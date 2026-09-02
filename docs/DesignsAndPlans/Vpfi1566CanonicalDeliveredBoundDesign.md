@@ -960,7 +960,15 @@ durable rather than a snapshot of one moment.
 **3. The intent class — via the `preInteraction` pull point.**
 
 - **Lien decrement, pull, and VPFI restamp are ONE atomic step** inside
-  `preInteractionImpl`. `commitSwapToRepayIntent` calls
+  `preInteractionImpl`, **executed under the pinned sanctions-safe MOVE-OUT
+  exemption** — the same wrapper the existing settlement already uses so a
+  post-commit flag cannot brick completion
+  (`LibSwapToRepayIntentSettlement.sol:149-157`). The new pull goes through
+  `vaultWithdrawERC20`, whose vault resolution rejects a sanctioned owner
+  (`VaultFactoryFacet.sol:253-264`), so without the wrapper, moving custody into
+  the vault introduces a sanctions-dependent fill failure the Diamond-custody
+  order never had — a borrower flagged after committing would strand the fill,
+  and the LOP retry with it. `commitSwapToRepayIntent` calls
   `LibConsolidation.restampUserVpfi` right after its withdrawal because
   `vaultWithdrawERC20` only moves the tracked balance
   (`SwapToRepayIntentFacet.sol:553-563`); move the withdrawal without the
@@ -1034,6 +1042,15 @@ durable rather than a snapshot of one moment.
   ones take the hook, and the old branch is deleted once the count reaches zero
   on its own.
 
+  ⚠️ **And the count itself needs an OPENING BALANCE.** The live pre-upgrade
+  commits bypassed its increment path, so a newly appended counter reads zero
+  while their `custodialCollateral` is still commingled — and the arming gate
+  passes vacuously on day one. `intentLiveCommitCount` cannot substitute, since
+  it also counts buyback and new vault-custody commits. So the old-version count
+  is **initialized from a paused scan or a precisely versioned snapshot, and
+  arming stays blocked until that initialization is finalized** — the same
+  opening-balance rule as the era counters, and for the same reason.
+
   ⚠️ **But "on its own" can be NEVER, and completion must not pretend
   otherwise.** An abandoned pre-upgrade order's `custodialCollateral` stays in
   the Diamond until someone fills or cancels it — expiry alone executes no
@@ -1098,10 +1115,17 @@ exactly what that position holds, nothing else) and ordered strictly after the
 role transition that creates the active era. An earlier revision registered the
 atomic transfer, declared the writer set exhaustive, and left the delayed leg
 unregistered — following the contract stranded the pending funds, and following
-the branch introduced an unlisted writer. Three writers, each provenance-bound — an earlier
+the branch introduced an unlisted writer. Three writers, each provenance-bound, **and the writer contract's concluding
+sentence says THREE** — an earlier revision defined the third writer and left
+the conclusion reading "two writers, no third", so an implementer following the
+summary would omit the delayed credit and strand every `Detached`-terminalized
+surplus in its pending position permanently — an earlier
 revision said "nothing else credits it", which rejects the terminal-surplus
 disposition the era mechanism requires and strands the remainder. Two writers,
-both provenance-bound, and no third. **The mirror's received-side writer table
+**three** provenance-bound writers — `fundRewardPool`, the era-terminal
+transfer, and its delayed pending-to-live form — and no fourth. (An earlier
+revision of this sentence said "no third" after the third had been defined
+above it.) **The mirror's received-side writer table
 carries the same transfer**, for the same reason: it moves attribution rather
 than tokens, so a table listing only token-moving writers omits it silently.
 
@@ -1494,7 +1518,15 @@ retired by accident:
 - **Counter.** On **every effective role change** — entering `Detached`, and
   the direct Mirror→Canonical and Canonical→Mirror transitions
   `setIsCanonicalRewardChain` permits — the residual **`max(received − paid, 0)`** moves to
-  an **era-scoped** balance keyed by the retiring era. The saturation is not
+  an **era-scoped** balance keyed by the retiring era — **and a NEGATIVE
+  residual is carried as an opening DEFICIT on the new baseline, never
+  forgiven.** The saturation protects the role change from reverting; it must
+  not also zero the debt: with `received = 100, paid = 100` and a 20-unit
+  demotion (`80/100`), a reset-to-zero makes the next 20-unit delivery fully
+  spendable — **cumulative fresh payouts of 120 against 100 authenticated
+  receipts.** So the new era opens with `paid − received` pre-charged against
+  it (equivalently: the deficit must be resolved before the role change is
+  permitted). Saturate the era balance; carry the deficit. The saturation is not
   defensive padding: a demoted or unwound confirmation can legitimately leave
   `paid > received` after some of the credited value was already paid, which is
   exactly why the live bound floors at zero
@@ -1705,7 +1737,19 @@ revision unimplementable:
      era. The transport epoch has no terminal and needs none — it is backed
      packet-by-packet by what each late arrival delivers, terminalization does
      not depend on it, and its reconciliation is the standing legacy epoch that
-     already never closes. If a deployment refuses to carry it, the honest
+     already never closes.
+
+     **And it is CONSUMABLE, not just backed.** Storage without a debit path is
+     stranding with better bookkeeping: the enforcement rule reads
+     `eraBalance + liveHeadroom`, and a separate transport epoch appears in
+     neither term. So the transport epoch's balance is **readable as a third
+     term by the obligations its packets TARGET** — a retired-era claim or sweep
+     whose funding arrived late draws `transportEpoch(target) → eraBalance →
+     liveHeadroom` in that order, debiting the packet-backed balance first. Any
+     remainder after the targeted obligations terminate follows the
+     terminal-surplus rule (pending recovery position while `Detached`, live
+     headroom under an active era) — so the lane never closing does not leave
+     its money without an exit. If a deployment refuses to carry it, the honest
      alternative remains **disallowing the permanent transition while the
      unverifiable lane exists** — never promote-and-strand.
 
@@ -1765,6 +1809,16 @@ revision unimplementable:
    where the claims it was sent to fund also live), or the design defines a
    transport epoch that survives a temporary detachment. The first is
    consistent with the era mechanism already in place.
+
+   ⚠️ **EXCEPT the legacy kind-2 broadcast, which cannot be routed by era at
+   all**: its wire carries no era field, the cross-chain callback exposes only
+   source chain, sender, payload and tokens — not the transport message id —
+   and a revert leaves no destination-side stamp. After reattachment the
+   application cannot distinguish the refused old-era packet from an identical
+   broadcast addressed to the fresh era. So legacy broadcasts go to the
+   **non-finalized transport epoch** like legacy remittances, where identity is
+   not required because nothing era-scoped depends on it — rather than
+   pretending a routing rule can run on information the frame does not carry.
 4. **The role transition itself** therefore has no receipt-level mutations to
    reverse — the property that makes rows 8–10 sound rather than merely
    convenient.
@@ -2251,9 +2305,17 @@ figure the operator does not assert. The netting is load-bearing:
 the same for its counted portion — so the raw aggregate includes
 recovery-reserved custody, and classifying it into live `received` or
 `recycleBucket` would let claims spend tokens that must stay available for
-recovery. Subtract each overlapping subledger at the snapshot (they are
-on-chain counters, so the netting is as assertion-free as the envelope), or
-carry the exclusions through classification — and the bootstrap classifies
+recovery. Subtract each overlapping subledger at the snapshot — **including the
+already-RETURNED overlap, not just the live one.** `sendStrandedReturn`
+decrements `strandedRecoveryReserved` and transfers the tokens **without
+decrementing `rewardBudgetFreshUncounted`** (`RepatriationFacet.sol:926-930`),
+so after quarantining and returning 100 the naive envelope reads
+`uncounted 100 − reserved 0 = 100` — classifying value whose tokens have left
+the Diamond entirely, headroom backed by unrelated custody. The returned
+overlap is on-chain too: `strandedReturnedCumulative` records exactly it, so the
+netting stays assertion-free — `uncounted − reservedLive − returnedCumulative`
+(each clamped to the overlap actually attributable to the envelope). Or carry
+the exclusions through classification — and the bootstrap classifies
 against that single recorded bound, under the same conservation and
 per-component rules, with the reclassification operation as the error path.
 Per-packet identity is required only where per-packet classification is
