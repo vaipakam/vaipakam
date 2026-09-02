@@ -2029,7 +2029,17 @@ non-refundable fee for fewer executable operations than they reviewed.
 Equivalently stated as the entitlement it protects: the call binds a
 **minimum executable throughput** — at least the reviewed number of
 minimum-cost actions of the role, under the cost schedule in force when it
-executes — and reverts if any of the three bindings fails. Minimum capacity alone survives a token
+executes — and reverts if any of the three bindings fails.
+
+**And a cost or limiter retune reconciles credit ALREADY STORED, exactly
+as a capacity retune must**: the epoch binding protects the in-flight
+arming call and nothing else — a bucket holding 100 units at
+cost-10-per-action that survives a retune to cost 1 silently buys 100
+actions instead of 10, a retroactive burst granted with the raw capacity
+untouched. The settle-or-invalidate decision applies here identically:
+elapsed credit is settled under the OLD schedule, or the affected bucket
+is invalidated and its credit forfeited, before the new cost prices
+anything. Minimum capacity alone survives a token
 rotation that lands while the arming transaction is pending: with both assets
 approved, the selector pulls the REPLACEMENT token and charges the
 non-refundable fee against it, and identical raw amounts or capacity can
@@ -2103,9 +2113,15 @@ recorded against zero eligible backing becomes collectible from
 principal that was not eligible when the offence occurred — action-time
 reach violated through the eligibility flag rather than the tranche
 list. Armed-from-excess principal therefore enters as a NEW
-tranche/exposure epoch (beyond every existing watermark), or
-equivalently each liability persists its action-time eligible cap per
-reached tranche and collection clamps there.
+tranche/exposure epoch (beyond every existing watermark) — **and the
+fresh epoch is MANDATORY, not one of two equivalents**: the
+per-liability-cap alternative this rule once offered breaks the
+coalescing bound (liabilities sharing one watermark but carrying
+different caps are not equivalent and cannot merge), and with no
+minimum raise or offence size the oldest-first queue grows past the gas
+limit again — the same grenade, rebuilt out of the supposedly
+equivalent option. One approach, the one that preserves every invariant
+already proved.
 
 **Fee-free EXCESS never becomes armed capacity by retune.** An operator
 who pre-deposits above the current ceiling pays no fee on the excess —
@@ -2377,8 +2393,13 @@ reject the proof: a reverted proof leaves the horizon expiring, the
 operator delists later, the reservation releases, and an otherwise valid
 debit is escaped — while executing it normally transfers frozen principal
 into recycling, against the repository rule that sanctioned funds freeze
-rather than move. So proof submission on a flagged operator follows the
-committed-transition pattern: the proof is CONSUMED and the offence
+rather than move. So proof submission on a flagged operator — **including the FIRST
+authoritative flagged read, when no confirmed marker exists yet** —
+follows the committed-transition pattern: the ordinary reverting screen
+would roll back the very observation (the first-flag rule again, on the
+prover's path), leaving the proof unconsumed, the horizon expiring, and
+the debit escaping at delisting. The transition persists the confirmed
+marker in the same committed act; the proof is CONSUMED and the offence
 ADJUDICATED (the evidence landed; the horizon question ends), the
 reserved amount converts to an **adjudicated liability held frozen** —
 no custody moves, nothing reaches the recycle bucket — and the liability
