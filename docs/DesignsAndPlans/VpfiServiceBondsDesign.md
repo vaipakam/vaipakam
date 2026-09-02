@@ -1062,7 +1062,16 @@ prove it — code that cannot change, or a record that every change must
 append to (the touch compares the log's mutation COUNT against
 `lastVerified`'s snapshot; any growth triggers the same
 quarantine-and-rollback as a live mismatch, restored or not). A mutable
-verifier with no such log is not eligible to adjudicate delayed proofs. A mismatch is
+verifier with no such log is not eligible to adjudicate delayed proofs.
+**And "immutable" means the TRANSITIVE closure of behavioural inputs,
+not the bytecode alone**: immutable code reading its own mutable
+storage, an upgradeable oracle, or a registry is the same continuity
+hole one call deeper — the dependency mutates and restores between
+touches, the hashes match, no counter grew. The exemption applies only
+to a verifier whose every behavioural input is itself immutable; any
+mutable input either routes its mutations through an immutable
+append-only logging chokepoint the touches also check, or disqualifies
+the verifier exactly as mutable bytecode would. A mismatch is
 QUARANTINE-EQUIVALENT for the affected epochs: proofs refuse,
 horizons pause on the shared clock, and governance resolves restore-or-
 invalidate exactly as for a flagged verifier. Immutable deployments
