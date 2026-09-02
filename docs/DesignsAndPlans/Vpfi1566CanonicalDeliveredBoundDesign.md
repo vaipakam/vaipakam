@@ -1574,6 +1574,18 @@ retired by accident:
   says nothing about packets). Two counters, two obligation classes, one
   terminal condition.
 
+  **On an existing deployment BOTH counters start WRONG, and must be backfilled
+  before any terminalization.** Every pre-upgrade `rewardEntries` row bypassed
+  the new increment paths, so a retiring era's liability counter reads zero
+  while old claims and sweeps are still live — and the first role transition
+  would satisfy the O(1) terminal check and **release their backing
+  prematurely**. Maintaining the counters for future mutations is not enough: a
+  **paused, paginated backfill** assigns every existing outstanding component
+  (and every open classification) to its era, and **role changes and
+  terminalization are gated until that initialization is finalized** — the same
+  high-water-mark completion proof as the other scans. A counter is only as good
+  as its opening balance.
+
   ⚠️ **"Read back" is not an executable condition at scale.** `rewardEntries` is
   append-only and unbounded, so a single terminalization call that walks the era
   eventually exceeds the block gas limit — **permanently stranding the surplus**
