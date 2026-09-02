@@ -815,7 +815,15 @@ lifts, horizons resume) and **invalidate** (the verifier is genuinely broken:
 the epoch's reservations are released, since their liability is no longer
 provable by trustworthy means). Invalidation is itself a **single O(1)
 epoch-state transition** — the per-operator reserved accounting is
-**epoch-partitioned** over a bounded active set, so the invalidated amount
+**partitioned over a bounded active set on BOTH axes: predicate/verifier epoch
+AND collateral-token epoch.** The first is what makes this invalidation one
+write; the second is what keeps the sums meaningful at all, and the round-49
+consolidation deleted it — restored here, because rotation carries old-token
+reservations, so a single figure across tokens adds incomparable raw units: a
+large-decimal old reservation blocks every new-token action, and the reverse
+rotation understates the old liability against the cap. Unreserved backing and
+the concurrency cap are kept per collateral-token epoch (or an explicit
+conversion precedes any summing). The invalidated amount then
 leaves unreserved backing and the concurrency cap with one write, no iteration,
 and reservation RECORDS are reclaimed by bounded, permissionless **lazy
 cleanup** that emits the per-reservation release events afterwards. Releasing is
