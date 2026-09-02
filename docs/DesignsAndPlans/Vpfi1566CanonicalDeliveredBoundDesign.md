@@ -1744,11 +1744,11 @@ delivery and nobody to report to.**
 
 | # | Site | Real question | Canonical | Mirror | **Detached** |
 | --- | --- | --- | --- | --- | --- |
-| 1 | `InteractionRewardsFacet.sweepForfeitedInteractionRewards:101` | which bound applies to the forfeit sweep | **matching transport-epoch balance FIRST, then the delivered bound** (was `max`) | matching transport FIRST, then delivered bound | **matching transport-epoch balance FIRST, then the eligible ERA balance** (live headroom 0) — transport-first is ROLE-COMMON, per the lifecycle's debit order and row 13 |
+| 1 | `InteractionRewardsFacet.sweepForfeitedInteractionRewards:101` | which bound applies to the forfeit sweep | **matching transport → eligible ERA balance → delivered bound** (was `max`; the era term is §5c's own order — an era balance is invisible to the live bound, so transport-then-live gave a retired-era obligation zero allowance) | matching transport → eligible era balance → delivered bound | **matching transport-epoch balance FIRST, then the eligible ERA balance** (live headroom 0) — transport-first is ROLE-COMMON, per the lifecycle's debit order and row 13 |
 | 2 | `…:128` | does the sweep record a paid delta | **only the fell-through-to-live portion** (was "no", then an unqualified "yes" — a sweep funded by transport or a retired-era balance must not also suppress future live headroom) | same — fell-through only | **only the portion that FELL THROUGH to live funding** — an era-funded outflow debits its era balance and nothing else |
 | 3 | `RewardCommitmentFacet.isDayCommitmentReady:191` | is a day's commitment reportable | n/a | yes | **no** — nobody to report to |
 | 4 | `RewardCommitmentFacet._assertMirror:268` | AUTH: may this chain report | revert | allow | **revert** — fail closed |
-| 5 | `RewardHorizonSweepFacet.sweepExpiredInteractionRewards:162` | which bound applies to expiry | **matching transport-epoch balance FIRST, then the delivered bound** (was `max`) | matching transport FIRST, then delivered bound | **matching transport-epoch balance FIRST, then the eligible ERA balance** (live headroom 0) |
+| 5 | `RewardHorizonSweepFacet.sweepExpiredInteractionRewards:162` | which bound applies to expiry | **matching transport → eligible ERA balance → delivered bound** (was `max`) | matching transport → eligible era balance → delivered bound | **matching transport-epoch balance FIRST, then the eligible ERA balance** (live headroom 0) |
 | 6 | `…:237` | paid-delta recording on expiry | **only the fell-through-to-live portion** (was "no", then an unqualified "yes") | same — fell-through only | **only the fell-through portion** — same rule as row 2 |
 | 7 | `RewardRemittanceFacet.sendRemitAck:1529` | AUTH: may this chain ack a remittance | revert | allow | **revert** — fail closed |
 | 8 | `RewardReporterFacet.setBaseChainId:1254` | is this a role transition needing residual retirement | n/a | yes | **yes — this is the site that CREATES and CLEARS Detached** |
@@ -2218,10 +2218,17 @@ revision unimplementable:
      element-by-element can itself exceed the destination gas limit and
      revert before ever reaching `RETIRING`, the same permanent bounce
      one step later. Admission stores the aggregate, the token delta,
-     and the PAYLOAD HASH (O(1)); the day index materializes afterwards
-     through bounded, resumable calls that supply the list and verify it
-     against the stored hash — the packet is safe and accounted from the
-     first transaction, and its per-day machinery arrives page by page. Resumable retirement: bounded index-updates per
+     and a **MERKLE ROOT over fixed-size chunks of the day list** (O(1)
+     to store; a flat whole-list hash cannot authenticate a PAGE — a
+     call supplying only its page has nothing to check, and one
+     re-supplying the whole list per page re-imports the unbounded
+     calldata and hashing the compact admission removed, potentially
+     unmaterializable forever near the gas limit). Each materialization
+     call supplies ONE bounded chunk plus its Merkle proof, verifies
+     against the stored root, and writes that chunk's day-index entries
+     — the packet is safe and accounted from the
+     first transaction, and its per-day machinery arrives page by page,
+     each page authenticated independently. Resumable retirement: bounded index-updates per
      call, batch marked RETIRING and skipped by allocation meanwhile. Exhaustion
      happens once per batch, so the removal cost is paid once by the
      settlement that exhausts it, not rediscovered by every other listed
@@ -2279,13 +2286,23 @@ revision unimplementable:
      restored coverage is DIRECTLY CONSUMABLE by any competing
      obligation's settlement**, and for a competitor too large for one
      bounded scan, **consumable through PRIORITY-MODE STAGING: an
-     obligation-bound reservation of the restored coverage that cannot
-     itself lease the batch** — it holds no batch reference, blocks no
-     cursor, and expires with its own deadline — so a multi-batch
-     competitor can accumulate the contested coverage across calls
-     without the window closing on it (settlement-only helped only
-     single-scan competitors; the attacker re-leased the batch the
-     moment the window shut). Ordinary
+     obligation-bound reservation of the restored coverage that holds no
+     exclusive lease and blocks no allocation** — but it DOES carry
+     **non-locking packet provenance** (packet id, batch id, per-leg
+     amounts) and counts in the batch's RETIREMENT-DEFERRAL references:
+     settlement must charge the right packet's leg counters, and an
+     expiry must restore into a batch no member-day index has passed —
+     "no batch reference at all" would let the batch retire under the
+     reservation and strand both. And priority-mode is
+     **NON-RENEWABLE per (obligation, batch) and FIFO by preparation
+     age**: one priority reservation ever — an obligation whose
+     reservation expires unsettled is permanently ineligible for
+     priority mode on that batch — because an attacker with two prepared
+     obligations could otherwise atomically unwind A and priority-stage
+     under B, alternating forever; non-renewability burns each
+     controlled obligation once, the finite pre-aged inventory drains,
+     and FIFO puts the oldest blocked competitor first at every burn.
+     Ordinary
      leases on that batch resume only after the window closes and any
      priority-mode reservations resolve.
      (Expiry-only was one round's scope: cancel-just-before-deadline
@@ -3605,10 +3622,19 @@ enforce**: the legacy frame authenticates the total alone, so demanding
 cap checks against caps nobody can authenticate either freezes
 transport draws (zero/unset caps) or launders operator-selected numbers
 into "authenticated" ones. When evidence-backed classification later
-fixes the caps, they become IMMUTABLE at that moment and the recorded
-legs reconcile against them retroactively — any leg already in excess
-of its newly-fixed cap is a recorded shortfall entering the
-slice-0 disposition family, not a silent pass. The fourth term counts
+fixes the caps, **the fixing transaction RECONCILES FIRST and the caps
+become immutable only after the component invariant holds**: an
+already-recorded leg in excess of its incoming cap is (a) REATTRIBUTED
+across legs where the other component's cap covers it — the aggregate
+was authentic, so a fresh-leg draw against what the evidence now says
+was recycled value becomes recycled-leg use, counters moved atomically —
+then (b) any excess beyond both components enters the slice-0
+disposition family with a **bounded replacement term added to that
+component's invariant** (`alreadyFresh + transportConsumedFresh ≤
+freshCap + replacementFresh`, the replacement delta-checked custody).
+Fixing caps against unreconciled counters would make the invariant
+false at birth — the transaction reverting forever or persisting
+invalid state, classification unfinalizable, the era terminal blocked. The fourth term counts
 NON-CLASSIFICATION exits only** (repatriation, write-off — debited by
 the exact remainder leaving through them): an evidence-backed
 classification is elsewhere called a "disposition" of a parked
