@@ -351,7 +351,17 @@ OffenceRecorded(operator, role, kind, refId)   // role, not just operator
 // alone keeps its name: it is an already-merged enum member in LibVpfiRecycle
 // (append-only, reserved, MUST stay unused in v1), and renaming a merged enum
 // member to launder a word out of an internal slot is churn without a user.
-// v1: `state` is Active only and `unlockAt` is unused — both exist for the
+// v1: `state` is `Active` or `SanctionsParked` — nothing else — and
+// `unlockAt` is unused. `SanctionsParked` is REQUIRED in v1, not predicate
+// machinery: the committed first-flag transition (park the withdrawal,
+// persist the confirmation, refuse the payout without reverting) must
+// PERSIST something, and an Active-only schema forces the implementation to
+// choose between reverting (rolling back the confirmed flag — the
+// later-oracle-outage escape the sanctions section exists to prevent) and
+// holding a parked amount no state represents, ambiguous to every release
+// path. Its release transition is delisting: an authoritative clean read
+// re-screens and returns the deposit through the normal withdrawal path.
+// `unlockAt` and the remaining states exist for the
 // DELAYED-UNBOND machinery that any delayed-proof predicate requires, NOT for
 // the liveness tier specifically. An earlier revision said "the liveness
 // tier's delayed unbond"; if equivocation ships without liveness, an
@@ -413,7 +423,17 @@ events arrive later from cleanup and do carry the per-bond fields.
 Every OTHER event carries the operator, the role, the delta, the
 **post-balance**, the token/config identity, and the withdrawal state. Post-
 balance rather than delta alone, because a consumer that missed one event can
-otherwise never resynchronise against a mapping it cannot enumerate. ABI and
+otherwise never resynchronise against a mapping it cannot enumerate.
+
+**`OffenceRecorded` is the second explicit exemption, and its companion
+carries the money.** The offence record is the ADJUDICATION fact — operator,
+role, kind, refId — and at recording time under a delayed predicate there may
+be no balance mutation in the same call at all. Requiring the balance fields
+on it left two incompatible normative ABIs for one event. The mutation is
+reported by the debit event of the future predicate tier
+(`CapacityDepositDebited`, per the schema block's naming rule), which carries
+the full mandatory field set and joins to its offence by `refId`. Two facts,
+two events, one join key — v1 emits neither, since v1 has no offences. ABI and
 indexer wiring ship with them, with focused tests; a lifecycle event nobody
 decodes is the same gap one step later.
 
@@ -868,7 +888,14 @@ sibling epochs the same broken verifier adjudicates stay open for forged
 proofs while the fast key chases them one transaction at a time. The
 quarantine is therefore **a single global flag on the verifier identity,
 consulted by every dependent epoch** — an epoch is quarantined-in-effect iff
-its verifier is flagged (or it is individually flagged), so one write contains
+its verifier is flagged — and that is the ONLY quarantine there is: an
+earlier revision added "(or it is individually flagged)" in passing, a second
+quarantine path the verifier-scoped event schema cannot represent (a verifier
+event over one epoch pauses every sibling in consumers' eyes; no event leaves
+provers blind to the pause). An epoch-level concern is contained by
+quarantining its VERIFIER — over-broad and safe, exactly what an off-timelock
+incident lever should be — and resolved per-epoch by governance, which can
+restore the untainted siblings in the same timelocked decision. One flag, so one write contains
 every epoch at once. In that one call it (a) disables proof submission
 against the suspect verifier — every epoch it backs — and (b) stops NEW
 predicate-governed admissions under those epochs — while
@@ -1608,8 +1635,17 @@ full non-refundable fee for something other than what they reviewed. Same
 substitution the perk channel binds against, and for the same reason — a
 non-refundable spend must settle on the terms its payer saw.
 
-So the call carries a **minimum post-arming capacity** (or a config epoch
-covering the fee and the curve together) and reverts if it is not met.
+So the call carries a **minimum post-arming capacity AND the expected
+COLLATERAL-TOKEN EPOCH — both mandatory, and the token binding is not the
+optional config-epoch branch**. Minimum capacity alone survives a token
+rotation that lands while the arming transaction is pending: with both assets
+approved, the selector pulls the REPLACEMENT token and charges the
+non-refundable fee against it, and identical raw amounts or capacity can
+satisfy the bound while the replacement differs in value or decimals — the
+payer settles on terms they never reviewed, passing the very check added to
+prevent that. Every value-pulling arming or deposit call therefore binds the
+token epoch it was signed against and reverts on mismatch; the config-epoch
+form (fee + curve together) remains the stronger optional binding on top.
 
 **Selecting (A) or (C) also changes the programme's definition of done, and
 that consequence has to be recorded rather than discovered.**
@@ -1658,8 +1694,14 @@ decisions rather than to an implementer's discretion:*
   member and the enum is append-only. `ServiceBondSlash` must NOT be used —
   C performs no slash, and reporting fee purchases as offences would
   corrupt the metric that member exists for. Borrowing a perk or generic
-  class merges distinct absorption. So C appends **`ServiceBondArmingFee`**,
-  with its own event and test.
+  class merges distinct absorption. So C appends
+  **`RecycleSource.CapacityArmingFee`**, with its own event and test. (An
+  earlier revision named it `ServiceBondArmingFee` in the same document that
+  makes capacity-deposit naming normative for every public identifier and
+  grants exactly ONE exception — the already-merged `ServiceBondSlash`. A NEW
+  append-only member is precisely where the naming rule bites: once appended
+  it is exposed through recycle events forever, so it is named correctly
+  BEFORE deployment, not grandfathered after.)
 
 **Recommendation: (C), else (A)** — and the real question is **not** "ship now
 or wait for the adjudicating tier". An earlier revision of this summary framed it
