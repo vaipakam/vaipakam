@@ -286,7 +286,12 @@ withdrawal. So, before bonds ship, **either**:
   the beneficiary**. Voluntary enumeration cannot be the only route.
 
   **Partitions key on a MONOTONIC ROTATION EPOCH, never the token address
-  alone.** `setVPFIToken` permits A → B → A (it rejects only a no-op
+  alone — and every SIGNED on-behalf authorization binds the epoch too**:
+  a payer supplies the deposit call's expected-epoch argument, so an
+  operator's unexpired consent signed over the token address alone can be
+  replayed into a NEW epoch after A → B → A, creating tranches and
+  consuming the operator's bounded state under stale consent. The
+  signature covers `rotationEpoch` alongside the token.** `setVPFIToken` permits A → B → A (it rejects only a no-op
   against the currently selected token), and address-keyed sub-balances
   then conflate two distinct rotations: a retired A-partition still
   holding principal, reservations or debt shares its key with the new
@@ -522,8 +527,13 @@ incident path the quarantine exists to provide. Emitting nothing instead leaves
 indexers and **provers** unable to tell that horizons paused or resumed — and a
 prover who cannot tell is a prover who misses a window.
 
-**Quarantine and restoration events carry the VERIFIER identity** (plus the
-observation block **and the RESTORED active-clock value — the verifier
+**Quarantine and restoration events carry the VERIFIER identity, the
+MISMATCH KIND (code vs config) and — for a config fault — the CAUSAL
+config epoch** (the containment flag is verifier-wide either way, but
+governance must invalidate the faulted epoch and restore the sound
+siblings, and a consumer shown only the verifier cannot tell an
+E2-only config fault from a verifier-wide code fault), plus the
+observation block **and the RESTORED active-clock value — the
 checkpoint the rollback rewound to**: a mismatch observed at 201 that
 restores the clock to 140 extends every dependent proof and release
 horizon by the difference, and a consumer shown only 201 cannot
@@ -946,13 +956,20 @@ record back with it) — **and the base depends on when the offence is recorded:
     which preserves EVERY cross-class boundary (a per-class merge by
     earliest position would process `A1+A2` ahead of an intervening
     `B1`, re-ordering exactly what the recording rule protects). The
-    segment COUNT carries a hard cap: an offence that would open a
-    segment past it coalesces into the newest same-class segment
-    instead, sacrificing cross-boundary precision only past the cap —
-    and only in the protocol-conservative direction (total collection
-    is conserved; the shift moves collection earlier for the merged
-    aggregate, and a multi-tranche debt displaced at one tranche
-    retains its other recourse). Alternation-to-grow-segments is thus
+    segment COUNT carries a hard cap — and overflow merges the two
+    OLDEST segments into one MIXED segment holding per-class subtotals
+    at the older position, **with allocation inside a mixed segment
+    running NARROWEST-REACH-FIRST** (the newest-same-class backward
+    merge was wrong: pulling a later broad-reach debt in front of an
+    intervening narrow one let the broad aggregate drain the contested
+    tranche first and strand the narrow debt's only source — collection
+    LOST, an operator alternating classes to the cap could shrink its
+    own liabilities). Narrowest-first within the merged pair is
+    collection-MAXIMIZING by the exchange argument — contested tranches
+    go to the debt with no alternative — so the summary never collects
+    less than any true ordering; the merged pair are the two oldest and
+    collect at the front either way, and each class keeps its own reach
+    and epoch inside the subtotals. Alternation-to-grow-segments is
     bounded by the cap, and each alternating offence still costs the
     attacker its own liability. The class
     count is bounded by the live tranche boundaries plus one, per the
@@ -1573,7 +1590,11 @@ whole rule:
   into 100 one-unit deposits would, under per-tranche ceiling-rounding, be
   debited all 100 units at a 10% slash, and under per-tranche flooring be
   debited **zero**. Rounding once over the aggregate debits 10, the answer
-  that does not depend on how the operator arranged their deposits.
+  that does not depend on how the operator arranged their deposits —
+  **with ceiling rounding applied to the POSITIVE NET-of-liabilities
+  base only: a zero net base records ZERO** (the "any positive balance
+  debits at least one unit" phrasing predated the net-base rule; against
+  a zero net base it mints a liability with no action-time backing).
   Allocation across the tranches is then a distribution question for **that
   proof** — but it is **not unconstrained**, because it changes what later proofs
   can reach.
@@ -2640,8 +2661,11 @@ after delisting (`LibVaipakam.sol:9850-9854`). The liability stays
 frozen and encumbered until delisting, however long that is; a disposal
 terminal, if the owner ever wants one, is a separately approved change
 to the sanctions POLICY — never an open branch in a bond design. **And it is an ENCUMBRANCE on every withdrawable-balance
-read from the moment of adjudication — settled BEFORE any parked
-release pays out.** The parked-withdrawal release pays the request cap
+read from the moment of adjudication — RETAINED IN FULL before any
+parked release pays out** (retained, not settled: settlement is
+fallible and retryable, per the retain-and-release-net rule below —
+"settled before" would hand a broken recycle path a full-balance
+freeze).** The parked-withdrawal release pays the request cap
 net of debits and reservations; converting the reservation into a
 liability without joining that netting lets a release-first
 implementation return the reserved units at delisting and leave nothing
