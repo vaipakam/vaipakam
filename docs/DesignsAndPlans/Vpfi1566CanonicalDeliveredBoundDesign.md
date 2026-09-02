@@ -2227,8 +2227,14 @@ revision unimplementable:
      **`actualReceived`** (never the declared total — short delivery must
      shrink the funding, not the obligations), with the listed `dayIds` as a
      MEMBERSHIP filter. A targeted obligation draws from the batches that
-     list its day (oldest batch first, each draw bounded by that batch's
-     remaining balance) — **through a per-day CURSOR that advances past
+     list its day — **fewest-remaining-member-days FIRST, oldest as the
+     tie-break** (each draw bounded by that batch's remaining balance):
+     the least-flexible source is spent before the flexible one, because
+     oldest-first alone starves later days — a shared batch listing A
+     and B spent on A while an A-only batch idles leaves B unfunded
+     though assigning A-only-to-A and shared-to-B settles both. Same
+     exchange argument as the typed-source rule: the batch with the
+     fewest alternatives is used where nothing else can serve — **through a per-day CURSOR that advances past
      exhausted batches permanently, because a bare oldest-first scan is
      unbounded on a hot path**: the legacy lane can mint arbitrarily many
      small batches listing one day, and a claim or permissionless sweep
@@ -2645,7 +2651,16 @@ revision unimplementable:
    binding cleared, or still SENDABLE TO THE RETIRED BASE if it did
    not. The ceremony therefore drains, quarantines, or re-attributes
    the buyback budget with everything else, and `remitBuyback` gains
-   the explicit role guard the audit's own test demands.
+   the explicit role guard the audit's own test demands — **against a
+   COMMITTED token universe, because the budget is a bare mapping with
+   no enumerable index**: the ceremony commits the token set (from the
+   allowlist's own configuration history, owner-attested with the same
+   recorded-disposition terminal as the lane universe), each member
+   drains to zero or takes its disposition, and a token surfacing
+   outside the committed set follows the straggler path. An
+   uncommitted drain over a non-enumerable mapping is a completion
+   claim nothing can check — the omitted balance strands the moment
+   the role guard lands.
 
    **A direct `setBaseChainId` REBIND (nonzero → nonzero) is PROHIBITED —
    every source-identity change goes through the Detached ceremony.** The
