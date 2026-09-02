@@ -530,10 +530,16 @@ carries the money.** The offence record is the ADJUDICATION fact — operator,
 role, kind, refId — and at recording time under a delayed predicate there may
 be no balance mutation in the same call at all. Requiring the balance fields
 on it left two incompatible normative ABIs for one event. The mutation is
-reported by the debit event of the future predicate tier
-(`CapacityDepositDebited`, per the schema block's naming rule), which carries
-the full mandatory field set and joins to its offence by `refId`. Two facts,
-two events, one join key — v1 emits neither, since v1 has no offences. ABI and
+reported in TWO stages per the durable-adjudication rule: the
+**liability-created event at committed adjudication** (amount, tranche
+allocation, token epoch, post-encumbrance total — the reservation is
+consumed here, and the backing must not read as available in the gap),
+then `CapacityDepositDebited` at settlement, which carries
+the full mandatory field set and joins to its offence by `refId`. Three
+facts, three events, one join key — v1 emits none, since v1 has no
+offences. (An earlier revision said "two facts, two events", which let
+an implementation skip the adjudication-time event and leave indexers
+blind between adjudication and settlement.) ABI and
 indexer wiring ship with them, with focused tests; a lifecycle event nobody
 decodes is the same gap one step later.
 
@@ -1016,8 +1022,14 @@ are all acceptance cases.** v1 does not need this at
 all: it has no offences to identify, since both selectable forks are
 non-confiscatable. An earlier revision said "v1's immediate in-call recording",
 which attributes a recording mechanism to a version that must not have one. For
-a predicate-enabled tier, the observation
-and the debit are the same call — which is exactly why it is easy to omit when
+a predicate-enabled tier, the observation and the FIGURE-fixing share
+one call, while the DEBIT follows the durable-adjudication rule: the
+observation commits the encumbering liability non-revertingly and the
+settlement retries separately (an earlier phrasing here said
+"observation and debit are the same call", which a reverting
+recycle-backing check or old-token leg turns into a rolled-back
+observation — the escape the two-transition rule closes) — which is
+exactly why it is easy to omit when
 the attested tier lands, and why it is written down here rather than there.
 
 **Which `slashBps`, when adjudication is delayed.** Immediate recording makes
