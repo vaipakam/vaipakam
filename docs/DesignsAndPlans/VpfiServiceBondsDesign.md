@@ -726,11 +726,34 @@ recycle bucket from the `(role, address)` bond whose entry point recorded the
 offence — **and the base depends on when the offence is recorded:**
 
 - **Synchronous recording (a future predicate-enabled tier, NOT v1):** the
-  FIGURE is `slashBps` of the current **TOTAL** balance; the immediate DEBIT
-  clamps to the unreserved portion; and any shortfall is recorded as a
-  **deferred liability collected at reservation release** — the released
-  amount pays outstanding sync liabilities (oldest first) before returning
-  to the operator's unreserved backing. Three parts because two simpler
+  FIGURE is `slashBps` of the action's **collateral-token-epoch partition
+  NET of that partition's outstanding deferred liabilities**; the immediate
+  DEBIT clamps to the partition's unreserved portion; and any shortfall is
+  recorded as a **deferred liability against that partition, collected at
+  reservation release within it** — a released amount pays the partition's
+  outstanding sync liabilities (oldest first) before returning to the
+  operator's unreserved backing. Two qualifiers, each closing a hole the
+  bare TOTAL-base rule left:
+
+  - **Partitioned, because the totals rule already is.** Rotation leaves
+    old-token reservations beside new-token balance, and a cross-partition
+    figure or collection mixes incomparable units — a new-token offence
+    confiscating old-token principal, or the reverse, through decimals
+    alone. The figure, the debit, and the liability all live in the
+    partition of the token the offending action was admitted under, exactly
+    as the reservation accounting already requires.
+  - **Net of outstanding liabilities, because a promise is spending.** On a
+    gross base, an operator at zero unreserved keeps generating
+    `slashBps × gross` per offence — liabilities that can sum past all
+    reserved principal, forcing either forgiveness or confiscation of
+    top-ups never held for those offences. On the net base the arithmetic
+    is geometric across offences and the total outstanding can never
+    exceed the partition's collateral at recording time; a liability never
+    reaches deposits made AFTER the offence (the action-time-reach rule,
+    applied to debts); and a fully-encumbered operator's next offence
+    records zero BY ARITHMETIC — every unit is already promised — with the
+    correct response being the role's encumbrance gating, not a promise
+    larger than the collateral behind it. Three parts because two simpler
   rules each failed: the raw-total debit consumes reserved collateral
   (below), and a plain unreserved-base figure lets clean reservations
   DISCOUNT the offence — fill the cap with clean delayed actions and a 25%
