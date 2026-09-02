@@ -663,7 +663,15 @@ teardown can read the consumed invalidator as ALREADY FILLED and refuse to
 return the custody. The recreation therefore allocates a fresh unused
 nonce in `makerTraits`, recomputes the order hash, and atomically rewrites
 every keyed index (`orderHashToLoanId`, the `orderHashKind` discriminator,
-the nonce registry) in the same act as the cancel.
+the nonce registry) in the same act as the cancel — **through a
+PAUSE-ONLY MIGRATION PRIMITIVE, because the production entries cannot run
+under the freeze**: both cancellation paths are `whenNotPaused` and
+borrower/deadline-gated, and slice 0 is explicitly paused, so a live
+underbacked intent could otherwise take this disposition only by
+unpausing into the exact claim/commit race the freeze exists to prevent
+(or block the scan forever). The primitive is migration-role-gated,
+callable ONLY while the reconciliation freeze holds, and performs the
+cancel + fresh nonce + full keyed-record rewrite in one act.
 
 **And the write-down reaches every STORED copy of the amount — for a
 `FallbackPending` position that is FIVE ledgers, not two.** The fallback
@@ -674,6 +682,17 @@ cure; the lien and `protocolTrackedVaultBalance` shadow them. Reduce only
 the snapshot and a claim row still draws the disposed amount; reduce only
 a claim and the migration still moves the full snapshot; leave the loan
 figure and an 80-token cure resumes as a 100-token-collateralized loan.
+**And the FULL-REPAYMENT terminal must not re-count the migrated
+snapshot: `RepayFacet`'s branch increments the lien by `held`
+(`RepayFacet.sol:691-695`), which was correct while the snapshot lived in
+Diamond custody and is a DOUBLE COUNT once migration has already included
+it in the live lien.** On a claim asset differing from the collateral,
+`claimAsBorrower` reads the doubled lien as additional collateral payout —
+overpaying or reverting against the tracked vault balance. For migrated or
+newly vault-backed rows the branch retains the existing snapshot lien
+instead of recreating it, and the all-consumer certification covers the
+full-repayment terminal alongside partial match and cure.
+
 The disposition reconciles them across TWO moments — **slice 0 rewrites
 the three ledgers whose referent is the Diamond-held snapshot (snapshot
 split, claim rows, loan collateral entitlement); the lien and tracked
@@ -1359,8 +1378,19 @@ remittances and the compensation dispatches all MOVE fresh custody out of
 the holder (delta-checked, in the same act as their ledger charge), and a
 mixed fresh/recycled CCIP send combines its two custody sources
 explicitly — the fresh share pulled from the holder into the outbound
-escrow at dispatch, the recycled share from the bucket's custody — so
-neither side's tokens can substitute for the other's.
+escrow at dispatch, the recycled share from the bucket's PROTECTED
+custody — so neither side's tokens can substitute for the other's.
+
+**And "the bucket's custody" means protected custody too — the recycled
+side has the same enemy.** A `recycleBucket` counter over shared Diamond
+balance is the payroll collision again: `withdrawSalary` consumes the
+tokens without decrementing the bucket, and the next recycled claim or
+remittance fails or substitutes unrelated custody while its ledger
+reports funding. The protected custody contract therefore carries a
+RECYCLED attribution row alongside the per-era fresh ones — one holder,
+attributed rows per ledger — and recycled ingresses, classifications and
+outflows move that attributed custody exactly as the fresh rules
+prescribe for theirs.
 
 **(b) The compensation dispatches are outflows too**, and naming only
 `remitRewardBudget` missed them. `remitManualBudget` and
@@ -2089,7 +2119,19 @@ revision unimplementable:
        downstream chokepoint (delivery, sweep, absorption accounting) sees
        only ITS residual component: the transport-paid share reaches no
        delivered-ledger or bucket check, because the aggregate it drew
-       from was never published into either ledger.
+       from was never published into either ledger. **And `transportPaid`
+       itself carries TWO legs, because the claim it pays has two.** A
+       claim is fresh-pending plus recycled; a scalar transport figure
+       leaves a 5-fresh/5-recycled claim with 6 transport-paid unable to
+       say which 4 reaches which chokepoint — double-charging one ledger
+       or preserving the wrong reserve, implementation's choice. The
+       allocation is **FRESH-FIRST, deterministically**:
+       `transportPaidFresh = min(transportPaid, freshPending)`, the
+       remainder is `transportPaidRecycled` — fresh first because the
+       delivered ledger is the scarcer, provenance-bound resource and
+       paying its component from the untyped aggregate reduces demand on
+       it without publishing anything — and each leg's chokepoint sees
+       only its own residual.
      - A generic pending-to-live drain (or repatriation) of a parked batch
        remainder is a **deliberate operator disposition carrying a recorded
        acknowledgment, keyed by the batch**: obligations arriving for any of
@@ -2127,8 +2169,15 @@ revision unimplementable:
      So the flow is `transportEpoch(target) → targeted obligations` (the
      first term resolving through batch membership), and any batch
      remainder `→ pending recovery position, keyed by the batch`, exiting
-     only through the membership-bound restore above, the registered
-     pending-to-live writer, or repatriation. If a deployment refuses to carry it, the honest
+     only through the membership-bound restore above, **evidence-backed
+     classification, or repatriation — the registered pending-to-live
+     writer is NOT an exit for an untyped batch remainder**, because that
+     writer credits `received` and an unsplit legacy aggregate flowing
+     through it is recycled-or-unknown value published as fresh headroom
+     (the typing rule above, evaded through the pending position). A
+     remainder that passes classification under the fresh-evidence rule
+     exits as what the evidence proved; one that never can leaves
+     untyped, through repatriation. If a deployment refuses to carry it, the honest
      alternative remains **disallowing the permanent transition while the
      unverifiable lane exists** — never promote-and-strand.
 
@@ -2899,6 +2948,17 @@ it under the SAME rules as the packet operation: spent attribution first,
 replacement custody where the correction moves value, conservation against
 the recorded bound.
 
+**A correction MOVES CUSTODY for the unspent share it reattributes, not
+only for the spent shortfall.** An unspent fresh share physically sits in
+the holder; correcting it to recycled without moving tokens leaves the
+recycled ledger pointing at the wrong pool — its next consumer fails or
+spends unrelated custody — and the reverse correction strands bucket
+custody outside the holder that fresh outflows now debit. So
+fresh→recycled moves the amount from the holder's attribution to the
+bucket's protected custody, recycled→fresh moves it back, atomically with
+the ledger reattribution; the spent shortfall keeps its separate
+replacement-custody requirement.
+
 **"Spent attribution first" now has a deterministic definition, because
 without one it was unanswerable.** Outflows are not debited per packet —
 `alreadyFresh[h]` / `alreadyRecycled[h]` record what each packet PUT IN,
@@ -3136,6 +3196,19 @@ for, each of:
   belt-and-braces is deliberate: the watermark is the one input the
   reconciliation cannot derive from history, so a floor protects against getting
   it wrong in the only direction that matters.
+
+**An ingress landing against a carried DEFICIT routes its
+deficit-covering portion to an explicit restitution position — allocating
+it as live backing strands it.** A new era can open with `paid − received`
+positive; the next funding transfer increments `received` without creating
+headroom until the deficit clears, so tokens allocated to the live ledger
+for that portion back nothing, no claim can ever debit them, and the next
+transition carries only `max(received − paid, 0)` — a holder allocation
+with no ledger balance and no terminal path. The deficit-covering portion
+of any ingress therefore lands in an explicit **restitution/recovery
+position** (owner-disposable: repatriation, or a recorded release into
+live backing once the deficit's cause is dispositioned), and only the
+excess above the deficit is allocated as live era backing.
 
 **And an imported POSITIVE `received − paid` is history, not money: usable
 headroom is capped by the DEDICATED HOLDER'S balance, which starts at
