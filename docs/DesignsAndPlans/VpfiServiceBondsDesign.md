@@ -364,8 +364,12 @@ then migrate whatever is left. Only the migration can be relied on, because only
 it requires nothing of the operator.
 
 ```
-ServiceCapacityDeposit { operator; role; token; amount; state; unlockAt;
-                         parkedRequest; eligibleAmount; }
+ServiceCapacityDeposit { operator; role; token; rotationEpoch; amount;
+                         state; unlockAt; parkedRequest; eligibleAmount; }
+// `rotationEpoch`: the monotonic rotation epoch this partition belongs to —
+// the KEY, with `token` the attribute (A -> B -> A creates two distinct
+// epochs for one address; a schema without this field lets retired
+// principal or liabilities contaminate the new partition).
 // `eligibleAmount`: the persisted ELIGIBLE (armed) balance fork C's rules
 // read — capacity curve inputs, reservation cap, involuntary-debit sizing,
 // withdrawal ordering all consult it, and a schema without it lets an
@@ -375,7 +379,12 @@ ServiceCapacityDeposit { operator; role; token; amount; state; unlockAt;
 // sanctions section requires to persist. `amount` is principal and `state`
 // alone cannot distinguish park-10-of-100 from park-all; the delisting
 // release pays min(parkedRequest, payable), DECREMENTS `parkedRequest` by
-// what it paid, and retains any remainder as still-parked.
+// what it paid — and a PERMANENT debit (a settled slash, a collected
+// liability) EXTINGUISHES the cap pro tanto in the same act: a remainder
+// retained past the principal that backed it is a phantom request that
+// either blocks the record's reclamation forever or reaches principal
+// posted after the request. Only amounts temporarily unavailable behind
+// live reservations stay parked.
 OffenceRecorded(operator, role, kind, refId)   // role, not just operator
 // NAMING IS NORMATIVE for every PUBLIC identifier — struct, selectors,
 // events, errors, user-facing copy: capacity-deposit naming, never "bond".
@@ -1281,9 +1290,18 @@ BOUNDED by the same discipline as the predicate axis**: every claim,
 cleanup, and accounting operation addresses ONE named partition in
 O(1) (nothing anywhere enumerates the accumulated set), and rotation
 carries BACKPRESSURE — a new rotation is refused while more than the
-bounded number of old partitions still hold residual principal, with
-the mandatory forced-migration duty as the drain that makes the bound
-reachable. Repeated rotate-and-leave-residue cycles otherwise grow the
+bounded number of old partitions still hold ACTIVELY DRAINABLE residual
+principal, with the mandatory forced-migration duty as the drain that
+makes the bound reachable — **and MIGRATED-ESCROW epochs are excluded
+from that bound**: a lost-key or sanctions-frozen balance preserved in
+original-asset escrow cannot be drained by anyone (the frozen claim
+persists until delisting), so counting it against the rotation bound
+rebuilds the hostage — enough undrainable epochs and governance can
+never replace a compromised token again, with migration unable to help
+because it MOVES these claims rather than ending them. Escrowed
+partitions move to a non-blocking, epoch-addressable ARCHIVAL ledger:
+fully accounted, claimable on their own terminals, invisible to the
+rotation gate. Repeated rotate-and-leave-residue cycles otherwise grow the
 partition set without limit, while evicting a partition would strand
 its principal, reservations, and liabilities — bounded by refusal at
 the source, never by eviction. **And the reads FILTER on a TRI-STATE: admission counts partitions whose
