@@ -33,6 +33,11 @@ on:
   schedule:
     - cron: '23 */6 * * *' # four sweeps a day; the GraphQL bucket refills hourly
   workflow_dispatch:
+    inputs:
+      closed_lookback_days:
+        description: 'Days of closed issues to sweep. Set this to backfill after a rename or a long outage — see the note on the watermark.'
+        required: false
+        default: ''
 
 # The PAT does the project read and write; the workflow's own token
 # stays read-only, matching add-to-project.yml's least-privilege shape.
@@ -67,7 +72,10 @@ jobs:
       # cover everything since the last successful sweep — see the note on
       # the watermark — so this is the floor for the normal case, not a
       # cutoff that can expire an unrecovered card.
-      CLOSED_LOOKBACK_DAYS: '14'
+      CLOSED_LOOKBACK_DAYS: ${{ inputs.closed_lookback_days || '14' }}
+      # Whether a human asked for that span explicitly. An operator who
+      # names a window has decided what to sweep; nobody has, otherwise.
+      LOOKBACK_IS_EXPLICIT: ${{ inputs.closed_lookback_days != '' }}
       # This workflow's own path, for the last-success watermark read.
       # Taken from the run context rather than written out: a hard-coded
       # name survives a rename of this file as a string that no longer
@@ -151,8 +159,14 @@ jobs:
           # for the other would narrow the window to the floor without
           # saying so, which is the failure this watermark exists to
           # prevent, so it stops the sweep instead.
+          # ...AND ONLY RUNS OF THE DEFAULT BRANCH COUNT. A manual dispatch
+          # of an older copy from a stale branch is a successful run of
+          # this workflow by the API's reckoning, and letting it set the
+          # watermark would shorten the next real sweep on the strength of
+          # a run that may not have reconciled anything.
+          default_branch=$(gh api "repos/$ISSUE_REPO" --jq '.default_branch')
           if ! runs=$(gh api \
-              "repos/$ISSUE_REPO/actions/workflows/$workflow_file/runs?status=success&per_page=1"); then
+              "repos/$ISSUE_REPO/actions/workflows/$workflow_file/runs?status=success&branch=$default_branch&per_page=1"); then
             echo "::error::could not read this workflow's run history ($workflow_file) — the closed-issue window cannot be computed"
             exit 1
           fi
@@ -162,9 +176,25 @@ jobs:
             # leave a sliver of time neither sweep looked at.
             watermark=$(( $(date -u -d "$last_success" +%s) - 86400 ))
             echo "last successful sweep: $last_success"
-          else
+          elif [ "$LOOKBACK_IS_EXPLICIT" = "true" ]; then
             watermark=$floor
-            echo "no previous successful sweep — using the floor"
+            echo "no previous successful sweep on $default_branch — using the $CLOSED_LOOKBACK_DAYS-day span this dispatch asked for"
+          else
+            # AN EMPTY HISTORY IS A MIGRATION, NOT A FRESH START. It means
+            # this workflow has never succeeded on the default branch, or
+            # has been renamed — the API keys run history to the file, so a
+            # rename leaves a workflow with no past. Quietly falling back
+            # to the floor would sweep a fortnight and call it complete,
+            # which is the very expiry the watermark exists to prevent.
+            #
+            # How far back to go is then a decision nobody has made, so
+            # the run stops and asks for one: dispatch it with
+            # `closed_lookback_days` set to cover the gap. That is a
+            # deliberate red on first install and after a rename, and
+            # nowhere else.
+            watermark=$floor
+            echo "::error::no successful run of $workflow_file on $default_branch — the window is unknown (first install, or a rename reset the history). Re-run this workflow from the Actions tab with closed_lookback_days set wide enough to cover the gap."
+            exit 1
           fi
           # Whichever reaches back further wins.
           if [ "$watermark" -gt "$floor" ]; then watermark=$floor; fi
@@ -320,12 +350,22 @@ jobs:
           # work would sit in the backlog permanently, which is this
           # workflow's own defect wearing a smaller hat.
           #
-          # So the pass runs over every recently-closed issue the board
-          # knows about, added on this sweep or long before, and fixes any
-          # whose Status is not Done. That makes it idempotent and
-          # self-healing: a failure here is retried by the next sweep
-          # rather than being frozen in, which is why a warning is honest
-          # and a hard failure would not add anything.
+          # THE PASS TAKES NO WINDOW AT ALL, and that is what finally
+          # settles a question three review rounds kept circling. Driving
+          # it from the closed LISTING inherited every weakness of the
+          # look-back: a card left un-Done by a failed write, by a rename
+          # that reset the run history, or by the board's own item-added
+          # automation writing Backlog after our edit, would age out of
+          # the window and never be examined again.
+          #
+          # It needs no window because the open listing is already the
+          # whole truth. Every open issue in this repository is in
+          # `open-urls.txt`; a board card for this repository that is NOT
+          # in it belongs to an issue that is not open. So the candidates
+          # are simply the board's own non-Done cards minus the open ones,
+          # at any age, and every sweep re-examines all of them. A missed
+          # transition is repaired by the next sweep no matter how long it
+          # has been wrong.
           status_unfixed=0
           if [ -z "$project_id" ] || [ -z "$status_field_id" ] || [ -z "$done_option_id" ]; then
             echo "::error::could not resolve the Status/Done ids — closed cards cannot be moved to Done"
@@ -341,23 +381,29 @@ jobs:
               echo "::error::no board item exposes a Status value — skipping the status pass rather than rewriting every card"
               status_unfixed=1
             else
-              needing=0; fixed=0; unfixed=0; unknown=0
-              while read -r url; do
-                [ -n "$url" ] || continue
-                row=$(awk -F'\t' -v u="$url" '$1 == u {print $2 "\t" $3; exit}' known-items.tsv)
-                [ -n "$row" ] || continue
-                id=$(printf '%s' "$row" | cut -f1)
-                st=$(printf '%s' "$row" | cut -f2 | tr '[:upper:]' '[:lower:]')
-                { [ -n "$id" ] && [ "$st" != "done" ]; } || continue
+              # Board cards for THIS repository whose Status is not Done.
+              # The repo prefix matters: a card fed in from another repo
+              # would not appear in this repo's open listing and would
+              # otherwise read as closed.
+              awk -F'\t' -v pre="https://github.com/$ISSUE_REPO/issues/" '
+                index($1, pre) == 1 && tolower($3) != "done" && $2 != "" { print $1 "\t" $2 }
+              ' known-items.tsv | sort -u > not-done.tsv
+              # ...minus the ones that are still open.
+              join -t"$(printf '\t')" -v1 -1 1 -2 1 \
+                <(sort -k1,1 not-done.tsv) <(sort -k1,1 open-urls.txt) > candidates.tsv
+              echo "non-Done board cards for this repo: $(wc -l < not-done.tsv | tr -d ' '), of which not open: $(wc -l < candidates.tsv | tr -d ' ')"
 
-                # RE-READ THE ISSUE BEFORE WRITING. `closed-urls.txt` is a
-                # snapshot taken at the start of the job; an issue reopened
-                # since then is still in it, and writing Done on a reopened
-                # issue is a change nothing here would ever undo — this
-                # pass is driven by the CLOSED listing, so on the next
-                # sweep that issue appears only among the open ones and is
-                # never looked at again. Active work, permanently shown as
-                # finished.
+              needing=0; fixed=0; unfixed=0; unknown=0
+              while IFS=$'\t' read -r url id; do
+                { [ -n "$url" ] && [ -n "$id" ]; } || continue
+
+                # RE-READ THE ISSUE BEFORE WRITING. The open listing is a
+                # snapshot taken at the start of the job, so an issue
+                # reopened since then is absent from it and looks closed
+                # here. Writing Done on a reopened issue states something
+                # false about active work, and the recheck is what keeps
+                # the candidate set honest between the listing and the
+                # write.
                 #
                 # The read runs as the repo-scoped token, so the recheck
                 # costs nothing from the contended account, and it happens
@@ -375,9 +421,9 @@ jobs:
                     # "COULD NOT TELL" IS NOT "OPEN". Reading a failed
                     # request as a reopened issue would skip the card
                     # silently and let the run finish green — which
-                    # advances the watermark past a card that may still
-                    # need Done. Every unreadable state holds the
-                    # boundary instead.
+                    # let the run finish green over a card that may still
+                    # need Done. Every unreadable state keeps the run
+                    # red instead.
                     echo "::error::could not read the state of $url"
                     unknown=$((unknown + 1))
                     continue
@@ -397,7 +443,7 @@ jobs:
                   sleep $((attempt * 15))
                 done
                 if [ "$ok" -eq 1 ]; then fixed=$((fixed + 1)); else unfixed=$((unfixed + 1)); fi
-              done < closed-urls.txt
+              done < candidates.tsv
 
               echo "closed cards needing Done: $needing (moved $fixed, still not $unfixed, state unreadable $unknown)"
               if [ "$needing" -gt 0 ] || [ "$unknown" -gt 0 ]; then
