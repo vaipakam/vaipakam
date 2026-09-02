@@ -2209,12 +2209,16 @@ revision unimplementable:
      and a batch that fit the source transaction can exceed the
      destination's gas limit when retirement writes one index per
      member — never retiring, parked at the front of every member
-     cursor. The authenticated ingress refuses (parks for split
-     redelivery) a packet listing more than the protocol's day-count
-     cap, sized so single-call retirement is safe on every target
-     chain; grandfathered oversize batches retire through a RESUMABLE
-     retirement (bounded index-updates per call, batch marked RETIRING
-     and skipped by allocation meanwhile). Exhaustion
+     cursor. The cap is enforced at DISPATCH (the send side refuses to build an
+     over-cap packet), and the receiver **ADMITS any transport-authentic
+     oversize packet into the RESUMABLE retirement path rather than
+     refusing it** — a CCIP payload is immutable, so a receive-side
+     refusal retries the same over-cap packet forever, its tokens and
+     source reservation stuck (the pre-cutover in-flight packet is the
+     unavoidable case, a buggy sender the avoidable one; both land in
+     storage marked for bounded, resumable index handling instead of a
+     permanent bounce). Resumable retirement: bounded index-updates per
+     call, batch marked RETIRING and skipped by allocation meanwhile. Exhaustion
      happens once per batch, so the removal cost is paid once by the
      settlement that exhausts it, not rediscovered by every other listed
      day's next scan (a cursor advanced only by its own day's draws
@@ -2265,10 +2269,15 @@ revision unimplementable:
      an obligation-keyed rule falls to a claimant controlling two
      eligible obligations, alternating A and B across expiries with each
      observing "its" cooldown while the batch never breathes. During the
-     priority window after a permissionless expiry unwind, **the
+     priority window after **ANY non-settlement release of a live
+     staging allocation — permissionless expiry AND voluntary
+     cancellation alike** — **the
      restored coverage is DIRECTLY CONSUMABLE by any competing
      obligation's settlement — no staging step, no lease** — and new
-     leases on that batch resume only after the window closes. This is
+     leases on that batch resume only after the window closes.
+     (Expiry-only was one round's scope: cancel-just-before-deadline
+     and atomically restage re-created the hostage with no expiry ever
+     firing.) This is
      what actually kills the hostage: a stage-first priority rule loses
      to serialization (pre-age obligations A and B, let A's lease
      expire, stage instantly through equally-old B — the window's
@@ -2709,8 +2718,13 @@ revision unimplementable:
    and out-of-order delivery lands it after the retired era finalized —
    a drain-first implementation holding no quarantine state for it then
    strands the packet or reopens finalized accounting. The source
-   attests "no further sends past sequence W", the destination verifies
-   its last received ≥ W, and only then is the lane drained; a lane
+   attests "no further sends past sequence W", and the destination
+   verifies **CONTIGUOUS receipt through W — a gap-free acknowledgement
+   watermark, not a highest-received check**: CCIP executes out of
+   order (`allowOutOfOrderExecution`), so W landing proves nothing about
+   W−1, which can still be in flight and land against finalized
+   accounting after a highest-received gate passed. Every sequence
+   through W received, and only then is the lane drained; a lane
    whose source cannot attest the freeze takes the mandatory quarantine
    path instead; and (c) a key surfacing after
    promotion is tombstoned locally and its Base-side draw released **only
@@ -2769,9 +2783,15 @@ revision unimplementable:
    source chain, sender, payload and tokens — not the transport message id —
    and a revert leaves no destination-side stamp. After reattachment the
    application cannot distinguish the refused old-era packet from an identical
-   broadcast addressed to the fresh era. So legacy broadcasts go to the
-   **non-finalized transport epoch** like legacy remittances, where identity is
-   not required because nothing era-scoped depends on it — rather than
+   broadcast addressed to the fresh era. So legacy broadcasts take the
+   **PARKED-MESSAGE lane** (apply only if the intended-era gate accepts
+   against the LIVE era; tombstone with recorded disposition once no
+   acceptable era can exist) — NOT the transport epoch, which an earlier
+   revision of this sentence named: that epoch is packet-backed FUNDING
+   and cannot digest a broadcast's day/era state, and routing one there
+   just strands state-bearing data in machinery with no application
+   semantics. The parked lane needs no era recovery either — acceptance
+   by the live gate IS the authentication — rather than
    pretending a routing rule can run on information the frame does not carry.
 4. **The role transition itself** therefore has no receipt-level mutations to
    reverse — the property that makes rows 8–10 sound rather than merely
@@ -3498,6 +3518,17 @@ the dedicated holder** (delta-checked, same act as the ledger credit), and
 the typed post-upgrade ingresses route their fresh share the same way at
 arrival.
 
+**The EXISTING `recycleBucket` balance gets a paused bootstrap
+reconciliation BEFORE the custody switch, and arming gates on it.** An
+upgraded deployment can carry a nonzero bucket whose historical custody
+sits (or sat) in the shared balance: seeding the new protected row from
+the counter or the ambient balance seizes payroll or user custody
+wherever the historical bucket is underbacked, while a zero row freezes
+already-funded recycled claims and commitments. So the switch runs the
+slice-0 family over the bucket itself — provenance proven, replacement
+funded, or written down — and the reconciled backing moves into the
+protected recycled row before any recycled gate reads it.
+
 **The RECYCLED share of the bootstrap aggregate gets the same
 executable-backing reconciliation as the fresh side, because `uncounted`
 is a counter, not custody.** The same pre-holder outflows that make
@@ -3514,9 +3545,11 @@ fresh is what claims can SPEND.** The component caps validate an entry
 against the operator's own reconstruction, so a wrong (or, with a
 compromised admin key, hostile) 6/4 split passes its own arithmetic and
 immediately exposes tokens as spendable headroom that should back recycled
-obligations — and once a false fresh credit is spent, the error path below
-requires replacement funding, so the reclassification machinery is
-corrective, not preventive. A fresh share therefore requires
+obligations — and once a false fresh credit is spent, the error path below can
+demand replacement funding (where no authenticated ledger inherits the
+debit — a correction that moves the debit to the destination's consumed
+accounting needs none, per the boundary below), so the reclassification
+machinery is corrective, not preventive. A fresh share therefore requires
 **authenticated source evidence** (the broadcast-side recorded splits where
 the lane carries them) **or delta-checked replacement custody**; absent
 both, the entry classifies **conservatively — recycled or unclassified —
@@ -3543,7 +3576,16 @@ tolerates rounding dust would then also tolerate stranding an entire packet.
 **And the marker's bound is COMBINED across every way a packet's value
 can leave — `transportConsumed + alreadyFresh + alreadyRecycled +
 repatriatedOrDisposed ≤ oldWireAmount` — maintained atomically on each
-transition, REPATRIATION INCLUDED. The fourth term counts
+transition, REPATRIATION INCLUDED — with `transportConsumed` SPLIT BY
+LEG against the authenticated component caps.** A scalar closes the
+total and leaves the components blind: a 4-fresh/6-recycled packet can
+fund a 4-fresh transport draw and then still classify 4 fresh — 8 fresh
+funded against 4 authenticated, with 4 of recycled commitments left
+unbacked, every stated check passing. So `transportConsumedFresh` and
+`transportConsumedRecycled` accumulate per packet, and each
+authenticated component bound covers its classification counter PLUS
+its transport leg (`alreadyFresh + transportConsumedFresh ≤ freshCap`,
+recycled likewise), alongside the aggregate wire bound. The fourth term counts
 NON-CLASSIFICATION exits only** (repatriation, write-off — debited by
 the exact remainder leaving through them): an evidence-backed
 classification is elsewhere called a "disposition" of a parked
