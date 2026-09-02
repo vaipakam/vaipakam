@@ -334,8 +334,23 @@ then migrate whatever is left. Only the migration can be relied on, because only
 it requires nothing of the operator.
 
 ```
-ServiceBond { operator; role; token; amount; state; unlockAt; }
+ServiceCapacityDeposit { operator; role; token; amount; state; unlockAt; }
 OffenceRecorded(operator, role, kind, refId)   // role, not just operator
+// NAMING IS NORMATIVE for every PUBLIC identifier — struct, selectors,
+// events, errors, user-facing copy: capacity-deposit naming, never "bond".
+// This document's own shape rules make avoiding that word a hard requirement
+// (a non-confiscatable principal described as a bond is the prohibited
+// characterization, handed to every integrator through the ABI), yet this
+// schema said `ServiceBond` for fifty rounds. Mapping, so the review history
+// stays readable: struct `ServiceBond` -> `ServiceCapacityDeposit`;
+// `postBond` -> `postCapacityDeposit`; `unbond` -> `withdrawCapacityDeposit`;
+// lifecycle events named `CapacityDeposit{Posted,Raised,Withdrawn,Parked}`.
+// The PROSE of this document keeps the shorthand ("bond", `unbond`) purely as
+// review-history continuity — shorthand is not part of the ABI, and an
+// implementer takes identifiers from THIS block. `RecycleSource.ServiceBondSlash`
+// alone keeps its name: it is an already-merged enum member in LibVpfiRecycle
+// (append-only, reserved, MUST stay unused in v1), and renaming a merged enum
+// member to launder a word out of an internal slot is churn without a user.
 // v1: `state` is Active only and `unlockAt` is unused — both exist for the
 // DELAYED-UNBOND machinery that any delayed-proof predicate requires, NOT for
 // the liveness tier specifically. An earlier revision said "the liveness
@@ -374,8 +389,16 @@ incident path the quarantine exists to provide. Emitting nothing instead leaves
 indexers and **provers** unable to tell that horizons paused or resumed — and a
 prover who cannot tell is a prover who misses a window.
 
-Each carries the epoch, its predicate and the block; horizons are read as
-paused from a quarantine and resumed from a restore.
+**Quarantine and restoration events carry the VERIFIER identity** (plus the
+block); the per-epoch schema written here earlier could not represent the
+one-write verifier quarantine at all — one epoch's event leaves indexers and
+provers unaware that sibling horizons paused, and one event per dependent
+epoch is the unbounded enumeration the O(1) incident path exists to avoid.
+Consumers derive the affected epoch set from the epoch-creation events they
+already index (each names its verifier), so horizons are read as paused from
+a verifier's quarantine and resumed from its restore; **the per-epoch
+invalidation event keeps epoch identity**, because invalidation genuinely is
+an epoch-state transition.
 
 **The epoch-invalidation event is an explicit EXCEPTION to the field list
 below.** It is deliberately O(1) and covers reservations belonging to many
@@ -940,7 +963,12 @@ timelocked one (`AdminFacet.sol:873-880`).
 
 So this authority is **narrowly scoped to QUARANTINE** — in one atomic call it
 disables proof submission against the suspect verifier **AND stops new
-predicate-governed admissions under that epoch**, while **preserving every
+predicate-governed admissions under EVERY epoch that verifier backs** (the
+verifier-keyed flag above; "under that epoch" survived here for a round after
+the quarantine was made verifier-wide, and an implementation following this
+summary would have left sibling epochs open for new reservations during the
+quarantine — exactly the capacity-consumption-in-anticipation-of-amnesty path
+the next paragraph describes), while **preserving every
 reservation and horizon accepted before the quarantine**.
 
 Blocking only proof submission is not enough: operators could keep consuming
@@ -990,13 +1018,23 @@ whole rule:
 - Geometric, not linear — 10% of what remains, so the bond falls away rather
   than hitting zero at a fixed count. "Ten offences to zero" in rev 1 was
   wrong arithmetic as well as an ambiguous rule.
-- **Rounding is computed ONCE over the sum of the proof's eligible remaining
-  tranches, then allocated across them** — never per tranche. Otherwise deposit
-  fragmentation changes the penalty: an operator splitting 100 units into 100
-  one-unit deposits would, under per-tranche ceiling-rounding, be debited all
-  100 units at a 10% slash, and under per-tranche flooring be debited **zero**.
-  Rounding once over the aggregate eligible remainder debits 10, which is the
-  answer that does not depend on how the operator arranged their deposits.
+- **Rounding is computed ONCE over the aggregate, then allocated across the
+  tranches** — never per tranche, and **for a delayed proof the aggregate is
+  the ACTION-TIME total, rounded when the immutable reservation is recorded,
+  not the eligible remainder at resolution**. "Eligible remaining tranches"
+  survived in this rule after the reservation was made immutable, and
+  computing rounding at resolution re-imports exactly the resolution-order
+  dependence the reservation removed — the 29-versus-30 arithmetic below, via
+  the rounding instead of the base. Round once at acceptance, freeze the
+  figure into the reservation, and resolution executes it; only the
+  synchronous case (observation and debit in one call) rounds over the
+  current unreserved balance, where the two figures coincide. The
+  per-tranche prohibition stands for both: deposit
+  fragmentation must not change the penalty — an operator splitting 100 units
+  into 100 one-unit deposits would, under per-tranche ceiling-rounding, be
+  debited all 100 units at a 10% slash, and under per-tranche flooring be
+  debited **zero**. Rounding once over the aggregate debits 10, the answer
+  that does not depend on how the operator arranged their deposits.
   Allocation across the tranches is then a distribution question for **that
   proof** — but it is **not unconstrained**, because it changes what later proofs
   can reach.
