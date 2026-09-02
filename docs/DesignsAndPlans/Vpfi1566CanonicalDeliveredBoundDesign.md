@@ -615,7 +615,25 @@ ordinary implementation, and it belongs in slice 3.
 ### Slicing
 
 > Every requirement established in the analysis above appears HERE, because the
-> slices are what an implementer follows. Four rounds of review found
+> slices are what an implementer follows.
+
+**0. A paused PRE-MIGRATION SOLVENCY RECONCILIATION, before any custody row
+moves.** The exposure this design repairs may already have been exercised:
+reward claims may have spent part of the very backing the grandfathered
+`vpfiHeld`, rebate and VPFI-fallback rows assume, so the Diamond may not hold
+enough VPFI to back every enumerated row independently of payroll, treasury and
+the other commingled owners. A scan that advances because each id was VISITED
+then either reverts partway and blocks arming (aggregate short), or — worse,
+when unrelated custody keeps the raw balance high — **transfers that unrelated
+custody into user vaults and silently reassigns the historical loss to another
+owner.**
+
+So before the cursor may certify anything: reconcile the enumerated liabilities
+against **dedicated backing**, and where they exceed it, require **replacement
+funding or an explicit, recorded shortfall disposition** (who bears the
+historical loss is an owner decision, not a side effect of iteration order).
+Solvency first, then movement — a migration must not be the mechanism that
+decides who eats a loss nobody has acknowledged. Four rounds of review found
 > requirements sitting in the prose while this list still said the superseded
 > thing; twice that was a scripted edit that aborted before writing and was
 > only partly re-run. Anything not in this list is not being built.
@@ -1746,10 +1764,29 @@ revision unimplementable:
      term by the obligations its packets TARGET** — a retired-era claim or sweep
      whose funding arrived late draws `transportEpoch(target) → eraBalance →
      liveHeadroom` in that order, debiting the packet-backed balance first. Any
-     remainder after the targeted obligations terminate follows the
-     terminal-surplus rule (pending recovery position while `Detached`, live
-     headroom under an active era) — so the lane never closing does not leave
-     its money without an exit. If a deployment refuses to carry it, the honest
+     remainder after the currently-known targeted obligations terminate goes to
+     the **pending recovery position — NEVER directly to live headroom**, for
+     two reasons an earlier revision missed at once:
+
+     - **The target set can still grow.** A legacy remittance can arrive before
+       its separately transported kind-2 broadcast, so "the obligations
+       terminated" is only true of the obligations known so far — the unclosable
+       lane can later install more day state for the same target, and a
+       remainder already released to live headroom would leave those late
+       obligations unfunded. The legacy lane cannot prove a per-target closure,
+       so the remainder is **retained where it stays visible and recoverable**
+       (and repatriation from the pending position remains available to the
+       operator).
+     - **A direct transport-to-live credit would be a FOURTH writer**, which the
+       three-writer contract forbids. Routing through the pending position uses
+       the already-registered **pending-to-live** writer — same machinery, no
+       new ingress — and that writer's own gate (an active era, and a deliberate
+       drain of the position) is the right severity for money whose obligations
+       may not be finished.
+
+     So the flow is `transportEpoch(target) → targeted obligations`, and any
+     remainder `→ pending recovery position`, exiting only through the
+     registered pending-to-live writer or repatriation. If a deployment refuses to carry it, the honest
      alternative remains **disallowing the permanent transition while the
      unverifiable lane exists** — never promote-and-strand.
 
