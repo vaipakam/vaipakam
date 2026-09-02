@@ -59,8 +59,12 @@ jobs:
       # limit. Generous enough for the whole history with room to grow,
       # and the step ABORTS rather than proceed on a short read.
       LIST_LIMIT: '4000'
+      # How far back to look for CLOSED issues. Wide enough to cover a
+      # multi-day outage of either workflow, bounded so the sweep never
+      # walks the whole closed history.
+      CLOSED_LOOKBACK_DAYS: '14'
     steps:
-      - name: List open issues
+      - name: List issues the board should hold
         env:
           # GITHUB_TOKEN, NOT THE PAT — a DIFFERENT IDENTITY, and that is
           # the point. Moving this listing to REST (#2056) was not enough:
@@ -90,11 +94,33 @@ jobs:
           # returns pull requests as well — they carry a `pull_request`
           # key, and a PR left in this list would be "missing from the
           # board" forever, re-added on every sweep.
-          gh api --paginate \
-            "repos/$ISSUE_REPO/issues?state=open&per_page=100" \
-            --jq '.[] | select(has("pull_request") | not) | .html_url' \
-            | sort -u > open-urls.txt
+          issue_urls() {
+            gh api --paginate "repos/$ISSUE_REPO/issues?per_page=100&$1" \
+              --jq '.[] | select(has("pull_request") | not) | .html_url'
+          }
+
+          issue_urls 'state=open' | sort -u > open-urls.txt
           echo "open issues: $(wc -l < open-urls.txt | tr -d ' ')"
+
+          # RECENTLY CLOSED ONES TOO, and #2054 is why: the issue that
+          # reported this whole defect was itself lost by it. Its add
+          # failed at 12:32, the PR fixing it closed the issue at 12:53,
+          # and the 13:26 sweep — looking only at open issues — could no
+          # longer see it. A card that is created and closed between two
+          # sweeps falls through the net permanently, which is precisely
+          # the shape of loss the net exists to catch.
+          #
+          # `since` filters on updated_at, so this is "closed issues
+          # touched in the window", which is what a missed add needs. The
+          # window is wide enough to cover a multi-day outage of either
+          # workflow, and bounded so the sweep never walks the whole
+          # closed history.
+          since=$(date -u -d "$CLOSED_LOOKBACK_DAYS days ago" +%Y-%m-%dT%H:%M:%SZ)
+          issue_urls "state=closed&since=$since" | sort -u > closed-urls.txt
+          echo "recently closed issues (since $since): $(wc -l < closed-urls.txt | tr -d ' ')"
+
+          sort -u open-urls.txt closed-urls.txt > wanted-urls.txt
+          echo "issues the board should hold: $(wc -l < wanted-urls.txt | tr -d ' ')"
 
       - name: List board items
         run: |
@@ -129,7 +155,7 @@ jobs:
           # with #42 of another repo feeding the same board.
           jq -r '.items[] | select(.content.type == "Issue") | .content.url' board.json \
             | sort -u > board-urls.txt
-          comm -23 open-urls.txt board-urls.txt > missing.txt
+          comm -23 wanted-urls.txt board-urls.txt > missing.txt
 
           missing=$(wc -l < missing.txt | tr -d ' ')
           echo "missing from board: $missing"
@@ -137,6 +163,7 @@ jobs:
             echo "## Board reconciliation"
             echo
             echo "- open issues: $(wc -l < open-urls.txt | tr -d ' ')"
+            echo "- recently closed issues: $(wc -l < closed-urls.txt | tr -d ' ')"
             echo "- already on the board: $(wc -l < board-urls.txt | tr -d ' ')"
             echo "- missing: $missing"
           } >> "$GITHUB_STEP_SUMMARY"
