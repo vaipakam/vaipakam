@@ -34,10 +34,13 @@ on:
     - cron: '23 */6 * * *' # four sweeps a day; the GraphQL bucket refills hourly
   workflow_dispatch:
 
-# The PAT does the project write; the workflow's own token stays
-# read-only, matching add-to-project.yml's least-privilege shape.
+# The PAT does the project read and write; the workflow's own token
+# stays read-only, matching add-to-project.yml's least-privilege shape.
+# `issues: read` is what lets the first step use GITHUB_TOKEN instead of
+# the PAT — see the note on that step.
 permissions:
   contents: read
+  issues: read
 
 concurrency:
   group: project-board-reconcile
@@ -58,15 +61,29 @@ jobs:
       LIST_LIMIT: '4000'
     steps:
       - name: List open issues
+        env:
+          # GITHUB_TOKEN, NOT THE PAT — a DIFFERENT IDENTITY, and that is
+          # the point. Moving this listing to REST (#2056) was not enough:
+          # the next run failed here too, with `HTTP 403 API rate limit
+          # exceeded for user ID …`. Both of that account's budgets are
+          # routinely spent, because everything authenticating as it
+          # shares them.
+          #
+          # Listing this repo's own issues needs nothing the PAT provides.
+          # The Actions token has its own per-repository budget that no
+          # other tool touches, so this step is now immune to whatever the
+          # account is doing elsewhere. Only the project steps below
+          # genuinely need the PAT: Projects v2 lives under a user
+          # account, which the repo-scoped token cannot reach at all.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          # REST, NOT `gh issue list`. The first real run of this workflow
-          # died here with the very error it was written to survive —
-          # "API rate limit already exceeded" — because `gh issue list` is
-          # GraphQL and so drew on the same drained bucket as the add it
-          # is meant to repair. REST has its own separate budget, so the
-          # step that decides WHAT is missing no longer competes with the
-          # step that fixes it.
+          # REST, NOT `gh issue list`. The first run of this workflow died
+          # here with the very error it was written to survive, because
+          # `gh issue list` is GraphQL and so drew on the same drained
+          # bucket as the add it is meant to repair. REST has a separate
+          # budget, so the step that decides WHAT is missing no longer
+          # competes with the step that fixes it.
           #
           # `--paginate` follows every page, so there is no limit to hit
           # and no truncation guard to get wrong. REST's issues endpoint
