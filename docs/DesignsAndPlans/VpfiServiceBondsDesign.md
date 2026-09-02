@@ -1018,6 +1018,18 @@ semantics retroactively, or make an offence valid under the old rules
 unprovable under the new ones. Both contradict the pre-change-liability
 principle the rest of this section preserves.
 
+**And the epoch pins the verifier's BEHAVIOUR, not merely its address.** An
+address is a name; an upgradeable proxy or a verifier reading mutable
+configuration can change what that name DOES with no new epoch and no
+quarantine — historical actions then accept forged proofs or reject
+evidence that was valid when admitted, through a pin that never moved. So
+the epoch records the verifier's **code hash and the hash of every config
+input its verdicts read**, resolution re-checks both, and a mismatch is
+treated as QUARANTINE-EQUIVALENT for the affected epochs: proofs refuse,
+horizons pause on the shared clock, and governance resolves restore-or-
+invalidate exactly as for a flagged verifier. Immutable deployments
+satisfy this trivially; anything else earns the check.
+
 **One exception, and it must be a distinct path rather than a special case of
 retuning: a verifier RETIRED FOR SECURITY.** If a predicate version is disabled
 because its verifier accepts forged evidence, retaining it through every old
