@@ -68,8 +68,14 @@ jobs:
       # the watermark — so this is the floor for the normal case, not a
       # cutoff that can expire an unrecovered card.
       CLOSED_LOOKBACK_DAYS: '14'
-      # This workflow's own filename, for the last-success watermark read.
-      WORKFLOW_FILE: project-board-reconcile.yml
+      # This workflow's own path, for the last-success watermark read.
+      # Taken from the run context rather than written out: a hard-coded
+      # name survives a rename of this file as a string that no longer
+      # resolves, the run-history read comes back empty, and the window
+      # silently narrows to the floor. Same shape as everything else this
+      # workflow guards against — a lookup that fails quietly and leaves a
+      # green run behind.
+      WORKFLOW_REF: ${{ github.workflow_ref }}
     steps:
       - name: List issues the board should hold
         env:
@@ -136,9 +142,21 @@ jobs:
           # Actions API read runs on the same repo-scoped token as the
           # listings, so it costs nothing from the contended account.
           floor=$(date -u -d "$CLOSED_LOOKBACK_DAYS days ago" +%s)
-          last_success=$(gh api \
-            "repos/$ISSUE_REPO/actions/workflows/$WORKFLOW_FILE/runs?status=success&per_page=1" \
-            --jq '.workflow_runs[0].created_at // empty')
+
+          # `owner/repo/.github/workflows/<file>@refs/heads/<branch>`
+          workflow_file=${WORKFLOW_REF%@*}
+          workflow_file=${workflow_file##*/}
+
+          # An unreadable run history is not "no previous run". Taking one
+          # for the other would narrow the window to the floor without
+          # saying so, which is the failure this watermark exists to
+          # prevent, so it stops the sweep instead.
+          if ! runs=$(gh api \
+              "repos/$ISSUE_REPO/actions/workflows/$workflow_file/runs?status=success&per_page=1"); then
+            echo "::error::could not read this workflow's run history ($workflow_file) — the closed-issue window cannot be computed"
+            exit 1
+          fi
+          last_success=$(printf '%s' "$runs" | jq -r '.workflow_runs[0].created_at // empty')
           if [ -n "$last_success" ]; then
             # A day of margin so a run that straddles the boundary cannot
             # leave a sliver of time neither sweep looked at.
