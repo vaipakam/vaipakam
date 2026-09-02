@@ -1149,8 +1149,19 @@ owner" is precisely the inventory §5b establishes is **unknown and unclosable**
 using it here would reintroduce the enumeration this whole section replaced,
 and would classify unrelated custody as claimable.
 
-So: **`bootstrapRewardPool(H)` — a separate, ADMIN-only, one-shot, pause-gated
-import** whose argument is exactly the `H` defined above: **freely spendable
+~~**`bootstrapRewardPool(H)`**~~ — ⚠️ **NOT CUT INTO THE DIAMOND for a
+deployment without a provable provenance ledger.** An earlier revision described
+it here as the migration path and then, three sections later, said it was
+"removed for this deployment class" — leaving the normative contract standing.
+The contract cannot enforce an off-chain distinction, so a selector that exists
+can be called: an administrator overstating `H` still exposes unrelated Diamond
+custody as canonical claim headroom, which is the whole failure. **The selector
+is omitted from that deployment's upgrade**, not merely discouraged; the
+zero-headroom seed plus delta-checked `fundRewardPool` is the only path.
+
+The description below is retained for the deployments that DO have a provenance
+ledger, where the call is cut: a separate, ADMIN-only, one-shot, pause-gated
+import whose argument is exactly the `H` defined above: **freely spendable
 fresh reward custody, with `rewardBudgetRecovered − rewardBudgetRedispatched`
 and every other restricted position excluded.** An earlier revision described
 the argument as an "independently reconciled reward-owned figure", which is the
@@ -1318,7 +1329,7 @@ delivery and nobody to report to.**
 | 10 | `RewardReporterFacet.setIsCanonicalRewardChain:1301` | same, canonical side | yes | n/a | **yes** |
 | 11 | `LibInteractionRewards._walkSideDays:1823` | pool pricing / schedule funding | canonical schedule | mirror-delivered | **0 — must NOT fall through to canonical schedule** |
 | 12 | `LibInteractionRewards.sweepExpiredEntry:3245` | expiry accounting source | canonical | mirror | **mirror-shaped, bound 0** |
-| 13 | `LibInteractionRewards._entryExecutableNow:3776` | may this entry execute now | **if funded, measured VINTAGE-BLIND** (was "always") | **same — see note** | **no** |
+| 13 | `LibInteractionRewards._entryExecutableNow:3776` | may this entry execute now | **if funded, measured VINTAGE-BLIND** (was "always") | **same — see note** | **if the ELIGIBLE ERA BALANCE covers it** (live headroom stays 0) |
 | 14 | `LibInteractionRewards.deliveredFreshBound:4211` | THE bound | **delivered** (was `max`) | delivered | **0** |
 
 **Two rows carry the whole risk and are worth reading twice.** Row 11 is where
@@ -1486,6 +1497,15 @@ a specification.
 The complete lifecycle, since half-describing it is what left the previous
 revision unimplementable:
 
+0. **The ingresses accept only their INTENDED era, not merely "not
+   `Detached`".** Gating on `Detached` alone leaves the direct Mirror→Canonical
+   promotion open: an in-flight remittance lands after the transition and credits
+   the **new canonical era**, even though `fundRewardPool` is defined as
+   canonical `received`'s only ingress — and the mirror-only acknowledgement then
+   reverts under row 7, so the packet is credited and unacknowledgeable. Each
+   ingress therefore checks the era it was addressed to and rejects anything
+   else, or the transition quarantines in-flight packets keyed to the retired
+   era. `Detached` is one case of this rule, not the rule.
 1. **Receive while `Detached`** — `onRewardBudgetReceived`,
    `onCompensationBudgetReceived`, **and ALL THREE reward BROADCAST ingresses —
    `onRewardBroadcastReceived` (legacy), `onRewardBroadcastV2Received` and
@@ -1830,6 +1850,15 @@ One reconciliation entry, three effects, all or nothing:
    `alreadyRecycled[h] + recycledShare <= authenticatedRecycled[h]`, **AND the
    cumulative sum bound against `oldWireAmount[h]` retained alongside them.**
 
+   **`oldWireAmount[h]` is the destination-observed `actualReceived`, NEVER the
+   payload's declared total**, and the authenticated component caps are scaled to
+   that same basis. `RewardRemittanceReceiver` already books only what landed and
+   explicitly scales the components to it (`:290-345`). Take the declared wire
+   value instead and a 10-token payload that lands 9 permits classification up to
+   10 — so once another packet has arrived, **the final unit is taken from that
+   later packet and credited to the first.** The bound has to be denominated in
+   the same quantity the ledger it guards was credited with
+
    An earlier revision said the sum bound "follows from" the component bounds. It
    does not, unless `authenticatedFresh + authenticatedRecycled <= oldWireAmount`
    is itself enforced — and old-wire packets carry no split, so those figures come
@@ -1958,10 +1987,23 @@ for legacy, no such terminal exists today, so it stays open. It is not a
 permanent second *ingress*: nothing arrives through it without an administrator
 submitting a reconciled entry, which is what bounds it. Authorization, not time.
 
-The rejected alternative was a post-unpause receipt-level reconciliation entry.
-It is rejected because it adds a **permanent administrative writer on the
-received side, authenticating a split from outside the chain** — the two
-properties the inversion exists to eliminate. If a lane genuinely cannot be
+⚠️ **This rejection applied to d2 and is SUPERSEDED for the legacy lane.** The
+argument below — that a post-unpause receipt-level entry adds a permanent
+administrative writer authenticating a split from outside the chain — is exactly
+why d2 gets a closable gate. But §5c then established that the legacy lane has no
+observable terminal, and **selected precisely this mechanism for it**, bound to
+packet evidence and paused per entry. Left unqualified, this paragraph rejects
+the design's own choice and leaves a delayed pre-d2 packet with no way to be
+classified at all.
+
+So: for **legacy**, the packet-evidence-bound, pause-gated epoch **is the
+accepted exception and remains open**. The rejection stands for d2, where a
+terminal exists and the writer therefore buys nothing.
+
+The original reasoning, which is why the exception is narrow: it adds a
+**permanent administrative writer on the received side, authenticating a split
+from outside the chain** — the two properties the inversion exists to
+eliminate. If a lane genuinely cannot be
 drained, that is an escalation to the owner, not an implementer's fallback.
 
 The last two writers are a matched pair and must be changed in one commit: the
