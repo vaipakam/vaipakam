@@ -360,8 +360,13 @@ OffenceRecorded(operator, role, kind, refId)   // role, not just operator
 // V1 after the snapshot and the stored deadline releases the principal
 // V1's still-valid proof should hold; extend the scalar instead and an
 // unrelated quarantine freezes V2-backed principal and every other
-// withdrawal with it. The outstanding-action set is already bounded by
-// the concurrency cap, so the max is a bounded read. `SanctionsParked` is REQUIRED in v1, not predicate
+// withdrawal with it. The outstanding-action set carries an explicit COUNT
+// cap per (operator, role) — the ratio cap alone does not bound it: at a
+// 50% cap and 1% rate an operator can raise ~2% and admit another action
+// indefinitely, every admission satisfying the ratio, until the
+// claim-time scan over thousands of records exceeds the gas limit and
+// strands the principal behind its own protection. Admission past the
+// count cap is refused; the claim-time max is then a bounded read. `SanctionsParked` is REQUIRED in v1, not predicate
 // machinery: the committed first-flag transition (park the withdrawal,
 // persist the confirmation, refuse the payout without reverting) must
 // PERSIST something, and an Active-only schema forces the implementation to
@@ -1024,8 +1029,17 @@ configuration can change what that name DOES with no new epoch and no
 quarantine — historical actions then accept forged proofs or reject
 evidence that was valid when admitted, through a pin that never moved. So
 the epoch records the verifier's **code hash and the hash of every config
-input its verdicts read**, resolution re-checks both, and a mismatch is
-treated as QUARANTINE-EQUIVALENT for the affected epochs: proofs refuse,
+input its verdicts read** — and **EVERY dependent touch re-checks them,
+not resolution alone**: admission, proof submission, and the
+release/claim path that reads the verifier's clock. A resolution-only
+check detects drift only if someone resolves — with no proof in flight,
+the flag stays clear, the active clock keeps running, and the withdrawal
+releases reserved principal before anything ever looks. The check at each
+touch is O(1) (two hash comparisons); on mismatch the touch PERSISTS and
+EMITS the quarantine (then refuses or parks), so the first path to
+observe the drift is the path that arms the containment, and the clock
+cannot expire past a drift nobody resolved. A mismatch is
+QUARANTINE-EQUIVALENT for the affected epochs: proofs refuse,
 horizons pause on the shared clock, and governance resolves restore-or-
 invalidate exactly as for a flagged verifier. Immutable deployments
 satisfy this trivially; anything else earns the check.
@@ -1957,6 +1971,16 @@ decisions rather than to an implementer's discretion:*
   append-only member is precisely where the naming rule bites: once appended
   it is exposed through recycle events forever, so it is named correctly
   BEFORE deployment, not grandfathered after.)
+
+**Fee-free EXCESS never becomes armed capacity by retune.** An operator
+who pre-deposits above the current ceiling pays no fee on the excess —
+correct at deposit time, since it grants no capacity — but a later curve
+retune must not silently activate it: deposit 100 to the ceiling, add 900
+free, let `bondAt4x` rise, and the 900 preserves full entitlement that a
+post-retune deposit of the same 900 would have paid for. The excess is
+therefore recorded as **capacity-INELIGIBLE until separately ARMED**, and
+the arming call charges the fee on the capacity being activated — the fee
+tracks capacity granted, whichever transaction grants it.
 
 **Recommendation: (C), else (A)** — and the real question is **not** "ship now
 or wait for the adjudicating tier". An earlier revision of this summary framed it
