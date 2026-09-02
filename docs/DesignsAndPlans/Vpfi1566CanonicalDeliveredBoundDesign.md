@@ -622,7 +622,21 @@ moves.** The exposure this design repairs may already have been exercised:
 reward claims may have spent part of the very backing the grandfathered
 `vpfiHeld`, rebate and VPFI-fallback rows assume, so the Diamond may not hold
 enough VPFI to back every enumerated row independently of payroll, treasury and
-the other commingled owners. A scan that advances because each id was VISITED
+the other commingled owners.
+
+**The enumeration covers all FOUR grandfathered classes — including the
+VPFI-denominated live intent commits (`custodialCollateral`) that slice 3
+leaves in Diamond custody until fill or cancellation.** An earlier revision
+listed three and omitted the intent class, whose teardown branch returns old
+custody on fill/cancel: the old-custody COUNT gates arming but proves nothing
+about whether the tokens still exist, so an intent teardown could revert — or
+return unrelated payroll/treasury custody to the borrower — for exactly the
+reason the other three classes are reconciled. Every class whose rows the
+migration or its retained old-custody branches will move at face value enters
+the same reconciliation: dedicated backing proven or zero, replacement
+funding or a recorded shortfall disposition, and the old-custody branch for
+intents may not execute ahead of that certification any more than the cursor
+may. A scan that advances because each id was VISITED
 then either reverts partway and blocks arming (aggregate short), or — worse,
 when unrelated custody keeps the raw balance high — **transfers that unrelated
 custody into user vaults and silently reassigns the historical loss to another
@@ -1169,11 +1183,13 @@ the conclusion reading "two writers, no third", so an implementer following the
 summary would omit the delayed credit and strand every `Detached`-terminalized
 surplus in its pending position permanently — an earlier
 revision said "nothing else credits it", which rejects the terminal-surplus
-disposition the era mechanism requires and strands the remainder. Two writers,
-**three** provenance-bound writers — `fundRewardPool`, the era-terminal
+disposition the era mechanism requires and strands the remainder.
+**Three** provenance-bound writers — `fundRewardPool`, the era-terminal
 transfer, and its delayed pending-to-live form — and no fourth. (An earlier
 revision of this sentence said "no third" after the third had been defined
-above it.) **The mirror's received-side writer table
+above it; the edit correcting that left a dangling "Two writers," in front of
+the enumeration of three, so the summary contradicted itself mid-sentence for
+a further round. The count is THREE, everywhere this contract is stated.) **The mirror's received-side writer table
 carries the same transfer**, for the same reason: it moves attribution rather
 than tokens, so a table listing only token-moving writers omits it silently.
 
@@ -1805,7 +1821,28 @@ revision unimplementable:
      neither term. So the transport epoch's balance is **readable as a third
      term by the obligations its packets TARGET** — a retired-era claim or sweep
      whose funding arrived late draws `transportEpoch(target) → eraBalance →
-     liveHeadroom` in that order, debiting the packet-backed balance first. Any
+     liveHeadroom` in that order, debiting the packet-backed balance first.
+
+     **`transportEpoch(target)` resolves through the BATCH, because the legacy
+     wire is batched and carries no per-day split.** A legacy remittance is
+     `abi.encode(uint256[] dayIds, uint256 total)`
+     (`RewardRemittanceReceiver.sol:221-223`) — one aggregate over many days,
+     while each legacy broadcast names only its own `dayId` — so a per-target
+     balance cannot be constructed from the wire at all: crediting the
+     aggregate to every listed day duplicates the backing, and inventing a
+     split asserts a fact the packet never carried. The epoch's unit is
+     therefore the PACKET: one balance per batch, bounded by that packet's
+     **`actualReceived`** (never the declared total — short delivery must
+     shrink the funding, not the obligations), with the listed `dayIds` as a
+     MEMBERSHIP filter. A targeted obligation draws from the batches that
+     list its day (oldest batch first, each draw bounded by that batch's
+     remaining balance), so conservation holds per packet — listed days can
+     contend for an aggregate, because an aggregate is what the wire
+     delivered, but no day outside the list can touch it and no token is
+     counted twice. Remainder, pending-recovery keying, the restore path and
+     the post-drain acknowledgment all follow the batch: the pending entry is
+     `(batchId, dayIds, amount)`, and a late obligation restores through its
+     day's membership. Any
      remainder after the currently-known targeted obligations terminate goes to
      the **pending recovery position — NEVER directly to live headroom**, for
      two reasons an earlier revision missed at once:
@@ -1916,7 +1953,27 @@ revision unimplementable:
    arrived BEFORE detachment can be pending across the transition, the role
    change itself must **drain, tombstone, or quarantine the pending
    repatriation set, which the instruction registry keeps enumerable** — the
-   lifecycle rule the broadcasts' parked lane already follows. Three times
+   lifecycle rule the broadcasts' parked lane already follows.
+
+   **And the registry needs a BACKFILL, because current storage cannot
+   enumerate what is already pending.** `repatInstructionState` is a bare
+   `mapping(bytes32 => uint8)` (`LibVaipakam.sol:6332`) with no key list — a
+   registry installed only at the new ingress lets the transition certify an
+   EMPTY set over a live pre-upgrade `PENDING` instruction, and permanent
+   promotion then strands it exactly as described above. A counter is only as
+   good as its opening balance, and a registry is only as good as its opening
+   set. So, the same paused-initialization pattern as the era counters: the
+   operator registers the pre-upgrade keys (each VERIFIED on-chain — the
+   claimed key must read non-`INSTR_NONE`), and **completeness is proven
+   against the CHARGED side of the pair** — the Base-side authorization
+   ledger is enumerable and records every instruction charged toward this
+   chain, so the certification requirement is that every Base-charged,
+   unresolved instruction targeting this chain appears in the mirror
+   registry. Role changes gate on that reconciliation. Any key that
+   nevertheless surfaces later (outside the certified set) is **refused —
+   tombstoned by default, with its Base-side authorization released through
+   the recorded-disposition path**, never executed against a role-less or
+   promoted chain. Three times
    the "what state can move" test found a survivor; the matrix row for
    repatriation now cites this item rather than assuming token-lessness
    means harmlessness.
