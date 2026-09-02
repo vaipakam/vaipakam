@@ -1028,6 +1028,19 @@ or an implementer inventing an unfunded credit.
 Base originates rewards and receives no remittances, which is why
 `deliveredFreshBound` returns `max` there today.
 
+**TWO credit paths, not one**, and an earlier revision named only the first —
+which strands every terminal era surplus, because the disposition rule requires
+a credit the writer contract forbids:
+
+1. `fundRewardPool` — a transfer, below.
+2. **The era-terminal transfer**: an atomic **old-era debit / live-`received`
+   credit**, moving a terminal era's unused balance into the active role's
+   ledger. It moves **no tokens** — the custody is already in the Diamond and
+   merely changes attribution — which is precisely why it needs registering as
+   an explicit provenance-bound writer rather than being read as a violation of
+   "only `fundRewardPool` credits `received`". It exists on **both** active
+   roles, and the mirror's writer table carries it too.
+
 **Credit — one event, and it is a TRANSFER, not a constant.** `received` on Base
 is credited only by an explicit `fundRewardPool(amount)`: an ADMIN-role call that
 moves `amount` VPFI **into the Diamond** and increments the counter in the same
@@ -1185,9 +1198,18 @@ section describes reconciling a *total*, which the earlier text never
 disambiguated: importing the total on top of an existing counter double-counts,
 importing a delta against an unseeded counter under-seeds.
 
-So: **a new paused, one-shot `rebaseArmedFreshPaid(total)`** that sets the
-counter to `max(existing, total)` — **never below what it already holds** —
-rather than adding to it. An earlier revision of this contract said "SETS",
+So: **a new paused, one-shot `rebaseArmedFreshPaid(total)`** that sets `paid` to
+`max(existing, total)` — **never below what it already holds** — rather than
+adding to it, **and atomically sets `received` to that same resulting figure on
+the canonical chain**, installing the zero-headroom baseline in the same call.
+
+That second clause is not tidiness. With `bootstrapRewardPool` removed and
+`fundRewardPool` unable to initialize anything (it requires a positive token
+delta), this is the **only** migration call a no-provenance canonical deployment
+has — so without it such a deployment ends at `paid = P, received = 0`, which is
+negative headroom, and every subsequent transfer is swallowed until funding
+exceeds `P`. The `received = paid` rule was stated three sections away and had
+no call to implement it. An earlier revision of this contract said "SETS",
 with the non-reduction floor stated only three sections later; an implementer
 following the call contract would lower `paid` whenever the off-chain
 reconstruction omitted a prior administrative retirement watermark, which is
@@ -1317,11 +1339,11 @@ delivery and nobody to report to.**
 
 | # | Site | Real question | Canonical | Mirror | **Detached** |
 | --- | --- | --- | --- | --- | --- |
-| 1 | `InteractionRewardsFacet.sweepForfeitedInteractionRewards:101` | which bound applies to the forfeit sweep | **delivered bound** (was `max`) | delivered bound | **0** — no delivery, nothing sweepable as fresh |
+| 1 | `InteractionRewardsFacet.sweepForfeitedInteractionRewards:101` | which bound applies to the forfeit sweep | **delivered bound** (was `max`) | delivered bound | **the eligible ERA balance** (live headroom 0) |
 | 2 | `…:128` | does the sweep record a paid delta | **yes** (was "no") | yes | **yes** — the ledger must still see the outflow |
 | 3 | `RewardCommitmentFacet.isDayCommitmentReady:191` | is a day's commitment reportable | n/a | yes | **no** — nobody to report to |
 | 4 | `RewardCommitmentFacet._assertMirror:268` | AUTH: may this chain report | revert | allow | **revert** — fail closed |
-| 5 | `RewardHorizonSweepFacet.sweepExpiredInteractionRewards:162` | which bound applies to expiry | **delivered bound** (was `max`) | delivered bound | **0** |
+| 5 | `RewardHorizonSweepFacet.sweepExpiredInteractionRewards:162` | which bound applies to expiry | **delivered bound** (was `max`) | delivered bound | **the eligible ERA balance** (live headroom 0) |
 | 6 | `…:237` | paid-delta recording on expiry | **yes** (was "no") | yes | **yes** |
 | 7 | `RewardRemittanceFacet.sendRemitAck:1529` | AUTH: may this chain ack a remittance | revert | allow | **revert** — fail closed |
 | 8 | `RewardReporterFacet.setBaseChainId:1254` | is this a role transition needing residual retirement | n/a | yes | **yes — this is the site that CREATES and CLEARS Detached** |
@@ -1339,6 +1361,15 @@ are where treating it as "a mirror" enables mirror-only cross-chain operations
 on a chain with `baseChainId == 0`. Those are opposite errors from the same
 missing third state, which is why no single boolean value works and why this
 matrix — not the resolver — is the substance of closure 3.
+
+**Rows 1, 5 and 13's `Detached` answers all carry the ERA BALANCE, and an
+earlier revision set them to a flat zero.** A retired-era obligation that
+becomes forfeitable or expires while the chain is `Detached` must be able to
+consume the funding already carried for that era — otherwise the reward-specific
+absorption is refused, the era's obligations never terminate, and the
+all-obligations-terminal transition that disposes of the residual **can never
+fire.** A flat zero there does not merely block a sweep; it makes the era
+immortal.
 
 **Row 13 also needs its MEASUREMENT changed, not just its role answer.** The
 predicate today takes only `armedFresh` from `_userArmedFreshNeedWithLegs`
@@ -1518,6 +1549,21 @@ revision unimplementable:
    ingress therefore checks the era it was addressed to and rejects anything
    else, or the transition quarantines in-flight packets keyed to the retired
    era. `Detached` is one case of this rule, not the rule.
+
+   ⚠️ **Refusal is only safe while the condition can clear, and after a
+   PERMANENT promotion it cannot.** The `Detached` case retries after
+   reattachment; a direct Mirror→Canonical promotion never restores the Mirror
+   role, so the packet can never pass the ingress gate — and since CCIP has no
+   maximum lifetime, the source-side reservation cannot obtain a
+   never-will-execute terminal either. **The remittance and its reservation both
+   stick indefinitely.**
+
+   So a permanent role change is not a refusal case at all: either the
+   transition **drains the lane first** (no in-flight packets when it runs — the
+   same shape as the d2 cutover gate), or in-flight packets are **quarantined
+   keyed to the retired era** and released through the era's own reconciliation,
+   which also gives the source reservation its terminal. Refusal with retry is
+   for conditions that end.
 1. **Receive while `Detached`** — `onRewardBudgetReceived`,
    `onCompensationBudgetReceived`, **and ALL THREE reward BROADCAST ingresses —
    `onRewardBroadcastReceived` (legacy), `onRewardBroadcastV2Received` and
@@ -1885,8 +1931,22 @@ One reconciliation entry, three effects, all or nothing:
    **exhausts the hash**, and permanently publishes 2 of false fresh headroom
    while leaving the recycle bucket 2 short — with no follow-up entry able to
    reverse either mutation. Binding each component to the authenticated figure
-   rejects that entry at submission instead of discovering it afterwards, which
-   is the only point at which it is still fixable —
+   rejects that entry at submission instead of discovering it afterwards.
+
+   ⚠️ **This catches disagreement with the reconstruction, NOT an error IN it.**
+   The caps are themselves the operator's reconstruction, since old-wire packets
+   carry no split — so a 10-token packet whose real composition is 4 fresh / 6
+   recycled but is reconstructed as 6/4 accepts a 6/4 entry against its own
+   caps, exhausts the packet, and still publishes 2 of false fresh headroom.
+   Separate counters cannot detect a consistent mistake.
+
+   So the epoch carries a **bounded RECLASSIFICATION operation** — ADMIN-only,
+   paused, packet-hash-bound, moving value between the fresh and recycled
+   attributions of an already-classified packet without changing its total, and
+   itself replay-guarded. Without it the reconstruction is unfalsifiable and its
+   first error is permanent. (Deriving the caps from independently provable
+   source evidence would be better and is not available: that evidence is what
+   the legacy wire does not carry, which is the root of this whole section.) —
    the CUMULATIVE total, not this submission alone. An earlier revision bounded
    only the current entry, which the correction permitting follow-up entries then
    made exploitable: for a 10-token packet, submissions of 6 and 6 each pass a
