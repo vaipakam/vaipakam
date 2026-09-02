@@ -1744,12 +1744,12 @@ delivery and nobody to report to.**
 
 | # | Site | Real question | Canonical | Mirror | **Detached** |
 | --- | --- | --- | --- | --- | --- |
-| 1 | `InteractionRewardsFacet.sweepForfeitedInteractionRewards:101` | which bound applies to the forfeit sweep | **delivered bound** (was `max`) | delivered bound | **matching transport-epoch balance FIRST, then the eligible ERA balance** (live headroom 0) |
-| 2 | `…:128` | does the sweep record a paid delta | **yes** (was "no") | yes | **only the portion that FELL THROUGH to live funding** — an era-funded outflow debits its era balance and nothing else |
+| 1 | `InteractionRewardsFacet.sweepForfeitedInteractionRewards:101` | which bound applies to the forfeit sweep | **matching transport-epoch balance FIRST, then the delivered bound** (was `max`) | matching transport FIRST, then delivered bound | **matching transport-epoch balance FIRST, then the eligible ERA balance** (live headroom 0) — transport-first is ROLE-COMMON, per the lifecycle's debit order and row 13 |
+| 2 | `…:128` | does the sweep record a paid delta | **only the fell-through-to-live portion** (was "no", then an unqualified "yes" — a sweep funded by transport or a retired-era balance must not also suppress future live headroom) | same — fell-through only | **only the portion that FELL THROUGH to live funding** — an era-funded outflow debits its era balance and nothing else |
 | 3 | `RewardCommitmentFacet.isDayCommitmentReady:191` | is a day's commitment reportable | n/a | yes | **no** — nobody to report to |
 | 4 | `RewardCommitmentFacet._assertMirror:268` | AUTH: may this chain report | revert | allow | **revert** — fail closed |
-| 5 | `RewardHorizonSweepFacet.sweepExpiredInteractionRewards:162` | which bound applies to expiry | **delivered bound** (was `max`) | delivered bound | **matching transport-epoch balance FIRST, then the eligible ERA balance** (live headroom 0) |
-| 6 | `…:237` | paid-delta recording on expiry | **yes** (was "no") | yes | **only the fell-through portion** — same rule as row 2 |
+| 5 | `RewardHorizonSweepFacet.sweepExpiredInteractionRewards:162` | which bound applies to expiry | **matching transport-epoch balance FIRST, then the delivered bound** (was `max`) | matching transport FIRST, then delivered bound | **matching transport-epoch balance FIRST, then the eligible ERA balance** (live headroom 0) |
+| 6 | `…:237` | paid-delta recording on expiry | **only the fell-through-to-live portion** (was "no", then an unqualified "yes") | same — fell-through only | **only the fell-through portion** — same rule as row 2 |
 | 7 | `RewardRemittanceFacet.sendRemitAck:1529` | AUTH: may this chain ack a remittance | revert | allow | **revert** — fail closed |
 | 8 | `RewardReporterFacet.setBaseChainId:1254` | is this a role transition needing residual retirement | n/a | yes | **yes — this is the site that CREATES and CLEARS Detached** |
 | 9 | `RewardReporterFacet._retireDeliveredResidualOnRoleChange:1286` | retire the delivered residual | n/a | on transition | **on ENTERING Detached, retire the counter AND relocate its backing; on LEAVING, start from zero** — see below |
@@ -2211,13 +2211,17 @@ revision unimplementable:
      member — never retiring, parked at the front of every member
      cursor. The cap is enforced at DISPATCH (the send side refuses to build an
      over-cap packet), and the receiver **ADMITS any transport-authentic
-     oversize packet into the RESUMABLE retirement path rather than
-     refusing it** — a CCIP payload is immutable, so a receive-side
-     refusal retries the same over-cap packet forever, its tokens and
-     source reservation stuck (the pre-cutover in-flight packet is the
-     unavoidable case, a buggy sender the avoidable one; both land in
-     storage marked for bounded, resumable index handling instead of a
-     permanent bounce). Resumable retirement: bounded index-updates per
+     oversize packet through a COMPACT admission whose storage cost does
+     not scale with the list** — a CCIP payload is immutable, so a
+     receive-side refusal retries the same over-cap packet forever; and
+     an admission that persists the full attacker-length `dayIds` array
+     element-by-element can itself exceed the destination gas limit and
+     revert before ever reaching `RETIRING`, the same permanent bounce
+     one step later. Admission stores the aggregate, the token delta,
+     and the PAYLOAD HASH (O(1)); the day index materializes afterwards
+     through bounded, resumable calls that supply the list and verify it
+     against the stored hash — the packet is safe and accounted from the
+     first transaction, and its per-day machinery arrives page by page. Resumable retirement: bounded index-updates per
      call, batch marked RETIRING and skipped by allocation meanwhile. Exhaustion
      happens once per batch, so the removal cost is paid once by the
      settlement that exhausts it, not rediscovered by every other listed
@@ -2273,8 +2277,17 @@ revision unimplementable:
      staging allocation — permissionless expiry AND voluntary
      cancellation alike** — **the
      restored coverage is DIRECTLY CONSUMABLE by any competing
-     obligation's settlement — no staging step, no lease** — and new
-     leases on that batch resume only after the window closes.
+     obligation's settlement**, and for a competitor too large for one
+     bounded scan, **consumable through PRIORITY-MODE STAGING: an
+     obligation-bound reservation of the restored coverage that cannot
+     itself lease the batch** — it holds no batch reference, blocks no
+     cursor, and expires with its own deadline — so a multi-batch
+     competitor can accumulate the contested coverage across calls
+     without the window closing on it (settlement-only helped only
+     single-scan competitors; the attacker re-leased the batch the
+     moment the window shut). Ordinary
+     leases on that batch resume only after the window closes and any
+     priority-mode reservations resolve.
      (Expiry-only was one round's scope: cancel-just-before-deadline
      and atomically restage re-created the hostage with no expiry ever
      firing.) This is
@@ -3585,7 +3598,17 @@ unbacked, every stated check passing. So `transportConsumedFresh` and
 `transportConsumedRecycled` accumulate per packet, and each
 authenticated component bound covers its classification counter PLUS
 its transport leg (`alreadyFresh + transportConsumedFresh ≤ freshCap`,
-recycled likewise), alongside the aggregate wire bound. The fourth term counts
+recycled likewise), alongside the aggregate wire bound. **Where NO
+authenticated component caps exist — the untyped legacy wire — only the
+aggregate bound binds, and the leg counters RECORD rather than
+enforce**: the legacy frame authenticates the total alone, so demanding
+cap checks against caps nobody can authenticate either freezes
+transport draws (zero/unset caps) or launders operator-selected numbers
+into "authenticated" ones. When evidence-backed classification later
+fixes the caps, they become IMMUTABLE at that moment and the recorded
+legs reconcile against them retroactively — any leg already in excess
+of its newly-fixed cap is a recorded shortfall entering the
+slice-0 disposition family, not a silent pass. The fourth term counts
 NON-CLASSIFICATION exits only** (repatriation, write-off — debited by
 the exact remainder leaving through them): an evidence-backed
 classification is elsewhere called a "disposition" of a parked
