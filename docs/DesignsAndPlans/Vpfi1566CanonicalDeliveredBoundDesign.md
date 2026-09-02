@@ -3136,8 +3136,17 @@ packet first — and the later delta-checked relocation still SUCCEEDS
 whenever any other owner's VPFI remains in the shared balance, moving
 that owner's tokens into the holder and publishing apparently-backed
 headroom. So the ingress transfer lands in protected custody under the
-`UNCLASSIFIED` row, and classification is an IN-HOLDER reattribution
-(unclassified → fresh or recycled), with nothing for payroll to race.
+`UNCLASSIFIED` row, and classification is an IN-HOLDER reattribution —
+**unclassified → fresh, recycled, OR restitution**, because the fresh
+destination is deficit-aware: an untyped packet is not credited to
+`received` until classified, and if `paid > received` at that moment,
+the deficit rule above routes the fresh amount it absorbs into the
+RESTITUTION attribution — putting it in the live row instead allocates
+tokens against zero headroom, unusable and strandable at the next
+transition. The authenticated fresh amount splits at the pre-credit
+deficit: the absorbed portion to restitution, only the excess to live
+backing. Nothing for payroll to race, and nothing for the deficit to
+strand.
 
 **A fresh classification MOVES ITS TOKENS, not just its numbers —
 in-holder, per the ingress rule above; for pre-holder arrivals the
@@ -3336,8 +3345,15 @@ restitution→live and reducing `paid` — the record of a payment that did
 not occur is corrected, the three-writer `received` contract is
 untouched, and `paid`'s writer set carries the entry with the
 disposition id. For a **GENUINE deficit** — tokens that really left
-beyond authenticated receipts, the permitted payout-then-demotion case —
-**`paid` is retained** (an earlier revision debited it here, which
+beyond authenticated receipts, with **no other authenticated funding
+ledger inheriting the debit** — **`paid` is retained**. That qualifier is
+the boundary against the reclassification rule, which governs the OTHER
+case: a spent entry whose split is corrected (6/4 → 4/6) moves its
+historical debit to the recycled-consumed attribution atomically, and
+`paid` reduces there WITH the debit — the payment still happened, its
+record now lives on the side that actually funded it, and the result
+matches a correct-at-ingress split. Retain-`paid` is for a debit that
+transfers NOWHERE — money gone from the funding universe (an earlier revision debited it here, which
 republishes spent allowance: `received = 80, paid = 100`, fund 20,
 debit `paid` to 80, and cumulative payouts reach 120 against 100
 authenticated receipts — and it contradicts the `paid = max(existing,
