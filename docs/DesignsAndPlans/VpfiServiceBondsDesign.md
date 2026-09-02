@@ -1037,8 +1037,21 @@ the flag stays clear, the active clock keeps running, and the withdrawal
 releases reserved principal before anything ever looks. The check at each
 touch is O(1) (two hash comparisons); on mismatch the touch PERSISTS and
 EMITS the quarantine (then refuses or parks), so the first path to
-observe the drift is the path that arms the containment, and the clock
-cannot expire past a drift nobody resolved. A mismatch is
+observe the drift is the path that arms the containment.
+
+**And detection rolls the clock back to the LAST VERIFIED point, because
+the interval between drift and first touch already elapsed unobserved.**
+Drift at block 150, horizon ending at 200, first touch at 201: refusing
+the release at 201 cannot un-count the 51 active blocks the horizon and
+artifact validity already absorbed — restore the pin and the evidence is
+expired, the containment an amnesty after all. So each epoch records the
+block of its **last successful behaviour verification** (every passing
+touch advances it), and a detected mismatch **restores the active clock
+to that point**: the unverified interval never counts, since nothing
+proves the verifier was sound during it. Conservative in the only safe
+direction — horizons lengthen, principal waits, nothing is forgiven.
+Immutable verifier deployments make all of this vacuous, which is the
+argument for them; anything mutable earns the rollback. A mismatch is
 QUARANTINE-EQUIVALENT for the affected epochs: proofs refuse,
 horizons pause on the shared clock, and governance resolves restore-or-
 invalidate exactly as for a flagged verifier. Immutable deployments
