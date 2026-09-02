@@ -226,10 +226,14 @@ withdrawal. So, before bonds ship, **either**:
   replacement has different decimals. Two implementations could reasonably
   either count it or ignore it, which is its own defect.
 
-  So one of: **snapshot the capacity curve per token epoch**, **revoke
-  old-token capacity at rotation** (simplest — the balance stays withdrawable,
-  it just stops buying throughput), or **define an explicit conversion** before
-  a residual balance may keep buying it. Preserving the principal is a custody
+  So: **old epochs have ZERO capacity after rotation**, full stop, unless an
+  explicit conversion **actually replaces the collateral** with the new asset.
+  An earlier revision offered "snapshot the capacity curve per token epoch" as
+  an equal option — it is not one: distinguishing epochs records *which* rate
+  applied without revoking the entitlement, so a compromised token's elevated
+  rate is preserved indefinitely, which is precisely the prohibition two
+  paragraphs up. Affected buckets are invalidated at rotation, and
+  **rotate-then-spend is an acceptance case**. Preserving the principal is a custody
   obligation; preserving its capacity is not.
 
   ⚠️ **But drain-to-zero is NOT a complete branch, because draining is
@@ -301,7 +305,17 @@ cannot reconstruct available backing, and an operator cannot tell when their
 capacity became usable again. Each carries the action and config epoch, the
 tranche allocation, and the **post-reserved total**.
 
-Every event carries the operator, the role, the delta, the
+**The epoch-invalidation event is an explicit EXCEPTION to the field list
+below.** It is deliberately O(1) and covers reservations belonging to many
+operators, so it cannot truthfully carry an operator, role, delta or
+post-balance — and emitting one per affected operator would require exactly the
+unbounded iteration the emergency path forbids, which could prevent the
+invalidation itself. Its schema is the **invalidated epoch** (plus the
+predicate it belonged to and the block), and an indexer reads it as "stop
+counting every tracked reservation for this epoch". The per-reservation release
+events arrive later from cleanup and do carry the per-bond fields.
+
+Every OTHER event carries the operator, the role, the delta, the
 **post-balance**, the token/config identity, and the withdrawal state. Post-
 balance rather than delta alone, because a consumer that missed one event can
 otherwise never resynchronise against a mapping it cannot enumerate. ABI and
