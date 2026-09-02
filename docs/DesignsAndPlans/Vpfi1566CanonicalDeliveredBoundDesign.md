@@ -636,7 +636,24 @@ migration or its retained old-custody branches will move at face value enters
 the same reconciliation: dedicated backing proven or zero, replacement
 funding or a recorded shortfall disposition, and the old-custody branch for
 intents may not execute ahead of that certification any more than the cursor
-may. A scan that advances because each id was VISITED
+may.
+
+**And a written-down LIVE intent needs its ORDER changed, not just its
+ledger — the standing order immutably hashes the original amount.** The LOP
+order key is a keccak over its parameters, `makerAmount` included
+(`SwapToRepayIntentFacet.sol:577-610`), so a disposition that writes the
+row down while leaving the order standing has changed a number the fill
+path never reads: the LOP still pulls the FULL original amount from
+commingled custody on fill, and shrinking the approval instead merely
+bricks the fill into a revert. For the live-intent class the disposition
+menu therefore narrows to two executable forms — **full replacement funding
+(the order stays as reviewed), or atomic cancel-and-recreate at the
+post-disposition amount** (the Diamond is the maker on custodial commits,
+so cancellation is its own act, and tombstone-without-recreate is the
+degenerate case). Certification of the class requires **no live order
+exceeding its post-disposition amount** — the executable-balance gate
+applied to the one class whose liability lives partly outside the
+migration's own ledgers. A scan that advances because each id was VISITED
 then either reverts partway and blocks arming (aggregate short), or — worse,
 when unrelated custody keeps the raw balance high — **transfers that unrelated
 custody into user vaults and silently reassigns the historical loss to another
@@ -1863,28 +1880,38 @@ revision unimplementable:
        drain of the position) is the right severity for money whose obligations
        may not be finished.
 
-     **And the remainder stays KEYED BY TARGET inside the pending position —
-     the move must not launder away the association the first reason above
-     depends on.** An earlier revision routed the remainder to the pending
-     position as one undifferentiated balance, which quietly re-created the
-     stranding one paragraph up: the debit order reads
-     `transportEpoch(target) → eraBalance → liveHeadroom`, so once the
-     target-scoped epoch is zeroed, a late kind-2 broadcast's obligations can
-     no longer reach the very money retained FOR them — they block despite
-     their backing being held, or fall through to unrelated live funding. So:
+     **And the remainder keeps its BATCH identity inside the pending
+     position — the move must not launder away the association the first
+     reason above depends on, and "keyed by target" was the wrong key.** An
+     earlier revision routed the remainder to the pending position as one
+     undifferentiated balance (stranding it); the correction re-keyed it by
+     TARGET, which the batch model above then falsified — no per-day amount
+     exists on the wire, so splitting an aggregate remainder into target
+     entries either invents an allocation or duplicates backing, exactly
+     what batch keying was introduced to prevent. The association that must
+     survive the move is the batch's: the debit order reads
+     `transportEpoch(target) → eraBalance → liveHeadroom` with the first
+     term resolving through batch membership, so once the batch's epoch is
+     zeroed, a late kind-2 broadcast's obligations can no longer reach the
+     money retained FOR them. So:
 
-     - The pending entry records `(target, amount)`. A late obligation for a
-       target first **restores that target's pending remainder into
-       `transportEpoch(target)`** — a bounded reversal of the move, debiting
-       the pending entry by at most what it holds; not a fourth live-headroom
-       writer, because it feeds the transport epoch, whose consumption path is
-       already specified — and then settles through the normal order.
-     - A generic pending-to-live drain (or repatriation) of a target-keyed
+     - The pending entry records **`(batchId, dayIds, amount)`** — the
+       batch, its membership filter, and its undivided remainder. A late
+       obligation whose day is IN a parked batch's membership first
+       **restores that batch's pending remainder into its transport
+       epoch** — a bounded reversal of the move, debiting the pending entry
+       by at most what it holds; not a fourth live-headroom writer, because
+       it feeds the transport epoch, whose consumption path is already
+       specified — and then settles through the normal membership-filtered
+       order.
+     - A generic pending-to-live drain (or repatriation) of a parked batch
        remainder is a **deliberate operator disposition carrying a recorded
-       acknowledgment**: obligations arriving for that target afterwards are
-       REFUSED, never silently paid from live headroom. Same family as slice
-       0's shortfall disposition — the lane cannot prove closure, so choosing
-       to stop waiting is an owner decision with its consequence written down.
+       acknowledgment, keyed by the batch**: obligations arriving for any of
+       that batch's listed days afterwards are REFUSED to the extent they
+       looked to that batch, never silently paid from live headroom. Same
+       family as slice 0's shortfall disposition — the lane cannot prove
+       closure, so choosing to stop waiting is an owner decision with its
+       consequence written down.
 
        **And the refusal has a defined EXIT, or it is a permanent failure
        wearing an acknowledgment.** An earlier revision said "pending fresh
@@ -1893,18 +1920,19 @@ revision unimplementable:
        obligation from consuming: funding could arrive forever without the
        refusal ever clearing, and an implementation would quietly fall back
        to the live funding the rule prohibits. The clearing operation is
-       **target-bound replacement funding: a delta-checked token transfer
-       that atomically credits `transportEpoch(target)` and clears the
+       **batch-bound replacement funding: a delta-checked token transfer
+       that atomically credits the batch's transport epoch and clears its
        acknowledgment** — the epoch-scoped sibling of `fundRewardPool`,
        feeding the transport epoch (whose consumption path is already
        specified) rather than live headroom, so the writer contract is
-       untouched. The refused packet then re-executes and settles through
-       the normal `transportEpoch(target)`-first order.
+       untouched. The refused obligations then re-execute and settle
+       through the normal membership-filtered order.
 
-     So the flow is `transportEpoch(target) → targeted obligations`, and any
-     remainder `→ pending recovery position, keyed by target`, exiting only
-     through the target-bound restore above, the registered pending-to-live
-     writer, or repatriation. If a deployment refuses to carry it, the honest
+     So the flow is `transportEpoch(target) → targeted obligations` (the
+     first term resolving through batch membership), and any batch
+     remainder `→ pending recovery position, keyed by the batch`, exiting
+     only through the membership-bound restore above, the registered
+     pending-to-live writer, or repatriation. If a deployment refuses to carry it, the honest
      alternative remains **disallowing the permanent transition while the
      unverifiable lane exists** — never promote-and-strand.
 
@@ -2523,6 +2551,23 @@ high-water-mark proof already records), and the aggregate correction keys on
 it under the SAME rules as the packet operation: spent attribution first,
 replacement custody where the correction moves value, conservation against
 the recorded bound.
+
+**"Spent attribution first" now has a deterministic definition, because
+without one it was unanswerable.** Outflows are not debited per packet —
+`alreadyFresh[h]` / `alreadyRecycled[h]` record what each packet PUT IN,
+while payouts and recycle consumption debit only the aggregates — so "was
+packet A's credit spent?" had no ledger to consult, and a correction could
+move attribution that had already funded a completed payout, printing an
+unbacked credit on the other side (the snapshot-keyed aggregate inherits
+the same question). The rule is **FIFO by classification order, per side**:
+each classification entry records the side's cumulative prefix at the time
+it landed, and an entry's credit is SPENT to the extent the side's
+cumulative outflow total exceeds its recorded prefix —
+`spent = clamp(sideOutflowTotal − prefixBefore, 0, credit)` — a pure
+derivation from totals already kept, no per-outflow bookkeeping. A
+correction may move only the provably-UNSPENT remainder under that order;
+anything else requires replacement custody. Deterministic, cheap, and
+order-published-at-classification, so no later event can re-argue it.
 Per-packet identity is required only where per-packet classification is
 attempted; for history, one provable envelope replaces many unprovable
 identities.
