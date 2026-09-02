@@ -2101,11 +2101,19 @@ revision unimplementable:
      rule then points at a finalized balance (crediting it resurrects an
      era after its terminal proof) while the live ledger is forbidden by
      the same era binding. The destination is the one built for exactly
-     this: classification after the addressed era's terminal follows the
-     LATE-CREDIT path — the retired era's carried balance where one
-     still exists, else the pending recovery position under the batch's
-     key — and never re-opens a terminalized era's counters or touches
-     an era it was not addressed to.
+     this — split by whether the addressed era has actually FINALIZED.
+     A RETIRED-but-unfinalized era (carried balance live, terminal proof
+     not yet run) takes the credit into that carried balance, normally.
+     After FINALIZATION nothing may credit the era at all — the terminal
+     proof asserted its obligations complete and its surplus is gone, so
+     a late credit either resurrects state behind a completed proof or
+     strands (no consumer, no repeatable terminal). Post-terminal shares
+     go to **component-appropriate non-finalized destinations**: the
+     fresh share to the pending recovery position under the batch's key
+     (exiting through the registered writers), the recycled share to the
+     global recycled bucket through its protected ingress — recycled is
+     not era-bound, so no era rule is violated. Never a finalized era
+     row, never an era it was not addressed to.
 
      **The transport balance is UNTYPED, and consuming it writes NEITHER
      the fresh nor the recycled ledger.** The wire authenticates only the
@@ -2160,11 +2168,21 @@ revision unimplementable:
      retry facing the same live batches with no progress — so partial
      draws land in a per-obligation staging allocation (debited from the
      batches, credited to no one), each retry adds to it, and the final
-     call settles the staged total atomically with the obligation.
-     Staged allocations are release-on-cancel (back to their batches, by
-     the same records), so a dead obligation cannot strand what it
-     staged. Bounded, resumable, and nothing half-paid — three
-     properties, one mechanism. So
+     call settles the staged total atomically with the obligation —
+     **with the EXHAUSTION transitions (member-day index advances,
+     `transportConsumed` increments) deferred to that final
+     settlement**: staging moves balance only. Fire them at staging time
+     and a cancellation has nothing clean to reverse — the indexes have
+     advanced past the batch for every member day and the packet budget
+     is spent, so the restored balance is skipped by every future scan
+     and rejected by the combined bound, stranded twice over. Deferred,
+     a cancellation simply returns the staged amounts to batches whose
+     indexes never passed them and whose budget never counted them —
+     nothing to reverse. Retries resume from the staging record (which
+     names its batches) rather than re-scanning, keeping the bound.
+     Staged allocations are release-on-cancel, so a dead obligation
+     cannot strand what it staged. Bounded, resumable, and nothing
+     half-paid — three properties, one mechanism. So
      conservation holds per packet — listed days can
      contend for an aggregate, because an aggregate is what the wire
      delivered, but no day outside the list can touch it and no token is
@@ -3370,7 +3388,15 @@ tolerates rounding dust would then also tolerate stranding an entire packet.
 **And the marker's bound is COMBINED across every way a packet's value
 can leave — `transportConsumed + alreadyFresh + alreadyRecycled +
 repatriatedOrDisposed ≤ oldWireAmount` — maintained atomically on each
-transition, REPATRIATION INCLUDED.** A packet parked to pending and then
+transition, REPATRIATION INCLUDED. The fourth term counts
+NON-CLASSIFICATION exits only** (repatriation, write-off — debited by
+the exact remainder leaving through them): an evidence-backed
+classification is elsewhere called a "disposition" of a parked
+remainder, and letting that meaning bleed in here double-counts it —
+100 classified would post 100 to the classification counters AND 100 to
+`repatriatedOrDisposed`, 200 against a bound of 100, reverting a valid
+operation. A classification debits the classification counters, full
+stop.** A packet parked to pending and then
 repatriated leaves through a fourth door: no transport draw, no
 classification, all counters zero — and once another delivery replenishes
 the global `uncounted` aggregate, the departed packet's hash could still
