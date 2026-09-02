@@ -1250,12 +1250,13 @@ at 201 — a shared rollback reaches 200 and counts 50 unsound blocks,
 E2's window expiring over them). A detected mismatch **restores the
 shared pausable clock to the matching checkpoint — code for code
 drift, the epoch's own config checkpoint for config drift**: the unverified interval never counts, since
-nothing proves the verifier was sound during it. Per-epoch checkpoints
-would either under-protect (a mismatch observed through busy E1 rolls
-back only to E1's recent checkpoint, still counting stale E2's
-unverified interval and releasing its collateral) or force the O(1)
-quarantine to hunt the oldest sibling — neither survives the single-flag
-model this clock belongs to. Conservative in the only safe
+nothing proves the verifier was sound during it. (The split resolves
+the tension a single choice could not: a purely per-epoch checkpoint
+under-protected CODE drift — busy E1's rollback left stale E2's
+unverified interval counted — while a purely verifier-wide one
+under-protected CONFIG drift, E1's touches advancing a checkpoint past
+inputs they never read. Code is shared, so its checkpoint is; configs
+are distinct, so theirs are.) Conservative in the only safe
 direction — horizons lengthen, principal waits, nothing is forgiven.
 Immutable verifier deployments make all of this vacuous, which is the
 argument for them — and it is now the RULE, not a preference: **a
