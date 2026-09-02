@@ -1060,11 +1060,19 @@ the interval between drift and first touch already elapsed unobserved.**
 Drift at block 150, horizon ending at 200, first touch at 201: refusing
 the release at 201 cannot un-count the 51 active blocks the horizon and
 artifact validity already absorbed — restore the pin and the evidence is
-expired, the containment an amnesty after all. So each epoch records the
-block of its **last successful behaviour verification** (every passing
-touch advances it), and a detected mismatch **restores the active clock
-to that point**: the unverified interval never counts, since nothing
-proves the verifier was sound during it. Conservative in the only safe
+expired, the containment an amnesty after all. So the **VERIFIER records the
+block of its last successful behaviour verification — one checkpoint per
+verifier, not per epoch** — advanced by any passing touch on ANY
+dependent epoch (a passing check proves the verifier sound at that block
+for every epoch it backs, so one epoch's traffic protects its stale
+siblings), and a detected mismatch **restores the shared pausable clock
+to that checkpoint**: the unverified interval never counts, since
+nothing proves the verifier was sound during it. Per-epoch checkpoints
+would either under-protect (a mismatch observed through busy E1 rolls
+back only to E1's recent checkpoint, still counting stale E2's
+unverified interval and releasing its collateral) or force the O(1)
+quarantine to hunt the oldest sibling — neither survives the single-flag
+model this clock belongs to. Conservative in the only safe
 direction — horizons lengthen, principal waits, nothing is forgiven.
 Immutable verifier deployments make all of this vacuous, which is the
 argument for them — and it is now the RULE, not a preference: **a
