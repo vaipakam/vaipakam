@@ -131,8 +131,12 @@ jobs:
             # the next sweep — a green run over a short board is exactly
             # the reassuring lie this workflow exists to end.
             for attempt in 1 2 3; do
+              # `< /dev/null` is load-bearing: this loop reads its list on
+              # stdin, and any command inside it that touched stdin would
+              # swallow the remaining URLs — the loop would then "succeed"
+              # having processed one issue.
               if gh project item-add "$PROJECT_NUMBER" \
-                   --owner "$PROJECT_OWNER" --url "$url"; then
+                   --owner "$PROJECT_OWNER" --url "$url" < /dev/null; then
                 added=1
                 break
               fi
