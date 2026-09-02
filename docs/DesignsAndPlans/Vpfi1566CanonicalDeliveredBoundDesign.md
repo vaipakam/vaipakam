@@ -2575,9 +2575,15 @@ revision unimplementable:
    after the snapshot but before the role change can charge an
    authorization the snapshot never covered while the gate happily
    accepts the old set's attestations. The gate requires from every
-   member of the PINNED version either
-   a finalized manifest or an **explicit empty attestation** ("nothing
-   charged, as of watermark W"). Role changes gate on all of that
+   member of the PINNED version one of THREE terminals: a finalized
+   manifest, an **explicit empty attestation** ("nothing charged, as of
+   watermark W"), or — for a lane that can honestly produce neither
+   remote-state assertion — the **recorded loss disposition itself, with
+   its charged-side accounting executed** (the lane's unresolved
+   authorizations written off on the owner's recorded authority,
+   disclosed as such). Without the third terminal the disposition clause
+   is unreachable: an unverifiable lane blocks the ceremony forever or
+   gets falsely attested empty. Role changes gate on all of that
    received and reconciled, not on the operator's word that it would
    have matched. Any key that
    nevertheless surfaces later (outside the certified set) is **refused —
