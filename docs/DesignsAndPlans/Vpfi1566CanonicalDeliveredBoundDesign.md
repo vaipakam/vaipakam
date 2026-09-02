@@ -879,9 +879,18 @@ decides who eats a loss nobody has acknowledged. Four rounds of review found
   party's rebate **irreversibly**.
 
   So the scan carries an explicit **precondition: a configured authoritative
-  oracle**. That is cheap here and nowhere else — the migration is a one-time
+  oracle — and so does EVERY LATER PARKED RELEASE, because the scan's
+  precondition protects only the scan.** Unset the oracle after migration
+  and `mustFreezeParty` returns false for the very payee whose confirmed
+  flag parked the value: the release path makes the irreversible payment
+  the parking existed to prevent, one step later. A parked release
+  therefore requires a configured oracle AND an authoritative clean read
+  at release time — absent either, the value STAYS PARKED; parked value
+  is never released on a disabled regime. The scan-time precondition is
+  cheap because the migration is a one-time
   paused operation, so the operator can simply set the oracle first, whereas an
-  ordinary user path cannot demand it. With the oracle configured, the helper's
+  ordinary user path cannot demand it; the release-time one is cheap
+  because a parked row is already the exceptional case. With the oracle configured, the helper's
   `Flagged` / `Clean` / `Unavailable` branches all behave as this paragraph
   needs, and the flag clears only on an authoritative clean read. Parking is what lets completion stay provable without either
   paying a sanctioned party or abandoning their value — and the scan's completion
@@ -2119,9 +2128,18 @@ revision unimplementable:
      permanently blocking the obligation and its era's terminalization
      behind backing that exists. Each day keeps an arrival-ordered batch
      index and a consumption cursor; allocation resumes at the cursor,
-     skips-and-advances over exhausted batches exactly once ever, and a
-     settlement touches at most the batches it actually draws from plus
-     the newly-exhausted ones it retires — bounded and resumable. So
+     and **exhausting a batch updates EVERY member day's index in that
+     act** — the batch's `dayIds` list is wire-bounded, exhaustion
+     happens once per batch, so the removal cost is paid once by the
+     settlement that exhausts it, not rediscovered by every other listed
+     day's next scan (a cursor advanced only by its own day's draws
+     leaves day B skipping the corpses of everything day A consumed —
+     the unbounded scan by another door). A settlement touches at most
+     the batches it draws from plus the ones it retires; a **hard
+     per-call scan cap with resumable cursor advance** backstops the
+     bound — a call that hits the cap advances the cursor and returns
+     retryable rather than reverting — bounded and resumable, twice
+     over. So
      conservation holds per packet — listed days can
      contend for an aggregate, because an aggregate is what the wire
      delivered, but no day outside the list can touch it and no token is
@@ -2214,12 +2232,21 @@ revision unimplementable:
        leaves a 5-fresh/5-recycled claim with 6 transport-paid unable to
        say which 4 reaches which chokepoint — double-charging one ledger
        or preserving the wrong reserve, implementation's choice. The
-       allocation is **against each component's SHORTFALL, deterministically
-       — typed funding counts first, transport covers what typed funding
-       cannot**: compute each component's unmet need net of its own typed
-       sources (era/live fresh for the fresh leg, bucket funding for the
-       recycled leg), and allocate the untyped balance to those shortfalls,
-       fresh-shortfall first when it cannot cover both. Blind fresh-first
+       allocation **preserves transport-first per component while using
+       SHORTFALLS only to split scarce transport** — two rules, in order.
+       First: matching transport is DRAWN before era/live or bucket
+       funding for whatever it is allocated to (the
+       `transportEpoch → eraBalance → liveHeadroom` order is not
+       optional — typed-covered components must not pull the shared era
+       balance while their matching transport sits parked: claims A and B
+       sharing 10 of era funding, with A alone holding a matching
+       10-token batch, settle as A-from-transport and B-from-era, never
+       A-draining-the-era). Second: when the untyped balance cannot cover
+       both components, it is allocated by SHORTFALL — each component's
+       need net of its own typed sources (era/live fresh; bucket
+       funding), fresh-shortfall first on ties — so transport is never
+       assigned to a component whose typed funding already suffices while
+       the other component reverts against nothing. Blind fresh-first
        rejected fully-backed claims: 5-fresh/5-recycled with 5 live fresh
        headroom, an empty bucket, and a matching 5-token batch has enough
        total backing — live pays fresh, transport pays recycled — but
@@ -2400,8 +2427,17 @@ revision unimplementable:
    completion watermark (charged-side block/sequence) marking the
    enumeration's end. The mirror verifies its registry against EVERY
    source chain's attestation — every attested key present, every
-   registry key attested — and role changes gate on all attestations
-   received and reconciled, not on the operator's word that they would
+   registry key attested — **against a source-lane UNIVERSE committed
+   before reconciliation begins**, because per-manifest authentication
+   cannot prove a whole chain was not omitted: reconcile only chain A,
+   promote, and chain B's charged authorization strands outside even the
+   kind-8/9 route, which accepts certified lanes only. The universe is
+   the messenger's own configured-lane registry — every lane that was
+   EVER configured for this channel, current and historical, an on-chain
+   enumerable set — and the gate requires from every member either a
+   finalized manifest or an **explicit empty attestation** ("nothing
+   charged, as of watermark W"). Role changes gate on all of that
+   received and reconciled, not on the operator's word that it would
    have matched. Any key that
    nevertheless surfaces later (outside the certified set) is **refused —
    tombstoned by default, with its Base-side authorization released through
@@ -3298,6 +3334,21 @@ operator who understates a share — or submits zero by accident — passes the
 bound, leaves the balance in `uncounted`, and **burns the packet hash**, so a
 corrected entry for that immutable delivery is refused forever. The rule that
 tolerates rounding dust would then also tolerate stranding an entire packet.
+
+**And the marker's bound is COMBINED across every way a packet's value
+can leave — `transportConsumed + alreadyFresh + alreadyRecycled ≤
+oldWireAmount` — maintained atomically on each transition.** The
+transport path and the classification path are two doors out of one
+packet: pay a targeted claim 10 through the batch and the classification
+counters still read zero, so a later full classification — once another
+packet has replenished the global `uncounted` aggregate — consumes THAT
+packet's custody and publishes backing for tokens already paid out
+(classify first and the batch balance is the stale one, symmetrically).
+Every transport draw therefore increments the packet's
+`transportConsumed` and reduces its classifiable remainder in the same
+act; every classification reduces the batch's drawable balance likewise;
+and the three counters share one wire-bounded budget a packet can never
+exceed from either direction.
 
 So the marker tracks the **cumulative amount classified per packet hash**, not a
 boolean: later entries may classify the remainder up to `oldWireAmount`, and the
