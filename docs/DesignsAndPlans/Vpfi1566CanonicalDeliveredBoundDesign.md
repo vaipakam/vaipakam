@@ -834,7 +834,24 @@ ordinary implementation, and it belongs in slice 3.
   range empty. That is independently verifiable, which an off-chain census is
   not. Prefer it.
 
-**2. `fallbackSnapshot` custody.**
+**2. `fallbackSnapshot` custody — and the PRODUCERS change, not only the
+migration and the consumers.**
+
+⚠️ **An earlier revision of this slice referenced a "lien-at-fallback rule" it
+never specified**, migrating pre-upgrade rows and rewriting consumers while
+leaving `RiskFacet._fullCollateralTransferFallback` and
+`DefaultedFacet._fullCollateralTransferFallback` retaining the failed-swap
+collateral in the Diamond. So the very next fallback after the scan creates a
+**new commingled snapshot** — the reward-drain exposure reopening immediately,
+behind an arming gate that was satisfied by a scan whose result the producers
+then invalidate.
+
+**Both creation paths return the collateral to the borrower's vault and
+atomically install all four: the lien, the tracked-balance record, the VPFI tier
+exclusion (VPFI snapshots only), and the custody discriminator** — the same
+quadruple the migration installs, so a migrated row and a freshly created one
+are indistinguishable afterwards. That is what makes the scan's completion
+durable rather than a snapshot of one moment.
 
 - **Every consumer moves to the new source**, not the claim path alone:
   `ClaimFacet`, internal matching (`RiskMatchLiquidationFacet._settleLeg` and its
@@ -1512,8 +1529,20 @@ retired by accident:
   Diamond forever: stranded by the mechanism built to stop stranding.
 
   So the era needs a **provable all-obligations-terminal transition** — every
-  retired-era claim and sweep **settled, or expired AND its absorption booked**,
-  read back. ⚠️ **Crossing the expiry horizon is NOT the terminal**, and an
+  retired-era claim and sweep **settled, or expired AND its absorption booked**.
+
+  ⚠️ **"Read back" is not an executable condition at scale.** `rewardEntries` is
+  append-only and unbounded, so a single terminalization call that walks the era
+  eventually exceeds the block gas limit — **permanently stranding the surplus**
+  — while checking a subset can release backing before another obligation is
+  absorbed. So terminality is established by an **incrementally maintained
+  per-era outstanding-liability counter reaching zero**, or by the same
+  **paginated high-water-mark scan** slice 1 uses, with the additional
+  requirement that **membership cannot grow between the proof and the move** (a
+  retired era admits no new obligations, so the high-water mark is genuinely
+  final — which is what makes pagination sound here and not in slice 1's
+  live-id case). The counter is preferable: O(1) to check, and it cannot be
+  raced. ⚠️ **Crossing the expiry horizon is NOT the terminal**, and an
   earlier revision accepted it as one: the permissionless sweep may not have run
   yet, so releasing the era balance then lets a live claim spend it, after which
   the pending sweep either fails for want of era funding or consumes unrelated
@@ -1633,9 +1662,18 @@ revision unimplementable:
    refusal safe here and is why it is chosen over quarantine: the packet is not
    lost, it is parked in the transport layer where it already has a retry story.
 3. **Reattachment** — the operator re-executes the parked messages after the
-   role is set. They arrive as ordinary ingresses against the fresh post-
-   transition ledger, which is the correct accounting: their funding was never
-   credited, so there is nothing for the residual retirement to have mishandled.
+   role is set, and they are routed to **the era they were ADDRESSED to**, not
+   to the fresh one. An earlier revision said they "arrive as ordinary ingresses
+   against the fresh post-transition ledger" — which the intended-era gate then
+   rejects, since every effective role change creates a new era. **The packet
+   would be refused on retry exactly as it was on arrival**, leaving its funds
+   and its source reservation stuck permanently.
+
+   So a re-executed packet is credited through the **retired era's own
+   reconciliation** (its funding belongs to that era's obligations, which is
+   where the claims it was sent to fund also live), or the design defines a
+   transport epoch that survives a temporary detachment. The first is
+   consistent with the era mechanism already in place.
 4. **The role transition itself** therefore has no receipt-level mutations to
    reverse — the property that makes rows 8–10 sound rather than merely
    convenient.
@@ -1987,7 +2025,17 @@ One reconciliation entry, three effects, all or nothing:
 
    So the operation may reclassify at most what remains unspent on the source
    side; beyond that it requires **replacement funding**, or another
-   custody-preserving recovery, rather than a bookkeeping move. Without the
+   custody-preserving recovery, rather than a bookkeeping move.
+
+   **"Replacement funding" means an atomic custody transfer, and saying the
+   words is not enough.** Without naming an ingress an implementation can treat
+   unrelated VPFI already sitting in the shared Diamond as the replacement and
+   credit the destination attribution while adding no custody at all —
+   reproducing the solvency defect the bound exists to prevent, through the
+   remedy for it. So the correction **atomically transfers the exact shortfall
+   with a verified balance delta**, or **atomically debits a separately tracked
+   recovery position**, before crediting the destination. New money or an
+   identified source; never the ambient balance. Without the
    reclassification at all the reconstruction is unfalsifiable and its first
    error permanent — but an unbounded one converts a labelling error into a
    solvency one. (Deriving the caps from independently provable
