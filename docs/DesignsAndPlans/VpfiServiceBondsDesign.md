@@ -1238,13 +1238,18 @@ the interval between drift and first touch already elapsed unobserved.**
 Drift at block 150, horizon ending at 200, first touch at 201: refusing
 the release at 201 cannot un-count the 51 active blocks the horizon and
 artifact validity already absorbed — restore the pin and the evidence is
-expired, the containment an amnesty after all. So the **VERIFIER records the
-block of its last successful behaviour verification — one checkpoint per
-verifier, not per epoch** — advanced by any passing touch on ANY
-dependent epoch (a passing check proves the verifier sound at that block
-for every epoch it backs, so one epoch's traffic protects its stale
-siblings), and a detected mismatch **restores the shared pausable clock
-to that checkpoint**: the unverified interval never counts, since
+expired, the containment an amnesty after all. So the checkpoint SPLITS BY WHAT A TOUCH ACTUALLY VERIFIES: the
+**verifier CODE checkpoint is verifier-wide** — any epoch's passing
+touch proves the bytecode sound for every epoch it backs, so one
+epoch's traffic protects its stale siblings against code drift — while
+**each epoch's CONFIG-INPUT checkpoint is its own**, advanced only by
+that epoch's touches, because E1's check reads E1's pinned config
+hashes and proves nothing about E2's distinct inputs (E2's config
+drifts at 150, busy E1 advances a shared checkpoint to 200, E2 detects
+at 201 — a shared rollback reaches 200 and counts 50 unsound blocks,
+E2's window expiring over them). A detected mismatch **restores the
+shared pausable clock to the matching checkpoint — code for code
+drift, the epoch's own config checkpoint for config drift**: the unverified interval never counts, since
 nothing proves the verifier was sound during it. Per-epoch checkpoints
 would either under-protect (a mismatch observed through busy E1 rolls
 back only to E1's recent checkpoint, still counting stale E2's
