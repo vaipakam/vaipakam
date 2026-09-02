@@ -1214,7 +1214,13 @@ epoch instead would force a later legitimate quarantine of V to either
 re-pause the restored epoch (the freeze this rule forbids) or exempt it
 from the verifier flag (a per-epoch exception the single-flag invariant
 and the verifier-scoped events cannot represent). One flag, one
-generation, one terminal bar. An emergency lever the incident
+generation, one terminal bar — **and the restore that bars a generation
+ATOMICALLY installs a usable replacement, or the verifier stays closed
+until one exists**. A restore that merely bars leaves the next genuine
+compromise of V with no fast lever at all: containment would need
+another timelocked action, handing forged proofs the full delay this
+section calls unacceptable. Bar and replace in one act, or do not
+reopen. An emergency lever the incident
 cannot turn against its own operators is the design goal of all three rules.
 
 **And the bound needs an exhaustion rule.** Long evidence horizons overlapping
