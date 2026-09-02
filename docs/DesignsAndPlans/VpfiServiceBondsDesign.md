@@ -1231,7 +1231,17 @@ reservations, so a single figure across tokens adds incomparable raw units: a
 large-decimal old reservation blocks every new-token action, and the reverse
 rotation understates the old liability against the cap. Unreserved backing and
 the concurrency cap are kept per collateral-token epoch (or an explicit
-conversion precedes any summing). **And the reads FILTER on a TRI-STATE: admission counts partitions whose
+conversion precedes any summing) — **and the token-epoch axis is
+BOUNDED by the same discipline as the predicate axis**: every claim,
+cleanup, and accounting operation addresses ONE named partition in
+O(1) (nothing anywhere enumerates the accumulated set), and rotation
+carries BACKPRESSURE — a new rotation is refused while more than the
+bounded number of old partitions still hold residual principal, with
+the mandatory forced-migration duty as the drain that makes the bound
+reachable. Repeated rotate-and-leave-residue cycles otherwise grow the
+partition set without limit, while evicting a partition would strand
+its principal, reservations, and liabilities — bounded by refusal at
+the source, never by eviction. **And the reads FILTER on a TRI-STATE: admission counts partitions whose
 global predicate epoch is VALID or QUARANTINED, and excludes only
 INVALIDATED ones — NET, in every case, of the outstanding synchronous
 liabilities bound to the partition's tranches.** Invalidation releases a
@@ -2488,14 +2498,28 @@ the two rules meet at a parked adjudication.
   already confirmed through another path could wait out an outage and
   have a non-refundable fee moved into recycling against freeze-not-
   seize. Previously confirmed payers are rejected during an outage;
-  fail-open remains only for addresses never confirmed flagged — **and an
-  authoritative CLEAN read on the arming path SELF-HEALS the stale
-  marker**, as the release and position-movement paths already do: a
+  fail-open remains only for addresses never confirmed flagged — **and BOTH non-trivial branches write**: a first authoritative
+  `Flagged` read on the arming path persists the confirmed marker in a
+  COMMITTED, value-unmoving transition (the call returns refused, the
+  observation stays — a plain revert rolls the marker back, and the
+  payer retries through the fail-open branch during the next outage,
+  moving the fee into recycling as "never confirmed"; flag → arm →
+  outage → arm is the acceptance case); and an
+  authoritative CLEAN read SELF-HEALS the stale
+  marker, as the release and position-movement paths already do: a
   view-style gate that merely ignores the marker on a healthy read
   leaves it standing, and the next outage bars a payer the oracle
   authoritatively delisted in between. Delist → arm → outage is the
   acceptance case. The
-  other selectors keep `_assertNotSanctioned` — and each needs a focused
+  other selectors keep `_assertNotSanctioned` for their REFUSALS — but
+  every party screen that observes an authoritative CLEAN result on a
+  wallet carrying a stale confirmed marker SELF-HEALS it in that call
+  (`postCapacityDeposit`, the permit/on-behalf party screens, all of
+  them): the plain helper is a view, so a clean read that merely passes
+  leaves the marker standing, and the next outage freezes the newly
+  deposited principal of an operator the oracle authoritatively
+  delisted in between. Flag → delist → deposit → outage → withdraw is
+  the acceptance case — and each selector needs its focused
   test — **but `unbond` does
   NOT take the reverting helper**, and this list said it did for one round
   after the paragraph above established why it cannot: when `unbond` is the
