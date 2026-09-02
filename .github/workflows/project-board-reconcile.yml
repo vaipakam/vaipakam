@@ -41,6 +41,10 @@ on:
 permissions:
   contents: read
   issues: read
+  # For the last-success watermark: reading this workflow's own run
+  # history is an Actions-API read, and an explicit `permissions` block
+  # grants nothing it does not name.
+  actions: read
 
 concurrency:
   group: project-board-reconcile
@@ -59,10 +63,13 @@ jobs:
       # limit. Generous enough for the whole history with room to grow,
       # and the step ABORTS rather than proceed on a short read.
       LIST_LIMIT: '4000'
-      # How far back to look for CLOSED issues. Wide enough to cover a
-      # multi-day outage of either workflow, bounded so the sweep never
-      # walks the whole closed history.
+      # MINIMUM look-back for CLOSED issues. The real window stretches to
+      # cover everything since the last successful sweep — see the note on
+      # the watermark — so this is the floor for the normal case, not a
+      # cutoff that can expire an unrecovered card.
       CLOSED_LOOKBACK_DAYS: '14'
+      # This workflow's own filename, for the last-success watermark read.
+      WORKFLOW_FILE: project-board-reconcile.yml
     steps:
       - name: List issues the board should hold
         env:
@@ -111,11 +118,40 @@ jobs:
           # the shape of loss the net exists to catch.
           #
           # `since` filters on updated_at, so this is "closed issues
-          # touched in the window", which is what a missed add needs. The
-          # window is wide enough to cover a multi-day outage of either
-          # workflow, and bounded so the sweep never walks the whole
-          # closed history.
-          since=$(date -u -d "$CLOSED_LOOKBACK_DAYS days ago" +%Y-%m-%dT%H:%M:%SZ)
+          # touched in the window", which is what a missed add needs.
+          #
+          # THE WINDOW REACHES BACK TO THE LAST SUCCESSFUL SWEEP, not a
+          # fixed span. A rolling cutoff quietly expires the very entries
+          # this workflow exists to recover: if writes are unavailable for
+          # longer than the span — an expired PAT, Actions disabled, a
+          # long run of rate-limit failures — a missing closed issue ages
+          # out, and the first sweep that finally works omits it and
+          # reports success. Permanently lost, under a green tick. That is
+          # the same reassuring lie in a third place.
+          #
+          # So the floor below is a MINIMUM, and the actual window is
+          # whichever is longer: the floor, or the time since this
+          # workflow last completed successfully. An outage therefore
+          # widens the next sweep by exactly as much as it cost. The
+          # Actions API read runs on the same repo-scoped token as the
+          # listings, so it costs nothing from the contended account.
+          floor=$(date -u -d "$CLOSED_LOOKBACK_DAYS days ago" +%s)
+          last_success=$(gh api \
+            "repos/$ISSUE_REPO/actions/workflows/$WORKFLOW_FILE/runs?status=success&per_page=1" \
+            --jq '.workflow_runs[0].created_at // empty')
+          if [ -n "$last_success" ]; then
+            # A day of margin so a run that straddles the boundary cannot
+            # leave a sliver of time neither sweep looked at.
+            watermark=$(( $(date -u -d "$last_success" +%s) - 86400 ))
+            echo "last successful sweep: $last_success"
+          else
+            watermark=$floor
+            echo "no previous successful sweep — using the floor"
+          fi
+          # Whichever reaches back further wins.
+          if [ "$watermark" -gt "$floor" ]; then watermark=$floor; fi
+          since=$(date -u -d "@$watermark" +%Y-%m-%dT%H:%M:%SZ)
+
           issue_urls "state=closed&since=$since" | sort -u > closed-urls.txt
           echo "recently closed issues (since $since): $(wc -l < closed-urls.txt | tr -d ' ')"
 
@@ -176,6 +212,40 @@ jobs:
           echo >> "$GITHUB_STEP_SUMMARY"
           echo "### Added" >> "$GITHUB_STEP_SUMMARY"
 
+          # A RECOVERED CLOSED CARD LANDS IN THE WRONG COLUMN unless we
+          # say otherwise. New cards enter Backlog, and Status moves to
+          # Done by the project's close automation — which fires on the
+          # close EVENT. A card added after its issue closed missed that
+          # event and can never receive it, so finished work would sit in
+          # the backlog looking active. ProjectProcedures.md §5.3 is
+          # explicit that a closed card is Done.
+          #
+          # Look the ids up once, by NAME, and treat their absence as a
+          # warning rather than a failure: the card being on the board is
+          # the point, and a project that renames its Status field should
+          # not turn the whole sweep red.
+          status_field_id=''
+          done_option_id=''
+          project_id=$(gh project view "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" \
+            --format json --jq '.id' 2>/dev/null || true)
+          if [ -n "$project_id" ]; then
+            fields=$(gh project field-list "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" \
+              --format json 2>/dev/null || echo '{}')
+            status_field_id=$(printf '%s' "$fields" | jq -r '
+              (.fields // [])[]
+              | select((.name // "") | ascii_downcase == "status")
+              | .id' | head -1)
+            done_option_id=$(printf '%s' "$fields" | jq -r '
+              (.fields // [])[]
+              | select((.name // "") | ascii_downcase == "status")
+              | (.options // [])[]
+              | select((.name // "") | ascii_downcase == "done")
+              | .id' | head -1)
+          fi
+          if [ -z "$project_id" ] || [ -z "$status_field_id" ] || [ -z "$done_option_id" ]; then
+            echo "::warning::could not resolve the Status/Done ids — recovered closed cards will stay in Backlog and need a manual move"
+          fi
+
           failed=0
           while read -r url; do
             [ -n "$url" ] || continue
@@ -191,15 +261,31 @@ jobs:
               # stdin, and any command inside it that touched stdin would
               # swallow the remaining URLs — the loop would then "succeed"
               # having processed one issue.
-              if gh project item-add "$PROJECT_NUMBER" \
-                   --owner "$PROJECT_OWNER" --url "$url" < /dev/null; then
+              if item_id=$(gh project item-add "$PROJECT_NUMBER" \
+                   --owner "$PROJECT_OWNER" --url "$url" \
+                   --format json --jq '.id' < /dev/null); then
                 added=1
                 break
               fi
               sleep $((attempt * 15))
             done
             if [ "$added" -eq 1 ]; then
-              echo "- $url" >> "$GITHUB_STEP_SUMMARY"
+              note=''
+              # Closed at the time we recovered it → it belongs in Done.
+              if grep -qxF "$url" closed-urls.txt && [ -n "$done_option_id" ]; then
+                if gh project item-edit --id "$item_id" \
+                     --project-id "$project_id" \
+                     --field-id "$status_field_id" \
+                     --single-select-option-id "$done_option_id" < /dev/null; then
+                  note=' → Done'
+                else
+                  # The card is on the board, which is what matters; say
+                  # so rather than failing the sweep over a field write.
+                  echo "::warning::added $url but could not set Status: Done"
+                  note=' (Status not set)'
+                fi
+              fi
+              echo "- $url$note" >> "$GITHUB_STEP_SUMMARY"
             else
               echo "::error::could not add $url"
               echo "- FAILED: $url" >> "$GITHUB_STEP_SUMMARY"
