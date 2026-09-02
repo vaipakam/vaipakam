@@ -2076,6 +2076,20 @@ revision unimplementable:
        it feeds the transport epoch, whose consumption path is already
        specified — and then settles through the normal membership-filtered
        order.
+
+       **And the transport-funded portion is THREADED THROUGH the claim's
+       ledger accounting, or the chokepoint rejects what the third term
+       admitted.** `_deliverReward` is separately required to charge a
+       claim's fresh component against the delivered ledger — so a claim
+       fully funded by a transport batch (zero era/live headroom, 10 in a
+       matching batch) passes the three-term check and then fails the
+       chokepoint against zero, and one with partial ledger headroom is
+       charged TWICE for the transport-paid share. The settlement records
+       the split — `transportPaid / eraPaid / livePaid` — and each
+       downstream chokepoint (delivery, sweep, absorption accounting) sees
+       only ITS residual component: the transport-paid share reaches no
+       delivered-ledger or bucket check, because the aggregate it drew
+       from was never published into either ledger.
      - A generic pending-to-live drain (or repatriation) of a parked batch
        remainder is a **deliberate operator disposition carrying a recorded
        acknowledgment, keyed by the batch**: obligations arriving for any of
