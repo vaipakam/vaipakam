@@ -177,8 +177,15 @@ managing their own aggregate bond.
 
 Neither is a detail to settle in implementation, because they are different
 products. **Either an explicit consented-gift model** — the deposit is
-irrevocably the operator's on arrival, stated as such at the call site, and the
-payer has no claim — **or tracked depositor shares**, with withdrawal
+irrevocably the operator's on arrival, stated as such at the call site, the
+payer has no claim, **and the OPERATOR authorises each one**. Consent is not
+optional garnish: a permissionless on-behalf selector lets a hostile payer drip
+tiny deposits between an operator's delayed actions, creating a distinct
+exposure epoch each time until the **bounded tranche set is full** — after which
+the operator's own legitimate raises are refused until those horizons expire.
+A griefing vector costing the attacker dust. The alternative, if a permissionless
+variant is wanted, is to keep unsolicited funds **outside** the operator's
+tranche, exposure and capacity state entirely until they accept them — **or tracked depositor shares**, with withdrawal
 authorization and the refund recipient both bound to those shares. Until one is
 chosen, the on-behalf variant does not ship; screening a selector whose
 ownership semantics are undefined only makes it *safely* ambiguous.
@@ -228,6 +235,19 @@ withdrawal. So, before bonds ship, **either**:
 
   So: **old epochs have ZERO capacity after rotation**, full stop, unless an
   explicit conversion **actually replaces the collateral** with the new asset.
+
+  ⚠️ **Zeroing the old epoch does not make the CURVE valid for the new token.**
+  `bondAt4x` is a raw-unit threshold and — under (C) — so is the flat arming
+  fee, so carrying either across a rotation into a token with different decimals
+  or value is a silent mis-scaling: a threshold configured for 6 decimals grants
+  **4× capacity for a negligible deposit** in an 18-decimal replacement, and the
+  opposite rotation makes bonded capacity effectively unreachable.
+
+  So rotation **atomically installs token-epoch-specific capacity and fee
+  parameters before any new-token deposit or spend is enabled** — the parameters
+  are per token epoch, like the capacity itself. **A differing-decimals rotation
+  is an acceptance case**, because same-decimals testing cannot distinguish a
+  correct implementation from one that simply carried the numbers over.
   An earlier revision offered "snapshot the capacity curve per token epoch" as
   an equal option — it is not one: distinguishing epochs records *which* rate
   applied without revoking the entitlement, so a compromised token's elevated
@@ -814,7 +834,21 @@ cap by the same single write, with no scan: reservations naming an invalidated
 epoch stop counting against the cap and stop blocking admission **immediately,
 without being touched**. A bounded active-epoch set is what makes the sum
 affordable; without it, "O(1) invalidation" only moves the unbounded work into
-the admission path. **The invalidation emits its OWN event**, carrying the invalidated epoch — not
+the admission path.
+
+**And the bound needs an exhaustion rule.** Long evidence horizons overlapping
+enough routine retunes let an operator hold reservations in every slot, and the
+three obvious responses are each wrong: growing the set makes the "bounded" scan
+unbounded, evicting a still-valid epoch **grants an amnesty on its liability**,
+and refusing outright locks the operator out after a legitimate governance or
+security retune they did not cause.
+
+So: **backpressure, never eviction.** When an operator's active-epoch slots are
+full, their new predicate-governed actions are refused — their ordinary capacity
+is untouched — until a horizon expires and frees a slot. That preserves all old
+liability, keeps the scan bounded, and puts the cost on the party whose
+outstanding exposure caused it. **Cap exhaustion is an acceptance case**, since
+this is reached by ordinary operation rather than by attack. **The invalidation emits its OWN event**, carrying the invalidated epoch — not
 only the later per-reservation ones. On-chain capacity is restored immediately,
 so if cleanup is delayed or never called an indexer with only per-reservation
 events keeps reporting the operator as fully reserved and cannot satisfy the
@@ -828,16 +862,27 @@ arriving after the incident rather than during it. An operator whose capacity is
 restored need not wait for cleanup; cleanup is bookkeeping, not the remedy.
 
 "Immediate" is not a property of naming it so. Ordinary configuration sits behind
-the timelocked `ADMIN_ROLE`; if epoch invalidation is built as just another
+the timelocked `ADMIN_ROLE`; if the **quarantine** is built as just another
 predicate setter, **the attacker gets the whole governance delay** to keep
 submitting forged proofs and confiscating reservations — which is precisely the
-window the emergency path exists to close. The repository already separates these:
+window the emergency path exists to close. (An earlier revision said this of
+*invalidation*, which implies invalidation belongs on the fast key. It does
+not: quarantine alone closes the window, because it stops the forged proofs —
+and invalidation is the half that releases, so putting it on a fast key is the
+amnesty described below.) The repository already separates these:
 `PAUSER_ROLE` is the fast-key multisig for incident levers, `ADMIN_ROLE` the
 timelocked one (`AdminFacet.sol:873-880`).
 
 So this authority is **narrowly scoped to QUARANTINE** — in one atomic call it
-disables proof submission against the suspect verifier, **preserving every
-reservation and its horizon**, and **nothing else**. It does NOT invalidate the
+disables proof submission against the suspect verifier **AND stops new
+predicate-governed admissions under that epoch**, while **preserving every
+reservation and horizon accepted before the quarantine**.
+
+Blocking only proof submission is not enough: operators could keep consuming
+bonded capacity under a verifier known to be broken, **knowing governance will
+release those reservations if it invalidates** — and honest traffic alone could
+fill the concurrency cap for the whole timelock. Admissions stop; existing
+liability is untouched. It does NOT invalidate the
 epoch, does not release capacity, and does not touch the reservation records.
 
 **Invalidation is governance's**, per the split above: an off-timelock key that
@@ -1759,7 +1804,13 @@ that everything else is throughput and these are custody:**
   fourth tracked balance class alongside user LIF custody, unclaimed budgets
   and the recycle bucket, and the Diamond-balance invariant must cover it
   (#892 / L13). It is necessary and it was never sufficient.
-- **(B) / attested tier only** — Slash → recycle: the debit credits
+- **(B) / attested tier only** — Slash → recycle **through the per-token or
+  escrow settlement path**, never the live single-token
+  `LibVpfiRecycle.credit`: rotation CARRIES old-token reservations, so a
+  post-rotation resolution would otherwise check and credit the **replacement**
+  token rather than the confiscated old asset — reverting, or corrupting recycle
+  accounting. `ServiceBondSlash` remains the source classification; only the
+  transport changes. The debit credits
   `LibVpfiRecycle.credit(RecycleSource.ServiceBondSlash, …)` through the
   chokepoint, with the event carrying that source and not a new generic one.
   Under (A) there is no production call that can satisfy this, so it is
