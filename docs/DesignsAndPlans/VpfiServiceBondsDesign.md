@@ -731,6 +731,24 @@ offence — **and the base depends on when the offence is recorded:**
   interleaving-independence — the delayed reservations settle to the same
   figures whatever order the synchronous offences land in.
 
+  **This makes `maxConcurrentReservedBps` an ADMISSION gate, not a continuous
+  invariant — deliberately.** A synchronous debit shrinks the balance the cap
+  is a ratio of (100 held, 50 reserved under a 50% cap; a 25% debit of the
+  unreserved 50 leaves 87.5 held with 50 still reserved — now above the
+  ratio), and the two candidate repairs are both worse than the breach:
+  clamping the debit so standing reservations stay within the cap turns heavy
+  reservation into an OFFENCE SHIELD — reserve to the cap, then misbehave
+  synchronously with impunity, the shielding attack by another door — and
+  releasing reservations to restore the ratio is the amnesty this section
+  spends its length forbidding. So the cap binds when a reservation is
+  CREATED, against the then-current balance, and never retroactively:
+  standing reservations above the ratio after a debit are preserved
+  liability that blocks NEW delayed admissions until proofs resolve.
+  Solvency is not the cap's job — it comes from reservations being
+  inviolable in absolute terms (the debit could not touch the reserved 50);
+  the cap is a throughput throttle on new exposure, and a throttled operator
+  post-offence is the correct outcome.
+
   An earlier revision labelled this "v1's in-call dispatcher". **v1 has no
   dispatcher and no offences** — both selectable forks are non-confiscatable —
   so a reader taking that label at face value builds the principal-slashing path
@@ -1635,9 +1653,20 @@ full non-refundable fee for something other than what they reviewed. Same
 substitution the perk channel binds against, and for the same reason — a
 non-refundable spend must settle on the terms its payer saw.
 
-So the call carries a **minimum post-arming capacity AND the expected
-COLLATERAL-TOKEN EPOCH — both mandatory, and the token binding is not the
-optional config-epoch branch**. Minimum capacity alone survives a token
+So the call carries a **minimum post-arming capacity, the expected
+COLLATERAL-TOKEN EPOCH, and the expected ACTION-COST CONFIG EPOCH for the
+role — all three mandatory; none of this is the optional config-epoch
+branch**. Two of the three bind what the deposit IS; the third binds what it
+BUYS: a governance retune of the role's per-action cost or limiter landing
+while the transaction is pending leaves both the token epoch and the raw
+capacity figure matching — this document itself records that identical
+capacity parameters yield materially different throughput when cost units
+change — so without the third binding the payer still pays the
+non-refundable fee for fewer executable operations than they reviewed.
+Equivalently stated as the entitlement it protects: the call binds a
+**minimum executable throughput** — at least the reviewed number of
+minimum-cost actions of the role, under the cost schedule in force when it
+executes — and reverts if any of the three bindings fails. Minimum capacity alone survives a token
 rotation that lands while the arming transaction is pending: with both assets
 approved, the selector pulls the REPLACEMENT token and charges the
 non-refundable fee against it, and identical raw amounts or capacity can
