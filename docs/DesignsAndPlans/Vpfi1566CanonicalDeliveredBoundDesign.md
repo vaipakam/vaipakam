@@ -2092,6 +2092,21 @@ revision unimplementable:
      whose funding arrived late draws `transportEpoch(target) → eraBalance →
      liveHeadroom` in that order, debiting the packet-backed balance first.
 
+     **A classification exit that lands AFTER the addressed era finalized
+     routes to the RETIRED era's carried machinery — never to a
+     resurrection, never to the live ledger.** The transport epoch
+     deliberately does not block its era's terminalization, so a late
+     packet can still be classifiable when the era's terminal proof has
+     run and its surplus is released — and the universal ingress-era
+     rule then points at a finalized balance (crediting it resurrects an
+     era after its terminal proof) while the live ledger is forbidden by
+     the same era binding. The destination is the one built for exactly
+     this: classification after the addressed era's terminal follows the
+     LATE-CREDIT path — the retired era's carried balance where one
+     still exists, else the pending recovery position under the batch's
+     key — and never re-opens a terminalized era's counters or touches
+     an era it was not addressed to.
+
      **The transport balance is UNTYPED, and consuming it writes NEITHER
      the fresh nor the recycled ledger.** The wire authenticates only the
      aggregate, so exposing a mixed packet's whole balance to a targeted
@@ -2138,8 +2153,18 @@ revision unimplementable:
      the batches it draws from plus the ones it retires; a **hard
      per-call scan cap with resumable cursor advance** backstops the
      bound — a call that hits the cap advances the cursor and returns
-     retryable rather than reverting — bounded and resumable, twice
-     over. So
+     retryable rather than reverting. **And a capped call that has
+     already DRAWN stages its draws obligation-bound rather than
+     dropping or orphaning them**: draws persisted loose remove packet
+     backing with no completed settlement, draws reverted leave the next
+     retry facing the same live batches with no progress — so partial
+     draws land in a per-obligation staging allocation (debited from the
+     batches, credited to no one), each retry adds to it, and the final
+     call settles the staged total atomically with the obligation.
+     Staged allocations are release-on-cancel (back to their batches, by
+     the same records), so a dead obligation cannot strand what it
+     staged. Bounded, resumable, and nothing half-paid — three
+     properties, one mechanism. So
      conservation holds per packet — listed days can
      contend for an aggregate, because an aggregate is what the wire
      delivered, but no day outside the list can touch it and no token is
@@ -2434,8 +2459,15 @@ revision unimplementable:
    kind-8/9 route, which accepts certified lanes only. The universe is
    the messenger's own configured-lane registry — every lane that was
    EVER configured for this channel, current and historical, an on-chain
-   enumerable set — and the gate requires from every member either a
-   finalized manifest or an **explicit empty attestation** ("nothing
+   enumerable set — **VERSIONED, with the ceremony pinned to one
+   version**: lane mutations are frozen for the ceremony's duration (or,
+   equivalently, any registry change bumps the version and voids every
+   attestation gathered under the old one), because a lane configured
+   after the snapshot but before the role change can charge an
+   authorization the snapshot never covered while the gate happily
+   accepts the old set's attestations. The gate requires from every
+   member of the PINNED version either
+   a finalized manifest or an **explicit empty attestation** ("nothing
    charged, as of watermark W"). Role changes gate on all of that
    received and reconciled, not on the operator's word that it would
    have matched. Any key that
@@ -3336,8 +3368,15 @@ corrected entry for that immutable delivery is refused forever. The rule that
 tolerates rounding dust would then also tolerate stranding an entire packet.
 
 **And the marker's bound is COMBINED across every way a packet's value
-can leave — `transportConsumed + alreadyFresh + alreadyRecycled ≤
-oldWireAmount` — maintained atomically on each transition.** The
+can leave — `transportConsumed + alreadyFresh + alreadyRecycled +
+repatriatedOrDisposed ≤ oldWireAmount` — maintained atomically on each
+transition, REPATRIATION INCLUDED.** A packet parked to pending and then
+repatriated leaves through a fourth door: no transport draw, no
+classification, all counters zero — and once another delivery replenishes
+the global `uncounted` aggregate, the departed packet's hash could still
+classify its full amount against the newcomer's custody. Executing a
+repatriation (or any disposal) of packet-attributed value therefore
+exhausts that packet's classifiable remainder in the same act.** The
 transport path and the classification path are two doors out of one
 packet: pay a targeted claim 10 through the batch and the classification
 counters still read zero, so a later full classification — once another
