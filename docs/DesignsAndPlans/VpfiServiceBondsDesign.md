@@ -218,6 +218,20 @@ withdrawal. So, before bonds ship, **either**:
   drain the rotation wants anyway; sub-balances only earn their complexity if
   bonds must stay continuously posted across a rotation.
 
+  ⚠️ **A retained old-token balance must NOT keep buying capacity.** The
+  capacity rule derives `rate(bond)` and the 4× ceiling from an undifferentiated
+  nominal amount, so a preserved old-token balance would go on granting elevated
+  throughput as though it were the new asset — even when the rotation happened
+  **because that asset was compromised and is now worthless**, and even when the
+  replacement has different decimals. Two implementations could reasonably
+  either count it or ignore it, which is its own defect.
+
+  So one of: **snapshot the capacity curve per token epoch**, **revoke
+  old-token capacity at rotation** (simplest — the balance stays withdrawable,
+  it just stops buying throughput), or **define an explicit conversion** before
+  a residual balance may keep buying it. Preserving the principal is a custody
+  obligation; preserving its capacity is not.
+
   ⚠️ **But drain-to-zero is NOT a complete branch, because draining is
   VOLUNTARY.** An operator who is offline, has lost their key, or simply
   declines to withdraw blocks the rotation indefinitely — no sanctions
@@ -296,7 +310,7 @@ decodes is the same gap one step later.
 
 | Role | What the bond unlocks | Slash conditions (objective) |
 | --- | --- | --- |
-| Solver / matcher | larger match-batch sizes ONLY. **Priority-window access is NOT a bond entitlement** — it is E-2's spend-gated perk with its own flat VPFI fee, and bonds neither gate it nor grant it. An earlier revision listed it here, which would let an implementation either require a bond ON TOP of the E-2 purchase or hand priority out for bonding alone; both change the perk's gate and its permanent absorption. Bond buys capacity; spend buys priority; the two never substitute | precondition lies recorded via the offence dispatcher below **ATTESTED TIER ONLY — v1 has no matcher slash predicate at all** (see the offence-recording bullet and the fork). The surviving in-call contradictions should REVERT rather than record an offence, so an implementation must not build a v1 slash path from this row; **immediate** debit of a fixed bps of the OFFENDING ROLE's bond, per recorded offence — the threshold is one; see the decisions below |
+| Solver / matcher | larger match-batch sizes ONLY. **Priority-window access is NOT a bond entitlement** — it is E-2's spend-gated perk with its own flat VPFI fee, and bonds neither gate it nor grant it. An earlier revision listed it here, which would let an implementation either require a bond ON TOP of the E-2 purchase or hand priority out for bonding alone; both change the perk's gate and its permanent absorption. Bond buys capacity; spend buys priority; the two never substitute | ⚠️ **NO slash predicate in any shipped tier.** Precondition lies are knowledge-based, and §2 establishes that neither attested branch recovers a slash for those — so routing them through the offence dispatcher would confiscate an honest matcher's principal after intervening state changes, the defect that removed the predicate in the first place. Any future slashing here waits on a separately specified **knowledge-free** predicate (equivocation). **v1 has no matcher slash predicate at all** (see the offence-recording bullet and the fork). The surviving in-call contradictions should REVERT rather than record an offence, so an implementation must not build a v1 slash path from this row; **immediate** debit of a fixed bps of the OFFENDING ROLE's bond, per recorded offence — the threshold is one; see the decisions below |
 | Keeper (opt-in roles) | higher per-pass action counts for granted `KEEPER_ACTION_*` roles. **A liveness commitment must be suspended, cancelled or extended — without an offence — whenever the protocol itself blocks performance**: a guardian pause, a role kill switch or a selector-level switch makes the required call revert while the commitment's clock keeps running, so every enrolled operator with a live window misses it and is slashed *for the protocol's own incident*. That is objectively detectable (the switch state is on-chain), so it belongs in the predicate rather than in an operator's appeal. A pause spanning a deadline is the acceptance case, and missing-liveness must not be admitted as a slash predicate until it passes | ~~repeated out-of-grant-scope attempts~~ — **LEAVES v1 for the same reason staleness did**: `setKeeperActions` / `revokeKeeper` can remove a grant after a keeper broadcasts an authorized call but before it executes, so an honest pending action is out-of-scope at execution, and worse with several queued. Grant state is not carried by the submission. **Does NOT return with the attested tier either** — §2 establishes that grant scope has no slashable form in either attested branch, so an implementation following an earlier "returns with the attested tier" note would slash an honest keeper whose grant was revoked after broadcast. Any future slashing here waits on a separately specified knowledge-free predicate (liveness or equivocation), not on the tier arriving |
 
 - ~~**Offence recording (Codex round-1 finding):**~~ **REJECTED FOR v1 — retained
@@ -440,8 +454,12 @@ decodes is the same gap one step later.
   reintroducing both a threshold and the implicit minimum the continuous
   curve exists to remove.
 - **Unbond delay** — NOT in v1 (rev 4). It exists to stop a slash-and-run
-  inside a misbehaviour window, and v1 has no such window: every offence is
-  debited in the same call that records it. The delay, and the privilege
+  inside a misbehaviour window, and v1 has no such window **because it has no
+  delayed evidence at all** — both selectable forks are non-confiscatable, so
+  there is nothing to record and nothing to debit. An earlier revision said
+  "every offence is debited in the same call that records it", which explains
+  v1's shape by attributing a debiting mechanism to it; same-call debiting
+  belongs to a future predicate-enabled tier. The delay, and the privilege
   revocation and `unlockAt` snapshot that make it sound, arrive with **the first
   predicate whose proof can land after the action** — whichever that turns out to
   be. Not with the liveness tier specifically: equivocation is now the only
@@ -708,9 +726,12 @@ identified the hole. Rule 2's "disabling does not cancel prior liability" is
 right for a routine retune and exactly wrong here.
 
 So: an **emergency epoch invalidation** that blocks the old verifier
-immediately AND makes the reservations that depended on it non-blocking —
-**held by an off-timelock authority, not by the ordinary predicate-config
-setter.**
+immediately AND, in the SAME atomic call, does **only** an O(1) epoch-state
+transition that makes the dependent reservations logically non-blocking — never
+an iteration over them — **held by an off-timelock authority, not by the
+ordinary predicate-config setter.** Reservation RECORDS are reclaimed
+afterwards by the bounded lazy cleanup below; nothing unbounded may sit inside
+the incident call.
 
 To be exact about what "atomically" covers, since an earlier revision said the
 authority atomically *releases the reservations*: it **atomically invalidates the
@@ -750,9 +771,14 @@ window the emergency path exists to close. The repository already separates thes
 `PAUSER_ROLE` is the fast-key multisig for incident levers, `ADMIN_ROLE` the
 timelocked one (`AdminFacet.sol:873-880`).
 
-So this authority is **narrowly scoped** — it may disable an affected verifier
-and release its reservations, atomically, and nothing else — with governance
-handling recovery afterwards on the normal path. Narrow scope is what makes an
+So this authority is **narrowly scoped** — in one atomic call it may disable an
+affected verifier and perform the **O(1) epoch invalidation** that logically
+frees the capacity its reservations held, and **nothing else**. It does NOT
+iterate or release the reservation records; that is the bounded lazy cleanup
+above. An earlier revision said it "release[s] its reservations, atomically",
+which puts an unbounded iteration back inside the incident call — the failure
+this passage exists to prevent. Governance handles recovery afterwards on the
+normal path. Narrow scope is what makes an
 off-timelock key acceptable. Those
 liabilities are unprovable by any trustworthy means once the only verifier for
 them is known-broken, so releasing them is the honest outcome rather than a
@@ -1554,6 +1580,14 @@ that everything else is throughput and these are custody:**
 - Bond / unbond lifecycle, including that v1 withdrawal is IMMEDIATE and that
   the withdrawal clamps accrued credit in the same step. A test that
   withdraws and then spends is the one that catches the bypass.
+- **An OLD-TOKEN slash settles through the per-token path, never the live
+  `LibVpfiRecycle.credit`.** Rotation now CARRIES old-token reservations, so a
+  delayed proof can resolve against one after the rotation — and the live credit
+  checks the balance of the new `s.vpfiToken` against one scalar bucket, so it
+  reverts for want of new-token backing or credits unrelated new tokens as
+  recycled. The criterion therefore exercises whichever mechanism §Mechanics
+  selects — per-token recycle accounting or escrow settlement — with its own
+  accounting event, and asserts the confiscated OLD asset is what moves.
 - **SANCTIONS, on every value-moving bond selector.** VPFI deposits and
   withdrawals are Tier-1 BLOCK in the repository's sanctions matrix, and the
   gate is per SELECTOR — each entry point screens the value's owner or
@@ -1574,7 +1608,14 @@ that everything else is throughput and these are custody:**
   **`assertNotSanctionedFailClosed` on the release path for confirmed-flagged
   balances**, plus a focused test: operator confirmed flagged, oracle then unset
   or reverting, `unbond` MUST refuse — **reverting when the flag is already
-  persisted, PARKING when this call is the first authoritative observation.** And a companion asserting an operator never
+  persisted, PARKING when this call is the first authoritative observation.**
+
+  **So `unbond` does NOT call `_assertNotSanctioned` on the first-flag path.**
+  That helper is a `view` that reverts, so any flag write or parked-withdrawal
+  transition in the same transaction rolls back with it — restoring the
+  later-outage escape this rule exists to close. The first flagged `unbond`
+  reads the **non-reverting tri-state** and commits the parked state; the
+  reverting helper is used only on paths that need to persist nothing. And a companion asserting an operator never
   confirmed flagged still withdraws during the same outage — otherwise an
   implementation could pass by freezing everyone.
 
