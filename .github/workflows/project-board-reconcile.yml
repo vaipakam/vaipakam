@@ -52,31 +52,44 @@ jobs:
       PROJECT_OWNER: vaipakam
       PROJECT_NUMBER: '1'
       ISSUE_REPO: ${{ github.repository }}
-      # Generous enough for the whole history with room to grow. Both
-      # listings below ABORT rather than proceed if they come back at
-      # this limit — see the truncation guards.
+      # Board listing only — the issue listing paginates and needs no
+      # limit. Generous enough for the whole history with room to grow,
+      # and the step ABORTS rather than proceed on a short read.
       LIST_LIMIT: '4000'
     steps:
       - name: List open issues
         run: |
           set -euo pipefail
-          gh issue list --repo "$ISSUE_REPO" --state open \
-            --limit "$LIST_LIMIT" --json number,url > open-issues.json
-          count=$(jq 'length' open-issues.json)
-          echo "open issues: $count"
-          # TRUNCATION IS THE DANGEROUS DIRECTION HERE. A short listing
-          # would make un-boarded issues invisible and the sweep would
-          # report success having skipped them. `gh issue list` has no
-          # total to compare against, so a result exactly at the limit is
-          # treated as truncated.
-          if [ "$count" -ge "$LIST_LIMIT" ]; then
-            echo "::error::open-issue listing hit LIST_LIMIT ($LIST_LIMIT) — raise it; a truncated listing would silently skip issues"
-            exit 1
-          fi
+          # REST, NOT `gh issue list`. The first real run of this workflow
+          # died here with the very error it was written to survive —
+          # "API rate limit already exceeded" — because `gh issue list` is
+          # GraphQL and so drew on the same drained bucket as the add it
+          # is meant to repair. REST has its own separate budget, so the
+          # step that decides WHAT is missing no longer competes with the
+          # step that fixes it.
+          #
+          # `--paginate` follows every page, so there is no limit to hit
+          # and no truncation guard to get wrong. REST's issues endpoint
+          # returns pull requests as well — they carry a `pull_request`
+          # key, and a PR left in this list would be "missing from the
+          # board" forever, re-added on every sweep.
+          gh api --paginate \
+            "repos/$ISSUE_REPO/issues?state=open&per_page=100" \
+            --jq '.[] | select(has("pull_request") | not) | .html_url' \
+            | sort -u > open-urls.txt
+          echo "open issues: $(wc -l < open-urls.txt | tr -d ' ')"
 
       - name: List board items
         run: |
           set -euo pipefail
+          # Projects v2 has no REST surface, so this step and the adds
+          # below are unavoidably GraphQL. Report the budget first: when
+          # this job fails, the log should say whether it ran out of
+          # points or hit something else. `rate_limit` is REST and is not
+          # itself metered.
+          remaining=$(gh api rate_limit --jq '.resources.graphql.remaining')
+          echo "GraphQL points remaining: $remaining"
+
           gh project item-list "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" \
             --format json --limit "$LIST_LIMIT" > board.json
           items=$(jq '.items | length' board.json)
@@ -99,7 +112,6 @@ jobs:
           # with #42 of another repo feeding the same board.
           jq -r '.items[] | select(.content.type == "Issue") | .content.url' board.json \
             | sort -u > board-urls.txt
-          jq -r '.[].url' open-issues.json | sort -u > open-urls.txt
           comm -23 open-urls.txt board-urls.txt > missing.txt
 
           missing=$(wc -l < missing.txt | tr -d ' ')
