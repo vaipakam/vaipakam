@@ -1497,8 +1497,14 @@ against RETUNES at the request (or a retune moves a pending withdrawal in
 both directions) — **but "pinned" is the schema's cache rule, not a scalar
 snapshot**: release still computes at claim time as the max over the
 withdrawal's outstanding actions' horizons, each under ITS verifier's
-pausable clock, with the retune-pin meaning a governance retune cannot
-SHORTEN any of those horizons after the request. An earlier phrasing said
+pausable clock, with the retune-pin meaning a governance retune moves NONE of those
+horizons after the request — in EITHER direction. "Cannot shorten" was
+one round's wording and it permits the other half: a lengthened evidence
+horizon re-locking already-requested principal under terms adopted after
+the action, against both the earlier both-directions rule and the
+immutable action-time config epoch. The horizon PARAMETERS freeze at the
+request; only the verifier's pausable clock advancing changes when that
+fixed horizon completes. An earlier phrasing said
 "`unlockAt` is snapshot at the request", which a verifier quarantine
 falsifies in both directions — the frozen scalar releases collateral a
 paused verifier's still-valid proof should hold, and extending it globally
