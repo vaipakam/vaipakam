@@ -425,6 +425,17 @@ Every OTHER event carries the operator, the role, the delta, the
 balance rather than delta alone, because a consumer that missed one event can
 otherwise never resynchronise against a mapping it cannot enumerate.
 
+**Epoch-creation and configuration events are the third exemption, with
+their own schema.** The verifier-wide quarantine relies on consumers
+learning the verifier-to-epoch relationship from the epoch-creation event —
+but a global configuration act has no truthful operator, role, delta,
+post-balance or withdrawal state to carry, so the blanket rule either forces
+fabricated values or makes the discovery event nonconforming. Their schema
+is configuration-shaped: the **config/predicate epoch id, the verifier
+identity, the predicate, the parameter/cost-schedule hash, and the block** —
+everything a consumer needs to bind epochs to verifiers (and later to read
+a verifier-keyed quarantine as covering them), nothing invented.
+
 **`OffenceRecorded` is the second explicit exemption, and its companion
 carries the money.** The offence record is the ADJUDICATION fact — operator,
 role, kind, refId — and at recording time under a delayed predicate there may
@@ -715,8 +726,19 @@ recycle bucket from the `(role, address)` bond whose entry point recorded the
 offence — **and the base depends on when the offence is recorded:**
 
 - **Synchronous recording (a future predicate-enabled tier, NOT v1):** the
-  current **UNRESERVED** balance — the same tri-state-filtered figure the
-  delayed-admission check reads, never the raw total. The observation and the
+  FIGURE is `slashBps` of the current **TOTAL** balance; the immediate DEBIT
+  clamps to the unreserved portion; and any shortfall is recorded as a
+  **deferred liability collected at reservation release** — the released
+  amount pays outstanding sync liabilities (oldest first) before returning
+  to the operator's unreserved backing. Three parts because two simpler
+  rules each failed: the raw-total debit consumes reserved collateral
+  (below), and a plain unreserved-base figure lets clean reservations
+  DISCOUNT the offence — fill the cap with clean delayed actions and a 25%
+  offence costs 12.5, repeat until unreserved is exhausted and further
+  offences cost ZERO while the clean reservations later release untouched —
+  the offence shield again, built this time out of good behaviour. The
+  penalty is sized on what the operator holds; only its COLLECTION waits on
+  what is currently free. The observation and the
   debit are the same call, so current and action-time are the same figure and
   there is nothing to apportion — but "current balance" unqualified survived
   here for a round after reservations were made immutable, and if both modes
@@ -780,14 +802,23 @@ role, offence kind, the action, and the commitment; marked consumed **before**
 the debit, not after; with duplicate submission and cross-role replay both
 tested.
 
-**For a MULTI-ARTIFACT offence the identity must be order-independent**, which a
-naive recipe is not. Equivocation is two conflicting signed statements, so
-hashing `(A, B)` and `(B, A)` yields two ids for one offence and the same
-equivocation debits twice — and any variation in proof encoding or signature
-packaging does the same. The id is therefore computed over the
-**canonically SORTED digests of the statements themselves**, independent of the
-proof's encoding, so the offence has one identity no matter how it is submitted.
-**Reversed-order submission is an acceptance case.** v1 does not need this at
+**For a MULTI-ARTIFACT offence the identity is the SLOT, not the pair.**
+A naive recipe double-debits twice over: hashing `(A, B)` and `(B, A)`
+yields two ids for one offence — and sorting the pair fixes only that,
+because with three conflicting statements the sorted pairs `(A,B)`, `(A,C)`,
+`(B,C)` are still three distinct ids, and four statements yield SIX
+debit-capable proofs for what the reservations provisioned as at most a
+handful of actions. One round of this document had the sorted-pair rule and
+called it order-independent, which it is — it just is not
+COUNT-independent. The offence id is therefore the **equivocation DOMAIN
+SLOT** — the duty instance the conflicting statements attach to (round,
+height, request id — whatever the predicate defines as the thing one may
+sign only once) — and **each slot is consumed AT MOST ONCE**: the first
+accepted proof debits it, and every further pair from the same slot is the
+same offence resubmitted, reverting as a duplicate regardless of which
+statements it packages. Signing ten conflicting statements in one slot is
+one equivocation, not forty-five. **Reversed-order submission and
+third-statement resubmission are both acceptance cases.** v1 does not need this at
 all: it has no offences to identify, since both selectable forks are
 non-confiscatable. An earlier revision said "v1's immediate in-call recording",
 which attributes a recording mechanism to a version that must not have one. For
@@ -1191,10 +1222,18 @@ whole rule:
     because every action in a burst was secured by the same capital.
 
     So concurrency gets its own bound rather than being squeezed into the
-    geometric one: **total outstanding reserved liability may never exceed
-    `maxConcurrentReservedBps` of the bond** (a governance parameter, bounded
-    well below 10 000 — 5 000 is the natural starting value). At 10% per action
-    that admits five concurrent pending actions and refuses the sixth. The bond
+    geometric one: **no NEW action is admitted whose reservation would take
+    total outstanding reserved liability above `maxConcurrentReservedBps` of
+    the then-current bond** (a governance parameter, bounded well below
+    10 000 — 5 000 is the natural starting value). At 10% per action that
+    admits five concurrent pending actions and refuses the sixth. An earlier
+    phrasing said the total "may never exceed" the ratio — a continuous
+    invariant that a permitted synchronous debit falsifies by shrinking the
+    denominator, leaving an implementation the choice between the
+    offence-shield clamp and the amnesty release, both rejected where the
+    admission-gate rule is stated. Admission-time, here too: standing
+    liability above the ratio is preserved and blocks new admissions until
+    proofs resolve. The bond
     cannot be zeroed by a burst, geometry is preserved across time, totals stay
     order-independent, and the admission check can still exhaust — all three
     properties at once, which no single rule delivered.
