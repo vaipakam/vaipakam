@@ -2665,7 +2665,14 @@ revision unimplementable:
    draw stays charged forever, the disposition unreachable. The
    promotion ceremony therefore also installs a **kind-8/9 sibling of
    the legacy-quarantine route** — able to do exactly TWO
-   things — persist the triple key and set it `TOMBSTONED` — and **this
+   things — persist the triple key and set it `TOMBSTONED` —
+   **IDEMPOTENT over terminals: a key already `EXECUTED` or already
+   `TOMBSTONED` is a NO-OP, exactly as the live state machine treats it
+   (`RepatriationFacet.sol:748-750`)** — a duplicate delivery of an
+   instruction that executed just before promotion, its return still in
+   flight, would otherwise overwrite `EXECUTED`, race the attestation to
+   Base, release the pending authorization, and fail the already-sent
+   return permanently. And **this
    tombstone-only leg accepts any TRANSPORT-AUTHENTIC packet, certified
    lane or not**: lane certification gates APPLICATION (anything that
    touches funding or state), but the straggler clause exists precisely
@@ -2695,7 +2702,17 @@ revision unimplementable:
    operator-asserted slot this design refuses everywhere else; (b) the
    promotion gate requires every
    CERTIFIED instruction resolved — executed or cancel-acked — while the
-   chain can still speak as a mirror; and (c) a key surfacing after
+   chain can still speak as a mirror, and **"observed drained" counts as
+   resolved only behind an AUTHENTICATED SOURCE-SIDE SEND FREEZE with a
+   sequence watermark**: a source can authorize a send after the
+   destination's final readback and before the role-change transaction,
+   and out-of-order delivery lands it after the retired era finalized —
+   a drain-first implementation holding no quarantine state for it then
+   strands the packet or reopens finalized accounting. The source
+   attests "no further sends past sequence W", the destination verifies
+   its last received ≥ W, and only then is the lane drained; a lane
+   whose source cannot attest the freeze takes the mandatory quarantine
+   path instead; and (c) a key surfacing after
    promotion is tombstoned locally and its Base-side draw released **only
    on an AUTHENTICATED TOMBSTONE ATTESTATION** — an earlier revision let
    the Base-side recorded-disposition operation release on its own,
