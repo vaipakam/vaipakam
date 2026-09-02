@@ -1432,8 +1432,17 @@ retired by accident:
   So the era needs a **provable all-obligations-terminal transition** — every
   retired-era claim and sweep either settled or expired, read back — after which
   the unused remainder moves to **live headroom** (it is delivered reward funding,
-  and the era that scoped it is finished) or to an explicit recovery/repatriation
-  position. Retiring the obligations without dispositioning the money is the same
+  and the era that scoped it is finished) — **but NOT while the chain is
+  `Detached`.** The matrix keeps a `Detached` live bound at zero, so crediting
+  there makes nothing usable, and the next effective role change carries that
+  live residual into yet another retired-era balance while the new era starts at
+  zero: the surplus **cycling through an obligation-free era** instead of funding
+  anything.
+
+  So while `Detached` the remainder goes to a **pending recovery position**,
+  credited to live headroom only once an active Canonical or Mirror era exists —
+  or it is repatriated. The rule: a terminal surplus is credited to a live era or
+  held, never to an era that cannot spend it. Retiring the obligations without dispositioning the money is the same
   half-measure as retiring the counter without moving the backing.
 
 Retiring a claim on money without deciding where the money goes is the shape this
