@@ -377,7 +377,13 @@ OffenceRecorded(operator, role, kind, refId)   // role, not just operator
 // consult, or an O(1) per-epoch counter joined by generation): a stored
 // scalar decremented only by lazy cleanup keeps refusing new admissions
 // after an invalidation that promised immediate capacity restoration,
-// and cleanup may never run — the ratio cap alone does not bound it: at a
+// and cleanup may never run. And the PHYSICAL set is bounded too, not
+// just the effective count: records live in PER-EPOCH sub-lists and
+// invalidation unlinks the epoch's list from the claim-time iterable in
+// O(1) — filtering invalidated records at read time while they stay in
+// one flat list lets fill-to-cap/invalidate cycles grow the traversal
+// without bound, and the claim-time maximum walks it back over the gas
+// limit with the effective count never exceeding its cap — the ratio cap alone does not bound it: at a
 // 50% cap and 1% rate an operator can raise ~2% and admit another action
 // indefinitely, every admission satisfying the ratio, until the
 // claim-time scan over thousands of records exceeds the gas limit and
@@ -2121,6 +2127,19 @@ value the fee bought. Armed principal is reached only when the excess is
 exhausted, capacity reduces accordingly, and the persisted
 eligible-balance figure is updated in the same act — re-arming withdrawn
 capacity later is a new grant and owes a new fee, per the rule above.
+
+**Every deferred-liability COLLECTION re-screens sanctions, and a flagged
+operator's liability converts to the frozen-encumbrance form instead of
+collecting.** The parked-adjudication rule covers a proof arriving after
+the flag; a liability adjudicated while the operator was CLEAN and still
+deferred behind reservations is the symmetric case — a later
+confirmation must not let a reservation release, an invalidation, or a
+permissionless cleanup collect it into recycling while the balance is
+frozen. On a flagged read, the collection converts the liability to the
+same adjudicated-frozen encumbrance (netted from every withdrawable
+figure, custody unmoved) and settlement waits for the delisting
+re-screen or the sanctions terminal, exactly as for the parked
+adjudication.
 
 **INVOLUNTARY debits are SIZED ON and CONFINED TO the action-time
 ELIGIBLE backing — the excess is not confiscatable at all.** A slash or
