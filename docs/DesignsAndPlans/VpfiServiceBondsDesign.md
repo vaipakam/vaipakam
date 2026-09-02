@@ -390,6 +390,17 @@ cannot reconstruct available backing, and an operator cannot tell when their
 capacity became usable again. Each carries the action and config epoch, the
 tranche allocation, and the **post-reserved total**.
 
+**Deferred synchronous liabilities get the same lifecycle treatment, for
+the same reason.** Creating a clamped-debit shortfall changes what the
+deposit is economically worth and what a future release will confiscate —
+while moving neither the balance nor the reserved total, the exact
+invisible-mutation shape the reservation events exist for. So:
+liability-created, liability-collected, and liability-extinguished events,
+each carrying the partition (collateral-token epoch), the recorded tranche
+reach, the amount, and the **post-outstanding liability total** — without
+which an indexer cannot reconstruct withdrawable backing and a release-time
+debit arrives unexplained by the mandated event stream.
+
 **Three EPOCH-LEVEL events are explicit EXCEPTIONS to the field list below:
 QUARANTINE, RESTORE and INVALIDATE.** An earlier revision excepted only
 invalidation — but quarantine and restoration also change proof eligibility and
@@ -767,28 +778,39 @@ offence — **and the base depends on when the offence is recorded:**
     proofs and collections), the remainder is **EXTINGUISHED, explicitly**
     — recorded as uncollectable, never carried forward — because the
     collateral that stood behind the promise is gone and every other rule
-    in this section refuses to let a debt outlive what secured it. Three parts because two simpler
-  rules each failed: the raw-total debit consumes reserved collateral
-  (below), and a plain unreserved-base figure lets clean reservations
-  DISCOUNT the offence — fill the cap with clean delayed actions and a 25%
-  offence costs 12.5, repeat until unreserved is exhausted and further
-  offences cost ZERO while the clean reservations later release untouched —
-  the offence shield again, built this time out of good behaviour. The
-  penalty is sized on what the operator holds; only its COLLECTION waits on
-  what is currently free. The observation and the
-  debit are the same call, so current and action-time are the same figure and
-  there is nothing to apportion — but "current balance" unqualified survived
-  here for a round after reservations were made immutable, and if both modes
-  are ever enabled for one role it lets a synchronous debit consume collateral
-  a delayed action has already reserved: reserve 50 of 100, land three
-  synchronous 25% debits, and the balance falls below the standing 50 — later
-  proofs clamp, reach the wrong tranche, and settle differently depending on
-  which offence class resolved first. **A reservation is inviolable by EVERY
-  consumer, not merely by other delayed actions**: the synchronous debit draws
-  from unreserved backing only, clamping there if it must, and the acceptance
-  test for any deployment enabling both modes on one role is
-  interleaving-independence — the delayed reservations settle to the same
-  figures whatever order the synchronous offences land in.
+    in this section refuses to let a debt outlive what secured it.
+
+    **And the liability QUEUE is bounded by the same argument that bounds
+    the tranches, or the geometric tail is a gas grenade.** At a permitted
+    1% rate over an 18-decimal balance, repeated offences against a fully
+    reserved partition can append thousands of tiny records, and an
+    oldest-first collection at release then exceeds the block gas limit —
+    blocking proof resolution and principal recovery behind an iteration
+    the offender manufactured. So: **liabilities with the SAME tranche
+    reach COALESCE** (amounts sum; reach is identical, so action-time
+    reach is preserved exactly), and since a NEW distinct reach exists
+    only when the bounded tranche set has changed between offences, the
+    number of distinct outstanding liabilities per partition is bounded by
+    the tranche bound itself — settlement iterates a list no longer than
+    the tranche list it already iterates, under the gas argument already
+    made there.
+
+  Why three parts (figure, clamp, deferral) rather than something simpler:
+  the two one-step rules each failed. A raw-total DEBIT consumes collateral
+  a delayed action has already reserved — reserve 50 of 100, land three
+  synchronous 25% debits, and the balance falls below the standing 50, so
+  later proofs clamp, reach the wrong tranche, and settle differently
+  depending on which offence class resolved first. **A reservation is
+  inviolable by EVERY consumer, not merely by other delayed actions.** And
+  a plain unreserved-base FIGURE lets clean reservations DISCOUNT the
+  offence — fill the cap with clean delayed actions and a 25% offence costs
+  12.5, repeat until unreserved is exhausted and further offences cost ZERO
+  while the clean reservations later release untouched — the offence shield
+  again, built this time out of good behaviour. The penalty is sized on
+  what the operator holds; only its COLLECTION waits on what is currently
+  free. The acceptance test for any deployment enabling both modes on one
+  role is interleaving-independence — the delayed reservations settle to
+  the same figures whatever order the synchronous offences land in.
 
   **This makes `maxConcurrentReservedBps` an ADMISSION gate, not a continuous
   invariant — deliberately.** A synchronous debit shrinks the balance the cap
@@ -1036,7 +1058,20 @@ rotation understates the old liability against the cap. Unreserved backing and
 the concurrency cap are kept per collateral-token epoch (or an explicit
 conversion precedes any summing). **And the reads FILTER on a TRI-STATE: admission counts partitions whose
 global predicate epoch is VALID or QUARANTINED, and excludes only
-INVALIDATED ones.** An earlier revision said "only VALID", which collides with
+INVALIDATED ones — NET, in every case, of the outstanding synchronous
+liabilities bound to the partition's tranches.** Invalidation releases a
+reservation in O(1) by flipping the epoch state, but a tranche-bound sync
+debt recorded against that backing is ALREADY ADJUDICATED — it does not
+evaporate with the epoch that happened to hold the reservation. Without
+the netting, the released backing reads as withdrawable the instant the
+filter flips, and the operator withdraws or re-reserves it before lazy
+cleanup collects — leaving collection to eat later liability or forgive
+the offence. So every read that exposes backing (withdrawable, unreserved,
+admission capacity) subtracts the outstanding tranche-bound liabilities,
+and any touch that would expose invalidation-released backing settles
+those liabilities against it FIRST — the debt rides the same lazy
+mechanism as the cleanup, and the release the operator sees is always the
+post-debt figure. An earlier revision said "only VALID", which collides with
 the quarantine's own rule that liability is preserved: filtering quarantined
 partitions out lets the operator **overcommit the same collateral through
 another live predicate** while the epoch is under review, and a later
