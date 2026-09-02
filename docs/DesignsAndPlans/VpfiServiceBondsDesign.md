@@ -379,12 +379,15 @@ ServiceCapacityDeposit { operator; role; token; rotationEpoch; amount;
 // sanctions section requires to persist. `amount` is principal and `state`
 // alone cannot distinguish park-10-of-100 from park-all; the delisting
 // release pays min(parkedRequest, payable), DECREMENTS `parkedRequest` by
-// what it paid — and a PERMANENT debit (a settled slash, a collected
-// liability) EXTINGUISHES the cap pro tanto in the same act: a remainder
-// retained past the principal that backed it is a phantom request that
-// either blocks the record's reclamation forever or reaches principal
-// posted after the request. Only amounts temporarily unavailable behind
-// live reservations stay parked.
+// what it paid — and a PERMANENT debit CLAMPS the cap to the post-debit payable
+// balance — `parkedRequest = min(parkedRequest, principal net of live
+// reservations)` — never a blind pro-tanto subtraction: a 10-unit debit
+// fully covered by the other 90 of a 100-unit deposit must not cancel a
+// valid 10-unit parked request (subtraction zeroed it; the clamp leaves
+// it payable). The cap shrinks exactly when the debit actually consumed
+// backing the request needed, a remainder never survives the principal
+// that backed it, and amounts temporarily behind live reservations stay
+// parked.
 OffenceRecorded(operator, role, kind, refId)   // role, not just operator
 // NAMING IS NORMATIVE for every PUBLIC identifier — struct, selectors,
 // events, errors, user-facing copy: capacity-deposit naming, never "bond".
@@ -571,7 +574,12 @@ liability in one act, so one event carries BOTH mutations**; without
 the reserved figure, an indexer following the reservation-lifecycle
 mandate counts the consumed reservation and its replacement liability
 at once), then `CapacityDepositDebited` at settlement, which carries
-the full mandatory field set and joins to its offence by `refId`. Three
+the full mandatory field set and joins by **AGGREGATE id** — the
+adjudication/liability-created event carries both the offence `refId`
+and the aggregate id it coalesced into, so a settlement of coalesced
+liabilities names the aggregate alone (a singular offence `refId` there
+would force an arbitrary constituent or per-offence settlement records,
+rebuilding the iteration the aggregate removed). Three
 facts, three events, one join key — v1 emits none, since v1 has no
 offences. (An earlier revision said "two facts, two events", which let
 an implementation skip the adjudication-time event and leave indexers
@@ -847,7 +855,12 @@ parameter safe. Rev 4 stops extending and removes two mechanisms v1 does not
 need — the unbond delay, and the fixed epoch — which answers five review
 findings by deletion rather than by specification.
 
-**1. The debit formula — every recorded offence debits, immediately, against the OFFENDING ROLE's bond.**
+**1. The debit formula — every recorded offence creates its LIABILITY
+immediately, against the OFFENDING ROLE's bond** (the DEBIT settles per
+the durable-adjudication rule — "debits immediately" was the pre-split
+wording, and an immediate debit sharing the observation's transaction
+rolls the adjudication back whenever the recycle-backing check or an
+old-token leg reverts, ageing the offence out).**
 
 Rev 1 said "slash at a counter threshold" AND "10% per offence, ten offences
 to zero", which are not the same rule: for any threshold above one it is
@@ -916,8 +929,23 @@ offence — **and the base depends on when the offence is recorded:**
     the offender manufactured. So: a reach is stored as a **WATERMARK, not a set** — the
     tranche-creation index at recording time, reaching every LIVE tranche
     created at or before it — and **liabilities whose watermarks separate
-    the same live tranches are EQUIVALENT and COALESCE into an AGGREGATE
-    liability with its OWN identity** (amounts sum; what each can touch
+    the same live tranches AND share a predicate/config epoch are
+    EQUIVALENT and COALESCE into an AGGREGATE
+    liability with its OWN identity** — the epoch is part of the
+    equivalence key, because quarantine pauses and invalidation
+    extinguishes PER EPOCH: one aggregate spanning two epochs could
+    neither selectively pause nor selectively resolve its constituents.
+    And ordering survives coalescing through **PER-CLASS QUEUES**: one
+    queue per (reach-class, epoch), collection MERGING classes by each
+    class's earliest outstanding recording position — within a class,
+    order is genuinely irrelevant (identical reach means identical
+    collectible sources), while the cross-class interleaving the
+    recording-order rule protects is preserved by the merge. The class
+    count is bounded by the live tranche boundaries plus one, per the
+    watermark argument, times the bounded live epochs — so the
+    representation is ordering-compatible AND bounded, where a flat
+    coalesce of non-adjacent same-reach entries would have re-ordered
+    them past an intervening different-reach debt (amounts sum; what each can touch
     is identical — and the audit join survives WITHOUT per-offence
     traversal at settlement, because it lives at ADJUDICATION: each
     offence's adjudication event carries its `refId` and names the
@@ -1307,9 +1335,12 @@ conversion precedes any summing) — **and the token-epoch axis is
 BOUNDED by the same discipline as the predicate axis**: every claim,
 cleanup, and accounting operation addresses ONE named partition in
 O(1) (nothing anywhere enumerates the accumulated set), and rotation
-carries BACKPRESSURE — a new rotation is refused while more than the
-bounded number of old partitions still hold ACTIVELY DRAINABLE residual
-principal, with the mandatory forced-migration duty as the drain that
+carries BACKPRESSURE — a new rotation is refused when the **PROSPECTIVE
+post-rotation count** of partitions holding actively drainable residual
+principal would exceed the bound (counting the CURRENT live partition
+wherever it will retain residual — gating on the existing count alone
+lets exactly-at-bound rotate into bound-plus-one and overrun any
+structure sized to it), with the mandatory forced-migration duty as the drain that
 makes the bound reachable — **and MIGRATED-ESCROW epochs are excluded
 from that bound**: a lost-key or sanctions-frozen balance preserved in
 original-asset escrow cannot be drained by anyone (the frozen claim
