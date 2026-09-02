@@ -345,7 +345,13 @@ then migrate whatever is left. Only the migration can be relied on, because only
 it requires nothing of the operator.
 
 ```
-ServiceCapacityDeposit { operator; role; token; amount; state; unlockAt; }
+ServiceCapacityDeposit { operator; role; token; amount; state; unlockAt;
+                         parkedRequest; }
+// `parkedRequest`: the outstanding parked-withdrawal amount — the CAP the
+// sanctions section requires to persist. `amount` is principal and `state`
+// alone cannot distinguish park-10-of-100 from park-all; the delisting
+// release pays min(parkedRequest, payable), DECREMENTS `parkedRequest` by
+// what it paid, and retains any remainder as still-parked.
 OffenceRecorded(operator, role, kind, refId)   // role, not just operator
 // NAMING IS NORMATIVE for every PUBLIC identifier — struct, selectors,
 // events, errors, user-facing copy: capacity-deposit naming, never "bond".
@@ -2446,7 +2452,18 @@ that everything else is throughput and these are custody:**
   confirmed flagged still withdraws during the same outage — otherwise an
   implementation could pass by freezing everyone.
 
-  **A delayed proof against a CONFIRMED-SANCTIONED operator adjudicates
+  **Post-request unenrolled calls DEMOTE to the free tier — "non-slashable"
+alone left the capacity armed.** If the non-slashable alternative merely
+labels post-request calls, the deposit (posted until its horizon ends)
+keeps feeding the capacity curve while the new calls create no
+reservations or liabilities: up to 4× throughput for the whole delay
+with no collateral exposed to it, against both the
+privileges-revoke-at-request rule and the rule that unenrolled deposits
+grant no predicate-enabled capacity. The branch demotes such calls to
+the free-tier allowance outright — bonded capacity is REMOVED from them,
+not just their slashability.
+
+**A delayed proof against a CONFIRMED-SANCTIONED operator adjudicates
 without moving the funds.** The blanket per-selector screen cannot simply
 reject the proof: a reverted proof leaves the horizon expiring, the
 operator delists later, the reservation releases, and an otherwise valid
@@ -2515,8 +2532,13 @@ the two rules meet at a parked adjudication.
   every party screen that observes an authoritative CLEAN result on a
   wallet carrying a stale confirmed marker SELF-HEALS it in that call —
   **with ALL party statuses read BEFORE effects, and a mixed result
-  (one party clean-healing, another flagged) landing as a COMMITTED,
-  value-unmoving refusal rather than a revert**: a permit/on-behalf
+  landing as a COMMITTED, value-unmoving refusal that writes BOTH
+  directions — every party read `Clean` self-heals its stale marker AND
+  every party read `Flagged` persists its `sanctionsConfirmedFlagged`
+  bit in the same act** (a refusal that only heals leaves a first-flag
+  operator "never confirmed": the next outage's fail-open branch then
+  accepts and later releases their principal against the earlier
+  authoritative flag): a permit/on-behalf
   call that heals the payer and then reverts on the flagged operator
   rolls the heal back with everything else, and the next outage blocks
   that authoritatively-delisted payer from their own fail-closed paths
