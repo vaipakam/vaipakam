@@ -2513,7 +2513,13 @@ the two rules meet at a parked adjudication.
   acceptance case. The
   other selectors keep `_assertNotSanctioned` for their REFUSALS — but
   every party screen that observes an authoritative CLEAN result on a
-  wallet carrying a stale confirmed marker SELF-HEALS it in that call
+  wallet carrying a stale confirmed marker SELF-HEALS it in that call —
+  **with ALL party statuses read BEFORE effects, and a mixed result
+  (one party clean-healing, another flagged) landing as a COMMITTED,
+  value-unmoving refusal rather than a revert**: a permit/on-behalf
+  call that heals the payer and then reverts on the flagged operator
+  rolls the heal back with everything else, and the next outage blocks
+  that authoritatively-delisted payer from their own fail-closed paths
   (`postCapacityDeposit`, the permit/on-behalf party screens, all of
   them): the plain helper is a view, so a clean read that merely passes
   leaves the marker standing, and the next outage freezes the newly
