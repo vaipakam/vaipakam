@@ -437,8 +437,14 @@ twice.
 
 ### Per-class applicability — F is not uniform across the four
 
-Scouted against the tree 2026-08-31. Three classes take the lien cleanly; one
-does not, and that one needs its own decision.
+Scouted against the tree 2026-08-31 — and at that first scout, three
+classes took the lien cleanly and one appeared to need its own decision.
+**That is no longer the state: all FOUR classes now have selected,
+non-uniform treatments and NO class is decision-blocked** — the intent
+class resolved via the fill-time hook (marked FITS in the table below),
+and the later analysis concludes F applies to all four with no further
+owner ratification required. This paragraph's original wording survived
+that resolution and read slice 3 as blocked on a decision already made.
 
 | Class | Verdict | Why |
 | --- | --- | --- |
@@ -2159,10 +2165,18 @@ revision unimplementable:
      fact: on retry the broadcast is **applied ONLY if the intended-era
      gate accepts it against the LIVE era** — acceptance IS the
      authentication that it still belongs — and refused otherwise, back
-     to parked. Once no acceptable era can ever exist (the relevant era
-     finalized, or the chain permanently promoted past the mirror role)
-     the broadcast is
-     **tombstoned with an explicit recorded disposition** (its accrued
+     to parked. And the tombstone is **AVAILABLE BEFORE FINALIZATION — it IS the
+     parked lane's drain for an era-unroutable broadcast**, not a
+     consequence of the terminal it would otherwise deadlock: the
+     terminalization rule requires the parked lane drained BEFORE the
+     era finalizes, so a tombstone gated on finalization parks the
+     broadcast forever and blocks the very terminal it waits for. Once
+     a retry has been REFUSED by the live-era gate (the evidence it
+     does not belong to the live era) and the addressed era is
+     terminal-pending, the operator records the disposition and the
+     broadcast is
+     **tombstoned with an explicit recorded disposition** (likewise on
+     permanent promotion past the mirror role) (its accrued
      obligations acknowledged as unservable, its source-side
      implications released through the charged-side machinery), never
      applied under a wrong accounting boundary.
