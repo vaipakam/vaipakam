@@ -1367,15 +1367,32 @@ would exhaust canonical fresh headroom and block local claims that are genuinely
 funded. Note the facet already checks `st.fresh` against `remaining` at `:535` —
 the fresh quantity is the one this ledger has always been about.
 
+**(a1b) The delivered-bound EXCLUSION for old intent commits is
+accounting, and accounting protects nothing payroll can reach.** Folding a
+live pre-upgrade intent's custody into an exclusion satisfies the reward
+consumers who consult it and no one else — `withdrawSalary` spends the
+shared balance without ever reading it, so the arming gate passes and the
+intent collateral is consumed anyway. The gate therefore requires one of:
+the old-custody COUNT at zero (torn down), the commits' custody MOVED
+into the protected contract under an INTENT attribution row (slice 3's
+teardown then debits that row), or the global outbound-reserve primitive
+covering the excluded amount. An exclusion no outflow path enforces is a
+label.
+
 **(a2) Every fresh OUTFLOW takes its TOKENS from the holder, not only its
 accounting from the ledger.** Charging `received − paid` while the tokens
 leave the shared balance re-creates the payroll collision in reverse: the
 remittance path today has `LibRewardRemitDispatch.dispatchRemitTail`
 approve the messenger from the DIAMOND, so a 100-fresh remittance against
 an underbacked payroll balance drains payroll's tokens while the reward
-100 sits stranded in the holder. So: claims, sweeps/absorptions,
-remittances and the compensation dispatches all MOVE fresh custody out of
-the holder (delta-checked, in the same act as their ledger charge), and a
+100 sits stranded in the holder. So: claims, remittances and the compensation dispatches MOVE fresh
+custody out of the holder (delta-checked, in the same act as their ledger
+charge) — but an **ABSORPTION (expiry, forfeiture) into `recycleBucket`
+is an IN-HOLDER attribution transfer, fresh row → recycled row, moving no
+tokens**: the recycled backing must live in the same protected contract,
+so exporting it to the shared balance would unback the very credit the
+absorption writes (only actual external payouts and transports move
+tokens out) — and a
 mixed fresh/recycled CCIP send combines its two custody sources
 explicitly — the fresh share pulled from the holder into the outbound
 escrow at dispatch, the recycled share from the bucket's PROTECTED
@@ -2119,8 +2136,17 @@ revision unimplementable:
        downstream chokepoint (delivery, sweep, absorption accounting) sees
        only ITS residual component: the transport-paid share reaches no
        delivered-ledger or bucket check, because the aggregate it drew
-       from was never published into either ledger. **And `transportPaid`
-       itself carries TWO legs, because the claim it pays has two.** A
+       from was never published into either ledger. **And transport coverage allocates PER MATCHING DAY before anything
+       else, because batch membership is a per-day filter.** A claim
+       spanning days A and B cannot apply a batch listing only B to A's
+       need: coverage is computed day by day — the batches listing THAT
+       day contribute, capped by that day's own component need — and only
+       then do the residuals aggregate into the chokepoint charges. A
+       batch-aggregate figure applied to the claim's aggregate marks the
+       wrong day covered, leaving one ledger uncharged while another's
+       protected custody is consumed. **Within each day's allocation,
+       `transportPaid` carries TWO legs, because the components it pays
+       are two.** A
        claim is fresh-pending plus recycled; a scalar transport figure
        leaves a 5-fresh/5-recycled claim with 6 transport-paid unable to
        say which 4 reaches which chokepoint — double-charging one ledger
@@ -2132,9 +2158,12 @@ revision unimplementable:
        paying its component from the untyped aggregate reduces demand on
        it without publishing anything — and each leg's chokepoint sees
        only its own residual.
-     - A generic pending-to-live drain (or repatriation) of a parked batch
-       remainder is a **deliberate operator disposition carrying a recorded
-       acknowledgment, keyed by the batch**: obligations arriving for any of
+     - A **repatriation, or an evidence-backed classification, of a parked
+       batch remainder** — never the generic pending-to-live drain, which
+       the typing rule above forbids for untyped value (this bullet said
+       "pending-to-live drain (or repatriation)" for one round after that
+       prohibition landed) — is a **deliberate operator disposition
+       carrying a recorded acknowledgment, keyed by the batch**: obligations arriving for any of
        that batch's listed days afterwards are REFUSED to the extent they
        looked to that batch, never silently paid from live headroom. Same
        family as slice 0's shortfall disposition — the lane cannot prove
@@ -3209,6 +3238,20 @@ of any ingress therefore lands in an explicit **restitution/recovery
 position** (owner-disposable: repatriation, or a recorded release into
 live backing once the deficit's cause is dispositioned), and only the
 excess above the deficit is allocated as live era backing.
+
+**And the release INTO live backing has a defined ledger leg, because
+custody reattribution alone moves nothing a claim can see.** After a
+20-deficit absorbs a 20-ingress, `received == paid` — reattributing the
+tokens to the live row leaves headroom at zero; crediting `received`
+again would be an unregistered fourth writer double-recording a receipt
+already counted. The release is therefore a **registered corrective
+`paid`-debit**: owner-gated, bound to the recorded deficit disposition,
+atomically moving the custody restitution→live AND reducing `paid` by
+the released amount — the honest semantics (the historical overpayment
+is being made whole, so the record of having paid it is corrected), it
+leaves the three-writer `received` contract untouched, and `paid`'s own
+writer set carries it as an explicit registered entry with the
+disposition id in the event.
 
 **And an imported POSITIVE `received − paid` is history, not money: usable
 headroom is capped by the DEDICATED HOLDER'S balance, which starts at
