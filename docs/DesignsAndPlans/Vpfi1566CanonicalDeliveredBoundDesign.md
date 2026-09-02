@@ -1598,7 +1598,13 @@ and every other restricted position excluded.** An earlier revision described
 the argument as an "independently reconciled reward-owned figure", which is the
 ownership test this section has already rejected — an implementer following the
 call contract would reproduce the recovery-position double-spend exactly (the same off-chain reconciliation the mirror bootstrap
-performs), moves no tokens, and is **irrevocably finalized before unpause**. The
+performs), **RELOCATES the proven custody into the dedicated holder in
+the same act — or verifies the holder already carries exactly that
+attributed amount — and** is **irrevocably finalized before unpause**
+("moves no tokens" was the pre-holder wording, and it published
+spendable headroom while the proven backing sat payroll-exposed in the
+shared balance — or unusable against an empty holder — per the
+provenance-relocation rule above). The
 finality is the load-bearing part on both sides: any increment to `received`
 publishes fresh payout headroom with no transfer behind it, so a writer left
 callable after reconciliation defeats the delivered bound entirely. Same shape as
@@ -2246,10 +2252,15 @@ revision unimplementable:
      revert before ever reaching `RETIRING`, the same permanent bounce
      one step later. Admission stores the aggregate, the token delta, and an
      authenticated commitment to the day list — **split by what the
-     WIRE can carry, because the old formats carry no root**. The new
-     wire (d5 onward) embeds a **Merkle root over fixed-size chunks
-     TOGETHER WITH the authenticated EXTENT — element count, chunk
-     count, and the indexed-leaf encoding** (a root alone proves a
+     WIRE can carry, because the old formats carry no root**. A NEW
+     wire version (d6 — the existing d5 shape is
+     `(tag, dayIds, total, remitId, remitter, recycledShare)` and
+     carries neither root nor extent, so reusing its tag would fail
+     in-flight d5 packets forever or leave them page-unauthenticated;
+     **existing d5 packets are admitted through the compact flat-hash
+     path exactly as the older wires are**) embeds a **Merkle root over
+     fixed-size chunks TOGETHER WITH the authenticated EXTENT — element
+     count, chunk count, and the indexed-leaf encoding** (a root alone proves a
      submitted chunk belongs to SOME tree, never that every member day
      has been seen: accepting a subset omits legitimate targets, and
      waiting for unspecified more strands the packet). Each
@@ -2452,7 +2463,21 @@ revision unimplementable:
 
        **And the per-day pass runs over DECREMENTING shared typed
        capacities — each day's shortfall is computed against what the
-       EARLIER days left, not against the original balances.** Days A
+       EARLIER days left — with scarce transport allocated by
+       SYSTEM-WIDE typed-source contention, not local shortfall alone.**
+       A local tie rule starves later days: A before B, A needing 5F/5R
+       with a matching 5-batch, B needing 5R, live fresh 5 and bucket 5
+       — A's local shortfalls are both zero, fresh-first parks the
+       batch on fresh, the bucket drains on A, and B reverts against
+       nothing while a feasible assignment existed (A: live fresh +
+       transport recycled; B: bucket). So the pass FIRST totals each
+       typed source's remaining demand across the whole obligation,
+       and each day's matching transport relieves the leg whose typed
+       source carries the greater system-wide deficit (ties
+       fresh-first). With one shared fresh source and one shared
+       recycled source, relieving the more-contested source first is
+       globally optimal by the exchange argument — the pass finds a
+       feasible assignment whenever one exists.** Days A
        and B each needing 5/5, with 5 live fresh, 5 bucket, and a
        matching 5-batch per day: independent evaluation sees both typed
        legs "funded" twice, assigns no transport, and the aggregate
