@@ -374,7 +374,7 @@ decodes is the same gap one step later.
 
 | Role | What the bond unlocks | Slash conditions (objective) |
 | --- | --- | --- |
-| Solver / matcher | larger match-batch sizes ONLY. **Priority-window access is NOT a bond entitlement** — it is E-2's spend-gated perk with its own flat VPFI fee, and bonds neither gate it nor grant it. An earlier revision listed it here, which would let an implementation either require a bond ON TOP of the E-2 purchase or hand priority out for bonding alone; both change the perk's gate and its permanent absorption. Bond buys capacity; spend buys priority; the two never substitute | ⚠️ **NO slash predicate in any shipped tier.** Precondition lies are knowledge-based, and §2 establishes that neither attested branch recovers a slash for those — so routing them through the offence dispatcher would confiscate an honest matcher's principal after intervening state changes, the defect that removed the predicate in the first place. Any future slashing here waits on a separately specified **knowledge-free** predicate (equivocation). **v1 has no matcher slash predicate at all** (see the offence-recording bullet and the fork). The surviving in-call contradictions should REVERT rather than record an offence, so an implementation must not build a v1 slash path from this row; **immediate** debit of a fixed bps of the OFFENDING ROLE's bond, per recorded offence — the threshold is one; see the decisions below |
+| Solver / matcher | larger match-batch sizes ONLY. **Priority-window access is NOT a bond entitlement** — it is E-2's spend-gated perk with its own flat VPFI fee, and bonds neither gate it nor grant it. An earlier revision listed it here, which would let an implementation either require a bond ON TOP of the E-2 purchase or hand priority out for bonding alone; both change the perk's gate and its permanent absorption. Bond buys capacity; spend buys priority; the two never substitute | ⚠️ **NO slash predicate in any shipped tier.** Precondition lies are knowledge-based, and §2 establishes that neither attested branch recovers a slash for those — so routing them through the offence dispatcher would confiscate an honest matcher's principal after intervening state changes, the defect that removed the predicate in the first place. Any future slashing here waits on a separately specified **knowledge-free** predicate (equivocation). **v1 has no matcher slash predicate at all** (see the offence-recording bullet and the fork). The surviving in-call contradictions should REVERT rather than record an offence, so an implementation must not build a v1 slash path from this row. (An earlier revision's trailing clause still instructed an immediate fixed-bps debit per recorded offence — machinery for a future predicate-enabled tier, mis-attached to a row that states there is no predicate. The debit mechanics live with the tranche/reservation rules and apply only when a knowledge-free predicate exists.) |
 | Keeper (opt-in roles) | higher per-pass action counts for granted `KEEPER_ACTION_*` roles. **A liveness commitment must be suspended, cancelled or extended — without an offence — whenever the protocol itself blocks performance**: a guardian pause, a role kill switch or a selector-level switch makes the required call revert while the commitment's clock keeps running, so every enrolled operator with a live window misses it and is slashed *for the protocol's own incident*. That is objectively detectable (the switch state is on-chain), so it belongs in the predicate rather than in an operator's appeal. A pause spanning a deadline is the acceptance case, and missing-liveness must not be admitted as a slash predicate until it passes | ~~repeated out-of-grant-scope attempts~~ — **LEAVES v1 for the same reason staleness did**: `setKeeperActions` / `revokeKeeper` can remove a grant after a keeper broadcasts an authorized call but before it executes, so an honest pending action is out-of-scope at execution, and worse with several queued. Grant state is not carried by the submission. **Does NOT return with the attested tier either** — §2 establishes that grant scope has no slashable form in either attested branch, so an implementation following an earlier "returns with the attested tier" note would slash an honest keeper whose grant was revoked after broadcast. Any future slashing here waits on a separately specified knowledge-free predicate (liveness or equivocation), not on the tier arriving |
 
 - ~~**Offence recording (Codex round-1 finding):**~~ **REJECTED FOR v1 — retained
@@ -796,75 +796,41 @@ forged proofs and confiscating those reservations after governance has already
 identified the hole. Rule 2's "disabling does not cancel prior liability" is
 right for a routine retune and exactly wrong here.
 
-So: an **emergency QUARANTINE** that blocks the old verifier immediately AND,
-in the SAME atomic call, does **only** an O(1) epoch-state transition — never an
-iteration. **Invalidation is not part of the immediate call**; an earlier
-revision named it here, which either restores the fast-key amnesty rejected
-below or puts the "immediate" operation behind the timelock it is meant to
-outrun.
+So the emergency machinery has TWO distinct operations, held by different
+authorities, and this passage previously described them in interleaved layers
+that contradicted one another — it is stated once here, and any earlier phrasing
+that survives elsewhere is subordinate to this statement:
 
-⚠️ **That transition is a QUARANTINE, not a release**, and an earlier revision
-conflated them. Making every reservation in the epoch non-blocking is an
-**amnesty**: if the fast authority is compromised, or simply wrong about which
-verifier is broken, every legitimate operator in that epoch can withdraw before
-the timelock lets governance recover. Calling the power "narrowly scoped" does
-not mitigate that — the scope was narrow and the *effect* was total.
+**1. QUARANTINE — the fast, off-timelock authority. O(1), atomic, and the ONLY
+thing the fast key can do.** In one call it (a) disables proof submission
+against the suspect verifier and (b) stops NEW predicate-governed admissions
+under that epoch — while **preserving every reservation and its horizon**
+(horizons pause; nothing is released, nothing debited). The forgery stops;
+nobody's liability moves; no iteration occurs. A compromised or mistaken fast
+key can therefore inconvenience, but cannot amnesty and cannot confiscate.
 
-So the split is by authority, not by scope:
+**2. INVALIDATION — governance, timelocked, and only after a quarantine.**
+Governance decides between **restore** (the suspicion was wrong: the quarantine
+lifts, horizons resume) and **invalidate** (the verifier is genuinely broken:
+the epoch's reservations are released, since their liability is no longer
+provable by trustworthy means). Invalidation is itself a **single O(1)
+epoch-state transition** — the per-operator reserved accounting is
+**epoch-partitioned** over a bounded active set, so the invalidated amount
+leaves unreserved backing and the concurrency cap with one write, no iteration,
+and reservation RECORDS are reclaimed by bounded, permissionless **lazy
+cleanup** that emits the per-reservation release events afterwards. Releasing is
+a judgement about unprovable liability, and judgements belong on the slow path.
 
-- **Off-timelock (fast):** an O(1) **quarantine** — proof submission against the
-  suspect verifier is disabled, while reservations and their horizons are
-  **preserved**. The forgery stops; nobody's liability moves.
-- **Governance (timelocked):** decides between **restoring** the verifier (the
-  suspicion was wrong; the quarantine lifts and horizons resume) and
-  **invalidating** the epoch, which is what actually releases the reservations.
-
-Releasing is a judgement about unprovable liability, and judgements belong on
-the slow path. Stopping an active forgery is not, and belongs on the fast one.
-Splitting them costs nothing operationally — the attack is halted either way — **held by an off-timelock authority, not by the
-ordinary predicate-config setter.** Reservation RECORDS are reclaimed
-afterwards by the bounded lazy cleanup below; nothing unbounded may sit inside
-the incident call.
-
-To be exact about what "atomically" covers, since an earlier revision said the
-authority atomically *releases the reservations*: it **atomically invalidates the
-EPOCH**, which logically frees the capacity those reservations were holding. The
-reservation RECORDS are released only by the bounded lazy cleanup below. Read
-literally, the earlier wording puts the unbounded iteration back inside the
-incident transaction — the failure this passage exists to prevent.
-
-**It must be O(1), and an earlier revision said "releases the reservations",
-which is not.** A compromised epoch can have reservations spread across many
-operators, so releasing each one atomically means iterating an unbounded global
-set: the incident transaction exceeds the block gas limit and **leaves the
-forged-proof verifier enabled** — the emergency lever failing precisely in the
-incident it exists for. It also could not emit the per-reservation release
-events §Events requires, since those are per reservation.
-
-So invalidation is a **single epoch-state transition**, and the accounting has
-to be **epoch-partitioned** for that transition to mean anything. Flipping one
-global bit does not update a per-operator outstanding-reservation TOTAL, so
-admission would either trust a stale total — leaving the operator blocked until
-cleanup, which is the opposite of the promise — or rescan an unbounded set of
-records and risk the same gas limit the O(1) design avoids.
-
-**So the per-operator reserved figure is kept per epoch, over a bounded set of
-active epochs**, and admission sums only the epochs still valid — **and the sum
-is partitioned by COLLATERAL TOKEN epoch too, never a single figure across
-tokens.** Rotation carries old-token reservations, so one operator can hold
-liabilities denominated in different raw units: an 18-decimal old-token
-reservation **dwarfs** a 6-decimal new bond and blocks every new
-predicate-governed action, while the reverse rotation makes the old liability
-**negligible** against the cap. Token-epoch capacity parameters fix the capacity
-arithmetic and do nothing for the reservation arithmetic — these are two sums,
-and both need the same partition. Either keep unreserved backing and the
-concurrency cap per token epoch, or define an explicit conversion before summing. An invalidated
-epoch's amount then disappears from both unreserved backing and the concurrency
-cap by the same single write, with no scan: reservations naming an invalidated
-epoch stop counting against the cap and stop blocking admission **immediately,
-without being touched**. A bounded active-epoch set is what makes the sum
-affordable; without it, "O(1) invalidation" only moves the unbounded work into
-the admission path.
+**3. Repeated quarantine must not become a freeze.** Horizons pause under
+quarantine, so a compromised fast key that re-quarantines a healthy epoch —
+undoing each governance restore — holds every delayed unbond backed by that
+epoch in suspension indefinitely: the capital freeze this note forbids for the
+ordinary pause, rebuilt out of the horizon clock. So **governance's resolution
+is terminal for that epoch**: a restore simultaneously bars the SAME authority
+from re-quarantining that epoch (a fresh quarantine requires a new
+authorization or a rotated key), and a governance path exists to **revoke and
+replace the fast authority** in the same act. An emergency lever the incident
+cannot turn against its own operators is the design goal of all three rules.
 
 **And the bound needs an exhaustion rule.** Long evidence horizons overlapping
 enough routine retunes let an operator hold reservations in every slot, and the
@@ -1843,9 +1809,11 @@ that everything else is throughput and these are custody:**
   transport changes — which means the criterion must **not** name
   `LibVpfiRecycle.credit` at all for this path, and an earlier revision still
   did while forbidding it one sentence above. The API exercised is the selected
-  **per-token credit or escrow settlement**. The debit credits
-  `LibVpfiRecycle.credit(RecycleSource.ServiceBondSlash, …)` through the
-  chokepoint, with the event carrying that source and not a new generic one.
+  **per-token credit or escrow settlement**, whose event carries
+  `RecycleSource.ServiceBondSlash` and not a new generic source. (An earlier
+  revision then went on to mandate the live `credit(...)` call in the very next
+  sentence — describing the change and then naming the forbidden API. The
+  classification survives; the call does not appear in this criterion at all.)
   Under (A) there is no production call that can satisfy this, so it is
   deferred rather than left unwritable.
 - **(B) / attested tier only** — each objective slash predicate proven
