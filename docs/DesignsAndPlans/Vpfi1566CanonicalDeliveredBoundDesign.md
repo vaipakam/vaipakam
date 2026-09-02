@@ -1745,7 +1745,13 @@ delivery and nobody to report to.**
 | 10 | `RewardReporterFacet.setIsCanonicalRewardChain:1301` | same, canonical side | yes | n/a | **yes** |
 | 11 | `LibInteractionRewards._walkSideDays:1823` | pool pricing / schedule funding | canonical schedule | mirror-delivered | **0 — must NOT fall through to canonical schedule** |
 | 12 | `LibInteractionRewards.sweepExpiredEntry:3245` | expiry accounting source | canonical | mirror | **mirror-shaped, bound 0** |
-| 13 | `LibInteractionRewards._entryExecutableNow:3776` | may this entry execute now | **if funded, measured VINTAGE-BLIND** (was "always") | **same — see note** | **if the PREPARED transport coverage plus the eligible ERA BALANCE covers it** (live headroom stays 0). The predicate is a VIEW and cannot run the bounded batch scan — coverage spread across more small batches than one scan permits would read false forever, the sweep never reaching the allocator it needs to become true. So discovery is a separate, permissionless, stateful **PREPARATION operation**: it runs the paginated scan-and-stage machinery for an obligation ahead of time, accumulating staged coverage across calls, and the predicate reads the O(1) result — staged total plus cursor-visible balance. Prepare until covered, then the clock and the sweep see it |
+| 13 | `LibInteractionRewards._entryExecutableNow:3776` | may this entry execute now | **if funded, measured VINTAGE-BLIND** (was "always") | **same — see note** | **if the PREPARED transport coverage plus the eligible ERA BALANCE covers it** (live headroom stays 0). The predicate is a VIEW and cannot run the bounded batch scan — coverage spread across more small batches than one scan permits would read false forever, the sweep never reaching the allocator it needs to become true. So discovery is a separate, permissionless, stateful **PREPARATION operation**: it runs the paginated scan-and-stage machinery for an obligation ahead of time, accumulating staged coverage across calls, and the predicate reads the O(1) result — staged total plus cursor-visible balance. Prepare until covered, then the clock and the sweep see it. **The
+prepared-coverage term is ROLE-COMMON, not Detached-only**: legacy
+packets route into the transport epoch after reattachment and after
+permanent promotion too, and their targeted obligations must consume it
+before era/live funding under every role — a retired claim backed
+solely by a late batch must read executable on Canonical and Mirror
+exactly as on Detached, or its era never terminalizes |
 | 14 | `LibInteractionRewards.deliveredFreshBound:4211` | THE bound | **delivered** (was `max`) | delivered | **0** |
 
 **Two rows carry the whole risk and are worth reading twice.** Row 11 is where
@@ -2129,6 +2135,21 @@ revision unimplementable:
      not era-bound, so no era rule is violated. Never a finalized era
      row, never an era it was not addressed to.
 
+     **A legacy kind-2 BROADCAST is not transport material at all — the
+     epoch is packet-backed FUNDING, and a broadcast carries STATE.** A
+     state-only broadcast installs day/era state and reserves
+     obligations; no transport-epoch operation can safely "apply" that,
+     so routing one into the epoch just parks a thing the epoch cannot
+     digest. A parked legacy broadcast follows the PARKED-MESSAGE lane
+     instead: retried into the era it was ADDRESSED to while that era
+     can still accept it (the intended-era gate, as specified for the
+     reattachment path); once the addressed era has finalized — or the
+     chain permanently promoted past it — the broadcast is
+     **tombstoned with an explicit recorded disposition** (its accrued
+     obligations acknowledged as unservable, its source-side
+     implications released through the charged-side machinery), never
+     applied under a wrong accounting boundary.
+
      **The transport balance is UNTYPED, and consuming it writes NEITHER
      the fresh nor the recycled ledger.** The wire authenticates only the
      aggregate, so exposing a mixed packet's whole balance to a targeted
@@ -2212,7 +2233,13 @@ revision unimplementable:
      exactly as a cancellation does — balance back to its named batches,
      references decremented, nothing half-paid — and the deadline is
      generous enough for honest retry chains (a bounded multiple of the
-     retry cadence), because the unwind costs the staler only a redo. Staged allocations are release-on-cancel, so a
+     retry cadence). **And an unwound stager does not go first in line
+     again**: restaging for the SAME obligation after a permissionless
+     expiry carries a COOLDOWN, during which competing obligations may
+     stage that coverage freely — "redo for gas cost" otherwise lets the
+     hostage strategy survive every deadline by immediate renewal, the
+     lease laundered through its own expiry. Honest stagers who settle
+     within the deadline never meet the cooldown. Staged allocations are release-on-cancel, so a
      dead obligation cannot strand what it staged. Bounded, resumable, and nothing
      half-paid — three properties, one mechanism. So
      conservation holds per packet — listed days can
@@ -2507,9 +2534,18 @@ revision unimplementable:
    cannot prove a whole chain was not omitted: reconcile only chain A,
    promote, and chain B's charged authorization strands outside even the
    kind-8/9 route, which accepts certified lanes only. The universe is
-   the messenger's own configured-lane registry — every lane that was
-   EVER configured for this channel, current and historical, an on-chain
-   enumerable set — **VERSIONED, with the ceremony pinned to one
+   an **OWNER-COMMITTED lane enumeration, honestly labelled** — the
+   messenger's live state cannot supply it: peers live in mappings,
+   rebinding clears prior entries, and `backfillChannelPeerIndex` itself
+   records that configured pairs are not discoverable on-chain and
+   completeness is the operator's. So the commitment enumerates every
+   current and historical lane the owner can establish, its completeness
+   is an explicit OWNER ATTESTATION carrying a recorded loss disposition
+   for any lane that cannot be verified (slice 0's family: who bears an
+   unverifiable lane's loss is an owner decision, written down) — and a
+   lane surfacing OUTSIDE the committed universe later follows the
+   straggler path: local tombstone, charged-side release against its own
+   ledger, never silent — **VERSIONED, with the ceremony pinned to one
    version**: lane mutations are frozen for the ceremony's duration (or,
    equivalently, any registry change bumps the version and voids every
    attestation gathered under the old one), because a lane configured
