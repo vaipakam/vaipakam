@@ -1567,6 +1567,19 @@ Retiring a claim on money without deciding where the money goes is the shape thi
 whole note exists to reject — and offering two under-specified branches was that
 shape one level up.
 
+⚠️ **Closure 3 cannot land "first and alone" on an existing canonical
+deployment.** The matrix's canonical cells switch `deliveredFreshBound`, the
+sweep allowances, the paid-delta recording and executability from `max` to the
+delivered bound — but canonical `received`, its zero-headroom migration and its
+funding writers all arrive in **slice 4**. Landing the matrix first therefore
+moves every canonical reward consumer from `max` to an **uninitialized zero**
+and freezes them all.
+
+So either **slice 4 and the ledger migration sequence BEFORE these matrix
+cells**, or the independently deployable piece is scoped to **`Detached`-only
+behaviour** — and in that case it must not be called closure 3, because the
+canonical column is where the bound actually binds.
+
 **Transition tests are required in BOTH directions**, since rows 8–10 are the
 only sites that mutate the role: entering `Detached` must retire the delivered
 residual (or an old residual is reusable on reattachment), and leaving it must
@@ -1668,6 +1681,15 @@ revision unimplementable:
    rejects, since every effective role change creates a new era. **The packet
    would be refused on retry exactly as it was on arrival**, leaving its funds
    and its source reservation stuck permanently.
+
+   ⚠️ **And the parked lane must CLOSE before that era terminalizes.** The
+   broadcasts install day and era state and reserve obligations, so a retry
+   arriving after the liability counter hit zero and the surplus was released
+   would **create an unfunded liability in a finalized era** — contradicting the
+   terminal proof's own premise that a retired era admits no new obligations.
+   So the era's terminalization requires the parked lane drained and closed as
+   part of its all-obligations condition, or retries are held in a
+   **non-finalized transport epoch** that terminalization does not depend on.
 
    So a re-executed packet is credited through the **retired era's own
    reconciliation** (its funding belongs to that era's obligations, which is
@@ -2107,9 +2129,23 @@ legacy packet twice under two fresh nonces passes both the nonce guard and the
 identity has to come from the delivery, or the phrase "this entry's OWN packet"
 means nothing.
 
-The legacy wire supplies no `remitId`, which is why the hash is **assigned by the
-operator from the delivery's own evidence** rather than read out of the payload —
-assigned, but not invented.
+The legacy wire supplies no `remitId` — but **the operator must not be the one
+asserting the identity either, and an earlier revision left it there.** A hash
+"assigned from the delivery's evidence" is unverifiable on-chain: two differently
+encoded transaction/log identities for the same arrival, or a single mistyped
+one, produce two hashes that the contract cannot tell apart. Each then gets its
+own `oldWireAmount` bound, and once a later packet replenishes global
+`uncounted` the duplicate classifies **that** packet's custody — which is
+precisely the fresh-nonce scheme this paragraph rejects, reintroduced by the
+remedy for it.
+
+So the identity is **recorded AT INGRESS by the contract**: the legacy receive
+path stamps an immutable delivery identifier when the packet lands — it is
+already executing there, and the transport metadata it sees is not
+operator-supplied — and the reconciliation **references that stamp** rather than
+constructing one. If for some layout no such stamp is available, the entry
+requires a verifiable uniqueness proof; what it may never do is trust the
+operator not to mint a second hash for one delivery.
 
 Step 0 is not defensive padding, but its rationale had to be rewritten with it:
 an earlier revision argued in terms of shares summing **above or below the
