@@ -2049,6 +2049,19 @@ One reconciliation entry, three effects, all or nothing:
    side; beyond that it requires **replacement funding**, or another
    custody-preserving recovery, rather than a bookkeeping move.
 
+   **And it must state what happens to the HISTORICAL DEBIT, not only the
+   custody.** Take the 6-fresh/4-recycled packet that already paid all six fresh
+   and is corrected to 4/6: moving 2 out of `received` while leaving `paid = 6`
+   opens a **two-unit deficit that swallows the next genuine fresh delivery**,
+   while leaving `received` untouched simply preserves the wrong split. Neither
+   is acceptable, and the correction is under-specified until it says which.
+
+   The rule: it adjusts `received`, `paid` **and** the recycled-consumed
+   attribution **atomically and consistently**, so the post-correction ledger is
+   exactly what it would have been had the packet been classified correctly at
+   ingress — with the replacement funding covering the custody that has already
+   left. Anything less relabels history without reconciling it.
+
    **"Replacement funding" means an atomic custody transfer, and saying the
    words is not enough.** Without naming an ingress an implementation can treat
    unrelated VPFI already sitting in the shared Diamond as the replacement and
