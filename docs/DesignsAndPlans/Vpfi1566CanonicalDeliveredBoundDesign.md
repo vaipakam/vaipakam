@@ -665,7 +665,19 @@ nonce in `makerTraits`, recomputes the order hash, and atomically rewrites
 every keyed index (`orderHashToLoanId`, the `orderHashKind` discriminator,
 the nonce registry) in the same act as the cancel.
 
-**And the INTERNAL commit is rewritten in the same act, because the
+**And the write-down reaches every STORED copy of the amount — the commit
+AND the loan — because each teardown consumer reads its own.** The
+settlement's borrower claim and its re-lien are both computed as
+`loan.collateralAmount − consumed`
+(`LibSwapToRepayIntentSettlement.sol:288-295, 351-356`) — so rewriting the
+order and commit to 80 while the loan still says 100 leaves the fill
+recording a 20-unit claim no tokens ever backed: it stays unclaimable or
+consumes unrelated vault custody, the same loss one ledger further in. The
+disposition therefore rewrites `loan.collateralAmount` (the collateral
+ENTITLEMENT) atomically with the commit and the order, and the
+certification below covers the loan-level figure too.
+
+**The INTERNAL commit is rewritten in the same act, because the
 teardown paths read the STORED amount, not the order.** The settlement
 residual is computed from `intentCommits[loanId].custodialCollateral`
 (`LibSwapToRepayIntentSettlement.sol:147`), the aggregate allowance is
@@ -1884,6 +1896,21 @@ revision unimplementable:
      whose funding arrived late draws `transportEpoch(target) → eraBalance →
      liveHeadroom` in that order, debiting the packet-backed balance first.
 
+     **The transport balance is UNTYPED, and consuming it writes NEITHER
+     the fresh nor the recycled ledger.** The wire authenticates only the
+     aggregate, so exposing a mixed packet's whole balance to a targeted
+     FRESH claim would classify by consumption — 10 tokens spent as fresh
+     on the strength of an assertion the fresh-evidence rule below exists
+     to refuse. A targeted obligation's transport draw is therefore a
+     **TOTAL-OBLIGATION debit**: it pays the obligation's amount from the
+     packet's aggregate and publishes nothing — no fresh headroom, no
+     recycled custody, no `received` write (the packet was delivered FOR
+     those obligations; paying them is what the aggregate is). And the
+     same typing rule governs every EXIT: a pending-to-live drain of an
+     unsplit remainder cannot credit `received` (that is fresh publication
+     by another door) — the remainder first passes CLASSIFICATION under
+     the fresh-evidence rule, or leaves untyped through repatriation.
+
      **`transportEpoch(target)` resolves through the BATCH, because the legacy
      wire is batched and carries no per-day split.** A legacy remittance is
      `abi.encode(uint256[] dayIds, uint256 total)`
@@ -1969,8 +1996,18 @@ revision unimplementable:
        acknowledgment** — the epoch-scoped sibling of `fundRewardPool`,
        feeding the transport epoch (whose consumption path is already
        specified) rather than live headroom, so the writer contract is
-       untouched. The refused obligations then re-execute and settle
-       through the normal membership-filtered order.
+       untouched. **And the acknowledgment clears by AMOUNT, not by
+       event**: the disposition stores the disposed remainder, replacement
+       transfers decrement it, and obligations are admitted only against
+       what has actually been re-funded — a 40-unit transfer against a
+       100-unit disposed remainder funds 40 of obligations and leaves the
+       refusal standing for the other 60, because the legacy target set
+       can still grow and a first small top-up must not silently
+       re-expose later obligations to era or live headroom. The refusal
+       ends when the outstanding disposed amount reaches zero, not when
+       the first transfer lands. The refused obligations then re-execute
+       and settle through the normal membership-filtered order, bounded by
+       the funded balance.
 
      So the flow is `transportEpoch(target) → targeted obligations` (the
      first term resolving through batch membership), and any batch
@@ -2010,6 +2047,19 @@ revision unimplementable:
    test has been stated and then applied to an incomplete set, which is why the
    list names all three selectors explicitly rather than describing a class. This is symmetric with row 7's ack,
    which already refuses.
+
+   **A direct `setBaseChainId` REBIND (nonzero → nonzero) is PROHIBITED —
+   every source-identity change goes through the Detached ceremony.** The
+   setter (`RewardReporterFacet.sol:1249`) currently accepts A → B while the
+   chain stays `Mirror`, which changes the authenticated funding source with
+   NO era rotation: no retired era, no carry-forward, and the intended-era
+   gate then either accepts delayed A-packets into B's live accounting
+   (funding attributed to a source that never sent it) or refuses them
+   permanently with their source reservations stuck. The era machinery keys
+   on the source IDENTITY, so a rebind IS a role transition in everything
+   but name — it gets the same ceremony: drain to `Detached`, retire the
+   era with its carry-forward, rebind while detached, reattach to B under a
+   fresh era. The setter enforces it (nonzero → nonzero reverts).
 
    **THIRD correction to the same list: the REPATRIATION instruction
    ingresses (kind-8/9) were still missing.** `RepatriationFacet.onlyMirror`
@@ -2053,7 +2103,17 @@ revision unimplementable:
    `baseChainId` (`RepatriationFacet.sol:834-856`) — after a permanent
    promotion the first gate fails and the second is zeroed or rebound, and
    the instruction key (`keccak(issuingBase, authId)`) retains no
-   authenticated source chain to route by. So: (a) source-chain persistence,
+   authenticated source chain to route by — **and persisting the chain
+   BESIDE that key is not enough: it must be IN it.** Two Base chains can
+   deploy `issuingBase` at one address (CREATE2 makes this ordinary) and
+   independently allocate the same Base-local `authId`; the two-field key
+   then collides, the second ingress no-ops against the first's state, and
+   the attestation routes to whichever chain the surviving record stored —
+   one authorization released against the wrong instruction, the other
+   charged forever. The state, the registry, and the attestation all key on
+   **`(sourceChainId, issuingBase, authId)`**, with backfilled entries
+   taking the source component from the charged-side reconciliation that
+   certified them. So: (a) source-chain persistence,
    split by WHEN the instruction arrived, because the two cases have
    different provable facts: **new ingresses persist the messenger's
    authenticated `sourceChainId` at arrival** — while for PRE-UPGRADE
@@ -2649,9 +2709,16 @@ while payouts and recycle consumption debit only the aggregates — so "was
 packet A's credit spent?" had no ledger to consult, and a correction could
 move attribution that had already funded a completed payout, printing an
 unbacked credit on the other side (the snapshot-keyed aggregate inherits
-the same question). The rule is **FIFO by classification order, per side**:
-each classification entry records the side's cumulative prefix at the time
-it landed, and an entry's credit is SPENT to the extent the side's
+the same question). The rule is **FIFO by classification order, per side, PER CREDITED
+ERA** — the queue lives where the credit went. A packet classified into
+retired era A is spent by A-era claims that debit A's carried balance and
+never touch live `paid`, so a single global `sideOutflowTotal` cannot see
+that spending: the credit would read forever-unspent and be movable
+without replacement, reusing backing that already paid the claim. Each
+credited era therefore keeps its own per-side outflow total and its own
+classification queue (the era stamp from ingress already says which), and
+each classification entry records ITS era-side's cumulative prefix at the time
+it landed; an entry's credit is SPENT to the extent that era-side's
 cumulative outflow total exceeds its recorded prefix —
 `spent = clamp(sideOutflowTotal − prefixBefore, 0, credit)` — a pure
 derivation from totals already kept, no per-outflow bookkeeping. A
