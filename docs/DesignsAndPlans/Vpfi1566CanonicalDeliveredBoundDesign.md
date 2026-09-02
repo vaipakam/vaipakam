@@ -1418,7 +1418,19 @@ retired by accident:
   against a zero live bound, and matrix row 13 simultaneously reports it
   unexecutable, so **an abandoned retired claim can never even become
   terminal.** Both checks take `eraBalance + liveHeadroom` as the available
-  figure and consume in that order. Making the era balance their ONLY source would freeze
+  figure and consume in that order — **PER ERA, never in aggregate.**
+
+  A single `claimInteractionRewards` window or expiry batch can span days from a
+  retired era and the current one, and the design otherwise passes one aggregate
+  fresh component to `_deliverReward`. A call carrying 10 of old-era need and 90
+  of live-era need would then consume **100** from the old era — current claims
+  spending funding reserved for the old era's other obligations, leaving those
+  dependent on a future delivery that may never arrive.
+
+  So the fresh component is decomposed **per era** and threaded that way through
+  claims, absorptions, enforcement and executability, with **each era's debit
+  capped by the need accrued in that era.** An era balance is a fund for its own
+  obligations, and an aggregate figure cannot express that. Making the era balance their ONLY source would freeze
   the excess permanently: with `received = 100`, `paid = 90` and 50 of
   outstanding retired-era claims, only 10 carries forward, and the other 40 would
   wait forever while later deliveries land in a balance they may not touch.
