@@ -43,6 +43,17 @@ instruction to anyone implementing or writing copy from the top of the file.
    the second surface afterwards. Tying the delay to a design that may never
    ship leaves the one that might unprotected.
 
+   **An unbond request must also STOP new predicate-governed admissions, not
+   merely snapshot `unlockAt`.** Revoking privileges does not close the door
+   where the predicate governs a permissionless surface — this note records that
+   `matchSignedOffer` has no per-matcher authorization and `matchIntent` can
+   remain open — so an operator can request unbond, **act again afterwards**
+   with an evidence horizon outliving the snapshot, and withdraw before that
+   proof arrives. So the request puts the bond into a state that **rejects new
+   predicate-governed admissions**, or post-request calls are explicitly
+   **unenrolled and non-slashable**. Either is sound; leaving it unsaid is not.
+   **request → act → proof** is an acceptance case.
+
    So each delayed-proof predicate carries its own **evidence horizon**, and the
    delay is the maximum over the predicates governing **still-actionable actions
    taken before the request — including predicates governance has since
@@ -178,7 +189,14 @@ managing their own aggregate bond.
 Neither is a detail to settle in implementation, because they are different
 products. **Either an explicit consented-gift model** — the deposit is
 irrevocably the operator's on arrival, stated as such at the call site, the
-payer has no claim, **and the OPERATOR authorises each one**. Consent is not
+payer has no claim, **and the OPERATOR authorises each one, SINGLE-USE.** "Each one" is not replay
+protection: an authorization implemented as an off-chain signature or a
+standing approval lets a payer submit the same one repeatedly with dust
+transfers until the bounded tranche set is full — the identical raise-blocking
+grief, now with a signature attached. So consent is bound to **payer, operator,
+role, token and exact amount**, carries the **chain and contract domain** plus
+an **expiry**, and **consumes a nonce before the transfer**. Replay is an
+acceptance case. Consent is not
 optional garnish: a permissionless on-behalf selector lets a hostile payer drip
 tiny deposits between an operator's delayed actions, creating a distinct
 exposure epoch each time until the **bounded tranche set is full** — after which
@@ -778,9 +796,12 @@ forged proofs and confiscating those reservations after governance has already
 identified the hole. Rule 2's "disabling does not cancel prior liability" is
 right for a routine retune and exactly wrong here.
 
-So: an **emergency epoch invalidation** that blocks the old verifier
-immediately AND, in the SAME atomic call, does **only** an O(1) epoch-state
-transition — never an iteration.
+So: an **emergency QUARANTINE** that blocks the old verifier immediately AND,
+in the SAME atomic call, does **only** an O(1) epoch-state transition — never an
+iteration. **Invalidation is not part of the immediate call**; an earlier
+revision named it here, which either restores the fast-key amnesty rejected
+below or puts the "immediate" operation behind the timelock it is meant to
+outrun.
 
 ⚠️ **That transition is a QUARANTINE, not a release**, and an earlier revision
 conflated them. Making every reservation in the epoch non-blocking is an
@@ -828,7 +849,16 @@ cleanup, which is the opposite of the promise — or rescan an unbounded set of
 records and risk the same gas limit the O(1) design avoids.
 
 **So the per-operator reserved figure is kept per epoch, over a bounded set of
-active epochs**, and admission sums only the epochs still valid. An invalidated
+active epochs**, and admission sums only the epochs still valid — **and the sum
+is partitioned by COLLATERAL TOKEN epoch too, never a single figure across
+tokens.** Rotation carries old-token reservations, so one operator can hold
+liabilities denominated in different raw units: an 18-decimal old-token
+reservation **dwarfs** a 6-decimal new bond and blocks every new
+predicate-governed action, while the reverse rotation makes the old liability
+**negligible** against the cap. Token-epoch capacity parameters fix the capacity
+arithmetic and do nothing for the reservation arithmetic — these are two sums,
+and both need the same partition. Either keep unreserved backing and the
+concurrency cap per token epoch, or define an explicit conversion before summing. An invalidated
 epoch's amount then disappears from both unreserved backing and the concurrency
 cap by the same single write, with no scan: reservations naming an invalidated
 epoch stop counting against the cap and stop blocking admission **immediately,
@@ -1810,7 +1840,10 @@ that everything else is throughput and these are custody:**
   post-rotation resolution would otherwise check and credit the **replacement**
   token rather than the confiscated old asset — reverting, or corrupting recycle
   accounting. `ServiceBondSlash` remains the source classification; only the
-  transport changes. The debit credits
+  transport changes — which means the criterion must **not** name
+  `LibVpfiRecycle.credit` at all for this path, and an earlier revision still
+  did while forbidding it one sentence above. The API exercised is the selected
+  **per-token credit or escrow settlement**. The debit credits
   `LibVpfiRecycle.credit(RecycleSource.ServiceBondSlash, …)` through the
   chokepoint, with the event carrying that source and not a new generic one.
   Under (A) there is no production call that can satisfy this, so it is
