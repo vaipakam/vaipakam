@@ -372,9 +372,15 @@ OffenceRecorded(operator, role, kind, refId)   // role, not just operator
 // state — withdrawals may REDUCE rather than close a deposit (the raise/
 // reduce lifecycle), so a 10-of-100 first-flag park with no stored figure
 // leaves the delisting release unable to tell pay-10-retain-90 from
-// pay-all; an emitted delta is not contract state. Its release transition
-// is delisting: an authoritative clean read re-screens and pays exactly
-// the persisted parked amount through the normal withdrawal path.
+// pay-all; an emitted delta is not contract state. The persisted figure
+// is a CAP, not a promise: a delayed proof accepted BEFORE the park may
+// debit the deposit while it sits parked, and paying "exactly" the
+// stored figure is then insolvent or permanently reverting. Release pays
+// min(persisted request, what the deposit still holds net of debits and
+// reservations) — the park queues a withdrawal, it does not escrow one.
+// Its release transition is delisting: an authoritative clean read
+// re-screens and pays that capped figure through the normal withdrawal
+// path.
 // `unlockAt` and the remaining states exist for the
 // DELAYED-UNBOND machinery that any delayed-proof predicate requires, NOT for
 // the liveness tier specifically. An earlier revision said "the liveness
@@ -1087,9 +1093,20 @@ the netting, the released backing reads as withdrawable the instant the
 filter flips, and the operator withdraws or re-reserves it before lazy
 cleanup collects — leaving collection to eat later liability or forgive
 the offence. So every read that exposes backing (withdrawable, unreserved,
-admission capacity) subtracts the outstanding liabilities **PER TRANCHE —
-each debt is netted only against the tranches its recorded watermark
-reaches, clamped there, and the per-tranche figures are summed** — and any
+admission capacity) subtracts the outstanding liabilities **PER TRANCHE,
+under ONE deterministic allocation: debts in recording order, each
+walking its reachable tranches oldest-first and DECREMENTING its
+remaining amount as it allocates** — a debt is counted once across the
+tranches it reaches, never clamped independently in each (a 10-unit debt
+reaching two 100-unit tranches withholds 10, not 20, and not 0 in
+whichever tranche a different implementation chose to skip). A debt's
+COLLECTIBLE amount is what that walk can actually place — `min(nominal,
+live reachable backing)` — and **every base that nets liabilities nets
+the COLLECTIBLE figure, not the nominal**: the synchronous offence base
+included, which otherwise lets a mostly-extinguished old debt (25
+recorded, 1 still reachable after delayed proofs consumed its tranche)
+discount new offences against a fresh 100-unit deposit it cannot touch.
+The per-tranche figures are then summed — and any
 touch that would expose invalidation-released backing settles the
 liabilities reaching it FIRST. The per-tranche scoping is not detail: a
 partition-WIDE subtraction would withhold a post-offence deposit for a
@@ -1467,8 +1484,17 @@ The delay is specified as arriving **with the first predicate that creates
 delayed evidence** — which revs 1–3 assumed would be the liveness tier, and now
 is more likely to be equivocation. The rules those revs worked out are kept for
 whichever it is rather than discarded: privileges revoke at the request (or the
-window does not cover actions taken inside it), and `unlockAt` is snapshot at
-the request (or a retune moves a pending withdrawal in both directions). Those
+window does not cover actions taken inside it), and the deadline is pinned
+against RETUNES at the request (or a retune moves a pending withdrawal in
+both directions) — **but "pinned" is the schema's cache rule, not a scalar
+snapshot**: release still computes at claim time as the max over the
+withdrawal's outstanding actions' horizons, each under ITS verifier's
+pausable clock, with the retune-pin meaning a governance retune cannot
+SHORTEN any of those horizons after the request. An earlier phrasing said
+"`unlockAt` is snapshot at the request", which a verifier quarantine
+falsifies in both directions — the frozen scalar releases collateral a
+paused verifier's still-valid proof should hold, and extending it globally
+lets an unrelated quarantine freeze every withdrawal. Those
 were right answers to a question v1 does not ask yet — and they are answers
 about **delayed evidence**, not about liveness, which is why they transfer.
 
