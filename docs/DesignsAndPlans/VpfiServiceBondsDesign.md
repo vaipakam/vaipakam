@@ -1051,7 +1051,18 @@ to that point**: the unverified interval never counts, since nothing
 proves the verifier was sound during it. Conservative in the only safe
 direction — horizons lengthen, principal waits, nothing is forgiven.
 Immutable verifier deployments make all of this vacuous, which is the
-argument for them; anything mutable earns the rollback. A mismatch is
+argument for them — and it is now the RULE, not a preference: **a
+delayed-proof verifier is immutable, or it maintains an on-chain
+APPEND-ONLY mutation log the touches check**. Point-in-time hash checks
+cannot see a TRANSIENT drift (mutate, exploit, restore between touches):
+both hashes match at the next touch, `lastVerified` advances across the
+unsound interval, and the rollback never fires because nothing is
+currently mismatched. Continuity must be provable, and only two things
+prove it — code that cannot change, or a record that every change must
+append to (the touch compares the log's mutation COUNT against
+`lastVerified`'s snapshot; any growth triggers the same
+quarantine-and-rollback as a live mismatch, restored or not). A mutable
+verifier with no such log is not eligible to adjudicate delayed proofs. A mismatch is
 QUARANTINE-EQUIVALENT for the affected epochs: proofs refuse,
 horizons pause on the shared clock, and governance resolves restore-or-
 invalidate exactly as for a flagged verifier. Immutable deployments
