@@ -3078,8 +3078,17 @@ it landed; an entry's credit is SPENT to the extent that era-side's
 cumulative outflow total exceeds its recorded prefix —
 `spent = clamp(sideOutflowTotal − prefixBefore, 0, credit)` — a pure
 derivation from totals already kept, no per-outflow bookkeeping. A
-correction may move only the provably-UNSPENT remainder under that order;
-anything else requires replacement custody.
+correction may move only the provably-UNSPENT **and UNRESERVED**
+remainder under that order — absence of a completed outflow is not proof
+that the credit is free. `recycleBucket = 10` with
+`outstandingCommitRecycled = 10` shows zero outflow and zero freedom:
+the FIFO test alone would move all 10 to fresh and leave the commitment
+outstanding against nothing, failing the next recycled claim or feeding
+it unrelated later funding. Movable recycled custody is bounded by the
+UNCOMMITTED balance — net of `outstandingCommitRecycled`, the keeper
+earmark, and every other standing reservation — unless the correction
+atomically retires or reassigns the reservation itself; anything else
+requires replacement custody.
 
 **And a correction that REMOVES an unspent entry must shift every later
 entry's effective position, or the prefixes it left behind lie.** The
@@ -3118,7 +3127,22 @@ removed amount**, which step 1 made impossible in both directions — and the
 "below" half actively contradicted step 1's requirement that the residual REMAIN
 in `uncounted`.
 
-**A fresh classification MOVES ITS TOKENS, not just its numbers.** The
+**An untyped arrival is PROTECTED AT INGRESS — `actualReceived` routes
+into an `UNCLASSIFIED` holder attribution the moment it lands.** Leaving
+the delivery in the shared balance until an administrator classifies it
+reopens the window this custody design closes: `uncounted` is a counter,
+the legacy epoch stays open indefinitely, a foreign outflow spends the
+packet first — and the later delta-checked relocation still SUCCEEDS
+whenever any other owner's VPFI remains in the shared balance, moving
+that owner's tokens into the holder and publishing apparently-backed
+headroom. So the ingress transfer lands in protected custody under the
+`UNCLASSIFIED` row, and classification is an IN-HOLDER reattribution
+(unclassified → fresh or recycled), with nothing for payroll to race.
+
+**A fresh classification MOVES ITS TOKENS, not just its numbers —
+in-holder, per the ingress rule above; for pre-holder arrivals the
+relocation is from the shared balance and inherits slice 0's
+provenance bar.** The
 arrival landed in the shared Diamond balance (`RewardRemittanceReceiver`
 transfers there), and classification that only debits `uncounted` and
 credits `received` publishes holder-capped headroom the holder does not
@@ -3302,14 +3326,26 @@ custody reattribution alone moves nothing a claim can see.** After a
 20-deficit absorbs a 20-ingress, `received == paid` — reattributing the
 tokens to the live row leaves headroom at zero; crediting `received`
 again would be an unregistered fourth writer double-recording a receipt
-already counted. The release is therefore a **registered corrective
-`paid`-debit**: owner-gated, bound to the recorded deficit disposition,
-atomically moving the custody restitution→live AND reducing `paid` by
-the released amount — the honest semantics (the historical overpayment
-is being made whole, so the record of having paid it is corrected), it
-leaves the three-writer `received` contract untouched, and `paid`'s own
-writer set carries it as an explicit registered entry with the
-disposition id in the event.
+already counted. The release SPLITS BY THE DEFICIT'S EVIDENCED CAUSE, which the recorded
+disposition must name — because a `paid`-debit is only honest when the
+payment never really happened. For an **evidenced ACCOUNTING error**
+(a double-recorded payout, a counter written with no transfer behind
+it), the release is a **registered corrective `paid`-debit**: owner-gated,
+bounded by the evidenced overstatement, atomically moving the custody
+restitution→live and reducing `paid` — the record of a payment that did
+not occur is corrected, the three-writer `received` contract is
+untouched, and `paid`'s writer set carries the entry with the
+disposition id. For a **GENUINE deficit** — tokens that really left
+beyond authenticated receipts, the permitted payout-then-demotion case —
+**`paid` is retained** (an earlier revision debited it here, which
+republishes spent allowance: `received = 80, paid = 100`, fund 20,
+debit `paid` to 80, and cumulative payouts reach 120 against 100
+authenticated receipts — and it contradicts the `paid = max(existing,
+reconciled)` floor stated for exactly this reason). The restitution
+custody then never becomes live backing by ledger surgery: it routes to
+the harmed/recovery side (repatriation, or funding the harmed position),
+and new headroom exists only when funding arrives through the ordinary
+`received`-crediting writer, genuinely backed.
 
 **And an imported POSITIVE `received − paid` is history, not money: usable
 headroom is capped by the DEDICATED HOLDER'S balance, which starts at
