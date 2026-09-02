@@ -285,6 +285,17 @@ withdrawal. So, before bonds ship, **either**:
   bond**, or rotation needs an explicit **forced escrow migration that preserves
   the beneficiary**. Voluntary enumeration cannot be the only route.
 
+  **Rotation carries the DEBT with the balance — the per-token liability
+  queue, its watermarks, and the debt-first settlement obligation migrate
+  atomically with the principal.** A deferred liability adjudicated
+  against old-token tranches otherwise watches its backing leave: the
+  snapshot/escrow migration moves the reserved principal into beneficiary
+  escrow while the debt stays in a ledger that no longer controls it, and
+  the eventual release must either forgive an adjudicated offence or
+  strand the escrowed withdrawal. The escrowed balance remains encumbered
+  by its migrated liabilities, settled debt-first at release exactly as
+  the un-migrated rule prescribes.
+
   **And the escrow holds the ORIGINAL asset — it does not move the principal
   "into the new token".** An earlier revision said the latter, which quietly
   assumes a conversion nobody funds: the old token may be compromised or
@@ -361,7 +372,12 @@ OffenceRecorded(operator, role, kind, refId)   // role, not just operator
 // V1's still-valid proof should hold; extend the scalar instead and an
 // unrelated quarantine freezes V2-backed principal and every other
 // withdrawal with it. The outstanding-action set carries an explicit COUNT
-// cap per (operator, role) — the ratio cap alone does not bound it: at a
+// cap per (operator, role) — with INVALIDATED epochs' actions excluded
+// AT READ TIME (the count consults the same tri-state the value reads
+// consult, or an O(1) per-epoch counter joined by generation): a stored
+// scalar decremented only by lazy cleanup keeps refusing new admissions
+// after an invalidation that promised immediate capacity restoration,
+// and cleanup may never run — the ratio cap alone does not bound it: at a
 // 50% cap and 1% rate an operator can raise ~2% and admit another action
 // indefinitely, every admission satisfying the ratio, until the
 // claim-time scan over thousands of records exceeds the gas limit and
@@ -1489,7 +1505,10 @@ whole rule:
     So concurrency gets its own bound rather than being squeezed into the
     geometric one: **no NEW action is admitted whose reservation would take
     total outstanding reserved liability above `maxConcurrentReservedBps` of
-    the then-current bond** (a governance parameter, bounded well below
+    the then-current ELIGIBLE balance** (never the whole bond: under C, 900
+    fee-free excess beside 100 armed at a 5,000-bps cap reads as 500 of
+    permitted reservations — a hundred 1% actions admitted, and a proof
+    burst zeroes the armed principal the cap exists to protect) (a governance parameter, bounded well below
     10 000 — 5 000 is the natural starting value). At 10% per action that
     admits five concurrent pending actions and refuses the sixth. An earlier
     phrasing said the total "may never exceed" the ratio — a continuous
@@ -2064,12 +2083,29 @@ decisions rather than to an implementer's discretion:*
   it is exposed through recycle events forever, so it is named correctly
   BEFORE deployment, not grandfathered after.)
 
+**Arming stored excess creates a FRESH exposure epoch — old liability
+watermarks must not reach newly armed principal.** A deferred liability
+persists a tranche watermark from when its offence was recorded; if
+arming later flips eligibility inside the same stored tranche, a debt
+recorded against zero eligible backing becomes collectible from
+principal that was not eligible when the offence occurred — action-time
+reach violated through the eligibility flag rather than the tranche
+list. Armed-from-excess principal therefore enters as a NEW
+tranche/exposure epoch (beyond every existing watermark), or
+equivalently each liability persists its action-time eligible cap per
+reached tranche and collection clamps there.
+
 **Fee-free EXCESS never becomes armed capacity by retune.** An operator
 who pre-deposits above the current ceiling pays no fee on the excess —
 correct at deposit time, since it grants no capacity — but a later curve
 retune must not silently activate it: deposit 100 to the ceiling, add 900
 free, let `bondAt4x` rise, and the 900 preserves full entitlement that a
-post-retune deposit of the same 900 would have paid for. The excess is
+post-retune deposit of the same 900 would have paid for. **Both capacity
+CURVE inputs — the ceiling read and the rate read — take the persisted
+ELIGIBLE balance, never the undifferentiated bond amount**: a formula fed
+the whole deposit re-prices all 1,000 units at the next bucket touch
+after a retune and silently activates the excess without its arming fee,
+the exact bypass the eligibility split exists to prevent. The excess is
 therefore recorded as **capacity-INELIGIBLE until separately ARMED**, and
 the arming call charges the fee on the capacity being activated — the fee
 tracks capacity granted, whichever transaction grants it.
@@ -2324,7 +2360,15 @@ no custody moves, nothing reaches the recycle bucket — and the liability
 settles on the regime's own terms: executed into recycling after an
 authoritative delisting re-screen, or disposed with the rest of the
 frozen balance under whatever terminal the sanctions machinery
-prescribes. The debit is never escaped and the freeze is never violated;
+prescribes. **And it is an ENCUMBRANCE on every withdrawable-balance
+read from the moment of adjudication — settled BEFORE any parked
+release pays out.** The parked-withdrawal release pays the request cap
+net of debits and reservations; converting the reservation into a
+liability without joining that netting lets a release-first
+implementation return the reserved units at delisting and leave nothing
+to recycle. The adjudicated liability persists in the withdrawal
+accounting (netted from every payable figure), and the delisting
+release executes it first, then pays the remainder. The debit is never escaped and the freeze is never violated;
 the two rules meet at a parked adjudication.
 
 **Both parties are screened on a deposit-on-behalf**, not just the caller. The
