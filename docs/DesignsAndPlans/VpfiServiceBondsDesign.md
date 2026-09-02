@@ -840,8 +840,24 @@ sign only once) — and **each slot is consumed AT MOST ONCE**: the first
 accepted proof debits it, and every further pair from the same slot is the
 same offence resubmitted, reverting as a duplicate regardless of which
 statements it packages. Signing ten conflicting statements in one slot is
-one equivocation, not forty-five. **Reversed-order submission and
-third-statement resubmission are both acceptance cases.** v1 does not need this at
+one equivocation, not forty-five.
+
+**And the slot binds ONE canonical reservation, fixed at ADMISSION — or
+consume-once decides the wrong thing deterministically.** If several
+enrolled actions can share a slot, their reservations differ (balance,
+rate, config epoch, tranche set all move between admissions), and "first
+accepted proof debits it" lets the SUBMITTER choose which: package the
+pair tied to the smallest reservation first, consume the slot, and the
+larger liability can never be applied — proof ORDER now controls both the
+confiscation and which tranches release, which is the
+resolution-order-dependence this section exists to remove, handed to the
+adversary as a feature. So slot uniqueness is enforced where reservations
+are created: **the FIRST action enrolling a slot binds it, and a second
+enrollment of the same slot is REFUSED at admission** — one duty instance,
+one reservation, and a proof for the slot executes that reservation and no
+other. Nothing is left for packaging to select. **Reversed-order
+submission, third-statement resubmission, and second-enrollment refusal
+are all acceptance cases.** v1 does not need this at
 all: it has no offences to identify, since both selectable forks are
 non-confiscatable. An earlier revision said "v1's immediate in-call recording",
 which attributes a recording mechanism to a version that must not have one. For
