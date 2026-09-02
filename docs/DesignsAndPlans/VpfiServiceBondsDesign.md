@@ -753,7 +753,21 @@ offence — **and the base depends on when the offence is recorded:**
     applied to debts); and a fully-encumbered operator's next offence
     records zero BY ARITHMETIC — every unit is already promised — with the
     correct response being the role's encumbrance gating, not a promise
-    larger than the collateral behind it. Three parts because two simpler
+    larger than the collateral behind it.
+
+    **"Never reaches later deposits" is enforced by BINDING, not by the
+    stated intention: each deferred liability records the TRANCHE SET
+    reachable when it was recorded, and collects only from releases of
+    those tranches.** A partition-wide oldest-first collection contradicts
+    the reach rule the moment tranches mix ages — delayed proofs consume
+    the action-time tranches, a post-offence deposit's reservation releases
+    into the same token epoch, and partition-scoped FIFO hands that new
+    capital to the old debt. Collection is therefore tranche-filtered; and
+    when a liability's recorded tranche set is EXHAUSTED (consumed by
+    proofs and collections), the remainder is **EXTINGUISHED, explicitly**
+    — recorded as uncollectable, never carried forward — because the
+    collateral that stood behind the promise is gone and every other rule
+    in this section refuses to let a debt outlive what secured it. Three parts because two simpler
   rules each failed: the raw-total debit consumes reserved collateral
   (below), and a plain unreserved-base figure lets clean reservations
   DISCOUNT the offence — fill the cap with clean delayed actions and a 25%
@@ -988,7 +1002,17 @@ every epoch at once. In that one call it (a) disables proof submission
 against the suspect verifier — every epoch it backs — and (b) stops NEW
 predicate-governed admissions under those epochs — while
 **preserving every reservation and its horizon**
-(horizons pause; nothing is released, nothing debited). The forgery stops;
+(horizons pause; nothing is released, nothing debited). **And "pause"
+governs ONE clock that both the horizon and the EVIDENCE read.** Pausing
+the reservation horizon while an equivocation artifact's own validity
+window keeps counting wall-clock time lets the evidence EXPIRE inside the
+quarantine: on restoration the reservation resumes but the verifier can no
+longer accept the proof — an amnesty nobody granted, or a permanently
+unresolvable reservation, delivered by the incident lever meant to prevent
+exactly that. So artifact and proof validity are measured against the same
+pausable ACTIVE clock as the horizon (quarantined blocks do not age the
+evidence), and restoration returns the full remaining submission window
+that existed when the quarantine began. The forgery stops;
 nobody's liability moves; no iteration occurs. A compromised or mistaken fast
 key can therefore inconvenience, but cannot amnesty and cannot confiscate.
 
@@ -1141,9 +1165,18 @@ whole rule:
   computing rounding at resolution re-imports exactly the resolution-order
   dependence the reservation removed — the 29-versus-30 arithmetic below, via
   the rounding instead of the base. Round once at acceptance, freeze the
-  figure into the reservation, and resolution executes it; only the
-  synchronous case (observation and debit in one call) rounds over the
-  current unreserved balance, where the two figures coincide. The
+  figure into the reservation, and resolution executes it; the synchronous
+  case (observation and debit in one call) rounds ONCE over the FIGURE'S
+  OWN BASE — the partition balance net of outstanding deferred liabilities
+  — and only the resulting figure's COLLECTION clamps to unreserved
+  backing. (This sentence previously said the synchronous rounding runs
+  "over the current unreserved balance, where the two figures coincide" —
+  they coincide only when nothing is reserved: at 100 held, 50 reserved,
+  25% rate, the unreserved-base rounding computes 12.5 where the
+  partition-net rule requires 25, which is the clean-reservation offence
+  shield resurrected through the ROUNDING sentence after being evicted
+  from the base rule. Rounding follows the base; clamping follows the
+  collection; the two are different steps.) The
   per-tranche prohibition stands for both: deposit
   fragmentation must not change the penalty — an operator splitting 100 units
   into 100 one-unit deposits would, under per-tranche ceiling-rounding, be
