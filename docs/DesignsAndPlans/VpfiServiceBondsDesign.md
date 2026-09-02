@@ -379,15 +379,17 @@ ServiceCapacityDeposit { operator; role; token; rotationEpoch; amount;
 // sanctions section requires to persist. `amount` is principal and `state`
 // alone cannot distinguish park-10-of-100 from park-all; the delisting
 // release pays min(parkedRequest, payable), DECREMENTS `parkedRequest` by
-// what it paid — and a PERMANENT debit CLAMPS the cap to the post-debit payable
-// balance — `parkedRequest = min(parkedRequest, principal net of live
-// reservations)` — never a blind pro-tanto subtraction: a 10-unit debit
-// fully covered by the other 90 of a 100-unit deposit must not cancel a
-// valid 10-unit parked request (subtraction zeroed it; the clamp leaves
-// it payable). The cap shrinks exactly when the debit actually consumed
-// backing the request needed, a remainder never survives the principal
-// that backed it, and amounts temporarily behind live reservations stay
-// parked.
+// what it paid — and a PERMANENT debit CLAMPS the cap to the POST-DEBIT PRINCIPAL —
+// `parkedRequest = min(parkedRequest, principal)` — never a blind
+// pro-tanto subtraction, and never a clamp against the instantaneous
+// unreserved amount: subtraction cancelled requests whose backing
+// survived, while netting live reservations into the clamp PERMANENTLY
+// forfeits amounts that are merely temporarily behind a reservation
+// (principal 100, reserved 60, parked 80, debit 10 — the request must
+// stay 80, since 90 becomes payable when the reservation expires; the
+// unreserved-net clamp cut it to 30 forever). Temporary unavailability
+// is the release-time min(parkedRequest, payable)'s job; the clamp only
+// enforces that a request never outlives the principal that backs it.
 OffenceRecorded(operator, role, kind, refId)   // role, not just operator
 // NAMING IS NORMATIVE for every PUBLIC identifier — struct, selectors,
 // events, errors, user-facing copy: capacity-deposit naming, never "bond".
@@ -867,9 +869,12 @@ to zero", which are not the same rule: for any threshold above one it is
 undefined whether the earlier offences debit, whether crossing the threshold
 takes 10% once or the accumulated total, and what the counter does afterwards.
 
-**The threshold is ONE.** Each `OffenceRecorded` debits `slashBps` into the
-recycle bucket from the `(role, address)` bond whose entry point recorded the
-offence — **and the base depends on when the offence is recorded:**
+**The threshold is ONE.** Each `OffenceRecorded` creates a liability of
+`slashBps` against the `(role, address)` bond whose entry point recorded
+the offence — settled into the recycle bucket per the
+durable-adjudication rule, never debited in the recording transaction
+(a reverting recycle-backing check or old-token leg would roll the
+record back with it) — **and the base depends on when the offence is recorded:**
 
 - **Synchronous recording (a future predicate-enabled tier, NOT v1):** the
   FIGURE is `slashBps` of the action's **collateral-token-epoch partition's
@@ -935,12 +940,21 @@ offence — **and the base depends on when the offence is recorded:**
     equivalence key, because quarantine pauses and invalidation
     extinguishes PER EPOCH: one aggregate spanning two epochs could
     neither selectively pause nor selectively resolve its constituents.
-    And ordering survives coalescing through **PER-CLASS QUEUES**: one
-    queue per (reach-class, epoch), collection MERGING classes by each
-    class's earliest outstanding recording position — within a class,
-    order is genuinely irrelevant (identical reach means identical
-    collectible sources), while the cross-class interleaving the
-    recording-order rule protects is preserved by the merge. The class
+    And ordering survives coalescing through **BOUNDED SEGMENTS**: the
+    queue is a recording-ordered list of (class, aggregate) segments,
+    consecutive same-class entries coalescing within their segment —
+    which preserves EVERY cross-class boundary (a per-class merge by
+    earliest position would process `A1+A2` ahead of an intervening
+    `B1`, re-ordering exactly what the recording rule protects). The
+    segment COUNT carries a hard cap: an offence that would open a
+    segment past it coalesces into the newest same-class segment
+    instead, sacrificing cross-boundary precision only past the cap —
+    and only in the protocol-conservative direction (total collection
+    is conserved; the shift moves collection earlier for the merged
+    aggregate, and a multi-tranche debt displaced at one tranche
+    retains its other recourse). Alternation-to-grow-segments is thus
+    bounded by the cap, and each alternating offence still costs the
+    attacker its own liability. The class
     count is bounded by the live tranche boundaries plus one, per the
     watermark argument, times the bounded live epochs — so the
     representation is ordering-compatible AND bounded, where a flat
@@ -2626,8 +2640,16 @@ net of debits and reservations; converting the reservation into a
 liability without joining that netting lets a release-first
 implementation return the reserved units at delisting and leave nothing
 to recycle. The adjudicated liability persists in the withdrawal
-accounting (netted from every payable figure), and the delisting
-release executes it first, then pays the remainder. The debit is never escaped and the freeze is never violated;
+accounting (netted from every payable figure) — and the delisting
+release **retains the liability's EXACT amount in escrow and pays the
+net remainder immediately**, never holding clean principal hostage to
+the settlement's health: settlement is allowed to fail and retry, so
+release-after-settlement turns a broken recycle or old-token path into
+a full-balance freeze of an operator the oracle has delisted, when
+retaining the encumbered 10 of a 100-unit deposit fully secures the
+liability and the 90 owes nobody anything. Settle-then-release becomes
+retain-and-release-net; the escrowed amount settles whenever the path
+heals. The debit is never escaped and the freeze is never violated;
 the two rules meet at a parked adjudication.
 
 **Both parties are screened on a deposit-on-behalf**, not just the caller. The
@@ -2779,7 +2801,7 @@ the two rules meet at a parked adjudication.
   earlier revision required testing a caller-supplied snapshot, which is the
   mechanism this note rejects, so that test could not have been written
   honestly.
-- **ANY PREDICATE-ENABLED TIER (was "(B) / attested tier only" — same rescope as the criterion above: the first slash predicate may arrive by enrolment on A or C)** — dust slashing: a 1-unit balance still
+- **ANY PREDICATE-ENABLED TIER (was "(B) / attested tier only" — same rescope as the criterion above: the first slash predicate may arrive by enrolment on A or C)** — dust slashing **over a POSITIVE NET base only: ceiling rounding applies to the computed net-of-liabilities figure, and a zero net base records ZERO** (the fully-encumbered rule — a minimum-one-unit debit against a zero net base mints a liability with no action-time backing, spurious or reaching protected later deposits): a 1-unit balance still
   debits 1 unit under ceiling division and reaches zero, so no positive
   balance survives a slash unchanged. Under (A) and (C) there is no slash
   path for this to exercise, so it is deferred with the others; the ceiling
