@@ -283,8 +283,19 @@ withdrawal. So, before bonds ship, **either**:
 
   Therefore the **token-snapshot/migration path must cover every residual
   bond**, or rotation needs an explicit **forced escrow migration that preserves
-  the beneficiary** — moving the principal into the new token while leaving the
-  operator's claim on it intact. Voluntary enumeration cannot be the only route.
+  the beneficiary**. Voluntary enumeration cannot be the only route.
+
+  **And the escrow holds the ORIGINAL asset — it does not move the principal
+  "into the new token".** An earlier revision said the latter, which quietly
+  assumes a conversion nobody funds: the old token may be compromised or
+  worthless and the replacement differently denominated, so funding the swap
+  from Diamond custody consumes assets backing other users, and an external
+  swap needs an amount, pricing, slippage and failure policy this design has no
+  business inventing. The operator's claim stays denominated in what they
+  deposited — **token-snapshotted escrow, original asset, beneficiary
+  preserved**. If governance ever wants a funded conversion, that is a
+  separately specified, separately funded operation that migrates balances and
+  reservations atomically — never an implicit property of rotation.
 
   The acceptance case is **branch-specific**, and an earlier revision required
   one sequence of both branches: for **per-token sub-balances**,
@@ -1646,8 +1657,14 @@ for analogous zero-value failures; leaving the baseline that defines
 "permissionless" unconstrained is the omission that matters most, because it
 converts the product into a different one silently.
 
-So: a **non-zero free-tier floor**, or a separate hard-coded permissionless
-allowance that no retune can reach.
+So: a free-tier floor that **covers at least ONE complete minimum-cost action
+per role**, or a separate hard-coded permissionless allowance that no retune can
+reach. "Non-zero" was the earlier wording and it is satisfiable while every
+zero-bond operation is still refused: cost units are deferred to implementation,
+so a role's minimum action charge can exceed a merely positive floor and the
+free bucket never accumulates one action's worth — governance compliant, product
+converted. **Operation at the configured floor is the acceptance case**: a
+zero-bond operator performs one minimum-cost action of each role.
 
 **A zero floor collapses C into A silently.** Governance could later tune the
 flat fee to zero while bond posting and raising stayed enabled — no absorption,
@@ -1729,8 +1746,12 @@ that everything else is throughput and these are custody:**
 - Bond / unbond lifecycle, including that v1 withdrawal is IMMEDIATE and that
   the withdrawal clamps accrued credit in the same step. A test that
   withdraws and then spends is the one that catches the bypass.
-- **An OLD-TOKEN slash settles through the per-token path, never the live
-  `LibVpfiRecycle.credit`.** Rotation now CARRIES old-token reservations, so a
+- **[ATTESTED TIER ONLY — deferred under (A)/(C), like every slash test]
+  An OLD-TOKEN slash settles through the per-token path, never the live
+  `LibVpfiRecycle.credit`.** An earlier revision left this criterion unscoped,
+  so a conforming v1 build — which has no slash path and must keep
+  `ServiceBondSlash` unused — would have had to add the forbidden path or fail
+  its own suite. Rotation now CARRIES old-token reservations, so a
   delayed proof can resolve against one after the rotation — and the live credit
   checks the balance of the new `s.vpfiToken` against one scalar bucket, so it
   reverts for want of new-token backing or credits unrelated new tokens as
