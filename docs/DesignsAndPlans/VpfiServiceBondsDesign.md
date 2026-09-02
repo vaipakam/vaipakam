@@ -1548,7 +1548,16 @@ both directions) — **but "pinned" is the schema's cache rule, not a scalar
 snapshot**: release still computes at claim time as the max over the
 withdrawal's outstanding actions' horizons, each under ITS verifier's
 pausable clock, with the retune-pin meaning a governance retune moves NONE of those
-horizons after the request — in EITHER direction. "Cannot shorten" was
+horizons after the action's ADMISSION — in either direction, and
+admission is the binding moment, not the withdrawal request: the action
+already binds its immutable config epoch when it is accepted, so its
+horizon parameters freeze there with it. Pinning only at the request
+left the admission-to-request interval retunable — shorten a 100-block
+horizon to 10 after admission, wait out the 10, and the principal
+releases while evidence is valid under the terms the action was actually
+admitted on; a lengthening locks it under terms adopted after the fact.
+The withdrawal request AGGREGATES the already-fixed per-action horizons;
+it fixes nothing itself. "Cannot shorten" was
 one round's wording and it permits the other half: a lengthened evidence
 horizon re-locking already-requested principal under terms adopted after
 the action, against both the earlier both-directions rule and the
