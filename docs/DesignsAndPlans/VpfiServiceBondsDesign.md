@@ -383,7 +383,11 @@ OffenceRecorded(operator, role, kind, refId)   // role, not just operator
 // O(1) — filtering invalidated records at read time while they stay in
 // one flat list lets fill-to-cap/invalidate cycles grow the traversal
 // without bound, and the claim-time maximum walks it back over the gas
-// limit with the effective count never exceeding its cap — the ratio cap alone does not bound it: at a
+// limit with the effective count never exceeding its cap. NATURAL
+// EXPIRY is bounded the same way: an admission that uses capacity freed
+// by an expired action UNLINKS that expired record in the same act (the
+// admission pays the O(1) cleanup), so expire-and-replace cycles inside
+// one long-lived valid epoch cannot grow the list past the cap either — the ratio cap alone does not bound it: at a
 // 50% cap and 1% rate an operator can raise ~2% and admit another action
 // indefinitely, every admission satisfying the ratio, until the
 // claim-time scan over thousands of records exceeds the gas limit and
@@ -927,6 +931,20 @@ standing after tranche provenance was made mandatory. Followed literally for a
 delayed proof submitted after the original tranches were consumed and the
 operator topped up, it confiscates the new tranche — the exact reach defect the
 tranche section exists to prevent, restored by the sentence above it.
+
+**Adjudication is DURABLE independently of settlement — a consumed-flag
+written in the same transaction as a fallible debit is not consumed.**
+The EVM rolls the earlier write back with the reverting settlement, and
+the settlement CAN revert — a failed recycle backing check, an
+old-token escrow path that cannot complete — so a proof "consumed" this
+way through the whole evidence horizon never committed at all, and the
+reservation releases despite valid evidence. The proof-to-debit path is
+therefore TWO transitions: a **non-reverting committed adjudication**
+(proof consumed, reservation converted to a durable adjudicated
+liability — no external calls, no fallible legs) and a **separate
+settlement** of that liability, whose failure leaves the liability
+standing encumbered and retryable. Nothing about a broken settlement
+path un-adjudicates an offence.
 
 **Each proof is consumed before it debits.** Under attested-tier delayed
 adjudication the offence arrives as a submitted proof rather than as an in-call
@@ -2036,8 +2054,13 @@ as a capacity retune must**: the epoch binding protects the in-flight
 arming call and nothing else — a bucket holding 100 units at
 cost-10-per-action that survives a retune to cost 1 silently buys 100
 actions instead of 10, a retroactive burst granted with the raw capacity
-untouched. The settle-or-invalidate decision applies here identically:
-elapsed credit is settled under the OLD schedule, or the affected bucket
+untouched. The settle-or-invalidate decision applies here identically — **and
+"settle" means the STORED balance is RESCALED, not merely checkpointed**:
+settling elapsed accrual under the old schedule still leaves 100 stored
+units that the new cost immediately reads as 100 actions. The stored
+balance converts to preserve its old-schedule EXECUTABLE ENTITLEMENT
+(scaled by the cost ratio, so 100 units at cost-10 become 10 units at
+cost-1 — the same 10 actions either way), or the affected bucket
 is invalidated and its credit forfeited, before the new cost prices
 anything. Minimum capacity alone survives a token
 rotation that lands while the arming transaction is pending: with both assets
@@ -2157,10 +2180,15 @@ the flag; a liability adjudicated while the operator was CLEAN and still
 deferred behind reservations is the symmetric case — a later
 confirmation must not let a reservation release, an invalidation, or a
 permissionless cleanup collect it into recycling while the balance is
-frozen. On a flagged read, the collection converts the liability to the
+frozen. On a flagged read — **including the FIRST authoritative flagged read,
+persisted in the same committed act, exactly as on the proof and
+withdrawal paths** (a reverting screen on cleanup's path rolls back the
+marker AND the conversion, and a later oracle outage then collects the
+frozen principal through the never-confirmed fail-open branch) — the
+collection converts the liability to the
 same adjudicated-frozen encumbrance (netted from every withdrawable
 figure, custody unmoved) and settlement waits for the delisting
-re-screen or the sanctions terminal, exactly as for the parked
+re-screen, exactly as for the parked
 adjudication.
 
 **INVOLUNTARY debits are SIZED ON and CONFINED TO the action-time
@@ -2403,10 +2431,16 @@ marker in the same committed act; the proof is CONSUMED and the offence
 ADJUDICATED (the evidence landed; the horizon question ends), the
 reserved amount converts to an **adjudicated liability held frozen** —
 no custody moves, nothing reaches the recycle bucket — and the liability
-settles on the regime's own terms: executed into recycling after an
-authoritative delisting re-screen, or disposed with the rest of the
-frozen balance under whatever terminal the sanctions machinery
-prescribes. **And it is an ENCUMBRANCE on every withdrawable-balance
+settles on ONE terminal only: **executed into recycling after an
+authoritative delisting re-screen — there is no disposal branch.** An
+earlier revision added "or disposed with the rest of the frozen balance
+under whatever terminal the sanctions machinery prescribes", which is an
+open-ended licence the repository's policy does not grant: frozen funds
+are never seized, redirected, or released, and become claimable only
+after delisting (`LibVaipakam.sol:9850-9854`). The liability stays
+frozen and encumbered until delisting, however long that is; a disposal
+terminal, if the owner ever wants one, is a separately approved change
+to the sanctions POLICY — never an open branch in a bond design. **And it is an ENCUMBRANCE on every withdrawable-balance
 read from the moment of adjudication — settled BEFORE any parked
 release pays out.** The parked-withdrawal release pays the request cap
 net of debits and reservations; converting the reservation into a
@@ -2426,7 +2460,16 @@ the two rules meet at a parked adjudication.
   identities, and the withdrawal recipient bound to whichever ownership model
   §Mechanics selects. So `postBond`, any deposit-on-behalf or permit
   variant, and (under C) the arming-fee payer each need
-  `LibVaipakam._assertNotSanctioned` and a focused test — **but `unbond` does
+  screening — **and the arming-fee payer's screen is the REGISTRY-AWARE
+  tri-state gate, not the plain helper**: `_assertNotSanctioned` is
+  fail-open on an oracle outage and never consults
+  `sanctionsConfirmedFlagged` (`LibVaipakam.sol:9934-9945`), so a payer
+  already confirmed through another path could wait out an outage and
+  have a non-refundable fee moved into recycling against freeze-not-
+  seize. Previously confirmed payers are rejected during an outage;
+  fail-open remains only for addresses never confirmed flagged. The
+  other selectors keep `_assertNotSanctioned` — and each needs a focused
+  test — **but `unbond` does
   NOT take the reverting helper**, and this list said it did for one round
   after the paragraph above established why it cannot: when `unbond` is the
   first authoritative observation of the flag, a revert rolls back the
