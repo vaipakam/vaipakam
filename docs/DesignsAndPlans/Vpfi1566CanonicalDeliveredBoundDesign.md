@@ -2186,7 +2186,17 @@ revision unimplementable:
        delivered ledger is the scarcer, provenance-bound resource and
        paying its component from the untyped aggregate reduces demand on
        it without publishing anything — and each leg's chokepoint sees
-       only its own residual.
+       only its own residual. **The recycled leg additionally RELEASES its
+       covered commitment without debiting the bucket** — a
+       transport-specific retirement, exactly as the absorption branch
+       already does: a broadcast that reserved 5 in
+       `outstandingCommitRecycled` and was then paid by the batch would
+       otherwise leave `consume(0)` retiring nothing (the commitment
+       outstanding forever, suppressing spendable bucket funding for a
+       terminal obligation) while an ordinary `consume(5)` debits
+       protected custody that never funded this transfer. Release the
+       commitment, touch no custody — the obligation ended, the bucket
+       never paid.
      - A **repatriation, or an evidence-backed classification, of a parked
        batch remainder** — never the generic pending-to-live drain, which
        the typing rule above forbids for untyped value (this bullet said
@@ -2927,6 +2937,17 @@ it. The port therefore gains a `transportMessageId` parameter (adapter
 and every recipient upgraded together — one interface version, five
 receivers, all in this repo), zero for a transport that has none, in
 which case the ingress falls back to the monotonic per-source counter.
+**And the id crosses the SECOND seam too — the receiver-to-Diamond
+ingress — because the ledger that enforces the packet cap lives in the
+Diamond, not the receiver.** `RewardRemittanceReceiver` calling
+`IRewardBudgetIngress.onRewardBudgetReceived` with no id field leaves
+the `uncounted` accounting stamping nothing: reconciliation would then
+accept a later operator-supplied hash at exactly the ledger the stamp
+exists to protect. The ingress interface gains the same
+`transportMessageId` parameter in the same upgrade batch, the DIAMOND
+stores the stamp with the packet's `uncounted` entry, and every
+reconciliation entry verifies against that stored stamp — never an
+operator-supplied hash.
 The stamp is `keccak(sourceChainId, messageId)`, unique per delivery and
 unfakeable by payload construction. A transport without a message id falls back to a
 **monotonic per-source counter allocated inside the authenticated
