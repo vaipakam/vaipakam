@@ -2204,7 +2204,17 @@ revision unimplementable:
      behind backing that exists. Each day keeps an arrival-ordered batch
      index and a consumption cursor; allocation resumes at the cursor,
      and **exhausting a batch updates EVERY member day's index in that
-     act** — the batch's `dayIds` list is wire-bounded, exhaustion
+     act — with the `dayIds` fan-out BOUNDED AT INGRESS**: "wire-bounded"
+     alone is not a bound, since the remitter supplies any nonempty list
+     and a batch that fit the source transaction can exceed the
+     destination's gas limit when retirement writes one index per
+     member — never retiring, parked at the front of every member
+     cursor. The authenticated ingress refuses (parks for split
+     redelivery) a packet listing more than the protocol's day-count
+     cap, sized so single-call retirement is safe on every target
+     chain; grandfathered oversize batches retire through a RESUMABLE
+     retirement (bounded index-updates per call, batch marked RETIRING
+     and skipped by allocation meanwhile). Exhaustion
      happens once per batch, so the removal cost is paid once by the
      settlement that exhausts it, not rediscovered by every other listed
      day's next scan (a cursor advanced only by its own day's draws
@@ -2254,14 +2264,20 @@ revision unimplementable:
      again — with the cooldown keyed to the BATCH, not the obligation**:
      an obligation-keyed rule falls to a claimant controlling two
      eligible obligations, alternating A and B across expiries with each
-     observing "its" cooldown while the batch never breathes. After a
-     permissionless expiry unwind, the unwound batch enters a priority
-     window in which **only obligations whose preparation predates the
-     expired lease may stage it** — previously blocked competitors go
-     first by construction, and an attacker cannot manufacture priority
-     after the fact (pre-preparing several obligations buys nothing:
-     the equally-old competitors stage freely alongside, and the
-     hostage requires an exclusivity the window denies). Honest stagers
+     observing "its" cooldown while the batch never breathes. During the
+     priority window after a permissionless expiry unwind, **the
+     restored coverage is DIRECTLY CONSUMABLE by any competing
+     obligation's settlement — no staging step, no lease** — and new
+     leases on that batch resume only after the window closes. This is
+     what actually kills the hostage: a stage-first priority rule loses
+     to serialization (pre-age obligations A and B, let A's lease
+     expire, stage instantly through equally-old B — the window's
+     "alongside" is no defence when one transaction takes the whole
+     balance first), where a settlement that needs no lease cannot be
+     outrun by re-leasing at all — the attacker can hold coverage only
+     until expiry, and at expiry anyone ready to SETTLE simply does.
+     Per-obligation cooldowns still apply to the expired lease's own
+     obligation. Honest stagers
      who settle within the deadline never meet any of this. Staged allocations are release-on-cancel, so a
      dead obligation cannot strand what it staged. Bounded, resumable, and nothing
      half-paid — three properties, one mechanism. So
@@ -2341,6 +2357,18 @@ revision unimplementable:
        batch's balance decrements, the recycled row increments, the
        commitment releases — the absorption analogue of the
        fresh→recycled rule.
+
+       **And the per-day pass runs over DECREMENTING shared typed
+       capacities — each day's shortfall is computed against what the
+       EARLIER days left, not against the original balances.** Days A
+       and B each needing 5/5, with 5 live fresh, 5 bucket, and a
+       matching 5-batch per day: independent evaluation sees both typed
+       legs "funded" twice, assigns no transport, and the aggregate
+       10/10 residual fails against 5/5 — total backing exactly
+       sufficient, claim rejected. One deterministic pass in day order,
+       consuming the shared era/live and bucket figures as it
+       allocates, transport covering each day's true residual —
+       settlement and `_entryExecutableNow` running the SAME pass.
 
        **And transport coverage allocates PER MATCHING DAY before anything
        else, because batch membership is a per-day filter.** A claim
@@ -2482,7 +2510,11 @@ revision unimplementable:
    **narrow legacy-quarantine route**: broadcasts are accepted
    post-promotion ONLY from the closed set of legacy source lanes
    certified at transition, authenticated exactly as before, and routed
-   solely into the parked/transport-epoch machinery — never to the
+   solely into the PARKED-MESSAGE lane (acceptance-or-tombstone, as the
+   broadcast rule specifies — an earlier phrasing here said
+   "parked/transport-epoch machinery", and the transport epoch is
+   packet-backed FUNDING that cannot digest a state-bearing broadcast)
+   — never to the
    canonical report surface. Everything else still reverts
    `BroadcastOnCanonical`.
 
