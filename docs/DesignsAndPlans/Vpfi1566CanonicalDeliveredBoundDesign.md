@@ -1719,8 +1719,16 @@ retired by accident:
   with no counter rule even after the paragraph above extended the scope: the
   contract an implementer follows is this list. The live counters go to the
   required zero baseline; the residual is not deleted, it is re-keyed.
-- **Custody.** The delivered VPFI does not move. It stays in the Diamond, now
-  attributed to that era's balance rather than to the live one.
+- **Custody.** The delivered VPFI does not move — **and "does not move"
+  now means it stays in the DEDICATED HOLDER**, re-attributed to the
+  era's balance rather than the live one. An earlier revision said "stays
+  in the Diamond", which the custody rule has since made exactly wrong:
+  holder-funded backing left in the shared balance at a transition is
+  re-exposed to the payroll drain the holder exists to prevent, and an
+  era ledger pointing at the Diamond points away from its actual tokens.
+  A HISTORICAL Diamond-side amount (pre-holder inventory) backs an era
+  only after passing the same provenance-or-replacement rule as every
+  other ambient claim of backing — labeling is not proving, here either.
 - **Claims.** Claims accrued under the retired era consume the era-scoped
   balance **first**, and any excess then debits the **live** delivered headroom
   like any other claim. **The era balance is threaded through the ENFORCEMENT
@@ -2726,9 +2734,17 @@ Conservation still passes — the sums are internally consistent — and recycle
 custody is silently reclassified as fresh headroom, or the reverse. A check that
 validates each entry in isolation cannot see this.
 
-So each entry carries a **canonical packet hash derived from IMMUTABLE DELIVERY
-EVIDENCE** — source chain plus transaction/log identity — with the
-`oldWireAmount` bound and the classified totals keyed to that hash.
+So each entry carries a **canonical packet hash — the INGRESS STAMP
+(`keccak(sourceChainId, messageId)`) for post-upgrade arrivals, or an
+on-chain-verifiable inclusion proof; never an operator-supplied
+transaction/log tuple** — with the `oldWireAmount` bound and the
+classified totals keyed to that hash. (This sentence said "source chain
+plus transaction/log identity" for one round after the historical-identity
+rule below rejected exactly that: for anything unstamped, the contract
+cannot detect two encodings of one arrival, and each encoding would carry
+its own `oldWireAmount` allowance against the global `uncounted`
+aggregate. Unstamped historical inventory has NO per-packet entries — the
+snapshot-keyed aggregate envelope is its only vehicle.)
 
 **Split by WHO stamps it — and only the INGRESS actually stamps.**
 HISTORICAL unstamped inventory does NOT get per-packet identities at all:
@@ -3069,6 +3085,22 @@ imported figures record history, and headroom becomes SPENDABLE only as
 replacement or provenance-backed funding actually lands in the holder;
 the gap between the two is an instance of slice 0's shortfall
 disposition, decided by the owner, never papered over by a seed.
+
+**And the funding half of that disposition needs a CUSTODY-ONLY writer,
+because `fundRewardPool` cannot close an imported gap.** `fundRewardPool`
+credits the holder AND `received` in one act — fund 100 against a
+100-gap and ledger headroom reads 200 over a 100-token holder: the
+shortfall is preserved, one claim later the holder is empty again. The
+two executable forms of the disposition are therefore: (a) a
+**delta-checked holder credit that does NOT touch `received`** — bounded
+by the recorded gap and decrementing it, which keeps the writer contract
+intact because it writes no ledger the three registered writers own
+(custody in, no headroom published; the imported history it funds was
+already recorded); or (b) an **atomic write-down of the imported ledger
+figures** — history retained in the record, headroom reduced to what the
+holder actually backs. Fund the history or shrink it; what is not
+executable is a disposition that promises either while the only funding
+writer inflates both sides at once.
 
 So the retained administrative writers are a starting point rather than the
 mechanism: `seedArmedFreshPaid` covers one side once, and a
