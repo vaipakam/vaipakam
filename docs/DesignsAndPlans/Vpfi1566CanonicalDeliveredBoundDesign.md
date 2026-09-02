@@ -663,13 +663,27 @@ teardown can read the consumed invalidator as ALREADY FILLED and refuse to
 return the custody. The recreation therefore allocates a fresh unused
 nonce in `makerTraits`, recomputes the order hash, and atomically rewrites
 every keyed index (`orderHashToLoanId`, the `orderHashKind` discriminator,
-the nonce registry) in the same act as the cancel. Certification of the
-class requires **no live order exceeding its post-disposition amount, and
-every recreated order FILLABLE** — amount-only certification passes a
-replacement that can never execute, which is the strand this class's
-inclusion in slice 0 exists to prevent — the executable-balance gate
-applied to the one class whose liability lives partly outside the
-migration's own ledgers. A scan that advances because each id was VISITED
+the nonce registry) in the same act as the cancel.
+
+**And the INTERNAL commit is rewritten in the same act, because the
+teardown paths read the STORED amount, not the order.** The settlement
+residual is computed from `intentCommits[loanId].custodialCollateral`
+(`LibSwapToRepayIntentSettlement.sol:147`), the aggregate allowance is
+debited by that same stored figure (`:167`), and cancellation returns it
+outright (`SwapToRepayIntentFacet.sol:924-948`) — so a recreation that
+rewrites the order to 80 while the commit still says 100 has fixed the
+fillable surface and left every internal exit paying out the written-down
+20 from unrelated Diamond custody. The recreation therefore rewrites
+`custodialCollateral` to the post-disposition amount and adjusts
+`intentAggregateAllowance` by the delta, atomically with the cancel and
+the new order. Certification of the class requires **no live order
+exceeding its post-disposition amount, every recreated order FILLABLE, and
+every commit's STORED amounts equal to the certified post-disposition
+figures** — amount-only certification of the external order passes a
+replacement whose teardown still spends the old number, which is the loss
+this class's inclusion in slice 0 exists to prevent — the
+executable-balance gate applied to the one class whose liability lives
+partly outside the migration's own ledgers. A scan that advances because each id was VISITED
 then either reverts partway and blocks arming (aggregate short), or — worse,
 when unrelated custody keeps the raw balance high — **transfers that unrelated
 custody into user vaults and silently reassigns the historical loss to another
@@ -1715,6 +1729,20 @@ retired by accident:
   not-yet-classified packets**, which the first-classification rule would
   have silently excluded from the initialization scan.
 
+  **And the ingress stamps the packet's ERA, which its eventual
+  classification CREDITS — the counter alone preserves finality but not
+  destination.** A packet arriving in era A, classified after the role
+  changed, would otherwise credit its fresh share to the LIVE `received`
+  counter — era B's — so B's claims consume backing that era A's targeted
+  obligations were counted open FOR: the open-classification count
+  correctly blocks A's terminalization and then watches the money go out
+  the wrong door. The packet record therefore persists its ingress era,
+  and classification writes to THAT era's balance — live `received` only
+  while the era is still current; the retired era's carried balance (the
+  same retired-era routing every other late credit follows) once it is
+  not. Two stamps at ingress — the count that holds the era open, and the
+  era id that tells the eventual credit where home is.
+
   **On an existing deployment BOTH counters start WRONG, and must be backfilled
   before any terminalization.** Every pre-upgrade `rewardEntries` row bypassed
   the new increment paths, so a retiring era's liability counter reads zero
@@ -2043,11 +2071,27 @@ revision unimplementable:
    promotion gate requires every
    CERTIFIED instruction resolved — executed or cancel-acked — while the
    chain can still speak as a mirror; and (c) a key surfacing after
-   promotion is tombstoned locally and its Base-side draw released **by the
-   Base-side recorded-disposition operation, verified against the persisted
-   source-chain record** — the charged side owns the ledger and retains
-   full machinery, so the release is an administrative act where the money
-   is, not an acknowledgment the promoted chain has no path to send. Three times
+   promotion is tombstoned locally and its Base-side draw released **only
+   on an AUTHENTICATED TOMBSTONE ATTESTATION** — an earlier revision let
+   the Base-side recorded-disposition operation release on its own,
+   "verified against the persisted source-chain record", but that record
+   lives on the DESTINATION: the charged side would be releasing
+   `chainRepatriationDebited` on an assertion it cannot read, and a
+   mistaken or malicious disposition then leaves the delayed instruction
+   executable while its backing authorization is gone — the same mirror
+   surplus backing two draws, which is the double-spend the authenticated
+   cancel-ack invariant exists to prevent. The existing ack cannot carry
+   this (it is `onlyMirror` and routes to the CURRENT `baseChainId`), so
+   the transition defines its role-agnostic sibling: a **tombstone
+   attestation** message, sendable regardless of the chain's current role,
+   gated ONLY on the persisted instruction state being `TOMBSTONED`, and
+   routed to the instruction's PERSISTED source chain rather than the
+   current role binding. The charged side consumes it exactly as it
+   consumes a cancel-ack — same authentication, same one-shot release —
+   and the recorded-disposition operation on Base is thereby reduced to
+   bookkeeping AFTER the attested release, never a release lever of its
+   own. No attestation, no release: a straggler that cannot yet attest
+   stays charged, which is the safe side of the ledger. Three times
    the "what state can move" test found a survivor; the matrix row for
    repatriation now cites this item rather than assuming token-lessness
    means harmlessness.
@@ -2650,6 +2694,22 @@ an earlier revision argued in terms of shares summing **above or below the
 removed amount**, which step 1 made impossible in both directions — and the
 "below" half actively contradicted step 1's requirement that the residual REMAIN
 in `uncounted`.
+
+**And the FRESH side of any split is the PRIVILEGED direction, because
+fresh is what claims can SPEND.** The component caps validate an entry
+against the operator's own reconstruction, so a wrong (or, with a
+compromised admin key, hostile) 6/4 split passes its own arithmetic and
+immediately exposes tokens as spendable headroom that should back recycled
+obligations — and once a false fresh credit is spent, the error path below
+requires replacement funding, so the reclassification machinery is
+corrective, not preventive. A fresh share therefore requires
+**authenticated source evidence** (the broadcast-side recorded splits where
+the lane carries them) **or delta-checked replacement custody**; absent
+both, the entry classifies **conservatively — recycled or unclassified —
+and a later evidence-backed reclassification lifts it**. Mis-classifying
+real fresh as recycled under-publishes headroom, which is recoverable by
+exactly that correction; the reverse spends someone else's backing first
+and asks questions later. Asymmetric risk, asymmetric rule.
 
 The live case is a share sum exceeding **`oldWireAmount`**: the writer then
 publishes fresh headroom and recycled custody backed by unrelated Diamond VPFI,
