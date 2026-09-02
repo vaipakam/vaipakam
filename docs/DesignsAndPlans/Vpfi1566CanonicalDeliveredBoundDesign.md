@@ -798,7 +798,14 @@ the loss reassignment slice 0 exists to prevent. This document's whole thesis
 applies to its own remedy: the commingled balance is subtractively
 unattributable (ten owners, "NOT AN AUDIT"), so **preexisting backing counts
 only where an on-chain provenance trail proves the segregation** (a
-separately held position, a delta-checked funding event) — and everything
+separately held position, a delta-checked funding event) — and even a
+PROVEN amount **relocates into the dedicated holder atomically with the
+`received` credit** (or the bootstrap verifies the holder already holds
+exactly that attributed custody): proof of provenance in the SHARED
+balance publishes headroom payroll can still spend — the collision the
+holder exists to prevent, reproduced by the bootstrap that cites its
+proof — while a proven-but-unallocated `H` against an empty holder is
+imported headroom nothing can pay. Everything
 else is UNBACKED until replacement funding lands in the tracked funded
 position or the owner records the shortfall disposition. Fund-forward is the
 rule here for the same reason it is the rule for `received`: what cannot be
@@ -2170,12 +2177,18 @@ revision unimplementable:
      consequence of the terminal it would otherwise deadlock: the
      terminalization rule requires the parked lane drained BEFORE the
      era finalizes, so a tombstone gated on finalization parks the
-     broadcast forever and blocks the very terminal it waits for. Once
+     broadcast forever and blocks the very terminal it waits for.
+     **And the association runs on RECEIPT TIME, because "the addressed
+     era" is not a recoverable fact**: parking is committed state, so
+     each parked entry carries its own local id and receipt stamp, an
+     era's terminal requires **no parked entry with receipt at or
+     before that era's retirement watermark outstanding**, and the
+     tombstone discharges the parked ENTRY by its id — no unknowable
+     era named, no wrong terminal releasable. Once
      a retry has been REFUSED by the live-era gate (the evidence it
-     does not belong to the live era) and the addressed era is
-     terminal-pending, the operator records the disposition and the
-     broadcast is
-     **tombstoned with an explicit recorded disposition** (likewise on
+     does not belong to the live era), the operator records the
+     disposition and the entry is
+     **tombstoned** (likewise on
      permanent promotion past the mirror role) (its accrued
      obligations acknowledged as unservable, its source-side
      implications released through the charged-side machinery), never
@@ -2234,10 +2247,17 @@ revision unimplementable:
      one step later. Admission stores the aggregate, the token delta, and an
      authenticated commitment to the day list — **split by what the
      WIRE can carry, because the old formats carry no root**. The new
-     wire (d5 onward) embeds a **Merkle root over fixed-size chunks**;
-     each materialization call then supplies one bounded chunk plus its
-     proof — O(page) verification, no call's work scaling with the
-     list. An OLD-wire over-cap packet cannot be given a root the
+     wire (d5 onward) embeds a **Merkle root over fixed-size chunks
+     TOGETHER WITH the authenticated EXTENT — element count, chunk
+     count, and the indexed-leaf encoding** (a root alone proves a
+     submitted chunk belongs to SOME tree, never that every member day
+     has been seen: accepting a subset omits legitimate targets, and
+     waiting for unspecified more strands the packet). Each
+     materialization call supplies one bounded, INDEXED chunk plus its
+     proof — O(page) verification — and completion is tracked against
+     the authenticated extent: the batch becomes allocatable, and its
+     retirement terminal reachable, only when every indexed chunk
+     through the committed count has landed. An OLD-wire over-cap packet cannot be given a root the
      payload does not carry (a later-supplied root is invented
      membership), so its admission stores `keccak(payload)` — computed
      once over calldata the transaction already paid for, LINEAR-CHEAP
@@ -2313,11 +2333,14 @@ revision unimplementable:
      obligation-bound reservation that DEBITS its amount from the
      restored coverage into staged form** — under the ordinary
      staged-balance conservation and unwind rules, so only the
-     UNRESERVED REMAINDER stays directly consumable ("blocks no
-     allocation" means no exclusive batch lease and no cursor block,
-     never that the amount stays allocatable: a reservation whose
-     tokens another settlement can still consume is double-counted
-     coverage and an oversubscribed packet) — and it DOES carry
+     UNRESERVED REMAINDER stays directly consumable — **and it holds
+     cursors: member-day indexes do NOT pass a batch with outstanding
+     priority reservations** (an earlier phrasing said "no cursor
+     block", which contradicted the retirement-deferral rule outright:
+     advance the cursor past a fully-reserved batch and an expiry
+     restores into a batch that member never revisits). What the
+     reservation does NOT hold is an exclusive lease — others consume
+     the batch's remaining balance freely — and it DOES carry
      **non-locking packet provenance** (packet id, batch id, per-leg
      amounts) and counts in the batch's RETIREMENT-DEFERRAL references:
      settlement must charge the right packet's leg counters, and an
@@ -2586,6 +2609,18 @@ revision unimplementable:
    — never to the
    canonical report surface. Everything else still reverts
    `BroadcastOnCanonical`.
+
+   **The BUYBACK lane joins the same transition gate.** The
+   "what state can move" audit repeatedly found survivors by asking the
+   question of an incomplete surface, and the buyback custody is
+   another: a mirror can enter promotion with a nonzero `buybackBudget`
+   (populated by `creditBuybackBudget`'s noncanonical branch), and
+   `remitBuyback` carries no role guard and sends to the retained
+   `s.baseChainId` — post-promotion that balance is stranded if the
+   binding cleared, or still SENDABLE TO THE RETIRED BASE if it did
+   not. The ceremony therefore drains, quarantines, or re-attributes
+   the buyback budget with everything else, and `remitBuyback` gains
+   the explicit role guard the audit's own test demands.
 
    **A direct `setBaseChainId` REBIND (nonzero → nonzero) is PROHIBITED —
    every source-identity change goes through the Detached ceremony.** The
