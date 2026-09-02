@@ -352,15 +352,29 @@ OffenceRecorded(operator, role, kind, refId)   // role, not just operator
 // (append-only, reserved, MUST stay unused in v1), and renaming a merged enum
 // member to launder a word out of an internal slot is churn without a user.
 // v1: `state` is `Active` or `SanctionsParked` — nothing else — and
-// `unlockAt` is unused. `SanctionsParked` is REQUIRED in v1, not predicate
+// `unlockAt` is unused. When the delayed-unbond machinery DOES arm,
+// `unlockAt` is a CACHE, never the state: release is computed at claim
+// time as the max over the withdrawal's outstanding actions' horizons,
+// each read under ITS verifier's pausable clock. A scalar snapshotted at
+// request time cannot represent independently paused verifiers — pause
+// V1 after the snapshot and the stored deadline releases the principal
+// V1's still-valid proof should hold; extend the scalar instead and an
+// unrelated quarantine freezes V2-backed principal and every other
+// withdrawal with it. The outstanding-action set is already bounded by
+// the concurrency cap, so the max is a bounded read. `SanctionsParked` is REQUIRED in v1, not predicate
 // machinery: the committed first-flag transition (park the withdrawal,
 // persist the confirmation, refuse the payout without reverting) must
 // PERSIST something, and an Active-only schema forces the implementation to
 // choose between reverting (rolling back the confirmed flag — the
 // later-oracle-outage escape the sanctions section exists to prevent) and
 // holding a parked amount no state represents, ambiguous to every release
-// path. Its release transition is delisting: an authoritative clean read
-// re-screens and returns the deposit through the normal withdrawal path.
+// path. The parked record persists the REQUESTED AMOUNT alongside the
+// state — withdrawals may REDUCE rather than close a deposit (the raise/
+// reduce lifecycle), so a 10-of-100 first-flag park with no stored figure
+// leaves the delisting release unable to tell pay-10-retain-90 from
+// pay-all; an emitted delta is not contract state. Its release transition
+// is delisting: an authoritative clean read re-screens and pays exactly
+// the persisted parked amount through the normal withdrawal path.
 // `unlockAt` and the remaining states exist for the
 // DELAYED-UNBOND machinery that any delayed-proof predicate requires, NOT for
 // the liveness tier specifically. An earlier revision said "the liveness
@@ -786,14 +800,20 @@ offence — **and the base depends on when the offence is recorded:**
     reserved partition can append thousands of tiny records, and an
     oldest-first collection at release then exceeds the block gas limit —
     blocking proof resolution and principal recovery behind an iteration
-    the offender manufactured. So: **liabilities with the SAME tranche
-    reach COALESCE** (amounts sum; reach is identical, so action-time
-    reach is preserved exactly), and since a NEW distinct reach exists
-    only when the bounded tranche set has changed between offences, the
-    number of distinct outstanding liabilities per partition is bounded by
-    the tranche bound itself — settlement iterates a list no longer than
-    the tranche list it already iterates, under the gas argument already
-    made there.
+    the offender manufactured. So: a reach is stored as a **WATERMARK, not a set** — the
+    tranche-creation index at recording time, reaching every LIVE tranche
+    created at or before it — and **liabilities whose watermarks separate
+    the same live tranches are EQUIVALENT and COALESCE** (amounts sum;
+    what each can touch is identical). Exhausted tranches leave every
+    reach automatically (a watermark reaches only what still exists), so
+    tranche TURNOVER cannot mint distinct records: keep one old tranche
+    alive, cycle the second slot through B1, B2, B3 … and set-valued
+    reaches `{A,B1}`, `{A,B2}` … never coalesce, where the watermark
+    representation collapses them the moment each Bi dies. Distinct
+    outstanding liabilities per partition are then bounded by live tranche
+    boundaries — the tranche bound plus one — and settlement iterates a
+    list no longer than the tranche list it already iterates, under the
+    gas argument already made there.
 
   Why three parts (figure, clamp, deferral) rather than something simpler:
   the two one-step rules each failed. A raw-total DEBIT consumes collateral
@@ -1067,11 +1087,19 @@ the netting, the released backing reads as withdrawable the instant the
 filter flips, and the operator withdraws or re-reserves it before lazy
 cleanup collects — leaving collection to eat later liability or forgive
 the offence. So every read that exposes backing (withdrawable, unreserved,
-admission capacity) subtracts the outstanding tranche-bound liabilities,
-and any touch that would expose invalidation-released backing settles
-those liabilities against it FIRST — the debt rides the same lazy
-mechanism as the cleanup, and the release the operator sees is always the
-post-debt figure. An earlier revision said "only VALID", which collides with
+admission capacity) subtracts the outstanding liabilities **PER TRANCHE —
+each debt is netted only against the tranches its recorded watermark
+reaches, clamped there, and the per-tranche figures are summed** — and any
+touch that would expose invalidation-released backing settles the
+liabilities reaching it FIRST. The per-tranche scoping is not detail: a
+partition-WIDE subtraction would withhold a post-offence deposit for a
+debt that cannot reach it — 10 owed against fully-reserved tranche A must
+not freeze 10 of later tranche B while A's reservation sits valid or
+quarantined through a long horizon — which is the never-reaches-later-
+deposits invariant broken by the very read that was added to protect it.
+The debt rides the same lazy mechanism as the cleanup, and the release
+the operator sees is always the post-debt figure for the backing that
+debt could actually claim. An earlier revision said "only VALID", which collides with
 the quarantine's own rule that liability is preserved: filtering quarantined
 partitions out lets the operator **overcommit the same collateral through
 another live predicate** while the epoch is under review, and a later
