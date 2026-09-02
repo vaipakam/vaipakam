@@ -1231,9 +1231,15 @@ durable rather than a snapshot of one moment.
   balance while any old-version commit survives. So the **old-custody count is
   tracked explicitly, and both the "slices complete" claim and ARMING carry it
   as a gate**: either the count reaches zero (through fills, cancellations, or
-  an operator-driven cancel-and-recreate sweep of abandoned orders), or those
-  residual commits are folded into the delivered bound's accounting as a
-  recorded, decrementing exclusion. Declaring F complete over an unbounded
+  an operator-driven cancel-and-recreate sweep of abandoned orders), or the
+  residual commits' custody is MOVED into the protected contract's INTENT
+  attribution row, or the global outbound-reserve primitive covers them.
+  (An earlier revision offered "folded into the delivered bound's
+  accounting as a recorded, decrementing exclusion" here — retired by the
+  rule below: the exclusion is consulted only by reward consumers, so
+  payroll spends the collateral straight through it. An exclusion no
+  outflow path enforces is a label, and a gate must not accept one.)
+  Declaring F complete over an unbounded
   residual is the status-claim failure this programme has already recorded
   twice. Same shape as slice 2's fallback rows — the second time that
   pattern has turned out to be the answer here, which is itself a reason to
@@ -1704,11 +1710,11 @@ delivery and nobody to report to.**
 
 | # | Site | Real question | Canonical | Mirror | **Detached** |
 | --- | --- | --- | --- | --- | --- |
-| 1 | `InteractionRewardsFacet.sweepForfeitedInteractionRewards:101` | which bound applies to the forfeit sweep | **delivered bound** (was `max`) | delivered bound | **the eligible ERA balance** (live headroom 0) |
+| 1 | `InteractionRewardsFacet.sweepForfeitedInteractionRewards:101` | which bound applies to the forfeit sweep | **delivered bound** (was `max`) | delivered bound | **matching transport-epoch balance FIRST, then the eligible ERA balance** (live headroom 0) |
 | 2 | `…:128` | does the sweep record a paid delta | **yes** (was "no") | yes | **only the portion that FELL THROUGH to live funding** — an era-funded outflow debits its era balance and nothing else |
 | 3 | `RewardCommitmentFacet.isDayCommitmentReady:191` | is a day's commitment reportable | n/a | yes | **no** — nobody to report to |
 | 4 | `RewardCommitmentFacet._assertMirror:268` | AUTH: may this chain report | revert | allow | **revert** — fail closed |
-| 5 | `RewardHorizonSweepFacet.sweepExpiredInteractionRewards:162` | which bound applies to expiry | **delivered bound** (was `max`) | delivered bound | **the eligible ERA balance** (live headroom 0) |
+| 5 | `RewardHorizonSweepFacet.sweepExpiredInteractionRewards:162` | which bound applies to expiry | **delivered bound** (was `max`) | delivered bound | **matching transport-epoch balance FIRST, then the eligible ERA balance** (live headroom 0) |
 | 6 | `…:237` | paid-delta recording on expiry | **yes** (was "no") | yes | **only the fell-through portion** — same rule as row 2 |
 | 7 | `RewardRemittanceFacet.sendRemitAck:1529` | AUTH: may this chain ack a remittance | revert | allow | **revert** — fail closed |
 | 8 | `RewardReporterFacet.setBaseChainId:1254` | is this a role transition needing residual retirement | n/a | yes | **yes — this is the site that CREATES and CLEARS Detached** |
@@ -1716,7 +1722,7 @@ delivery and nobody to report to.**
 | 10 | `RewardReporterFacet.setIsCanonicalRewardChain:1301` | same, canonical side | yes | n/a | **yes** |
 | 11 | `LibInteractionRewards._walkSideDays:1823` | pool pricing / schedule funding | canonical schedule | mirror-delivered | **0 — must NOT fall through to canonical schedule** |
 | 12 | `LibInteractionRewards.sweepExpiredEntry:3245` | expiry accounting source | canonical | mirror | **mirror-shaped, bound 0** |
-| 13 | `LibInteractionRewards._entryExecutableNow:3776` | may this entry execute now | **if funded, measured VINTAGE-BLIND** (was "always") | **same — see note** | **if the ELIGIBLE ERA BALANCE covers it** (live headroom stays 0) |
+| 13 | `LibInteractionRewards._entryExecutableNow:3776` | may this entry execute now | **if funded, measured VINTAGE-BLIND** (was "always") | **same — see note** | **if the matching TRANSPORT-EPOCH balance plus the eligible ERA BALANCE covers it** (live headroom stays 0 — a late legacy batch as sole backing must read executable, or its obligations can never absorb and the era never terminalizes) |
 | 14 | `LibInteractionRewards.deliveredFreshBound:4211` | THE bound | **delivered** (was `max`) | delivered | **0** |
 
 **Two rows carry the whole risk and are worth reading twice.** Row 11 is where
@@ -2105,7 +2111,18 @@ revision unimplementable:
      shrink the funding, not the obligations), with the listed `dayIds` as a
      MEMBERSHIP filter. A targeted obligation draws from the batches that
      list its day (oldest batch first, each draw bounded by that batch's
-     remaining balance), so conservation holds per packet — listed days can
+     remaining balance) — **through a per-day CURSOR that advances past
+     exhausted batches permanently, because a bare oldest-first scan is
+     unbounded on a hot path**: the legacy lane can mint arbitrarily many
+     small batches listing one day, and a claim or permissionless sweep
+     forced to traverse that whole history exceeds the gas limit,
+     permanently blocking the obligation and its era's terminalization
+     behind backing that exists. Each day keeps an arrival-ordered batch
+     index and a consumption cursor; allocation resumes at the cursor,
+     skips-and-advances over exhausted batches exactly once ever, and a
+     settlement touches at most the batches it actually draws from plus
+     the newly-exhausted ones it retires — bounded and resumable. So
+     conservation holds per packet — listed days can
      contend for an aggregate, because an aggregate is what the wire
      delivered, but no day outside the list can touch it and no token is
      counted twice. Remainder, pending-recovery keying, the restore path and
@@ -2372,11 +2389,20 @@ revision unimplementable:
    set. So, the same paused-initialization pattern as the era counters: the
    operator registers the pre-upgrade keys (each VERIFIED on-chain — the
    claimed key must read non-`INSTR_NONE`), and **completeness is proven
-   against the CHARGED side of the pair** — the Base-side authorization
-   ledger is enumerable and records every instruction charged toward this
-   chain, so the certification requirement is that every Base-charged,
-   unresolved instruction targeting this chain appears in the mirror
-   registry. Role changes gate on that reconciliation. Any key that
+   against the CHARGED side of the pair, by AUTHENTICATED ATTESTATION —
+   not by trusting the operator to have looked**. Local verification
+   proves each SUBMITTED key exists; it cannot prove the operator
+   submitted every remotely charged one, and an omitted pending key would
+   pass promotion and strand its instruction and Base-side draw. So each
+   charged chain sends, over the authenticated messenger lane, a
+   **manifest attestation**: the enumerated set (or its Merkle root) of
+   its charged, unresolved authorizations targeting this chain, with a
+   completion watermark (charged-side block/sequence) marking the
+   enumeration's end. The mirror verifies its registry against EVERY
+   source chain's attestation — every attested key present, every
+   registry key attested — and role changes gate on all attestations
+   received and reconciled, not on the operator's word that they would
+   have matched. Any key that
    nevertheless surfaces later (outside the certified set) is **refused —
    tombstoned by default, with its Base-side authorization released through
    the recorded-disposition path**, never executed against a role-less or
@@ -2414,7 +2440,21 @@ revision unimplementable:
    it was) is tombstoned with its funds handled through the pending
    recovery machinery, and certification requires ZERO ambiguous keys
    outstanding. Losing two authorizations to explicit release is
-   recoverable; attributing one to the wrong chain is not. So: (a) source-chain persistence,
+   recoverable; attributing one to the wrong chain is not. **A late kind-8/9 packet needs its own post-promotion route, because
+   the broadcast route does not carry it and the attestation gate is
+   unreachable without one.** The messenger rejects both instruction
+   kinds when canonical, and the narrow legacy-quarantine route above is
+   defined for broadcasts only — so a key first surfacing after
+   promotion could never reach `TOMBSTONED` state, and the role-agnostic
+   attestation (gated on exactly that state) could never fire: the Base
+   draw stays charged forever, the disposition unreachable. The
+   promotion ceremony therefore also installs a **kind-8/9 sibling of
+   the legacy-quarantine route**: authenticated identically, accepted
+   from the certified legacy lanes only, and able to do exactly TWO
+   things — persist the triple key and set it `TOMBSTONED`. No
+   execution, no custody movement, no state but the tombstone; it
+   exists so the attestation can be sent and the charged side released.
+   So: (a) source-chain persistence,
    split by WHEN the instruction arrived, because the two cases have
    different provable facts: **new ingresses persist the messenger's
    authenticated `sourceChainId` at arrival** — while for PRE-UPGRADE
@@ -2623,8 +2663,17 @@ one call.
 **Generic `credit` must fail CLOSED: it accepts only an explicit, closed set of
 proven non-reward inflows** — today `NotificationFee`, `FullTariff`,
 `SpendGatedPerk` — and rejects everything else, including any source added
-later. A new absorption class then cannot compile-and-forget its way into the
-bucket; it must either be added to that allowlist by someone who has argued it
+later. **And "allowed" means an allowed OPERATION, not an allowed tag on the
+generic entry point**: per the provenance rule, each allowlisted class is
+reachable only through its own dedicated, delta-checked operation that
+derives the tag from the ingress or attribution transfer it verified — the
+generic caller-selected-enum interface is not a usable route to any of
+them, or an allowed tag passed by a future path publishes recycled backing
+without the delivered-headroom charge, the compile-and-forget failure
+through the front door. A new absorption class then cannot
+compile-and-forget its way into the
+bucket; it must either gain its own provenance-verifying operation from someone
+who has argued it
 is not reward value, or go through the reward operation that charges `paid` in
 the same call.
 
@@ -3108,7 +3157,12 @@ cumulative outflow total exceeds its recorded prefix —
 `spent = clamp(sideOutflowTotal − prefixBefore, 0, credit)` — a pure
 derivation from totals already kept, no per-outflow bookkeeping. A
 correction may move only the provably-UNSPENT **and UNRESERVED**
-remainder under that order — absence of a completed outflow is not proof
+remainder under that order without further requirement — beyond it,
+replacement custody is required **only for a spent debit no
+authenticated destination ledger inherits** (the boundary stated with
+the retain-`paid` rule: a corrected spent split that moves its debit to
+the other side's consumed accounting needs no replacement — demanding it
+blocks the valid correction). Absence of a completed outflow is not proof
 that the credit is free. `recycleBucket = 10` with
 `outstandingCommitRecycled = 10` shows zero outflow and zero freedom:
 the FIFO test alone would move all 10 to fresh and leave the commitment
