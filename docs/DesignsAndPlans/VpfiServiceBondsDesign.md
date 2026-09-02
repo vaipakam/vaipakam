@@ -823,7 +823,13 @@ reservations, so a single figure across tokens adds incomparable raw units: a
 large-decimal old reservation blocks every new-token action, and the reverse
 rotation understates the old liability against the cap. Unreserved backing and
 the concurrency cap are kept per collateral-token epoch (or an explicit
-conversion precedes any summing). The invalidated amount then
+conversion precedes any summing). **And the reads FILTER: admission sums only
+partitions whose global predicate epoch is VALID** — the invalidation write
+changes the epoch's global state, not the stored per-operator totals, so a read
+that does not filter keeps counting the stale partitions until lazy cleanup
+(blocking the operator, the opposite of the promise) or forces per-operator
+writes back into the incident path. The filter at read time is what makes the
+one global write sufficient: the invalidated amount then
 leaves unreserved backing and the concurrency cap with one write, no iteration,
 and reservation RECORDS are reclaimed by bounded, permissionless **lazy
 cleanup** that emits the per-reservation release events afterwards. Releasing is
@@ -1125,7 +1131,13 @@ has no offences to record and no dispatcher; its immediate withdrawal follows
 from the ABSENCE of delayed evidence, not from same-call debiting. This
 paragraph describes a tier that has a predicate, and is retained for whenever
 one is specified. The liveness
-tier — the only source of evidence that arrives *after* an operator stops
+tier — **a** source of evidence that arrives *after* an operator stops —
+**and NOT the only one, which an earlier revision claimed: equivocation's
+second conflicting statement can surface after the operator stops acting too,
+and it is now the LIKELIER delayed-proof predicate. The delayed-unbond
+machinery attaches to every delayed-proof predicate (rule 2), so shipping
+equivocation without liveness still requires it in full.** The liveness tier as
+originally imagined
 acting — is explicitly out of v1. So there is no adjudication in flight when
 an operator unbonds, and a 3–30 day lock protects nothing. It is a pure
 lockup, and it sits badly beside a shape whose legal spine is
