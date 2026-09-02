@@ -638,6 +638,17 @@ funding or a recorded shortfall disposition, and the old-custody branch for
 intents may not execute ahead of that certification any more than the cursor
 may.
 
+**And the freeze is a GATE the fill path reads, not a hope — the LOP
+hooks are not pause-gated, so slice 0 carries an explicit
+RECONCILIATION-MODE flag checked by both intent hooks and the
+old-custody fill branch.** Without it, a pre-upgrade order can fill
+while the paginated scan is still deciding whether its commingled
+collateral is backed — consuming unrelated payroll or treasury custody
+and deleting the intent before the scan reaches it, iteration order
+deciding who bears the shortfall in exactly the way slice 0 exists to
+prevent. The flag is set before the scan's first page and cleared at
+certification; a fill attempted under it reverts retryable.
+
 **And a written-down LIVE intent needs its ORDER changed, not just its
 ledger — the standing order immutably hashes the original amount.** The LOP
 order key is a keccak over its parameters, `makerAmount` included
@@ -2141,10 +2152,16 @@ revision unimplementable:
      obligations; no transport-epoch operation can safely "apply" that,
      so routing one into the epoch just parks a thing the epoch cannot
      digest. A parked legacy broadcast follows the PARKED-MESSAGE lane
-     instead: retried into the era it was ADDRESSED to while that era
-     can still accept it (the intended-era gate, as specified for the
-     reattachment path); once the addressed era has finalized — or the
-     chain permanently promoted past it — the broadcast is
+     instead — **with no era-recovery attempted, because the legacy wire
+     cannot supply one**: it carries neither era nor message id, and a
+     reverted receipt leaves no destination stamp, so "the era it was
+     addressed to" is not a recoverable fact. The rule needs no such
+     fact: on retry the broadcast is **applied ONLY if the intended-era
+     gate accepts it against the LIVE era** — acceptance IS the
+     authentication that it still belongs — and refused otherwise, back
+     to parked. Once no acceptable era can ever exist (the relevant era
+     finalized, or the chain permanently promoted past the mirror role)
+     the broadcast is
      **tombstoned with an explicit recorded disposition** (its accrued
      obligations acknowledged as unservable, its source-side
      implications released through the charged-side machinery), never
@@ -2234,12 +2251,18 @@ revision unimplementable:
      references decremented, nothing half-paid — and the deadline is
      generous enough for honest retry chains (a bounded multiple of the
      retry cadence). **And an unwound stager does not go first in line
-     again**: restaging for the SAME obligation after a permissionless
-     expiry carries a COOLDOWN, during which competing obligations may
-     stage that coverage freely — "redo for gas cost" otherwise lets the
-     hostage strategy survive every deadline by immediate renewal, the
-     lease laundered through its own expiry. Honest stagers who settle
-     within the deadline never meet the cooldown. Staged allocations are release-on-cancel, so a
+     again — with the cooldown keyed to the BATCH, not the obligation**:
+     an obligation-keyed rule falls to a claimant controlling two
+     eligible obligations, alternating A and B across expiries with each
+     observing "its" cooldown while the batch never breathes. After a
+     permissionless expiry unwind, the unwound batch enters a priority
+     window in which **only obligations whose preparation predates the
+     expired lease may stage it** — previously blocked competitors go
+     first by construction, and an attacker cannot manufacture priority
+     after the fact (pre-preparing several obligations buys nothing:
+     the equally-old competitors stage freely alongside, and the
+     hostage requires an exclusivity the window denies). Honest stagers
+     who settle within the deadline never meet any of this. Staged allocations are release-on-cancel, so a
      dead obligation cannot strand what it staged. Bounded, resumable, and nothing
      half-paid — three properties, one mechanism. So
      conservation holds per packet — listed days can
@@ -2603,9 +2626,18 @@ revision unimplementable:
    attestation (gated on exactly that state) could never fire: the Base
    draw stays charged forever, the disposition unreachable. The
    promotion ceremony therefore also installs a **kind-8/9 sibling of
-   the legacy-quarantine route**: authenticated identically, accepted
-   from the certified legacy lanes only, and able to do exactly TWO
-   things — persist the triple key and set it `TOMBSTONED`. No
+   the legacy-quarantine route** — able to do exactly TWO
+   things — persist the triple key and set it `TOMBSTONED` — and **this
+   tombstone-only leg accepts any TRANSPORT-AUTHENTIC packet, certified
+   lane or not**: lane certification gates APPLICATION (anything that
+   touches funding or state), but the straggler clause exists precisely
+   because the certified universe can be incomplete, and a route that
+   rejects out-of-universe packets rejects exactly the stragglers it
+   promises to terminalize — the source authorization charged forever.
+   Persisting a key and tombstoning it is safe for ANY packet the
+   transport authenticates (it enables only the release attestation);
+   the same openness applies to the broadcast quarantine route's
+   tombstone leg. No
    execution, no custody movement, no state but the tombstone; it
    exists so the attestation can be sent and the charged side released.
    So: (a) source-chain persistence,
@@ -3604,7 +3636,12 @@ headroom until the deficit clears, so tokens allocated to the live ledger
 for that portion back nothing, no claim can ever debit them, and the next
 transition carries only `max(received − paid, 0)` — a holder allocation
 with no ledger balance and no terminal path. The deficit-covering portion
-of any ingress therefore lands in an explicit **restitution/recovery
+of any ingress — **and of the two attribution-only credit writers, the
+era-terminal transfer and the pending-to-live recovery, which absorb a
+deficit exactly as a token ingress does** (a 20-token surplus drained
+into a 20-unit deficit leaves zero headroom and 20 tokens the next
+transition carries as zero residual — stranded with no terminal path) —
+therefore lands in an explicit **restitution/recovery
 position** (owner-disposable: repatriation, or a recorded release into
 live backing once the deficit's cause is dispositioned), and only the
 excess above the deficit is allocated as live era backing.
