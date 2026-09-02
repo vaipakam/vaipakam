@@ -1,0 +1,157 @@
+name: Reconcile @vaipakam-labs board
+
+# WHY THIS EXISTS. `add-to-project.yml` fires once, on `issues: opened`,
+# and there is no second chance: if that single call fails, the issue is
+# never added and nothing notices. The failure is not hypothetical — it
+# has a measured rate. Over the 60 runs preceding 2026-09-02, 17 failed
+# (28%), every one of them with:
+#
+#     Request failed due to following response errors:
+#      - API rate limit already exceeded for user ID <the PAT's owner>
+#
+# Projects v2 is GraphQL-only, so the add competes for the SAME 5,000
+# point/hour GraphQL bucket as every other tool authenticating as that
+# account. When something else drains the bucket, issues opened in that
+# window silently miss the board — and CLAUDE.md makes the board the
+# single source of truth for what is in flight. A tracker that loses a
+# quarter of its intake without saying so is worse than one that is
+# visibly behind.
+#
+# This job is the recovery half: it periodically compares open issues
+# against the board and adds whatever is missing, whatever the reason it
+# went missing. It deliberately does NOT replace the on-open add — that
+# path is what makes a new issue appear within seconds, and it stays.
+# This is the net underneath it, and it repairs a backlog as readily as
+# a fresh miss.
+#
+# `addProjectV2ItemById` (what `gh project item-add` calls) is idempotent
+# — adding an item already on the board returns the existing item — so a
+# spurious add costs a request and changes nothing. That asymmetry is why
+# the guards below fail toward re-adding rather than toward skipping.
+
+on:
+  schedule:
+    - cron: '23 */6 * * *' # four sweeps a day; the GraphQL bucket refills hourly
+  workflow_dispatch:
+
+# The PAT does the project write; the workflow's own token stays
+# read-only, matching add-to-project.yml's least-privilege shape.
+permissions:
+  contents: read
+
+concurrency:
+  group: project-board-reconcile
+  cancel-in-progress: false
+
+jobs:
+  reconcile:
+    name: Add un-boarded open issues
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.ADD_TO_PROJECT_PAT }}
+      PROJECT_OWNER: vaipakam
+      PROJECT_NUMBER: '1'
+      ISSUE_REPO: ${{ github.repository }}
+      # Generous enough for the whole history with room to grow. Both
+      # listings below ABORT rather than proceed if they come back at
+      # this limit — see the truncation guards.
+      LIST_LIMIT: '4000'
+    steps:
+      - name: List open issues
+        run: |
+          set -euo pipefail
+          gh issue list --repo "$ISSUE_REPO" --state open \
+            --limit "$LIST_LIMIT" --json number,url > open-issues.json
+          count=$(jq 'length' open-issues.json)
+          echo "open issues: $count"
+          # TRUNCATION IS THE DANGEROUS DIRECTION HERE. A short listing
+          # would make un-boarded issues invisible and the sweep would
+          # report success having skipped them. `gh issue list` has no
+          # total to compare against, so a result exactly at the limit is
+          # treated as truncated.
+          if [ "$count" -ge "$LIST_LIMIT" ]; then
+            echo "::error::open-issue listing hit LIST_LIMIT ($LIST_LIMIT) — raise it; a truncated listing would silently skip issues"
+            exit 1
+          fi
+
+      - name: List board items
+        run: |
+          set -euo pipefail
+          gh project item-list "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" \
+            --format json --limit "$LIST_LIMIT" > board.json
+          items=$(jq '.items | length' board.json)
+          total=$(jq '.totalCount // (.items | length)' board.json)
+          echo "board items: $items (totalCount $total)"
+          # Truncation here is the harmless direction — a board issue read
+          # as absent is re-added idempotently — but it inflates every run
+          # and hides the real number, so it is still an error.
+          if [ "$items" -lt "$total" ]; then
+            echo "::error::board listing returned $items of $total items — raise LIST_LIMIT"
+            exit 1
+          fi
+
+      - name: Add whatever is missing
+        run: |
+          set -euo pipefail
+
+          # Board items carry the issue's URL; matching on that rather
+          # than on the number avoids confusing issue #42 of this repo
+          # with #42 of another repo feeding the same board.
+          jq -r '.items[] | select(.content.type == "Issue") | .content.url' board.json \
+            | sort -u > board-urls.txt
+          jq -r '.[].url' open-issues.json | sort -u > open-urls.txt
+          comm -23 open-urls.txt board-urls.txt > missing.txt
+
+          missing=$(wc -l < missing.txt | tr -d ' ')
+          echo "missing from board: $missing"
+          {
+            echo "## Board reconciliation"
+            echo
+            echo "- open issues: $(wc -l < open-urls.txt | tr -d ' ')"
+            echo "- already on the board: $(wc -l < board-urls.txt | tr -d ' ')"
+            echo "- missing: $missing"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$missing" -eq 0 ]; then
+            echo "nothing to do"
+            exit 0
+          fi
+
+          echo >> "$GITHUB_STEP_SUMMARY"
+          echo "### Added" >> "$GITHUB_STEP_SUMMARY"
+
+          failed=0
+          while read -r url; do
+            [ -n "$url" ] || continue
+            added=0
+            # Three quick attempts absorb a transient error. They will NOT
+            # outlast an exhausted GraphQL bucket, and are not meant to:
+            # that case is what the six-hourly schedule is for. The job
+            # still fails, because the board really is incomplete until
+            # the next sweep — a green run over a short board is exactly
+            # the reassuring lie this workflow exists to end.
+            for attempt in 1 2 3; do
+              # `< /dev/null` is load-bearing: this loop reads its list on
+              # stdin, and any command inside it that touched stdin would
+              # swallow the remaining URLs — the loop would then "succeed"
+              # having processed one issue.
+              if gh project item-add "$PROJECT_NUMBER" \
+                   --owner "$PROJECT_OWNER" --url "$url" < /dev/null; then
+                added=1
+                break
+              fi
+              sleep $((attempt * 15))
+            done
+            if [ "$added" -eq 1 ]; then
+              echo "- $url" >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "::error::could not add $url"
+              echo "- FAILED: $url" >> "$GITHUB_STEP_SUMMARY"
+              failed=$((failed + 1))
+            fi
+          done < missing.txt
+
+          if [ "$failed" -gt 0 ]; then
+            echo "::error::$failed issue(s) still missing from the board; the next scheduled sweep will retry"
+            exit 1
+          fi
