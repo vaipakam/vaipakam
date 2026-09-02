@@ -445,7 +445,11 @@ indexers and **provers** unable to tell that horizons paused or resumed — and 
 prover who cannot tell is a prover who misses a window.
 
 **Quarantine and restoration events carry the VERIFIER identity** (plus the
-block); the per-epoch schema written here earlier could not represent the
+observation block **and the RESTORED active-clock value — the verifier
+checkpoint the rollback rewound to**: a mismatch observed at 201 that
+restores the clock to 140 extends every dependent proof and release
+horizon by the difference, and a consumer shown only 201 cannot
+reconstruct the window the rollback exists to give provers back); the per-epoch schema written here earlier could not represent the
 one-write verifier quarantine at all — one epoch's event leaves indexers and
 provers unaware that sibling horizons paused, and one event per dependent
 epoch is the unbounded enumeration the O(1) incident path exists to avoid.
@@ -773,8 +777,13 @@ recycle bucket from the `(role, address)` bond whose entry point recorded the
 offence — **and the base depends on when the offence is recorded:**
 
 - **Synchronous recording (a future predicate-enabled tier, NOT v1):** the
-  FIGURE is `slashBps` of the action's **collateral-token-epoch partition
-  NET of that partition's outstanding deferred liabilities**; the immediate
+  FIGURE is `slashBps` of the action's **collateral-token-epoch partition's
+  ELIGIBLE (armed) balance, NET of that partition's outstanding collectible
+  liabilities** — never the whole partition, which under C includes
+  fee-free excess that secured nothing: a partition-sized 25% of a
+  100-armed/900-excess deposit is 250, and even with collection confined
+  to eligible tranches the 150-unit uncollectable tail distorts liability
+  totals and every later offence base computed net of them; the immediate
   DEBIT clamps to the partition's unreserved portion; and any shortfall is
   recorded as a **deferred liability against that partition, collected at
   reservation release within it** — a released amount pays the partition's
@@ -2301,7 +2310,24 @@ that everything else is throughput and these are custody:**
   confirmed flagged still withdraws during the same outage — otherwise an
   implementation could pass by freezing everyone.
 
-  **Both parties are screened on a deposit-on-behalf**, not just the caller. The
+  **A delayed proof against a CONFIRMED-SANCTIONED operator adjudicates
+without moving the funds.** The blanket per-selector screen cannot simply
+reject the proof: a reverted proof leaves the horizon expiring, the
+operator delists later, the reservation releases, and an otherwise valid
+debit is escaped — while executing it normally transfers frozen principal
+into recycling, against the repository rule that sanctioned funds freeze
+rather than move. So proof submission on a flagged operator follows the
+committed-transition pattern: the proof is CONSUMED and the offence
+ADJUDICATED (the evidence landed; the horizon question ends), the
+reserved amount converts to an **adjudicated liability held frozen** —
+no custody moves, nothing reaches the recycle bucket — and the liability
+settles on the regime's own terms: executed into recycling after an
+authoritative delisting re-screen, or disposed with the rest of the
+frozen balance under whatever terminal the sanctions machinery
+prescribes. The debit is never escaped and the freeze is never violated;
+the two rules meet at a parked adjudication.
+
+**Both parties are screened on a deposit-on-behalf**, not just the caller. The
   repository's sanctions rule requires the actual recipient or position holder in
   addition to the sender wherever a call acts for someone else
   (`ProjectDetailsREADME.md` §sanctions). Screening only the caller lets a
