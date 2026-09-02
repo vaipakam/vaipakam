@@ -1579,9 +1579,11 @@ it fixes nothing itself. "Cannot shorten" was
 one round's wording and it permits the other half: a lengthened evidence
 horizon re-locking already-requested principal under terms adopted after
 the action, against both the earlier both-directions rule and the
-immutable action-time config epoch. The horizon PARAMETERS freeze at the
-request; only the verifier's pausable clock advancing changes when that
-fixed horizon completes. An earlier phrasing said
+immutable action-time config epoch. The horizon PARAMETERS freeze at the action's
+ADMISSION (per the config-epoch rule above — this sentence said "at the
+request" for one round after that rule landed); only the verifier's
+pausable clock advancing changes when each fixed horizon completes, and
+the request merely aggregates them. An earlier phrasing said
 "`unlockAt` is snapshot at the request", which a verifier quarantine
 falsifies in both directions — the frozen scalar releases collateral a
 paused verifier's still-valid proof should hold, and extending it globally
@@ -2032,6 +2034,18 @@ post-retune deposit of the same 900 would have paid for. The excess is
 therefore recorded as **capacity-INELIGIBLE until separately ARMED**, and
 the arming call charges the fee on the capacity being activated — the fee
 tracks capacity granted, whichever transaction grants it.
+
+**And withdrawals drain the INELIGIBLE excess first, deterministically.**
+Once a deposit holds both armed and fee-free principal, an unspecified
+partial withdrawal lets implementations disagree about everything that
+matters — whether 100 withdrawn from a 100-armed/900-excess deposit
+preserves full capacity or zeroes it, and how much a later top-up owes.
+Excess-first is the order because the operator PAID for the armed
+capacity: consuming armed principal while free excess sits idle destroys
+value the fee bought. Armed principal is reached only when the excess is
+exhausted, capacity reduces accordingly, and the persisted
+eligible-balance figure is updated in the same act — re-arming withdrawn
+capacity later is a new grant and owes a new fee, per the rule above.
 
 **Recommendation: (C), else (A)** — and the real question is **not** "ship now
 or wait for the adjudicating tier". An earlier revision of this summary framed it
