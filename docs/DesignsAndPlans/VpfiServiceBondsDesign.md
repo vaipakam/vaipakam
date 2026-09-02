@@ -395,8 +395,15 @@ decodes is the same gap one step later.
   Three predicate attempts have now collapsed under review, in three
   different directions. That is evidence about the problem rather than about
   the attempts: slashing needs an adjudicable notion of what the operator
-  knew, and v1 deliberately has no attestation to supply one. Staleness,
-  grant scope and liveness all return with the attested tier.
+  knew, and v1 deliberately has no attestation to supply one. ⚠️ **Staleness
+  and grant scope do NOT "return with the attested tier"** — an earlier revision
+  of this sentence said they did, and the analysis immediately below refutes it:
+  attestation cannot prove knowledge acquired after issuance, so neither
+  attested branch makes them slashable. Following the old sentence revives the
+  rejected path and confiscates an honest operator's principal after intervening
+  state changes. What the attested tier may do with them is **non-punitive** —
+  authorize, or revert — never debit. Liveness has its own separate problems
+  below.
 
   **But an expiry-bounded protocol commitment does NOT make "knew" decidable,
   and an earlier revision of this bullet claimed it did.** A protocol-issued
@@ -741,8 +748,27 @@ right for a routine retune and exactly wrong here.
 
 So: an **emergency epoch invalidation** that blocks the old verifier
 immediately AND, in the SAME atomic call, does **only** an O(1) epoch-state
-transition that makes the dependent reservations logically non-blocking — never
-an iteration over them — **held by an off-timelock authority, not by the
+transition — never an iteration.
+
+⚠️ **That transition is a QUARANTINE, not a release**, and an earlier revision
+conflated them. Making every reservation in the epoch non-blocking is an
+**amnesty**: if the fast authority is compromised, or simply wrong about which
+verifier is broken, every legitimate operator in that epoch can withdraw before
+the timelock lets governance recover. Calling the power "narrowly scoped" does
+not mitigate that — the scope was narrow and the *effect* was total.
+
+So the split is by authority, not by scope:
+
+- **Off-timelock (fast):** an O(1) **quarantine** — proof submission against the
+  suspect verifier is disabled, while reservations and their horizons are
+  **preserved**. The forgery stops; nobody's liability moves.
+- **Governance (timelocked):** decides between **restoring** the verifier (the
+  suspicion was wrong; the quarantine lifts and horizons resume) and
+  **invalidating** the epoch, which is what actually releases the reservations.
+
+Releasing is a judgement about unprovable liability, and judgements belong on
+the slow path. Stopping an active forgery is not, and belongs on the fast one.
+Splitting them costs nothing operationally — the attack is halted either way — **held by an off-timelock authority, not by the
 ordinary predicate-config setter.** Reservation RECORDS are reclaimed
 afterwards by the bounded lazy cleanup below; nothing unbounded may sit inside
 the incident call.
@@ -762,9 +788,21 @@ forged-proof verifier enabled** — the emergency lever failing precisely in the
 incident it exists for. It also could not emit the per-reservation release
 events §Events requires, since those are per reservation.
 
-So invalidation is a **single epoch-state transition**: reservations naming an
-invalidated epoch stop counting against the concurrency cap and stop blocking
-admission **immediately, without being touched**. **The invalidation emits its OWN event**, carrying the invalidated epoch — not
+So invalidation is a **single epoch-state transition**, and the accounting has
+to be **epoch-partitioned** for that transition to mean anything. Flipping one
+global bit does not update a per-operator outstanding-reservation TOTAL, so
+admission would either trust a stale total — leaving the operator blocked until
+cleanup, which is the opposite of the promise — or rescan an unbounded set of
+records and risk the same gas limit the O(1) design avoids.
+
+**So the per-operator reserved figure is kept per epoch, over a bounded set of
+active epochs**, and admission sums only the epochs still valid. An invalidated
+epoch's amount then disappears from both unreserved backing and the concurrency
+cap by the same single write, with no scan: reservations naming an invalidated
+epoch stop counting against the cap and stop blocking admission **immediately,
+without being touched**. A bounded active-epoch set is what makes the sum
+affordable; without it, "O(1) invalidation" only moves the unbounded work into
+the admission path. **The invalidation emits its OWN event**, carrying the invalidated epoch — not
 only the later per-reservation ones. On-chain capacity is restored immediately,
 so if cleanup is delayed or never called an indexer with only per-reservation
 events keeps reporting the operator as fully reserved and cannot satisfy the
@@ -1338,10 +1376,18 @@ middle.
 migration" was wrong. Activating predicates against balances deposited under
 capacity-only terms would make them confiscatable by the activation
 transaction itself, which immediate withdrawal does not protect against —
-the owner never had a chance to exit. So the tier must require explicit
-per-operator enrolment, or version deposits and only debit enrolled ones,
-or give a withdrawal grace period before any new predicate can debit an
-existing balance.
+the owner never had a chance to exit. So the tier must require **explicit per-operator enrolment**, or **version
+deposits and only debit enrolled ones**. ⚠️ **A withdrawal grace period is NOT
+a third option and an earlier revision listed it as one:** an operator who is
+offline, has lost their key, or simply does not watch governance has their
+deposit converted from explicitly non-confiscatable terms into slashable
+collateral the moment the window lapses. **An opportunity to exit is not
+affirmative enrolment** — it inverts the default, which is exactly what the
+capacity-only terms promised would not happen.
+
+Un-enrolled deposits therefore stay **non-slashable** and simply **stop
+granting predicate-enabled capacity** until converted. That keeps the incentive
+to enrol without touching anyone's principal on a timer.
 
 **(B) Ship nothing until the attested tier — and (B) IS NOW UNRESOLVED, not a
 third path.** This option previously read "wait for the observation commitment
