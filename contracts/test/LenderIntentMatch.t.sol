@@ -1411,7 +1411,7 @@ contract LenderIntentMatchTest is SetupTest {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: true
             })
         );
 
@@ -1519,7 +1519,7 @@ contract LenderIntentMatchTest is SetupTest {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: true
             })
         );
 
@@ -1630,7 +1630,7 @@ contract LenderIntentMatchTest is SetupTest {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: true
             })
         );
         vm.prank(lender);
@@ -1707,7 +1707,7 @@ contract LenderIntentMatchTest is SetupTest {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: true
             })
         );
         vm.prank(posBuyer);
@@ -1783,7 +1783,7 @@ contract LenderIntentMatchTest is SetupTest {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: true
             })
         );
 

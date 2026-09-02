@@ -330,6 +330,10 @@ contract Vpfi592LenderProceedsTest is SetupTest {
         l.collateralLiquidity = LibVaipakam.LiquidityStatus.Liquid;
         TestMutatorFacet(address(diamond)).scaffoldActiveLoan(LOAN, l);
         _mockLenderNft(l.lender); // also mocks ownerOf(8888) == borrower
+        // #1383 — the default leg resolves the lender yield-fee discount via
+        // the INTERNAL LibERC721.ownerOf(lenderTokenId), which vm.mockCall
+        // cannot intercept: the token must exist in diamond storage.
+        TestMutatorFacet(address(diamond)).mintNFTRaw(l.lender, LENDER_TOKEN_ID);
 
         // Fund the borrower vault with the collateral so the swap can withdraw
         // it; fund the diamond with both assets to back the mocked swap flow.
