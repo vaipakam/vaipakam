@@ -451,7 +451,15 @@ the **eligible delta and the post-eligible balance** alongside the
 principal fields.
 
 **Deferred synchronous liabilities get the same lifecycle treatment, for
-the same reason.** Creating a clamped-debit shortfall changes what the
+the same reason — and the liability-created event extends to DELAYED
+adjudications, emitted in the committed adjudication transaction.** The
+adjudication consumes the reservation (lowering the indexed reserved
+total) while the debit event is still in the future — between the two,
+an indexer reading only `OffenceRecorded` (no amount, no allocation)
+reports the backing as available while the contract holds it encumbered.
+The event carries the converted amount, the reservation's tranche
+allocation, the token epoch, and the post-outstanding encumbrance
+total.** Creating a clamped-debit shortfall changes what the
 deposit is economically worth and what a future release will confiscate —
 while moving neither the balance nor the reserved total, the exact
 invisible-mutation shape the reservation events exist for. So:
@@ -933,7 +941,14 @@ operator topped up, it confiscates the new tranche — the exact reach defect th
 tranche section exists to prevent, restored by the sentence above it.
 
 **Adjudication is DURABLE independently of settlement — a consumed-flag
-written in the same transaction as a fallible debit is not consumed.**
+written in the same transaction as a fallible debit is not consumed —
+and this is a rule about ADJUDICATION, synchronous included, not about
+proofs.** A synchronous observation sharing one call with a fallible
+settlement (the recycle backing check among them) rolls back WITH it:
+`OffenceRecorded` and the liability vanish, the offender need not
+retry, and the same settlement-dependent escape returns one tier down.
+Synchronous observation likewise commits an encumbering liability in a
+non-reverting transition, with settlement separately retryable.**
 The EVM rolls the earlier write back with the reverting settlement, and
 the settlement CAN revert — a failed recycle backing check, an
 old-token escrow path that cannot complete — so a proof "consumed" this
@@ -2467,7 +2482,13 @@ the two rules meet at a parked adjudication.
   already confirmed through another path could wait out an outage and
   have a non-refundable fee moved into recycling against freeze-not-
   seize. Previously confirmed payers are rejected during an outage;
-  fail-open remains only for addresses never confirmed flagged. The
+  fail-open remains only for addresses never confirmed flagged — **and an
+  authoritative CLEAN read on the arming path SELF-HEALS the stale
+  marker**, as the release and position-movement paths already do: a
+  view-style gate that merely ignores the marker on a healthy read
+  leaves it standing, and the next outage bars a payer the oracle
+  authoritatively delisted in between. Delist → arm → outage is the
+  acceptance case. The
   other selectors keep `_assertNotSanctioned` — and each needs a focused
   test — **but `unbond` does
   NOT take the reverting helper**, and this list said it did for one round
