@@ -1032,7 +1032,20 @@ durable rather than a snapshot of one moment.
 
   The discriminator has none of that: old commits keep the old custody path, new
   ones take the hook, and the old branch is deleted once the count reaches zero
-  on its own. Same shape as slice 2's fallback rows — the second time that
+  on its own.
+
+  ⚠️ **But "on its own" can be NEVER, and completion must not pretend
+  otherwise.** An abandoned pre-upgrade order's `custodialCollateral` stays in
+  the Diamond until someone fills or cancels it — expiry alone executes no
+  teardown — so slices 1–3 have **not** removed all user value from the shared
+  balance while any old-version commit survives. So the **old-custody count is
+  tracked explicitly, and both the "slices complete" claim and ARMING carry it
+  as a gate**: either the count reaches zero (through fills, cancellations, or
+  an operator-driven cancel-and-recreate sweep of abandoned orders), or those
+  residual commits are folded into the delivered bound's accounting as a
+  recorded, decrementing exclusion. Declaring F complete over an unbounded
+  residual is the status-claim failure this programme has already recorded
+  twice. Same shape as slice 2's fallback rows — the second time that
   pattern has turned out to be the answer here, which is itself a reason to
   reach for it first.
 - **The fill test is a PREREQUISITE of this slice, not a follow-up.** It does not
@@ -1529,7 +1542,18 @@ retired by accident:
   Diamond forever: stranded by the mechanism built to stop stranding.
 
   So the era needs a **provable all-obligations-terminal transition** — every
-  retired-era claim and sweep **settled, or expired AND its absorption booked**.
+  retired-era claim and sweep **settled, or expired AND its absorption booked**,
+  **and every old-wire packet attributed to the era CLASSIFICATION-FINAL.** The
+  legacy reconciliation epoch stays open indefinitely, so a packet's
+  fresh/recycled split can be corrected after its era retires — and if the era
+  has already terminalized and released its surplus, the correction has no
+  source to debit: the attribution left with the transfer, and debiting live
+  `received` consumes unrelated current-era funding. So a packet's
+  classification is **finalized per packet** (its reclassification right
+  explicitly closed) before its era's balance may release — or the terminal
+  transfer carries the packet attributions forward so a later correction debits
+  the moved balance rather than the live one. Finality-first is simpler and
+  keeps the terminal proof self-contained.
 
   ⚠️ **"Read back" is not an executable condition at scale.** `rewardEntries` is
   append-only and unbounded, so a single terminalization call that walks the era
@@ -1635,12 +1659,20 @@ revision unimplementable:
    never-will-execute terminal either. **The remittance and its reservation both
    stick indefinitely.**
 
-   So a permanent role change is not a refusal case at all: either the
-   transition **drains the lane first** (no in-flight packets when it runs — the
-   same shape as the d2 cutover gate), or in-flight packets are **quarantined
-   keyed to the retired era** and released through the era's own reconciliation,
-   which also gives the source reservation its terminal. Refusal with retry is
-   for conditions that end.
+   So a permanent role change is not a refusal case at all — and for the LEGACY
+   lane, "drain first" is not available either: §5c proves there is no on-chain
+   way to establish that lane has drained. So the precedence is explicit:
+
+   - **d2 and V3 lanes:** drain first (their reservations are observable), or
+     quarantine keyed to the retired era.
+   - **Legacy lane:** **quarantine keyed to the retired era is the ONLY sound
+     option**, and it is retained for permanent transitions specifically —
+     released through the era's own reconciliation, which also gives the source
+     side its terminal. If a deployment refuses to carry that quarantine, the
+     honest alternative is to **disallow the permanent transition while the
+     unverifiable legacy lane exists**, not to promote and strand.
+
+   Refusal with retry is for conditions that end.
 1. **Receive while `Detached`** — `onRewardBudgetReceived`,
    `onCompensationBudgetReceived`, **and ALL THREE reward BROADCAST ingresses —
    `onRewardBroadcastReceived` (legacy), `onRewardBroadcastV2Received` and
@@ -2160,6 +2192,22 @@ constructing one. If for some layout no such stamp is available, the entry
 requires a verifiable uniqueness proof; what it may never do is trust the
 operator not to mint a second hash for one delivery.
 
+**The PRE-UPGRADE inventory has neither, and needs its own bounded scheme.**
+Ingress stamping starts when the code ships; the value already sitting in
+`rewardBudgetFreshUncounted` arrived before it existed, so those packets have no
+stamp and — being long past — no practical uniqueness proof either. Falling back
+to operator-assigned identity for them re-opens the hole for exactly the
+inventory the bootstrap must classify.
+
+So the pre-upgrade inventory is handled as **one bounded aggregate, not as
+per-packet entries**: its total is the `uncounted` balance at the upgrade block
+— an on-chain figure the operator does not assert — and the bootstrap classifies
+against that single recorded bound, under the same conservation and
+per-component rules, with the reclassification operation as the error path.
+Per-packet identity is required only where per-packet classification is
+attempted; for history, one provable envelope replaces many unprovable
+identities.
+
 Step 0 is not defensive padding, but its rationale had to be rewritten with it:
 an earlier revision argued in terms of shares summing **above or below the
 removed amount**, which step 1 made impossible in both directions — and the
@@ -2304,7 +2352,13 @@ and it applies here. It is more work than five `+=` lines — and the five
 
 ### Sequencing
 
-Closure 3 is independent and small; it can land first and alone. Closure 2 is
+Closure 3's RESOLVER is independent and small and can land early — but its
+**canonical matrix cells cannot land before slice 4**, and an earlier revision
+of this sequencing line said the whole closure could go "first and alone".
+Landing the cells first switches every canonical reward consumer from `max` to
+an uninitialized zero `received` and freezes them (§5c states this in full). So
+the standalone early piece is the resolver plus the **`Detached`-only**
+behaviour; the canonical column lands with slice 4 and its migration. Closure 2 is
 the larger piece and shares its migration question with nothing else. Neither
 depends on Option F, and F depends on neither — the three closures are
 genuinely parallel, which is why arming waits on all of them rather than on a
