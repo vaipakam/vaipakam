@@ -889,7 +889,12 @@ record back with it) — **and the base depends on when the offence is recorded:
 - **Synchronous recording (a future predicate-enabled tier, NOT v1):** the
   FIGURE is `slashBps` of the action's **collateral-token-epoch partition's
   ELIGIBLE (armed) balance, NET of that partition's outstanding collectible
-  liabilities** — never the whole partition, which under C includes
+  liabilities** — and the ENTIRE figure becomes a durable liability in the
+  observation's committed transition, the unreserved portion collected by
+  the separately retryable settlement (an earlier phrasing kept an
+  "immediate debit" for the unreserved part, recording only the shortfall
+  as a liability — which a reverting recycle-backing check or old-token
+  leg rolls back together with the observation itself) — never the whole partition, which under C includes
   fee-free excess that secured nothing: a partition-sized 25% of a
   100-armed/900-excess deposit is 250, and even with collection confined
   to eligible tranches the 150-unit uncollectable tail distorts liability
