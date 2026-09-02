@@ -1745,7 +1745,7 @@ delivery and nobody to report to.**
 | 10 | `RewardReporterFacet.setIsCanonicalRewardChain:1301` | same, canonical side | yes | n/a | **yes** |
 | 11 | `LibInteractionRewards._walkSideDays:1823` | pool pricing / schedule funding | canonical schedule | mirror-delivered | **0 — must NOT fall through to canonical schedule** |
 | 12 | `LibInteractionRewards.sweepExpiredEntry:3245` | expiry accounting source | canonical | mirror | **mirror-shaped, bound 0** |
-| 13 | `LibInteractionRewards._entryExecutableNow:3776` | may this entry execute now | **if funded, measured VINTAGE-BLIND** (was "always") | **same — see note** | **if the matching TRANSPORT-EPOCH balance plus the eligible ERA BALANCE covers it** (live headroom stays 0 — a late legacy batch as sole backing must read executable, or its obligations can never absorb and the era never terminalizes) |
+| 13 | `LibInteractionRewards._entryExecutableNow:3776` | may this entry execute now | **if funded, measured VINTAGE-BLIND** (was "always") | **same — see note** | **if the PREPARED transport coverage plus the eligible ERA BALANCE covers it** (live headroom stays 0). The predicate is a VIEW and cannot run the bounded batch scan — coverage spread across more small batches than one scan permits would read false forever, the sweep never reaching the allocator it needs to become true. So discovery is a separate, permissionless, stateful **PREPARATION operation**: it runs the paginated scan-and-stage machinery for an obligation ahead of time, accumulating staged coverage across calls, and the predicate reads the O(1) result — staged total plus cursor-visible balance. Prepare until covered, then the clock and the sweep see it |
 | 14 | `LibInteractionRewards.deliveredFreshBound:4211` | THE bound | **delivered** (was `max`) | delivered | **0** |
 
 **Two rows carry the whole risk and are worth reading twice.** Row 11 is where
@@ -2203,7 +2203,16 @@ revision unimplementable:
      cursor has passed — stranded by a neighbour. The last reference to
      resolve (settle or cancel) fires the retirement if the balance is
      then zero; until then the batch reads empty-but-referenced and no
-     index passes it. Staged allocations are release-on-cancel, so a
+     index passes it. **And a staging record carries a DEADLINE, past
+     which anyone may unwind it** — the claim entry points are
+     caller-bound, so without permissionless expiry a claimant who
+     stages the oldest batch's remainder and stops (malice, a lost key,
+     a later sanctions flag) holds every obligation sharing those days
+     hostage and the era never terminalizes. Expired staging unwinds
+     exactly as a cancellation does — balance back to its named batches,
+     references decremented, nothing half-paid — and the deadline is
+     generous enough for honest retry chains (a bounded multiple of the
+     retry cadence), because the unwind costs the staler only a redo. Staged allocations are release-on-cancel, so a
      dead obligation cannot strand what it staged. Bounded, resumable, and nothing
      half-paid — three properties, one mechanism. So
      conservation holds per packet — listed days can
