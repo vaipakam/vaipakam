@@ -1273,7 +1273,12 @@ everywhere, and this opening list is what an implementer follows:
    amount only via the provenance-or-replacement rule) and
    merely changes attribution — which is precisely why it needs registering as
    an explicit provenance-bound writer rather than being read as a violation of
-   "only `fundRewardPool` credits `received`". It exists on **both** active
+   "only `fundRewardPool` credits `received`" — a sentence that is true
+   only of TOKEN-MOVING EXTERNAL FUNDING, and says nothing against the
+   two registered attribution writers (this transfer and its delayed
+   pending-to-live form), which move no tokens and are registered
+   precisely so this sentence cannot be read as forbidding them. It
+   exists on **both** active
    roles, and the mirror's writer table carries it too.
 3. **The delayed pending-to-live recovery credit** — the era-terminal
    transfer's `Detached` form, draining the pending recovery position into
@@ -1336,6 +1341,18 @@ egress path uses, asserting `balance − outflow ≥ outstanding reward
 reserve` at the one chokepoint. What is NEVER acceptable is per-call-site
 discipline: "every other spender remembers to check" is the enumeration
 this design exists to refuse, pointed the other way.
+
+**A caller-selected `RecycleSource` tag is not provenance, and the
+allowlist must not treat it as such.** A generic `credit(source, …)`
+whose enum the caller supplies proves neither the call origin nor a
+token ingress — a future path passing an allowed tag compiles, bypasses
+the delivered-headroom charge, and publishes recycled backing from
+unrelated custody: the compile-and-forget failure by the front door.
+Every allowed inflow class therefore gets its **own provenance-verifying
+operation** — a dedicated, delta-checked ingress (or attribution
+transfer) that DERIVES the source tag from what it verified, rather than
+accepting it as an argument at a generic chokepoint. The enum names the
+classes; the operations prove membership.
 
 **`VPFI_INTERACTION_POOL_CAP` is explicitly NOT the ingress**, and this is the
 distinction the whole inversion turns on. The 69M cap is a **schedule** — an
@@ -2180,13 +2197,18 @@ revision unimplementable:
        leaves a 5-fresh/5-recycled claim with 6 transport-paid unable to
        say which 4 reaches which chokepoint — double-charging one ledger
        or preserving the wrong reserve, implementation's choice. The
-       allocation is **FRESH-FIRST, deterministically**:
-       `transportPaidFresh = min(transportPaid, freshPending)`, the
-       remainder is `transportPaidRecycled` — fresh first because the
-       delivered ledger is the scarcer, provenance-bound resource and
-       paying its component from the untyped aggregate reduces demand on
-       it without publishing anything — and each leg's chokepoint sees
-       only its own residual. **The recycled leg additionally RELEASES its
+       allocation is **against each component's SHORTFALL, deterministically
+       — typed funding counts first, transport covers what typed funding
+       cannot**: compute each component's unmet need net of its own typed
+       sources (era/live fresh for the fresh leg, bucket funding for the
+       recycled leg), and allocate the untyped balance to those shortfalls,
+       fresh-shortfall first when it cannot cover both. Blind fresh-first
+       rejected fully-backed claims: 5-fresh/5-recycled with 5 live fresh
+       headroom, an empty bucket, and a matching 5-token batch has enough
+       total backing — live pays fresh, transport pays recycled — but
+       assigning transport to fresh leaves the recycled residual against
+       the empty bucket, reverting a claim the funding fully covers. Each
+       leg's chokepoint sees only its own residual, as before. **The recycled leg additionally RELEASES its
        covered commitment without debiting the bucket** — a
        transport-specific retirement, exactly as the absorption branch
        already does: a broadcast that reserved 5 in
@@ -3043,8 +3065,15 @@ spends unrelated custody — and the reverse correction strands bucket
 custody outside the holder that fresh outflows now debit. So
 fresh→recycled moves the amount from the holder's attribution to the
 bucket's protected custody, recycled→fresh moves it back, atomically with
-the ledger reattribution; the spent shortfall keeps its separate
-replacement-custody requirement.
+the ledger reattribution. **Replacement custody is required only where
+the spent debit transfers NOWHERE** — the retain-`paid` boundary, applied
+here: a corrected spent split moves its historical debit to the other
+side's consumed accounting (`paid` reducing with it, the destination's
+consumption rising), so the 6/4-spent-corrected-to-4/6 case settles as
+`received = 4, paid = 4`, recycled credit 6 with 2 consumed, original
+custody intact — demanding 2 replacement tokens there either blocks a
+valid correction or leaves 2 unallocated. Replacement funds only a debit
+no authenticated ledger inherits.
 
 **"Spent attribution first" now has a deterministic definition, because
 without one it was unanswerable.** Outflows are not debited per packet —
@@ -3147,6 +3176,18 @@ transition. The authenticated fresh amount splits at the pre-credit
 deficit: the absorbed portion to restitution, only the excess to live
 backing. Nothing for payroll to race, and nothing for the deficit to
 strand.
+
+**The same deficit split governs RECLASSIFICATION into fresh, and the
+reverse direction names its debit order.** A recycled→fresh correction
+raises `received` exactly as a classification does — under
+`paid > received` the absorbed portion creates no headroom, so it routes
+to restitution identically, only the excess to the live row. And a
+fresh→recycled correction debiting a fresh attribution that spans
+restitution AND live custody takes from **LIVE first**: the live portion
+is the spendable one whose reattribution the correction machinery
+already handles, while restitution-held custody moves only through its
+own disposition rules — a correction is not a back door out of the
+restitution position.
 
 **A fresh classification MOVES ITS TOKENS, not just its numbers —
 in-holder, per the ingress rule above; for pre-holder arrivals the
