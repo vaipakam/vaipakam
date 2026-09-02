@@ -1446,6 +1446,20 @@ explicitly — the fresh share pulled from the holder into the outbound
 escrow at dispatch, the recycled share from the bucket's PROTECTED
 custody — so neither side's tokens can substitute for the other's.
 
+**The funding GATES move with the funding — every check that inspected
+the Diamond balance reads the holder attribution once custody lives
+there.** `RewardClaimFacet` and both sweep paths gate through
+`LibVpfiRecycle.backingPosition`, whose balance term is
+`balanceOf(address(this))`, and `_entryExecutableNow` derives its
+funding check from the same position — so a fully funded state (100 in
+the holder, no spare Diamond VPFI) would be REJECTED by the very gates
+that run before the new holder-debiting transfer logic ever executes.
+The gate replacement is part of the custody change, not a follow-up:
+`backingPosition`'s balance term and `_entryExecutableNow`'s funding
+read become the consumer's ELIGIBLE holder attribution (its era,
+transport, and bucket rows as applicable), and no gate anywhere reads
+the shared Diamond balance for reward funding again.
+
 **And "the bucket's custody" means protected custody too — the recycled
 side has the same enemy.** A `recycleBucket` counter over shared Diamond
 balance is the payroll collision again: `withdrawSalary` consumes the
@@ -2180,8 +2194,17 @@ revision unimplementable:
      indexes never passed them and whose budget never counted them —
      nothing to reverse. Retries resume from the staging record (which
      names its batches) rather than re-scanning, keeping the bound.
-     Staged allocations are release-on-cancel, so a dead obligation
-     cannot strand what it staged. Bounded, resumable, and nothing
+     **And a batch with OUTSTANDING STAGING REFERENCES cannot be retired
+     by anyone** — staging increments a per-batch reference count that
+     defers the exhaustion transitions for EVERY consumer, not just the
+     stager: otherwise B stages-and-settles the other half of A's batch,
+     the zero available balance lets B fire the member-day index
+     advances, and A's later cancellation restores 5 into a batch every
+     cursor has passed — stranded by a neighbour. The last reference to
+     resolve (settle or cancel) fires the retirement if the balance is
+     then zero; until then the batch reads empty-but-referenced and no
+     index passes it. Staged allocations are release-on-cancel, so a
+     dead obligation cannot strand what it staged. Bounded, resumable, and nothing
      half-paid — three properties, one mechanism. So
      conservation holds per packet — listed days can
      contend for an aggregate, because an aggregate is what the wire
