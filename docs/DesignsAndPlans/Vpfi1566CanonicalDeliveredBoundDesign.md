@@ -2583,8 +2583,26 @@ cumulative outflow total exceeds its recorded prefix —
 `spent = clamp(sideOutflowTotal − prefixBefore, 0, credit)` — a pure
 derivation from totals already kept, no per-outflow bookkeeping. A
 correction may move only the provably-UNSPENT remainder under that order;
-anything else requires replacement custody. Deterministic, cheap, and
-order-published-at-classification, so no later event can re-argue it.
+anything else requires replacement custody.
+
+**And a correction that REMOVES an unspent entry must shift every later
+entry's effective position, or the prefixes it left behind lie.** The
+recorded prefix counts the removed credit: classify A then B at 100 each
+(B's prefix = 100), reclassify the still-unspent A away, then pay 100 — the
+tokens consumed are B's, yet the stale formula reads B as entirely unspent
+(`clamp(100 − 100, 0, 100) = 0`) and permits moving B too, without
+replacement — an underbacked destination attribution, twice over. So the
+normative rule is **spent-ness over the LIVE queue**: outflows consume the
+entries that still exist, in classification order, and an entry's effective
+prefix is its recorded prefix **minus every amount reclassified out of
+entries classified before it**. The realization puts the cost where the
+rarity is: outflows (hot, permissionless) stay O(1) against the untouched
+running totals; a reclassification (a PAUSED, operator-driven correction)
+carries a paginated suffix adjustment — or an equivalent removal ledger the
+effective-prefix read subtracts — under the same completion proof as every
+other paused scan in this design. An earlier revision called the prefix
+immutable, "so no later event can re-argue it"; the immutability claim was
+the bug — what must be immutable is the ORDER, not the arithmetic.
 Per-packet identity is required only where per-packet classification is
 attempted; for history, one provable envelope replaces many unprovable
 identities.
