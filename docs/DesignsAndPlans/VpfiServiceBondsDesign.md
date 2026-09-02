@@ -285,6 +285,18 @@ withdrawal. So, before bonds ship, **either**:
   bond**, or rotation needs an explicit **forced escrow migration that preserves
   the beneficiary**. Voluntary enumeration cannot be the only route.
 
+  **Partitions key on a MONOTONIC ROTATION EPOCH, never the token address
+  alone.** `setVPFIToken` permits A → B → A (it rejects only a no-op
+  against the currently selected token), and address-keyed sub-balances
+  then conflate two distinct rotations: a retired A-partition still
+  holding principal, reservations or debt shares its key with the new
+  A deposits — the retired balance regains capacity, or an old liability
+  watermark reaches newly posted principal, both against the
+  token-epoch isolation this section requires. Every partition is keyed
+  by the rotation epoch (the address is an attribute, not the key), or
+  equivalently address reuse is prohibited until every historical
+  partition for that address is empty.
+
   **Rotation carries the DEBT with the balance — the per-token liability
   queue, its watermarks, and the debt-first settlement obligation migrate
   atomically with the principal.** A deferred liability adjudicated
@@ -346,7 +358,12 @@ it requires nothing of the operator.
 
 ```
 ServiceCapacityDeposit { operator; role; token; amount; state; unlockAt;
-                         parkedRequest; }
+                         parkedRequest; eligibleAmount; }
+// `eligibleAmount`: the persisted ELIGIBLE (armed) balance fork C's rules
+// read — capacity curve inputs, reservation cap, involuntary-debit sizing,
+// withdrawal ordering all consult it, and a schema without it lets an
+// implementation silently activate excess or charge the wrong fee. Under A
+// (no fee-free excess), eligibleAmount == amount.
 // `parkedRequest`: the outstanding parked-withdrawal amount — the CAP the
 // sanctions section requires to persist. `amount` is principal and `state`
 // alone cannot distinguish park-10-of-100 from park-all; the delisting
@@ -532,9 +549,12 @@ be no balance mutation in the same call at all. Requiring the balance fields
 on it left two incompatible normative ABIs for one event. The mutation is
 reported in TWO stages per the durable-adjudication rule: the
 **liability-created event at committed adjudication** (amount, tranche
-allocation, token epoch, post-encumbrance total — the reservation is
-consumed here, and the backing must not read as available in the gap),
-then `CapacityDepositDebited` at settlement, which carries
+allocation, token epoch, post-encumbrance total **AND the post-reserved
+total — the adjudication consumes the reservation and creates the
+liability in one act, so one event carries BOTH mutations**; without
+the reserved figure, an indexer following the reservation-lifecycle
+mandate counts the consumed reservation and its replacement liability
+at once), then `CapacityDepositDebited` at settlement, which carries
 the full mandatory field set and joins to its offence by `refId`. Three
 facts, three events, one join key — v1 emits none, since v1 has no
 offences. (An earlier revision said "two facts, two events", which let
@@ -1442,7 +1462,8 @@ whole rule:
   dependence the reservation removed — the 29-versus-30 arithmetic below, via
   the rounding instead of the base. Round once at acceptance, freeze the
   figure into the reservation, and resolution executes it; the synchronous
-  case (observation and debit in one call) rounds ONCE over the FIGURE'S
+  case (observation and figure-fixing in one call — the debit settles
+  separately, per durable adjudication) rounds ONCE over the FIGURE'S
   OWN BASE — the partition balance net of outstanding deferred liabilities
   — and only the resulting figure's COLLECTION clamps to unreserved
   backing. (This sentence previously said the synchronous rounding runs
@@ -2202,7 +2223,12 @@ retune must not silently activate it: deposit 100 to the ceiling, add 900
 free, let `bondAt4x` rise, and the 900 preserves full entitlement that a
 post-retune deposit of the same 900 would have paid for. **Both capacity
 CURVE inputs — the ceiling read and the rate read — take the persisted
-ELIGIBLE balance, never the undifferentiated bond amount**: a formula fed
+ELIGIBLE balance NET of outstanding collectible and adjudicated-frozen
+liabilities, never the undifferentiated bond amount**: encumbered
+backing must not buy capacity — 100 eligible units fully encumbered by
+an adjudicated liability whose settlement keeps failing would otherwise
+grant the full 4× rate, and synchronous offences would be admitted
+against a net base of zero — a formula fed
 the whole deposit re-prices all 1,000 units at the next bucket touch
 after a retune and silently activates the excess without its arming fee,
 the exact bypass the eligibility split exists to prevent. The excess is
@@ -2474,6 +2500,19 @@ privileges-revoke-at-request rule and the rule that unenrolled deposits
 grant no predicate-enabled capacity. The branch demotes such calls to
 the free-tier allowance outright — bonded capacity is REMOVED from them,
 not just their slashability.
+
+**EVERY first authoritative `Flagged` refusal commits the marker —
+single-party calls included, on every selector.** The committed
+transition was specified for proofs, withdrawals, collections and the
+mixed multi-party result, which left the ordinary case uncovered: a
+plain `postCapacityDeposit` whose sole party is freshly flagged would
+refuse through the reverting helper, roll back the confirmation, and
+hand the next outage a "never confirmed" wallet whose fail-open deposit
+and withdrawal paths accept and release principal. Wherever a screen
+reads `Flagged` for a wallet with no persisted marker, the refusal is a
+COMMITTED, value-unmoving transition that writes
+`sanctionsConfirmedFlagged`; the plain reverting helper is for wallets
+whose marker is already persisted.
 
 **A delayed proof against a CONFIRMED-SANCTIONED operator adjudicates
 without moving the funds.** The blanket per-selector screen cannot simply
