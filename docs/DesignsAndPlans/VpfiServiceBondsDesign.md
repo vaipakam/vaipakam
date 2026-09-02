@@ -1533,7 +1533,13 @@ whole rule:
   are pending, so the malicious action they were meant to shield is refused
   rather than cheapened.
 
-  **Only a COMPLETED DEBIT reduces a later action's base. A pending reservation
+  **Only a COMPLETED DEBIT reduces a later action's base — where "base"
+  means the DELAYED-reservation base, and the exception covers pending
+  DELAYED reservations alone: outstanding deferred SYNCHRONOUS
+  liabilities DO reduce every later synchronous offence base**, per the
+  net-of-collectible-liabilities figure — pricing new offences from the
+  gross balance while old promises stand unpaid mints nominal liabilities
+  past the collateral reachable at recording. **A pending reservation
   does not** — it constrains ADMISSION through the cap above, never the base. An earlier revision said "an action taken after an earlier
   reservation sees a smaller total", which reproduces 10, 9, 8.1 … for
   sequential clean actions against an unchanged 100-token balance — the fixed-
