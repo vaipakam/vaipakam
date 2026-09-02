@@ -189,8 +189,15 @@ jobs:
           # Board items carry the issue's URL; matching on that rather
           # than on the number avoids confusing issue #42 of this repo
           # with #42 of another repo feeding the same board.
-          jq -r '.items[] | select(.content.type == "Issue") | .content.url' board.json \
-            | sort -u > board-urls.txt
+          #
+          # Each item's id and Status come along for the ride, because
+          # reconciling Status cannot depend on whether the card was
+          # added on THIS sweep — see the status pass below.
+          jq -r '.items[]
+                 | select(.content.type == "Issue")
+                 | [.content.url, .id, (.status // "")]
+                 | @tsv' board.json > board-items.tsv
+          cut -f1 board-items.tsv | sort -u > board-urls.txt
           comm -23 wanted-urls.txt board-urls.txt > missing.txt
 
           missing=$(wc -l < missing.txt | tr -d ' ')
@@ -204,13 +211,10 @@ jobs:
             echo "- missing: $missing"
           } >> "$GITHUB_STEP_SUMMARY"
 
-          if [ "$missing" -eq 0 ]; then
-            echo "nothing to do"
-            exit 0
-          fi
-
-          echo >> "$GITHUB_STEP_SUMMARY"
-          echo "### Added" >> "$GITHUB_STEP_SUMMARY"
+          # NOTE: no early exit when nothing is missing. The status pass
+          # at the end has its own work to do — a card added by an earlier
+          # sweep whose Status write failed is present on the board and so
+          # will never appear here again.
 
           # A RECOVERED CLOSED CARD LANDS IN THE WRONG COLUMN unless we
           # say otherwise. New cards enter Backlog, and Status moves to
@@ -246,7 +250,11 @@ jobs:
             echo "::warning::could not resolve the Status/Done ids — recovered closed cards will stay in Backlog and need a manual move"
           fi
 
+          : > added-items.tsv
           failed=0
+          if [ "$missing" -gt 0 ]; then
+          echo >> "$GITHUB_STEP_SUMMARY"
+          echo "### Added" >> "$GITHUB_STEP_SUMMARY"
           while read -r url; do
             [ -n "$url" ] || continue
             added=0
@@ -270,28 +278,80 @@ jobs:
               sleep $((attempt * 15))
             done
             if [ "$added" -eq 1 ]; then
-              note=''
-              # Closed at the time we recovered it → it belongs in Done.
-              if grep -qxF "$url" closed-urls.txt && [ -n "$done_option_id" ]; then
-                if gh project item-edit --id "$item_id" \
-                     --project-id "$project_id" \
-                     --field-id "$status_field_id" \
-                     --single-select-option-id "$done_option_id" < /dev/null; then
-                  note=' → Done'
-                else
-                  # The card is on the board, which is what matters; say
-                  # so rather than failing the sweep over a field write.
-                  echo "::warning::added $url but could not set Status: Done"
-                  note=' (Status not set)'
-                fi
-              fi
-              echo "- $url$note" >> "$GITHUB_STEP_SUMMARY"
+              # A brand-new card has no Status yet; the pass below sets it
+              # if the issue is closed.
+              printf '%s\t%s\t\n' "$url" "$item_id" >> added-items.tsv
+              echo "- $url" >> "$GITHUB_STEP_SUMMARY"
             else
               echo "::error::could not add $url"
               echo "- FAILED: $url" >> "$GITHUB_STEP_SUMMARY"
               failed=$((failed + 1))
             fi
           done < missing.txt
+          fi
+
+          # THE STATUS PASS IS SEPARATE FROM ADDING, and has to be. Setting
+          # Status only at the moment of the add makes the transition
+          # single-shot in the same way the on-open workflow was: if that
+          # one write fails — an exhausted budget, a transient error — the
+          # card is on the board from then on, so it never appears in
+          # `missing.txt` again and its Status is never retried. Finished
+          # work would sit in the backlog permanently, which is this
+          # workflow's own defect wearing a smaller hat.
+          #
+          # So the pass runs over every recently-closed issue the board
+          # knows about, added on this sweep or long before, and fixes any
+          # whose Status is not Done. That makes it idempotent and
+          # self-healing: a failure here is retried by the next sweep
+          # rather than being frozen in, which is why a warning is honest
+          # and a hard failure would not add anything.
+          if [ -n "$done_option_id" ]; then
+            cat board-items.tsv added-items.tsv > known-items.tsv
+            with_status=$(awk -F'\t' '$3 != ""' board-items.tsv | wc -l | tr -d ' ')
+            if [ "$with_status" -eq 0 ] && [ -s board-items.tsv ]; then
+              # THE CHECK HAS GONE BLIND. Every board item reporting an
+              # empty Status means the field is not where this jq looks,
+              # not that the whole board is unset — and acting on it would
+              # rewrite Status on every recovered card each sweep.
+              echo "::warning::no board item exposes a Status value — skipping the status pass rather than rewriting every card"
+            else
+              needing=0; fixed=0; unfixed=0
+              while read -r url; do
+                [ -n "$url" ] || continue
+                row=$(awk -F'\t' -v u="$url" '$1 == u {print $2 "\t" $3; exit}' known-items.tsv)
+                [ -n "$row" ] || continue
+                id=$(printf '%s' "$row" | cut -f1)
+                st=$(printf '%s' "$row" | cut -f2 | tr '[:upper:]' '[:lower:]')
+                { [ -n "$id" ] && [ "$st" != "done" ]; } || continue
+                needing=$((needing + 1))
+                ok=0
+                for attempt in 1 2 3; do
+                  if gh project item-edit --id "$id" \
+                       --project-id "$project_id" \
+                       --field-id "$status_field_id" \
+                       --single-select-option-id "$done_option_id" < /dev/null; then
+                    ok=1
+                    break
+                  fi
+                  sleep $((attempt * 15))
+                done
+                if [ "$ok" -eq 1 ]; then fixed=$((fixed + 1)); else unfixed=$((unfixed + 1)); fi
+              done < closed-urls.txt
+
+              echo "closed cards needing Done: $needing (moved $fixed, still not $unfixed)"
+              if [ "$needing" -gt 0 ]; then
+                {
+                  echo
+                  echo "### Closed cards moved to Done"
+                  echo "- moved: $fixed"
+                  [ "$unfixed" -eq 0 ] || echo "- still not Done (next sweep retries): $unfixed"
+                } >> "$GITHUB_STEP_SUMMARY"
+              fi
+              if [ "$unfixed" -gt 0 ]; then
+                echo "::warning::$unfixed closed card(s) are still not Done; the next sweep retries them"
+              fi
+            fi
+          fi
 
           if [ "$failed" -gt 0 ]; then
             echo "::error::$failed issue(s) still missing from the board; the next scheduled sweep will retry"
