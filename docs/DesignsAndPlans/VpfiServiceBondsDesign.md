@@ -916,8 +916,17 @@ offence — **and the base depends on when the offence is recorded:**
     the offender manufactured. So: a reach is stored as a **WATERMARK, not a set** — the
     tranche-creation index at recording time, reaching every LIVE tranche
     created at or before it — and **liabilities whose watermarks separate
-    the same live tranches are EQUIVALENT and COALESCE** (amounts sum;
-    what each can touch is identical). Exhausted tranches leave every
+    the same live tranches are EQUIVALENT and COALESCE into an AGGREGATE
+    liability with its OWN identity** (amounts sum; what each can touch
+    is identical — and the audit join survives WITHOUT per-offence
+    traversal at settlement, because it lives at ADJUDICATION: each
+    offence's adjudication event carries its `refId` and names the
+    aggregate id it coalesced into, so the settlement event joins to
+    the AGGREGATE alone and the constituent set reconstructs from the
+    adjudication stream. Retaining constituent ids for iteration at
+    collection would rebuild the gas grenade coalescing removes;
+    discarding them would break the audit mandate — the aggregate id is
+    how both survive). Exhausted tranches leave every
     reach automatically (a watermark reaches only what still exists), so
     tranche TURNOVER cannot mint distinct records: keep one old tranche
     alive, cycle the second slot through B1, B2, B3 … and set-valued
@@ -1007,7 +1016,16 @@ therefore TWO transitions: a **non-reverting committed adjudication**
 liability — no external calls, no fallible legs) and a **separate
 settlement** of that liability, whose failure leaves the liability
 standing encumbered and retryable. Nothing about a broken settlement
-path un-adjudicates an offence.
+path un-adjudicates an offence. **And every adjudicated liability BINDS
+its verifier epoch, with quarantine PAUSING its settlement**: a forged
+proof adjudicated moments before the defect is detected leaves a
+durable liability anyone could otherwise settle into recycling while
+governance deliberates — the fast containment ineffective for exactly
+the evidence the broken verifier accepted last. Quarantine pauses
+settlement of every liability bound to the flagged verifier's epochs,
+alongside proofs and admissions; restoration resumes them; invalidation
+explicitly resolves or extinguishes the rejected verifier's
+liabilities in the same governance act that releases its reservations.
 
 **Each proof is consumed before it debits.** Under attested-tier delayed
 adjudication the offence arrives as a submitted proof rather than as an in-call
