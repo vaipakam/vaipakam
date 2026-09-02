@@ -1384,8 +1384,15 @@ retired by accident:
 
 - **Counter.** On **every effective role change** — entering `Detached`, and
   the direct Mirror→Canonical and Canonical→Mirror transitions
-  `setIsCanonicalRewardChain` permits — the residual `received − paid` moves to
-  an **era-scoped** balance keyed by the retiring era. An earlier revision of
+  `setIsCanonicalRewardChain` permits — the residual **`max(received − paid, 0)`** moves to
+  an **era-scoped** balance keyed by the retiring era. The saturation is not
+  defensive padding: a demoted or unwound confirmation can legitimately leave
+  `paid > received` after some of the credited value was already paid, which is
+  exactly why the live bound floors at zero
+  (`LibInteractionRewards.sol:4199-4214`). A bare subtraction would either revert
+  the administrative role change under checked arithmetic or, unchecked, mint an
+  enormous era balance out of an underflow — **a valid unwind wedging role
+  reconfiguration, or funding an era from nothing.** An earlier revision of
   this bullet said "on entering `Detached`", which left the direct transitions
   with no counter rule even after the paragraph above extended the scope: the
   contract an implementer follows is this list. The live counters go to the
@@ -1394,7 +1401,13 @@ retired by accident:
   attributed to that era's balance rather than to the live one.
 - **Claims.** Claims accrued under the retired era consume the era-scoped
   balance **first**, and any excess then debits the **live** delivered headroom
-  like any other claim. Making the era balance their ONLY source would freeze
+  like any other claim. **The era balance is threaded through the ENFORCEMENT
+  and EXECUTABILITY checks too, not just the settlement arithmetic** — otherwise
+  a claim fully backed by its era balance is rejected by `_deliverReward`
+  against a zero live bound, and matrix row 13 simultaneously reports it
+  unexecutable, so **an abandoned retired claim can never even become
+  terminal.** Both checks take `eraBalance + liveHeadroom` as the available
+  figure and consume in that order. Making the era balance their ONLY source would freeze
   the excess permanently: with `received = 100`, `paid = 90` and 50 of
   outstanding retired-era claims, only 10 carries forward, and the other 40 would
   wait forever while later deliveries land in a balance they may not touch.
