@@ -2217,18 +2217,28 @@ revision unimplementable:
      an admission that persists the full attacker-length `dayIds` array
      element-by-element can itself exceed the destination gas limit and
      revert before ever reaching `RETIRING`, the same permanent bounce
-     one step later. Admission stores the aggregate, the token delta,
-     and a **MERKLE ROOT over fixed-size chunks of the day list** (O(1)
-     to store; a flat whole-list hash cannot authenticate a PAGE — a
-     call supplying only its page has nothing to check, and one
-     re-supplying the whole list per page re-imports the unbounded
-     calldata and hashing the compact admission removed, potentially
-     unmaterializable forever near the gas limit). Each materialization
-     call supplies ONE bounded chunk plus its Merkle proof, verifies
-     against the stored root, and writes that chunk's day-index entries
-     — the packet is safe and accounted from the
-     first transaction, and its per-day machinery arrives page by page,
-     each page authenticated independently. Resumable retirement: bounded index-updates per
+     one step later. Admission stores the aggregate, the token delta, and an
+     authenticated commitment to the day list — **split by what the
+     WIRE can carry, because the old formats carry no root**. The new
+     wire (d5 onward) embeds a **Merkle root over fixed-size chunks**;
+     each materialization call then supplies one bounded chunk plus its
+     proof — O(page) verification, no call's work scaling with the
+     list. An OLD-wire over-cap packet cannot be given a root the
+     payload does not carry (a later-supplied root is invented
+     membership), so its admission stores `keccak(payload)` — computed
+     once over calldata the transaction already paid for, LINEAR-CHEAP
+     next to the per-element storage writes that were the actual gas
+     wall — and each materialization call **re-supplies the full
+     payload as calldata, verifies the flat hash (linear, cheap), and
+     writes only its bounded page of storage**. The arithmetic is the
+     point: a packet whose full index writes burst the block holds
+     thousands of days at ~20k gas per slot, while re-hashing its
+     ~tens-of-KB payload costs well under a million — every page call
+     affords the verification, none affords the writes, which is
+     exactly the split this mechanism makes. The packet is safe and
+     accounted from the first transaction, and its per-day machinery
+     arrives page by page, each page authenticated against the stored
+     commitment. Resumable retirement: bounded index-updates per
      call, batch marked RETIRING and skipped by allocation meanwhile. Exhaustion
      happens once per batch, so the removal cost is paid once by the
      settlement that exhausts it, not rediscovered by every other listed
@@ -2286,8 +2296,14 @@ revision unimplementable:
      restored coverage is DIRECTLY CONSUMABLE by any competing
      obligation's settlement**, and for a competitor too large for one
      bounded scan, **consumable through PRIORITY-MODE STAGING: an
-     obligation-bound reservation of the restored coverage that holds no
-     exclusive lease and blocks no allocation** — but it DOES carry
+     obligation-bound reservation that DEBITS its amount from the
+     restored coverage into staged form** — under the ordinary
+     staged-balance conservation and unwind rules, so only the
+     UNRESERVED REMAINDER stays directly consumable ("blocks no
+     allocation" means no exclusive batch lease and no cursor block,
+     never that the amount stays allocatable: a reservation whose
+     tokens another settlement can still consume is double-counted
+     coverage and an oversubscribed packet) — and it DOES carry
      **non-locking packet provenance** (packet id, batch id, per-leg
      amounts) and counts in the batch's RETIREMENT-DEFERRAL references:
      settlement must charge the right packet's leg counters, and an
