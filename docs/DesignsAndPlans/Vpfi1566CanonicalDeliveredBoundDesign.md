@@ -650,8 +650,24 @@ menu therefore narrows to two executable forms — **full replacement funding
 (the order stays as reviewed), or atomic cancel-and-recreate at the
 post-disposition amount** (the Diamond is the maker on custodial commits,
 so cancellation is its own act, and tombstone-without-recreate is the
-degenerate case). Certification of the class requires **no live order
-exceeding its post-disposition amount** — the executable-balance gate
+degenerate case).
+
+**And "recreate" means a NEW order in every keyed index, under a FRESH
+nonce — not the old order with a smaller number.** These are
+no-partial/no-multiple-fill orders invalidated by the LOP bit invalidator
+keyed on `(maker, nonceOrEpoch)`, and the protocol's own replay registry
+(`intentNonceUsed`, `LibVaipakam.sol:4194`) permanently rejects a reused
+nonce — so a replacement recreated with the stored `makerTraits` is
+terminally unfillable (its slot was consumed by the cancel), and its later
+teardown can read the consumed invalidator as ALREADY FILLED and refuse to
+return the custody. The recreation therefore allocates a fresh unused
+nonce in `makerTraits`, recomputes the order hash, and atomically rewrites
+every keyed index (`orderHashToLoanId`, the `orderHashKind` discriminator,
+the nonce registry) in the same act as the cancel. Certification of the
+class requires **no live order exceeding its post-disposition amount, and
+every recreated order FILLABLE** — amount-only certification passes a
+replacement that can never execute, which is the strand this class's
+inclusion in slice 0 exists to prevent — the executable-balance gate
 applied to the one class whose liability lives partly outside the
 migration's own ledgers. A scan that advances because each id was VISITED
 then either reverts partway and blocks arming (aggregate short), or — worse,
