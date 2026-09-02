@@ -679,6 +679,20 @@ rows, loan collateral entitlement, lien, tracked vault balance — and the
 class certification asserts their mutual consistency, not any single
 figure.
 
+**With one timing rule inside that atomicity: the PRE-EXISTING lien and
+tracked-balance figures are for the TOP-UP, and slice 0 must not touch
+them.** A non-curing top-up is deposited into the VAULT and liened there
+at once — `AddCollateralFacet.sol:168-207` ticks
+`protocolTrackedVaultBalance` and the lien for the top-up while the
+snapshot explicitly STAYS in Diamond custody — so those two counters
+currently represent real, separately funded vault collateral, not the
+Diamond-held snapshot the shortfall disposition is writing down. Reducing
+them for a SNAPSHOT shortfall makes backed top-up collateral withdrawable
+or erases its tracked deposit. So: slice 0 reduces the snapshot split,
+the claim rows and the loan entitlement; the lien and tracked balance
+GAIN the post-disposition snapshot amount only when slice 2 actually
+migrates it into the vault — the moment the counters' referent arrives.
+
 **The same rule for the intent class — the commit
 AND the loan — because each teardown consumer reads its own.** The
 settlement's borrower claim and its re-lien are both computed as
@@ -1265,6 +1279,26 @@ the enumeration of three, so the summary contradicted itself mid-sentence for
 a further round. The count is THREE, everywhere this contract is stated.) **The mirror's received-side writer table
 carries the same transfer**, for the same reason: it moves attribution rather
 than tokens, so a table listing only token-moving writers omits it silently.
+
+**The delivered bound constrains REWARD outflows — nothing else respects
+it, so the funding needs CUSTODY, not just arithmetic.** `received − paid`
+gates every reward payout, but the tokens behind it sit in the shared
+Diamond balance, and the OTHER spenders consult their own ledgers:
+`PayrollFacet.withdrawSalary` transfers VPFI on the strength of
+`stream.funded` alone (`PayrollFacet.sol:229-245`), never reading
+`received`. On the historical state this design explicitly anticipates —
+a non-reward ledger already underfunded at cutover — an underbacked
+100-token payroll stream simply spends a new 100-token `fundRewardPool`
+delivery, while the reward ledger still reports 100 of headroom: the
+positive ledger was never the part that could fail, custody was. So
+**delivered reward funding lives in DEDICATED CUSTODY** — a
+Diamond-owned holder that only the registered reward writers credit and
+only reward payouts debit, so no foreign `transfer` can reach it — with
+the acceptable fallback being a **single outbound-VPFI primitive** every
+egress path uses, asserting `balance − outflow ≥ outstanding reward
+reserve` at the one chokepoint. What is NEVER acceptable is per-call-site
+discipline: "every other spender remembers to check" is the enumeration
+this design exists to refuse, pointed the other way.
 
 **`VPFI_INTERACTION_POOL_CAP` is explicitly NOT the ingress**, and this is the
 distinction the whole inversion turns on. The 69M cap is a **schedule** — an
@@ -2685,6 +2719,25 @@ validates each entry in isolation cannot see this.
 So each entry carries a **canonical packet hash derived from IMMUTABLE DELIVERY
 EVIDENCE** — source chain plus transaction/log identity — with the
 `oldWireAmount` bound and the classified totals keyed to that hash.
+
+**Split by WHO stamps it, because the two stampers can read different
+facts.** HISTORICAL entries are operator-submitted reconciliations, and
+transaction/log identity is exactly right there — verifiable off-chain by
+anyone against the chain history. But a POST-UPGRADE legacy arrival is
+stamped by the INGRESS itself, on-chain, where transaction hashes are
+unreadable and the payload cannot distinguish its own twins: two
+legitimate remittances from one chain can carry identical day arrays,
+totals and token amounts (the legacy wire has no `remitId`,
+`RewardRemittanceReceiver.sol:221-232`), so hashing the visible tuple
+ALIASES them — colliding `oldWireAmount`, classification totals and
+transport-batch balances, stranding the second delivery or breaking
+per-packet conservation. The ingress therefore takes uniqueness from the
+layer that already has it: **the CCIP message id, which `_ccipReceive`
+receives and the messenger threads through to the handler** — the stamp
+is `keccak(sourceChainId, messageId)`, unique per delivery and unfakeable
+by payload construction. A transport without a message id falls back to a
+**monotonic per-source counter allocated inside the authenticated
+ingress** — never a hash of contents two honest packets can share.
 
 **The guard is a cumulative INCREMENT, not a one-shot consumed flag**, and an
 earlier revision of this paragraph said "marked consumed BEFORE any ledger
