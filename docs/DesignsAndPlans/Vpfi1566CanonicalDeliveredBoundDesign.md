@@ -665,7 +665,21 @@ nonce in `makerTraits`, recomputes the order hash, and atomically rewrites
 every keyed index (`orderHashToLoanId`, the `orderHashKind` discriminator,
 the nonce registry) in the same act as the cancel.
 
-**And the write-down reaches every STORED copy of the amount — the commit
+**And the write-down reaches every STORED copy of the amount — for a
+`FallbackPending` position that is FIVE ledgers, not two.** The fallback
+custody total is split across the three `fallbackSnapshot` collateral
+fields; the lender and borrower claim rows carry their own amounts;
+`loan.collateralAmount` keeps driving health and liquidation after a
+cure; the lien and `protocolTrackedVaultBalance` shadow them. Reduce only
+the snapshot and a claim row still draws the disposed amount; reduce only
+a claim and the migration still moves the full snapshot; leave the loan
+figure and an 80-token cure resumes as a 100-token-collateralized loan.
+The disposition reconciles ALL of them atomically — snapshot split, claim
+rows, loan collateral entitlement, lien, tracked vault balance — and the
+class certification asserts their mutual consistency, not any single
+figure.
+
+**The same rule for the intent class — the commit
 AND the loan — because each teardown consumer reads its own.** The
 settlement's borrower claim and its re-lien are both computed as
 `loan.collateralAmount − consumed`
@@ -1756,7 +1770,20 @@ retired by accident:
   era id that tells the eventual credit where home is.
 
   **On an existing deployment BOTH counters start WRONG, and must be backfilled
-  before any terminalization.** Every pre-upgrade `rewardEntries` row bypassed
+  before any terminalization — into a CONSERVATIVE BOOTSTRAP ERA, because
+  "its era" is not derivable from current storage.** `RewardEntry` carries
+  a day range and no era field (`LibVaipakam.sol:2451`), and the rotation
+  state retains only the last nonzero Base deployment and a boolean — so
+  on a deployment that changed role or source BEFORE this upgrade, an
+  operator-SELECTED assignment can place an old obligation outside the
+  counter guarding its backing, and one era terminalizes and releases
+  funds before that obligation is absorbed. The backfill therefore
+  assigns **every unstamped pre-upgrade obligation, and the matching
+  backing, to ONE bootstrap era** that follows the retired-era rules
+  (carried balance, both counters, no terminalization until ITS
+  conditions hold); a FINER assignment is permitted only where immutable
+  per-day source evidence proves it — the same evidence bar as every
+  other privileged attribution in this design.** Every pre-upgrade `rewardEntries` row bypassed
   the new increment paths, so a retiring era's liability counter reads zero
   while old claims and sweeps are still live — and the first role transition
   would satisfy the O(1) terminal check and **release their backing
@@ -2048,6 +2075,21 @@ revision unimplementable:
    list names all three selectors explicitly rather than describing a class. This is symmetric with row 7's ack,
    which already refuses.
 
+   **Permanent promotion COORDINATES the messenger, or the transport
+   epoch is unreachable by the very packets it exists for.** The satellite
+   messenger rejects every broadcast when its own flag says canonical —
+   `if (isCanonical) revert BroadcastOnCanonical()`
+   (`VaipakamRewardMessenger.sol:1751-1755`) — BEFORE the facet could
+   quarantine it; leaving the flag false instead preserves the whole
+   mirror report/broadcast authorization surface on a chain that is no
+   longer one. So the promotion ceremony flips the flag AND installs a
+   **narrow legacy-quarantine route**: broadcasts are accepted
+   post-promotion ONLY from the closed set of legacy source lanes
+   certified at transition, authenticated exactly as before, and routed
+   solely into the parked/transport-epoch machinery — never to the
+   canonical report surface. Everything else still reverts
+   `BroadcastOnCanonical`.
+
    **A direct `setBaseChainId` REBIND (nonzero → nonzero) is PROHIBITED —
    every source-identity change goes through the Detached ceremony.** The
    setter (`RewardReporterFacet.sol:1249`) currently accepts A → B while the
@@ -2059,7 +2101,15 @@ revision unimplementable:
    on the source IDENTITY, so a rebind IS a role transition in everything
    but name — it gets the same ceremony: drain to `Detached`, retire the
    era with its carry-forward, rebind while detached, reattach to B under a
-   fresh era. The setter enforces it (nonzero → nonzero reverts).
+   fresh era. The setter enforces it (nonzero → nonzero reverts). **And
+   "source identity" includes the DEPLOYMENT ADDRESS, not just the chain:**
+   `setBaseRewardDeployment(A → B)` on the same Base chain currently
+   accepts a nonzero rotation and updates only `rewardEraRotated` and the
+   expected V3 deployment (`RewardReporterFacet.sol:1164-1185`) — no
+   retired era, no carry-forward — so B's funding shares A's live
+   accounting while delayed A-packets are refused against no matching
+   retired balance. Same identity change, same ceremony, same setter rule:
+   nonzero → nonzero reverts outside the Detached window.
 
    **THIRD correction to the same list: the REPATRIATION instruction
    ingresses (kind-8/9) were still missing.** `RepatriationFacet.onlyMirror`
@@ -2113,7 +2163,23 @@ revision unimplementable:
    charged forever. The state, the registry, and the attestation all key on
    **`(sourceChainId, issuingBase, authId)`**, with backfilled entries
    taking the source component from the charged-side reconciliation that
-   certified them. So: (a) source-chain persistence,
+   certified them.
+
+   **A collision that ALREADY happened under the old two-field key cannot
+   be disambiguated by the new one, and the backfill must refuse to
+   guess.** If two Base chains used the same `issuingBase` and `authId`,
+   both charged ledgers claim the key but the mirror retained only
+   whichever instruction arrived first (the second ingress no-oped) — and
+   nothing on the mirror says WHICH. Backfilling both triple keys
+   duplicates one instruction; picking either is an operator assertion
+   about an authenticated fact. So ambiguous keys are a CERTIFICATION
+   FAILURE, resolved on the charged sides: every Base authorization
+   participating in an ambiguity is **cancelled/released through its own
+   chain's recorded-disposition path**, the mirror-side instruction (whichever
+   it was) is tombstoned with its funds handled through the pending
+   recovery machinery, and certification requires ZERO ambiguous keys
+   outstanding. Losing two authorizations to explicit release is
+   recoverable; attributing one to the wrong chain is not. So: (a) source-chain persistence,
    split by WHEN the instruction arrived, because the two cases have
    different provable facts: **new ingresses persist the messenger's
    authenticated `sourceChainId` at arrival** — while for PRE-UPGRADE
@@ -2709,8 +2775,20 @@ while payouts and recycle consumption debit only the aggregates — so "was
 packet A's credit spent?" had no ledger to consult, and a correction could
 move attribution that had already funded a completed payout, printing an
 unbacked credit on the other side (the snapshot-keyed aggregate inherits
-the same question). The rule is **FIFO by classification order, per side, PER CREDITED
-ERA** — the queue lives where the credit went. A packet classified into
+the same question). The rule is **FIFO by classification order — per credited era on the
+FRESH side, GLOBAL on the RECYCLED side — because each queue must live
+where its spending is actually recorded.** The recycled bucket is one
+global balance in code: `LibVpfiRecycle.consume` and
+`debitRepatriationSurplus` debit it with no era, so era-scoped recycled
+queues would face a debit no rule can assign — charge era B's counter and
+era A's packet reads forever-unspent, reclassifiable into fresh headroom
+after its backing already left. The recycled queue is therefore GLOBAL:
+every recycled credit (packet-classified, aggregate-bootstrap, and
+non-packet alike) enters one classification-order queue whose outflow
+total is the bucket's own cumulative consumption. The FRESH side is the
+opposite for the same reason — `received`/`paid` genuinely partition by
+era, retired-era claims debit carried balances that never touch live
+`paid`, so fresh queues live per credited era. A packet classified into
 retired era A is spent by A-era claims that debit A's carried balance and
 never touch live `paid`, so a single global `sideOutflowTotal` cannot see
 that spending: the credit would read forever-unspent and be movable
