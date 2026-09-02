@@ -305,6 +305,18 @@ cannot reconstruct available backing, and an operator cannot tell when their
 capacity became usable again. Each carries the action and config epoch, the
 tranche allocation, and the **post-reserved total**.
 
+**Three EPOCH-LEVEL events are explicit EXCEPTIONS to the field list below:
+QUARANTINE, RESTORE and INVALIDATE.** An earlier revision excepted only
+invalidation — but quarantine and restoration also change proof eligibility and
+the evidence-horizon clock in O(1) across many operators, so requiring per-bond
+fields on them forces one event per reservation, which defeats the bounded
+incident path the quarantine exists to provide. Emitting nothing instead leaves
+indexers and **provers** unable to tell that horizons paused or resumed — and a
+prover who cannot tell is a prover who misses a window.
+
+Each carries the epoch, its predicate and the block; horizons are read as
+paused from a quarantine and resumed from a restore.
+
 **The epoch-invalidation event is an explicit EXCEPTION to the field list
 below.** It is deliberately O(1) and covers reservations belonging to many
 operators, so it cannot truthfully carry an operator, role, delta or
@@ -823,11 +835,16 @@ window the emergency path exists to close. The repository already separates thes
 `PAUSER_ROLE` is the fast-key multisig for incident levers, `ADMIN_ROLE` the
 timelocked one (`AdminFacet.sol:873-880`).
 
-So this authority is **narrowly scoped** — in one atomic call it may disable an
-affected verifier and perform the **O(1) epoch invalidation** that logically
-frees the capacity its reservations held, and **nothing else**. It does NOT
-iterate or release the reservation records; that is the bounded lazy cleanup
-above. An earlier revision said it "release[s] its reservations, atomically",
+So this authority is **narrowly scoped to QUARANTINE** — in one atomic call it
+disables proof submission against the suspect verifier, **preserving every
+reservation and its horizon**, and **nothing else**. It does NOT invalidate the
+epoch, does not release capacity, and does not touch the reservation records.
+
+**Invalidation is governance's**, per the split above: an off-timelock key that
+can invalidate is an off-timelock key that can grant an amnesty — a compromised
+or mistaken holder frees every affected reservation and operators withdraw
+during the governance delay. An earlier revision of this paragraph gave the fast
+authority the invalidation as well, which reinstates exactly that. An earlier revision said it "release[s] its reservations, atomically",
 which puts an unbounded iteration back inside the incident call — the failure
 this passage exists to prevent. Governance handles recovery afterwards on the
 normal path. Narrow scope is what makes an
