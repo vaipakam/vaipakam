@@ -315,10 +315,16 @@ withdrawal. So, before bonds ship, **either**:
   broken asset.
 
   So: **the token-snapshotted branch becomes MANDATORY whenever any frozen
-  balance exists**, or a sanctions-preserving escrow migrates the frozen
-  principal into the new token while keeping it frozen and claimable only on
-  delisting. Either way the rotation must not be gated on an operation the
-  sanctions gate forbids.
+  balance exists** — a sanctions-preserving escrow that keeps the frozen
+  principal **in the ORIGINAL asset**, frozen and claimable only on delisting.
+  This alternative said "into the new token" for one round longer than the
+  forced-migration rule above it, and it is wrong here for the same reason plus
+  one: the unfunded conversion rejected there, applied to a balance that is
+  frozen precisely when the old asset is compromised — so the conversion would
+  be least fundable exactly when this branch fires. Original asset,
+  token-snapshotted, conversion only ever a separately specified and separately
+  funded operation. Either way the rotation must not be gated on an operation
+  the sanctions gate forbids.
 
 **The snapshot/escrow migration is MANDATORY**, not the second of two options.
 An earlier revision called draining "simpler" and preferred it, which lets an
@@ -666,8 +672,21 @@ recycle bucket from the `(role, address)` bond whose entry point recorded the
 offence — **and the base depends on when the offence is recorded:**
 
 - **Synchronous recording (a future predicate-enabled tier, NOT v1):** the
-  CURRENT balance. The observation and the debit are the same call, so current
-  and action-time are the same figure and there is nothing to apportion.
+  current **UNRESERVED** balance — the same tri-state-filtered figure the
+  delayed-admission check reads, never the raw total. The observation and the
+  debit are the same call, so current and action-time are the same figure and
+  there is nothing to apportion — but "current balance" unqualified survived
+  here for a round after reservations were made immutable, and if both modes
+  are ever enabled for one role it lets a synchronous debit consume collateral
+  a delayed action has already reserved: reserve 50 of 100, land three
+  synchronous 25% debits, and the balance falls below the standing 50 — later
+  proofs clamp, reach the wrong tranche, and settle differently depending on
+  which offence class resolved first. **A reservation is inviolable by EVERY
+  consumer, not merely by other delayed actions**: the synchronous debit draws
+  from unreserved backing only, clamping there if it must, and the acceptance
+  test for any deployment enabling both modes on one role is
+  interleaving-independence — the delayed reservations settle to the same
+  figures whatever order the synchronous offences land in.
 
   An earlier revision labelled this "v1's in-call dispatcher". **v1 has no
   dispatcher and no offences** — both selectable forks are non-confiscatable —
@@ -818,18 +837,32 @@ that contradicted one another — it is stated once here, and any earlier phrasi
 that survives elsewhere is subordinate to this statement:
 
 **1. QUARANTINE — the fast, off-timelock authority. O(1), atomic, and the ONLY
-thing the fast key can do.** In one call it (a) disables proof submission
-against the suspect verifier and (b) stops NEW predicate-governed admissions
-under that epoch — while **preserving every reservation and its horizon**
+thing the fast key can do. It keys on the VERIFIER, not on one config epoch.**
+Routine parameter retunes multiply config epochs over an unchanged verifier,
+and different operators keep different historical epochs alive through their
+horizons — so an epoch-scoped quarantine is not O(1) containment at all: the
+sibling epochs the same broken verifier adjudicates stay open for forged
+proofs while the fast key chases them one transaction at a time. The
+quarantine is therefore **a single global flag on the verifier identity,
+consulted by every dependent epoch** — an epoch is quarantined-in-effect iff
+its verifier is flagged (or it is individually flagged), so one write contains
+every epoch at once. In that one call it (a) disables proof submission
+against the suspect verifier — every epoch it backs — and (b) stops NEW
+predicate-governed admissions under those epochs — while
+**preserving every reservation and its horizon**
 (horizons pause; nothing is released, nothing debited). The forgery stops;
 nobody's liability moves; no iteration occurs. A compromised or mistaken fast
 key can therefore inconvenience, but cannot amnesty and cannot confiscate.
 
-**2. INVALIDATION — governance, timelocked, and only after a quarantine.**
-Governance decides between **restore** (the suspicion was wrong: the quarantine
-lifts, horizons resume) and **invalidate** (the verifier is genuinely broken:
-the epoch's reservations are released, since their liability is no longer
-provable by trustworthy means). Invalidation is itself a **single O(1)
+**2. INVALIDATION — governance, timelocked, and only after a quarantine.
+Resolution stays PER-EPOCH even though the quarantine was verifier-global.**
+Governance decides between **restore** (the suspicion was wrong: the
+verifier's flag lifts, horizons resume everywhere it applied) and
+**invalidate** (the verifier is genuinely broken: the affected epochs'
+reservations are released, since their liability is no longer provable by
+trustworthy means) — and it may invalidate some of a verifier's epochs while
+restoring others, because the containment needed one write but the
+consequences are epoch-specific accounting. Invalidation is itself a **single O(1)
 epoch-state transition** — the per-operator reserved accounting is
 **partitioned over a bounded active set on BOTH axes: predicate/verifier epoch
 AND collateral-token epoch.** The first is what makes this invalidation one
@@ -1796,9 +1829,18 @@ that everything else is throughput and these are custody:**
   sanctioned operator acquire a funded bond through a clean payer; screening only
   the operator lets a sanctioned payer move value into protocol custody. Both
   identities, and the withdrawal recipient bound to whichever ownership model
-  §Mechanics selects. So `postBond`, `unbond`, any deposit-on-behalf or permit
+  §Mechanics selects. So `postBond`, any deposit-on-behalf or permit
   variant, and (under C) the arming-fee payer each need
-  `LibVaipakam._assertNotSanctioned` and a focused test. Omitted from an
+  `LibVaipakam._assertNotSanctioned` and a focused test — **but `unbond` does
+  NOT take the reverting helper**, and this list said it did for one round
+  after the paragraph above established why it cannot: when `unbond` is the
+  first authoritative observation of the flag, a revert rolls back the
+  committed `sanctionsConfirmedFlagged` + parked-withdrawal writes, and a later
+  oracle outage then routes the same balance through the never-confirmed
+  fail-open branch. `unbond` uses the committed non-reverting tri-state
+  transition (park, persist the flag, refuse the payout); a plain revert is
+  acceptable there only once the flag is ALREADY persisted, because then there
+  is nothing new to keep. Omitted from an
   earlier revision of this list entirely, which would have let a flagged
   operator post, withdraw or pay a fee through an unscreened path.
 - **PAUSE AND REENTRANCY GUARDS, on the inflow and fee selectors.** The
