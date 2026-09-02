@@ -697,8 +697,20 @@ ordinary implementation, and it belongs in slice 3.
   immediately to a payee already recorded in `sanctionsConfirmedFlagged` —
   turning the exhaustive migration into a **compliance bypass for exactly the
   wallets already confirmed**, and an irreversible one, since delivery is
-  terminal. The registry-aware helper is the one that consults the confirmed set
-  during an outage; the flag clears only on an authoritative clean read. Parking is what lets completion stay provable without either
+  terminal. ⚠️ **`mustFreezeParty` fails closed on a REVERTING oracle, not an UNSET one** —
+  it returns `false` immediately for `sanctionsOracle == address(0)` as "regime
+  disabled", without consulting `sanctionsConfirmedFlagged`
+  (`LibSanctionedLock.sol:329-335`). An earlier revision of this paragraph
+  claimed it covers the outage case generally; it covers only half of it, and the
+  unset case is the one where the scan would deliver and clear a confirmed
+  party's rebate **irreversibly**.
+
+  So the scan carries an explicit **precondition: a configured authoritative
+  oracle**. That is cheap here and nowhere else — the migration is a one-time
+  paused operation, so the operator can simply set the oracle first, whereas an
+  ordinary user path cannot demand it. With the oracle configured, the helper's
+  `Flagged` / `Clean` / `Unavailable` branches all behave as this paragraph
+  needs, and the flag clears only on an authoritative clean read. Parking is what lets completion stay provable without either
   paying a sanctioned party or abandoning their value — and the scan's completion
   proof is exactly why this cannot be left as an operational follow-up.
 
@@ -1045,7 +1057,14 @@ a credit the writer contract forbids:
 is credited only by an explicit `fundRewardPool(amount)`: an ADMIN-role call that
 moves `amount` VPFI **into the Diamond** and increments the counter in the same
 call, reverting unless the transfer delivers exactly `amount` (balance-delta
-checked, the same discipline as the intent hook). Nothing else credits it.
+checked, the same discipline as the intent hook).
+
+**The ONLY other credit is the era-terminal transfer above** — an earlier
+revision said "nothing else credits it", which rejects the terminal-surplus
+disposition the era mechanism requires and strands the remainder. Two writers,
+both provenance-bound, and no third. **The mirror's received-side writer table
+carries the same transfer**, for the same reason: it moves attribution rather
+than tokens, so a table listing only token-moving writers omits it silently.
 
 **`VPFI_INTERACTION_POOL_CAP` is explicitly NOT the ingress**, and this is the
 distinction the whole inversion turns on. The 69M cap is a **schedule** — an
@@ -1340,11 +1359,11 @@ delivery and nobody to report to.**
 | # | Site | Real question | Canonical | Mirror | **Detached** |
 | --- | --- | --- | --- | --- | --- |
 | 1 | `InteractionRewardsFacet.sweepForfeitedInteractionRewards:101` | which bound applies to the forfeit sweep | **delivered bound** (was `max`) | delivered bound | **the eligible ERA balance** (live headroom 0) |
-| 2 | `…:128` | does the sweep record a paid delta | **yes** (was "no") | yes | **yes** — the ledger must still see the outflow |
+| 2 | `…:128` | does the sweep record a paid delta | **yes** (was "no") | yes | **only the portion that FELL THROUGH to live funding** — an era-funded outflow debits its era balance and nothing else |
 | 3 | `RewardCommitmentFacet.isDayCommitmentReady:191` | is a day's commitment reportable | n/a | yes | **no** — nobody to report to |
 | 4 | `RewardCommitmentFacet._assertMirror:268` | AUTH: may this chain report | revert | allow | **revert** — fail closed |
 | 5 | `RewardHorizonSweepFacet.sweepExpiredInteractionRewards:162` | which bound applies to expiry | **delivered bound** (was `max`) | delivered bound | **the eligible ERA balance** (live headroom 0) |
-| 6 | `…:237` | paid-delta recording on expiry | **yes** (was "no") | yes | **yes** |
+| 6 | `…:237` | paid-delta recording on expiry | **yes** (was "no") | yes | **only the fell-through portion** — same rule as row 2 |
 | 7 | `RewardRemittanceFacet.sendRemitAck:1529` | AUTH: may this chain ack a remittance | revert | allow | **revert** — fail closed |
 | 8 | `RewardReporterFacet.setBaseChainId:1254` | is this a role transition needing residual retirement | n/a | yes | **yes — this is the site that CREATES and CLEARS Detached** |
 | 9 | `RewardReporterFacet._retireDeliveredResidualOnRoleChange:1286` | retire the delivered residual | n/a | on transition | **on ENTERING Detached, retire the counter AND relocate its backing; on LEAVING, start from zero** — see below |
@@ -1361,6 +1380,15 @@ are where treating it as "a mirror" enables mirror-only cross-chain operations
 on a chain with `baseChainId == 0`. Those are opposite errors from the same
 missing third state, which is why no single boolean value works and why this
 matrix — not the resolver — is the substance of closure 3.
+
+**An ERA-FUNDED outflow debits its era balance ONLY — it must not increment the
+live `paid` counter**, and rows 2 and 6 said it should. The consequence is a
+double charge against future funding: a transition from `received = 100,
+paid = 90` carries 10 into the era and sets live headroom to zero; sweeping that
+10 while also recording a live paid delta means the next 20-token delivery
+exposes only 10 of headroom, though the era funds — not the live ledger — paid
+the sweep. The claim chokepoint takes the same qualification: **charge live
+`paid` only with the portion that fell through to live funding.**
 
 **Rows 1, 5 and 13's `Detached` answers all carry the ERA BALANCE, and an
 earlier revision set them to a flat zero.** A retired-era obligation that
@@ -1484,7 +1512,14 @@ retired by accident:
   Diamond forever: stranded by the mechanism built to stop stranding.
 
   So the era needs a **provable all-obligations-terminal transition** — every
-  retired-era claim and sweep either settled or expired, read back — after which
+  retired-era claim and sweep **settled, or expired AND its absorption booked**,
+  read back. ⚠️ **Crossing the expiry horizon is NOT the terminal**, and an
+  earlier revision accepted it as one: the permissionless sweep may not have run
+  yet, so releasing the era balance then lets a live claim spend it, after which
+  the pending sweep either fails for want of era funding or consumes unrelated
+  live funding. It also contradicts this note's own rule that an expired
+  obligation stays live until its reward-specific absorption completes.
+  **Fully processed, with the absorption recorded — not merely due.** after which
   the unused remainder moves to **live headroom** (it is delivered reward funding,
   and the era that scoped it is finished) — **but NOT while the chain is
   `Detached`.** The matrix keeps a `Detached` live bound at zero, so crediting
@@ -1943,8 +1978,19 @@ One reconciliation entry, three effects, all or nothing:
    So the epoch carries a **bounded RECLASSIFICATION operation** — ADMIN-only,
    paused, packet-hash-bound, moving value between the fresh and recycled
    attributions of an already-classified packet without changing its total, and
-   itself replay-guarded. Without it the reconstruction is unfalsifiable and its
-   first error is permanent. (Deriving the caps from independently provable
+   itself replay-guarded — **and bounded by the still-UNSPENT source
+   attribution.** Moving attribution cannot move custody that has already left:
+   if a reconstructed 6-fresh/4-recycled packet has already paid all 6 fresh and
+   is then corrected to 4/6, crediting 2 to the recycle bucket claims backing
+   that is gone. Pausing the correction call does not help, since the epoch
+   deliberately allows claims to resume before it closes.
+
+   So the operation may reclassify at most what remains unspent on the source
+   side; beyond that it requires **replacement funding**, or another
+   custody-preserving recovery, rather than a bookkeeping move. Without the
+   reclassification at all the reconstruction is unfalsifiable and its first
+   error permanent — but an unbounded one converts a labelling error into a
+   solvency one. (Deriving the caps from independently provable
    source evidence would be better and is not available: that evidence is what
    the legacy wire does not carry, which is the root of this whole section.) —
    the CUMULATIVE total, not this submission alone. An earlier revision bounded
