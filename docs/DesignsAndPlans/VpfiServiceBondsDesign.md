@@ -2077,7 +2077,13 @@ balance converts to preserve its old-schedule EXECUTABLE ENTITLEMENT
 (scaled by the cost ratio, so 100 units at cost-10 become 10 units at
 cost-1 — the same 10 actions either way), or the affected bucket
 is invalidated and its credit forfeited, before the new cost prices
-anything. Minimum capacity alone survives a token
+anything. **The rescale branch exists only for DOWNWARD cost moves** —
+an upward move preserving entitlement needs a stored balance above the
+bucket ceiling (10 actions at cost-20 is 200 units in a 100-unit
+bucket), and either clamping (entitlement silently cut) or over-ceiling
+grandfathering (a burst above the limiter envelope) breaks something
+the ceiling exists for. **Upward-cost retunes take the invalidation
+branch**, and both directions are acceptance cases. Minimum capacity alone survives a token
 rotation that lands while the arming transaction is pending: with both assets
 approved, the selector pulls the REPLACEMENT token and charges the
 non-refundable fee against it, and identical raw amounts or capacity can
@@ -2528,7 +2534,12 @@ the two rules meet at a parked adjudication.
   gate does not list it, so a Terms update would freeze operator capital exactly
   as a pause would — with the note still promising the exit is open.
 
-  So `unbond` goes in `EXIT_WRITES` and on an exempt route, while `postBond`,
+  So **`withdrawCapacityDeposit`** — the ACTUAL selector; `unbond` is prose
+  shorthand existing in no ABI, and `tosWriteGate.ts` compares exact
+  function names, so the shorthand in this instruction would leave the
+  real exit blocked whenever Terms acceptance is stale — goes in
+  `EXIT_WRITES` and on an exempt route (with the focused gate test naming
+  it too), while `postCapacityDeposit`,
   any deposit-on-behalf or permit variant and (under C) the arming fee stay
   gated — the same inflow/exit split as the pause. The stale-Terms case needs
   its own test: it is a different mechanism from the pause and passes none of
