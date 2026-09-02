@@ -646,6 +646,22 @@ amount** — and the cursor's certification gate is the resulting EXECUTABLE
 balance (enumerated post-disposition liabilities ≤ dedicated backing plus the
 funded position), never the existence of the record.
 
+**And "dedicated backing" STARTS AT ZERO unless a provenance ledger proves
+it — labeling the ambient balance is not proving it.** An earlier revision
+left the initial dedicated amount undefined, and on a Diamond holding 100
+owed to payroll against 100 of enumerated user liabilities the gate then
+passes by calling the ambient 100 "dedicated" — the migration moves payroll
+custody into user vaults without ever entering the shortfall branch, which is
+the loss reassignment slice 0 exists to prevent. This document's whole thesis
+applies to its own remedy: the commingled balance is subtractively
+unattributable (ten owners, "NOT AN AUDIT"), so **preexisting backing counts
+only where an on-chain provenance trail proves the segregation** (a
+separately held position, a delta-checked funding event) — and everything
+else is UNBACKED until replacement funding lands in the tracked funded
+position or the owner records the shortfall disposition. Fund-forward is the
+rule here for the same reason it is the rule for `received`: what cannot be
+proven is not there.
+
 Solvency first, then movement — a migration must not be the mechanism that
 decides who eats a loss nobody has acknowledged. Four rounds of review found
 > requirements sitting in the prose while this list still said the superseded
@@ -1631,12 +1647,24 @@ retired by accident:
   **And "every packet finalized" must be ENUMERABLE, or the terminal cannot
   check it.** Classification state is keyed by packet hash, so without a
   registry the terminalizer inspects an unknowable subset. Each era therefore
-  maintains a **per-era OPEN-CLASSIFICATION COUNT** — incremented when a packet
-  attributed to the era is first classified, decremented when its
-  reclassification right is closed — and the terminal requires it at zero,
+  maintains a **per-era OPEN-CLASSIFICATION COUNT** — incremented when the
+  authenticated wire ingress LANDS the packet, decremented when its
+  classification AND reclassification rights are closed — and the terminal requires it at zero,
   exactly parallel to the liability counter (which covers claims and sweeps and
   says nothing about packets). Two counters, two obligation classes, one
   terminal condition.
+
+  **Increment at INGRESS, not at first classification — an earlier revision
+  counted the operator's act instead of the arrival.** Classification can lag
+  arbitrarily behind the wire: a packet landing in `uncounted` shortly before
+  its era retires had, under first-classification counting, a zero open
+  count — the era terminalizes and releases its balance, and the later
+  classification must then credit a finalized era or draw unrelated live
+  funding. Arrival is the authenticated, unfakeable event (the same
+  delta-checked ingress that wrote `uncounted`), so arrival is what opens the
+  obligation — and the backfill below therefore includes **already-arrived,
+  not-yet-classified packets**, which the first-classification rule would
+  have silently excluded from the initialization scan.
 
   **On an existing deployment BOTH counters start WRONG, and must be backfilled
   before any terminalization.** Every pre-upgrade `rewardEntries` row bypassed
@@ -1817,10 +1845,24 @@ revision unimplementable:
      - A generic pending-to-live drain (or repatriation) of a target-keyed
        remainder is a **deliberate operator disposition carrying a recorded
        acknowledgment**: obligations arriving for that target afterwards are
-       REFUSED pending fresh funding through the registered writers, never
-       silently paid from live headroom. Same family as slice 0's shortfall
-       disposition — the lane cannot prove closure, so choosing to stop
-       waiting is an owner decision with its consequence written down.
+       REFUSED, never silently paid from live headroom. Same family as slice
+       0's shortfall disposition — the lane cannot prove closure, so choosing
+       to stop waiting is an owner decision with its consequence written down.
+
+       **And the refusal has a defined EXIT, or it is a permanent failure
+       wearing an acknowledgment.** An earlier revision said "pending fresh
+       funding through the registered writers" — but the registered writers
+       feed LIVE headroom, which the same sentence forbids the refused
+       obligation from consuming: funding could arrive forever without the
+       refusal ever clearing, and an implementation would quietly fall back
+       to the live funding the rule prohibits. The clearing operation is
+       **target-bound replacement funding: a delta-checked token transfer
+       that atomically credits `transportEpoch(target)` and clears the
+       acknowledgment** — the epoch-scoped sibling of `fundRewardPool`,
+       feeding the transport epoch (whose consumption path is already
+       specified) rather than live headroom, so the writer contract is
+       untouched. The refused packet then re-executes and settles through
+       the normal `transportEpoch(target)`-first order.
 
      So the flow is `transportEpoch(target) → targeted obligations`, and any
      remainder `→ pending recovery position, keyed by target`, exiting only
@@ -1859,6 +1901,25 @@ revision unimplementable:
    test has been stated and then applied to an incomplete set, which is why the
    list names all three selectors explicitly rather than describing a class. This is symmetric with row 7's ack,
    which already refuses.
+
+   **THIRD correction to the same list: the REPATRIATION instruction
+   ingresses (kind-8/9) were still missing.** `RepatriationFacet.onlyMirror`
+   is not a role check — it is `!isCanonicalRewardChain`
+   (`RepatriationFacet.sol:400-402`), which a `Detached` chain passes — so a
+   delayed instruction packet mutates repatriation state on a chain with no
+   role, its later execution derives a destination from the now-zero
+   `baseChainId`, and a permanent promotion afterwards makes every
+   mirror-only execute / cancel-ack path unavailable while the old Base-side
+   authorization stays charged indefinitely. So: these ingresses (and the
+   execute/cancel exits) gate on the EXPLICIT role, refusing while
+   `Detached` exactly as the broadcasts do — and because instructions that
+   arrived BEFORE detachment can be pending across the transition, the role
+   change itself must **drain, tombstone, or quarantine the pending
+   repatriation set, which the instruction registry keeps enumerable** — the
+   lifecycle rule the broadcasts' parked lane already follows. Three times
+   the "what state can move" test found a survivor; the matrix row for
+   repatriation now cites this item rather than assuming token-lessness
+   means harmlessness.
 2. **Transport** — a reverted CCIP inbound is a failed message, **manually
    re-executable once the condition clears**. That is the property that makes
    refusal safe here and is why it is chosen over quarantine: the packet is not
@@ -2393,7 +2454,18 @@ netting stays assertion-free — `uncounted − reservedLive − returnedCumulat
 (each clamped to the overlap actually attributable to the envelope). Or carry
 the exclusions through classification — and the bootstrap classifies
 against that single recorded bound, under the same conservation and
-per-component rules, with the reclassification operation as the error path.
+per-component rules — with a **SNAPSHOT-KEYED aggregate reclassification as
+the error path, because the packet-keyed one cannot reach it**. The
+reclassification operation defined above binds to a packet hash, and this
+envelope exists precisely because the history has no usable packet
+identities — so an aggregate imported with a mistaken fresh/recycled split
+would otherwise be permanent, leaving false fresh headroom or an underfunded
+recycle bucket while the text promised an error path it could not execute.
+The bootstrap envelope carries its own identity (the snapshot id the
+high-water-mark proof already records), and the aggregate correction keys on
+it under the SAME rules as the packet operation: spent attribution first,
+replacement custody where the correction moves value, conservation against
+the recorded bound.
 Per-packet identity is required only where per-packet classification is
 attempted; for history, one provable envelope replaces many unprovable
 identities.
