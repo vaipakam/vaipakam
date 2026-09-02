@@ -1089,7 +1089,16 @@ moves `amount` VPFI **into the Diamond** and increments the counter in the same
 call, reverting unless the transfer delivers exactly `amount` (balance-delta
 checked, the same discipline as the intent hook).
 
-**The ONLY other credit is the era-terminal transfer above** — an earlier
+**The ONLY other credits are the era-terminal transfer above and its DELAYED
+form — the pending-to-live recovery credit.** A `Detached` terminalization
+debits the era into a pending recovery position and credits live `received`
+only once an active era exists; that later credit is a **third registered
+writer**, provenance-bound to the pending position it drains (it may credit
+exactly what that position holds, nothing else) and ordered strictly after the
+role transition that creates the active era. An earlier revision registered the
+atomic transfer, declared the writer set exhaustive, and left the delayed leg
+unregistered — following the contract stranded the pending funds, and following
+the branch introduced an unlisted writer. Three writers, each provenance-bound — an earlier
 revision said "nothing else credits it", which rejects the terminal-surplus
 disposition the era mechanism requires and strands the remainder. Two writers,
 both provenance-bound, and no third. **The mirror's received-side writer table
@@ -1555,6 +1564,16 @@ retired by accident:
   the moved balance rather than the live one. Finality-first is simpler and
   keeps the terminal proof self-contained.
 
+  **And "every packet finalized" must be ENUMERABLE, or the terminal cannot
+  check it.** Classification state is keyed by packet hash, so without a
+  registry the terminalizer inspects an unknowable subset. Each era therefore
+  maintains a **per-era OPEN-CLASSIFICATION COUNT** — incremented when a packet
+  attributed to the era is first classified, decremented when its
+  reclassification right is closed — and the terminal requires it at zero,
+  exactly parallel to the liability counter (which covers claims and sweeps and
+  says nothing about packets). Two counters, two obligation classes, one
+  terminal condition.
+
   ⚠️ **"Read back" is not an executable condition at scale.** `rewardEntries` is
   append-only and unbounded, so a single terminalization call that walks the era
   eventually exceeds the block gas limit — **permanently stranding the surplus**
@@ -1665,12 +1684,18 @@ revision unimplementable:
 
    - **d2 and V3 lanes:** drain first (their reservations are observable), or
      quarantine keyed to the retired era.
-   - **Legacy lane:** **quarantine keyed to the retired era is the ONLY sound
-     option**, and it is retained for permanent transitions specifically —
-     released through the era's own reconciliation, which also gives the source
-     side its terminal. If a deployment refuses to carry that quarantine, the
-     honest alternative is to **disallow the permanent transition while the
-     unverifiable legacy lane exists**, not to promote and strand.
+   - **Legacy lane:** quarantine — but **into the separately backed,
+     NON-FINALIZED transport epoch, not into the retired era's own ledger.** An
+     earlier revision keyed the quarantine to the retired era, which collides
+     with that era's terminal: the legacy lane never provably drains, so the era
+     would either stay non-terminal forever (its surplus stranded) or release
+     early and have a late packet create an unfunded liability in a finalized
+     era. The transport epoch has no terminal and needs none — it is backed
+     packet-by-packet by what each late arrival delivers, terminalization does
+     not depend on it, and its reconciliation is the standing legacy epoch that
+     already never closes. If a deployment refuses to carry it, the honest
+     alternative remains **disallowing the permanent transition while the
+     unverifiable lane exists** — never promote-and-strand.
 
    Refusal with retry is for conditions that end.
 1. **Receive while `Detached`** — `onRewardBudgetReceived`,
@@ -1732,9 +1757,15 @@ revision unimplementable:
    reverse — the property that makes rows 8–10 sound rather than merely
    convenient.
 
-Quarantine is rejected: it needs a parallel state, an unwind path, and a decision
-about what happens to a quarantined packet whose sender has since been
-reconfigured. Refusal has none of those because it never accepts anything.
+Quarantine is rejected **for TEMPORARY detachment** — there, refusal costs
+nothing because the condition ends and the transport retries. **For a PERMANENT
+role change the precedence above governs instead**: the condition never ends, so
+refusal strands, and the legacy lane's quarantine into the non-finalized
+transport epoch is mandatory. An earlier revision of this conclusion rejected
+quarantine without the qualifier, contradicting the permanent-transition rules
+and instructing exactly the promote-and-strand they forbid. The cost argument
+stands where it applies: for a lane that will retry on its own, a parallel
+state with an unwind path buys nothing.
 
 This subsection exists because the matrix looked exhaustive and was not. Any
 future addition to it should start from "what state can move", not "who reads the
@@ -2201,7 +2232,16 @@ inventory the bootstrap must classify.
 
 So the pre-upgrade inventory is handled as **one bounded aggregate, not as
 per-packet entries**: its total is the `uncounted` balance at the upgrade block
-— an on-chain figure the operator does not assert — and the bootstrap classifies
+**NET of every on-chain restricted position that overlaps it** — an on-chain
+figure the operator does not assert. The netting is load-bearing:
+`_quarantineCompensation` increments both `strandedRecoveryReserved` and
+`rewardBudgetFreshUncounted` for the same tokens, and the demotion branch does
+the same for its counted portion — so the raw aggregate includes
+recovery-reserved custody, and classifying it into live `received` or
+`recycleBucket` would let claims spend tokens that must stay available for
+recovery. Subtract each overlapping subledger at the snapshot (they are
+on-chain counters, so the netting is as assertion-free as the envelope), or
+carry the exclusions through classification — and the bootstrap classifies
 against that single recorded bound, under the same conservation and
 per-component rules, with the reclassification operation as the error path.
 Per-packet identity is required only where per-packet classification is
