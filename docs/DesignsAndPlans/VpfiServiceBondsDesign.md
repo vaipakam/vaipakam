@@ -638,7 +638,9 @@ decodes is the same gap one step later.
   "every offence is debited in the same call that records it", which explains
   v1's shape by attributing a debiting mechanism to it; same-call debiting
   belongs to a future predicate-enabled tier. The delay, and the privilege
-  revocation and `unlockAt` snapshot that make it sound, arrive with **the first
+  revocation and retune-pinned claim-time horizon rule that make it sound
+  (`unlockAt` being only the non-authoritative cache — see the schema),
+  arrive with **the first
   predicate whose proof can land after the action** — whichever that turns out to
   be. Not with the liveness tier specifically: equivocation is now the only
   viable candidate, so binding the machinery to a tier that may never ship would
@@ -1100,8 +1102,14 @@ remaining amount as it allocates** — a debt is counted once across the
 tranches it reaches, never clamped independently in each (a 10-unit debt
 reaching two 100-unit tranches withholds 10, not 20, and not 0 in
 whichever tranche a different implementation chose to skip). A debt's
-COLLECTIBLE amount is what that walk can actually place — `min(nominal,
-live reachable backing)` — and **every base that nets liabilities nets
+COLLECTIBLE amount is what that walk can actually place — **against a
+SHARED per-tranche residual that the walk itself decrements**, so each
+unit of backing is allocated to at most ONE debt: two debts reaching the
+same 10 surviving units collect 10 between them in recording order, never
+10 each (`min(nominal, live reachable backing)` evaluated independently
+per debt double-counts exactly there — the read withholds 20 of backing
+that holds 10, and the phantom half discounts later offences). And
+**every base that nets liabilities nets
 the COLLECTIBLE figure, not the nominal**: the synchronous offence base
 included, which otherwise lets a mostly-extinguished old debt (25
 recorded, 1 still reachable after delayed proofs consumed its tranche)
@@ -2050,8 +2058,10 @@ all**. Two candidates, neither yet specified:
   what anyone knew, which is what makes it the strongest candidate.
 
 Until one is written down, **there is no route to deterrence under any fork**,
-and the unbond delay, revocation rule and `unlockAt` snapshot from revs 2–3 are
-machinery waiting on a predicate rather than a tier waiting on a schedule.
+and the unbond delay, the revocation rule and the retune-pinned claim-time
+horizon rule from revs 2–3 (with `unlockAt` as its non-authoritative cache)
+are machinery waiting on a predicate rather than a tier waiting on a
+schedule.
 
 **NOT for the owner, deliberately — deferred to implementation:**
 
