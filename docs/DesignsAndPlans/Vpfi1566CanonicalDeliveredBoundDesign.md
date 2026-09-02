@@ -632,6 +632,20 @@ So before the cursor may certify anything: reconcile the enumerated liabilities
 against **dedicated backing**, and where they exceed it, require **replacement
 funding or an explicit, recorded shortfall disposition** (who bears the
 historical loss is an owner decision, not a side effect of iteration order).
+
+**And the disposition CHANGES THE LEDGERS the migration reads — a record of
+who bears the loss is not backing.** An earlier revision stopped at
+"recorded", and slices 1–2 would then still transfer each row's FULL recorded
+amount: the scan reverts partway or draws the acknowledged loss from ambient
+custody anyway, which is the exact outcome slice 0 exists to prevent, now with
+a signature on it. So the disposition is executable or it is not a
+disposition: **replacement funding lands as tokens in a separately tracked
+funded position the migration debits**, or **the affected entitlements are
+written down / reassigned so each row migrates at its post-disposition
+amount** — and the cursor's certification gate is the resulting EXECUTABLE
+balance (enumerated post-disposition liabilities ≤ dedicated backing plus the
+funded position), never the existence of the record.
+
 Solvency first, then movement — a migration must not be the mechanism that
 decides who eats a loss nobody has acknowledged. Four rounds of review found
 > requirements sitting in the prose while this list still said the superseded
@@ -1784,9 +1798,34 @@ revision unimplementable:
        drain of the position) is the right severity for money whose obligations
        may not be finished.
 
+     **And the remainder stays KEYED BY TARGET inside the pending position —
+     the move must not launder away the association the first reason above
+     depends on.** An earlier revision routed the remainder to the pending
+     position as one undifferentiated balance, which quietly re-created the
+     stranding one paragraph up: the debit order reads
+     `transportEpoch(target) → eraBalance → liveHeadroom`, so once the
+     target-scoped epoch is zeroed, a late kind-2 broadcast's obligations can
+     no longer reach the very money retained FOR them — they block despite
+     their backing being held, or fall through to unrelated live funding. So:
+
+     - The pending entry records `(target, amount)`. A late obligation for a
+       target first **restores that target's pending remainder into
+       `transportEpoch(target)`** — a bounded reversal of the move, debiting
+       the pending entry by at most what it holds; not a fourth live-headroom
+       writer, because it feeds the transport epoch, whose consumption path is
+       already specified — and then settles through the normal order.
+     - A generic pending-to-live drain (or repatriation) of a target-keyed
+       remainder is a **deliberate operator disposition carrying a recorded
+       acknowledgment**: obligations arriving for that target afterwards are
+       REFUSED pending fresh funding through the registered writers, never
+       silently paid from live headroom. Same family as slice 0's shortfall
+       disposition — the lane cannot prove closure, so choosing to stop
+       waiting is an owner decision with its consequence written down.
+
      So the flow is `transportEpoch(target) → targeted obligations`, and any
-     remainder `→ pending recovery position`, exiting only through the
-     registered pending-to-live writer or repatriation. If a deployment refuses to carry it, the honest
+     remainder `→ pending recovery position, keyed by target`, exiting only
+     through the target-bound restore above, the registered pending-to-live
+     writer, or repatriation. If a deployment refuses to carry it, the honest
      alternative remains **disallowing the permanent transition while the
      unverifiable lane exists** — never promote-and-strand.
 
