@@ -1374,10 +1374,26 @@ consumers who consult it and no one else — `withdrawSalary` spends the
 shared balance without ever reading it, so the arming gate passes and the
 intent collateral is consumed anyway. The gate therefore requires one of:
 the old-custody COUNT at zero (torn down), the commits' custody MOVED
-into the protected contract under an INTENT attribution row (slice 3's
-teardown then debits that row), or the global outbound-reserve primitive
-covering the excluded amount. An exclusion no outflow path enforces is a
-label.
+into the protected contract under an INTENT attribution row, or the
+global outbound-reserve primitive covering the excluded amount. An
+exclusion no outflow path enforces is a label.
+
+**And the INTENT-row move must carry the FILL path with it, or it breaks
+the very order it protects.** The old order names the Diamond as maker
+and its parameters are hashed — moving the collateral to the holder while
+changing only teardown leaves the LOP fill reverting for missing tokens,
+or consuming unrelated same-token Diamond custody, and a later holder
+debit delivers nothing to the taker. The move is valid because the
+orders already route through the Diamond's own `preInteraction`
+(extension bytes pin it, `SwapToRepayIntentFacet.sol:113`), and the
+HANDLER behind that pinned target is Diamond-upgradable: for a commit
+flagged holder-custodied, the upgraded handler **pulls the row's custody
+from the holder into the Diamond just-in-time for the fill**
+(delta-checked, debiting the INTENT row in the same act), so the hashed
+order is untouched and the tokens are where the LOP transfer expects
+them. Where a commit's order does NOT route through the handler, this
+alternative is unavailable — cancel-and-recreate or count-zero are the
+remaining options.
 
 **(a2) Every fresh OUTFLOW takes its TOKENS from the holder, not only its
 accounting from the ledger.** Charging `received − paid` while the tokens
@@ -2136,7 +2152,20 @@ revision unimplementable:
        downstream chokepoint (delivery, sweep, absorption accounting) sees
        only ITS residual component: the transport-paid share reaches no
        delivered-ledger or bucket check, because the aggregate it drew
-       from was never published into either ledger. **And transport coverage allocates PER MATCHING DAY before anything
+       from was never published into either ledger. **A transport-funded ABSORPTION recycles in place — there is no
+       claimant to transfer to, so "reaches no bucket operation" would
+       DROP the tokens.** An expiry or forfeiture funded by a matching
+       batch keeps its tokens in protected custody; excluding the
+       transport-paid share from absorption accounting debits the batch
+       while crediting nothing, leaving the tokens attributed nowhere and
+       `recycleBucket` undercounted. So: a claim's transport-funded share
+       transfers OUT to its claimant, but an absorption's performs an
+       **in-holder transport→recycled attribution transfer** — the
+       batch's balance decrements, the recycled row increments, the
+       commitment releases — the absorption analogue of the
+       fresh→recycled rule.
+
+       **And transport coverage allocates PER MATCHING DAY before anything
        else, because batch membership is a per-day filter.** A claim
        spanning days A and B cannot apply a batch listing only B to A's
        need: coverage is computed day by day — the batches listing THAT
@@ -2888,10 +2917,18 @@ totals and token amounts (the legacy wire has no `remitId`,
 ALIASES them — colliding `oldWireAmount`, classification totals and
 transport-batch balances, stranding the second delivery or breaking
 per-packet conservation. The ingress therefore takes uniqueness from the
-layer that already has it: **the CCIP message id, which `_ccipReceive`
-receives and the messenger threads through to the handler** — the stamp
-is `keccak(sourceChainId, messageId)`, unique per delivery and unfakeable
-by payload construction. A transport without a message id falls back to a
+layer that already has it: **the CCIP message id — which requires an
+explicit PORT change, stated here so nobody discovers it at
+implementation time**. `_ccipReceive` has `message.messageId`, but the
+provider-agnostic port (`ICrossChainMessenger.onCrossChainMessage`)
+forwards only source chain, sender, payload and tokens, and today the id
+is merely emitted after the handler returns — the handler cannot read
+it. The port therefore gains a `transportMessageId` parameter (adapter
+and every recipient upgraded together — one interface version, five
+receivers, all in this repo), zero for a transport that has none, in
+which case the ingress falls back to the monotonic per-source counter.
+The stamp is `keccak(sourceChainId, messageId)`, unique per delivery and
+unfakeable by payload construction. A transport without a message id falls back to a
 **monotonic per-source counter allocated inside the authenticated
 ingress** — never a hash of contents two honest packets can share.
 
