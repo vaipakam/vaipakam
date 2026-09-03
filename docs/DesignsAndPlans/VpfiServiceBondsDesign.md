@@ -923,9 +923,16 @@ decodes is the same gap one step later.
    predicate at all (§2), so **v1 ships no slash of any kind** — the ratified
    scope stands, and what it scopes turned out to be empty. The dispatcher
    reference here describes machinery for a predicate-enabled tier, not v1.
-2. **Unbond delay: RATIFIED — v1 has NONE.** Rev 4 removed it rather than
-   sizing it, because v1 has no evidence arriving after an operator stops
-   acting; the reasoning is below. Immediate withdrawal and the
+2. **Unbond delay: DESIGN CONCLUSION — v1 has NONE. Not yet
+   owner-ratified**: the recorded ratification covered the legal shape
+   and the objective-lies scope, while the owner-facing material of that
+   round still described the 7/3–30-day delay as the live proposal — so
+   shipping immediate withdrawal on this line alone would ship a
+   reversal no owner decision approved. The conclusion rides with the
+   A/C fork ask (ratifying either fork ratifies the no-delay shape it
+   is built on, and an owner who wants a delay says so there). Rev 4
+   removed the delay rather than sizing it, because v1 has no evidence
+   arriving after an operator stops acting; the reasoning is below. Immediate withdrawal and the
    clamp-on-decrease were decided together and are both invariants, not
    recommendations — **with one qualification the mechanism requires**: a
    capacity or curve retune either settles elapsed credit under the old capacity
@@ -3090,8 +3097,16 @@ the two rules meet at a parked adjudication.
   `sanctionsConfirmedFlagged` (`LibVaipakam.sol:10051`), so a payer
   already confirmed through another path could wait out an outage and
   have a non-refundable fee moved into recycling against freeze-not-
-  seize. Previously confirmed payers are rejected during an outage;
-  fail-open remains only for addresses never confirmed flagged — **and BOTH non-trivial branches write**: a first authoritative
+  seize. Previously confirmed payers are rejected during an outage — **and
+  since the fail-closed rule was widened to the WHOLE bond mutation
+  surface, "never confirmed" no longer buys fail-open here either:
+  `Unavailable` defers posting, raising, arming, and withdrawal for
+  EVERY party** (the marker can be erased by a reverting caller, so a
+  branch keyed on its absence is the smart-account retry escape — flag
+  → refuse → outer revert → outage → "never confirmed" → fee into
+  recycling). The committed-marker machinery below remains as
+  honest-path bookkeeping and indexer visibility, not as the safety
+  boundary — **and BOTH non-trivial branches write**: a first authoritative
   `Flagged` read on the arming path persists the confirmed marker in a
   COMMITTED, value-unmoving transition (the call returns refused, the
   observation stays — a plain revert rolls the marker back, and the
