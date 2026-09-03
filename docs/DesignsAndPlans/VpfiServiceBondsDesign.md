@@ -2288,9 +2288,14 @@ untouched. The settle-or-invalidate decision applies here identically — **and
 "settle" means the STORED balance is RESCALED, not merely checkpointed**:
 settling elapsed accrual under the old schedule still leaves 100 stored
 units that the new cost immediately reads as 100 actions. The stored
-balance converts to preserve its old-schedule EXECUTABLE ENTITLEMENT
-(scaled by the cost ratio, so 100 units at cost-10 become 10 units at
-cost-1 — the same 10 actions either way), or the affected bucket
+balance converts to preserve its old-schedule EXECUTABLE ENTITLEMENT —
+**computed from the count of COMPLETE old-schedule actions, never a
+scaled quantity with implementation-chosen rounding**:
+`entitlement = floor(oldBalance / oldCost)`, new balance
+`entitlement × newCost` (100 units at cost-10 → 10 actions → 10 units
+at cost-1, the same 10 actions either way; and 9 units at cost-10 →
+ZERO actions → zero at any new cost, where ceiling-scaling `9×6/10` to
+6 would grant an action the old schedule never held), or the affected bucket
 is invalidated and its credit forfeited, before the new cost prices
 anything. **The rescale branch exists only for DOWNWARD cost moves** —
 an upward move preserving entitlement needs a stored balance above the
