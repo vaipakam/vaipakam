@@ -1517,8 +1517,13 @@ included, which otherwise lets a mostly-extinguished old debt (25
 recorded, 1 still reachable after delayed proofs consumed its tranche)
 discount new offences against a fresh 100-unit deposit it cannot touch.
 The per-tranche figures are then summed — and any
-touch that would expose invalidation-released backing settles the
-liabilities reaching it FIRST. The per-tranche scoping is not detail: a
+touch that would expose invalidation-released backing **RETAINS the
+liabilities reaching it and releases the NET** — retained, not
+settled-first: settlement is fallible and retryable, and a broken
+recycle or old-token path must hold only the encumbered 10 of a
+100-unit release, never the clean 90 (retain-and-release-net, applied
+to invalidation-triggered releases exactly as to sanctions-parked
+ones). The per-tranche scoping is not detail: a
 partition-WIDE subtraction would withhold a post-offence deposit for a
 debt that cannot reach it — 10 owed against fully-reserved tranche A must
 not freeze 10 of later tranche B while A's reservation sits valid or
