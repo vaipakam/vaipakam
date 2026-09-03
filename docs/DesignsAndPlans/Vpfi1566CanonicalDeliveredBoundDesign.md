@@ -2217,7 +2217,16 @@ revision unimplementable:
      obligation draining a shared batch transport-first leaves the late
      day unfunded though other sources covered the early one. So an
      arrived obligation draws such a batch only for what its OTHER
-     eligible sources cannot cover; the batch's remainder stays for the
+     eligible sources cannot cover — **and this necessity constraint is
+     part of ON-CHAIN ASSIGNMENT VALIDITY, not a default a preparer can
+     override**: a plan drawing from an unarrived-day batch while
+     era/live, bucket, or fully-arrived-batch funding could cover the
+     same need is INVALID (the check reads balances the chain already
+     holds), because such an allocation is invisible to the contested
+     machinery and would settle immediately over the late day's only
+     backing. The transport-first rule is qualified the same way — it
+     never applies to a batch with unarrived listed days. The batch's
+     remainder stays for the
      unarrived days until they arrive, terminal, or are dispositioned —
      and a late day still short then follows the late-obligation
      machinery as before.
@@ -2265,15 +2274,19 @@ revision unimplementable:
      cannot settle irreversibly before it can be outdone**: a staged
      draw from a batch listed by a known UNMET obligation's day waits
      out a short challenge window before final settlement, during which
-     a superseding plan displaces it by **covering at least the
-     incumbent's obligations while drawing NO MORE from every contested
-     batch, with at least one strict improvement — more coverage, or
-     strictly less contested-batch usage** ("strictly more coverage"
-     alone fails under block limits: a valid plan already covering the
-     maximum processable count but choosing shared batches poorly could
-     never be outdone by the same-count plan that swaps X→A for Y→A and
-     leaves X for B; the per-batch usage comparison is O(plan size) to
-     verify and captures exactly that swap). Uncontested allocations
+     a superseding plan displaces it by **covering STRICTLY MORE of the
+     known set — with plans PAGINATED so block limits cannot cap
+     coverage**: a plan is a committed root over assignment pages,
+     verified and staged page by page, so its coverage is unbounded by
+     any single block and "covers strictly more" is always expressible.
+     (Two earlier displacement rules each failed: raw strictly-more
+     collapsed when one block bounded a plan's size, and the per-batch
+     dominance test that replaced it rejected genuine improvements —
+     `X={A,B}, Y={A,C}, Z={B}` with incumbent `Y→A`: the superior
+     `X→A, Y→C, Z→B` INCREASES contested-X usage and fails dominance
+     while making every known obligation feasible. Pagination dissolves
+     the block-limit premise, so coverage comparison — which that
+     superior plan wins 3 to 1 — is again the whole test.) Uncontested allocations
      settle immediately —
      "outdone later" is no remedy once X is spent on A and B's only
      source is gone. Permissionless improvement, on-chain
@@ -2691,6 +2704,21 @@ revision unimplementable:
    canonical report surface. Everything else still reverts
    `BroadcastOnCanonical`.
 
+   **UNSENT day outputs join the transition drain — reports, commitment
+   reports, and compensation quotes accumulate locally and are routed by
+   the CURRENT binding when finally sent.** `closeDay` reads the current
+   `baseChainId` at call time and `sendCommitmentReport` validates only
+   the current role before dispatching to the current messenger — so
+   after A → Detached → B, a keeper submitting an old A-era day report
+   sends it to B, authenticated as the currently configured mirror,
+   corrupting B's denominators or funding A's obligations from B's
+   accounting. The ceremony therefore **drains or tombstones every
+   locally accumulated unsent output before rebinding** (sent while the
+   old binding stands, or dispositioned), and the send paths gain the
+   intended-era check on the OUTBOUND side: an output whose originating
+   era is not the current binding's era is refused, exactly as inbound
+   packets already are.
+
    **The BUYBACK lane joins the same transition gate.** The
    "what state can move" audit repeatedly found survivors by asking the
    question of an incomplete surface, and the buyback custody is
@@ -2718,7 +2746,16 @@ revision unimplementable:
    recovered rather than stranded behind the new role guard. An
    uncommitted drain over a non-enumerable mapping is a completion
    claim nothing can check — the omitted balance strands the moment
-   the role guard lands. **And the census is STABLE or it is not a
+   the role guard lands. **And a buyback ENTRY is reconciled before it is moved — the mapping
+   is accounting over the historically shared balance, not proven
+   custody**: a 100-token entry can be underbacked while 100 tokens
+   owed to payroll remain, and either the drain or the straggler
+   transfer would then move that other owner's tokens into recovery
+   custody — the historical loss silently reassigned, slice 0's failure
+   through the buyback door. Every entry passes the
+   provenance/replacement/write-down reconciliation before drain,
+   quarantine, or re-attribution, exactly as the other historical
+   shared-balance liabilities do. **And the census is STABLE or it is not a
    census**: `creditBuybackBudget` stays callable while the promotion
    setters run, so token T can read zero at the check and be credited
    before the role flip — inside the committed set, outside the
@@ -2875,7 +2912,11 @@ revision unimplementable:
    draw stays charged forever, the disposition unreachable. The
    promotion ceremony therefore also installs a **kind-8/9 sibling of
    the legacy-quarantine route** — able to do exactly TWO
-   things — persist the triple key and set it `TOMBSTONED` —
+   things — persist the triple key and set it `TOMBSTONED` — **open to
+   any TRANSPORT-AUTHENTIC packet (application elsewhere stays
+   certified-lane-only; an earlier phrasing restricted this route to
+   certified lanes, which rejects exactly the out-of-universe straggler
+   whose charged-side release depends on reaching it)** —
    **IDEMPOTENT over terminals: a key already `EXECUTED` or already
    `TOMBSTONED` is a NO-OP, exactly as the live state machine treats it
    (`RepatriationFacet.sol:748-750`)** — a duplicate delivery of an
@@ -3377,8 +3418,12 @@ One reconciliation entry, three effects, all or nothing:
    The rule: it adjusts `received`, `paid` **and** the recycled-consumed
    attribution **atomically and consistently**, so the post-correction ledger is
    exactly what it would have been had the packet been classified correctly at
-   ingress — with the replacement funding covering the custody that has already
-   left. Anything less relabels history without reconciling it.
+   ingress — with replacement funding covering only a spent debit that **no
+   authenticated destination ledger inherits** (the worked 6/4→4/6 case
+   inherits its two-unit debit into recycled-consumed with `paid`
+   reducing alongside — custody conserved, no capital required; an
+   unconditional replacement demand here blocked that valid correction).
+   Anything less relabels history without reconciling it.
 
    **"Replacement funding" means an atomic custody transfer, and saying the
    words is not enough.** Without naming an ingress an implementation can treat
