@@ -440,7 +440,8 @@ it requires nothing of the operator.
 
 ```
 ServiceCapacityDeposit { operator; role; token; rotationEpoch; amount;
-                         state; unlockAt; parkedRequest; eligibleAmount; }
+                         state; unlockAt; pendingAmount; parkedRequest;
+                         eligibleAmount; }
 // `rotationEpoch`: the monotonic rotation epoch this partition belongs to —
 // the KEY, with `token` the attribute (A -> B -> A creates two distinct
 // epochs for one address; a schema without this field lets retired
@@ -2510,7 +2511,9 @@ fill with a fourth attempt — it is what the evidence says, and the owner shoul
 choose between two coherent shapes rather than have me keep trying:
 
 **(A) Ship v1 WITHOUT slashing.** Bonds buy capacity continuously, are
-refundable at will, and nothing is confiscated — an operational CAPACITY
+refundable (on the timing the separately selected unbond option sets —
+immediate under (i), delay-bounded under (ii); the fork does NOT decide
+withdrawal policy), and nothing is confiscated — an operational CAPACITY
 deposit, named as such. `ServiceBondSlash` stays reserved and unused.
 
 *Two costs, both of which review surfaced and neither of which an earlier

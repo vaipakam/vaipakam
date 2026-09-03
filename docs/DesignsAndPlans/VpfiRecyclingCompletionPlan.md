@@ -1151,7 +1151,8 @@ ratified no-yield refundable-deposit shape, per the design's owner
 decisions — superseding this plan's earlier "NOT discharged" note):
 the enum slot stays reserved with no call site because no confiscation
 predicate EXISTS, not because legal review is pending; what remains
-open on #1219 is the A/C owner fork (and C's fee parameters). **And if
+open on #1219 is the four-decision owner gate — the A/C fork, the
+capacity terms, the unbond option, and under C the fee parameters. **And if
 a predicate is ever ratified, EVERY slash settles through the design's
 epoch-aware per-token/escrow settlement path — uniformly; the live
 single-token `credit(ServiceBondSlash, …)` API never carries a slash**
