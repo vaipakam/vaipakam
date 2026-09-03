@@ -1266,7 +1266,10 @@ durable rather than a snapshot of one moment.
   as a gate**: either the count reaches zero (through fills, cancellations, or
   an operator-driven cancel-and-recreate sweep of abandoned orders), or the
   residual commits' custody is MOVED into the protected contract's INTENT
-  attribution row, or the global outbound-reserve primitive covers them.
+  attribution row (the third option once listed here — the "global
+  outbound-reserve primitive" — is WITHDRAWN as undefined, per the gate
+  rule below: no invariant, no debit sites, no terminal; a gate option
+  that exists only in its own sentence arms over drainable collateral).
   (An earlier revision offered "folded into the delivered bound's
   accounting as a recorded, decrementing exclusion" here — retired by the
   rule below: the exclusion is consulted only by reward consumers, so
@@ -3662,9 +3665,15 @@ own disposition rules — a correction is not a back door out of the
 restitution position.
 
 **A fresh classification MOVES ITS TOKENS, not just its numbers —
-in-holder, per the ingress rule above; for pre-holder arrivals the
-relocation is from the shared balance and inherits slice 0's
-provenance bar. And a batch with OUTSTANDING listed obligations is not
+in-holder, per the ingress rule above. The Diamond-to-holder relocation
+exists ONLY for HISTORICAL pre-holder inventory** (and inherits slice
+0's provenance bar there): every post-upgrade untyped arrival is
+ingress-protected into the `UNCLASSIFIED` attribution the moment it
+lands, so a classification-time relocation for such a packet would mean
+it had sat payroll-exposed in the shared balance for the whole
+indefinitely-open legacy epoch — and a late relocation over a spent
+packet seizes another owner's VPFI, per the ingress rule's own
+delta-check argument. And a batch with OUTSTANDING listed obligations is not
 classifiable at all**: classification converts batch-scoped backing
 into era-wide or global credit, so classifying a live batch lets an
 unrelated claim spend what the packet was delivered FOR — day A's sole
@@ -3792,7 +3801,11 @@ packet's custody and publishes backing for tokens already paid out
 (classify first and the batch balance is the stale one, symmetrically).
 Every transport draw therefore increments the packet's
 `transportConsumed` and reduces its classifiable remainder in the same
-act; every classification reduces the batch's drawable balance likewise;
+act; every classification — which the parked-remainder rule makes possible
+only AFTER parking — **debits the batch-keyed pending
+`(batchId, dayIds, amount)` entry, not the transport balance the
+parking already zeroed** (a drawable-balance debit at that point
+reverts or double-debits value already moved);
 and the three counters share one wire-bounded budget a packet can never
 exceed from either direction.
 
