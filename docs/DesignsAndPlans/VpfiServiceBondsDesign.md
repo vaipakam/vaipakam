@@ -454,8 +454,13 @@ OffenceRecorded(operator, role, kind, refId)   // role, not just operator
 // scalar decremented only by lazy cleanup keeps refusing new admissions
 // after an invalidation that promised immediate capacity restoration,
 // and cleanup may never run. And the PHYSICAL set is bounded too, not
-// just the effective count: records live in PER-EPOCH sub-lists and
-// invalidation unlinks the epoch's list from the claim-time iterable in
+// just the effective count: records live in PER-EPOCH sub-lists GROUPED
+// BY CODE GENERATION — a generation invalidation unlinks the whole
+// generation group in ONE write (per-epoch unlinking cannot remove
+// arbitrarily many epochs' lists inside an O(1) generation kill, and
+// create/fill/invalidate cycles across generations would grow the
+// physical iterable unboundedly), with retained invalidated generations
+// hard-bounded — and epoch invalidation unlinks the epoch's list in
 // O(1) — filtering invalidated records at read time while they stay in
 // one flat list lets fill-to-cap/invalidate cycles grow the traversal
 // without bound, and the claim-time maximum walks it back over the gas
@@ -619,7 +624,11 @@ but a global configuration act has no truthful operator, role, delta,
 post-balance or withdrawal state to carry, so the blanket rule either forces
 fabricated values or makes the discovery event nonconforming. Their schema
 is configuration-shaped: the **config/predicate epoch id, the verifier
-identity, the predicate, the parameter/cost-schedule hash, and the block** —
+identity, ITS CODE GENERATION (or pinned code hash — without it a
+consumer cannot separate a repaired generation's epochs from a
+compromised one's at the same verifier address, and the
+generation-invalidation event's derive-the-epoch-set promise fails),
+the predicate, the parameter/cost-schedule hash, and the block** —
 everything a consumer needs to bind epochs to verifiers (and later to read
 a verifier-keyed quarantine as covering them), nothing invented.
 
@@ -669,8 +678,17 @@ decodes is the same gap one step later.
   non-reverting outer dispatcher: on a precondition lie (e.g. a submission whose
   own arguments or effects contradict a precondition it asserted — NOT a
   stale-listing fill, which left v1's predicates; see below), the call
-  **succeeds as a no-op**, records `OffenceRecorded(operator, role, kind,
-  refId)`, and debits that `(role, address)` bond IMMEDIATELY — the threshold
+  **succeeds as a no-op that RETURNS AN EXPLICIT REFUSAL STATUS** — a bare
+  no-op is indistinguishable from successful origination to a routed caller:
+  `BackstopVaultImplementation.executeFill` and
+  `AggregatorAdapterImplementation.matchIntent` consume the returned loan id,
+  and `BackstopFacet` emits `BackstopFilled` after any successful return, so a
+  default or stale value would be reported and processed as a real loan. Every
+  direct and routed caller must branch on the status, exactly as the document
+  already requires for other committed refusals — records
+  `OffenceRecorded(operator, role, kind, refId)`, and COMMITS the liability
+  against that `(role, address)` bond (settlement is separately retryable per
+  durable adjudication, not a same-call debit) — the threshold
   is one (see the decisions below). The counter is keyed by role too, and
   survives only as a lifetime tally for observability; nothing reads it to
   decide a slash. An earlier revision of this bullet described a
@@ -1562,12 +1580,23 @@ every liability creation, collection, and extinguishment **AND at every
 BACKING mutation that touches reached tranches** (a delayed-proof debit
 or tranche exhaustion lowers what old debts can collect, and a cache
 blind to it discounts later offence bases with debt that cannot collect
-from the new, unreachable deposits): the cache is an O(1)-maintained
-UPPER bound — `min(nominal outstanding, reachable-backing heuristic)`,
-the heuristic decremented by every debit to reached tranches — floored
-to the exact figure by each cursor-driven collection pass, with the
-error direction protocol-favorable (an understated collectible enlarges
-the next offence's net base). Never by
+from the new, unreachable deposits): the cache is PARTITIONED BY INVALIDATION DOMAIN (per verifier
+epoch/generation, filtered at read time — a single aggregate cannot be
+updated for arbitrarily many operators inside an O(1) invalidation, and
+an unfiltered read would keep subtracting extinguished debts) and
+serves TWO conservative reads, each safe in its own direction:
+**capacity and admission reads use the O(1) collectible UPPER bound**
+(`min(nominal outstanding, reachable-backing heuristic)`, the heuristic
+decremented by every debit to reached tranches — overstating
+collectible there only under-grants capacity), while **the offence
+FIGURE nets NOMINAL outstanding** (nominal ≥ collectible always, so
+the minted liability never exceeds what backing remains after every
+older promise — the earlier "understatement is protocol-favorable"
+claim was wrong for exactly this read: an understated collectible
+OVERSTATES the net base and mints liability against backing already
+promised to older debts, defeating the zero-net gate and the
+action-time bound). Exactness is needed nowhere; each read leans the
+safe way. Never by
 walking the list inside the adjudication** (the mixed-segment list is
 explicitly growable, and an adjudication forced to traverse it to price
 the offence runs out of gas exactly when the offender has grown the
@@ -1969,7 +1998,13 @@ v1 does NOT have.** Both selectable forks lack a confiscation predicate, so v1
 has no offences to record and no dispatcher; its immediate withdrawal follows
 from the ABSENCE of delayed evidence, not from same-call debiting. This
 paragraph describes a tier that has a predicate, and is retained for whenever
-one is specified. The liveness
+one is specified — **with one standing correction: even there, the same-call
+DEBIT does not survive durable adjudication.** The synchronous observation
+COMMITS THE LIABILITY in the same successful call; the debit itself settles in
+a separately retryable transaction (a same-call debit couples the offence
+record to a fallible settlement leg — a reverting recycle-backing check or
+old-token transfer would revert the record and consumed state with it, letting
+the offender age the evidence out without ever committing liability). The liveness
 tier — **a** source of evidence that arrives *after* an operator stops —
 **and NOT the only one, which an earlier revision claimed: equivocation's
 second conflicting statement can surface after the operator stops acting too,
@@ -2416,7 +2451,12 @@ ZERO actions → zero at any new cost, where ceiling-scaling `9×6/10` to
 6 would grant an action the old schedule never held), or the affected bucket
 is invalidated and its credit forfeited, before the new cost prices
 anything. **The rescale branch exists only for DOWNWARD, UNIFORMLY PROPORTIONAL
-cost moves** — a schedule with multiple cost classes retuned
+cost moves — and a uniform multi-class retune scales the WHOLE balance
+by the common ratio, floor-rounded** (`newBalance = floor(oldBalance ×
+ratio)` — relative prices are unchanged, so every class's entitlement
+scales identically and no per-class choice arises; picking any single
+class's cost as "the" oldCost destroys or doubles the other classes'
+entitlements). A schedule with multiple cost classes retuned
 non-uniformly has no faithful scalar mapping (drop only the 10-cost
 action to 5 and a 20-unit balance either loses its unchanged 20-cost
 entitlement or doubles its cheap one), so a relative-price change takes
