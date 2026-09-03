@@ -158,10 +158,18 @@ staked/tracked-balance stranding anyway — see "Decision" below).
    and update them atomically-enough that no inbound flow lands on a stale
    token. The removed fixed-rate buy receiver/adapter are not part of new
    deployments.
-7. **Confirm the audit event.** Ops/indexer must observe `VPFITokenRotated` and
+7. **Assert the bond-epoch archival (once #1219 custody exists).** Before any
+   generic event check, read back the archival's own effects from the step-6
+   transaction: the epoch-archival event fired and the per-epoch getter
+   reports every pre-rotation bond balance archived under the rotation epoch.
+   A rotation whose archival hook was absent or faulty must be caught HERE,
+   frozen — re-enabling first strands old-token deposits behind a completed
+   rotation. (On a deployment with no bond custody this step is a recorded
+   no-op.)
+8. **Confirm the audit event.** Ops/indexer must observe `VPFITokenRotated` and
    record that the drain + zero-verification (steps 2–5) preceded it. The event
    is the on-chain breadcrumb; it does not by itself prove the drain.
-8. **Re-enable.** Unfreeze / unpause. Verify new VPFI offers/loans key off the
+9. **Re-enable.** Unfreeze / unpause. Verify new VPFI offers/loans key off the
    new token.
 
 ## Known limitations & residual risk

@@ -918,8 +918,26 @@ decodes is the same gap one step later.
   any later debit **per token**, rather than waiting for every proof to expire.
   The recycle-credit problem that motivated the original rule is then handled
   where it actually lives — a slash resolving against an old-token tranche
-  credits per-token, or is settled out of band — not by blocking the rotation. That makes it one more item on the rotation's drain inventory
-  rather than a new accounting dimension.
+  credits per-token, or is settled out of band — not by blocking the rotation.
+  **And no slash settlement executes until its verifier epoch has been FINAL
+  for a bounded challenge delay**: adjudication commits the liability, but
+  the debit stays escrowed through the delay, and a quarantine or
+  invalidation landing within it VOIDS the pending settlement — otherwise an
+  attacker who finds a logical defect in an unquarantined verifier bundles
+  the forged-proof adjudication with the permissionless settlement in one
+  breath, and the principal is in the recycle bucket (spendable) before the
+  guardian can react; invalidation can void a liability, never claw back a
+  spent credit. That makes it one more item on the rotation's drain inventory
+  rather than a new accounting dimension. **And archived-token proceeds
+  stay ISOLATED from the live netting loop until an explicit terminal
+  disposition**: the live mesh reports and spends a single current-VPFI
+  bucket, and a confiscated old token — possibly compromised, with its
+  own decimals and value — is not current backing merely because it was
+  recorded per-token. Aggregating it overstates reward funding; the
+  per-token credit is instead held apart (visible, classified
+  `ServiceBondSlash`) until a funded conversion into the live token or a
+  recorded disposition (e.g. burn or treasury quarantine) terminates it,
+  and only the CONVERSION's proceeds ever join the netting.
   That enum member is ALREADY reserved and must be used rather than a new
   generic one — appending a duplicate would split service-bond absorption
   from the metrics class reserved for it. (This bullet said
@@ -2202,7 +2220,11 @@ This is the third revision in which a parameter was added to make a previous
 parameter safe. That is the signal to stop extending and check whether the
 mechanism is needed at all — it was not.
 
-**3. Capacity — the DECISION, and why the mechanism is not specified here.**
+**3. Capacity — the PROPOSAL (awaiting the owner's capacity-terms
+decision; see the status header and owner ask), and why the mechanism is
+not specified here.** The ACTOR rules below are design-structural
+(who a routed call charges — an identity boundary, not economics) and
+are fixed regardless of which capacity numbers the owner ratifies.
 
 **The decision, which is what this note is for:** a bond buys capacity
 *continuously and proportionally*, with **no minimum bond**, up to a ceiling
@@ -3099,8 +3121,17 @@ escape, because reinstallation is not guaranteed to exist** (the
 likeliest reason to disable is that the oracle itself was
 compromised, and "refundable at will" must not quietly become
 "refundable if a vendor ships"): governance may ratify a documented
-SNAPSHOT of the persisted confirmed-flagged registry, after which
-operators with NO persisted marker withdraw once a LONG TIMELOCK
+SNAPSHOT — **built from an AUTHORITATIVE source, not from the persisted
+registry alone**: the persisted markers PLUS a governance-attested,
+documented screening of every escaping operator against the public
+authoritative sanctions data itself (the lists the oracle vendor
+derives from — they exist and remain checkable even when no vendor
+does), recorded with the snapshot. The registry alone cannot carry the
+escape, because the erasable first-observation marker means a
+sanctioned smart account may appear in NO on-chain record; the
+attested screening is what catches it, and an operator failing it is
+excluded and stays frozen. After ratification, operators the snapshot
+clears withdraw once a LONG TIMELOCK
 elapses (long enough for pending flag evidence to surface and for a
 replacement oracle to be installed if one exists — installing one
 cancels the escape and restores the ordinary rule). The timelock plus
