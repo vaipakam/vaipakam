@@ -705,7 +705,13 @@ fails, and the backstop's partial-match path can early-return nonterminal
 with the residual snapshot still active — so the retry's preparatory
 lien-release and Diamond-pull must be reversed on failure: collateral
 back to the vault, lien re-incremented, tracked balance and the VPFI
-tier exclusion restored, the exact inverse of the pull. Anything less
+tier exclusion restored, the exact inverse of the pull — **with the
+EXCLUSION restored BEFORE the vault credit, or an explicit final restamp
+after all inverse mutations** (the migration chokepoint's own ordering
+rule: the vault credit rolls the borrower's cached fee tier and staking
+checkpoint up from whatever exclusion is stored at that moment, and
+credit-then-exclude leaves the borrower tier-credited for VPFI still
+owed under the snapshot). Anything less
 re-creates commingled unprotected custody and silently invalidates the
 completed migration on the first adapter outage.
 
