@@ -1445,10 +1445,17 @@ delivery, while the reward ledger still reports 100 of headroom: the
 positive ledger was never the part that could fail, custody was. So
 **delivered reward funding lives in DEDICATED CUSTODY** — a
 Diamond-owned holder that only the registered reward writers credit and
-only reward payouts debit, so no foreign `transfer` can reach it — with
-the acceptable fallback being a **single outbound-VPFI primitive** every
-egress path uses, asserting `balance − outflow ≥ outstanding reward
-reserve` at the one chokepoint. What is NEVER acceptable is per-call-site
+only reward payouts debit, so no foreign `transfer` can reach it.
+**The outbound-primitive chokepoint that stood here as an "acceptable
+fallback" is WITHDRAWN as an alternative** — the ratification selects
+the dedicated holder, and the two are different custody designs with
+different implementation and audit surfaces, so a sentence permitting
+either lets an implementation satisfy this paragraph while violating
+the ratified choice and re-inheriting dependence on complete coverage
+of every present and future VPFI egress. A single outbound primitive
+asserting `balance − outflow ≥ outstanding reward reserve` may still be
+built as defence-in-depth ON TOP of the holder — never instead of it.
+What is NEVER acceptable is per-call-site
 discipline: "every other spender remembers to check" is the enumeration
 this design exists to refuse, pointed the other way.
 
@@ -2396,9 +2403,22 @@ revision unimplementable:
      base-plus-per-page with inclusion slack, because a fixed deadline
      makes any valid superior plan wider than it UNVERIFIABLE — the
      challenger lapses mid-check and the inferior incumbent settles
-     irreversibly, consuming a scarce batch. The BOND scales with the
-     committed page count by the same rule, so the longer global freeze
-     a wide commitment buys is linearly paid for and forfeited on lapse
+     irreversibly, consuming a scarce batch. **And the declared count is
+     NOT attacker-chosen: it is CAPPED at commit time by the SNAPSHOTTED
+     WORK.** A plan's pages enumerate draws over the pre-incumbent
+     snapshot's batches and obligations, so the largest count any real
+     plan can need is derivable from the snapshot's recorded domain size
+     (a counter the domain already maintains O(1)); a commitment
+     declaring more than `ceil(size / pageSize) + slack` is refused
+     BEFORE it takes the slot, and a protocol ceiling backstops the
+     formula. Without the cap, page-proportional time is an attack
+     surface by itself: declare an enormous count, occupy the slot, and
+     the linearly-scaled bond buys an arbitrarily long freeze of every
+     unrelated obligation, repeatable after each forfeiture. With it,
+     the longest freeze any occupant can buy is the honest verification
+     time for the domain's ACTUAL size. The BOND scales with the
+     committed page count by the same rule, so the freeze a wide
+     commitment buys is linearly paid for and forfeited on lapse
      — page-proportional time without page-proportional stake would let
      a staller commit a huge count for a long free freeze
      (pagination lifts the per-transaction cap, not the number of
@@ -2642,7 +2662,18 @@ revision unimplementable:
        the already-registered **pending-to-live** writer — same machinery, no
        new ingress — and that writer's own gate (an active era, and a deliberate
        drain of the position) is the right severity for money whose obligations
-       may not be finished.
+       may not be finished — **plus one gate that route cannot inherit:
+       CLASSIFICATION. The pending-to-live writer credits fresh `received`,
+       so an UNTYPED remainder must never reach it** — draining a
+       still-unclassified legacy remainder through that writer publishes
+       recycled-or-unknown value as fresh headroom, exactly what the
+       pending-to-live rules later forbid, and fresh claims then consume
+       backing belonging to the recycled side. A remainder whose
+       fresh/recycled split is still unknown has exactly two exits:
+       restoration into its batch's transport epoch (staying untyped), or
+       repatriation. The pending-to-live drain is available only AFTER the
+       reconciliation records the split, and only for the fresh share it
+       recorded.
 
      **And the remainder keeps its BATCH identity inside the pending
      position — the move must not launder away the association the first
@@ -3291,6 +3322,23 @@ revision unimplementable:
    So the era's terminalization requires the parked lane drained and closed as
    part of its all-obligations condition, or retries are held in a
    **non-finalized transport epoch** that terminalization does not depend on.
+
+   ⚠️ **And "the era it was ADDRESSED to" is a recoverable fact only for
+   lanes whose wire or parked entry carries identity — the d2 token
+   remittance carries NEITHER.** Its payload is `(dayIds, total, remitId,
+   remitter)` with no era, and the reverting first receipt writes no
+   destination-side stamp, so once reattachment opens a fresh era the
+   intended-era gate rejects the retry exactly as it rejected the arrival —
+   tokens and source reservation stuck, with the permanently open recovery
+   epoch scoped to legacy packets, not to this. The only sound rule is that
+   the situation NEVER ARISES: **every detachment — temporary or permanent —
+   requires the d2 lane drained FIRST**, the authenticated source-side send
+   freeze plus the pinned reservation/sequence watermark the cutover gate
+   already mandates, run before the role leaves its bound state. A drained,
+   frozen lane has nothing in flight, so a d2 arrival while `Detached` is
+   transport-impossible and the revert rule is safe; the
+   addressed-era routing below is for the lanes that CAN carry or park
+   identity.
 
    So a re-executed packet is credited through the **retired era's own
    reconciliation** (its funding belongs to that era's obligations, which is
