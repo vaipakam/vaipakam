@@ -2248,9 +2248,15 @@ revision unimplementable:
      is a matching problem, and matching belongs OFF-chain: the
      permissionless preparation operation computes a
      feasibility-preserving assignment over the known obligation set,
-     the chain verifies only validity, and a preparer whose assignment
-     under-covers can be outdone by anyone submitting a better one —
-     permissionless improvement, on-chain verification, no hardcoded
+     the chain verifies only validity — **and a CONTESTED allocation
+     cannot settle irreversibly before it can be outdone**: a staged
+     draw from a batch listed by a known UNMET obligation's day waits
+     out a short challenge window before final settlement, during which
+     a superseding plan covering strictly more of the known set
+     displaces it (uncontested allocations settle immediately —
+     "outdone later" is no remedy once X is spent on A and B's only
+     source is gone). Permissionless improvement, on-chain
+     verification, no hardcoded
      greedy to beat — **through a per-day CURSOR that advances past
      exhausted batches permanently, because a bare oldest-first scan is
      unbounded on a hot path**: the legacy lane can mint arbitrarily many
