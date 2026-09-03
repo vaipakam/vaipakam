@@ -1149,11 +1149,15 @@ decisions — superseding this plan's earlier "NOT discharged" note):
 the enum slot stays reserved with no call site because no confiscation
 predicate EXISTS, not because legal review is pending; what remains
 open on #1219 is the A/C owner fork (and C's fee parameters). **And if
-a predicate is ever ratified, the live `credit(ServiceBondSlash, …)`
-API serves the CURRENT token only** — an archived-token epoch's slash
-settles through the design's per-token/escrow settlement path, because
-the live API checks the replacement token and updates the single live
-bucket (revert or wrong backing attribution for an archived epoch).
+a predicate is ever ratified, EVERY slash settles through the design's
+epoch-aware per-token/escrow settlement path — uniformly; the live
+single-token `credit(ServiceBondSlash, …)` API never carries a slash**
+(an earlier revision of this instruction excepted the current token,
+but adjudication and settlement are separate transactions and a
+rotation can land between them — the live API would then check the
+replacement token and credit the single live bucket, the exact
+corruption the design forbids). `ServiceBondSlash` survives as the
+classification the settlement event carries.
 
 ### M7 — Activation ceremonies (runbook, not code — nothing is real until this)
 

@@ -94,6 +94,15 @@ staked/tracked-balance stranding anyway — see "Decision" below).
      its principal/collateral are NOT VPFI, so it does not appear in the leg
      scans above; check the rebate ledger separately and let those loans reach
      terminal (settle/forfeit) so the held VPFI is released before rotating.
+   - **Service-bond custody (#1219, once built) is enumerated but NOT
+     drained**: bond deposits take the design's **epoch-level archival
+     transition** at rotation instead of a voluntary drain — an offline,
+     lost-key, or (frozen) sanctioned operator cannot drain, and making
+     the rotation wait on them is the hostage condition the archival
+     path exists to remove. The step-5 zero check therefore scopes to
+     non-bond custody; bond custody is verified as **archived under the
+     rotation epoch** (balances preserved per-epoch, released later
+     through the archival machinery), not as zero.
    Scan via the indexer or a full active-offer scan on `lendingAsset` +
    `prepayAsset` + `collateralAsset` == old token (NOT
    `MetricsFacet.getActiveOffersByAsset`, which keys on `lendingAsset` only and

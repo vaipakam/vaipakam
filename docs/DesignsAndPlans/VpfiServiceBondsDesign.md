@@ -944,9 +944,15 @@ decodes is the same gap one step later.
    and the objective-lies scope, while the owner-facing material of that
    round still described the 7/3–30-day delay as the live proposal — so
    shipping immediate withdrawal on this line alone would ship a
-   reversal no owner decision approved. The conclusion rides with the
-   A/C fork ask (ratifying either fork ratifies the no-delay shape it
-   is built on, and an owner who wants a delay says so there). Rev 4
+   reversal no owner decision approved. The conclusion does NOT ride implicitly: **the owner-facing ask
+   presents the unbond question as its own explicit decision item with
+   BOTH options** — (i) no v1 delay (this design's conclusion, for the
+   reasons below; RECOMMENDED), or (ii) the originally advertised
+   proposal this change was scoped around: a 7-day default unbond
+   delay, 3-day floor, 30-day ceiling. Selecting A or C alone decides
+   nothing about withdrawal policy; the owner picks (i) or (ii)
+   alongside the fork, so the advertised proposal remains before them
+   rather than silently replaced. Rev 4
    removed the delay rather than sizing it, because v1 has no evidence
    arriving after an operator stops acting; the reasoning is below. Immediate withdrawal and the
    clamp-on-decrease were decided together and are both invariants, not
@@ -3030,10 +3036,20 @@ status, and revert its outer frame — EVM rollback erases the
 integration that treats refusal as revert-worthy does the same by
 accident). If outage safety rested on that marker, the operator would
 be "never confirmed" in the next outage and take the fail-open path.
-So **bond PRINCIPAL RELEASE fails CLOSED during oracle outages,
-unconditionally**: `withdrawCapacityDeposit` / unbond require an
-authoritative oracle read in the releasing transaction — `Unavailable`
-defers the release regardless of marker state, for every operator. And the same rollback defeats marker-dependence on the INFLOW side —
+So **bond PRINCIPAL RELEASE fails CLOSED during oracle OUTAGES,
+unconditionally** — and "outage" is checked AFTER the configured-ness
+branch this document already mandates, because `sanctionsStatus`
+returns `Unavailable` both for a failed call AND for
+`sanctionsOracle == address(0)`, which are opposite states: with the
+oracle deliberately DISABLED, screening is a no-op — never-confirmed
+operators post, raise, arm, and withdraw freely (blanket deferral
+there would strand every deposit on a chain that never configures an
+oracle), while an operator with a PERSISTED confirmed marker still
+cannot release (the central frozen-proceeds rule: an unreachable or
+unset oracle blocks confirmed-frozen release). With a CONFIGURED
+oracle failing, `withdrawCapacityDeposit` / unbond require an
+authoritative read in the releasing transaction — the outage defers
+the release regardless of marker state, for every operator. And the same rollback defeats marker-dependence on the INFLOW side —
 a flagged contract can invoke a posting while the oracle is healthy,
 receive the refusal, revert its outer frame, and retry during an
 outage as "never confirmed"; under C that moves a sanctioned party's
