@@ -2287,9 +2287,15 @@ revision unimplementable:
      cannot settle irreversibly before it can be outdone**: a staged
      draw from a batch listed by a known UNMET obligation's day waits
      out a short challenge window before final settlement, during which
-     a superseding plan displaces it by **covering STRICTLY MORE of the
-     known set — with plans PAGINATED so block limits cannot cap
-     coverage**: a plan is a committed root over assignment pages —
+     a superseding plan displaces it by **covering a strict SUPERSET of the
+     incumbent's covered obligations — every one of them, plus at least
+     one more — with plans PAGINATED so block limits cannot cap
+     coverage** (a raw count comparison lets a challenger WIN 2-to-1
+     while dropping the one obligation whose scarce batch has no
+     alternative — spending that batch on a small claim, adding a
+     flexible-funded second, and stranding the incumbent's beneficiary
+     irreversibly; superset coverage cannot regress any already-covered
+     member): a plan is a committed root over assignment pages —
      **shadow-validated against a PINNED PRE-INCUMBENT snapshot, then
      activated ATOMICALLY**: challenger pages verify against the batch
      balances as they stood before the incumbent staged (the incumbent's
@@ -2302,7 +2308,14 @@ revision unimplementable:
      (pagination lifts the per-transaction cap, not the number of
      transactions a window can hold; without the suspension the
      incumbent settles mid-verification and the
-     cannot-settle-before-outdone invariant is a race). The activation is an **O(1) ACTIVE-ROOT switch**: each plan's staging
+     cannot-settle-before-outdone invariant is a race) — **through ONE
+     BONDED exclusive challenger slot**: a commitment posts a bond
+     forfeited if the challenge lapses unfinished, and a second
+     challenger waits for the slot (a bare commitment proves nothing
+     about coverage, so free suspension let anyone stall every contested
+     allocation with unfinishable roots at gas cost — the bond prices
+     the delay, the exclusivity bounds it, and the forfeiture funds the
+     obligations the stall delayed). The activation is an **O(1) ACTIVE-ROOT switch**: each plan's staging
      lives under its own root with per-plan shadow accounting, the
      switch changes which root is ACTIVE in one write, stale-plan state
      is inert from that instant (every consumer checks the active root),
@@ -2699,7 +2712,17 @@ revision unimplementable:
    `onCompensationBudgetReceived`, and the TYPED broadcast ingresses
    (`onRewardBroadcastV2Received`, `onRewardBroadcastV3Received`) —
    revert: no receipt is written, no pool, recycle, day or era state
-   moves, nothing to unwind. **The LEGACY `onRewardBroadcastReceived` is
+   moves, nothing to unwind — **which makes typed retries INVISIBLE to
+   the destination, so era finalization for typed-broadcast lanes gates
+   on the SOURCE side**: a reverted V2/V3 broadcast exists only in the
+   transport layer, a locally enumerable parked lane cannot list it, and
+   a terminal that reads the empty lane releases the era while an
+   addressed broadcast is still retryable. Finalization therefore
+   requires the authenticated source-side send FREEZE with the gap-free
+   contiguous receipt watermark (the same instrument the drained-lane
+   promotion terminal uses) for every typed lane addressing the era —
+   the destination cannot enumerate what it refused, so the source
+   attests what was sent and the watermark proves what arrived. **The LEGACY `onRewardBroadcastReceived` is
    the exception that PARKS instead** (a persisted entry with local id
    and receipt stamp, application refused) — its wire carries no era and
    no message id, so a reverted receipt erases exactly the state the
@@ -2963,10 +2986,12 @@ revision unimplementable:
    nothing on the mirror says WHICH. Backfilling both triple keys
    duplicates one instruction; picking either is an operator assertion
    about an authenticated fact. So ambiguous keys are a CERTIFICATION
-   FAILURE, resolved by **TERMINAL-ONLY triple tombstones: BOTH candidate
-   triple keys are persisted directly as `TOMBSTONED`, each carrying a
-   collision marker binding both charged manifests to the single retired
-   legacy row.** Persisting both is safe precisely because the state is
+   FAILURE, resolved by **TERMINAL-ONLY triple tombstones for EVERY
+   authenticated candidate — the collision is an arbitrary-size SET, not
+   a pair** (nothing bounds same-address-same-authId to two chains):
+   each candidate triple key from each charged manifest is persisted
+   directly as `TOMBSTONED`, carrying a collision marker binding ALL
+   participating manifests to the single retired legacy row.** Persisting both is safe precisely because the state is
    terminal-born — the duplication hazard was execution and attribution,
    and a tombstone-born key can execute nothing — while persisting
    NEITHER (the earlier wording) made the release unreachable: the
