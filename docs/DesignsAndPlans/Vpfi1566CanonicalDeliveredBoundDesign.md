@@ -1283,10 +1283,19 @@ durable rather than a snapshot of one moment.
   version — a version-0 commit runs the original Diamond-custody fill,
   balance-delta check, and `_teardownCommit` transfer exactly as written,
   to its natural terminal; only commits created after the upgrade take the
-  vault-pull path. No live commit is migrated, paused, or re-routed — the
-  double-withdrawal above is precisely what applying the new path to an old
-  commit does, so the discriminator is the commit's stamped version, never
-  the upgrade time or a drain ceremony.
+  vault-pull path. **The one sanctioned exception is the ARMING migration**:
+  the arming path may move a surviving version-0 commit's collateral into
+  the protected holder, and that ceremony STAMPS a distinct HOLDER-MIGRATED
+  version atomically with the custody move — fill and teardown branch on it
+  to the holder-aware pull, because running such a commit as version 0
+  would have the LOP transfer revert (the Diamond no longer holds the
+  collateral) or consume unrelated same-token Diamond custody. Outside
+  that stamped ceremony no live commit is migrated, paused, or re-routed —
+  the double-withdrawal above is precisely what applying the new path to an
+  old commit does. The discriminator is ALWAYS the commit's stamped
+  version, never the upgrade time or a drain ceremony; the migration is
+  the only operation that ever changes a stamp, and it changes the custody
+  in the same transaction.
 
   ⚠️ An earlier revision of this bullet also offered "a paused cutover gated on
   `intentLiveCommitCount == 0` after cancellation/drain", with the withdrawal
@@ -1631,6 +1640,19 @@ the headroom remains to consume unrelated Diamond custody.
 So `H` excludes `rewardBudgetRecovered − rewardBudgetRedispatched` and every
 other restricted reward position — the test is **"can a local claim spend
 this?"**, not "does this belong to rewards?".
+
+**And the exclusion is only the ACCOUNTING half — the recovered TOKENS
+must live in the protected holder too, in a dedicated RECOVERY row.**
+The current receiver forwards a stranded return's VPFI into the shared
+Diamond balance; excluding the position from headroom stops local
+claims from spending it, but payroll or any other foreign Diamond
+outflow still can — after which the intact recovery counters describe
+tokens that are gone, and a redispatch reverts or substitutes unrelated
+custody (slice 0's failure, through the recovery door). So every
+recovery ingress credits the holder's RECOVERY row (the tokens enter
+the holder, not the shared balance), and the uncharged
+`…FromRecovery` redispatch debits that row — never the shared balance,
+never the live-fresh allocation.
 
 So the canonical bootstrap sets **`received = H + paid`** after the paid rebase
 has installed `P` — or, equivalently, resets the paid baseline to zero and sets
@@ -2369,6 +2391,16 @@ revision unimplementable:
      page has been verified — **and a valid challenger COMMITMENT
      landing inside the window SUSPENDS incumbent settlement** until the
      challenge completes or its own bounded verification deadline lapses
+     — **a deadline SIZED TO THE COMMITTED PAGE COUNT, not a constant**:
+     the commitment authenticates its page count, and the deadline is
+     base-plus-per-page with inclusion slack, because a fixed deadline
+     makes any valid superior plan wider than it UNVERIFIABLE — the
+     challenger lapses mid-check and the inferior incumbent settles
+     irreversibly, consuming a scarce batch. The BOND scales with the
+     committed page count by the same rule, so the longer global freeze
+     a wide commitment buys is linearly paid for and forfeited on lapse
+     — page-proportional time without page-proportional stake would let
+     a staller commit a huge count for a long free freeze
      (pagination lifts the per-transaction cap, not the number of
      transactions a window can hold; without the suspension the
      incumbent settles mid-verification and the
@@ -2428,8 +2460,17 @@ revision unimplementable:
      permanently blocking the obligation and its era's terminalization
      behind backing that exists. Each day keeps an arrival-ordered batch
      index and a consumption cursor; allocation resumes at the cursor,
-     and **exhausting a batch updates EVERY member day's index in that
-     act — with the `dayIds` fan-out BOUNDED AT INGRESS**: "wire-bounded"
+     and **exhausting a WITHIN-CAP batch updates EVERY member day's index
+     in that act — the atomic rule holds ONLY under the ingress fan-out
+     cap; an admitted OVERSIZE packet takes the resumable `RETIRING`
+     path below as its SOLE retirement rule, and the settlement that
+     exhausts it COMMITS WITHOUT attempting the full fan-out** (those
+     per-member writes are exactly what this section shows exceeding
+     the destination block gas limit — requiring them atomically for a
+     packet the design deliberately admits would park the exhausted
+     batch at the front of every member cursor forever, the permanent
+     bounce one step later). **The `dayIds` fan-out is BOUNDED AT
+     INGRESS**: "wire-bounded"
      alone is not a bound, since the remitter supplies any nonempty list
      and a batch that fit the source transaction can exceed the
      destination's gas limit when retirement writes one index per
@@ -3476,7 +3517,17 @@ the ambiguity it claims to resolve, since the two need different gates and
 different authentication rules.
 
 **Mandated: hold consumers frozen until every in-flight d2 remittance has landed
-and been reconciled.** The gate is per lane, read back per source chain.
+and been reconciled.** The gate is per lane, read back per source chain —
+**and the readback alone is RACY until the SOURCE stops sending**:
+`RewardRemittanceFacet.remitRewardBudget` stays independently callable on
+Base, so a reservation created after the destination's last readback but
+before d2 is permanently rejected arrives post-cutover and strands its
+VPFI, and the permanently open recovery epoch is scoped to LEGACY packets,
+not to sends the ceremony raced. The gate therefore requires the same
+instrument as every other lane's drain: an **authenticated source-side
+send FREEZE plus a pinned reservation/sequence watermark** — the source
+attests it has stopped and what it sent; the watermark proves everything
+attested has landed; only then can the per-lane gate pass.
 
 ⚠️ **The ordinary Diamond pause cannot be that freeze, and an earlier revision
 said "hold the pause".** Both token ingresses are `whenNotPaused`
