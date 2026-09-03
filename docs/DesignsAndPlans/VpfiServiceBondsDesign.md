@@ -143,7 +143,18 @@ instruction to anyone implementing or writing copy from the top of the file.
 
    The primitive already exists: **`LibVaipakam.assertNotSanctionedFailClosed`**
    (#998 S10 / #1006) reverts `SanctionsOracleUnavailable()` whenever the oracle
-   is unset or its call reverts. So: **record the confirmed flag, and release a
+   is unset or its call reverts — **and the bond paths must branch on
+   CONFIGURED-ness before reaching it, because "unset" and "outage" are
+   different states with opposite meanings**. `sanctionsOracle ==
+   address(0)` is the deliberate DISABLED state (`setSanctionsOracle`
+   zero semantics; the FunctionalSpecs require chains without a
+   configured oracle to treat the check as a no-op): screening is off,
+   a retained confirmed marker is history rather than an enforced
+   freeze, and withdrawal proceeds through the ordinary path — else the
+   configure → flag → deliberately-disable sequence strands principal
+   until an oracle is installed again. The fail-closed release gate
+   applies to an OUTAGE of a CONFIGURED oracle only. So: **record the
+   confirmed flag, and while an oracle is configured, release a
    flagged balance only through the fail-closed check**, while operators never
    confirmed flagged keep the ordinary fail-open path — an outage must not freeze
    everybody's capital, which is the reason the fail-open default exists. An earlier revision
@@ -1597,13 +1608,22 @@ tranche-resident, so two domains' liabilities reaching the same
 surviving 10-unit tranche must compete for it — a per-domain
 `min(nominal, backing)` caches 10 in each and their sum subtracts 20
 of backing that holds 10, re-opening the offence shield through the
-partition seam. The read is `min(Σ valid-domain nominal, shared
-reachable-backing aggregate)` — invalidation still lands O(1) (it
-removes a domain's nominal from the sum via the filter; the physical
-backing aggregate was never domain-attributed and needs no update) and
-the shared-residual rule above is preserved by construction, because
-the backing component is the same shared figure the collection walk
-decrements — and
+partition seam. The read is `min(Σ_d min(nominal_d, reach-backing_d), shared
+reachable-backing aggregate)` — **each valid domain's term is capped by
+the backing ITS OWN liabilities can reach** (the per-domain heuristic,
+maintained O(1) at the same mutation sites), and the sum is then capped
+by the shared global aggregate. Both caps are load-bearing: without the
+per-domain cap, a still-valid domain's nominal pairs with backing only
+an INVALIDATED domain's watermark could reach — D1 reaching only
+exhausted tranche A stays "collectible" against surviving B that only
+dead D2 reached, and the uncollectible debt shields future offences;
+without the global cap, two valid domains reaching the same surviving
+tranche each count it, the partition-seam double-count. Invalidation
+still lands O(1) (it removes a domain's term from the sum via the
+filter; the shared physical aggregate was never domain-attributed and
+needs no update) and the shared-residual rule above is preserved by
+construction, because the global cap is the same shared figure the
+collection walk decrements — and
 serves ONE figure for BOTH reads: the O(1) collectible UPPER bound
 (`min(nominal outstanding, reachable-backing heuristic)`, the heuristic
 decremented by every debit to reached tranches). **Never-understated is
@@ -2889,6 +2909,23 @@ continuing a workflow on a deposit that does not exist, and leaves
 indexers unable to reconstruct the newly persisted marker. Integrations
 MUST branch on the returned status; the plain reverting helper remains for wallets
 whose marker is already persisted.
+
+**This is a deliberate, NARROW amendment to the central Tier-1 revert
+policy, and it ships as one.** `ProjectDetailsREADME`'s sanctions section
+requires deposit/withdraw flows to revert for a flagged wallet; a
+committed status-returning refusal on the FIRST authoritative
+observation diverges from that letter — in service of the same
+section's deeper invariants (confirmed-flagged position movement and
+fail-closed frozen-proceeds release both DEPEND on the marker being
+persisted, which is the one property a revert cannot provide). The
+divergence is confined to exactly that case: a wallet whose marker is
+already persisted gets the central policy's revert, unchanged. And the
+bond selectors are NEW surface — no legacy caller exists to be deceived
+by success-with-status, and their integration contract requires
+branching from day one. The FunctionalSpecs sanctions section is
+updated with the implementing PR to record this first-observation
+exception (same-diff rule); until that lands, this paragraph is the
+divergence's record.
 
 **A delayed proof against a CONFIRMED-SANCTIONED operator adjudicates
 without moving the funds.** The blanket per-selector screen cannot simply
