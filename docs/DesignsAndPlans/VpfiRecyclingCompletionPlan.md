@@ -1138,8 +1138,11 @@ bytes of stamping did not fit. The broadcast cluster moved to
 A pure relocation: every code line identical, storage and selectors
 unchanged.
 
-**#1219 service bonds** — legal glance DISCHARGED (the ratified
-no-yield refundable-deposit shape; the remaining open items are FOUR
+**#1219 service bonds** — legal glance DISCHARGED **for the no-yield
+refundable-deposit shape** (fork A in full, C's deposit half; **C's
+non-refundable arming-fee purchase is a separate legal shape needing
+its own bounded glance or recorded owner approval before C builds**;
+the remaining open items are FOUR
 owner decisions — the A/C fork, the capacity terms (4×/no-minimum/
 clamp), the unbond option (i)/(ii), and under C the fee parameters);
 slash path →
@@ -1659,7 +1662,7 @@ constituent cards below remain the working tickets.
 | #1222 | Adopt the parked B1–B4 cut with §M3's two corrections (B1 two report fields; two-pass funding in B2/B3); #1331 stays absorbed by B2. **The Phase-C tail is C1–C4, not C1–C2** (#1567–#1570), **plus #1577's code-side changes** which must land with or before Mode A, and **C2's scope changed** with §3.6a — see §M4 |
 | #1331 | **CLOSED 2026-07-18 as duplicate of #1222** — its full scope (remit-ingress labeling; remitted-recycled = local credit vs locally-committed = pure release, across claim/forfeit/expiry) is §M3's B2; the B4 tests must cover it. **B4 coverage DISCHARGED as of B4-d, except the mirror half.** Recording the evidence precisely, because the first version of this row credited it to the wrong tests: B4-a's `availRecycled ≤ reported` ceiling does NOT establish the exclusion (it still holds if relocated custody wrongly increments `reported` — the ceiling rises with it), and `MeshThreeChainE2ETest` never delivers a reward remittance through the receive path, so B4-b does not drive remit-ingress labelling either. The exclusion is exercised by the single-diamond `RewardRemitLedgerTest`, which drives the ingress directly, and made externally observable by #1448's composition relation — with the omission case (an arrival never labelled at all) still open as #1452. B4-a and B4-b remain load-bearing for what they DO prove: the per-chain clamp chain and the three-diamond mesh behaviour respectively. The MIRROR half **was unreachable until #1434** (CLOSED 2026-08-20; P1-b lifted the halt, so it is now reachable) — but state it precisely, because "no mirror-side bucket" is FALSE: B2-d5 moved the recycled credit to remit ARRIVAL, so `onRewardBudgetReceived` already calls `creditCustodyRelocated` and a mirror's bucket is live and credited today (exercised by `RewardRemitLedgerTest`). What #1434 gates is claim / forfeit / expiry PRICING on a mirror, and therefore the retirement or release of locally-committed reservations — the consumption side, not the credit side. Recording it as "no bucket exists" would send the follow-up to build something that already ships |
 | #1218 | Re-point at §M5 (net-emission = `freshDrawdown` under the governor; dashboard surface) |
-| #1204 / #1219 | Keep; note the RL-5 release-train commitment; #1219's glance is DISCHARGED — the open ask is FOUR decisions: the A/C fork, the capacity terms (4×/no-minimum/clamp), the unbond option (i)/(ii), and under C the fee parameters |
+| #1204 / #1219 | Keep; note the RL-5 release-train commitment; #1219's glance is DISCHARGED for the refundable-deposit shape (C's arming-fee shape needs its own glance/approval) — the open ask is FOUR decisions: the A/C fork, the capacity terms (4×/no-minimum/clamp), the unbond option (i)/(ii), and under C the fee parameters |
 | New | Cut the M2 card set (per §M2 table) once D1 is decided; one M7 runbook card |
 | #1217 | **CLOSED 2026-07-18 as completed** — tasks 1/4 shipped (governor stack), task 2's conversion-routing superseded (successors: #1346 Layer 0, #1347 Layer 2), task 3 continues as #1218 (§M5); fragment assembly stays tracked by M8, not by the card. #1301–#1306 closed via their PRs |
 
