@@ -361,7 +361,19 @@ withdrawal. So, before bonds ship, **either**:
   funded operation. Either way the rotation must not be gated on an operation
   the sanctions gate forbids.
 
-**The snapshot/escrow migration is MANDATORY**, not the second of two options.
+**The snapshot/escrow migration is MANDATORY — as an O(1) TOKEN-EPOCH
+transition with LAZY per-record materialization, never a per-deposit
+sweep gating rotation.** Deposits are keyed by non-enumerable
+`(operator, role, epoch)` records with no minimum size, so any rule
+requiring every residual deposit processed before rotation hands an
+attacker the rotation hostage back: dust a thousand one-unit deposits
+across addresses and governance must touch them all before replacing a
+compromised token. The migration is therefore ONE write — the token
+epoch as a whole flips to ARCHIVED (escrow semantics attach at the
+epoch level) — and each deposit's archival claim MATERIALIZES lazily on
+its owner's next touch, carrying its principal, reservations, and
+liabilities per the migration rules and emitting its migration event
+then. Rotation gates on the epoch flip, not the materialization count.
 An earlier revision called draining "simpler" and preferred it, which lets an
 implementation ship without the residual path and keep the exact hostage
 condition the correction removes. Drain what drains — it shrinks the residual —
@@ -998,11 +1010,12 @@ record back with it) — **and the base depends on when the offence is recorded:
     intervening narrow one let the broad aggregate drain the contested
     tranche first and strand the narrow debt's only source — collection
     LOST, an operator alternating classes to the cap could shrink its
-    own liabilities). Narrowest-first within the merged pair is
-    collection-MAXIMIZING by the exchange argument — contested tranches
-    go to the debt with no alternative — so the summary never collects
-    less than any true ordering; the merged pair are the two oldest and
-    collect at the front either way, and each class keeps its own reach
+    own liabilities). Allocation inside the merged pair runs RECORDING ORDER, per the mixed-
+    segment rule above — a narrowest-first paragraph stood here one round
+    after that rule landed, and the two prescribed different confiscated
+    amounts for the same overflow; the merged pair are the two oldest and
+    collect at the front either way, their relative positions preserved,
+    and each class keeps its own reach
     and epoch inside the subtotals. Alternation-to-grow-segments is
     bounded by the cap, and each alternating offence still costs the
     attacker its own liability. The class
@@ -1303,9 +1316,14 @@ that epoch's touches, because E1's check reads E1's pinned config
 hashes and proves nothing about E2's distinct inputs (E2's config
 drifts at 150, busy E1 advances a shared checkpoint to 200, E2 detects
 at 201 — a shared rollback reaches 200 and counts 50 unsound blocks,
-E2's window expiring over them). A detected mismatch **restores the
-shared pausable clock to the matching checkpoint — code for code
-drift, the epoch's own config checkpoint for config drift**: the unverified interval never counts, since
+E2's window expiring over them). A detected mismatch **restores the matching CLOCK to the matching
+checkpoint — the SHARED clock to the code checkpoint for code drift,
+and the affected EPOCH'S OWN clock offset to its config checkpoint for
+config drift** (config rollback through the shared clock rewound
+unrelated healthy siblings: E1 admitted at 190 with a 210 horizon,
+dormant E2 config-drifting from its 140 checkpoint — a shared rewind to
+140 locks E1's principal ~70 extra blocks and resurrects E1 records
+already expired): the unverified interval never counts, since
 nothing proves the verifier was sound during it. (The split resolves
 the tension a single choice could not: a purely per-epoch checkpoint
 under-protected CODE drift — busy E1's rollback left stale E2's
@@ -1757,7 +1775,12 @@ whole rule:
     So concurrency gets its own bound rather than being squeezed into the
     geometric one: **no NEW action is admitted whose reservation would take
     total outstanding reserved liability above `maxConcurrentReservedBps` of
-    the then-current ELIGIBLE balance** (never the whole bond: under C, 900
+    the then-current ELIGIBLE balance NET of outstanding collectible
+    liabilities** (the gross-eligible denominator re-admitted actions
+    against encumbered backing: 100 eligible with 90 encumbered and a
+    50% cap still admitted a 10-unit reservation whose settlement could
+    consume the whole deposit — the loss bound only means something over
+    backing that is actually free) (never the whole bond: under C, 900
     fee-free excess beside 100 armed at a 5,000-bps cap reads as 500 of
     permitted reservations — a hundred 1% actions admitted, and a proof
     burst zeroes the armed principal the cap exists to protect) (a governance parameter, bounded well below
@@ -2714,7 +2737,14 @@ under whatever terminal the sanctions machinery prescribes", which is an
 open-ended licence the repository's policy does not grant: frozen funds
 are never seized, redirected, or released, and become claimable only
 after delisting (`LibVaipakam.sol:9850-9854`). The liability stays
-frozen and encumbered until delisting, however long that is; a disposal
+frozen and encumbered until delisting, however long that is — **with
+verifier INVALIDATION as the one qualifier**: the delisting-only
+terminal governs liabilities whose verifier epoch remains valid or is
+restored, while a liability adjudicated by a verifier governance later
+REJECTS is extinguished by that invalidation exactly as its unfrozen
+siblings are (preserving it would confiscate on forged evidence at
+delisting — the sanctions freeze does not launder a broken proof into a
+valid debt). A disposal
 terminal, if the owner ever wants one, is a separately approved change
 to the sanctions POLICY — never an open branch in a bond design. **And it is an ENCUMBRANCE on every withdrawable-balance
 read from the moment of adjudication — RETAINED IN FULL before any
@@ -2772,7 +2802,11 @@ the two rules meet at a parked adjudication.
   leaves it standing, and the next outage bars a payer the oracle
   authoritatively delisted in between. Delist → arm → outage is the
   acceptance case. The
-  other selectors keep `_assertNotSanctioned` for their REFUSALS — but
+  other selectors' refusals ALSO run the registry-aware tri-state gate —
+  the plain `_assertNotSanctioned` is retired from every value-moving
+  path, per the rule above (it fails open on an outage for a
+  previously-confirmed wallet, letting sanctioned value into custody
+  where the fail-closed withdrawal then traps it) — and
   every party screen that observes an authoritative CLEAN result on a
   wallet carrying a stale confirmed marker SELF-HEALS it in that call —
   **with ALL party statuses read BEFORE effects, and a mixed result
