@@ -981,14 +981,19 @@ record back with it) — **and the base depends on when the offence is recorded:
     remap absorbed into survivor, and settlement names the survivor
     alone (retaining every historical id in the segment is unbounded;
     silently replacing one breaks the join; one O(1) event per merge is
-    the bounded third way) — **with allocation inside a mixed segment
-    running NARROWEST-REACH-FIRST, and RECORDING ORDER as the tie-break
-    for equal-reach subtotals** (each subtotal retains its earliest
-    recording position — bounded metadata — because two equal-reach
-    liabilities from DIFFERENT epochs against one tranche must allocate
-    deterministically: quarantine or invalidation of one epoch changes
-    which liability remains collectible, and an implementation-chosen
-    allocation makes that governance outcome implementation-chosen too)** (the newest-same-class backward
+    the bounded third way) — **with allocation inside a mixed segment running RECORDING ORDER,
+    full stop — the same rule as the un-merged queue** (each subtotal
+    retains its earliest recording position, bounded metadata). An
+    earlier revision ran narrowest-reach-first inside the merge, which
+    made the CONFISCATED AMOUNT depend on whether the queue happened to
+    overflow: an older broad debt reaching {t1,t2} before a narrow one
+    reaching {t1} collects 10 under recording order (broad takes t1,
+    narrow finds it empty, broad needs no t2) but 20 under
+    narrowest-first — a semantics change smuggled in through the
+    overflow path. The bounded representation must reproduce the
+    un-overflowed rule's outcome, not improve on it; recording order
+    inside the merged pair does exactly that, since the pair's relative
+    positions are preserved** (the newest-same-class backward
     merge was wrong: pulling a later broad-reach debt in front of an
     intervening narrow one let the broad aggregate drain the contested
     tranche first and strand the narrow debt's only source — collection
@@ -1318,11 +1323,16 @@ both hashes match at the next touch, `lastVerified` advances across the
 unsound interval, and the rollback never fires because nothing is
 currently mismatched. Continuity must be provable, and only two things
 prove it — code that cannot change, or a record that every change must
-append to — **with mutation versions kept PER INPUT, and each epoch
-pinning the version vector of ITS dependencies**: the touch compares
-only the counters of inputs its epoch actually pins, and growth there
-triggers the same quarantine-and-rollback as a live mismatch, restored
-or not. A verifier-WIDE count would turn every routine retune into an
+append to — **with mutation versions kept PER INPUT, each epoch pinning the
+version vector of ITS dependencies — and the dependency count carries a
+HARD constant bound**: the touch compares only the counters its epoch
+pins, so the touch cost is that vector's length, and an unbounded
+supported-input set would push admission, proof, and release past the
+gas limit — principal stranded behind its own verification. A verifier
+needing more inputs than the bound is disqualified from delayed-proof
+adjudication, exactly as mutable-without-a-log bytecode is; growth in a
+pinned counter triggers the same quarantine-and-rollback as a live
+mismatch, restored or not. A verifier-WIDE count would turn every routine retune into an
 incident — adding a legitimate E2 configuration grows the shared log,
 and the next E1 touch quarantines every sibling though none of E1's
 pinned inputs changed. A mutable
@@ -2732,8 +2742,13 @@ the two rules meet at a parked adjudication.
   identities, and the withdrawal recipient bound to whichever ownership model
   §Mechanics selects. So `postBond`, any deposit-on-behalf or permit
   variant, and (under C) the arming-fee payer each need
-  screening — **and the arming-fee payer's screen is the REGISTRY-AWARE
-  tri-state gate, not the plain helper**: `_assertNotSanctioned` is
+  screening — **and EVERY value-moving payer and operator screen is the
+  REGISTRY-AWARE tri-state gate, not the plain helper — the arming-fee
+  payer was the first named, and naming only it left every other
+  deposit selector fail-open for previously confirmed wallets during an
+  outage** (`postCapacityDeposit` pulling tokens from a confirmed payer
+  the fail-closed withdrawal path then traps, value moved into custody
+  by a sanctioned wallet against the two-party rule): `_assertNotSanctioned` is
   fail-open on an oracle outage and never consults
   `sanctionsConfirmedFlagged` (`LibVaipakam.sol:9934-9945`), so a payer
   already confirmed through another path could wait out an outage and
