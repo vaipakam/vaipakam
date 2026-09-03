@@ -1647,11 +1647,19 @@ the per-domain terms sum to 21 under a 110 global cap while only 11
 can ever collect — the 10-unit overstatement would shield later
 offences. Reach-overlap competition is exactly what the
 recording-order collection walk already computes, and segments are
-BOUNDED (the bounded-segment rule above), so **the offence base uses
-the reconciled figure from that bounded walk over the affected
-partition's live segments — run or resumed before the base is read —
-while the two-cap cached formula stays the O(1) fast path for
-capacity and admission reads, where overstatement only under-grants.** For capacity and admission, overstating collectible
+BOUNDED (the bounded-segment rule above) — **but the walk must never
+sit inside the adjudicating transaction** (the no-walk rule below: an
+offender who grows the queue would block their own adjudication past
+the gas limit — queue growth as a slash escape). So the two are
+decoupled: **the observation commits the offence RECORD in O(1),
+immediately and unconditionally; the liability AMOUNT is fixed by the
+bounded, resumable, permissionless reconciliation walk; and until that
+walk completes, the affected partition's evidence clock is PAUSED and
+the offender's new admissions DEFER.** Nothing waits inside one
+transaction, the offence cannot age out while reconciliation runs, and
+a queue the offender grew delays only their own capacity — delay buys
+them nothing. The two-cap cached formula stays the O(1) fast path for
+capacity and admission reads, where overstatement only under-grants. For capacity and admission, overstating collectible
 only under-grants capacity — safe. For the offence base, an
 UNDERSTATED collectible would overstate the net base and mint liability
 against backing already promised to older debts (the earlier
@@ -2919,9 +2927,17 @@ that everything else is throughput and these are custody:**
   transition in the same transaction rolls back with it — restoring the
   later-outage escape this rule exists to close. The first flagged `unbond`
   reads the **non-reverting tri-state** and commits the parked state; the
-  reverting helper is used only on paths that need to persist nothing. And a companion asserting an operator never
-  confirmed flagged still withdraws during the same outage — otherwise an
-  implementation could pass by freezing everyone.
+  reverting helper is used only on paths that need to persist nothing. And the companion case is updated for the ratified fail-closed bond
+  surface — **during the outage EVERY release defers, the never-confirmed
+  operator's included** (the earlier companion asserted that operator
+  still withdraws mid-outage, which is exactly the flagged-contract
+  escape the fail-closed rule closes; the two cannot both hold). What
+  the companion must now assert is that the deferral is LATENCY, not a
+  lock: the never-confirmed operator's withdrawal, refused during the
+  outage, succeeds immediately on the first authoritative `Clean` read
+  after recovery — an implementation cannot pass by freezing everyone
+  PERMANENTLY, and the discriminating assertion is post-recovery
+  success, not mid-outage success.
 
   **Post-request unenrolled calls DEMOTE to the free tier — "non-slashable"
 alone left the capacity armed.** If the non-slashable alternative merely

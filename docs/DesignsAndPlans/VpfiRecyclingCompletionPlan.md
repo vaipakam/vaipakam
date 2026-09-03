@@ -1674,9 +1674,14 @@ constituent cards below remain the working tickets.
    (the same completed-deferral treatment as the conversion classes),
    **or — per the ratified #1219 design — shipped WITHOUT a slash path**:
    both selectable bond forks carry no confiscation predicate, so bonds
-   gate capacity only, `ServiceBondSlash` stays a reserved unused enum
-   slot, and nothing enters recycling from bonds in this state (the
-   mesh's completeness is unaffected — there is no flow to account for) —
+   gate capacity only and `ServiceBondSlash` stays a reserved unused
+   enum slot. **The no-recycling-flow claim splits by fork**: under A
+   nothing enters recycling from bonds; under C the ARMING FEE does —
+   every fee enters the recycle chokepoint as
+   `RecycleSource.CapacityArmingFee` per the design — so C's done state
+   additionally requires that credit path built, validated, and
+   accounted in the mesh (declaring M6 complete on the A wording while
+   C shipped would skip C's permanent absorption path) —
    "pending" is not a done state; conversion classes (borrower
    LIF-in-VPFI, yield-fee-in-VPFI, matcher remainders) explicitly
    **market-era deferred** behind the single §14 legal item — deferral
