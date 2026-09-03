@@ -597,6 +597,12 @@ Every OTHER event carries the operator, the role, the delta, the
 balance rather than delta alone, because a consumer that missed one event can
 otherwise never resynchronise against a mapping it cannot enumerate.
 
+**The GENERATION-INVALIDATION event is the fifth exemption** — its
+schema is generation-shaped (verifier, generation id, block; consumers
+derive the epoch set from creation events), and the per-deposit fields
+are no more truthful for a one-write generation kill than for epoch
+invalidation.
+
 **The EPOCH-ARCHIVAL event is the fourth exemption**: emitted in the
 O(1) rotation flip over non-enumerable residual deposits, it has no
 truthful operator, role, delta, or post-balance — demanding them forces
@@ -969,8 +975,16 @@ record back with it) — **and the base depends on when the offence is recorded:
     exceed the partition's collateral at recording time; a liability never
     reaches deposits made AFTER the offence (the action-time-reach rule,
     applied to debts); and a fully-encumbered operator's next offence
-    records zero BY ARITHMETIC — every unit is already promised — with the
-    correct response being the role's encumbrance gating, not a promise
+    records zero BY ARITHMETIC — **and a ZERO-VALUED liability is NEVER
+    ENQUEUED** (the offence emits its record event and nothing enters
+    the queue: there is nothing to collect, and an enqueued zero would
+    let free-tier alternation grow the mixed segment at no principal
+    cost — unfunded queue growth, the exact opposite of the
+    offender-funded bound). The encumbrance gate is DEFINED, not
+    gestured at: an operator whose partition net base is zero is refused
+    predicate-governed admissions until liabilities settle or backing
+    arrives — with the
+    correct response being that gate, not a promise
     larger than the collateral behind it.
 
     **"Never reaches later deposits" is enforced by BINDING, not by the
@@ -1544,7 +1558,16 @@ that holds 10, and the phantom half discounts later offences). And
 **every base that nets liabilities nets
 the COLLECTIBLE figure, not the nominal — read from a CACHED
 per-partition outstanding-collectible aggregate, maintained O(1) at
-every liability creation, collection, and extinguishment, never by
+every liability creation, collection, and extinguishment **AND at every
+BACKING mutation that touches reached tranches** (a delayed-proof debit
+or tranche exhaustion lowers what old debts can collect, and a cache
+blind to it discounts later offence bases with debt that cannot collect
+from the new, unreachable deposits): the cache is an O(1)-maintained
+UPPER bound — `min(nominal outstanding, reachable-backing heuristic)`,
+the heuristic decremented by every debit to reached tranches — floored
+to the exact figure by each cursor-driven collection pass, with the
+error direction protocol-favorable (an understated collectible enlarges
+the next offence's net base). Never by
 walking the list inside the adjudication** (the mixed-segment list is
 explicitly growable, and an adjudication forced to traverse it to price
 the offence runs out of gas exactly when the offender has grown the
@@ -2392,7 +2415,13 @@ at cost-1, the same 10 actions either way; and 9 units at cost-10 →
 ZERO actions → zero at any new cost, where ceiling-scaling `9×6/10` to
 6 would grant an action the old schedule never held), or the affected bucket
 is invalidated and its credit forfeited, before the new cost prices
-anything. **The rescale branch exists only for DOWNWARD cost moves** —
+anything. **The rescale branch exists only for DOWNWARD, UNIFORMLY PROPORTIONAL
+cost moves** — a schedule with multiple cost classes retuned
+non-uniformly has no faithful scalar mapping (drop only the 10-cost
+action to 5 and a 20-unit balance either loses its unchanged 20-cost
+entitlement or doubles its cheap one), so a relative-price change takes
+the INVALIDATION branch (or the implementation keeps separate credit
+per cost class, specified as such) —
 an upward move preserving entitlement needs a stored balance above the
 bucket ceiling (10 actions at cost-20 is 200 units in a 100-unit
 bucket), and either clamping (entitlement silently cut) or over-ceiling
