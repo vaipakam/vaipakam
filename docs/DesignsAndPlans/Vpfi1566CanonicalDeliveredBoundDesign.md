@@ -1429,10 +1429,16 @@ live pre-upgrade intent's custody into an exclusion satisfies the reward
 consumers who consult it and no one else — `withdrawSalary` spends the
 shared balance without ever reading it, so the arming gate passes and the
 intent collateral is consumed anyway. The gate therefore requires one of:
-the old-custody COUNT at zero (torn down), the commits' custody MOVED
-into the protected contract under an INTENT attribution row, or the
-global outbound-reserve primitive covering the excluded amount. An
-exclusion no outflow path enforces is a label.
+the old-custody COUNT at zero (torn down), or the commits' custody MOVED
+into the protected contract under an INTENT attribution row. An
+exclusion no outflow path enforces is a label — **and the previously
+listed third option, a "global outbound-reserve primitive", is
+WITHDRAWN as undefined**: it appeared in this gate and nowhere else —
+no state invariant, no initialization, no debit sites, no terminal —
+and an undefined fund-safety primitive in a gate is a box an
+implementation can tick while `withdrawSalary` drains the very
+collateral the gate exists to protect. Two defined options suffice; a
+third may be added only as a fully specified mechanism.
 
 **And the INTENT-row move must carry the FILL path with it, or it breaks
 the very order it protects.** The old order names the Diamond as maker
@@ -2227,14 +2233,22 @@ revision unimplementable:
      **`actualReceived`** (never the declared total — short delivery must
      shrink the funding, not the obligations), with the listed `dayIds` as a
      MEMBERSHIP filter. A targeted obligation draws from the batches that
-     list its day — **fewest-remaining-member-days FIRST, oldest as the
-     tie-break** (each draw bounded by that batch's remaining balance):
-     the least-flexible source is spent before the flexible one, because
-     oldest-first alone starves later days — a shared batch listing A
-     and B spent on A while an A-only batch idles leaves B unfunded
-     though assigning A-only-to-A and shared-to-B settles both. Same
-     exchange argument as the typed-source rule: the batch with the
-     fewest alternatives is used where nothing else can serve — **through a per-day CURSOR that advances past
+     list its day — and **the contract checks the VALIDITY of an
+     assignment, never its optimality: any assignment drawing each unit
+     from an eligible batch within its balance is accepted, with
+     fewest-remaining-member-days-first (oldest on ties) as the DEFAULT
+     a preparer may override.** No local greedy survives overlapping
+     memberships — oldest-first starves the shared-batch case, and even
+     degree-ordering falls to `X={A,B}, Y={A,C}, Z={C}` with unit
+     demands, where spending tied-degree X on A strands B though
+     Y→A, X→B, Z→C settles all three. Feasibility over overlapping sets
+     is a matching problem, and matching belongs OFF-chain: the
+     permissionless preparation operation computes a
+     feasibility-preserving assignment over the known obligation set,
+     the chain verifies only validity, and a preparer whose assignment
+     under-covers can be outdone by anyone submitting a better one —
+     permissionless improvement, on-chain verification, no hardcoded
+     greedy to beat — **through a per-day CURSOR that advances past
      exhausted batches permanently, because a bare oldest-first scan is
      unbounded on a hot path**: the legacy lane can mint arbitrarily many
      small batches listing one day, and a claim or permissionless sweep
@@ -2657,7 +2671,15 @@ revision unimplementable:
    allowlist's own configuration history, owner-attested with the same
    recorded-disposition terminal as the lane universe), each member
    drains to zero or takes its disposition, and a token surfacing
-   outside the committed set follows the straggler path. An
+   outside the committed set takes a **BUYBACK-SPECIFIC straggler
+   operation — not the repatriation lanes' path, which does not fit**:
+   that path is a local tombstone plus a release against a REMOTE
+   charged ledger, and a local `buybackBudget[token]` has neither a
+   remote ledger nor anything a tombstone would move. The operation
+   **atomically debits the budget entry and transfers the tokens into
+   quarantine/recovery custody** (owner-disposable — repatriation or a
+   recorded release), so the anticipated out-of-universe balance is
+   recovered rather than stranded behind the new role guard. An
    uncommitted drain over a non-enumerable mapping is a completion
    claim nothing can check — the omitted balance strands the moment
    the role guard lands.
@@ -3642,7 +3664,15 @@ restitution position.
 **A fresh classification MOVES ITS TOKENS, not just its numbers —
 in-holder, per the ingress rule above; for pre-holder arrivals the
 relocation is from the shared balance and inherits slice 0's
-provenance bar.** The
+provenance bar. And a batch with OUTSTANDING listed obligations is not
+classifiable at all**: classification converts batch-scoped backing
+into era-wide or global credit, so classifying a live batch lets an
+unrelated claim spend what the packet was delivered FOR — day A's sole
+eligible batch emptied by a day-B claim through the global ledger. The
+ONLY route to classification is the acknowledged PARKED-REMAINDER path
+(listed obligations terminal or dispositioned, the batch-bound
+acknowledgment recorded); the general reconciliation path classifies
+no live batch.** The
 arrival landed in the shared Diamond balance (`RewardRemittanceReceiver`
 transfers there), and classification that only debits `uncounted` and
 credits `received` publishes holder-capped headroom the holder does not
