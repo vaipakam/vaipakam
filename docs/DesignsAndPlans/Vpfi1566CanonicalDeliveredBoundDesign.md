@@ -2212,8 +2212,13 @@ revision unimplementable:
      **And the association runs on RECEIPT TIME, because "the addressed
      era" is not a recoverable fact**: parking is committed state, so
      each parked entry carries its own local id and receipt stamp, an
-     era's terminal requires **no parked entry with receipt at or
-     before that era's retirement watermark outstanding**, and the
+     era's terminal requires **no parked entry received BEFORE THE NEXT
+     ERA OPENS outstanding** — the boundary is the next era's opening,
+     NOT the retirement watermark, because the very broadcasts this lane
+     exists for typically arrive while `Detached`, AFTER retirement: a
+     watermark-bounded gate ignores exactly the delayed packets it was
+     built to hold, finalizing the era over a parked state-bearing
+     broadcast. The
      tombstone discharges the parked ENTRY by its id — no unknowable
      era named, no wrong terminal releasable. Once
      a retry has been REFUSED by the live-era gate (the evidence it
@@ -2315,7 +2320,16 @@ revision unimplementable:
      transactions a window can hold; without the suspension the
      incumbent settles mid-verification and the
      cannot-settle-before-outdone invariant is a race) — **through ONE
-     BONDED exclusive challenger slot**: a commitment posts a bond
+     BONDED exclusive challenger slot, with the batches NAMED in the
+     commitment FROZEN for the challenge's duration**: no settlement —
+     contested or uncontested — and no new draw touches a named batch
+     until the challenge completes or lapses, because the pre-incumbent
+     snapshot the pages verify against is only meaningful while those
+     balances hold still (an uncontested settlement or a late-arriving
+     obligation could otherwise consume a snapshotted batch
+     mid-verification, activating a plan no longer fully backed). The
+     freeze is bounded by the challenge deadline the bond already
+     enforces. A commitment posts a bond
      forfeited if the challenge lapses unfinished, and a second
      challenger waits for the slot (a bare commitment proves nothing
      about coverage, so free suspension let anyone stall every contested
@@ -2782,6 +2796,20 @@ revision unimplementable:
    — never to the
    canonical report surface. Everything else still reverts
    `BroadcastOnCanonical`.
+
+   **The BUYBACK REMITTANCE ingress joins the value-bearing-ingress
+   gate.** `BuybackRemittanceReceiver.onCrossChainMessage →
+   `absorbRemittance` transfers tokens to the Diamond and credits
+   `baseBuybackBudget` with no reward-chain role check, and the
+   buyback-intent commit functions can spend that budget without a
+   canonical-role check — so an in-flight mirror-to-Base buyback packet
+   executing after the destination detached or demoted credits (and can
+   spend) funds on the retired canonical deployment, while the buyback
+   transition section drains only the OUTGOING side. This ingress takes
+   the same era-bound refusal/quarantine as the other token ingresses,
+   the in-flight drain covers it (source freeze + contiguous watermark,
+   as for every lane), and the commit functions gain the canonical-role
+   check the audit's what-state-can-move test demands.
 
    **UNSENT day outputs join the transition drain — reports, commitment
    reports, and compensation quotes accumulate locally and are routed by
