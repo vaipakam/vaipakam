@@ -206,12 +206,20 @@ Options weighed (per the issue): (1) block rotation while live references
 exist, (2) snapshot the VPFI address onto each offer/loan and have D-2/F-1
 read the snapshot, (3) this operational runbook.
 
-**Chosen: (3) runbook + an on-chain `VPFITokenRotated` audit event.**
-Rationale: the exposure is low and recoverable. Liened collateral is never at
+**Chosen: (3) runbook + an on-chain `VPFITokenRotated` audit event —
+scoped to the PRE-BOND world.** Once #1219 service-bond custody exists,
+this decision is SUPERSEDED in one respect: the deliberately-undrained
+bond deposits make a pointer-only `setVPFIToken` strand every residual
+old-token deposit on the first rotation, so **the atomic epoch-archival
+hook in the rotation transaction (per the #1219 design) is a SHIPPING
+PREREQUISITE of enabling bond custody** — not a deferred nicety; the
+manual runbook alone stops being a complete procedure the day deposits
+go live. For everything else the original rationale stands: the
+exposure is low and recoverable. Liened collateral is never at
 risk (the encumbrance sub-ledger protects each token's liens independently);
 the one real stranding risk — un-liened protocol-tracked old-token balances
 (staked VPFI) — is **governance-recoverable** and is fully eliminated by the
-drain step above. Snapshotting (2) keys off offers/loans, so it would not even
+drain step above for every drainable class. Snapshotting (2) keys off offers/loans, so it would not even
 address that staked/tracked-balance stranding, while adding a permanent
 per-offer/loan struct-field + read-site cost — not justified for a rare,
 pre-live, migration-class event. Option (1) needs a global "live VPFI

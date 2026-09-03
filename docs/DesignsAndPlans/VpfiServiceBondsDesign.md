@@ -953,8 +953,14 @@ decodes is the same gap one step later.
   `settleAfter`** — the simple, testable form of the finality rule:
   adjudication commits the liability AND stamps
   `settleAfter = adjudicationTime + configured challenge delay` (the
-  delay governance-bounded with a positive floor and a ceiling, so a
-  liability is neither instantly settleable nor indefinitely
+  delay governance-bounded with a floor and a ceiling — **and the floor
+  is sized to the documented worst-case guardian response: detection by
+  the monitoring pass, PAUSER-quorum signing, and inclusion latency,
+  not merely "positive"** — a one-block floor only stops same-transaction
+  bundling, and an attacker adjudicating a forged proof right after a
+  monitoring pass would settle before the quorum could quarantine, after
+  which invalidation cannot recover the spent credit; so a liability is
+  neither settleable inside the guardian window nor indefinitely
   encumbered); the debit stays escrowed until `settleAfter` passes,
   settlement is permissionless afterwards — and the two incident levers
   act DIFFERENTLY on the escrow: a QUARANTINE landing before settlement
@@ -963,7 +969,9 @@ decodes is the same gap one step later.
   compromised or mistaken fast key grant irreversible amnesty), while a
   governance INVALIDATION extinguishes any still-unsettled liability
   whether or not its `settleAfter` has passed. Boundary tests straddle
-  the stamp on both sides — otherwise an
+  the stamp on both sides, and the adjudication-to-quarantine RACE is
+  itself a required test: a quarantine landing at the floor's edge must
+  still pause the pending settlement — otherwise an
   attacker who finds a logical defect in an unquarantined verifier bundles
   the forged-proof adjudication with the permissionless settlement in one
   breath, and the principal is in the recycle bucket (spendable) before the

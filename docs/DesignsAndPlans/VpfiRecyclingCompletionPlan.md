@@ -27,7 +27,9 @@
 > Still owner-gated and deliberately untouched: **#1566** (which quantity
 > bounds a canonical payout), **#1219**'s FOUR owner decisions — A/C
 > fork, capacity terms, unbond option, C's fee parameters (its legal
-> glance is DISCHARGED — see M6), the per-perk
+> glance is DISCHARGED for the refundable-deposit shape only; **C's
+> non-refundable arming fee needs its own glance or recorded owner
+> approval** — see M6), the per-perk
 > effects behind #1204's remaining design decisions, and the M7
 > ceremonies. **#1949** is open engineering with a design fork recorded on
 > the card.
@@ -1690,7 +1692,10 @@ constituent cards below remain the working tickets.
    **or — per the ratified #1219 design — shipped WITHOUT a slash path**:
    both selectable bond forks carry no confiscation predicate, so bonds
    gate capacity only and `ServiceBondSlash` stays a reserved unused
-   enum slot. **The no-recycling-flow claim splits by fork**: under A
+   enum slot — **and if the shipped fork is C, its done state
+   additionally requires the arming-fee legal shape approved** (its own
+   bounded glance or a recorded owner approval; the discharged glance
+   covers only the refundable-deposit shape). **The no-recycling-flow claim splits by fork**: under A
    nothing enters recycling from bonds; under C the ARMING FEE does —
    every fee enters the recycle chokepoint as
    `RecycleSource.CapacityArmingFee` per the design — so C's done state
