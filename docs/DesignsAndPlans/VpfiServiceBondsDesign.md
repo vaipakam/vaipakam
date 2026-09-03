@@ -2889,10 +2889,14 @@ The implementation pass defines the units and the envelope, then brings the
 numbers back with their actual throughput meaning attached.
 
 **Already ratified, recorded here so nothing re-opens them:** the no-yield
-refundable-deposit shape; objective-lies-only for v1 (which collapsed to no
-predicate at all — see the fork); the 4× ceiling per `(role, address)` as an
-invariant rather than a suggestion; no minimum bond; and
-clamp-on-any-capacity-reduction. **NOT on this list: the v1 no-unbond-delay
+refundable-deposit shape, and objective-lies-only for v1 (which collapsed to
+no predicate at all — see the fork). **NOT on this list — the capacity
+terms**: the 4× ceiling per `(role, address)`, no minimum bond, and
+clamp-on-any-capacity-reduction are the PROPOSED shape the capacity section
+is explicitly asking the owner to ratify (an earlier revision listed them
+here as ratified, which would let an implementation ship throughput and
+entry economics no owner decision approved). They join the owner ask beside
+the A/C fork, C's fee parameters, and the unbond option. **NOT on this list: the v1 no-unbond-delay
 conclusion** — it is a design conclusion riding with the A/C fork ask, not
 yet owner-ratified (the decisions section records the provenance; an earlier
 revision listed it here as ratified, which would ship an unapproved
@@ -2911,9 +2915,13 @@ form the limiter takes.
 **Fund accounting and lifecycle — restored, and the reason they matter is
 that everything else is throughput and these are custody:**
 
-- Bond / unbond lifecycle, including that v1 withdrawal is IMMEDIATE and that
-  the withdrawal clamps accrued credit in the same step. A test that
-  withdraws and then spends is the one that catches the bypass.
+- Bond / unbond lifecycle, **conditioned on the owner's unbond selection**:
+  under option (i) withdrawal is IMMEDIATE; under option (ii) it completes
+  only after the configured delay (7-day default, 3-day floor, 30-day
+  ceiling), and a test drives the boundary on both sides of the deadline.
+  Under EITHER option the capacity decrease clamps accrued credit in the
+  same step — the clamp binds at the decrease, not at the eventual token
+  exit, so the withdraw-then-spend test catches the bypass in both worlds.
 - **[C FORK] The non-refundable arming spend gets its own cases** — the
   list above covers principal and its clamp, and none of it exercises
   the money that does NOT come back: a capacity-NEUTRAL raise is

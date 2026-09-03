@@ -96,13 +96,18 @@ staked/tracked-balance stranding anyway — see "Decision" below).
      terminal (settle/forfeit) so the held VPFI is released before rotating.
    - **Service-bond custody (#1219, once built) is enumerated but NOT
      drained**: bond deposits take the design's **epoch-level archival
-     transition** at rotation instead of a voluntary drain — an offline,
+     transition, ATOMIC WITH the step-6 rotation transaction itself**
+     (the epoch flip IS the rotation transition — there is no separate
+     archival call for the operator to invent between the freeze and the
+     rotate) — instead of a voluntary drain, because an offline,
      lost-key, or (frozen) sanctioned operator cannot drain, and making
      the rotation wait on them is the hostage condition the archival
-     path exists to remove. The step-5 zero check therefore scopes to
-     non-bond custody; bond custody is verified as **archived under the
-     rotation epoch** (balances preserved per-epoch, released later
-     through the archival machinery), not as zero.
+     path exists to remove. The verification splits accordingly: the
+     step-5 zero check scopes to non-bond custody and additionally
+     confirms bond custody is fully ACCOUNTED per-epoch (ready to
+     archive); the **archived-under-the-rotation-epoch check runs
+     immediately AFTER step 6**, against the same transaction's effects,
+     before step 7 re-enables anything.
    Scan via the indexer or a full active-offer scan on `lendingAsset` +
    `prepayAsset` + `collateralAsset` == old token (NOT
    `MetricsFacet.getActiveOffersByAsset`, which keys on `lendingAsset` only and
