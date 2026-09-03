@@ -113,18 +113,26 @@ staked/tracked-balance stranding anyway — see "Decision" below).
    `MetricsFacet.getActiveOffersByAsset`, which keys on `lendingAsset` only and
    misses prepay/collateral offers), a full active-loan scan on all three legs,
    the encumbrance ledger, and the `protocolTrackedVaultBalance` ledger.
-3. **Drain them ACTIVELY.** Don't rely on passive expiry/maturity. Actively
+3. **Drain them ACTIVELY — every class EXCEPT service-bond custody.** Don't
+   rely on passive expiry/maturity. Actively
    cancel the offers (releasing pre-vaulted principal); settle / close / repay
    the loans so their liens release; have users unstake + withdraw (or migrate)
    their tracked old-token VPFI. Drive every old-token offer, loan, encumbrance,
-   and tracked balance to zero by action.
+   and tracked balance to zero by action. Service-bond custody (#1219, once
+   built) is NOT drained — it takes the epoch archival atomic with step 6, per
+   the step-2 note; here it is only reconciled and accounted per-epoch.
 4. **Hard-freeze for the rotate window.** Now that the drain is complete, apply
    a hard freeze — a global guardian pause is appropriate **here** (the drain is
    done, so it can't deadlock anything). This stops every inflow surface at once
    for the brief rotate window, including any the partial step-1 freeze missed.
-5. **Re-verify ZERO under the freeze — comprehensive total-balance check.**
-   With the system frozen, confirm the protocol holds **zero recoverable
-   old-token VPFI anywhere it tracks or custodies it**. Do NOT rely on
+5. **Re-verify ZERO under the freeze — comprehensive total-balance check,
+   with ONE carve-out.** With the system frozen, confirm the protocol holds
+   **zero recoverable old-token VPFI anywhere it tracks or custodies it,
+   EXCEPT service-bond custody** (#1219, once built) — which is instead
+   verified here as fully ACCOUNTED per-epoch and ready to archive (its
+   archived-state assertion runs after step 6, against the rotation
+   transaction's own effects). A nonzero balance in any OTHER class fails
+   this gate exactly as before. Do NOT rely on
    re-walking the named step-2 surfaces alone — the authoritative test is a
    TOTAL: account for the entire old-token VPFI supply the protocol controls.
    That includes the step-2 classes (offers, loans, encumbrances, tracked

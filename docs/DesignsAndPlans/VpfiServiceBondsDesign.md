@@ -1698,10 +1698,20 @@ sit inside the adjudicating transaction** (the no-walk rule below: an
 offender who grows the queue would block their own adjudication past
 the gas limit — queue growth as a slash escape). So the two are
 decoupled: **the observation commits the offence RECORD in O(1),
-immediately and unconditionally; the liability AMOUNT is fixed by the
-bounded, resumable, permissionless reconciliation walk; and until that
-walk completes, the affected partition's evidence clock is PAUSED and
-the offender's new admissions DEFER.** Nothing waits inside one
+immediately and unconditionally — TOGETHER WITH a conservative
+PROVISIONAL ENCUMBRANCE of `slashBps × the action-time eligible base`
+(computable O(1); an upper bound on the final figure, since the
+reconciled netting can only shrink it) pinning the action-time
+tranches; the liability AMOUNT is then fixed by the bounded,
+resumable, permissionless reconciliation walk, which trims the
+encumbrance to the exact figure and releases the excess; and until
+that walk completes, the affected partition's evidence clock is
+PAUSED and the offender's new admissions DEFER.** A record with no
+encumbrance would leave withdrawal open — the operator drains the
+action-time tranches before a permissionless caller finishes the
+walk, and the eventual liability lands on nothing. Over-encumbering
+briefly is the safe direction: it over-freezes the offender's own
+principal until reconciliation, never mints against backing. Nothing waits inside one
 transaction, the offence cannot age out while reconciliation runs, and
 a queue the offender grew delays only their own capacity — delay buys
 them nothing. The two-cap cached formula stays the O(1) fast path for
@@ -3084,7 +3094,19 @@ marker-rollback bypass with governance's disable as the second step.
 Under disabled-after-configured the WHOLE bond mutation surface
 behaves exactly like an outage — release AND inflows: every mutation
 requires an authoritative read the disabled state cannot provide, so
-all of it defers until an oracle is reinstalled. (An earlier revision
+all of it defers until an oracle is reinstalled — **with one TERMINAL
+escape, because reinstallation is not guaranteed to exist** (the
+likeliest reason to disable is that the oracle itself was
+compromised, and "refundable at will" must not quietly become
+"refundable if a vendor ships"): governance may ratify a documented
+SNAPSHOT of the persisted confirmed-flagged registry, after which
+operators with NO persisted marker withdraw once a LONG TIMELOCK
+elapses (long enough for pending flag evidence to surface and for a
+replacement oracle to be installed if one exists — installing one
+cancels the escape and restores the ordinary rule). The timelock plus
+the public snapshot makes disable-then-drain slow and visible rather
+than an instant bypass; operators WITH a persisted marker stay frozen
+through the escape, per the central frozen-proceeds policy. (An earlier revision
 let inflows proceed on "nothing escapes through a deposit" — wrong
 under C, where the marker-rollback retry pays a sanctioned operator's
 NON-REFUNDABLE fee into recycling, the freeze-not-seize violation
