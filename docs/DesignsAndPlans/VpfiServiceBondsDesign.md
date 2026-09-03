@@ -597,6 +597,15 @@ Every OTHER event carries the operator, the role, the delta, the
 balance rather than delta alone, because a consumer that missed one event can
 otherwise never resynchronise against a mapping it cannot enumerate.
 
+**The EPOCH-ARCHIVAL event is the fourth exemption**: emitted in the
+O(1) rotation flip over non-enumerable residual deposits, it has no
+truthful operator, role, delta, or post-balance — demanding them forces
+fabrication or per-record emission during the flip, which is the
+unbounded iteration and rotation hostage the O(1) transition exists to
+prevent. Its schema is epoch-shaped: epoch id, old and new token,
+archival destination, and the block; per-deposit fields arrive with
+each claim's later materialization event.
+
 **Epoch-creation and configuration events are the third exemption, with
 their own schema.** The verifier-wide quarantine relies on consumers
 learning the verifier-to-epoch relationship from the epoch-creation event —
@@ -1468,9 +1477,14 @@ Governance decides between **restore** (the suspicion was wrong: the
 verifier's flag lifts, horizons resume everywhere it applied) and
 **invalidate** (the verifier is genuinely broken: the affected epochs'
 reservations are released, since their liability is no longer provable by
-trustworthy means) — and it may invalidate some of a verifier's epochs while
+trustworthy means) — and **for CONFIGURATION faults only**, it may
+invalidate some of a verifier's epochs while
 restoring others, because the containment needed one write but the
-consequences are epoch-specific accounting. Invalidation is itself a **single O(1)
+consequences are epoch-specific accounting. **A CODE fault permits no
+partial restore**: no dependent epoch reopens until the compromised
+code generation is invalidated, per the generation-invalidation rule —
+lifting the flag over a partially invalidated code fault reopens forged
+proofs through every remaining epoch. Invalidation is itself a **single O(1)
 epoch-state transition** — the per-operator reserved accounting is
 **partitioned over a bounded active set on BOTH axes: predicate/verifier epoch
 AND collateral-token epoch.** The first is what makes this invalidation one
