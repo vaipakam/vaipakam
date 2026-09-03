@@ -468,8 +468,16 @@ OffenceRecorded(operator, role, kind, refId)   // role, not just operator
 // alone keeps its name: it is an already-merged enum member in LibVpfiRecycle
 // (append-only, reserved, MUST stay unused in v1), and renaming a merged enum
 // member to launder a word out of an internal slot is churn without a user.
-// v1: `state` is `Active` or `SanctionsParked` — nothing else — and
-// `unlockAt` is unused. When the delayed-unbond machinery DOES arm,
+// v1 under unbond option (i): `state` is `Active` or `SanctionsParked`
+// — nothing else — and `unlockAt` is unused. **Under option (ii) the
+// schema arms a third state, `PendingWithdrawal`, entered by the
+// withdrawal request (which clamps capacity in the same step) and
+// carrying `unlockAt = requestBlockTime + configuredDelay` (7-day
+// default, 3-day floor, 30-day ceiling); release executes only past
+// `unlockAt`, and the sanctions screen re-runs at release.** In v1
+// there are no outstanding actions for the deadline to interact with,
+// so the scalar is sufficient THERE — the caveat below is about the
+// delayed-unbond machinery of a predicate-enabled tier, where: When the delayed-unbond machinery DOES arm,
 // `unlockAt` is a CACHE, never the state: release is computed at claim
 // time as the max over the withdrawal's outstanding actions' horizons,
 // each read under ITS verifier's pausable clock. A scalar snapshotted at
@@ -2763,8 +2771,13 @@ collapsed is about slashing.
 
 **Open for the owner.** The fork is the **first** blocking decision, and under
 one branch it is not the last: choosing **(C)** immediately raises item 2, which
-§3 states is not buildable without a number. So **(A) is the single-decision
-path and (C) is the two-decision path** — B is not a path at all, having no
+§3 states is not buildable without a number. So **the owner ask is: the A/C fork, PLUS the capacity terms (4×
+ceiling, no minimum, clamp), PLUS the unbond option (i)/(ii) — under
+either fork — and under (C) additionally its fee parameters.** An
+earlier revision called (A) "the single-decision path" and (C) "the
+two-decision path", counting only the fork and the fee — which would
+start implementation on throughput economics and a withdrawal policy
+the owner never approved. B is not a path at all, having no
 predicate, and is removed from the selectable forks below. An earlier revision
 of this sentence still counted it as one, which is enough for an owner to treat
 it as ratifiable.
@@ -3048,13 +3061,24 @@ So **bond PRINCIPAL RELEASE fails CLOSED during oracle OUTAGES,
 unconditionally** — and "outage" is checked AFTER the configured-ness
 branch this document already mandates, because `sanctionsStatus`
 returns `Unavailable` both for a failed call AND for
-`sanctionsOracle == address(0)`, which are opposite states: with the
-oracle deliberately DISABLED, screening is a no-op — never-confirmed
-operators post, raise, arm, and withdraw freely (blanket deferral
-there would strand every deposit on a chain that never configures an
-oracle), while an operator with a PERSISTED confirmed marker still
-cannot release (the central frozen-proceeds rule: an unreachable or
-unset oracle blocks confirmed-frozen release). With a CONFIGURED
+`sanctionsOracle == address(0)`, which are opposite states: the disabled state splits on WHETHER AN ORACLE WAS EVER CONFIGURED
+(a one-time `sanctionsOracleEverSet` latch, written when the first
+nonzero oracle is installed): on a NEVER-configured chain no marker
+could ever have existed, screening is genuinely a no-op, and the bond
+surface runs open — blanket deferral there would strand every deposit
+on a chain that never screens. But **once an oracle HAS been
+configured, a later disable does NOT reopen principal RELEASE**: a
+flagged smart account can erase its first-observation marker by
+reverting the outer frame, so "no persisted marker" under
+disabled-after-configured proves nothing — releasing on it is the
+marker-rollback bypass with governance's disable as the second step.
+Release under disabled-after-configured behaves exactly like an
+outage: it requires an authoritative read the disabled state cannot
+provide, so it defers until an oracle is reinstalled (value-INFLOW
+actions may proceed — nothing escapes through a deposit). An operator
+with a PERSISTED confirmed marker cannot release in any of these
+states (the central frozen-proceeds rule: an unreachable or unset
+oracle blocks confirmed-frozen release). With a CONFIGURED
 oracle failing, `withdrawCapacityDeposit` / unbond require an
 authoritative read in the releasing transaction — the outage defers
 the release regardless of marker state, for every operator. And the same rollback defeats marker-dependence on the INFLOW side —
