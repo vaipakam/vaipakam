@@ -573,11 +573,18 @@ config epoch** (the containment flag is verifier-wide either way, but
 governance must invalidate the faulted epoch and restore the sound
 siblings, and a consumer shown only the verifier cannot tell an
 E2-only config fault from a verifier-wide code fault), plus the
-observation block **and the RESTORED active-clock value — the
-checkpoint the rollback rewound to**: a mismatch observed at 201 that
-restores the clock to 140 extends every dependent proof and release
-horizon by the difference, and a consumer shown only 201 cannot
-reconstruct the window the rollback exists to give provers back); the per-epoch schema written here earlier could not represent the
+observation block **and BOTH restored clock values — the VERIFIER-WIDE
+clock (where its pause froze, the value sibling epochs resume from) and
+the affected EPOCH'S local restored value (the checkpoint its rollback
+rewound to)**: a config fault gives the two clocks DIFFERENT values —
+E2's offset rewinds to E2's checkpoint while the verifier clock freezes
+in place for healthy E1 — so one field cannot describe both, and a
+consumer applying E2's checkpoint verifier-wide resurrects E1 windows
+while one treating it as E2-only cannot reconstruct the verifier-wide
+pause/resume point. (A mismatch observed at 201 restoring a clock to
+140 extends every dependent proof and release horizon by the
+difference; the consumer needs to know WHICH horizon set each value
+governs.); the per-epoch schema written here earlier could not represent the
 one-write verifier quarantine at all — one epoch's event leaves indexers and
 provers unaware that sibling horizons paused, and one event per dependent
 epoch is the unbounded enumeration the O(1) incident path exists to avoid.
@@ -1580,10 +1587,23 @@ every liability creation, collection, and extinguishment **AND at every
 BACKING mutation that touches reached tranches** (a delayed-proof debit
 or tranche exhaustion lowers what old debts can collect, and a cache
 blind to it discounts later offence bases with debt that cannot collect
-from the new, unreachable deposits): the cache is PARTITIONED BY INVALIDATION DOMAIN (per verifier
-epoch/generation, filtered at read time — a single aggregate cannot be
-updated for arbitrarily many operators inside an O(1) invalidation, and
-an unfiltered read would keep subtracting extinguished debts) and
+from the new, unreachable deposits): the cache is PARTITIONED BY INVALIDATION DOMAIN **on the NOMINAL side
+only** (per verifier epoch/generation, filtered at read time — a single
+aggregate cannot be updated for arbitrarily many operators inside an
+O(1) invalidation, and an unfiltered read would keep subtracting
+extinguished debts), **while the reachable-backing side stays ONE
+SHARED aggregate, never partitioned**: backing is physical and
+tranche-resident, so two domains' liabilities reaching the same
+surviving 10-unit tranche must compete for it — a per-domain
+`min(nominal, backing)` caches 10 in each and their sum subtracts 20
+of backing that holds 10, re-opening the offence shield through the
+partition seam. The read is `min(Σ valid-domain nominal, shared
+reachable-backing aggregate)` — invalidation still lands O(1) (it
+removes a domain's nominal from the sum via the filter; the physical
+backing aggregate was never domain-attributed and needs no update) and
+the shared-residual rule above is preserved by construction, because
+the backing component is the same shared figure the collection walk
+decrements — and
 serves ONE figure for BOTH reads: the O(1) collectible UPPER bound
 (`min(nominal outstanding, reachable-backing heuristic)`, the heuristic
 decremented by every debit to reached tranches). **Never-understated is
