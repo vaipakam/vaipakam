@@ -985,8 +985,17 @@ record back with it) — **and the base depends on when the offence is recorded:
     earliest position would process `A1+A2` ahead of an intervening
     `B1`, re-ordering exactly what the recording rule protects). The
     segment COUNT carries a hard cap — and overflow merges the two
-    OLDEST segments into one MIXED segment holding per-class subtotals
-    at the older position — **emitting a bounded AGGREGATE-MERGE event
+    OLDEST segments into one MIXED segment that **CONCATENATES their
+    subtotals in recording order — one subtotal per (class, original
+    segment), coalescing only ADJACENT same-class subtotals inside**,
+    never one-subtotal-per-class (collapsing A1 and A2 around an
+    intervening B to A1's position re-creates the under-collection this
+    machinery rejects: A1=5, B=10 narrow, A2=5 over t1=10/t2=5 collects
+    15 in true order and 10 collapsed). The mixed segment settles
+    front-first with a BOUNDED, RESUMABLE per-call step — per-call
+    boundedness is what gas requires; the stored list's growth is paid
+    for by the offender, each entry being an offence they owe — and it
+    sits at the older position — **emitting a bounded AGGREGATE-MERGE event
     (survivor id, absorbed id) whenever two subtotals of one class
     combine**, so the audit chain survives repeated overflows: the
     adjudication events named the original aggregates, merge events
