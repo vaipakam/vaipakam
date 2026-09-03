@@ -1,8 +1,11 @@
 # VPFI service bonds — work-token sink (S-4 / R-3)
 
 **Status:** legal glance DISCHARGED (no-yield refundable-deposit shape
-ratified; §owner decisions) — awaiting the **A/C owner fork** (and C's fee
-parameters), then build. Card:
+ratified; §owner decisions) — awaiting **FOUR owner decisions**, then
+build: the **A/C fork**; the **capacity terms** (4× ceiling, no minimum,
+clamp); the **unbond option** (i) immediate vs (ii) 7-day delayed; and —
+under C only — the **fee parameters**. Selecting the fork alone does not
+unblock the build. Card:
 #1219. Umbrella: #1221. Legal frame: #694. Part of the VPFI circular-flow
 programme ([`VpfiCrossChainRecyclingDesign.md`](VpfiCrossChainRecyclingDesign.md)).
 
@@ -474,7 +477,13 @@ OffenceRecorded(operator, role, kind, refId)   // role, not just operator
 // withdrawal request (which clamps capacity in the same step) and
 // carrying `unlockAt = requestBlockTime + configuredDelay` (7-day
 // default, 3-day floor, 30-day ceiling); release executes only past
-// `unlockAt`, and the sanctions screen re-runs at release.** In v1
+// `unlockAt`, and the sanctions screen re-runs at release. ONE pending
+// request at a time: a second request while one is pending is
+// REJECTED — aggregating under the first deadline would release the
+// later amount early, and replacing the deadline would relock the
+// first; an operator wanting to change the amount CANCELS (restoring
+// capacity) and re-requests under a fresh deadline. The
+// request-while-pending sequence is a required test.** In v1
 // there are no outstanding actions for the deadline to interact with,
 // so the scalar is sufficient THERE — the caveat below is about the
 // delayed-unbond machinery of a predicate-enabled tier, where: When the delayed-unbond machinery DOES arm,
@@ -3072,10 +3081,14 @@ flagged smart account can erase its first-observation marker by
 reverting the outer frame, so "no persisted marker" under
 disabled-after-configured proves nothing — releasing on it is the
 marker-rollback bypass with governance's disable as the second step.
-Release under disabled-after-configured behaves exactly like an
-outage: it requires an authoritative read the disabled state cannot
-provide, so it defers until an oracle is reinstalled (value-INFLOW
-actions may proceed — nothing escapes through a deposit). An operator
+Under disabled-after-configured the WHOLE bond mutation surface
+behaves exactly like an outage — release AND inflows: every mutation
+requires an authoritative read the disabled state cannot provide, so
+all of it defers until an oracle is reinstalled. (An earlier revision
+let inflows proceed on "nothing escapes through a deposit" — wrong
+under C, where the marker-rollback retry pays a sanctioned operator's
+NON-REFUNDABLE fee into recycling, the freeze-not-seize violation
+itself.) An operator
 with a PERSISTED confirmed marker cannot release in any of these
 states (the central frozen-proceeds rule: an unreachable or unset
 oracle blocks confirmed-frozen release). With a CONFIGURED
