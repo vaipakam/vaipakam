@@ -1584,19 +1584,28 @@ from the new, unreachable deposits): the cache is PARTITIONED BY INVALIDATION DO
 epoch/generation, filtered at read time — a single aggregate cannot be
 updated for arbitrarily many operators inside an O(1) invalidation, and
 an unfiltered read would keep subtracting extinguished debts) and
-serves TWO conservative reads, each safe in its own direction:
-**capacity and admission reads use the O(1) collectible UPPER bound**
+serves ONE figure for BOTH reads: the O(1) collectible UPPER bound
 (`min(nominal outstanding, reachable-backing heuristic)`, the heuristic
-decremented by every debit to reached tranches — overstating
-collectible there only under-grants capacity), while **the offence
-FIGURE nets NOMINAL outstanding** (nominal ≥ collectible always, so
-the minted liability never exceeds what backing remains after every
-older promise — the earlier "understatement is protocol-favorable"
-claim was wrong for exactly this read: an understated collectible
-OVERSTATES the net base and mints liability against backing already
-promised to older debts, defeating the zero-net gate and the
-action-time bound). Exactness is needed nowhere; each read leans the
-safe way. Never by
+decremented by every debit to reached tranches). **Never-understated is
+the safety property, tightness is the anti-shield property, and the
+bound has both.** For capacity and admission, overstating collectible
+only under-grants capacity — safe. For the offence base, an
+UNDERSTATED collectible would overstate the net base and mint liability
+against backing already promised to older debts (the earlier
+"understatement is protocol-favorable" claim was wrong exactly there,
+defeating the zero-net gate and the action-time bound) — an upper bound
+cannot understate, so that direction is closed. And netting NOMINAL is
+NOT an acceptable substitute even though nominal is also
+never-understated: nominal's slack is unbounded, so a mostly-extinguished
+old debt becomes an offence shield — 100 nominal collecting 1 discounts
+the next offence by 100 while the capacity read subtracts ~1, near-full
+capacity at near-zero penalty. The cached bound's slack is instead
+capped by the reachable-backing heuristic, which already tracked the
+tranche exhaustion (it reads ~1 in that example, not 100), and every
+cursor-driven collection pass floors it toward exact — run the pass
+first when a material offence makes the residual slack worth closing;
+settlement is separately retryable, so the pass composes. Exactness is
+needed nowhere; both reads lean the safe way on the same figure. Never by
 walking the list inside the adjudication** (the mixed-segment list is
 explicitly growable, and an adjudication forced to traverse it to price
 the offence runs out of gas exactly when the offender has grown the
