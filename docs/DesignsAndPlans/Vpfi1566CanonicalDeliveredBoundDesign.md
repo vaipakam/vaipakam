@@ -1385,8 +1385,13 @@ durable rather than a snapshot of one moment.
 Slices 1–3 remove USER value from the shared balance. They do nothing about
 payroll, either buyback state, the routed budgets, or the next owner nobody has
 written yet. Since §5b establishes that enumerating those owners cannot be
-completed, this slice IS the delivered bound — so it and slice 5 are the same
-work approached from two sides.
+completed, this slice IS the delivered bound — closure 1's canonical half,
+approached from the custody side. (An earlier revision called this and
+slice 5 "the same work approached from two sides", which contradicted
+slice 5's own definition — closures 2 and 3, independent of the above —
+and the sequencing section that runs the three closures in parallel. The
+same-work claim is withdrawn; the slice boundaries are as each slice
+defines them.)
 
 **Canonical `received` is not inherited from the mirror case, and this slice
 CHOOSES its ingress rather than asking an implementer to.** An earlier revision
@@ -1899,13 +1904,7 @@ delivery and nobody to report to.**
 | 10 | `RewardReporterFacet.setIsCanonicalRewardChain:1301` | same, canonical side | yes | n/a | **yes** |
 | 11 | `LibInteractionRewards._walkSideDays:1823` | pool pricing / schedule funding | canonical schedule | mirror-delivered | **0 — must NOT fall through to canonical schedule** |
 | 12 | `LibInteractionRewards.sweepExpiredEntry:3245` | expiry accounting source | canonical | mirror | **mirror-shaped, bound 0** |
-| 13 | `LibInteractionRewards._entryExecutableNow:3776` | may this entry execute now | **if funded, measured VINTAGE-BLIND** (was "always") | **same — see note** | **if the PREPARED transport coverage plus the eligible ERA BALANCE covers it** (live headroom stays 0). The predicate is a VIEW and cannot run the bounded batch scan — coverage spread across more small batches than one scan permits would read false forever, the sweep never reaching the allocator it needs to become true. So discovery is a separate, permissionless, stateful **PREPARATION operation**: it runs the paginated scan-and-stage machinery for an obligation ahead of time, accumulating staged coverage across calls, and the predicate reads the O(1) result — staged total plus cursor-visible balance, **applied through the same per-day TWO-LEG allocation as settlement BEFORE any drought check runs**: the recycled drought test compares recycled need against the bucket first today, so a transport-backed recycled claim (the 5-fresh/5-recycled example) would read non-executable against an empty bucket even with full prepared coverage — the drought computes on the recycled residual NET of prepared transport, the fresh check likewise on its net leg. Prepare until covered, then the clock and the sweep see it — both legs. **The
-prepared-coverage term is ROLE-COMMON, not Detached-only**: legacy
-packets route into the transport epoch after reattachment and after
-permanent promotion too, and their targeted obligations must consume it
-before era/live funding under every role — a retired claim backed
-solely by a late batch must read executable on Canonical and Mirror
-exactly as on Detached, or its era never terminalizes |
+| 13 | `LibInteractionRewards._entryExecutableNow:3776` | may this entry execute now | **if funded, measured VINTAGE-BLIND** (was "always") | **same — see note** | **if the PREPARED transport coverage plus the eligible ERA BALANCE covers it** (live headroom stays 0). The predicate is a VIEW and cannot run the bounded batch scan — coverage spread across more small batches than one scan permits would read false forever, the sweep never reaching the allocator it needs to become true. So discovery is a separate, permissionless, stateful **PREPARATION operation**: it runs the paginated scan-and-stage machinery for an obligation ahead of time, accumulating staged coverage across calls, and the predicate reads the O(1) result — staged total plus cursor-visible balance, **applied through the same per-day TWO-LEG allocation as settlement BEFORE any drought check runs**: the recycled drought test compares recycled need against the bucket first today, so a transport-backed recycled claim (the 5-fresh/5-recycled example) would read non-executable against an empty bucket even with full prepared coverage — the drought computes on the recycled residual NET of prepared transport, the fresh check likewise on its net leg. Prepare until covered, then the clock and the sweep see it — both legs.<br>**The prepared-coverage term is ROLE-COMMON, not Detached-only**: legacy packets route into the transport epoch after reattachment and after permanent promotion too, and their targeted obligations must consume it before era/live funding under every role — a retired claim backed solely by a late batch must read executable on Canonical and Mirror exactly as on Detached, or its era never terminalizes |
 | 14 | `LibInteractionRewards.deliveredFreshBound:4211` | THE bound | **delivered** (was `max`) | delivered | **0** |
 
 **Two rows carry the whole risk and are worth reading twice.** Row 11 is where
@@ -2447,8 +2446,17 @@ revision unimplementable:
      plan can need is derivable from the snapshot's recorded domain size
      (a counter the domain already maintains O(1)); a commitment
      declaring more than `ceil(size / pageSize) + slack` is refused
-     BEFORE it takes the slot, and a protocol ceiling backstops the
-     formula. Without the cap, page-proportional time is an attack
+     BEFORE it takes the slot. **And no FIXED protocol ceiling sits above
+     the formula** — an earlier revision added one as a backstop, but the
+     snapshot can legitimately be wide (the legacy lane mints arbitrarily
+     many small batches), and a ceiling binding below the snapshot's real
+     need makes the complete plan INEXPRESSIBLE: an incumbent fills every
+     permitted page while omitting one coverable obligation, the strict
+     superset needs one page more than the ceiling allows, and the
+     inferior incumbent settles — the always-expressible guarantee broken
+     by the guard rail. The snapshot-derived cap needs no backstop: its
+     input is the chain-recorded domain size, not anything an attacker
+     declares. Without the cap, page-proportional time is an attack
      surface by itself: declare an enormous count, occupy the slot, and
      the linearly-scaled bond buys an arbitrarily long freeze of every
      unrelated obligation, repeatable after each forfeiture. With it,
@@ -3614,10 +3622,10 @@ the chokepoints, each handing in its fresh component rather than its total:
 `LibInteractionRewards:1825`. The other two are **administrative state
 transitions, not outflows**, and must be retained and redefined in place:
 
-- `RewardReporterFacet:1152-1153` — the role-change assignment
+- `RewardReporterFacet:1287-1289` — the role-change assignment
   (`if (paid < received) paid = received`). Delete it and an old delivered
   residual becomes reusable after a mirror role transition and reattachment.
-- `RewardReporterFacet:1268` — `seedArmedFreshPaid`. Delete it and a migrated
+- `RewardReporterFacet:1397` — `seedArmedFreshPaid`. Delete it and a migrated
   deployment has no way to initialize, which is the very migration answer the
   next clause asks for.
 
@@ -3761,9 +3769,14 @@ caveat: for the legacy lane the epoch STAYS OPEN.** It is ADMIN-gated and
 paused per entry, so what it costs is an administrative surface that never
 formally closes. That is strictly better than a finalization which can occur
 while an executable delivery is still in flight, which is what any deadline or
-synthesised terminal would give. If the operator later establishes out-of-band
-that a lane is drained, closing it is their decision on evidence — not a rule
-this document can state in advance.
+synthesised terminal would give. And no out-of-band belief changes that: an earlier revision let the
+operator close a lane "on evidence" they had established off-chain, which
+is a finalization without an observed terminal — exactly what the
+open-epoch contract forbids, because a still-executable packet delivered
+after such a closing is permanently unclassifiable and its VPFI strands.
+The legacy epoch stays open, without exception; what an operator's
+off-chain confidence buys is the decision to stop watching, never a state
+transition.
 
 **The reconciliation is ATOMIC over BOTH shares, not just the fresh one.** A
 pre-d2 delivery passes both component shares as zero, so `onRewardBudgetReceived`
