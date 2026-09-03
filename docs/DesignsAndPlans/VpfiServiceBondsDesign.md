@@ -376,7 +376,11 @@ existing rotation event carries only token addresses, and a dormant,
 lost-key, or sanctions-frozen owner may never touch their record, so
 without the epoch event an indexer never learns the non-enumerable
 partition moved) — and each deposit's archival claim MATERIALIZES lazily on
-its owner's next touch, carrying its principal, reservations, and
+**ANY operation addressing the record — proof, cleanup, settlement,
+withdrawal, or owner touch alike** (owner-only materialization let a
+dormant offender dodge post-rotation settlement forever: the preserved
+old-token reservation must be debitable by a third-party prover whether
+or not its owner ever returns), carrying its principal, reservations, and
 liabilities per the migration rules and emitting its migration event
 then. Rotation gates on the epoch flip, not the materialization count.
 An earlier revision called draining "simpler" and preferred it, which lets an
@@ -1436,7 +1440,14 @@ nobody's liability moves; no iteration occurs. A compromised or mistaken fast
 key can therefore inconvenience, but cannot amnesty and cannot confiscate.
 
 **2. INVALIDATION — governance, timelocked, and only after a quarantine.
-Resolution stays PER-EPOCH even though the quarantine was verifier-global.**
+Resolution is PER-EPOCH for CONFIG faults — and O(1) VERIFIER-SCOPE for
+CODE faults**: a code compromise taints every epoch the verifier backs,
+so restoring the verifier-wide flag after invalidating only some epochs
+reopens forged-proof submission through the rest, while requiring every
+historical epoch invalidated first makes recovery unbounded. A code
+fault invalidates the verifier's CODE GENERATION in one write (every
+dependent epoch reads it, exactly as they read the quarantine flag);
+per-epoch invalidation remains for epoch-local configuration faults.**
 Governance decides between **restore** (the suspicion was wrong: the
 verifier's flag lifts, horizons resume everywhere it applied) and
 **invalidate** (the verifier is genuinely broken: the affected epochs'
@@ -2444,8 +2455,14 @@ against a net base of zero — a formula fed
 the whole deposit re-prices all 1,000 units at the next bucket touch
 after a retune and silently activates the excess without its arming fee,
 the exact bypass the eligibility split exists to prevent. The excess is
-therefore recorded as **capacity-INELIGIBLE until separately ARMED**, and
-the arming call charges the fee on the capacity being activated — the fee
+therefore recorded as **capacity-INELIGIBLE until separately ARMED — by
+the OPERATOR, or under the same single-use epoch-bound signed operator
+authorization as a delegated deposit**: arming transforms previously
+ineligible principal into fresh slash-reachable exposure and consumes
+the operator's bounded tranche state, and a screen that checks only the
+fee payer lets a hostile third party pay the flat fee to expose another
+operator's excess to future liabilities. The arming call charges the
+fee on the capacity being activated — the fee
 tracks capacity granted, whichever transaction grants it.
 
 **And withdrawals drain the INELIGIBLE excess first, deterministically.**
