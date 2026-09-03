@@ -380,7 +380,13 @@ partition moved) — and each deposit's archival claim MATERIALIZES lazily on
 withdrawal, or owner touch alike** (owner-only materialization let a
 dormant offender dodge post-rotation settlement forever: the preserved
 old-token reservation must be debitable by a third-party prover whether
-or not its owner ever returns), carrying its principal, reservations, and
+or not its owner ever returns) — **with ADJUDICATION committing O(1)
+against the record id, never waiting on the materialization cursor**: a
+durable liability attaches to the archived record in the adjudication's
+own committed transaction and reconciles into the materialized claim as
+the resumable migration catches up, or an operator with a large
+overflowed mixed list lets a valid pending proof age out during
+post-rotation migration and recovers its reservation, carrying its principal, reservations, and
 liabilities per the migration rules and emitting its migration event
 then. Rotation gates on the epoch flip, not the materialization count.
 An earlier revision called draining "simpler" and preferred it, which lets an
@@ -1522,7 +1528,15 @@ same 10 surviving units collect 10 between them in recording order, never
 per debt double-counts exactly there — the read withholds 20 of backing
 that holds 10, and the phantom half discounts later offences). And
 **every base that nets liabilities nets
-the COLLECTIBLE figure, not the nominal**: the synchronous offence base
+the COLLECTIBLE figure, not the nominal — read from a CACHED
+per-partition outstanding-collectible aggregate, maintained O(1) at
+every liability creation, collection, and extinguishment, never by
+walking the list inside the adjudication** (the mixed-segment list is
+explicitly growable, and an adjudication forced to traverse it to price
+the offence runs out of gas exactly when the offender has grown the
+queue — queue growth as a slash escape; the full recording-order walk
+with the shared residual belongs to COLLECTION, where the resumable
+cursor already governs it): the synchronous offence base
 included, which otherwise lets a mostly-extinguished old debt (25
 recorded, 1 still reachable after delayed proofs consumed its tranche)
 discount new offences against a fresh 100-unit deposit it cannot touch.
