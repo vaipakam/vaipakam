@@ -2218,7 +2218,7 @@ revision unimplementable:
      day unfunded though other sources covered the early one. So an
      arrived obligation draws such a batch only for what its OTHER
      eligible sources cannot cover; the batch's remainder stays for the
-     unarrived days until they arrive, terminal, or láre dispositioned —
+     unarrived days until they arrive, terminal, or are dispositioned —
      and a late day still short then follows the late-obligation
      machinery as before.
 
