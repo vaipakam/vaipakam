@@ -936,7 +936,18 @@ decides who eats a loss nobody has acknowledged. Four rounds of review found
   party's rebate **irreversibly**.
 
   So the scan carries an explicit **precondition: a configured authoritative
-  oracle — and so does EVERY LATER PARKED RELEASE, because the scan's
+  oracle — checked PER ROW, in the delivering transaction, not once
+  before the first page.** A paginated migration outlives any
+  scan-start check: the oracle can die between pages, and
+  `mustFreezeParty` returns `false` for an address never previously
+  recorded — a later page would treat "unavailable" as "clean" and
+  irreversibly deliver and clear that holder's rebate. Each IMMEDIATE
+  delivery therefore requires an authoritative `Clean` read in its own
+  transaction; a `Flagged` row parks, and an `Unavailable` row parks
+  TOO (the parked lifecycle already re-screens at release, so parking
+  on outage costs only latency, while delivering on outage is the
+  irreversible payment the parking exists to prevent). **And the same
+  holds for EVERY LATER PARKED RELEASE, because the scan's
   precondition protects only the scan.** Unset the oracle after migration
   and `mustFreezeParty` returns false for the very payee whose confirmed
   flag parked the value: the release path makes the irreversible payment
@@ -2446,7 +2457,19 @@ revision unimplementable:
      about coverage, so free suspension let anyone stall every contested
      allocation with unfinishable roots at gas cost — the bond prices
      the delay, the exclusivity bounds it, and the forfeiture funds the
-     obligations the stall delayed). The activation is an **O(1) ACTIVE-ROOT switch**: each plan's staging
+     obligations the stall delayed). **And every lapse or loss is
+     followed by a SETTLEMENT-ONLY GRACE before the slot can be
+     retaken**: capping and pricing each occupation bounds one round,
+     not the number of rounds — a forfeiture-willing attacker could
+     otherwise re-commit the instant a deadline lapses and keep every
+     settlement, sweep, and era terminalization deferred forever, buying
+     round after round. During the grace the domain flag clears for
+     settlements and draws (deferred work executes; incumbents ready to
+     settle settle) and no new commitment is accepted; its length is
+     bounded and proportional to the work deferred during the freeze.
+     So repeat occupations alternate a paid, bounded freeze with a
+     window of guaranteed progress — indefinite deferral is structurally
+     unavailable at any bond budget. The activation is an **O(1) ACTIVE-ROOT switch**: each plan's staging
      lives under its own root with per-plan shadow accounting, the
      switch changes which root is ACTIVE in one write, stale-plan state
      is inert from that instant (every consumer checks the active root),
@@ -2948,8 +2971,20 @@ revision unimplementable:
    an acked lifecycle — before this lane's source-freeze + watermark
    terminal is meaningful; until it ships, a post-transition arrival on
    the LEGACY buyback wire is indistinguishable from a send for the new
-   binding and takes quarantine (park, recorded-disposition tombstone),
-   never credit. And the commit functions gain the canonical-role
+   binding and takes quarantine — **a SUCCESSFUL new ingress branch with
+   specified custody, not a rejection and not a suppressed credit**. The
+   current receiver transfers the tokens to the Diamond and then calls
+   `absorbRemittance`: rejecting rolls the whole delivery back into the
+   transport layer of a retired lane, while merely suppressing the
+   budget credit leaves untracked tokens in shared custody — stranded
+   or spendable by foreign outflows. The quarantine branch atomically
+   moves the delivered tokens into the protected holder's PACKET-KEYED
+   quarantine row (`keccak(sourceChainId, messageId)`), records the
+   packet identity, and exits ONLY through the recorded-disposition
+   terminal: owner-dispositioned repatriation to the source, or a
+   recorded release into the live budget if the binding proves live —
+   each debiting the row atomically with its executed accounting. Never
+   a plain credit. And the commit functions gain the canonical-role
    check the audit's what-state-can-move test demands — **which is half
    the gate: an order COMMITTED before the transition stays fillable
    through `IntentDispatchFacet.preInteraction`/`postInteraction`,
@@ -3135,7 +3170,20 @@ revision unimplementable:
    unverifiable lane's loss is an owner decision, written down) — and a
    lane surfacing OUTSIDE the committed universe later follows the
    straggler path: local tombstone, charged-side release against its own
-   ledger, never silent — **VERSIONED, with the ceremony pinned to one
+   ledger, never silent — **and the straggler path serves only FUTURE
+   arrivals, so ALREADY-LANDED omissions get a registration path of
+   their own**: a pre-upgrade kind-8/9 instruction from an omitted lane
+   already sits as a `PENDING` key in the non-enumerable
+   `repatInstructionState` mapping, no packet will ever surface to
+   create its tombstone, and certification passes without it — leaving
+   the mirror-only execute/cancel paths unreachable and the Base
+   authorization charged forever. So a permissionless POST-PROMOTION
+   registration exists permanently: present the instruction key, the
+   contract verifies `repatInstructionState[key] == PENDING` by direct
+   read (the state is on-chain and provable even though the mapping is
+   not enumerable), and registration creates the role-agnostic
+   triple-key tombstone whose charged-side release lands on the issuing
+   deployment's own ledger — **VERSIONED, with the ceremony pinned to one
    version**: lane mutations are frozen for the ceremony's duration (or,
    equivalently, any registry change bumps the version and voids every
    attestation gathered under the old one), because a lane configured
