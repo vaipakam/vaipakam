@@ -1139,8 +1139,10 @@ A pure relocation: every code line identical, storage and selectors
 unchanged.
 
 **#1219 service bonds** — legal glance DISCHARGED (the ratified
-no-yield refundable-deposit shape; the remaining open item is the A/C
-owner fork, plus C's fee parameters); slash path →
+no-yield refundable-deposit shape; the remaining open items are FOUR
+owner decisions — the A/C fork, the capacity terms (4×/no-minimum/
+clamp), the unbond option (i)/(ii), and under C the fee parameters);
+slash path →
 `credit(ServiceBondSlash, …)` **only if a slash predicate is ever
 ratified** — the #1219 design's selectable forks ship with NO slash
 path (bonds gate capacity only), which is a done state of the §6 gate,

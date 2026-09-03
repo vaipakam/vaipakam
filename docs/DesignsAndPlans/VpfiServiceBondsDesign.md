@@ -36,9 +36,14 @@ instruction to anyone implementing or writing copy from the top of the file.
 
 1. **No yield, ever.** Bonds earn nothing — not interest, not rewards, not
    fee shares. Posting a bond buys operational capacity, full stop.
-2. **Refundable at will, subject to the sanctions gate** — a deposit, not a
-   purchase. v1 has no unwind delay, because v1 has no evidence that arrives
-   after an operator stops acting.
+2. **Refundable, subject to the sanctions gate and to the owner's pending
+   unbond selection** — a deposit, not a purchase. Under option (i) v1 has
+   no unwind delay (no evidence arrives after an operator stops acting —
+   the design's recommended conclusion); under option (ii) withdrawal
+   completes after the configured delay (7-day default, 3/30 bounds).
+   User-facing copy must not say "at will" until option (i) is actually
+   ratified — the choice is the owner's, and both branches carry
+   acceptance criteria.
 
    **The delay attaches to ANY predicate whose proof can arrive after the
    action — not to the liveness tier specifically.** An earlier revision tied it
@@ -476,6 +481,8 @@ OffenceRecorded(operator, role, kind, refId)   // role, not just operator
 // alone keeps its name: it is an already-merged enum member in LibVpfiRecycle
 // (append-only, reserved, MUST stay unused in v1), and renaming a merged enum
 // member to launder a word out of an internal slot is churn without a user.
+// The record declares `pendingAmount` (unused under option (i), the
+// pending partial-withdrawal amount under option (ii) — see below).
 // v1 under unbond option (i): `state` is `Active` or `SanctionsParked`
 // — nothing else — and `unlockAt` is unused. **Under option (ii) the
 // schema arms a third state, `PendingWithdrawal`, entered by the
@@ -932,10 +939,16 @@ decodes is the same gap one step later.
   The recycle-credit problem that motivated the original rule is then handled
   where it actually lives — a slash resolving against an old-token tranche
   credits per-token, or is settled out of band — not by blocking the rotation.
-  **And no slash settlement executes until its verifier epoch has been FINAL
-  for a bounded challenge delay**: adjudication commits the liability, but
-  the debit stays escrowed through the delay, and a quarantine or
-  invalidation landing within it VOIDS the pending settlement — otherwise an
+  **And no slash settlement executes before its adjudication's stamped
+  `settleAfter`** — the simple, testable form of the finality rule:
+  adjudication commits the liability AND stamps
+  `settleAfter = adjudicationTime + configured challenge delay` (the
+  delay governance-bounded with a positive floor and a ceiling, so a
+  liability is neither instantly settleable nor indefinitely
+  encumbered); the debit stays escrowed until `settleAfter` passes,
+  settlement is permissionless afterwards, and a quarantine or
+  invalidation landing before `settleAfter` VOIDS the pending
+  settlement. Boundary tests straddle the stamp on both sides — otherwise an
   attacker who finds a logical defect in an unquarantined verifier bundles
   the forged-proof adjudication with the permissionless settlement in one
   breath, and the principal is in the recycle bucket (spendable) before the
@@ -3155,8 +3168,17 @@ operator: a one-time clearance would let an operator sanctioned AFTER
 the snapshot simply wait out the timelock and withdraw on stale
 evidence. Anyone may submit adverse evidence during the timelock, and
 governance re-attests before each release batch; an operator newly
-flagged in a re-attestation is excluded and stays frozen. Operators
-the fresh screening clears withdraw once the LONG TIMELOCK
+flagged in a re-attestation is excluded and stays frozen — **and the
+same fresh screening SUPERSEDES a stale persisted marker in the other
+direction**: an operator flagged once but since DELISTED still carries
+the marker, and with the oracle permanently retired nothing can ever
+self-heal it — the ordinary release path and the escape would both be
+closed forever over evidence the authoritative data no longer
+supports. The attestation is derived from the same authoritative
+source a delisting proof would use, so a governance-ratified fresh
+screening that proves such an operator clean CLEARS the marker for the
+escape's release, exactly as an authoritative clean read would have.
+Operators the fresh screening clears withdraw once the LONG TIMELOCK
 elapses (long enough for pending flag evidence to surface and for a
 replacement oracle to be installed if one exists — installing one
 cancels the escape and restores the ordinary rule). The timelock plus
