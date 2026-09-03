@@ -1053,9 +1053,13 @@ record back with it) — **and the base depends on when the offence is recorded:
     reaches `{A,B1}`, `{A,B2}` … never coalesce, where the watermark
     representation collapses them the moment each Bi dies. Distinct
     outstanding liabilities per partition are then bounded by live tranche
-    boundaries — the tranche bound plus one — and settlement iterates a
-    list no longer than the tranche list it already iterates, under the
-    gas argument already made there.
+    boundaries — the tranche bound plus one — IN THE STEADY STATE; where
+    overflow has built a mixed segment, **the resumable cursor governs
+    every path that drains or migrates it** (the mixed list may grow,
+    offender-funded, so no release, collection, or migration path may
+    iterate it whole — bounded per-call steps with a persistent cursor,
+    per the mixed-segment rule, or the release-time loop strands
+    principal the moment the list outgrows a block).
 
   Why three parts (figure, clamp, deferral) rather than something simpler:
   the two one-step rules each failed. A raw-total DEBIT consumes collateral
