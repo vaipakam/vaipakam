@@ -1638,8 +1638,20 @@ collection walk decrements — and
 serves ONE figure for BOTH reads: the O(1) collectible UPPER bound
 (`min(nominal outstanding, reachable-backing heuristic)`, the heuristic
 decremented by every debit to reached tranches). **Never-understated is
-the safety property, tightness is the anti-shield property, and the
-bound has both.** For capacity and admission, overstating collectible
+the safety property, tightness is the anti-shield property — and the
+CACHED bound has the first unconditionally but the second only when
+reach sets do not overlap, so the OFFENCE base takes one further
+step.** Two domains each owing 10 that can reach only the same 10-unit
+tranche, beside a third owing 1 against a separate 100-unit tranche:
+the per-domain terms sum to 21 under a 110 global cap while only 11
+can ever collect — the 10-unit overstatement would shield later
+offences. Reach-overlap competition is exactly what the
+recording-order collection walk already computes, and segments are
+BOUNDED (the bounded-segment rule above), so **the offence base uses
+the reconciled figure from that bounded walk over the affected
+partition's live segments — run or resumed before the base is read —
+while the two-cap cached formula stays the O(1) fast path for
+capacity and admission reads, where overstatement only under-grants.** For capacity and admission, overstating collectible
 only under-grants capacity — safe. For the offence base, an
 UNDERSTATED collectible would overstate the net base and mint liability
 against backing already promised to older debts (the earlier
@@ -2969,14 +2981,23 @@ be "never confirmed" in the next outage and take the fail-open path.
 So **bond PRINCIPAL RELEASE fails CLOSED during oracle outages,
 unconditionally**: `withdrawCapacityDeposit` / unbond require an
 authoritative oracle read in the releasing transaction — `Unavailable`
-defers the release regardless of marker state, for every operator. The
-fail-open liveness posture continues to govern value-INFLOW actions
-(posting, raising, arming) and everything screened for wallets never
-confirmed flagged; what an outage costs a clean operator here is
-latency on principal exit, bounded by the outage — against which the
-alternative is a flag-rollback escape hatch for any operator that can
-revert. The committed first-observation transition remains the honest
-path's bookkeeping; safety no longer depends on it persisting.
+defers the release regardless of marker state, for every operator. And the same rollback defeats marker-dependence on the INFLOW side —
+a flagged contract can invoke a posting while the oracle is healthy,
+receive the refusal, revert its outer frame, and retry during an
+outage as "never confirmed"; under C that moves a sanctioned party's
+non-refundable fee into recycling, the freeze-not-seize violation this
+section forbids. So the WHOLE bond mutation surface — posting,
+raising, arming, AND withdrawal — requires an authoritative oracle
+read in the mutating transaction; `Unavailable` defers them all. The
+fail-open liveness posture survives only OUTSIDE this surface (the
+platform's ordinary never-confirmed screening); what an outage costs
+a clean operator here is latency — on principal exit and on capacity
+changes, both bounded by the outage, with no capital trapped on the
+inflow side because undeposited funds simply stay in the wallet —
+against which the alternative is a flag-rollback escape hatch for any
+operator that can revert. The committed first-observation transition
+remains the honest path's bookkeeping; safety no longer depends on it
+persisting.
 
 **A delayed proof against a CONFIRMED-SANCTIONED operator adjudicates
 without moving the funds.** The blanket per-selector screen cannot simply
@@ -3000,7 +3021,8 @@ earlier revision added "or disposed with the rest of the frozen balance
 under whatever terminal the sanctions machinery prescribes", which is an
 open-ended licence the repository's policy does not grant: frozen funds
 are never seized, redirected, or released, and become claimable only
-after delisting (`LibVaipakam.sol:9850-9854`). The liability stays
+after delisting (`LibSanctionedLock.sol` — `mustFreezeParty` :329 and
+the frozen-claimant record/release machinery :348/:473). The liability stays
 frozen and encumbered until delisting, however long that is — **with
 verifier INVALIDATION as the one qualifier**: the delisting-only
 terminal governs liabilities whose verifier epoch remains valid or is
@@ -3049,7 +3071,7 @@ the two rules meet at a parked adjudication.
   the fail-closed withdrawal path then traps, value moved into custody
   by a sanctioned wallet against the two-party rule): `_assertNotSanctioned` is
   fail-open on an oracle outage and never consults
-  `sanctionsConfirmedFlagged` (`LibVaipakam.sol:9934-9945`), so a payer
+  `sanctionsConfirmedFlagged` (`LibVaipakam.sol:10051`), so a payer
   already confirmed through another path could wait out an outage and
   have a non-refundable fee moved into recycling against freeze-not-
   seize. Previously confirmed payers are rejected during an outage;
