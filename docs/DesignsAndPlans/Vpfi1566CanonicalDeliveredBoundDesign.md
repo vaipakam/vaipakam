@@ -1944,10 +1944,18 @@ entry can expire the moment funding arrives. Switching the row from "always" to
 "if funded" without widening the measurement leaves that gap on both roles, which
 is why the Mirror cell is not unchanged either.
 
-So the predicate compares the claimant's **aggregate vintage-blind fresh need**
-against the delivered bound — the same quantity `_deliverReward` rejects on.
-Anything narrower makes the two disagree, and the expiry clock is the one that
-runs silently.
+So the predicate compares the claimant's **aggregate vintage-blind fresh need
+— capped at `poolRemaining()` first — against the delivered bound**: the claim
+path itself truncates total fresh spend to the pool cap before checking backing
+(`RewardClaimFacet` scales against `poolRemaining()`), so near pool exhaustion
+a claimant with 10 of legacy entitlement, 1 of pool headroom, and 1 delivered
+unit is PAYABLE at 1 — and an uncapped comparison of 10-versus-1 reads the
+entry non-executable, its expiry never accrues, and its retired era can never
+reach the all-obligations terminal over a claim that would succeed. The capped
+aggregate is the same quantity `_deliverReward` actually spends (the
+`_userClaimFundingNeedViewWith` ordering, preserved). Anything narrower — or
+uncapped — makes the two disagree, and the expiry clock is the one that runs
+silently.
 
 **Every canonical cell marked "(was …)" changes WITH slice 4, not only row 14.**
 An earlier revision of this matrix updated the bound and left the canonical
@@ -2992,7 +3000,19 @@ revision unimplementable:
    source-side implications charged forever) — authenticated exactly as
    before, and routed
    solely into the PARKED-MESSAGE lane (acceptance-or-tombstone, as the
-   broadcast rule specifies — an earlier phrasing here said
+   broadcast rule specifies — **and the TIER lane is NOT part of this
+   quarantine, because its consumer keys on a DIFFERENT role**:
+   `MSG_TYPE_TIER_UPDATED` / `MSG_TYPE_VERSION_BUMPED` revert once the
+   messenger's canonical flag flips, yet fee resolution dispatches on
+   the independent `isCanonicalVpfiChain` flag
+   (`LibVPFIDiscount.sol:365-369`) and keeps reading `userTierCache` —
+   so a reward-role promotion that quarantined the tier lane would
+   starve the cache and silently strip users of valid fee discounts as
+   entries age out. The tier-update ingress therefore gates on the
+   VPFI-role flag — the SAME flag its consumer reads — so a
+   reward-role ceremony leaves tier propagation untouched, and only a
+   VPFI-canonical role transition (its own ceremony) ever moves that
+   lane. An earlier phrasing here said
    "parked/transport-epoch machinery", and the transport epoch is
    packet-backed FUNDING that cannot digest a state-bearing broadcast)
    — never to the
@@ -3027,9 +3047,20 @@ revision unimplementable:
    budget credit leaves untracked tokens in shared custody — stranded
    or spendable by foreign outflows. The quarantine branch atomically
    moves the delivered tokens into the protected holder's PACKET-KEYED
-   quarantine row (`keccak(sourceChainId, messageId)`), records the
-   packet identity, and exits ONLY through the recorded-disposition
-   terminal: owner-dispositioned repatriation to the source, or a
+   quarantine row (`keccak(sourceChainId, messageId)`) — **which requires
+   carrying the authenticated transport ID through BOTH buyback seams,
+   the same port change the reward-remittance stamp already mandates**:
+   today `onCrossChainMessage` hands the receiver only source chain,
+   sender, payload, and tokens, and the Diamond ingress
+   `absorbRemittance(token, amount, sourceChainId)` forwards no id
+   either (`BuybackRemittanceReceiver.sol:162-167`, `:20-24`), and a
+   payload-hash fallback is UNSAFE because two valid remittances can
+   carry identical token/amount contents — aliased quarantine rows, one
+   delivery stranded or dispositioned twice. The `transportMessageId`
+   is added to both interfaces (or, failing that, a per-source
+   monotonic ingress sequence allocated at receipt), and the row
+   records the packet identity, exiting ONLY through the
+   recorded-disposition terminal: owner-dispositioned repatriation to the source, or a
    recorded release into the live budget if the binding proves live —
    each debiting the row atomically with its executed accounting. Never
    a plain credit. And the commit functions gain the canonical-role
@@ -3072,7 +3103,18 @@ revision unimplementable:
    corrupting B's denominators or funding A's obligations from B's
    accounting. The ceremony therefore **drains or tombstones every
    locally accumulated unsent output before rebinding** (sent while the
-   old binding stands, or dispositioned), and the send paths gain the
+   old binding stands, or dispositioned) — **where "sent" means RECEIVED,
+   proven by the same gap-free receipt watermark as every other lane,
+   not a local sent-flag**: `sendCommitmentReport` sets its one-shot
+   flag BEFORE dispatch (`RewardCommitmentFacet.sol:168-172`), and a
+   delayed report a demoted destination rejects cannot be resent past
+   that flag — locally "drained", actually lost, the old era stuck or
+   finalized over the missing liability (chain reports share the shape
+   via `chainReportSentAt`). The mirror→Base report lanes therefore
+   join the source-freeze + receipt-watermark family: an output counts
+   drained only when the destination's watermark covers it, and one the
+   old destination can no longer accept is DISPOSITIONED (tombstoned as
+   unservable), never counted sent. And the send paths gain the
    intended-era check on the OUTBOUND side: an output whose originating
    era is not the current binding's era is refused, exactly as inbound
    packets already are. **Which requires the stamp to EXIST and the
