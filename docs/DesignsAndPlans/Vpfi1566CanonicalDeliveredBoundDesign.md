@@ -2209,6 +2209,19 @@ revision unimplementable:
      implications released through the charged-side machinery), never
      applied under a wrong accounting boundary.
 
+     **A batch with UNARRIVED listed days is drawn LAST — necessity only,
+     inverting transport-first for exactly those batches.** A listed
+     member day whose broadcast has not landed is not a "known unmet
+     obligation", so the contested-allocation machinery cannot see it —
+     yet the design itself says these broadcasts arrive late: an early
+     obligation draining a shared batch transport-first leaves the late
+     day unfunded though other sources covered the early one. So an
+     arrived obligation draws such a batch only for what its OTHER
+     eligible sources cannot cover; the batch's remainder stays for the
+     unarrived days until they arrive, terminal, or láre dispositioned —
+     and a late day still short then follows the late-obligation
+     machinery as before.
+
      **The transport balance is UNTYPED, and consuming it writes NEITHER
      the fresh nor the recycled ledger.** The wire authenticates only the
      aggregate, so exposing a mixed packet's whole balance to a targeted
@@ -2252,10 +2265,18 @@ revision unimplementable:
      cannot settle irreversibly before it can be outdone**: a staged
      draw from a batch listed by a known UNMET obligation's day waits
      out a short challenge window before final settlement, during which
-     a superseding plan covering strictly more of the known set
-     displaces it (uncontested allocations settle immediately —
+     a superseding plan displaces it by **covering at least the
+     incumbent's obligations while drawing NO MORE from every contested
+     batch, with at least one strict improvement — more coverage, or
+     strictly less contested-batch usage** ("strictly more coverage"
+     alone fails under block limits: a valid plan already covering the
+     maximum processable count but choosing shared batches poorly could
+     never be outdone by the same-count plan that swaps X→A for Y→A and
+     leaves X for B; the per-batch usage comparison is O(plan size) to
+     verify and captures exactly that swap). Uncontested allocations
+     settle immediately —
      "outdone later" is no remedy once X is spent on A and B's only
-     source is gone). Permissionless improvement, on-chain
+     source is gone. Permissionless improvement, on-chain
      verification, no hardcoded
      greedy to beat — **through a per-day CURSOR that advances past
      exhausted batches permanently, because a bare oldest-first scan is
@@ -2654,8 +2675,14 @@ revision unimplementable:
    mirror report/broadcast authorization surface on a chain that is no
    longer one. So the promotion ceremony flips the flag AND installs a
    **narrow legacy-quarantine route**: broadcasts are accepted
-   post-promotion ONLY from the closed set of legacy source lanes
-   certified at transition, authenticated exactly as before, and routed
+   post-promotion for APPLICATION only from the closed set of legacy
+   source lanes certified at transition — while the **state-free
+   TOMBSTONE leg accepts any TRANSPORT-AUTHENTIC broadcast, certified
+   lane or not** (the any-authentic rule for tombstone legs, stated with
+   the kind-8/9 route: a straggler from an omitted lane otherwise
+   reverts at the messenger before it can be parked or tombstoned, its
+   source-side implications charged forever) — authenticated exactly as
+   before, and routed
    solely into the PARKED-MESSAGE lane (acceptance-or-tombstone, as the
    broadcast rule specifies — an earlier phrasing here said
    "parked/transport-epoch machinery", and the transport epoch is
@@ -2691,7 +2718,15 @@ revision unimplementable:
    recovered rather than stranded behind the new role guard. An
    uncommitted drain over a non-enumerable mapping is a completion
    claim nothing can check — the omitted balance strands the moment
-   the role guard lands.
+   the role guard lands. **And the census is STABLE or it is not a
+   census**: `creditBuybackBudget` stays callable while the promotion
+   setters run, so token T can read zero at the check and be credited
+   before the role flip — inside the committed set, outside the
+   straggler operation's scope. Every buyback-budget producer FREEZES
+   for the ceremony, and any credit landing after the census (a race
+   the freeze missed, an unpaused path) VERSIONS the certification
+   invalid — re-census before the flip, never a certified drain over a
+   moved mapping.
 
    **A direct `setBaseChainId` REBIND (nonzero → nonzero) is PROHIBITED —
    every source-identity change goes through the Detached ceremony.** The
@@ -3324,7 +3359,12 @@ One reconciliation entry, three effects, all or nothing:
    deliberately allows claims to resume before it closes.
 
    So the operation may reclassify at most what remains unspent on the source
-   side; beyond that it requires **replacement funding**, or another
+   side; beyond that it requires **replacement funding ONLY where no
+   authenticated destination ledger inherits the debit** (the boundary
+   stated with the historical-debit rule below: the spent 6/4→4/6
+   correction moves its two-unit debit into recycled-consumed accounting
+   with `paid` reducing alongside — custody conserved, no replacement —
+   and demanding capital there blocks a valid correction), or another
    custody-preserving recovery, rather than a bookkeeping move.
 
    **And it must state what happens to the HISTORICAL DEBIT, not only the
@@ -3687,16 +3727,17 @@ eligible batch emptied by a day-B claim through the global ledger. The
 ONLY route to classification is the acknowledged PARKED-REMAINDER path
 (listed obligations terminal or dispositioned, the batch-bound
 acknowledgment recorded); the general reconciliation path classifies
-no live batch.** The
-arrival landed in the shared Diamond balance (`RewardRemittanceReceiver`
-transfers there), and classification that only debits `uncounted` and
+no live batch.** Classification that only debits `uncounted` and
 credits `received` publishes holder-capped headroom the holder does not
-hold — the legitimate funding is unusable, or unrelated holder custody
-backs it while payroll consumes the actual packet. So classifying a share
-as FRESH **atomically relocates that share from the shared balance into
-the dedicated holder** (delta-checked, same act as the ledger credit), and
-the typed post-upgrade ingresses route their fresh share the same way at
-arrival.
+hold. So classifying a share as FRESH performs an **IN-HOLDER
+reattribution — `UNCLASSIFIED` row to fresh row — for every post-upgrade
+arrival** (which the ingress rule already protected into the holder at
+landing; a shared-balance relocation here would transfer the same
+custody twice or seize unrelated Diamond VPFI), while **HISTORICAL
+pre-holder inventory alone relocates from the shared balance**
+(delta-checked, same act as the ledger credit, under slice 0's
+provenance bar). The typed post-upgrade ingresses route their fresh
+share into the holder at arrival, same as the untyped ones.
 
 **The EXISTING `recycleBucket` balance gets a paused bootstrap
 reconciliation BEFORE the custody switch, and arming gates on it.** An
