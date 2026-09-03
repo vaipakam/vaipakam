@@ -699,6 +699,16 @@ cure; the lien and `protocolTrackedVaultBalance` shadow them. Reduce only
 the snapshot and a claim row still draws the disposed amount; reduce only
 a claim and the migration still moves the full snapshot; leave the loan
 figure and an 80-token cure resumes as a 100-token-collateralized loan.
+**A FAILED fallback retry RESTORES the vault custody it borrowed** —
+`_attemptRetrySwap` is best-effort and returns false when every adapter
+fails, and the backstop's partial-match path can early-return nonterminal
+with the residual snapshot still active — so the retry's preparatory
+lien-release and Diamond-pull must be reversed on failure: collateral
+back to the vault, lien re-incremented, tracked balance and the VPFI
+tier exclusion restored, the exact inverse of the pull. Anything less
+re-creates commingled unprotected custody and silently invalidates the
+completed migration on the first adapter outage.
+
 **And the FULL-REPAYMENT terminal must not re-count the migrated
 snapshot: `RepayFacet`'s branch increments the lien by `held`
 (`RepayFacet.sol:691-695`), which was correct while the snapshot lived in
@@ -2286,9 +2296,22 @@ revision unimplementable:
      debits neither block the challenger's use of the same batch nor
      double-count as available — the two plans never coexist against
      live balances), the challenge completes only when every committed
-     page has been verified, and the activation swaps
-     incumbent-to-challenger in one transition (incumbent's staging
-     released, challenger's applied). Coverage is thereby unbounded by
+     page has been verified — **and a valid challenger COMMITMENT
+     landing inside the window SUSPENDS incumbent settlement** until the
+     challenge completes or its own bounded verification deadline lapses
+     (pagination lifts the per-transaction cap, not the number of
+     transactions a window can hold; without the suspension the
+     incumbent settles mid-verification and the
+     cannot-settle-before-outdone invariant is a race). The activation is an **O(1) ACTIVE-ROOT switch**: each plan's staging
+     lives under its own root with per-plan shadow accounting, the
+     switch changes which root is ACTIVE in one write, stale-plan state
+     is inert from that instant (every consumer checks the active root),
+     and the loser's staging unwinds lazily through bounded resumable
+     steps afterwards — a per-batch replay of both plans' debits and
+     references in one transaction would reintroduce the block-gas wall
+     pagination exists to remove, and no partially switched allocation
+     is ever observable because activity keys on the root, not the
+     unwind Coverage is thereby unbounded by
      any single block and "covers strictly more" is always expressible —
      and expressible IN TIME, since page-staging against live balances
      would have let the incumbent's own debits make the superior plan
@@ -2673,11 +2696,15 @@ revision unimplementable:
    refuses APPLICATION; the typed post-legacy wires, which carry
    identity, keep the plain revert-and-retry.
 1. **Receive while `Detached`** — `onRewardBudgetReceived`,
-   `onCompensationBudgetReceived`, **and ALL THREE reward BROADCAST ingresses —
-   `onRewardBroadcastReceived` (legacy), `onRewardBroadcastV2Received` and
-   `onRewardBroadcastV3Received`** — revert. No
-   receipt is written, no pool, recycle, day or era state moves, nothing to
-   unwind.
+   `onCompensationBudgetReceived`, and the TYPED broadcast ingresses
+   (`onRewardBroadcastV2Received`, `onRewardBroadcastV3Received`) —
+   revert: no receipt is written, no pool, recycle, day or era state
+   moves, nothing to unwind. **The LEGACY `onRewardBroadcastReceived` is
+   the exception that PARKS instead** (a persisted entry with local id
+   and receipt stamp, application refused) — its wire carries no era and
+   no message id, so a reverted receipt erases exactly the state the
+   tombstone protocol keys on and makes the retry indistinguishable from
+   a current-era broadcast, per the parked-lane rule below.
 
    **The broadcasts were missing from an earlier revision of this list**, which
    gated only the two token ingresses and called the lifecycle complete. They
@@ -2867,7 +2894,11 @@ revision unimplementable:
    before reconciliation begins**, because per-manifest authentication
    cannot prove a whole chain was not omitted: reconcile only chain A,
    promote, and chain B's charged authorization strands outside even the
-   kind-8/9 route, which accepts certified lanes only. The universe is
+   kind-8/9 route, whose APPLICATION leg accepts certified lanes only
+   (its state-free tombstone leg takes any transport-authentic packet,
+   per that route's own rule — so an omitted lane's instruction can
+   still tombstone and release, and what the incomplete universe costs
+   is application, not recovery). The universe is
    an **OWNER-COMMITTED lane enumeration, honestly labelled** — the
    messenger's live state cannot supply it: peers live in mappings,
    rebinding clears prior entries, and `backfillChannelPeerIndex` itself
@@ -2932,10 +2963,18 @@ revision unimplementable:
    nothing on the mirror says WHICH. Backfilling both triple keys
    duplicates one instruction; picking either is an operator assertion
    about an authenticated fact. So ambiguous keys are a CERTIFICATION
-   FAILURE, resolved on the charged sides: every Base authorization
-   participating in an ambiguity is **cancelled/released through its own
-   chain's recorded-disposition path**, the mirror-side instruction (whichever
-   it was) is tombstoned with its funds handled through the pending
+   FAILURE, resolved by **TERMINAL-ONLY triple tombstones: BOTH candidate
+   triple keys are persisted directly as `TOMBSTONED`, each carrying a
+   collision marker binding both charged manifests to the single retired
+   legacy row.** Persisting both is safe precisely because the state is
+   terminal-born — the duplication hazard was execution and attribution,
+   and a tombstone-born key can execute nothing — while persisting
+   NEITHER (the earlier wording) made the release unreachable: the
+   attestation gates on a persisted `TOMBSTONED` state, so each Base
+   could never obtain its release and certification could never reach
+   zero. Each charged authorization releases against its own candidate's
+   attestation; the mirror-side instruction (whichever it was) is
+   tombstoned with its funds handled through the pending
    recovery machinery, and certification requires ZERO ambiguous keys
    outstanding. Losing two authorizations to explicit release is
    recoverable; attributing one to the wrong chain is not. **A late kind-8/9 packet needs its own post-promotion route, because
