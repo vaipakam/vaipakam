@@ -1065,6 +1065,22 @@ decides who eats a loss nobody has acknowledged. Four rounds of review found
   (The forfeit terminals need no payee: `forfeitBorrowerLif` routes the whole
   held amount to treasury.)
 
+  **And a consolidation that returns `Skipped` for a FLAGGED current holder
+  parks the entitlement — it must not fall through to the in-vault
+  release.** `consolidateToHolder` skips (never blocks) a Tier-2 close-out
+  whose current NFT holder is sanctioned (`LibConsolidation.sol:108-118`),
+  so after a clean-holder transfer to a flagged transferee, `loan.borrower`,
+  the `vpfiHeld` custody, and the lien all still point at the FORMER
+  holder's vault at terminal time. Running the normal release there frees
+  the rebate as withdrawable value in the stale vault and consumes the
+  claim entitlement — the former holder is paid, the current holder loses
+  the rebate. On a `Skipped` result the terminal instead moves the rebate
+  into PROTECTED claim-bound custody with the current `ownerOf` recorded
+  as the frozen claimant, released only through the fail-closed parked
+  lifecycle (authoritative re-screen of the re-resolved holder at release,
+  as the migration's parked rows already require). The close-out itself
+  still completes — skip-not-block — only the entitlement waits.
+
 - **Both terminal consumers are rewritten, not just the lien.**
   `settleBorrowerLifProper` transfers the matcher and treasury shares from
   Diamond custody today, and `forfeitBorrowerLif` does the same for the whole
@@ -2338,7 +2354,17 @@ revision unimplementable:
      same need is INVALID (the check reads balances the chain already
      holds), because such an allocation is invisible to the contested
      machinery and would settle immediately over the late day's only
-     backing. The transport-first rule is qualified the same way — it
+     backing. **And the check runs AGAIN AT SETTLEMENT, against the
+     balances of that moment** — a draw validly necessary at the
+     pinned snapshot stops being necessary when live or bucket funding
+     arrives before settlement, and a challenger cannot displace it
+     (same coverage is not a strict superset), so snapshot-time
+     validity alone lets the plan consume the unarrived day's only
+     backing while cheaper funding sits unused. A drawn leg failing
+     settlement-time necessity is refused and re-covered from the
+     now-available funding in the same settlement pass — by
+     construction that funding suffices for the need the batch would
+     have covered. The transport-first rule is qualified the same way — it
      never applies to a batch with unarrived listed days. The batch's
      remainder stays for the
      unarrived days until they arrive, terminal, or are dispositioned —
@@ -2761,10 +2787,24 @@ revision unimplementable:
        typed source's remaining demand across the whole obligation,
        and each day's matching transport relieves the leg whose typed
        source carries the greater system-wide deficit (ties
-       fresh-first). With one shared fresh source and one shared
-       recycled source, relieving the more-contested source first is
-       globally optimal by the exchange argument — the pass finds a
-       feasible assignment whenever one exists.** Days A
+       fresh-first). **The exchange argument holds ONLY while every typed source is
+       SHARED — membership-constrained batches break it.** Day A
+       needing 1F/1R with an A-only 1-token batch, day B needing 1F
+       with a B-only 1-token batch, shared 1F/0R: both system-wide
+       deficits are 1, fresh-first parks A's batch on fresh, and A's
+       recycled need fails against a batch B's membership cannot serve
+       — while A-batch→recycled, B-batch→fresh, live-fresh→A settles
+       everything. With per-day batches the leg assignment is a
+       bipartite feasibility problem, so the deterministic pass is the
+       DEFAULT, not a completeness claim: it is what settlement-direct
+       and `_entryExecutableNow` run, it finds a feasible assignment
+       whenever one exists over shared sources alone, and where
+       membership constraints defeat it the JOINT leg allocation is
+       supplied as part of a staged PLAN — computed off-chain, checked
+       on-chain by the same balance, membership, and necessity rules
+       (validity-not-optimality, as everywhere in this machinery). A
+       fully-backed claim the default pass cannot settle is exactly
+       what the permissionless-preparation path exists to settle.** Days A
        and B each needing 5/5, with 5 live fresh, 5 bucket, and a
        matching 5-batch per day: independent evaluation sees both typed
        legs "funded" twice, assigns no transport, and the aggregate
@@ -4051,7 +4091,23 @@ each classification entry records ITS era-side's cumulative prefix at the time
 it landed; an entry's credit is SPENT to the extent that era-side's
 cumulative outflow total exceeds its recorded prefix —
 `spent = clamp(sideOutflowTotal − prefixBefore, 0, credit)` — a pure
-derivation from totals already kept, no per-outflow bookkeeping. A
+derivation from totals already kept, no per-outflow bookkeeping.
+**Sound only while the sequence is APPEND-ONLY and the counters
+MONOTONE — so no correction may decrement `sideOutflowTotal` or edit
+an earlier entry's stored prefix.** If reclassifying two spent units
+of a 6-credit entry A also dropped the side's outflow total 7 → 5,
+a later entry B (prefix 6, 4 credit, truly 1 spent) would read
+`clamp(5 − 6, 0, 4) = 0` — a unit that already funded a payout
+becomes movable, under-backed custody by successive corrections. The
+retain-`paid` rule above is therefore load-bearing HERE too: a
+corrected spent split moves its debit to the other side's CONSUMED
+accounting while this side's cumulative outflow total is RETAINED
+(with the totals retained, A rereads as 4-of-4 spent, B as 1 — every
+figure right with no prefix rewritten); where the delivered-bound
+arithmetic takes a registered corrective paid-debit, that debit
+applies to the HEADROOM aggregate, never to this FIFO's sequencing
+counter — the two run on the same events but the ordering counter
+only ever grows. A
 correction may move only the provably-UNSPENT **and UNRESERVED**
 remainder under that order without further requirement — beyond it,
 replacement custody is required **only for a spent debit no
