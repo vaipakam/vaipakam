@@ -148,12 +148,21 @@ instruction to anyone implementing or writing copy from the top of the file.
    different states with opposite meanings**. `sanctionsOracle ==
    address(0)` is the deliberate DISABLED state (`setSanctionsOracle`
    zero semantics; the FunctionalSpecs require chains without a
-   configured oracle to treat the check as a no-op): screening is off,
-   a retained confirmed marker is history rather than an enforced
-   freeze, and withdrawal proceeds through the ordinary path — else the
-   configure → flag → deliberately-disable sequence strands principal
-   until an oracle is installed again. The fail-closed release gate
-   applies to an OUTAGE of a CONFIGURED oracle only. So: **record the
+   configured oracle to treat the check as a no-op) — **and the no-op
+   governs SCREENING: fresh checks on wallets never confirmed flagged
+   flow freely. It does NOT release a CONFIRMED-frozen balance.** The
+   central frozen-proceeds policy is explicit that an unreachable **or
+   unset** oracle blocks the release of confirmed-frozen funds — the
+   recorded party must be proven de-listed before value moves, and a
+   delisting proof requires a reachable oracle. So in the
+   configure → flag → disable sequence the confirmed balance STAYS
+   parked (that is the central policy's chosen trade, not a defect of
+   this custody class); what the disabled state changes is that no NEW
+   confirmations or freezes arise, and never-confirmed operators are
+   wholly unaffected. An earlier revision of this branch released
+   confirmed balances on disable, which was a sanctions-release bypass
+   — governance wanting that outcome changes the central policy, not
+   one custody class's reading of it. So: **record the
    confirmed flag, and while an oracle is configured, release a
    flagged balance only through the fail-closed check**, while operators never
    confirmed flagged keep the ordinary fail-open path — an outage must not freeze
@@ -2539,11 +2548,15 @@ The M7 completion gate would stay permanently unmet while the feature is
 finished — the worst combination, because nothing in the programme would ever
 signal that it is waiting on something impossible.
 
-So whichever of A or C is selected, the plan's §6 clause is amended in the same
-change: a **third done state — shipped without a slash path**, on the reasoning
-in this note, with `ServiceBondSlash` remaining an unused enum slot reserved for
-the attested tier. That amendment is part of the fork decision, not a follow-up
-to it.
+Both selectable forks ship without a slash path, so the amendment is
+fork-INDEPENDENT — and it therefore lands **with this note**, not with the
+fork decision: the plan's §6 clause gains a **third done state — shipped
+without a slash path by ratified design**, with `ServiceBondSlash` remaining
+an unused enum slot reserved for the attested tier, and the plan's M6 build
+instruction is qualified the same way. (An earlier revision deferred the
+amendment to the fork decision, which left a finished A-or-C implementation
+permanently blocked by the programme gate in the meantime — the exact
+waiting-on-something-impossible state this paragraph diagnoses.)
 
 *What C restores, precisely:* the **permanent SINK**, not the performance
 bond. An earlier draft said it "restores the objective" and that overclaimed
@@ -2619,8 +2632,15 @@ the exact bypass the eligibility split exists to prevent. The excess is
 therefore recorded as **capacity-INELIGIBLE until separately ARMED — by
 the OPERATOR, or under the same single-use epoch-bound signed operator
 authorization as a delegated deposit**: arming transforms previously
-ineligible principal into fresh slash-reachable exposure and consumes
-the operator's bounded tranche state, and a screen that checks only the
+ineligible principal into fresh CAPACITY eligibility and consumes
+the operator's bounded tranche state — **and arming is NOT slash
+enrollment**: a tranche becomes confiscatable only when the separate,
+affirmative predicate-enrollment state is ALSO present (recorded
+independently, per the enrollment rule above). An operator may arm
+solely to buy the current non-slashable capacity product; treating
+that authorization as consent to a later predicate's terms would
+expose their principal retroactively — the exact retroactivity the
+enrollment rule forbids — and a screen that checks only the
 fee payer lets a hostile third party pay the flat fee to expose another
 operator's excess to future liabilities. The arming call charges the
 fee on the capacity being activated — the fee
@@ -2747,8 +2767,17 @@ reach. "Non-zero" was the earlier wording and it is satisfiable while every
 zero-bond operation is still refused: cost units are deferred to implementation,
 so a role's minimum action charge can exceed a merely positive floor and the
 free bucket never accumulates one action's worth — governance compliant, product
-converted. **Operation at the configured floor is the acceptance case**: a
-zero-bond operator performs one minimum-cost action of each role.
+converted. **And the floor is sized per CLASS, not per role**: a role may carry
+several action-cost classes, and a floor that only fits the cheapest
+class silently bond-gates every dearer one — the free bucket's ceiling
+equals the free tier, so a class whose cost exceeds it can NEVER
+accumulate one action's credit, permissionless in name only. The free
+tier accommodates at least one action of EVERY permissionless class
+(or the design uses separate class-specific allowances).
+**Operation at the configured floor is the acceptance case**: a
+zero-bond operator performs one action of the MOST EXPENSIVE
+permissionless class of each role — exercising the cheap class proves
+nothing about the ones a wrong floor would convert.
 
 **A zero floor collapses C into A silently.** Governance could later tune the
 flat fee to zero while bond posting and raising stayed enabled — no absorption,

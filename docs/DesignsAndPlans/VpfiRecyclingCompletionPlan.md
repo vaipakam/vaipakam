@@ -1038,7 +1038,10 @@ perks complete only in a decided state (glance passed + built, or an
 explicit owner deferral recorded on #1204).
 **#1219 service bonds** — schedule the legal glance now (the bounded
 review slot the excision doc recommends); slash path →
-`credit(ServiceBondSlash, …)` on build.
+`credit(ServiceBondSlash, …)` **only if a slash predicate is ever
+ratified** — the #1219 design's selectable forks ship with NO slash
+path (bonds gate capacity only; the enum slot stays reserved), which is
+a done state of the §6 gate, not a pending one.
 
 ### M7 — Activation ceremonies (runbook, not code — nothing is real until this)
 
@@ -1548,7 +1551,12 @@ constituent cards below remain the working tickets.
    #1204; **service bonds (#1219) in a DECIDED state** — either the
    legal glance passed and the slash path (`credit(ServiceBondSlash, …)`)
    built and live, **or** an explicit owner deferral recorded on #1219
-   (the same completed-deferral treatment as the conversion classes) —
+   (the same completed-deferral treatment as the conversion classes),
+   **or — per the ratified #1219 design — shipped WITHOUT a slash path**:
+   both selectable bond forks carry no confiscation predicate, so bonds
+   gate capacity only, `ServiceBondSlash` stays a reserved unused enum
+   slot, and nothing enters recycling from bonds in this state (the
+   mesh's completeness is unaffected — there is no flow to account for) —
    "pending" is not a done state; conversion classes (borrower
    LIF-in-VPFI, yield-fee-in-VPFI, matcher remainders) explicitly
    **market-era deferred** behind the single §14 legal item — deferral
