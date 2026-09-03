@@ -2218,7 +2218,17 @@ revision unimplementable:
      exists for typically arrive while `Detached`, AFTER retirement: a
      watermark-bounded gate ignores exactly the delayed packets it was
      built to hold, finalizing the era over a parked state-bearing
-     broadcast. The
+     broadcast. **And the boundary gates only the TERMINAL — it never
+     certifies a later arrival as belonging to the new era.** A legacy
+     broadcast still in CCIP when the next era opens carries no era and
+     no message id, so after reattachment it is indistinguishable from
+     a fresh-era broadcast, and the legacy lane has no provable source
+     terminal that could rule it out; treating the opening as proof of
+     membership would install old-era day state after the prior era
+     finalized. So an era-less legacy broadcast FIRST RECEIVED after
+     the next era's opening is **QUARANTINE-ONLY**: it parks and exits
+     solely by tombstone with a recorded disposition — the live-era
+     gate's apply branch is closed to it, permanently. The
      tombstone discharges the parked ENTRY by its id — no unknowable
      era named, no wrong terminal releasable. Once
      a retry has been REFUSED by the live-era gate (the evidence it
@@ -2320,16 +2330,22 @@ revision unimplementable:
      transactions a window can hold; without the suspension the
      incumbent settles mid-verification and the
      cannot-settle-before-outdone invariant is a race) — **through ONE
-     BONDED exclusive challenger slot, with the batches NAMED in the
-     commitment FROZEN for the challenge's duration**: no settlement —
-     contested or uncontested — and no new draw touches a named batch
-     until the challenge completes or lapses, because the pre-incumbent
-     snapshot the pages verify against is only meaningful while those
-     balances hold still (an uncontested settlement or a late-arriving
-     obligation could otherwise consume a snapshotted batch
-     mid-verification, activating a plan no longer fully backed). The
-     freeze is bounded by the challenge deadline the bond already
-     enforces. A commitment posts a bond
+     BONDED exclusive challenger slot — and the SLOT ITSELF is the
+     freeze, a single O(1) transport-domain flag, not a per-batch
+     mark**: a paginated plan names an unbounded number of batches, so
+     the commitment transaction cannot enumerate and mark each one
+     frozen, a root alone cannot let an ordinary draw prove its batch
+     ABSENT from the committed set, and freezing batches only as pages
+     verify leaves the unprocessed snapshot balances mutable — the
+     under-backed activation race by another door. While the slot is
+     occupied, ALL final settlements and new draws across the contested
+     obligation's transport domain defer (one flag, read by every
+     settlement and draw path), because the pre-incumbent snapshot the
+     pages verify against is only meaningful while those balances hold
+     still. The freeze is global but BRIEF — bounded by the challenge
+     deadline the bond already enforces — and the uncontested world's
+     bounded delay is priced by the bond and funded by its
+     forfeiture. A commitment posts a bond
      forfeited if the challenge lapses unfinished, and a second
      challenger waits for the slot (a bare commitment proves nothing
      about coverage, so free suspension let anyone stall every contested
@@ -2806,10 +2822,47 @@ revision unimplementable:
    executing after the destination detached or demoted credits (and can
    spend) funds on the retired canonical deployment, while the buyback
    transition section drains only the OUTGOING side. This ingress takes
-   the same era-bound refusal/quarantine as the other token ingresses,
-   the in-flight drain covers it (source freeze + contiguous watermark,
-   as for every lane), and the commit functions gain the canonical-role
-   check the audit's what-state-can-move test demands.
+   the same era-bound refusal/quarantine as the other token ingresses —
+   **which requires a wire that can CARRY the instrument, and the
+   current one cannot**: `remitBuyback` encodes only the destination
+   token and the receiver forwards source chain, token, and amount, so
+   the destination has neither an intended era nor an ordered sequence
+   from which a contiguous watermark could prove the lane gap-free. The
+   drain instrument therefore requires a VERSIONED buyback payload —
+   intended era plus an authenticated per-lane monotonic sequence with
+   an acked lifecycle — before this lane's source-freeze + watermark
+   terminal is meaningful; until it ships, a post-transition arrival on
+   the LEGACY buyback wire is indistinguishable from a send for the new
+   binding and takes quarantine (park, recorded-disposition tombstone),
+   never credit. And the commit functions gain the canonical-role
+   check the audit's what-state-can-move test demands — **which is half
+   the gate: an order COMMITTED before the transition stays fillable
+   through `IntentDispatchFacet.preInteraction`/`postInteraction`,
+   whose buyback branch authenticates the LOP but reads no reward-chain
+   role**, so a post-demotion fill still debits `baseBuybackReserved`
+   and routes the received VPFI into the retired deployment's
+   reward/keeper budgets, while expiry returns the remainder to the
+   now-guarded budget. The ceremony therefore freezes the FILL HOOKS
+   with the other buyback producers and terminalizes every pending Base
+   buyback order — filled, cancelled, or expired, each with executed
+   accounting, or moved to explicitly quarantined accounting — before
+   the role flip.
+
+   **The VPFI RETURN lane joins the receive inventory.**
+   `VpfiReturnReceiver` forwards to `onRepatriationReturnReceived` /
+   `onStrandedReturnReceived`, both `onlyCanonical` — so a mirror-side
+   repatriation return or stranded return executed just before Base
+   leaves `Canonical` but DELIVERED after the role change reverts, and
+   after a permanent demotion reverts forever, with the mirror-side
+   value already removed and the Base-side authorization or recovery
+   gate still outstanding. Canonical exit therefore freezes new returns
+   at the SOURCE (the mirror-side send paths) and proves this lane
+   gap-free drained with the same source-freeze + contiguous-watermark
+   terminal as every other lane — and the historical-return route it
+   leaves behind is ROLE-AGNOSTIC, keyed by the issuing deployment
+   exactly as the tombstone attestations already are, so a late return
+   lands against the issuing deployment's outstanding gate rather than
+   against whatever role the chain holds when CCIP finally executes.
 
    **UNSENT day outputs join the transition drain — reports, commitment
    reports, and compensation quotes accumulate locally and are routed by
