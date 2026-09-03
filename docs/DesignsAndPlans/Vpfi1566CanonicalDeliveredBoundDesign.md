@@ -2259,10 +2259,13 @@ revision unimplementable:
      shrink the funding, not the obligations), with the listed `dayIds` as a
      MEMBERSHIP filter. A targeted obligation draws from the batches that
      list its day — and **the contract checks the VALIDITY of an
-     assignment, never its optimality: any assignment drawing each unit
-     from an eligible batch within its balance is accepted, with
+     assignment, never its optimality: an assignment is valid when each
+     unit draws from an eligible batch within its balance AND the
+     unarrived-day necessity constraint holds (no draw from a batch
+     with unarrived listed days that other available funding could
+     cover — ONE validator contract, per the necessity rule below), with
      fewest-remaining-member-days-first (oldest on ties) as the DEFAULT
-     a preparer may override.** No local greedy survives overlapping
+     a preparer may override within those constraints.** No local greedy survives overlapping
      memberships — oldest-first starves the shared-batch case, and even
      degree-ordering falls to `X={A,B}, Y={A,C}, Z={C}` with unit
      demands, where spending tied-degree X on A strands B though
@@ -2891,7 +2894,11 @@ revision unimplementable:
    authorizations written off on the owner's recorded authority,
    disclosed as such). Without the third terminal the disposition clause
    is unreachable: an unverifiable lane blocks the ceremony forever or
-   gets falsely attested empty. Role changes gate on all of that
+   gets falsely attested empty. (An omitted lane's straggler still
+   reaches the TOMBSTONE leg — that leg accepts any transport-authentic
+   packet per its own rule; certification gates APPLICATION only, and
+   any earlier phrasing here reading otherwise is superseded.) Role
+   changes gate on all of that
    received and reconciled, not on the operator's word that it would
    have matched. Any key that
    nevertheless surfaces later (outside the certified set) is **refused —
