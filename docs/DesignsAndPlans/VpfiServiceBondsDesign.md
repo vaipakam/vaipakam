@@ -166,9 +166,17 @@ instruction to anyone implementing or writing copy from the top of the file.
    — governance wanting that outcome changes the central policy, not
    one custody class's reading of it. So: **record the
    confirmed flag, and while an oracle is configured, release a
-   flagged balance only through the fail-closed check**, while operators never
-   confirmed flagged keep the ordinary fail-open path — an outage must not freeze
-   everybody's capital, which is the reason the fail-open default exists. An earlier revision
+   flagged balance only through the fail-closed check**, while — **on the bond surface specifically — even never-confirmed
+   operators DEFER during an outage**: the later-ratified fail-closed
+   rule for the whole bond mutation surface supersedes the
+   fail-open-for-never-confirmed posture this rule originally stated,
+   because the first-observation marker is erasable by a reverting
+   caller, so a branch keyed on its absence is the smart-account retry
+   escape. The "an outage must not freeze everybody's capital" concern
+   is answered by SCOPE, not by a fail-open branch: what defers is bond
+   principal and capacity mutation only — latency bounded by the
+   outage, no other capital touched — while the platform-wide fail-open
+   posture for ordinary activity is unchanged outside bonds. An earlier revision
    promised refundability unconditionally here while requiring the freeze there
    — an implementation could satisfy one only by violating the other, and the
    unconditional promise is the one that would have been quoted in copy.
@@ -862,8 +870,16 @@ decodes is the same gap one step later.
   be. Not with the liveness tier specifically: equivocation is now the only
   viable candidate, so binding the machinery to a tier that may never ship would
   leave the one that might entirely unprotected.
-- Slashed VPFI → treasury **recycle bucket** through the programme's single
-  chokepoint, `LibVpfiRecycle.credit(RecycleSource.ServiceBondSlash, …)`.
+- Slashed VPFI → treasury **recycle bucket** through the **per-token or
+  escrow settlement path — uniformly, for current and archived tokens
+  alike; the live single-token `LibVpfiRecycle.credit` is never the
+  transport for a slash** (the acceptance criteria say the same:
+  rotation CARRIES old-token reservations, so any delayed resolution
+  can land post-rotation, and a token-split rule would leave the
+  current-token branch racing the rotation it cannot see coming).
+  `RecycleSource.ServiceBondSlash` remains the source classification
+  the settlement's event carries — the classification survives; the
+  live call does not appear on this path.
 
   ⚠️ **An OLD-TOKEN slash cannot take that path.** If the dual-token branch
   retains an old-token tranche across a rotation and a delayed proof later
@@ -2157,7 +2173,7 @@ mechanism is needed at all — it was not.
 
 **The decision, which is what this note is for:** a bond buys capacity
 *continuously and proportionally*, with **no minimum bond**, up to a ceiling
-of **4× the free tier per `(role, address)`** — the same key the bond record and the buckets use, where ADDRESS is the charged actor defined by an exhaustive selector→(role, actor) table that implementation must produce. That table is not optional and not inferable: `BackstopFacet.backstopFill` routes through `BackstopVaultImplementation.executeFill` into `OfferMatchFacet.matchIntent`, so the inner `msg.sender` is a SHARED vault rather than the initiator, and adapter fills likewise replace the keeper or principal with the adapter. Keying on the inner caller would pool unrelated activity and let one contract's bond subsidise every routed caller; charging wrappers without a closed mapping risks bypass or double-charging instead. Direct and routed paths both have to appear in it. Not per address across roles: an address holding solver, matcher and keeper bonds gets an independent ceiling for each, because their action units are not commensurable and a shared cap would let one role suppress another's capacity.
+of **4× the free tier per `(role, address)`** — the same key the bond record and the buckets use, where ADDRESS is the charged actor defined by an exhaustive selector→(role, actor) table that implementation must produce — **under actor rules this spec fixes NOW, per route family, so the table is an enumeration exercise rather than an identity-boundary decision left to an implementer**: (1) a DIRECT operator entry charges `msg.sender`, the enrolled operator; (2) an ADAPTER route charges the operator identity BOUND to that adapter at registration (recorded on-chain when the adapter is registered), never the outer caller and never the adapter contract; (3) the BACKSTOP route (`backstopFill` → shared vault → `matchIntent`) charges NO bonded actor — it runs at the permissionless free tier of the OUTER initiator, because charging the shared vault lets any user exhaust one global quota and block every backstop fill, and charging an arbitrary wrapper caller invites free-address rotation (rotation under the outer-initiator rule buys only free-tier throughput, which IS the permissionless baseline); and (4) a route with no registered binding and no bonded shape defaults to the outer initiator's free tier, never to an intermediate contract. That table is not optional and not inferable: `BackstopFacet.backstopFill` routes through `BackstopVaultImplementation.executeFill` into `OfferMatchFacet.matchIntent`, so the inner `msg.sender` is a SHARED vault rather than the initiator, and adapter fills likewise replace the keeper or principal with the adapter. Keying on the inner caller would pool unrelated activity and let one contract's bond subsidise every routed caller; charging wrappers without a closed mapping risks bypass or double-charging instead. Direct and routed paths both have to appear in it. Not per address across roles: an address holding solver, matcher and keeper bonds gets an independent ceiling for each, because their action units are not commensurable and a shared cap would let one role suppress another's capacity.
 
 **Any CHANGE in capacity — up or down — must settle elapsed credit under the
 OLD capacity before the new one takes effect, OR invalidate the affected
@@ -2869,13 +2885,15 @@ numbers back with their actual throughput meaning attached.
 **Already ratified, recorded here so nothing re-opens them:** the no-yield
 refundable-deposit shape; objective-lies-only for v1 (which collapsed to no
 predicate at all — see the fork); the 4× ceiling per `(role, address)` as an
-invariant rather than a suggestion; no minimum bond; **no v1 unbond delay —
-because v1 has no delayed-proof predicate, NOT because the delay belongs to the
-liveness tier** (an earlier revision of this list said the latter, which would
-let an implementer ship equivocation without liveness and permit immediate
-withdrawal after conflicting statements are signed, exactly as rule 2 now
-forbids); and
-clamp-on-any-capacity-reduction.
+invariant rather than a suggestion; no minimum bond; and
+clamp-on-any-capacity-reduction. **NOT on this list: the v1 no-unbond-delay
+conclusion** — it is a design conclusion riding with the A/C fork ask, not
+yet owner-ratified (the decisions section records the provenance; an earlier
+revision listed it here as ratified, which would ship an unapproved
+funds-withdrawal policy). Its reasoning stands as written — no delayed-proof
+predicate in v1, NOT "the delay belongs to the liveness tier" (which would
+let equivocation ship without liveness and permit immediate withdrawal after
+conflicting statements are signed, exactly as rule 2 forbids).
 
 ## Tests
 
@@ -2890,6 +2908,17 @@ that everything else is throughput and these are custody:**
 - Bond / unbond lifecycle, including that v1 withdrawal is IMMEDIATE and that
   the withdrawal clamps accrued credit in the same step. A test that
   withdraws and then spends is the one that catches the bypass.
+- **[C FORK] The non-refundable arming spend gets its own cases** — the
+  list above covers principal and its clamp, and none of it exercises
+  the money that does NOT come back: a capacity-NEUTRAL raise is
+  rejected or not charged (charging a no-op is an irreversible
+  overcharge); the fee binds the fee rate, token epoch, capacity
+  granted, and action-cost epoch at commit, and a governance retune or
+  token rotation landing between commit and settlement either settles
+  on the bound terms or refuses — never settles on materially worse
+  ones; and each unit of capacity is charged exactly once (re-arming
+  withdrawn capacity is a new grant owing a new fee, per the
+  excess-first rule).
 - **[ANY PREDICATE-ENABLED TIER — deferred under plain (A)/(C), like
   every slash test; "attested tier only" was the earlier scope, and it
   under-covered: the first slash predicate may arrive through the
