@@ -14,6 +14,7 @@ import {InteractionRewardsFacet} from "../../src/facets/InteractionRewardsFacet.
 import {InteractionRewardsLensFacet} from "../../src/facets/InteractionRewardsLensFacet.sol";
 import {RewardReporterFacet} from "../../src/facets/RewardReporterFacet.sol";
 import {RewardAggregatorFacet} from "../../src/facets/RewardAggregatorFacet.sol";
+import {RewardBroadcastFacet} from "../../src/facets/RewardBroadcastFacet.sol";
 import {RepatriationFacet} from "../../src/facets/RepatriationFacet.sol";
 import {LibAccessControl} from "../../src/libraries/LibAccessControl.sol";
 import {VPFIToken} from "../../src/token/VPFIToken.sol";
@@ -148,7 +149,7 @@ contract MeshLedgerInvariant is Test {
         InteractionRewardsLensFacet lens = new InteractionRewardsLensFacet();
         RepatriationFacet repatFacet = new RepatriationFacet();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](9);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](10);
         cuts[0] = _cut(address(ac), helper.getAccessControlFacetSelectors());
         cuts[1] = _cut(address(admin), helper.getAdminFacetSelectors());
         cuts[2] = _cut(address(vpfiFacet), helper.getVPFITokenFacetSelectors());
@@ -160,6 +161,11 @@ contract MeshLedgerInvariant is Test {
         );
         cuts[5] = _cut(
             address(aggregator), helper.getRewardAggregatorFacetSelectors()
+        );
+        // #1569 — broadcast split into its own facet.
+        cuts[9] = _cut(
+            address(new RewardBroadcastFacet()),
+            helper.getRewardBroadcastFacetSelectors()
         );
         cuts[6] = _cut(address(mutator), helper.getTestMutatorFacetSelectors());
         cuts[7] = _cut(
@@ -257,6 +263,26 @@ contract MeshLedgerInvariant is Test {
         RepatriationFacet(address(diamond)).setRepatriationTokenAdminRegistry(
             address(tokenReg)
         );
+        // #1569 M4 C3 (Codex #2031 r2) — ARM the per-chain keeper earmark on
+        // one chain, so every invariant below runs against a live one.
+        //
+        // The first version of that card charged the earmark to
+        // `chainConsumedRecycled`, which is one half of
+        // `outstanding == instructed − retired`. This campaign is exactly
+        // what should have caught it and did not: the knob defaults to zero,
+        // so `invariant_OutstandingEqualsInstructedMinusRetired` held
+        // vacuously for the new field. Arming it here rather than adding a
+        // fuzz action makes the coverage DETERMINISTIC — a fuzzed arming
+        // could lose the race with the reserved-day sequence and quietly
+        // stop exercising it, which is the failure mode this suite's own
+        // coverage probe exists to catch.
+        //
+        // ARB only, so `invariant_...MinusRetired` still spans an armed and
+        // an unarmed chain in the same campaign.
+        RewardAggregatorFacet(address(diamond)).setChainKeeperAllocateBps(
+            CHAIN_ARB, 2_500
+        );
+
         targetContract(address(handler));
         // RESTRICT to the handler's OWN entry points. `MeshHandler` inherits
         // `Test`, which brings hundreds of public cheatcode/assertion helpers
@@ -301,6 +327,42 @@ contract MeshLedgerInvariant is Test {
     }
 
     // ─── Invariants ──────────────────────────────────────────────────────
+
+    /// #1569 M4 C3 — the THIRD draw on one reported capacity:
+    /// `keeperNet ≤ reported − claimNet − repatNet`.
+    ///
+    /// Arming the knob in `setUp` does NOT by itself make this campaign
+    /// verify the earmark's safety property (Codex #2031 r4): no other
+    /// invariant reads the keeper draw, and availability SATURATES — so a
+    /// mutation that removed the headroom clamp would over-draw, floor
+    /// `avail` to zero, and leave all eighteen green. This is the assertion
+    /// that can actually fail on that mutation.
+    ///
+    /// Against the remainder after BOTH other draws, not against `reported`
+    /// alone: the three share one capacity, and each being individually
+    /// within `reported` still over-commits it when their sum is not — the
+    /// same two-comparison form `repat-cap` uses on the watcher side.
+    function invariant_KeeperDrawWithinRemainingCapacity() public view {
+        uint32[2] memory ids = [CHAIN_ARB, CHAIN_OP];
+        for (uint256 i; i < ids.length; ++i) {
+            (uint256 reported, uint256 consumed, , ) =
+                _agg().getChainRecycledLedger(ids[i]);
+            (, uint256 released) =
+                _agg().getChainRecycledCommitRetirement(ids[i]);
+            uint256 claimNet = consumed > released ? consumed - released : 0;
+            uint256 afterClaims = reported > claimNet ? reported - claimNet : 0;
+            (uint256 repatNet, ) =
+                RepatriationFacet(address(diamond))
+                    .getChainRepatriationDraw(ids[i]);
+            uint256 remainder =
+                afterClaims > repatNet ? afterClaims - repatNet : 0;
+            assertLe(
+                _agg().getChainKeeperDraw(ids[i]),
+                remainder,
+                "keeperNet <= reported - claimNet - repatNet"
+            );
+        }
+    }
 
     /// §7 #6, in B3's form: `sat(consumed − released) ≤ reported`. The
     /// formula-check:allow the superseded bare form is quoted just below.
@@ -517,6 +579,21 @@ contract MeshLedgerInvariant is Test {
             0,
             "VACUOUS RUN: the fuzzer never instructed any mirror - every "
             "invariant above passed on an untouched ledger"
+        );
+        // #1569 M4 C3 (Codex #2031 r4) — the keeper bound above is only
+        // meaningful if a NONZERO draw was actually produced. `setUp` arms
+        // ARB at 2,500 bps, but the draw is bounded by the headroom each
+        // day's commit leaves, so a campaign that only ever instructed
+        // chains to their full availability would leave every earmark at
+        // zero and the bound trivially satisfied — green, and testing
+        // nothing. This is the same class of vacuity the instruction and
+        // retirement guards above exist for.
+        assertGt(
+            _agg().getChainKeeperDraw(CHAIN_ARB),
+            0,
+            "VACUOUS RUN: the fuzzer never produced a nonzero keeper "
+            "earmark - invariant_KeeperDrawWithinRemainingCapacity passed "
+            "on an unexercised ledger"
         );
         // Codex #1437 r1 P1 — instructions alone are NOT enough. If no
         // post-instruction retirement report ever lands (or
@@ -1447,13 +1524,13 @@ contract MeshHandler is Test {
         // zero retirements: its `finalizeDay` always reverted, so no
         // instruction existed for the retirement figures to clamp against.
         try messenger.deliverChainReportB3(
-            CHAIN_BASE, d0, 10e18, 5e18, 900 ether, 0, 0, 0
+            CHAIN_BASE, d0, 10e18, 5e18, 900 ether, 900 ether, 0, 0
         ) {} catch {}
         try messenger.deliverChainReportB3(
-            CHAIN_ARB, d0, 20e18, 10e18, 900 ether, 0, 0, 0
+            CHAIN_ARB, d0, 20e18, 10e18, 900 ether, 900 ether, 0, 0
         ) {} catch {}
         try messenger.deliverChainReportB3(
-            CHAIN_OP, d0, 20e18, 10e18, 900 ether, 0, 0, 0
+            CHAIN_OP, d0, 20e18, 10e18, 900 ether, 900 ether, 0, 0
         ) {} catch {}
         mut.setChainDayCommitmentCompleteRaw(d0, CHAIN_ARB, true);
         mut.setChainDayCommitmentCompleteRaw(d0, CHAIN_OP, true);

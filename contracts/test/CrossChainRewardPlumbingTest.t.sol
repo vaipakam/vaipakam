@@ -5,6 +5,7 @@ import {SetupTest} from "./SetupTest.t.sol";
 
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
+import {RewardBroadcastFacet} from "../src/facets/RewardBroadcastFacet.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
@@ -105,6 +106,12 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
 
     function _agg() internal view returns (RewardAggregatorFacet) {
         return RewardAggregatorFacet(address(diamond));
+    }
+
+    /// #1569 — broadcast moved to its own facet for EIP-170 headroom.
+    /// Same Diamond, same selectors; only the cast type changed.
+    function _bcast() internal view returns (RewardBroadcastFacet) {
+        return RewardBroadcastFacet(address(diamond));
     }
 
     function _mut() internal view returns (TestMutatorFacet) {
@@ -589,13 +596,13 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
     function testBroadcastRevertsBeforeFinalization() public {
         _configureCanonical();
         vm.expectRevert(DayNotReadyToFinalize.selector);
-        _agg().broadcastGlobal(1);
+        _bcast().broadcastGlobal(1);
     }
 
     function testBroadcastRevertsOnMirror() public {
         _configureMirror(CHAIN_ARB);
         vm.expectRevert(NotCanonicalRewardChain.selector);
-        _agg().broadcastGlobal(1);
+        _bcast().broadcastGlobal(1);
     }
 
     function testBroadcastRevertsWithoutMessenger() public {
@@ -606,7 +613,7 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         _rep().setRewardMessenger(address(0));
 
         vm.expectRevert(RewardMessengerNotSet.selector);
-        _agg().broadcastGlobal(1);
+        _bcast().broadcastGlobal(1);
     }
 
     /// @dev B2-b — the trigger now assembles the kind-5 per-destination
@@ -625,7 +632,7 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
 
         vm.deal(alice, 1 ether);
         vm.prank(alice);
-        _agg().broadcastGlobal{value: 0.2 ether}(1);
+        _bcast().broadcastGlobal{value: 0.2 ether}(1);
 
         // #1434 P2-w1 — the current sender generation is the kind-10 V3
         // wire (same per-destination shape + the frozen clock facts); the
@@ -661,7 +668,7 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
 
         vm.deal(alice, 1 ether);
         vm.prank(alice);
-        _agg().broadcastGlobal{value: 0.2 ether}(1);
+        _bcast().broadcastGlobal{value: 0.2 ether}(1);
 
         assertEq(messenger.broadcastV3Count(), 0, "V3 send unavailable");
         assertEq(messenger.broadcastV2Count(), 0, "V2 send unavailable");
@@ -697,21 +704,21 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         // V2 = lane×1, legacy = flat), so the value proves which messenger
         // path ran.
         assertEq(
-            _agg().quoteBroadcastGlobal(1),
+            _bcast().quoteBroadcastGlobal(1),
             0.3 ether,
             "V3 quote: one lane per destination, x3 marker"
         );
 
         messenger.setV3Unsupported(true);
         assertEq(
-            _agg().quoteBroadcastGlobal(1),
+            _bcast().quoteBroadcastGlobal(1),
             0.1 ether,
             "pre-V3 messenger: V2 quote, one lane per destination"
         );
 
         messenger.setV2Unsupported(true);
         assertEq(
-            _agg().quoteBroadcastGlobal(1),
+            _bcast().quoteBroadcastGlobal(1),
             0.05 ether,
             "pre-B2-b messenger: legacy flat quote"
         );
@@ -728,7 +735,7 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         _agg().finalizeDay(1);
 
         vm.expectRevert(bytes("MockMessenger: broadcast revert"));
-        _agg().broadcastGlobal(1);
+        _bcast().broadcastGlobal(1);
         assertEq(messenger.broadcastCount(), 0, "no legacy fallback");
     }
 
@@ -739,9 +746,9 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         messenger.deliverChainReport(CHAIN_OP, 1, 3e18, 1e18);
         _agg().finalizeDay(1);
 
-        _agg().broadcastGlobal(1);
-        _agg().broadcastGlobal(1);
-        _agg().broadcastGlobal(1);
+        _bcast().broadcastGlobal(1);
+        _bcast().broadcastGlobal(1);
+        _bcast().broadcastGlobal(1);
         assertEq(messenger.broadcastV3Count(), 3, "three retries allowed");
     }
 
@@ -888,7 +895,7 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
 
         AdminFacet(address(diamond)).pause();
         vm.expectRevert();
-        _agg().broadcastGlobal(1);
+        _bcast().broadcastGlobal(1);
     }
 
     function testOnChainReportIngressNotPauseGated() public {
@@ -977,7 +984,7 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
 
         // 5. Broadcast would ship the pair to every peer (here: counted
         //    only — #1434 P2-w1 sends the kind-10 per-destination shape).
-        _agg().broadcastGlobal(1);
+        _bcast().broadcastGlobal(1);
         assertEq(messenger.broadcastV3Count(), 1);
         (, uint256 vGL, , , , , ) = messenger.lastV3Shared();
         assertEq(vGL, 70e18);

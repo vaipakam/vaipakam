@@ -114,3 +114,123 @@ test('a recorded error surfaces in the drawer and its report', async ({
   expect(reportText.toLowerCase()).not.toContain(embedded.toLowerCase());
   expect(reportText).toContain(`${embedded.slice(0, 6)}…${embedded.slice(-4)}`);
 });
+
+/** #2023 — the report must be readable BEFORE the link that discloses it.
+ *
+ *  Opening the report is an `<a href>` to a pre-filled GitHub issue, so the
+ *  diagnostics reach GitHub the moment the form opens. The drawer's own rows
+ *  are a partial view — 300 characters of the error and no component trace —
+ *  while the report carries up to 1200 and 1000. "Copy details" was therefore
+ *  the only way to inspect the payload first, and it failed silently whenever
+ *  the Clipboard API was unavailable or denied: no content, no error, not even
+ *  a change of button label. The remaining way to see the report was the act
+ *  of sending it.
+ *
+ *  Both arms below seed the same crash the case above uses, because the
+ *  disclosure has to show the parts the drawer summary omits — a preview that
+ *  only repeats what is already on screen would not close the gap.
+ */
+test('the full report can be read in the drawer without sending it', async ({
+  launchWallet,
+}) => {
+  const { page } = await launchWallet('borrower');
+  await page.goto('/', { waitUntil: 'domcontentloaded' });
+  // The address is SEEDED, not merely asserted absent (round 3 P2). The first
+  // version of this case checked that `0x1111…0000` does not appear in the
+  // preview while seeding a message that never contained it — so the check
+  // passed on an empty string and would have gone on passing if the preview
+  // stopped redacting entirely. An absence assertion is worth nothing unless
+  // the thing could have been present.
+  const embedded = '0x1111222233334444555566667777888899990000';
+  await page.evaluate((addr) => {
+    sessionStorage.setItem(
+      'vaipakam.app.lastError',
+      JSON.stringify({
+        message: `E2E preview crash for ${addr}`,
+        componentStack: 'PreviewCulprit\nSomePage',
+        path: '/lend',
+        at: Date.now(),
+      }),
+    );
+  }, embedded);
+  await page
+    .getByRole('button', { name: /support and connection check/i })
+    .click();
+  const dialog = page.getByRole('dialog', { name: /support/i });
+
+  // Collapsed by default — the drawer stays a summary until asked.
+  const toggle = dialog.getByRole('button', { name: /show full report/i });
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  await expect(dialog.locator('#diag-report-body')).toBeHidden();
+
+  await toggle.click();
+  const body = dialog.locator('#diag-report-body');
+  await expect(body).toBeVisible();
+  // The component trace is the part the drawer's rows never render, so it is
+  // what proves this is the REPORT rather than a restatement of the summary.
+  // `toHaveValue`, not `toContainText`: the disclosure is a read-only
+  // textarea (round 2 P2 — a `<pre>` is not in the tab order, so the
+  // keyboard-only user the failure message instructs could not reach it), and
+  // a textarea carries its content as its VALUE with empty text content.
+  await expect(body).toHaveValue(/PreviewCulprit/);
+  await expect(body).toHaveValue(/E2E preview crash/);
+  // ...and the preview honours the same redaction contract as the report.
+  expect((await body.inputValue()).toLowerCase()).not.toContain(
+    embedded.toLowerCase(),
+  );
+  // ...and the shortened form IS there, which is what proves the redaction
+  // ran rather than the field being empty.
+  await expect(body).toHaveValue(
+    new RegExp(`${embedded.slice(0, 6)}…${embedded.slice(-4)}`),
+  );
+
+  await dialog.getByRole('button', { name: /hide full report/i }).click();
+  await expect(dialog.locator('#diag-report-body')).toBeHidden();
+});
+
+test('a blocked clipboard is reported, and opens the report instead', async ({
+  launchWallet,
+}) => {
+  const { page } = await launchWallet('borrower');
+  // A hardened browser, an insecure context or a denied permission all reach
+  // the app the same way: `writeText` rejects. Installed before any app code
+  // runs so the drawer never sees the real implementation.
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: {
+        writeText: () => Promise.reject(new Error('denied')),
+      },
+    });
+  });
+  await page.goto('/', { waitUntil: 'domcontentloaded' });
+  await page.evaluate(() => {
+    sessionStorage.setItem(
+      'vaipakam.app.lastError',
+      JSON.stringify({
+        message: 'E2E clipboard-denied crash',
+        componentStack: 'DeniedCulprit\nSomePage',
+        path: '/lend',
+        at: Date.now(),
+      }),
+    );
+  });
+  await page
+    .getByRole('button', { name: /support and connection check/i })
+    .click();
+  const dialog = page.getByRole('dialog', { name: /support/i });
+
+  await dialog.getByRole('button', { name: /copy details/i }).click();
+
+  // Said, not swallowed...
+  await expect(dialog.getByText(/would not let the app use the clipboard/i)).toBeVisible();
+  // ...and NOT a dead end: the text the clipboard refused is now on screen.
+  // Reporting the failure while leaving no way to read the report would fix
+  // the honesty and not the problem.
+  await expect(dialog.locator('#diag-report-body')).toBeVisible();
+  await expect(dialog.locator('#diag-report-body')).toHaveValue(
+    /DeniedCulprit/,
+  );
+  // The button must NOT claim success.
+  await expect(dialog.getByRole('button', { name: /^copy details$/i })).toBeVisible();
+});

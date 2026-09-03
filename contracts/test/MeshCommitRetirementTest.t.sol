@@ -74,19 +74,43 @@ contract MeshCommitRetirementTest is SetupTest {
     ///      immediately re-instructs whatever availability the report just
     ///      restored, so an assertion taken after finalize would read the
     ///      restored figure back as ~zero and prove nothing.
+    /// @dev As `_reportArb`, but states the day credit explicitly. Needed
+    ///      because a report may legitimately carry a huge LIFETIME
+    ///      cumulative alongside an ordinary day credit, and conflating the
+    ///      two changes what a test is testing.
+    function _reportArbWithDayCredit(
+        uint256 dayId,
+        uint256 arbCumulative,
+        uint256 forDay,
+        uint256 retiredCum,
+        uint256 releasedCum
+    ) internal {
+        messenger.deliverChainReportB3(
+            CHAIN_ARB, dayId, 20e18, 10e18, arbCumulative, forDay,
+            retiredCum, releasedCum
+        );
+    }
+
     function _reportArb(
         uint256 dayId,
         uint256 arbCumulative,
         uint256 retiredCum,
         uint256 releasedCum
     ) internal {
+        // `recycledForDay18` = the whole cumulative on the day it first
+        // appears. The zero this used to pass was an unrealistic shape — a
+        // chain reporting availability it never credited on any day — and it
+        // silently zeroed the #1569 keeper allocation once that was sized
+        // from the day's inflow rather than from claim demand (Codex #2031
+        // r9). The anti-vacuity guard in the invariant campaign is what
+        // surfaced it.
         messenger.deliverChainReportB3(
             CHAIN_ARB,
             dayId,
             20e18,
             10e18,
             arbCumulative,
-            0,
+            arbCumulative,
             retiredCum,
             releasedCum
         );
@@ -132,6 +156,150 @@ contract MeshCommitRetirementTest is SetupTest {
             instructed > retired ? instructed - retired : 0,
             "outstanding == instructed - retired"
         );
+    }
+
+    // ─── #1569 keeper earmark vs. the identity ───────────────────────────
+
+    /// The keeper earmark must NOT ride `chainConsumedRecycled`.
+    ///
+    /// That counter is one half of `outstanding == instructed − retired`,
+    /// and only the local COMMIT enters the retirement lifecycle — a mirror
+    /// can retire at most what it was committed. The first version of #1569
+    /// added the earmark to it, which broke the identity on the first
+    /// non-zero allocation and left the difference as phantom consumption
+    /// permanently suppressing the chain's availability (Codex #2031 r2).
+    ///
+    /// The earmark now has its own draw slot, exactly like the C2
+    /// repatriation draw whose storage doc names this same trap.
+    function test_KeeperEarmarkDoesNotBreakTheLedgerIdentity() public {
+        // 25% — large enough that a regression cannot hide inside the
+        // approximate-equality slack the instruction figure carries.
+        _agg().setChainKeeperAllocateBps(CHAIN_ARB, 2_500);
+
+        uint256 instructed = _armAndInstruct40();
+
+        // The identity holds WITH an armed allocation. Against the first
+        // version of #1569 this fails: outstanding is the commit while
+        // instructed carries commit + earmark.
+        _assertLedgerIdentity(CHAIN_ARB);
+        assertEq(
+            _agg().getChainOutstandingRecycledCommit(CHAIN_ARB),
+            instructed,
+            "the earmark never inflated the instruction cumulative"
+        );
+    }
+
+    /// …and the property the wrong placement was reaching for still holds:
+    /// availability nets the earmark, so Base cannot instruct the same
+    /// tokens twice. Without this the fix would be a regression dressed as
+    /// one — the identity restored by simply forgetting the earmark.
+    ///
+    /// Needs HEADROOM to be visible at all: `_armAndInstruct40` gives ARB
+    /// exactly enough to fund its own demand, and an earmark is bounded by
+    /// what the commit leaves (see the over-commit test below), so on that
+    /// scaffold the armed figure is legitimately zero.
+    function test_KeeperEarmarkStillDrawsDownAvailability() public {
+        _agg().setChainKeeperAllocateBps(CHAIN_ARB, 2_500);
+        uint256 instructed = _armAndInstructWithHeadroom();
+        uint256 keeperArmed = _agg().getChainKeeperDraw(CHAIN_ARB);
+        assertGt(keeperArmed, 0, "the earmark fits in the headroom");
+        (, , uint256 availArmed, ) = _agg().getChainRecycledLedger(CHAIN_ARB);
+
+        // The identical scenario with the knob dark.
+        setUp();
+        uint256 instructedDark = _armAndInstructWithHeadroom();
+        (, , uint256 availDark, ) = _agg().getChainRecycledLedger(CHAIN_ARB);
+
+        assertEq(instructed, instructedDark, "same commit either way");
+        assertEq(
+            availDark - availArmed,
+            keeperArmed,
+            "availability falls by exactly the earmark, and by nothing else"
+        );
+    }
+
+    /// The earmark is a SECOND draw on one bucket, so it must fit in what
+    /// the claim commit leaves (Codex #2031 r3).
+    ///
+    /// `_armAndInstruct40` is the exact shape of the report: ARB's demand
+    /// consumes its whole 40 of availability. Against the pre-fix code a
+    /// 25% instruction still derived 10 on top — 40 of claims plus 10 of
+    /// keeper budget backed by 40 tokens, with the mirror dutifully
+    /// reserving both.
+    function test_KeeperEarmarkCannotOverCommitTheBucket() public {
+        _agg().setChainKeeperAllocateBps(CHAIN_ARB, 2_500);
+        uint256 instructed = _armAndInstruct40();
+
+        (uint256 reported, uint256 consumed, , ) =
+            _agg().getChainRecycledLedger(CHAIN_ARB);
+        uint256 keeper = _agg().getChainKeeperDraw(CHAIN_ARB);
+
+        // The invariant, which is the actual claim: the two draws on one
+        // bucket never exceed what the chain reported holding.
+        assertLe(
+            consumed + keeper,
+            reported,
+            "the two draws together never exceed what the chain reported"
+        );
+        // And the trim really bit. The pro-rata commit split leaves a few
+        // WEI of rounding headroom, so the bound clamps a want of ~10e18
+        // (25% of a 40e18 commit, which the pre-fix code granted in full,
+        // on top of the commit) down to that dust. Asserting the dust is
+        // zero would be asserting the rounding rather than the property;
+        // asserting it is negligible is the property.
+        assertLt(
+            keeper,
+            1e15,
+            "earmark trimmed to the headroom the commit left, not 25% on top"
+        );
+        // Trimmed, never refused: the day still funded its full commit.
+        assertApproxEqAbs(instructed, 40 ether, 1e15, "commit is untouched");
+    }
+
+    /// Base cannot be its own allocation target, and the refusal is the
+    /// point: the mesh split gives Base no local commit to take a share OF
+    /// (`_stampOne` leaves `commitLocal` at zero for the canonical id), so
+    /// the setting would be stored, acknowledged by a success event, and
+    /// never produce a single wei. An operator would believe Base's keeper
+    /// share was armed (Codex #2031 r6).
+    function test_CanonicalChainIsRefusedAsAnAllocationTarget() public {
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RewardAggregatorFacet.KeeperAllocateTargetIsCanonical.selector,
+                CHAIN_BASE
+            )
+        );
+        _agg().setChainKeeperAllocateBps(CHAIN_BASE, 2_500);
+        assertEq(
+            _agg().getChainKeeperAllocateBps(CHAIN_BASE),
+            0,
+            "nothing was stored for the canonical chain"
+        );
+
+        // The control: the guard is scoped to the canonical id and has not
+        // broken the case the setter exists for. Without this a change that
+        // rejected every chain would pass the assertion above.
+        _agg().setChainKeeperAllocateBps(CHAIN_ARB, 2_500);
+        assertEq(
+            _agg().getChainKeeperAllocateBps(CHAIN_ARB),
+            2_500,
+            "a mirror is still a valid target"
+        );
+    }
+
+    /// @dev Like `_armAndInstruct40` but reports MORE availability than the
+    ///      day's demand consumes, so an earmark has room to land. Returns
+    ///      the instructed figure.
+    function _armAndInstructWithHeadroom() internal returns (uint256 instructed) {
+        _mut().setRecycleBucketRaw(1_000_000 ether);
+        _mut().setRecycledCreditedByDayRaw(5, 700 ether);
+        _mut().setGovernorCommitArmedFromDayRaw(5);
+
+        _reportArb(5, 400 ether, 0, 0);
+        _finalize(5);
+
+        (, instructed, , ) = _agg().getChainRecycledLedger(CHAIN_ARB);
+        assertGt(instructed, 0, "the day instructed something");
     }
 
     // ─── The reservation ledger now retires ──────────────────────────────
@@ -309,9 +477,20 @@ contract MeshCommitRetirementTest is SetupTest {
     function test_B3_HugeReportedCumulativeCannotWedgeFinalization() public {
         _armAndInstruct40();
 
-        // A faulty/compromised mirror reports an absurd lifetime cumulative
-        // together with a genuine release.
-        _reportArb(6, type(uint256).max, 20 ether, 15 ether);
+        // A faulty/compromised mirror reports an absurd lifetime CUMULATIVE
+        // together with a genuine release. The day credit stays ordinary —
+        // that is this test's subject, and conflating the two tests
+        // something else.
+        //
+        // Worth recording what conflating them exposed (Codex #2031 r9): a
+        // report may carry BOTH a max cumulative and a max day credit, and
+        // the day-attribution clamp accepts it, because the clamp is
+        // `min(forDay, reported - attributed)` and a max cumulative makes
+        // that headroom max too. `finalizeDay` then panics on overflow —
+        // with the keeper knob DARK, so it is a pre-existing wedge this
+        // suite's zero day credit was hiding, not anything #1569 introduced.
+        // Tracked separately rather than widened into this PR.
+        _reportArbWithDayCredit(6, type(uint256).max, 5 ether, 20 ether, 15 ether);
 
         // The read survives, and the ceiling still holds structurally.
         (uint256 reported, , uint256 avail, ) =

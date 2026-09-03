@@ -1,6 +1,8 @@
 # VPFI service bonds — work-token sink (S-4 / R-3)
 
-**Status:** design note for **legal glance → decision → build**. Card:
+**Status:** legal glance DISCHARGED (no-yield refundable-deposit shape
+ratified; §owner decisions) — awaiting the **A/C owner fork** (and C's fee
+parameters), then build. Card:
 #1219. Umbrella: #1221. Legal frame: #694. Part of the VPFI circular-flow
 programme ([`VpfiCrossChainRecyclingDesign.md`](VpfiCrossChainRecyclingDesign.md)).
 
@@ -2955,6 +2957,26 @@ branching from day one. The FunctionalSpecs sanctions section is
 updated with the implementing PR to record this first-observation
 exception (same-diff rule); until that lands, this paragraph is the
 divergence's record.
+
+**And the committed transition is NOT load-bearing for outage safety,
+because a callee cannot out-commit a reverting caller.** A contract or
+smart-account operator can call the selector, receive the refusal
+status, and revert its outer frame — EVM rollback erases the
+"committed" marker and the parked withdrawal together (an honest
+integration that treats refusal as revert-worthy does the same by
+accident). If outage safety rested on that marker, the operator would
+be "never confirmed" in the next outage and take the fail-open path.
+So **bond PRINCIPAL RELEASE fails CLOSED during oracle outages,
+unconditionally**: `withdrawCapacityDeposit` / unbond require an
+authoritative oracle read in the releasing transaction — `Unavailable`
+defers the release regardless of marker state, for every operator. The
+fail-open liveness posture continues to govern value-INFLOW actions
+(posting, raising, arming) and everything screened for wallets never
+confirmed flagged; what an outage costs a clean operator here is
+latency on principal exit, bounded by the outage — against which the
+alternative is a flag-rollback escape hatch for any operator that can
+revert. The committed first-observation transition remains the honest
+path's bookkeeping; safety no longer depends on it persisting.
 
 **A delayed proof against a CONFIRMED-SANCTIONED operator adjudicates
 without moving the funds.** The blanket per-selector screen cannot simply

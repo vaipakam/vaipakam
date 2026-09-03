@@ -5668,8 +5668,16 @@ library LibVaipakam {
         //   against — the HARD backstop bounding every day-credit clamp.
         mapping(uint32 => uint256) chainReportedRecycled;
         // `chainConsumedRecycled` — BASE-ONLY: cumulative recycled Base has
-        //   INSTRUCTED chain `c` to consume (B2 `recycleConsume` +
-        //   `keeperAllocate`, B3 netting). Declared with the ledger so the
+        //   INSTRUCTED chain `c` to consume (B2 `recycleConsume`, B3
+        //   netting). **NOT `keeperAllocate`** — this definition listed it
+        //   until #1569 armed the field, and that listing is what a
+        //   maintainer would follow to fold the earmark back in here and
+        //   break the `outstanding + retired == consumed` identity this
+        //   block protects. Only `commitLocal` enters the outstanding /
+        //   retirement lifecycle, so only it may be counted here; the
+        //   earmark has its own draw slot, `chainKeeperAllocDebited`,
+        //   exactly as the C2 repatriation draw does and for the same
+        //   reason (see the trap named further down this comment). Declared with the ledger so the
         //   block reads as one unit; written from B2 on. It is NOT bounded by
         //   `chainReportedRecycled[c]`: a commitment released un-spent is
         //   legitimately re-committable, so this cumulative can legally
@@ -7095,6 +7103,104 @@ library LibVaipakam {
         /// @notice Count of records marked above, so `getGlobalCounts` can
         ///         report ids-issued minus vehicles without a scan.
         uint256 internalVehicleLoanCount;
+        // ── #1204 E-2 spend-gated perks (append-only tail) ──────────────
+        /// @notice VPFI price of one unit of perk `perkId`, in wei.
+        ///         ZERO MEANS THE PERK IS NOT FOR SALE — that is the deploy
+        ///         default, so the channel ships dark and an owner arms each
+        ///         perk individually by setting its price. The design's open
+        ///         decisions (which perks ship, at what price) are therefore
+        ///         configuration rather than code, and nothing here presumes
+        ///         them.
+        mapping(uint256 => uint256) perkPriceVpfi;
+        /// @notice Unix second at which `user`'s entitlement to `perkId`
+        ///         lapses. A purchase extends from `max(now, current)`, so
+        ///         buying early stacks rather than burning the remainder.
+        ///         Zero ⇒ never purchased / long lapsed.
+        mapping(address => mapping(uint256 => uint64)) perkEntitlementUntil;
+        /// @notice Seconds of entitlement one purchase of `perkId` grants.
+        ///         Zero alongside a non-zero price ⇒ the perk is a COUNTED
+        ///         consumable rather than a timed one; see `perkCredits`.
+        mapping(uint256 => uint32) perkDurationSeconds;
+        /// @notice Unspent counted units of `perkId` held by `user`, for
+        ///         perks whose duration is zero. Consumers decrement through
+        ///         {PerkFacet.consumePerkCredit}.
+        mapping(address => mapping(uint256 => uint256)) perkCredits;
+        /// @notice Lifetime VPFI absorbed through perk purchases, for the
+        ///         operator surface. The bucket already counts it; this
+        ///         separates the perk channel's contribution from the rest.
+        uint256 perkSpendCumulative;
+        /// @notice Units of `perkId` ever sold. Governance may re-price or
+        ///         disarm a perk at any time, but once this is non-zero the
+        ///         perk's MODE is frozen: a timed perk stays timed and a
+        ///         counted one stays counted. Entitlements already granted
+        ///         live in per-user mappings that no setter can walk, so a
+        ///         mode switch would leave holders with a basis the perk no
+        ///         longer has. A new meaning takes a new `perkId`; they are
+        ///         opaque and free.
+        mapping(uint256 => uint256) perkUnitsSold;
+        // ── #1569 M4 C3 — per-chain keeper allocation (append-only tail) ──
+        /// @notice BASE-ONLY. Share, in bps of a chain's REPORTED DAY
+        ///         INFLOW, that Base instructs that chain to earmark for its
+        ///         own keeper-incentive register. The chain's locally-funded
+        ///         commit is the CAP — the earmark is bounded by the headroom
+        ///         that commit leaves in the chain's availability — not the
+        ///         base it is a share OF.
+        ///
+        ///         BASE-AUTHORIZED is the load-bearing property of the card: a
+        ///         mirror must not be able to grant itself keeper budget, so
+        ///         this is written only on the canonical chain and travels
+        ///         outbound on the wire as `keeperAllocate`. A mirror reads the
+        ///         instruction it was sent; it never sets one.
+        ///
+        ///         Zero — the deploy default — instructs nothing, which is the
+        ///         behaviour every deployment had before this was armed.
+        ///         Bounded by {RECYCLE_REGISTER_KEEPER_MAX_BPS}, the ceiling
+        ///         the LOCAL register weight already carries, so neither
+        ///         allocation surface can earmark more than half a bucket.
+        mapping(uint32 => uint16) chainKeeperAllocateBps;
+        /// @notice BASE-ONLY: the NET recycled value chain `c` has been
+        ///         instructed to earmark for its keeper register — a SEPARATE
+        ///         draw term of §3.6a's availability formula, exactly like
+        ///         `chainRepatriationDebited` and for exactly the same reason.
+        ///
+        ///         It must NOT ride `chainConsumedRecycled` (Codex #2031 r2).
+        ///         That counter is one half of the
+        ///         `outstanding + retired == consumed` identity, and only
+        ///         `commitLocal` ever enters the outstanding/retirement
+        ///         lifecycle — a mirror can retire at most what it was
+        ///         committed. Charging the earmark there breaks the identity
+        ///         on the first non-zero allocation and leaves the difference
+        ///         as phantom consumption that permanently suppresses the
+        ///         chain's reported availability. The counter's own doc names
+        ///         this trap for the repatriation draw; the keeper earmark is
+        ///         the same class of non-claim draw and had walked into it.
+        ///
+        ///         Availability still nets it, so Base can never instruct the
+        ///         same tokens twice — that property was the reason for the
+        ///         original (wrong) placement and it is preserved here.
+        ///
+        ///         NET is maintained IN this slot rather than derived from a
+        ///         debited/released pair, following the same Codex #1608 r1
+        ///         P2 reasoning the repatriation draw records: two cumulatives
+        ///         let a cancelled near-max draw pin one at ~2^256 and wedge
+        ///         every later authorization on overflow.
+        ///
+        ///         Zero until `chainKeeperAllocateBps` is armed, so the term
+        ///         is inert on every deployment built before then.
+        mapping(uint32 => uint256) chainKeeperAllocDebited;
+        /// @notice MIRROR-ONLY: whether this day's Base-instructed keeper
+        ///         earmark has been applied to `recycleKeeperBudget`.
+        ///
+        ///         Its OWN flag rather than `broadcastV2Applied`, for exactly
+        ///         the reason `mirrorRecycleCommitReserved` has one (Codex
+        ///         #2031 r5): a non-atomic rollout leaves days that a
+        ///         PRE-#1569 receiver applied — it stored `keeperAllocate` on
+        ///         the day record and set the applied flag, but the budget
+        ///         write did not exist yet. Keyed on the applied flag, the
+        ///         repair could never run, and Base would have charged
+        ///         `chainKeeperAllocDebited` while the mirror still treated
+        ///         those tokens as fundable for claims and repatriation.
+        mapping(uint256 => bool) mirrorKeeperEarmarkApplied;
     }
 
     /// @notice #1434 P2-w4 (§5.2 R6a) — a lapsed day's recorded loss: the
@@ -7268,9 +7374,12 @@ library LibVaipakam {
     ///      an inspector reading the Base stamp would have read its zero as
     ///      "Base funded none of its own day" rather than "this field does
     ///      not apply here".
-    ///      `keeperAllocate`
-    ///      is reserved for the per-chain keeper allocation (0-valued until
-    ///      that resolution exists). `freshLenderHalf`/`freshBorrowerHalf`
+    ///      `keeperAllocate` carries the per-chain keeper allocation and is
+    ///      LIVE since #1569 — sized on Base from the destination's reported
+    ///      day inflow and capped by the headroom its local commit leaves.
+    ///      This line said the field was 0-valued until a future resolution,
+    ///      which was true until that landed and would now tell a reader the
+    ///      wire field is dead. `freshLenderHalf`/`freshBorrowerHalf`
     ///      (B2-b append) are the per-side FRESH floors this chain prices
     ///      with — the global `scheduleFloor/2` on both sides until a
     ///      per-chain fresh trim mechanism exists (plan §M3: per-dest

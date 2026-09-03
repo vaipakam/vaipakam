@@ -508,3 +508,92 @@ describe('redactAddress', () => {
     expect(redactAddress(undefined)).toBe('not connected');
   });
 });
+
+describe('redactText — the prefix is not what makes it an address (#2027)', () => {
+  // The old pattern required `0x` and the forty digits to be CONTIGUOUS, so
+  // anything between them was an escape route on every path — and forty bare
+  // digits, with no prefix at all, were one fixed two-character edit from the
+  // account, on a report that opens a PUBLIC issue.
+  const A = '1234567890abcdef1234567890abcdef12345678';
+  const SHORT = '123456…5678';
+
+  it('redacts forty bare hex digits with no prefix at all', () => {
+    expect(redactText(A)).toBe(SHORT);
+  });
+
+  it('redacts digits separated from an escaped prefix by a space', () => {
+    // The first shape in the issue, and the one that LOOKS like #2026's
+    // round-5 case without being it: there, the redactor's own deletion
+    // separated the prefix from the payload; here the space already had.
+    expect(redactText(`%30%78 ${A}`)).toBe(`%30%78 ${SHORT}`);
+  });
+
+  it('redacts digits separated from a literal prefix by a query parameter', () => {
+    expect(redactText(`/p?a=0x&b=${A}`)).toBe(`/p?a=0x&b=${SHORT}`);
+  });
+
+  it('still absorbs an adjacent prefix so the familiar shape survives', () => {
+    // Behaviour that must NOT change: a plain address keeps rendering as
+    // `0x1234…5678`, in both cases of the prefix.
+    expect(redactText(`0x${A}`)).toBe('0x1234…5678');
+    expect(redactText(`0X${A}`)).toBe('0X1234…5678');
+  });
+
+  it('leaves a transaction hash whole, WITH and WITHOUT its prefix', () => {
+    // The property that makes a bare-hex rule safe: a hash is a 64-run, so it
+    // is not a 40-run. The old lookahead had to say this; "maximal run" says
+    // it for free — and says it for the bare form too, which the lookahead
+    // never covered because it never matched a bare run at all.
+    const hash = `0x${'ab'.repeat(32)}`;
+    expect(redactText(hash)).toBe(hash);
+    expect(redactText('ab'.repeat(32))).toBe('ab'.repeat(32));
+  });
+
+  it("does not redact a hash's last forty characters", () => {
+    // They sit INSIDE the 64-run, so they are not a maximal 40-run. This is
+    // the case the issue asked to be answered explicitly, and it needs no
+    // rule of its own.
+    const hash = `0x${'ab'.repeat(32)}`;
+    expect(redactText(`see ${hash} end`)).toBe(`see ${hash} end`);
+  });
+
+  it('does not redact runs that are not exactly forty long', () => {
+    // 39 is not an address. 41 is not either — and the 41 case is a REAL
+    // residual exposure rather than a happy result: its last forty characters
+    // could be an account with one junk character in front. It is left
+    // deliberately, because the only rule that would catch it — redact any
+    // 40-character window inside a longer run — also redacts every
+    // transaction hash, which this module promises to keep whole. The two
+    // cannot both hold; see the limits note in the module header.
+    expect(redactText(A.slice(1))).toBe(A.slice(1));
+    expect(redactText(`a${A}`)).toBe(`a${A}`);
+  });
+
+  it('redacts a second address whose 0x is shared with the run before it', () => {
+    // #2043 round 2 P2 — a LEAK, introduced by the prefix absorption itself.
+    // The `0` of `0x` is a hex character, so it can be the last character of
+    // the preceding maximal run: `<39 hex>0x<40 hex>` makes the first run
+    // exactly forty long (the 39 plus that `0`), and the second address then
+    // reaches back for the same `0`. The consumer's overlap guard dropped the
+    // whole second match, and the observed output carried `0x` and all forty
+    // digits INTACT.
+    const A = '1234567890abcdef1234567890abcdef12345678';
+    const out = redactText(`${'a'.repeat(39)}0x${A}`);
+    expect(out).not.toContain(A);
+    // Both are shortened: the first run on its own, then the second WITHOUT
+    // absorbing the contested prefix — which is the right thing to give up,
+    // since the prefix is cosmetic and the digits are the promise.
+    expect(out).toBe('aaaaaa…aaa0x123456…5678');
+  });
+
+  it('DOES NOT close a deliberately split address, and that is recorded', () => {
+    // #2027's third shape: the two halves are separately encoded and joined
+    // by a hyphen, so at the fixpoint they are two 20-runs and neither is an
+    // address. Closing it means joining fragments across separators, which is
+    // the judgement call the issue declined to make silently — how far may a
+    // separation stretch before reconstruction is speculation? Pinned as a
+    // KNOWN limit so the gap is visible in the suite rather than assumed shut.
+    const halves = `${pctAll('0x1234567890abcdef1234')}-${pctAll('567890abcdef12345678')}`;
+    expect(redactText(halves)).toBe(halves);
+  });
+});

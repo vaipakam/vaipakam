@@ -45,6 +45,7 @@ import {
 import {
   compositionUnavailableGap,
   isMissingSelector,
+  keeperDrawUnavailableGap,
   repatDrawUnavailableGap,
   repatPositionUnavailableGap,
   backingSnapshotUnavailableGap,
@@ -106,6 +107,12 @@ function mirrorBooks(): BaseChainBooks {
     // draw-dependent checks skip, so leaving it off the baseline would
     // silently disable those checks across the whole suite.
     repat: { netDraw: 0n, lifetimeReleased: 0n },
+    // #1569 M4 C3 — same reasoning as the repat baseline directly above:
+    // a CURRENT deployment has the view and reads zero. Leaving it
+    // `undefined` would make every draw-dependent check skip across the
+    // whole suite, which is the silent-disable this comment exists to
+    // prevent.
+    keeperDraw: 0n,
   };
 }
 
@@ -121,6 +128,7 @@ function canonicalBooks(): BaseChainBooks {
     released: 0n,
     outstanding: 0n,
     repat: { netDraw: 0n, lifetimeReleased: 0n },
+    keeperDraw: 0n,
   };
 }
 
@@ -1286,6 +1294,74 @@ describe('checkHardInvariants — repatriation terms (#1568 C2)', () => {
     ).toEqual(['bucket-composition']);
   });
 
+  it('nets the keeper earmark out of availability (#1569 M4 C3)', () => {
+    // The earmark deliberately does NOT ride `consumed` — that counter is
+    // one half of the on-chain `outstanding + retired == consumed`
+    // identity — so it has to appear as its own subtrahend or this model
+    // disagrees with the chain by exactly the earmark.
+    expect(
+      expectedAvail({ ...mirrorBooks(), keeperDraw: 50n * E }),
+    ).toBe(650n * E);
+  });
+
+  it('pages nothing when the chain nets the same earmark it reports', () => {
+    // The regression this exists for: before the term was added here, a
+    // healthy armed chain re-derived 700 against an on-chain 650 and
+    // paged a CRITICAL `availability-formula` — the watcher calling a
+    // correct ledger corrupted.
+    expect(
+      codes({ mirror: { keeperDraw: 50n * E, avail: 650n * E } }),
+    ).toEqual([]);
+  });
+
+  it('SKIPS the availability check while the KEEPER draw is UNKNOWN', () => {
+    // Same discipline as the repatriation draw: an unreadable view is
+    // UNKNOWN, never zero. Substituting zero here would re-derive 700
+    // against the chain's 650 and page a false CRITICAL on every armed
+    // chain whose aggregator a refresh had missed.
+    expect(
+      codes({ mirror: { keeperDraw: undefined, avail: 650n * E } }),
+    ).toEqual([]);
+    // The control, so the skip above is the only reason nothing fired:
+    // the SAME figures with the draw readable are healthy…
+    expect(
+      codes({ mirror: { keeperDraw: 50n * E, avail: 650n * E } }),
+    ).toEqual([]);
+    // …and a genuinely wrong figure still fires once it is readable.
+    expect(
+      codes({ mirror: { keeperDraw: 50n * E, avail: 700n * E } }),
+    ).toEqual(['availability-formula']);
+  });
+
+  it('fires keeper-cap when the earmark exceeds the remaining capacity', () => {
+    // Checked separately from the formula for the saturation-blindness
+    // reason `consumed-cap` documents: an over-draw floors BOTH the model
+    // and the chain to zero, so `availability-formula` would agree while
+    // the over-draw stayed invisible.
+    //
+    // reported 1000 − claimNet 300 − repatNet 0 = 700 of remaining
+    // capacity; an 800 earmark exceeds it by 100.
+    expect(
+      codes({ mirror: { keeperDraw: 800n * E, avail: 0n } }),
+    ).toEqual(['keeper-cap']);
+  });
+
+  it('counts the keeper cap against the remainder AFTER the repat draw', () => {
+    // The three draws share ONE capacity, so each being individually
+    // within `reported` still over-commits it when the sum is not. With a
+    // 650 repatriation draw the remaining capacity is 700 − 650 = 50, so
+    // a 100 earmark is an over-draw even though 100 alone looks small.
+    expect(
+      codes({
+        mirror: {
+          repat: { netDraw: 650n * E, lifetimeReleased: 0n },
+          keeperDraw: 100n * E,
+          avail: 0n,
+        },
+      }),
+    ).toEqual(['keeper-cap']);
+  });
+
   it('SKIPS the availability check while the draw is UNKNOWN', () => {
     // Codex #1618 r1 P2 — a transient failure of only the draw view, on a
     // chain whose on-chain `avail` nets a live 100 draw. Substituting zero
@@ -2175,6 +2251,24 @@ describe('base-self-inert scope', () => {
       }),
     ).toEqual(['base-self-inert']);
   });
+
+  it('fires on a keeper draw booked against Base (#1569 M4 C3)', () => {
+    // BOTH writers structurally exclude the canonical id, so a non-zero
+    // Base keeper draw cannot arise from correct operation. Without it in
+    // this check the value hides: expectedAvail folds it in as a legitimate
+    // subtrahend and keeper-cap accepts it while it fits under `reported`,
+    // so a writer regression on Base leaves every other check green.
+    expect(
+      codes({ canonical: { keeperDraw: 1n * E, avail: 499n * E } }),
+    ).toEqual(['base-self-inert']);
+  });
+
+  it('does not fire on an UNKNOWN keeper draw under the canonical id', () => {
+    // Same discipline as the draw's other checks: unreadable is UNKNOWN,
+    // never zero and never a fault. A partial refresh must not page a
+    // self-inertness CRITICAL on a healthy Base.
+    expect(codes({ canonical: { keeperDraw: undefined } })).toEqual([]);
+  });
 });
 
 describe('report-lag window sizing', () => {
@@ -2759,6 +2853,18 @@ describe('repat gap builders + the pre-C2/unknown discrimination', () => {
     expect(draw.detail).toContain('UNKNOWN');
     expect(draw.detail).toContain('repat-cap');
     expect(draw.detail).toContain('did NOT run');
+    // #1569 M4 C3 (Codex #2031 r11) — keeper-cap measures the remaining
+    // capacity AFTER the repatriation draw, so an unreadable REPAT draw
+    // disables it too. Naming only repat-cap told an incident responder
+    // the keeper bound was still monitored in exactly the window it was
+    // not, which is the failure mode these gap messages exist to prevent.
+    expect(draw.detail).toContain('keeper-cap');
+    // #1569 M4 C3 (Codex #2031 r19) — the Base self-inertness leg is gated
+    // on the same value and is the ONLY check that would catch a keeper
+    // draw booked against the canonical id, so an incident responder must
+    // be told it is unavailable too.
+    expect(keeperDrawUnavailableGap(10, TRANSIENT()).detail)
+      .toContain('base-self-inert');
     const pos = repatPositionUnavailableGap(10, TRANSIENT());
     expect(pos.detail).toContain('UNKNOWN');
     expect(pos.detail).toContain('bucket composition');

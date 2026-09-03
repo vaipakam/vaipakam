@@ -94,7 +94,24 @@ library LibVpfiRecycle {
         // this class — it credits the w5 RECOVERY POSITION (the ratified
         // §5.3 unification: no emission-headroom restoration anywhere;
         // the re-remit runs uncharged from the position).
-        RecoveryCeremonyRelocation
+        RecoveryCeremonyRelocation,
+        // #1204 E-2 — SPEND-GATED PERK purchase (append-only enum). A user
+        // spends VPFI from their own vault to buy a consumable perk
+        // entitlement; the tokens land in Diamond custody and credit the
+        // bucket, exactly like the notification tariff. GENUINE absorption
+        // (fresh-from-user, never previously Ā-counted), so it belongs in the
+        // day-bucketed `credited[d]` feed and the reported cumulative — hence
+        // {credit}, not {creditCustodyRelocated}.
+        //
+        // Appended rather than folded into `NotificationFee` or `FullTariff`
+        // so the feed stays readable per class, which is what the completion
+        // plan §M6 requires ("the #1204 build appends `SpendGatedPerk` rather
+        // than misclassifying perk absorption under another source").
+        //
+        // refId is the PERK ID, not a loanId: a perk purchase is not bound to
+        // a loan, and the per-user record lives in storage rather than in the
+        // event's reference slot.
+        SpendGatedPerk
     }
 
     /// @notice Emitted once per recycle-bucket credit — the on-chain feed
@@ -618,11 +635,26 @@ library LibVpfiRecycle {
         //
         // Worse, patching it compounds. The r3 treasury subtraction
         // immediately diverged this from the RL-3 expiry predicates
-        // (`sweepExpiredEntry` / `_entryExecutableNow`), which still test
-        // `balanceOf >= fundingNeed` — so horizon clocks accrued while claims
-        // reverted and an entry could expire without ever having an
-        // executable notice window. A fix that manufactures a new defect is
-        // the signal to stop patching (#1499 tracks that divergence).
+        // (`sweepExpiredEntry` / `_entryExecutableNow`) — so horizon clocks
+        // accrued while claims reverted, and an entry could expire without
+        // ever having had an executable notice window. A fix that
+        // manufactures a new defect is the signal to stop patching.
+        //
+        // THAT DIVERGENCE IS CLOSED (#1499, #1970). The predicates still
+        // read `balanceOf >= fundingNeed`, but `fundingNeed` now carries the
+        // earmark — `_userClaimFundingNeedViewWith` adds
+        // `balance − unearmarked` to the fresh requirement — so the test is
+        // equivalent to the claim's own `payableFresh <= backingRoom`, on
+        // the same {backingPosition} definition and the same inclusive
+        // boundary. The sentence above used to say the predicates "still
+        // test `balanceOf >= fundingNeed`" as evidence of an OPEN
+        // divergence; that reading is now wrong, and left standing it would
+        // send a reader to re-fix something already fixed.
+        //
+        // The residual differences are deliberate and fail-closed: the
+        // recycled side is an upper bound rather than an exact figure, and
+        // the view mirror cannot advance sibling cursors. Both over-pause
+        // the clock; neither reaps early.
         //
         // So the remaining claimants stay KNOWN-UNRESERVED and are recorded
         // as such rather than half-fixed. #1566 carries the durable remedy
@@ -1280,7 +1312,17 @@ library LibVpfiRecycle {
         // this view said the capacity was back. Zero until #1568 arms, so
         // the term is inert on every deployment built before then.
         uint256 netRepat = s.chainRepatriationDebited[chainId];
-        return avail > netRepat ? avail - netRepat : 0;
+        avail = avail > netRepat ? avail - netRepat : 0;
+        // #1569 M4 C3 keeper earmark — the THIRD separate draw term, added
+        // for the same reason as the repatriation one above and maintained
+        // the same way (net in the debited slot). It rides here rather than
+        // on `chainConsumedRecycled` because that counter is one half of the
+        // `outstanding + retired == consumed` identity and only the local
+        // COMMIT enters the retirement lifecycle. Netting it is what stops
+        // Base instructing the same tokens twice. Zero until
+        // `chainKeeperAllocateBps` is armed, so inert on older deployments.
+        uint256 netKeeper = s.chainKeeperAllocDebited[chainId];
+        return avail > netKeeper ? avail - netKeeper : 0;
     }
 
     /**

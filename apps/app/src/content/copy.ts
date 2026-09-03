@@ -781,6 +781,13 @@ const copySource = {
       'Opens a pre-filled GitHub issue with the details above and the last recorded error. Your full wallet address is never included.',
     copyDetails: 'Copy details',
     copied: 'Copied.',
+    // #2023 — the clipboard can refuse, and it used to refuse in silence.
+    // The sentence names the remedy that is already on screen rather than
+    // just reporting the failure.
+    copyFailed:
+      'This browser would not let the app use the clipboard. The full report is below — select it to copy it by hand.',
+    showReport: 'Show full report',
+    hideReport: 'Hide full report',
   },
   support: {
     title: 'Contact support',
@@ -3961,6 +3968,9 @@ const copySource = {
       'Minted a test rental NFT to your wallet. Its token ID — you’ll need it to list the rental:',
     copyTokenId: 'Copy token ID',
     copiedTokenId: 'Copied.',
+    // #2023 — this button used to say "Copied." whether or not it had. The
+    // id is displayed just above, so naming the failure is enough.
+    copyTokenIdFailed: 'Could not copy — select the ID above instead.',
     liquid: {
       title: 'Liquid test token (tLIQ)',
       blurb:

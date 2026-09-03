@@ -701,12 +701,16 @@ contract RewardAggregatorFacet is
 
     /// @notice #1222 M3 B2-a — a chain's funded recycled stamp for an armed
     ///         day (zeroes with `stamped == false` pre-cutover or for a
-    ///         never-funded chain). `keeperAllocate` is always 0 — B2-b
-    ///         landed and it is STILL always 0, because the per-chain
-    ///         keeper allocation it reserves space for is #1569, which is
-    ///         undecided. TWO places write a zero, and they are not two
+    ///         never-funded chain). `keeperAllocate` is NO LONGER always
+    ///         0: #1569 landed and {LibMeshFunding._stampOne} now computes
+    ///         it from the destination's reported day inflow, capped by the
+    ///         headroom its local commit leaves. This paragraph said the
+    ///         field was permanently zero and the card undecided, which was
+    ///         true until that landed (Codex #2031 r13). TWO places write a
+    ///         zero, and they are not two
     ///         stamps: {LibMeshFunding._stampOne} is the only production
-    ///         stamp producer and hard-zeroes the field, while this facet's
+    ///         stamp producer and COMPUTES the field (it hard-zeroed it
+    ///         until #1569 armed the knob), while this facet's
     ///         `_perDestFields` writes zero only in its MISSING-STAMP
     ///         fallback payload (an excluded or unstamped destination) —
     ///         where a stamp exists it forwards `f.keeperAllocate`
@@ -716,15 +720,26 @@ contract RewardAggregatorFacet is
     ///         B2-b") implied the field would populate at a milestone that
     ///         has since passed.
     ///
-    ///         It is READ, though — do not mistake "always 0" for "inert".
+    ///         And it is both WRITTEN and READ since #1569 armed it — the
+    ///         "always 0" framing this paragraph used is retired. Do not
+    ///         mistake the missing-stamp fallback's zero for the field's
+    ///         value: `_stampOne` computes it from the destination's
+    ///         reported day inflow, charges `chainKeeperAllocDebited` on
+    ///         Base, and the receiver adds it to `recycleKeeperBudget`.
     ///         `_perDestFields` puts it in every V2/V3 per-destination
     ///         payload, {VaipakamRewardMessenger} forwards it, and
     ///         {RewardReporterFacet} stores it and REPLAY-COMPARES it: a
     ///         re-broadcast carrying a value that differs from the stored
     ///         one reverts `KnownGlobalAlreadySet()`. So whoever arms #1569
-    ///         is changing a wire field under an equality check, not filling
-    ///         in an unused slot. What is true is narrower than "unread":
-    ///         no accounting or allocation logic acts on the value.
+    ///         changed a wire field under an equality check rather than
+    ///         filling in an unused slot — and it is armed now, so the
+    ///         equality check guards a live value.
+    ///
+    ///         The old closing line, "no accounting or allocation logic acts
+    ///         on the value", is RETIRED (Codex #2031 r16). Base charges
+    ///         `chainKeeperAllocDebited` from it and nets it out of the
+    ///         chain's availability; the receiver adds it to
+    ///         `recycleKeeperBudget`. Accounting acts on it on both sides.
     function getChainDayRecycledFunding(uint256 dayId, uint32 chainId)
         external
         view
@@ -807,6 +822,31 @@ contract RewardAggregatorFacet is
         attributedCumulative = s.chainAttributedRecycled[chainId];
     }
 
+    /// @notice #1569 M4 C3 — the chain's keeper-earmark draw, the third
+    ///         separate term of the availability formula alongside the claim
+    ///         net and the repatriation draw.
+    /// @dev    Exposed for the SAME reason `getChainRepatriationDraw` is
+    ///         (Codex #2031 r3): `ops/mesh-watcher` re-derives availability
+    ///         off-chain and pages a CRITICAL when its figure disagrees with
+    ///         the chain's. A draw term the watcher cannot read makes a
+    ///         healthy armed chain look corrupted by exactly this amount,
+    ///         and leaves the watcher unable to check the draw's own bound.
+    ///
+    ///         Zero until `chainKeeperAllocateBps` is armed, so a
+    ///         pre-#1569 deployment reads zero and needs no special case —
+    ///         but a MISSING selector is not the same as zero, and the
+    ///         watcher must treat an unreadable view as UNKNOWN and skip,
+    ///         never as zero (a partial facet refresh leaves possibly-nonzero
+    ///         storage behind a reverting view).
+    /// @return netDraw The live earmark draw for `chainId`.
+    function getChainKeeperDraw(uint32 chainId)
+        external
+        view
+        returns (uint256 netDraw)
+    {
+        return LibVaipakam.storageSlot().chainKeeperAllocDebited[chainId];
+    }
+
     /// @notice #1222 M4 C1 (#1567) — the surplus multiple `N` changed.
     ///         `0` means the flag is dark.
     event RecycleSurplusMultipleSet(uint16 multiple);
@@ -854,6 +894,105 @@ contract RewardAggregatorFacet is
      *         `InteractionRewardsFacet`, not `ConfigFacet`).
      * @param  newMultiple New `N`; `0` turns the flag off.
      */
+    /// @notice #1569 M4 C3 — emitted when Base changes the keeper-allocation
+    ///         instruction it sends to one chain.
+    /// @custom:event-category informational/config
+    event ChainKeeperAllocateBpsSet(uint32 indexed chainId, uint16 bps);
+
+    /**
+     * @notice #1222 M4 C3 (#1569) — the share of a chain's REPORTED DAY
+     *         INFLOW that Base instructs it to earmark for its own
+     *         keeper-incentive register. The chain's locally-funded commit
+     *         is the CAP, not the base: the earmark is bounded by the
+     *         headroom that commit leaves in the chain's availability.
+     *
+     * @dev    BASE-AUTHORIZED, and that is the point of the card: a mirror
+     *         must not be able to grant itself keeper budget. `onlyCanonical`
+     *         is therefore not decoration — without it an admin on a MIRROR
+     *         would get a successful call and an event while nothing
+     *         observable changed, which is a false confirmation to governance
+     *         or automation (the same reasoning C1's knob carries).
+     *
+     *         Bounded by the LOCAL register's ceiling
+     *         ({LibVaipakam.RECYCLE_REGISTER_KEEPER_MAX_BPS}) so the two
+     *         allocation surfaces cannot diverge on how much of a bucket may
+     *         be earmarked for keepers. Zero — the deploy default — instructs
+     *         nothing, which is exactly the behaviour before this was armed.
+     *
+     *         THE INSTRUCTION IS PER DAY AND FROZEN AT FINALIZATION. Changing
+     *         this changes what LATER days instruct; a day already stamped
+     *         keeps the figure it was stamped with, and re-broadcasting that
+     *         day with a different one is refused by the mirror's replay
+     *         equality check (`KnownGlobalAlreadySet`). That is deliberate —
+     *         the wire field is under an equality check, not an unused slot.
+     *
+     *         THE CANONICAL CHAIN IS NOT A VALID TARGET, and is rejected
+     *         rather than accepted-and-ignored (Codex #2031 r6). Base is
+     *         never a "local" funder in the commit split — `_stampOne`
+     *         leaves `commitLocal` at zero for `c.chainId == ctx.baseId`,
+     *         because Base's own slice is drawn from the bucket the global
+     *         ledger already governs — so the keeper block never runs for it
+     *         and no day could ever produce an allocation from this setting.
+     *         Storing it and emitting a success event would report a
+     *         configuration that is inert by construction, which is the
+     *         worst kind: an operator would believe Base's keeper share was
+     *         armed and never see a figure appear.
+     *
+     *         Base's own keeper share has its own knob —
+     *         {ConfigFacet-setRecycleRegisterKeeperBps}, the LOCAL recycle
+     *         register — which is what an operator reaching for this one on
+     *         the canonical chain actually wants.
+     *
+     * @param  chainId Destination chain the instruction is for. MUST NOT be
+     *                 the canonical chain's own id.
+     * @param  bps     Share of that chain's REPORTED DAY INFLOW to earmark;
+     *                 `0` off. NOT a share of the local commit — that is the
+     *                 CAP (the earmark is bounded by the headroom the commit
+     *                 leaves in the chain's availability), not the base.
+     *                 Tuning this from expected claim demand gives the wrong
+     *                 figure, most visibly on a low-demand day.
+     */
+    function setChainKeeperAllocateBps(uint32 chainId, uint16 bps)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+        onlyCanonical
+    {
+        // Matched against `block.chainid` rather than a stored id because
+        // that is exactly what `LibMeshFunding` compares against
+        // (`baseId = uint32(block.chainid)`), and this setter is
+        // `onlyCanonical` so the two are the same chain by construction. A
+        // stored-id comparison could drift from the one that decides.
+        if (chainId == uint32(block.chainid)) {
+            revert KeeperAllocateTargetIsCanonical(chainId);
+        }
+        if (bps > LibVaipakam.RECYCLE_REGISTER_KEEPER_MAX_BPS) {
+            revert IVaipakamErrors.ParameterOutOfRange(
+                "chainKeeperAllocateBps",
+                bps,
+                0,
+                LibVaipakam.RECYCLE_REGISTER_KEEPER_MAX_BPS
+            );
+        }
+        LibVaipakam.storageSlot().chainKeeperAllocateBps[chainId] = bps;
+        emit ChainKeeperAllocateBpsSet(chainId, bps);
+    }
+
+    /// @notice The canonical chain cannot be its own allocation target: the
+    ///         mesh split gives Base no local commit to take a share OF, so
+    ///         the setting would be inert. Use
+    ///         {ConfigFacet-setRecycleRegisterKeeperBps} for Base's own
+    ///         keeper share.
+    error KeeperAllocateTargetIsCanonical(uint32 chainId);
+
+    /// @notice The keeper-allocation instruction Base currently sends `chainId`.
+    function getChainKeeperAllocateBps(uint32 chainId)
+        external
+        view
+        returns (uint16)
+    {
+        return LibVaipakam.storageSlot().chainKeeperAllocateBps[chainId];
+    }
+
     function setRecycleSurplusMultiple(uint16 newMultiple)
         external
         onlyRole(LibAccessControl.ADMIN_ROLE)
@@ -1550,466 +1689,6 @@ contract RewardAggregatorFacet is
         );
     }
 
-    // ─── Broadcast trigger ─────────────────────────────────────────────────
-
-    /**
-     * @notice Ship the finalized `(globalLender, globalBorrower)` pair
-     *         for `dayId` to every mirror via the registered messenger.
-     * @dev Payable, permissionless. `msg.value` must cover the sum of
-     *      per-destination CCIP native fees — quote first via
-     *      {IRewardMessenger.quoteBroadcastGlobal}. Leftover refunds to the
-     *      caller.
-     *
-     *      Separated from {finalizeDay} so finalization stays cheap and
-     *      a LZ outage on one destination can be retried independently
-     *      from another via a follow-up call.
-     * @param dayId Day whose finalized pair to broadcast.
-     */
-    function broadcastGlobal(
-        uint256 dayId
-    ) external payable nonReentrant whenNotPaused onlyCanonical {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        if (!s.dailyGlobalFinalized[dayId]) revert DayNotReadyToFinalize();
-        address messenger = s.rewardMessenger;
-        if (messenger == address(0)) revert RewardMessengerNotSet();
-
-        // #1434 P2-w1 — three-step send ladder: V3 (kind-10, the frozen
-        // day-clock facts) → V2 (kind-5) → legacy (kind-2). Each step falls
-        // through ONLY on an empty revert (= missing selector on an older
-        // messenger proxy — the established capability probe); a reasoned
-        // revert is a real failure and bubbles. A day finalized BEFORE this
-        // upgrade has no frozen clock (`dayLapseClock[dayId].finalizedAt ==
-        // 0`) and is broadcast on the V2 wire permanently: there is no
-        // authentic finalization timestamp to send, and a zero-clock V3
-        // would fail closed at the mirror ingress as a PERMANENTLY failed
-        // CCIP message — the V2 fallback is what keeps pre-upgrade days
-        // broadcastable at all.
-        _broadcastDayV3(
-            s,
-            dayId,
-            messenger,
-            IRewardMessenger(messenger).getBroadcastDestinations()
-        );
-    }
-
-    /// @notice B2-b (Codex #1417 r1) — quote the fee the PERMISSIONLESS
-    ///         {broadcastGlobal} trigger will actually pay: assembles the
-    ///         SAME per-destination V2 payloads as the send and quotes them
-    ///         through the messenger, falling back to the legacy quote when
-    ///         the messenger predates V2 (empty revert = missing selector)
-    ///         — the exact mirror of the send-side shim, so the unchanged
-    ///         public entry point stays quotable across the rollout window.
-    function quoteBroadcastGlobal(uint256 dayId)
-        external
-        view
-        returns (uint256 nativeFee)
-    {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        if (!s.dailyGlobalFinalized[dayId]) revert DayNotReadyToFinalize();
-        address messenger = s.rewardMessenger;
-        if (messenger == address(0)) revert RewardMessengerNotSet();
-
-        (
-            IRewardMessenger.BroadcastV2Shared memory shared,
-            IRewardMessenger.BroadcastV2PerDest[] memory perDest
-        ) = _assembleDayV2(
-            s, dayId, IRewardMessenger(messenger).getBroadcastDestinations()
-        );
-        // #1434 P2-w1 — quote the V3 shape iff the send path would send it:
-        // the day carries a frozen clock AND the messenger has the V3
-        // selector. The exact mirror of the send-side ladder, so the
-        // permissionless trigger's quote can never price a different wire
-        // generation than the send dispatches.
-        if (s.dayLapseClock[dayId].finalizedAt != 0) {
-            try IRewardMessenger(messenger).quoteBroadcastDayV3(
-                shared, _dayExtras(s, dayId), _toV3PerDest(s, dayId, perDest)
-            ) returns (uint256 f3) {
-                return f3;
-            } catch (bytes memory reason) {
-                if (reason.length != 0) {
-                    assembly ("memory-safe") {
-                        revert(add(reason, 0x20), mload(reason))
-                    }
-                }
-            }
-        }
-        try IRewardMessenger(messenger).quoteBroadcastDayV2(shared, perDest)
-        returns (uint256 f) {
-            return f;
-        } catch (bytes memory reason) {
-            if (reason.length != 0) {
-                assembly ("memory-safe") {
-                    revert(add(reason, 0x20), mload(reason))
-                }
-            }
-        }
-        // Pre-B2-b messenger: the send path will fall back to the legacy
-        // kind-2 broadcast, so quote that shape.
-        return IRewardMessenger(messenger).quoteBroadcastGlobal(
-            dayId,
-            s.dailyGlobalLenderInterestNumeraire18[dayId],
-            s.dailyGlobalBorrowerInterestNumeraire18[dayId]
-        );
-    }
-
-    /// @notice #1434 P2-w1 — the single-destination V3 heal: re-deliver day
-    ///         `dayId`'s frozen clock facts (plus the full V2 figures) to
-    ///         ONE destination. Permissionless and repeatable, exactly like
-    ///         {broadcastGlobal} — the payload is assembled from the same
-    ///         frozen state, so a re-send is byte-identical and the mirror
-    ///         ingress is idempotent.
-    /// @dev    Exists because {broadcastGlobal} enumerates the messenger's
-    ///         CURRENT destination list: a mirror removed from that list
-    ///         after its kind-5 apply could otherwise never receive its V3
-    ///         clock backfill (design §1.1). Admission is day-scoped
-    ///         historical standing — included in the day's finalized
-    ///         denominator, or holding any chain-day commitments record
-    ///         (complete report, remit-ineligible marking, or a reported
-    ///         liability) — NOT current-list membership. A chain with
-    ///         neither has no stake in the day and cannot be used to spray
-    ///         arbitrary lanes. If the LANE itself is torn down, the
-    ///         underlying CCIP messenger reverts — the operator
-    ///         decommissioning boundary stated in the design.
-    /// @param dayId       The finalized day to heal.
-    /// @param destChainId The destination chain (uint32-bounded).
-    function broadcastGlobalTo(
-        uint256 dayId,
-        uint256 destChainId
-    ) external payable nonReentrant whenNotPaused onlyCanonical {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        if (!s.dailyGlobalFinalized[dayId]) revert DayNotReadyToFinalize();
-        address messenger = s.rewardMessenger;
-        if (messenger == address(0)) revert RewardMessengerNotSet();
-        if (s.dayLapseClock[dayId].finalizedAt == 0) {
-            revert DayHasNoLapseClock(dayId);
-        }
-        _assertDayStanding(s, dayId, destChainId);
-
-        uint256[] memory one = new uint256[](1);
-        one[0] = destChainId;
-        (
-            IRewardMessenger.BroadcastV2Shared memory shared,
-            IRewardMessenger.BroadcastV2PerDest[] memory perDest
-        ) = _assembleDayV2(s, dayId, one);
-
-        try IRewardMessenger(messenger).broadcastDayV3Single{
-            value: msg.value
-        }(
-            shared,
-            _dayExtras(s, dayId),
-            _toV3PerDest(s, dayId, perDest)[0],
-            payable(msg.sender)
-        ) returns (bytes32) {} catch (bytes memory reason) {
-            if (reason.length != 0) {
-                assembly ("memory-safe") {
-                    revert(add(reason, 0x20), mload(reason))
-                }
-            }
-            revert MessengerPredatesV3();
-        }
-    }
-
-    /// @notice #1434 P2-w1 — quote the fee {broadcastGlobalTo} will pay.
-    ///         Same admission checks as the send, so quoting a
-    ///         non-admissible heal fails the same way the send would.
-    function quoteBroadcastGlobalTo(
-        uint256 dayId,
-        uint256 destChainId
-    ) external view returns (uint256 nativeFee) {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        if (!s.dailyGlobalFinalized[dayId]) revert DayNotReadyToFinalize();
-        address messenger = s.rewardMessenger;
-        if (messenger == address(0)) revert RewardMessengerNotSet();
-        if (s.dayLapseClock[dayId].finalizedAt == 0) {
-            revert DayHasNoLapseClock(dayId);
-        }
-        _assertDayStanding(s, dayId, destChainId);
-
-        uint256[] memory one = new uint256[](1);
-        one[0] = destChainId;
-        (
-            IRewardMessenger.BroadcastV2Shared memory shared,
-            IRewardMessenger.BroadcastV2PerDest[] memory perDest
-        ) = _assembleDayV2(s, dayId, one);
-
-        try IRewardMessenger(messenger).quoteBroadcastDayV3Single(
-            shared, _dayExtras(s, dayId), _toV3PerDest(s, dayId, perDest)[0]
-        ) returns (uint256 f) {
-            return f;
-        } catch (bytes memory reason) {
-            if (reason.length != 0) {
-                assembly ("memory-safe") {
-                    revert(add(reason, 0x20), mload(reason))
-                }
-            }
-            revert MessengerPredatesV3();
-        }
-    }
-
-    /// @dev #1434 P2-w1 — the heal's admission gate: day-scoped historical
-    ///      standing. A destination wider than uint32 can hold no standing
-    ///      (every per-chain ledger is keyed uint32), so it fails here too.
-    ///      Own frame for viaIR stack headroom.
-    function _assertDayStanding(
-        LibVaipakam.Storage storage s,
-        uint256 dayId,
-        uint256 destChainId
-    ) private view {
-        if (destChainId <= type(uint32).max && destChainId != block.chainid) {
-            uint32 dest = uint32(destChainId);
-            LibVaipakam.ChainDayCommitments storage c =
-                s.chainDayCommitments[dayId][dest];
-            // Codex #1632 r3 P1 — the FROZEN zeroed marker is part of the
-            // standing predicate: `remitIneligible` is operator-clearable
-            // (reconciliation), so a zeroed destination that was reconciled
-            // and then removed from the destination list would otherwise
-            // lose its heal eligibility — the exact chain the heal exists
-            // for. The frozen copy never clears, so standing survives.
-            if (
-                s.chainDailyIncluded[dayId][dest] || c.complete
-                    || c.remitIneligible || c.liabilityLender18 != 0
-                    || c.liabilityBorrower18 != 0
-                    || s.dayZeroedForDest[dayId][dest]
-            ) {
-                return;
-            }
-        }
-        revert DestinationHasNoDayStanding(dayId, destChainId);
-    }
-
-    // #1434 P2-w1 — the versioned lapse-schedule setter and the day-clock
-    // read views live in {RewardCommitmentFacet}, NOT here: this facet sits
-    // ~500 bytes under the EIP-170 ceiling and the commitment facet (which
-    // already owns the day-scoped reconciliation surface the frozen zeroed
-    // marker exists to be compared against) has ~20KB of headroom.
-
-    /// @dev B2-b — assemble the kind-5 per-destination broadcast: the
-    ///      day-shared consensus fields once, each destination's OWN funded
-    ///      figures from its finalize-time stamp. A destination the mesh
-    ///      resolver skipped (unarmed day / no coupled target) gets the
-    ///      global fresh floor halves and zeroed recycled fields — exactly
-    ///      what the remit sizing assumes for it. Shared by the send AND
-    ///      the facet-level quote so the two can never price different
-    ///      payloads (Codex #1417 r1).
-    function _assembleDayV2(
-        LibVaipakam.Storage storage s,
-        uint256 dayId,
-        uint256[] memory dests
-    )
-        private
-        view
-        returns (
-            IRewardMessenger.BroadcastV2Shared memory shared,
-            IRewardMessenger.BroadcastV2PerDest[] memory perDest
-        )
-    {
-        uint256 armedFrom = s.governorCommitArmedFromDay;
-        bool armed = armedFrom != 0 && dayId >= armedFrom;
-        shared = IRewardMessenger.BroadcastV2Shared({
-            dayId: dayId,
-            globalLenderNumeraire18: s.dailyGlobalLenderInterestNumeraire18[
-                dayId
-            ],
-            globalBorrowerNumeraire18: s
-                .dailyGlobalBorrowerInterestNumeraire18[dayId],
-            capMode: armed
-                ? uint8(LibVaipakam.CapMode.ShareOfPool)
-                : uint8(LibVaipakam.CapMode.LegacyEthRatio),
-            // ShareOfPool: the per-SIDE D1 ceilings (global figures, Base-
-            // computed). Legacy: the §4 threshold rides the lender slot.
-            capPayloadLender: armed
-                ? s.dayUserSideCapLenderVpfi18[dayId]
-                : s.dayCapThreshold18[dayId],
-            capPayloadBorrower: armed
-                ? s.dayUserSideCapBorrowerVpfi18[dayId]
-                : 0,
-            armedFromDay: armedFrom
-        });
-
-        uint256 n = dests.length;
-        perDest = new IRewardMessenger.BroadcastV2PerDest[](n);
-        uint256 floorHalf = uint256(s.dayPoolStamp[dayId].scheduleFloor) / 2;
-        for (uint256 i; i < n; ++i) {
-            perDest[i] = _perDestFields(s, dayId, dests[i], floorHalf);
-        }
-    }
-
-    /// @dev B2-b — build + send the kind-5 per-destination broadcast.
-    function _broadcastDayV2(
-        LibVaipakam.Storage storage s,
-        uint256 dayId,
-        address messenger,
-        uint256[] memory dests
-    ) private {
-        (
-            IRewardMessenger.BroadcastV2Shared memory shared,
-            IRewardMessenger.BroadcastV2PerDest[] memory perDest
-        ) = _assembleDayV2(s, dayId, dests);
-
-        try IRewardMessenger(messenger).broadcastDayV2{value: msg.value}(
-            shared, perDest, payable(msg.sender)
-        ) {} catch (bytes memory reason) {
-            // Empty revert = missing selector on a pre-B2-b messenger
-            // proxy → legacy kind-2 fallback (the failed call returned
-            // the full msg.value, so the legacy send re-forwards it).
-            // Reasoned reverts (fee shortfall, destination-set mismatch)
-            // are real failures and bubble.
-            if (reason.length != 0) {
-                assembly ("memory-safe") {
-                    revert(add(reason, 0x20), mload(reason))
-                }
-            }
-            _broadcastLegacy(s, dayId, messenger);
-        }
-    }
-
-    /// @dev #1434 P2-w1 — the V3 ladder head: assemble the SAME V2 fields
-    ///      the kind-5 wire would carry, append the day's frozen clock facts,
-    ///      and try the kind-10 send; fall through to {_broadcastDayV2} on
-    ///      an empty revert (pre-V3 messenger proxy — the established
-    ///      missing-selector probe; the failed call returned the full
-    ///      msg.value, so the V2 send re-forwards it) or when the day has no
-    ///      frozen clock (finalized before this upgrade — see
-    ///      {broadcastGlobal}). Reasoned reverts bubble.
-    function _broadcastDayV3(
-        LibVaipakam.Storage storage s,
-        uint256 dayId,
-        address messenger,
-        uint256[] memory dests
-    ) private {
-        if (s.dayLapseClock[dayId].finalizedAt == 0) {
-            _broadcastDayV2(s, dayId, messenger, dests);
-            return;
-        }
-        (
-            IRewardMessenger.BroadcastV2Shared memory shared,
-            IRewardMessenger.BroadcastV2PerDest[] memory perDest
-        ) = _assembleDayV2(s, dayId, dests);
-
-        try IRewardMessenger(messenger).broadcastDayV3{value: msg.value}(
-            shared,
-            _dayExtras(s, dayId),
-            _toV3PerDest(s, dayId, perDest),
-            payable(msg.sender)
-        ) {} catch (bytes memory reason) {
-            if (reason.length != 0) {
-                assembly ("memory-safe") {
-                    revert(add(reason, 0x20), mload(reason))
-                }
-            }
-            _broadcastDayV2(s, dayId, messenger, dests);
-        }
-    }
-
-    /// @dev #1434 P2-w1 — the day's frozen clock facts, read back verbatim
-    ///      from the finalization-time freeze (never recomputed — R2a).
-    ///      #1636 r2 — plus the day-level funded pool halves from the same
-    ///      freeze (`dayPoolStamp`, written by finalize): the Δq quote
-    ///      numerator, which a zeroed destination cannot derive from its
-    ///      own deliberately-zero slice.
-    function _dayExtras(
-        LibVaipakam.Storage storage s,
-        uint256 dayId
-    ) private view returns (IRewardMessenger.BroadcastV3Extras memory) {
-        LibVaipakam.DayLapseClock storage c = s.dayLapseClock[dayId];
-        LibVaipakam.DayPoolStamp storage p = s.dayPoolStamp[dayId];
-        return IRewardMessenger.BroadcastV3Extras({
-            finalizedAt: c.finalizedAt,
-            lapseScheduleVersion: c.scheduleVersion,
-            lapseWindowSeconds: c.lapseWindowSeconds,
-            dispatchCutoffGap: c.dispatchCutoffGap,
-            dayScheduleFloorHalf: uint256(p.scheduleFloor) / 2,
-            dayRecycledBudgetHalf: uint256(p.recycledBudget) / 2
-        });
-    }
-
-    /// @dev #1434 P2-w1 — wrap the assembled V2 per-destination entries with
-    ///      each destination's FROZEN zeroed marker (never the live
-    ///      `remitIneligible`, which reconciliation can clear between two
-    ///      sends of the same day).
-    function _toV3PerDest(
-        LibVaipakam.Storage storage s,
-        uint256 dayId,
-        IRewardMessenger.BroadcastV2PerDest[] memory perDest
-    ) private view returns (IRewardMessenger.BroadcastV3PerDest[] memory) {
-        uint256 n = perDest.length;
-        IRewardMessenger.BroadcastV3PerDest[] memory v3 =
-            new IRewardMessenger.BroadcastV3PerDest[](n);
-        for (uint256 i; i < n; ++i) {
-            v3[i] = IRewardMessenger.BroadcastV3PerDest({
-                base: perDest[i],
-                zeroedForDest: s.dayZeroedForDest[dayId][
-                    uint32(perDest[i].destChainId)
-                ]
-            });
-        }
-        return v3;
-    }
-
-    /// @dev One destination's V2 fields (own frame — viaIR stack headroom).
-    function _perDestFields(
-        LibVaipakam.Storage storage s,
-        uint256 dayId,
-        uint256 destChainId,
-        uint256 floorHalf
-    ) private view returns (IRewardMessenger.BroadcastV2PerDest memory) {
-        LibVaipakam.ChainDayFunding storage f =
-            s.chainDayRecycledFunding[dayId][uint32(destChainId)];
-        if (f.stamped) {
-            return IRewardMessenger.BroadcastV2PerDest({
-                destChainId: destChainId,
-                freshLenderHalf: f.freshLenderHalf,
-                freshBorrowerHalf: f.freshBorrowerHalf,
-                recycledLenderHalfEquiv: f.lenderHalfEquiv,
-                recycledBorrowerHalfEquiv: f.borrowerHalfEquiv,
-                recycleConsume: f.recycleConsume,
-                keeperAllocate: f.keeperAllocate
-            });
-        }
-        // Codex #1417 r2 P1 — a destination excluded from the finalized
-        // denominator (grace/force-finalized without its report) gets ZERO
-        // halves: its numerators are not in the globals, so any nonzero
-        // half would let its users accrue unremittable rewards.
-        if (!s.chainDailyIncluded[dayId][uint32(destChainId)]) {
-            floorHalf = 0;
-        }
-        return IRewardMessenger.BroadcastV2PerDest({
-            destChainId: destChainId,
-            freshLenderHalf: floorHalf,
-            freshBorrowerHalf: floorHalf,
-            recycledLenderHalfEquiv: 0,
-            recycledBorrowerHalfEquiv: 0,
-            recycleConsume: 0,
-            keeperAllocate: 0
-        });
-    }
-
-    /// @dev B2-b — the pre-V2 kind-2 send, kept as the fallback for a
-    ///      not-yet-upgraded messenger proxy (rollout shim; remove with
-    ///      the legacy wire).
-    function _broadcastLegacy(
-        LibVaipakam.Storage storage s,
-        uint256 dayId,
-        address messenger
-    ) private {
-        LibVaipakam.DayPoolStamp storage stamp = s.dayPoolStamp[dayId];
-        IRewardMessenger(messenger).broadcastGlobal{value: msg.value}(
-            dayId,
-            s.dailyGlobalLenderInterestNumeraire18[dayId],
-            s.dailyGlobalBorrowerInterestNumeraire18[dayId],
-            // #1008 (S13) — ship the finalize-snapshotted canonical §4 cap
-            // threshold so every mirror caps identically.
-            s.dayCapThreshold18[dayId],
-            // Governor PR-3c (#1217 §6/§8) — ship the finalize-stamped
-            // day-pool composition (per-side halves) + the arming day so
-            // every mirror prices the identical dailyPool and arms on the
-            // same D* with zero operator drift.
-            uint256(stamp.scheduleFloor) / 2,
-            uint256(stamp.recycledBudget) / 2,
-            s.governorCommitArmedFromDay,
-            payable(msg.sender)
-        );
-    }
 
     /// @notice #1222 M3 B2-b — the armed day's per-SIDE D1 ceilings
     ///         (stamped at finalization from the GLOBAL funded figures,

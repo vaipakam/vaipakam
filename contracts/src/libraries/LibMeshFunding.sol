@@ -416,18 +416,137 @@ library LibMeshFunding {
             }
         }
         reservedBase = commit - commitLocal;
-        if (commitLocal != 0) {
+        // #1569 — the Base-authorized keeper instruction rides the SAME local
+        // commit, so it exists only where that does. Computed before the
+        // ledger writes because the instruction cumulative must count it:
+        // Base has told the chain to spend it, and the backstop that stops a
+        // chain being committed twice for the same tokens nets against that
+        // cumulative.
+        uint256 keeperAlloc;
+        // GATED ON BEING A MIRROR, not on there being claim demand (Codex
+        // #2031 r9). This block used to open with `commitLocal != 0`, which
+        // is the same defect as sizing from it: a chain that absorbed
+        // receipts on a quiet day has inflow to earmark and no claims, so the
+        // whole allocation was skipped for exactly the low-demand surplus
+        // chains the channel targets. Base is still excluded — it is never a
+        // local funder in this split, and `setChainKeeperAllocateBps` refuses
+        // the canonical id anyway, so this is belt-and-braces.
+        if (c.chainId != ctx.baseId) {
+            // TWO LIMITS OF THIS, recorded because review found both and the
+            // sizing rule has already moved twice (Codex #2031 r10):
+            //
+            //  1. It only runs on a day that HAS claim demand.
+            //     `resolveAndStampDayFunding` returns before `_stampAndArm`
+            //     when the coupled target or both global interest halves are
+            //     zero, so a pure-inflow quiet day stamps nothing at all.
+            //     Sizing from inflow removes the dependence on the SIZE of
+            //     demand, not on its existence.
+            //  2. The numerator is MIRROR-REPORTED. A mirror can shift its
+            //     unattributed cumulative headroom into one day's
+            //     `recycledForDay18` and accelerate its own earmark. The
+            //     clamp below still bounds the total to what the chain
+            //     holds, so this moves the allocation MIX and its timing
+            //     rather than letting a chain exceed its availability — but
+            //     it does soften "a mirror cannot grant itself keeper
+            //     budget" to "cannot grant itself MORE THAN IT HAS".
+            //
+            // Both are design questions rather than clear bugs: the ratified
+            // formula asks for reported inflow, and reported inflow is
+            // mirror-controlled by construction. Tracked for the design pass
+            // rather than resolved unilaterally here.
+            //
+            // SIZED FROM THE DAY'S REPORTED INFLOW, not from the claim commit
+            // (Codex #2031 r9). The ratified formula in
+            // `VpfiCrossChainRecyclingDesign.md` §3.5 is
+            //
+            //   keeperAllocate = min(reportedInflow × keeperBps / 10_000,
+            //                        availRecycled − recycleConsume)
+            //
+            // — inflow is the NUMERATOR base and availability-minus-claims is
+            // only the CAP. Sizing the numerator from `commitLocal` instead
+            // made keeper funding a function of CLAIM DEMAND, so a quiet or
+            // zero-demand day funded no housekeeping however much the chain
+            // had just absorbed — starving exactly the low-demand surplus
+            // chains this channel exists to serve. The clamp below is the
+            // cap half and was already correct.
+            //
+            // `mulDiv`, not `a * b / c` (Codex #2031 r8). `recordChainRecycled`
+            // deliberately accepts UNBOUNDED monotonic cumulatives, so a
+            // faulty or hostile mirror can report a figure large enough that
+            // `commitLocal * bps` overflows before the headroom clamp below
+            // can trim anything. That reverts the whole funding pass, wedging
+            // day finalization for EVERY chain — a per-chain input taking the
+            // mesh down, whenever the knob is armed. `mulDiv` carries the
+            // intermediate in 512 bits and cannot overflow here, since the
+            // result is bounded by `commitLocal`.
+            uint256 want = Math.mulDiv(
+                s.chainDailyRecycledCredit[dayId][c.chainId],
+                s.chainKeeperAllocateBps[c.chainId],
+                10_000
+            );
+            // BOUNDED BY WHAT IS LEFT (Codex #2031 r3). The earmark is a
+            // SECOND draw on the same bucket, not a haircut on the claim
+            // commit, so it has to fit in the headroom the commit leaves —
+            // `commitLocal + keeperAlloc <= c.avail`. Without the bound a
+            // chain whose demand consumed its whole availability still
+            // derived a positive allocation on top: a 40 VPFI bucket with a
+            // 25% instruction became backing for 40 of claims PLUS 10 of
+            // keeper budget, and the mirror duly reserved both.
+            //
+            // Round 2 moved the earmark to its own ledger, which repaired
+            // the `outstanding + retired == consumed` identity and left this
+            // untouched — the identity was never the thing that would have
+            // caught an over-draw, because both halves were internally
+            // consistent at the inflated total.
+            //
+            // TRIMMED, never refused: an instruction that does not fit is
+            // honoured as far as the bucket allows and the remainder is
+            // simply not earmarked. Reverting would let a keeper-budget
+            // instruction fail a day's whole funding pass, which is a much
+            // worse failure than a smaller keeper budget.
+            //
+            // NOT carved out of `commitLocal` instead, which is the other
+            // shape this could take: the commit is what the day's CLAIMS are
+            // funded by, so taking the earmark out of it would leave the day
+            // short by exactly the earmark and move the shortfall onto
+            // claimants.
+            uint256 headroom = c.avail > commitLocal ? c.avail - commitLocal : 0;
+            keeperAlloc = want > headroom ? headroom : want;
             // The INSTRUCTION cumulative (B1's definition) — the binding
             // availability backstop `_mirrorAvailable` nets against, so a
             // chain can never be committed twice for the same tokens.
-            s.chainConsumedRecycled[c.chainId] += commitLocal;
+            //
+            // ONLY `commitLocal`. The keeper earmark is charged to its own
+            // draw slot below, NOT here (Codex #2031 r2): this counter is one
+            // half of the `outstanding + retired == consumed` identity, and
+            // only `commitLocal` enters the outstanding/retirement lifecycle
+            // — a mirror can retire at most what it was committed. Adding the
+            // earmark here broke the identity on the first non-zero
+            // allocation and left the difference as phantom consumption that
+            // permanently suppressed the chain's availability. The storage
+            // doc for `chainConsumedRecycled` names exactly this trap for the
+            // C2 repatriation draw; the keeper earmark is the same class of
+            // non-claim draw, and the first version of this code walked into
+            // it while quoting the half of that doc which lists
+            // `keeperAllocate` — a definition written while the field was
+            // dead, so the identity held vacuously.
+            if (commitLocal != 0) s.chainConsumedRecycled[c.chainId] += commitLocal;
+            // The SEPARATE draw term, the sibling of
+            // `chainRepatriationDebited`. Availability nets it, so the
+            // backstop property the wrong placement was reaching for is
+            // preserved: Base still cannot instruct the same tokens twice.
+            if (keeperAlloc != 0) {
+                s.chainKeeperAllocDebited[c.chainId] += keeperAlloc;
+            }
             // §5's per-chain reservation ledger, the sibling of the global
             // `outstandingCommitRecycled`. Monotonic in d3: Base has no
             // authenticated view of mirror claims, so B3's source-scoped
             // netting is what retires it. Availability nets by the
             // instruction above ONLY — never by both, or the same commit
             // would be subtracted twice.
-            s.chainOutstandingRecycledCommit[c.chainId] += commitLocal;
+            if (commitLocal != 0) {
+                s.chainOutstandingRecycledCommit[c.chainId] += commitLocal;
+            }
         }
 
         s.chainDayRecycledFunding[dayId][c.chainId] = LibVaipakam
@@ -440,7 +559,22 @@ library LibMeshFunding {
             // exactly this at broadcast arrival (same figure, both ledgers),
             // and the remit path nets it out so Base sends only its top-up.
             recycleConsume: commitLocal,
-            keeperAllocate: 0,
+            // #1569 — a SECOND draw on the chain's own bucket, sized from
+            // the chain's REPORTED DAY INFLOW and charged BESIDE the local
+            // commit, bounded above by the headroom that commit leaves (see
+            // where `keeperAlloc` is computed). The commit is the CAP, not
+            // the base — an earlier revision of this comment said otherwise
+            // and survived the r9 numerator change (Codex #2031 r13).
+            //
+            // NOT carved out of `commitLocal`, which an earlier revision of
+            // this comment claimed (Codex #2031 r4). `commitLocal` remains
+            // the FULL claimant commitment; taking the earmark out of it
+            // would leave the day short by exactly the earmark and move the
+            // shortfall onto claimants. The distinction is load-bearing: a
+            // maintainer who believes the commit already contains the
+            // earmark would see the separate capacity bound as redundant
+            // and remove it, which is the over-commit r3 fixed.
+            keeperAllocate: keeperAlloc,
             stamped: true,
             // Per-side fresh floors: the global value on both sides until a
             // per-chain fresh trim mechanism exists (plan §M3) — but ZERO

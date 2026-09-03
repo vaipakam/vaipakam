@@ -785,7 +785,11 @@ settlement-reachability condition. Gate A constrains **both** branches.
 enforce them and will enable happily without them: the loan-side reward cap
 (PR-5c) and the settlement sweep that honours the lender Full stamp (PR-6).
 
-**⛔ PR-6 is NOT discharged, and no deploy assertion bears on whether it is.**
+**PR-6 IS discharged (#1947 closed 2026-08-26, verified against the API
+2026-09-01) — but no deploy assertion bears on whether THIS Diamond runs the
+fixed bytecode.** That distinction is the whole of this step, and an earlier
+revision collapsed it into "PR-6 is NOT discharged", which halts enablement
+indefinitely over work that has landed.
 The only deploy assertion touching this flag pins it OFF on a fresh deploy
 (`DeployDiamondIntegrationTest.t.sol`); it observes no settlement path at all,
 and the setter checks only the chain role. Treat the whole of this step as a
@@ -797,28 +801,44 @@ default, liquidation, discounted liquidation, split and partial (FIVE, not the
 six an earlier revision of this step named — the periodic-interest
 auto-liquidation leg deducts a handling fee on swap PROCEEDS and charges no
 lender yield fee at all, so there is nothing there for the bump to reduce) —
-still take the ordinary cut from recovered lender interest without consulting
-the stamp; and refinance resolves the stamp against the STORED lender rather
-than the current holder. **Partial liquidation is worse than the others**: it
-deposits the lender share to `loan.lender` and deliberately writes no claim
-record, so on a transferred position the previous lender keeps the proceeds
-outright and the current holder has nothing to claim against — the discount is
-the smaller half of that defect. (The collateral prepay-SALE terminals were named here
+USED to take the ordinary cut from recovered lender interest without
+consulting the stamp, and refinance USED to resolve the stamp against the
+stored lender rather than the current holder. **Both are fixed** (#1947,
+closed 2026-08-26, re-verified in the tree 2026-09-01): recovery resolves
+through `LibLenderYieldFeeHost.resolve(..., ownerOf(lenderTokenId), ...)`
+and `RefinanceFacet` resolves `settlingLender` from `ownerOf`.
+
+**Partial liquidation was worse than the others** and is also fixed: it
+deposited the lender share to `loan.lender` and wrote no claim record, so on
+a transferred position the previous lender kept the proceeds outright. It now
+pays through the #998 S10 Class B host, which resolves `ownerOf` itself and
+freezes fail-closed for a flagged holder — `RiskFacet` records outright that
+paying the stale `loan.lender` "was the original bug". It still writes no
+claim record, which is precisely why the host must pay the holder directly.
+
+**What this step still requires is unchanged, and it is not the card:**
+confirm the DEPLOYED bytecode on THIS Diamond carries those fixes. A closed
+card is evidence about the repository, never about a deployment. (The collateral prepay-SALE terminals were named here
 in an earlier revision and are REMOVED: their treasury leg is an ADDITIVE
 consideration item funded from the sale price — the lender receives principal
 plus interest GROSS and the BORROWER's residual bears the fee — so there is no
 lender discount to deliver and applying the bump would subsidise the borrower.) Frozen §F2
-is "at every lender-yield settlement", so that is a live divergence and a hard
-precondition for this step, not a scope boundary. Enabling here while it stands
-collects `C*` for a discount a lender can lose depending on how their loan ends.
+is "at every lender-yield settlement", and the recovery and refinance paths now
+meet it — so the divergence that made this a hard precondition is CLOSED, not
+merely narrowed. Enabling while it stood would have collected `C*` for a
+discount a lender could lose depending on how their loan ended; that is the
+historical reason this step exists, and it is why the readback above survives
+the card's closure.
 The frozen rule is `### F2 — Lender yield fee (frozen — rev 8)` in
 `docs/DesignsAndPlans/VpfiAbsorptionDistributionFormulaRedesign.md` (read its two
 IN-PLACE SUPERSESSION notes before acting on it: the F2 pseudocode keys the
 discount on `loan.lender` and must be read as the current position-NFT holder,
 and its C1 gate names PR-5c alone and must be read as also requiring #1947) — NOT
-`TokenomicsTechSpec`, which has no §F2 of its own. The open implementation card
-is **#1947**; #1383 is the COMPLETED repayment/early-close family and is not the
-blocker. See also `TokenomicsTechSpec`'s lender-settlement section for the
+`TokenomicsTechSpec`, which has no §F2 of its own. **#1947 is CLOSED
+(2026-08-26)** and #1383 was the repayment/early-close family; neither is an
+open card, and an operator sent looking for open implementation work here will
+not find any. What remains is the bytecode readback, which is a question about
+this deployment. See also `TokenomicsTechSpec`'s lender-settlement section for the
 discharge criterion.
 Without the cap, a Full loan enters the uncapped reward path; without the sweep,
 a user can pay `C*` for a discount settlement then ignores. This bites on partial
@@ -847,18 +867,22 @@ Establish both by hand on the TARGET Diamond before scheduling anything:
   `VPFIDiscountFacet`. Skip this and Full can be enabled on a Diamond whose
   ordinary repayment and early-close settlements still ignore the purchased bump
   — the failure this step exists to prevent, on the paths it already calls done.
-- **PR-6 / #1947, the REOPENED family** — confirm the DEPLOYED bytecode of
+- **PR-6 / #1947, the family that was reopened and CLOSED again on
+  2026-08-26** — confirm the DEPLOYED bytecode of
   `DefaultedFacet`, `RiskFacet`, `RiskSplitLiquidationFacet` and `RefinanceFacet`
   is the fixed version, the same way.
 
-**Two branches out of this step, not one.** While #1947 is open and unsuperseded
-there is no fixed build for the reopened family, so that readback cannot pass and
-the step cannot proceed. If the owner has instead recorded an explicit
-**superseding decision** against the frozen §F2 (the alternative the spec's
-discharge criterion allows, for the recovery family), then for the superseded
-family there is deliberately no implementation to verify: check that the decision
-is recorded and in force, and require fixed bytecode only for the families that
-remain implementation obligations.
+**ONE branch now, not two.** This step used to fork on whether #1947 was open:
+with no fixed build for that family the readback could not pass, and the
+escape was an explicit **superseding decision** against the frozen §F2. #1947
+CLOSED on 2026-08-26, so a fixed build exists and neither the halt nor the
+supersession applies — an operator reaching for the supersession route today
+would be seeking a policy exception for work that is already done.
+
+What remains is the readback itself, which was always the substantive half:
+confirm the DEPLOYED bytecode of the named facets is the fixed version on THIS
+Diamond. A closed card is evidence about the repository, never about a
+particular deployment.
 
 **One requirement survives ANY supersession, and it is inside the recovery
 family, so it is easy to lose here.** The partial-liquidation PAYOUT re-key is
@@ -1584,10 +1608,16 @@ buffer the choice existed to provide is simply gone. If the buffer has eroded,
 cancel and re-schedule with a later `D*` rather than executing.
 
 The setter writes Base storage and emits `GovernorCommitArmed`. **It sends
-nothing itself.** A mirror learns `D*` in-band, when the first *not-yet-applied*
-finalized day's broadcast reaches it after arming — a replay of an
-already-applied day exits through the idempotency branch without installing the
-value.
+nothing itself.** A mirror learns `D*` in-band, when a finalized day's
+broadcast reaches it after arming.
+
+**A replay of an ALREADY-APPLIED day now installs it too** (#1944). This
+paragraph said the opposite until 2026-09-01, and the change was deliberate:
+the old behaviour let any third party burn a mirror's propagation days by
+applying them first, leaving that mirror unarmable through this path
+entirely. Both the V2 replay branch and the V3 clock-backfill branch install
+`D*` when the mirror has none — never re-choosing one already set, and never
+from a retired era's legacy wire.
 
 ### Step 5 — DRIVE the propagation and verify it (M3 / active-mirror branch only)
 
@@ -1600,7 +1630,28 @@ of borrower collateral rather than reverting.
 
 1. current membership of `getBroadcastDestinations()`;
 2. current membership of `getExpectedSourceChainIds()`;
-3. an UNAPPLIED historical standing day that can pass the V3 lapse-clock gate.
+3. a historical standing day that can pass the V3 lapse-clock gate —
+   **applied or not** (#1944). "Unapplied" was part of this definition until
+   2026-09-01 and is now WRONG in the unsafe direction: a replay installs
+   `D*` on a mirror that has none, so an applied day still makes a mirror
+   armable and therefore reachable.
+
+   **Being ALREADY ARMED is not an exclusion** — a correction to the first
+   version of this rewrite (Codex #2031 r13). `D*` being one-shot stops a
+   second arming; it does not stop `broadcastGlobalTo`. A fresh apply of an
+   unapplied standing day passes `_assertDayStanding` and opens that day's
+   claim gate whether or not `armedFromDay` was already set, so an armed
+   mirror lacking the per-day funding property is still an exposure.
+
+   A removed mirror drops out of reachability only when it is absent from
+   the expected-source list AND every gate-opening path is exhausted — its
+   era rotated away and its lane gone, so no wire reaches it at all.
+
+   "Every qualifying standing day applied" was offered here as an
+   alternative and is NOT sufficient on its own: an authenticated replay
+   installs `D*` on a mirror that has none, so an applied day is still a
+   usable arming path. What matters is whether any wire can still open a
+   claim gate on that mirror, not whether a particular day is spent.
 
 **This is the one definition. Everything else in this runbook refers to it
 rather than restating it** — the two places that restated it drifted apart three
@@ -1623,15 +1674,35 @@ does not make a REMOVED mirror targetable at all. Require a standing day that ca
 pass that gate; otherwise a mirror with nothing but pre-upgrade history would
 hold the mesh paused over a broadcast that cannot be sent.
 
-And the qualifying day must be **UNAPPLIED** there. A removed mirror whose every
-V3-clock standing day has already been applied and safely reconciled cannot be
-reopened by re-broadcasting one: `_applyBroadcastV2Core` takes the idempotent
-replay branch before installing `armedFromDay` or touching any gate. Provided it
-is also absent from the expected-source list — so no future day can acquire new
-standing — its finite history is spent and it must not block the mesh. Treating
-spent history as reachable is the same over-block as the two above. An earlier revision defined
-reachability on standing alone and would have permitted unpausing with exactly
-that mirror exposed. **Do not run the cycle
+**SUPERSEDED — an APPLIED day is no longer spent for arming (#1944 / #1569,
+2026-09-01).** This paragraph used to say that a removed mirror whose every
+V3-clock standing day had already been applied could not be reopened, because
+`_applyBroadcastV2Core` took the idempotent replay branch *before* installing
+`armedFromDay`. That premise was removed on purpose: the replay branch now
+installs `D*` when the mirror has none, and so does the V3 clock-backfill
+branch, because the old behaviour left a mirror permanently unarmable once a
+third party had applied its days first.
+
+The consequence for THIS gate is the dangerous direction. A permissionless
+`broadcastGlobalTo` of an ALREADY-APPLIED day still passes historical standing
+and can now arm that mirror, so "its finite history is spent" no longer
+follows from "every standing day is applied". Following the old reachability
+test would permit unpausing the mesh while an unsafe mirror is still
+targetable.
+
+**Treat an authenticated V3 replay as an arming path.** A removed mirror is
+excluded from the gate only if it is absent from the expected-source list AND
+**every gate-opening path is exhausted** — its era rotated away and its lane
+gone, so no wire can reach it at all.
+
+Neither "already armed" nor "every standing day applied" is sufficient, and
+both appeared in earlier revisions of this paragraph. Armed does not exclude:
+`D*` being one-shot stops a second ARMING, not `broadcastGlobalTo`, and a
+fresh apply of an unapplied standing day opens that day's claim gate whatever
+`armedFromDay` holds. All-applied does not exclude either: an authenticated
+replay installs `D*` on a mirror that has none. **The exposure is a claim
+gate being opened on a mirror that does not enforce the per-day funding
+property — arming is one way to reach that, not the only one.** **Do not run the cycle
 below, and do not unpause the reward messenger, while that is true of any such
 mirror** — see "the one safe branch" and the dead-end list further down, which
 record five procedures that were each tried against this and refuted. The cycle
@@ -1796,14 +1867,23 @@ the arm does not help: `broadcastGlobal`'s only day-state prerequisite is
 `dailyGlobalFinalized[dayId]`, so a third party can broadcast the day the moment
 it is finalized, whichever side of the arm that falls on.
 
-**A pre-arm application spends the DAY, not the mirror.** If the day is applied
-on a mirror while Base is still unarmed, that mirror records
-`broadcastV2Applied[dayId]`, and `_applyBroadcastV2Core`'s replay branch
-**returns before installing `armedFromDay`** — so rebroadcasting *that day* after
-arming exits idempotently and installs nothing. Another day still works:
+**A pre-arm application NO LONGER spends the day** (#1944, 2026-09-01). This
+paragraph said it did, and the whole "exhaust the day set" worry below follows
+from that premise. If the day is applied on a mirror while Base is still
+unarmed, that mirror records `broadcastV2Applied[dayId]` — and
+`_applyBroadcastV2Core`'s replay branch now INSTALLS `armedFromDay` when the
+mirror has none, so rebroadcasting *that same day* after arming works. The V3
+clock-backfill branch installs it too.
+
+Any other eligible day also still works, as it always did:
 `_assembleDayV2` stamps the CURRENT `s.governorCommitArmedFromDay` into every
-newly assembled payload, so any other unapplied eligible pre-`D*` day takes the
-fresh branch and installs the same `D*`. Permanent failure requires EXHAUSTING
+newly assembled payload, so a fresh apply installs the same `D*`. What a replay
+never does is RE-choose a `D*` already set, or install one from a retired era's
+legacy wire.
+
+The paragraph below is retained because its reasoning still holds for the cases
+that DO exhaust — a rotated-away era, or a lane that is genuinely gone.
+Permanent failure requires EXHAUSTING
 the eligible alternatives, not losing one. (An earlier revision of this paragraph
 said the mirror could not be armed at all; that was wrong and would have had an
 operator treat a recoverable cutover as irreparable.)
@@ -1869,7 +1949,7 @@ DEAD-END LIST so the next person does not re-derive them under time pressure:
 
 | Attempted procedure | Why it does not hold |
 | --- | --- |
-| Remit + receipts BEFORE arming | `broadcastGlobal`'s only day-state gate is `dailyGlobalFinalized`; arming is irrelevant to it. Worse, a pre-arm application spends that day for propagation (`_applyBroadcastV2Core` replays without installing `armedFromDay`). |
+| Remit + receipts BEFORE arming | `broadcastGlobal`'s only day-state gate is `dailyGlobalFinalized`; arming is irrelevant to it. A pre-arm application used to spend that day for propagation; since #1944 it does not — `_applyBroadcastV2Core`'s replay installs `armedFromDay` on a mirror that has none — so this row's remaining force is the first sentence, not the day cost. |
 | Pause, fund the candidate, unpause, broadcast | `broadcastGlobal` accepts ANY finalized day, so unpausing re-opens every other unfunded finalized day at once. |
 | Reconcile every broadcastable day first | An applied-but-unfunded day is ALREADY open and pausing Base cannot close it; and `finalizeDay` is permissionless, so new broadcastable days can appear after the inventory. |
 | Contain the destination's claim path meanwhile | `AdminFacet.pause()` is the Diamond's single global flag: `claimInteractionRewards` and `onRewardBudgetReceived` are BOTH `whenNotPaused`, so pausing claims also blocks the remittance receipt. "Wait until every pending day is funded" is unreachable — funding cannot land while claims are stopped, and unpausing to admit it re-opens the race. |
@@ -1886,7 +1966,8 @@ Three parts, and each was added because leaving it out was tried:
 
 - **REACHABLE** is the definition given at the head of this step — a live
   outbound lane and any of destination-list membership, expected-source
-  membership, or an unapplied V3-clock standing day. Deliberately NOT restated
+  membership, or a V3-clock standing day (applied or not, per #1944).
+  Deliberately NOT restated
   here: the two copies of it drifted apart three times during review, so this
   bullet points at the one statement instead of paraphrasing it.
 - **Reconciliation of outstanding broadcasts is part of the branch, not a
@@ -1960,10 +2041,18 @@ Two mechanical facts that survive whatever branch is taken:
 
 Whether or not the pause is used:
 
-- **Pick a propagation day the target mirrors have NOT applied, and confirm it
-  per mirror immediately before broadcasting.** Call
-  `RewardReporterFacet.getBroadcastV2Applied(dayId)` on each mirror — `true`
-  means the day is spent for arming purposes there. Do this as a readback in
+- **Pick a propagation day and confirm its state per mirror immediately before
+  broadcasting.** Call `RewardReporterFacet.getBroadcastV2Applied(dayId)` on
+  each mirror.
+
+  **`true` NO LONGER means the day is spent for arming** (#1944, 2026-09-01).
+  It once did, and this line said so; the replay branch now installs `D*` on a
+  mirror that has none, precisely so a third party applying a day first cannot
+  render that mirror unarmable. An applied day is therefore still a usable
+  propagation day over an authenticated V3 wire. The readback remains worth
+  doing — it tells you whether the broadcast will take the fresh path or the
+  replay path, which is what you are reconciling afterwards — but it is no
+  longer a go/no-go on arming. Do this as a readback in
   the same sitting as the broadcast, not from notes taken earlier: any third
   party can apply a finalized day in between.
 
@@ -1972,20 +2061,28 @@ Whether or not the pause is used:
   and reaches a deployment only through a facet refresh, so a Diamond that
   predates the refresh reverts `FunctionDoesNotExist`. On such a Diamond the
   only source is the mirror's LOGS — a `RewardBroadcastV2Applied(dayId, …)`
-  event for that `dayId` means the day is spent.
+  event for that `dayId` means the day has been APPLIED. Since #1944 that no
+  longer means it is spent for arming: a replay installs `D*` on a mirror
+  that has none. The readback still tells you which branch a broadcast will
+  take, which is what you reconcile afterwards.
 
   **Prefer the readback wherever it is available, and treat a log scan as the
   degraded path.** A scan that silently misses a page — provider retention,
   block-range caps, a truncated response — reports "not applied", which is the
   one wrong answer that burns the candidate day. The readback has no such
-  failure mode.
-- **Have alternates ready.** Identify several unapplied pre-`D*` days before
-  arming, not one.
+  failure mode. Note the stakes are lower than they were: a missed page
+  reports "not applied" for a day that IS applied, and since #1944 an applied
+  day is still usable, so the wrong answer costs a reconciliation step rather
+  than the candidate.
+- **Have alternates ready.** Identify several eligible pre-`D*` days before
+  arming, not one. They no longer have to be unapplied.
 - **Keep the finalize→broadcast interval short**, since finalization is what
   makes a day broadcastable by anyone.
-- **If every eligible day has been applied on a mirror, stop and escalate** —
-  that is the exhaustion case, and it is a protocol question rather than a
-  runbook step.
+- **All days applied is NO LONGER an exhaustion case** (#1944). A replay of
+  an applied day installs `D*` on a mirror that has none, so rebroadcast one
+  of them. Genuine exhaustion is narrower: a rotated-away era whose legacy
+  wire cannot arm, or a lane that is gone. Those remain protocol questions
+  rather than runbook steps.
 
 **⛔ While #1566 is open, an early broadcast is a FUND-LOSS exposure, not a UX
 one — and an earlier revision of this paragraph asserted the opposite.** The
@@ -2036,9 +2133,12 @@ borrower collateral (see the containment note in the propagation section). Where
 that property IS enforced, the harm reduces to users hitting an empty balance until
 funding arrives. The keeper narrows that gap on a best-effort basis
 and does not close it, which is exactly why a MANUAL broadcast has to remit
-first. A replay of an
-already-applied day exits through the idempotency branch **without** installing
-`D*`, so the day you broadcast has to be one the mirrors have not seen.
+first. A replay of an already-applied day **does** install `D*` on a mirror
+that has none (#1944), so the day you broadcast no longer has to be one the
+mirrors have not seen — this sentence said it did until 2026-09-01. Choosing
+an unseen day is still the cleaner operation, because a fresh apply
+reconciles in one step, but it is a preference now rather than a
+precondition.
 
 Then read `D*` back on every mirror, with days to spare:
 
