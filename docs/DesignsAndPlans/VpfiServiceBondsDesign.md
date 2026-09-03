@@ -1,7 +1,12 @@
 # VPFI service bonds — work-token sink (S-4 / R-3)
 
-**Status:** legal glance DISCHARGED (no-yield refundable-deposit shape
-ratified; §owner decisions) — awaiting **FOUR owner decisions**, then
+**Status:** legal glance DISCHARGED **for the no-yield
+refundable-deposit shape** (§owner decisions) — which covers fork A in
+full and C's deposit half; **C's NON-REFUNDABLE arming-fee purchase is a
+separate legal shape the recorded sign-off does not reach**, so
+selecting C additionally requires its own bounded legal glance (or an
+explicit recorded owner approval of the fee shape) before C builds.
+Awaiting **FOUR owner decisions**, then
 build: the **A/C fork**; the **capacity terms** (4× ceiling, no minimum,
 clamp); the **unbond option** (i) immediate vs (ii) 7-day delayed; and —
 under C only — the **fee parameters**. Selecting the fork alone does not
@@ -894,7 +899,11 @@ decodes is the same gap one step later.
   following it would assign no incremental capacity below a tier boundary,
   reintroducing both a threshold and the implicit minimum the continuous
   curve exists to remove.
-- **Unbond delay** — NOT in v1 (rev 4). It exists to stop a slash-and-run
+- **Unbond delay** — the DESIGN CONCLUSION is none in v1 (rev 4), but the
+  choice is the owner's pending option (i)/(ii): under (i) no delay ships;
+  under (ii) the configured 7-day/3/30 delay applies through the
+  `PendingWithdrawal` state, whatever this bullet's reasoning prefers. The
+  reasoning: the delay exists to stop a slash-and-run
   inside a misbehaviour window, and v1 has no such window **because it has no
   delayed evidence at all** — both selectable forks are non-confiscatable, so
   there is nothing to record and nothing to debit. An earlier revision said
@@ -947,9 +956,14 @@ decodes is the same gap one step later.
   delay governance-bounded with a positive floor and a ceiling, so a
   liability is neither instantly settleable nor indefinitely
   encumbered); the debit stays escrowed until `settleAfter` passes,
-  settlement is permissionless afterwards, and a quarantine or
-  invalidation landing before `settleAfter` VOIDS the pending
-  settlement. Boundary tests straddle the stamp on both sides — otherwise an
+  settlement is permissionless afterwards — and the two incident levers
+  act DIFFERENTLY on the escrow: a QUARANTINE landing before settlement
+  only PAUSES it (the liability is preserved and the escrow held until
+  restoration or invalidation — a voiding quarantine would let a
+  compromised or mistaken fast key grant irreversible amnesty), while a
+  governance INVALIDATION extinguishes any still-unsettled liability
+  whether or not its `settleAfter` has passed. Boundary tests straddle
+  the stamp on both sides — otherwise an
   attacker who finds a logical defect in an unquarantined verifier bundles
   the forged-proof adjudication with the permissionless settlement in one
   breath, and the principal is in the recycle bucket (spendable) before the
@@ -1305,7 +1319,18 @@ settlement (the recycle backing check among them) rolls back WITH it:
 `OffenceRecorded` and the liability vanish, the offender need not
 retry, and the same settlement-dependent escape returns one tier down.
 Synchronous observation likewise commits an encumbering liability in a
-non-reverting transition, with settlement separately retryable.**
+non-reverting transition, with settlement separately retryable — **and
+the in-call record is a CONVENIENCE, never the durability mechanism,
+because the operator's OUTER FRAME can revert it** (the same EVM limit
+the sanctions markers hit: a wrapper that inspects the refusal status
+and reverts erases the record, the encumbrance, and every other
+inner-call write). A predicate is admissible only if its offence is
+provable from INDEPENDENTLY SUBMITTABLE EVIDENCE — signed statements,
+persistent state contradictions — that a third party can adjudicate in
+its OWN transaction after the operator's call vanished; equivocation's
+two signatures are the model. A predicate whose only evidence lives
+inside the operator-controlled call cannot be made durable and is not
+shippable.**
 The EVM rolls the earlier write back with the reverting settlement, and
 the settlement CAN revert — a failed recycle backing check, an
 old-token escrow path that cannot complete — so a proof "consumed" this
@@ -3385,11 +3410,20 @@ the two rules meet at a parked adjudication.
   its own test: it is a different mechanism from the pause and passes none of
   the pause's tests.
 
-- **SHIPPING PREREQUISITE, not a test: reward-funding isolation (#1566).**
+- **SHIPPING PREREQUISITE, not a test: reward-funding isolation — and the
+  PRECISE prerequisite is the #1566 DELIVERED-CUSTODY HOLDER with reward
+  payouts debiting the holder EXCLUSIVELY** (the ratified F-plus-holder
+  scope; Option F's user-vault lien alone protects USER value and would not
+  keep a Diamond-held bond out of reward backing).
   `RewardClaimFacet` takes `backingRoom` from `LibVpfiRecycle.backingPosition`,
   which treats every VPFI outside `recycleBucket` as reward backing — so a
   refundable bond deposited into the Diamond becomes available for transfer
-  to reward claimants. Bonds cannot ship before that is closed.
+  to reward claimants until payouts spend only the holder. Bonds cannot ship
+  before those slices are live — **and, defence in depth, bond principal is
+  DEPOSITED INTO ITS OWN ESCROWED ATTRIBUTION from day one** (the fourth
+  tracked balance class this design already declares), never into the
+  undifferentiated shared balance, so a partial or in-flight #1566 rollout
+  still cannot reach it.
 
   An earlier revision listed only the escrow accounting invariant here, as
   though extending the enumerated Diamond-balance check were the remedy. It
