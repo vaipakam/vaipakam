@@ -2276,9 +2276,20 @@ revision unimplementable:
      out a short challenge window before final settlement, during which
      a superseding plan displaces it by **covering STRICTLY MORE of the
      known set — with plans PAGINATED so block limits cannot cap
-     coverage**: a plan is a committed root over assignment pages,
-     verified and staged page by page, so its coverage is unbounded by
-     any single block and "covers strictly more" is always expressible.
+     coverage**: a plan is a committed root over assignment pages —
+     **shadow-validated against a PINNED PRE-INCUMBENT snapshot, then
+     activated ATOMICALLY**: challenger pages verify against the batch
+     balances as they stood before the incumbent staged (the incumbent's
+     debits neither block the challenger's use of the same batch nor
+     double-count as available — the two plans never coexist against
+     live balances), the challenge completes only when every committed
+     page has been verified, and the activation swaps
+     incumbent-to-challenger in one transition (incumbent's staging
+     released, challenger's applied). Coverage is thereby unbounded by
+     any single block and "covers strictly more" is always expressible —
+     and expressible IN TIME, since page-staging against live balances
+     would have let the incumbent's own debits make the superior plan
+     unsubmittable before it settled.
      (Two earlier displacement rules each failed: raw strictly-more
      collapsed when one block bounded a plan's size, and the per-batch
      dominance test that replaced it rejected genuine improvements —
@@ -2648,7 +2659,16 @@ revision unimplementable:
      alternative remains **disallowing the permanent transition while the
      unverifiable lane exists** — never promote-and-strand.
 
-   Refusal with retry is for conditions that end.
+   Refusal with retry is for conditions that end — **with the LEGACY
+   kind-1/kind-2 broadcast as the one exception that PARKS at detached
+   receipt instead of reverting**: the tombstone protocol keys on the
+   parked entry's local id and receipt stamp, and a reverted receipt
+   writes neither — the retry after reattachment is then
+   indistinguishable from a current-era broadcast (the legacy wire
+   carries no era and no message id) and can neither be safely applied
+   nor tombstoned. The detached route persists the parked entry and
+   refuses APPLICATION; the typed post-legacy wires, which carry
+   identity, keep the plain revert-and-retry.
 1. **Receive while `Detached`** — `onRewardBudgetReceived`,
    `onCompensationBudgetReceived`, **and ALL THREE reward BROADCAST ingresses —
    `onRewardBroadcastReceived` (legacy), `onRewardBroadcastV2Received` and
@@ -2717,7 +2737,16 @@ revision unimplementable:
    old binding stands, or dispositioned), and the send paths gain the
    intended-era check on the OUTBOUND side: an output whose originating
    era is not the current binding's era is refused, exactly as inbound
-   packets already are.
+   packets already are. **Which requires the stamp to EXIST and the
+   inventory to HOLD STILL**: an output acquires its originating era at
+   CREATION — the day at open, the accumulator at its first write —
+   never at send time (current storage records only sent-flags, so an
+   old unclosed day invoked after the rebind would be labelled with the
+   NEW era by the very call that sends it); the output producers freeze
+   for the ceremony exactly as the buyback producers do; and the drain's
+   completion terminal is checked against a SNAPSHOT of open outputs
+   taken at the freeze — a multi-transaction drain over a moving
+   inventory misses whatever became ready after its slot was checked.
 
    **The BUYBACK lane joins the same transition gate.** The
    "what state can move" audit repeatedly found survivors by asking the
@@ -2983,8 +3012,15 @@ revision unimplementable:
    the transition defines its role-agnostic sibling: a **tombstone
    attestation** message, sendable regardless of the chain's current role,
    gated ONLY on the persisted instruction state being `TOMBSTONED`, and
-   routed to the instruction's PERSISTED source chain rather than the
-   current role binding. The charged side consumes it exactly as it
+   routed to the instruction's PERSISTED source chain **AND issuing
+   DEPLOYMENT — the chain id alone is not a route**: after a same-chain
+   A → B deployment rebind, the chain's configured return receiver
+   forwards to one diamond, and the acknowledgment consumer rejects
+   unless `issuingBase == address(this)` — an attestation for A landing
+   at B reverts and A's authorization stays charged forever. The
+   attestation targets the historical return endpoint persisted at
+   ingress (the triple key already carries `issuingBase`), or the
+   chain's receiver dispatches authentically by `issuingBase`. The charged side consumes it exactly as it
    consumes a cancel-ack — same authentication, same one-shot release —
    and the recorded-disposition operation on Base is thereby reduced to
    bookkeeping AFTER the attested release, never a release lever of its
