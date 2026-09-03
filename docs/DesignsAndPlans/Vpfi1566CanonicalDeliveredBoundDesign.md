@@ -1,9 +1,14 @@
 # #1566 — bounding reward payouts by funding delivered for rewards
 
-**Status:** design note. No code change proposed for merge yet — the decision
-this note exists to enable is which quantity bounds a payout on the CANONICAL
-chain, and that is a governance-visible choice about what the platform promises
-a reward claimant.
+**Status:** RATIFIED — the owner chose **Option F plus the dedicated
+delivered-custody holder** (2026-08-31; §5b records the decision). The
+question this note existed to enable — which quantity bounds a payout on the
+CANONICAL chain — is answered: the delivered bound (`received − paid`) over
+dedicated custody, with user value never commingled. What remains is closure
+work, not a choice: the implementation-ready slices below (custody holder,
+migration, era ceremonies, transport machinery) and their cards. An earlier
+status line still called this an open decision with no code change proposed,
+which let a reader treat the ratified sections as unresolved.
 
 **Card:** #1566 (fund-safety; successor to the auto-closed #1498).
 **Related:** #1434 P1-b (`83483149e`), #1555 (`e655030026`), #1499, #1460.
@@ -272,6 +277,18 @@ ownership question structural rather than accounted, but F reuses machinery that
 already exists and is already tested, and it does not have to re-home remittance
 arrival, expiry routing, forfeit routing or the recycle bucket's credits — which
 is the bulk of D's cost.
+
+> ⚠️ **That cost advantage did NOT survive review, and the comparison above is
+> retained as the state of knowledge AT the decision, not as the ratified
+> costing.** The review-hardened specification adds the dedicated
+> delivered-custody holder — which re-homes every fresh outflow and absorption
+> to that holder, changes the funding gates, and adds protected recycled
+> custody — i.e. the bulk of the very re-homing this paragraph credits F with
+> avoiding. The honest scope of the ratified design is **F plus the delivered
+> holder**, and its justification is structural (user value is never
+> commingled, and delivered reward funding is custody no foreign transfer can
+> reach), not avoided work. F still avoids re-homing the USER-side flows D
+> would have moved; the REWARD-side re-homing arrived anyway.
 
 **The decision is between B, C, D, E and F.** Option A is retained above as an
 analysed-and-rejected step, not as a candidate: it does not satisfy the
@@ -1020,6 +1037,23 @@ decides who eats a loss nobody has acknowledged. Four rounds of review found
   the exclusion and the receiving vault gains it, or the tier defect this slice
   exists to prevent simply relocates to whichever holder is not being tracked.
 
+  **And `FallbackPending` is a hole in that lazy re-key — the terminal must
+  consolidate AFTER the cure, not before it.** Consolidation is skip-not-block
+  and `LibConsolidation._isExcludedLive` unconditionally excludes
+  `FallbackPending` on both sides (`LibConsolidation.sol:193-205`), while
+  `repayLoan` runs `consolidateToHolder` BEFORE accepting and curing that
+  status (`RepayFacet.sol:221-234`). So an NFT transferred while the loan sits
+  `FallbackPending` never re-keys: `loan.borrower`, the migrated `vpfiHeld`
+  custody, its lien, and the exclusion all stay with the FORMER holder, and a
+  proper close out of the cure then frees the rebate in the stale vault and
+  consumes the claim entitlement — the current holder loses the rebate. Any
+  terminal reachable from `FallbackPending` therefore **re-runs borrower-side
+  consolidation after the cure returns the loan to a consolidatable state and
+  before it settles** (cure → consolidate → settle), so the three-part re-key
+  lands on the current `ownerOf` and the release targets the right vault.
+  (The forfeit terminals need no payee: `forfeitBorrowerLif` routes the whole
+  held amount to treasury.)
+
 - **Both terminal consumers are rewritten, not just the lien.**
   `settleBorrowerLifProper` transfers the matcher and treasury shares from
   Diamond custody today, and `forfeitBorrowerLif` does the same for the whole
@@ -1242,8 +1276,17 @@ durable rather than a snapshot of one moment.
 - **Live commits need a cutover.** A commit predating the upgrade has already
   decremented its lien and withdrawn `custodialCollateral` (`:529-553`), so the
   new hook would withdraw a second time and its fill would revert with the
-  original custody stranded. Either a paused cutover gated on
-  **the per-commit custody-version branch.**
+  original custody stranded. The cutover rule is **the per-commit
+  custody-version branch, and nothing else**: every commit records its custody
+  version at creation (live pre-upgrade commits are version 0 by absence),
+  and every fill hook and every teardown path branches on the COMMIT'S OWN
+  version — a version-0 commit runs the original Diamond-custody fill,
+  balance-delta check, and `_teardownCommit` transfer exactly as written,
+  to its natural terminal; only commits created after the upgrade take the
+  vault-pull path. No live commit is migrated, paused, or re-routed — the
+  double-withdrawal above is precisely what applying the new path to an old
+  commit does, so the discriminator is the commit's stamped version, never
+  the upgrade time or a drain ceremony.
 
   ⚠️ An earlier revision of this bullet also offered "a paused cutover gated on
   `intentLiveCommitCount == 0` after cancellation/drain", with the withdrawal
