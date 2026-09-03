@@ -370,7 +370,12 @@ attacker the rotation hostage back: dust a thousand one-unit deposits
 across addresses and governance must touch them all before replacing a
 compromised token. The migration is therefore ONE write — the token
 epoch as a whole flips to ARCHIVED (escrow semantics attach at the
-epoch level) — and each deposit's archival claim MATERIALIZES lazily on
+epoch level), **emitting an EPOCH-LEVEL archival event in that same
+flip** (epoch id, old and new token, archival destination — the
+existing rotation event carries only token addresses, and a dormant,
+lost-key, or sanctions-frozen owner may never touch their record, so
+without the epoch event an indexer never learns the non-enumerable
+partition moved) — and each deposit's archival claim MATERIALIZES lazily on
 its owner's next touch, carrying its principal, reservations, and
 liabilities per the migration rules and emitting its migration event
 then. Rotation gates on the epoch flip, not the materialization count.
