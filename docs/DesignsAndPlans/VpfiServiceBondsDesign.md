@@ -1446,8 +1446,18 @@ so restoring the verifier-wide flag after invalidating only some epochs
 reopens forged-proof submission through the rest, while requiring every
 historical epoch invalidated first makes recovery unbounded. A code
 fault invalidates the verifier's CODE GENERATION in one write (every
-dependent epoch reads it, exactly as they read the quarantine flag);
-per-epoch invalidation remains for epoch-local configuration faults.**
+dependent epoch reads it, exactly as they read the quarantine flag) —
+**emitting a GENERATION-invalidation event carrying the verifier and
+generation id, with consumers deriving the affected epoch set from the
+epoch-creation events they already index, exactly as for verifier-wide
+quarantine** (the per-epoch invalidation event cannot represent a
+one-write generation kill without enumerating history); per-epoch
+invalidation — and its per-epoch event — remains for epoch-local
+configuration faults. **And partial restoration is a CONFIG-fault
+option only: after a code fault, no dependent epoch reopens until the
+compromised generation is invalidated** — restoring the verifier-wide
+flag over a partially invalidated code fault re-enables forged proofs
+through every remaining epoch.**
 Governance decides between **restore** (the suspicion was wrong: the
 verifier's flag lifts, horizons resume everywhere it applied) and
 **invalidate** (the verifier is genuinely broken: the affected epochs'
