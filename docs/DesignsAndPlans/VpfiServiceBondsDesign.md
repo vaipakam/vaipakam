@@ -163,8 +163,13 @@ instruction to anyone implementing or writing copy from the top of the file.
    configure → flag → disable sequence the confirmed balance STAYS
    parked (that is the central policy's chosen trade, not a defect of
    this custody class); what the disabled state changes is that no NEW
-   confirmations or freezes arise, and never-confirmed operators are
-   wholly unaffected. An earlier revision of this branch released
+   confirmations or freezes arise — and never-confirmed operators are
+   wholly unaffected **outside the bond surface. ON the bond surface,
+   disabled-after-configured defers every mutation for every operator**
+   (the later normative rule and its acceptance cases; an erasable
+   first-observation marker means "never-confirmed" is unprovable
+   there, and the snapshot-plus-timelock escape is the terminal exit) —
+   only a NEVER-configured chain runs the bond surface open. An earlier revision of this branch released
    confirmed balances on disable, which was a sanctions-release bypass
    — governance wanting that outcome changes the central policy, not
    one custody class's reading of it. So: **record the
@@ -494,7 +499,15 @@ OffenceRecorded(operator, role, kind, refId)   // role, not just operator
 // V1 after the snapshot and the stored deadline releases the principal
 // V1's still-valid proof should hold; extend the scalar instead and an
 // unrelated quarantine freezes V2-backed principal and every other
-// withdrawal with it. The outstanding-action set carries an explicit COUNT
+// withdrawal with it. Under option (ii) the pending request persists
+// its AMOUNT alongside `unlockAt` (`pendingAmount` — set by the
+// request together with the capacity clamp, paid out exactly by the
+// release, restored exactly by a cancel): partial withdrawals are
+// permitted and a second request is rejected rather than aggregated,
+// so nothing else can tell release or cancel whether the pending
+// request covers 10 of a 100-token deposit or all of it. The
+// sanctions-parked transition keeps its own `parkedRequest` record —
+// the two states are distinct and each carries its own amount. The outstanding-action set carries an explicit COUNT
 // cap per (operator, role) — with INVALIDATED epochs' actions excluded
 // AT READ TIME (the count consults the same tri-state the value reads
 // consult, or an O(1) per-epoch counter joined by generation): a stored
@@ -936,8 +949,13 @@ decodes is the same gap one step later.
   recorded per-token. Aggregating it overstates reward funding; the
   per-token credit is instead held apart (visible, classified
   `ServiceBondSlash`) until a funded conversion into the live token or a
-  recorded disposition (e.g. burn or treasury quarantine) terminates it,
-  and only the CONVERSION's proceeds ever join the netting.
+  recorded TREASURY-QUARANTINE disposition terminates it, and only the
+  CONVERSION's proceeds ever join the netting. **Burn is NOT a valid
+  terminal** — the rule below says never burned, and the platform's
+  recycling bookkeeping ethos is re-labelling value the protocol holds,
+  never destroying it; an earlier phrasing here offered burn as an
+  example disposition, giving the same liability two opposite custody
+  outcomes.
   That enum member is ALREADY reserved and must be used rather than a new
   generic one — appending a duplicate would split service-bond absorption
   from the metrics class reserved for it. (This bullet said
@@ -3130,8 +3148,15 @@ does), recorded with the snapshot. The registry alone cannot carry the
 escape, because the erasable first-observation marker means a
 sanctioned smart account may appear in NO on-chain record; the
 attested screening is what catches it, and an operator failing it is
-excluded and stays frozen. After ratification, operators the snapshot
-clears withdraw once a LONG TIMELOCK
+excluded and stays frozen. After ratification the escape opens a BOUNDED claim window, and each
+release within it requires the attested screening to be FRESH — no
+older than the window's re-attestation interval and covering that
+operator: a one-time clearance would let an operator sanctioned AFTER
+the snapshot simply wait out the timelock and withdraw on stale
+evidence. Anyone may submit adverse evidence during the timelock, and
+governance re-attests before each release batch; an operator newly
+flagged in a re-attestation is excluded and stays frozen. Operators
+the fresh screening clears withdraw once the LONG TIMELOCK
 elapses (long enough for pending flag evidence to surface and for a
 replacement oracle to be installed if one exists — installing one
 cancels the escape and restores the ordinary rule). The timelock plus
