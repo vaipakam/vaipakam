@@ -33,9 +33,11 @@ VPFI receipts accrue on **every** chain, not just Base:
 
 - a borrower on Polygon takes the VPFI-LIF path → forfeiture/treasury share
   lands in the **Polygon** Diamond;
-- notification fees, forfeited rewards, matcher-share remainders, future
-  service-bond slashes — all accrue **locally** on whichever chain the
-  activity happened.
+- notification fees, forfeited rewards, matcher-share remainders, and —
+  under the #1219 C fork — capacity-arming fees, all accrue **locally**
+  on whichever chain the activity happened. (~~future service-bond
+  slashes~~ — superseded: the ratified #1219 design ships no slash
+  predicate in either selectable fork.)
 
 But the recycling loop is anchored on **Base**: the 69M interaction-reward
 pool lives there, daily finalization happens there, and fresh minting (the
@@ -129,7 +131,11 @@ Every Diamond (Base included) gains a protocol-owned **recycle bucket**:
 - Credited by every VPFI receipt class at the moment of receipt: yield-fee
   shares paid in VPFI, forfeited borrower-LIF custody (net of matcher
   share), forfeited interaction rewards, notification fees, matcher-share
-  remainders, future service-bond slashes (#1219).
+  remainders, and — under the #1219 C fork — capacity-arming fees
+  (`RecycleSource.CapacityArmingFee`). ~~future service-bond slashes
+  (#1219)~~ **superseded by the ratified #1219 design: both selectable
+  bond forks ship WITHOUT a slash predicate** (`ServiceBondSlash` stays
+  a reserved unused enum slot; see `VpfiServiceBondsDesign.md`).
 - Event per credit: `VpfiRecycled(source, refId, amount, dayId)` — the
   indexer/transparency surface derives everything from these.
 - **Tracked-balance separation** with an on-chain invariant:

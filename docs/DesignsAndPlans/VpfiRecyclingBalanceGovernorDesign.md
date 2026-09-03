@@ -411,9 +411,13 @@ discount. Concrete candidates already on the roadmap:
 - **E-5 standing intents** (#1207) — standing-order keeper execution fees,
   in VPFI.
 - **#1219 service bonds (R-3/S-4)** — keepers/operators post VPFI bonds
-  sized natively in VPFI units to register; misbehaviour slashes into the
-  bucket (absorption), honest operation keeps supply locked (sink). No
-  conversion anywhere in the lifecycle.
+  sized natively in VPFI units to register; honest operation keeps supply
+  locked (sink). ~~misbehaviour slashes into the bucket (absorption)~~
+  **superseded by the ratified #1219 design: both selectable forks ship
+  WITHOUT a slash predicate** — under the C fork the absorption flow is
+  the non-refundable capacity-arming fee
+  (`RecycleSource.CapacityArmingFee`); under A there is no flow (see
+  `VpfiServiceBondsDesign.md`). No conversion anywhere in the lifecycle.
 Boundary rule: tariffs apply **only to optional conveniences** — never to
 protocol-safety functions (permissionless liquidation, default triggering,
 close-outs stay free), preserving the liveness/ethos posture.
