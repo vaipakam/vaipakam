@@ -3328,6 +3328,11 @@ function firstUnquoted(text, chars) {
       else if (c === quote) quote = null;
       continue;
     }
+    // A BACKSLASH ESCAPES OUTSIDE QUOTES TOO. `cp generated\\;file.jsonc dest`
+    // carries the semicolon in the source WORD, and reading it as a command
+    // boundary truncated the scan before the destination and lost the
+    // overwrite (Codex #2066 r2).
+    if (c === '\\') { i += 1; continue; }
     if (c === '"' || c === "'") quote = c;
     else if (chars.includes(c)) return i;
   }
@@ -3467,7 +3472,15 @@ function copyWriteOffsets(text, base, cfgDir) {
   // comparison cannot actually be made.
   const dirCouldBe = (dir, cfg) => {
     if (typeof dir !== 'string' || dir === '') return true;
-    const d = dir.endsWith('/') ? dir.slice(0, -1) : dir;
+    // `configs/.` and `configs/` and `configs` are the same directory. Only
+    // the trailing slash was removed, so the terminal-dot spelling compared
+    // unequal and a real overwrite read as a backup (Codex #2066 r2).
+    let d = dir;
+    for (;;) {
+      const next = d.replace(/\/+$/, '').replace(/\/\.$/, '');
+      if (next === d) break;
+      d = next;
+    }
     if (d === '' || d === '.' || d === '..' || d.includes('..')) return true;
     if (typeof cfg !== 'string' || cfg === '') return true;
     return d === cfg || cfg.endsWith(`/${d}`) || d.endsWith(`/${cfg}`);
@@ -3519,12 +3532,22 @@ function copyWriteOffsets(text, base, cfgDir) {
     const tIdx = hasTargetFlag
       ? operands.findIndex((w) => w === '-t' || w === '--target-directory')
       : -1;
-    const inlineT = hasTargetFlag
-      ? operands.find(
-          // The attached short form is what GNU accepts too: `-t/tmp/backups`.
-          (w) => w.startsWith('--target-directory=') || /^-t.+/.test(w),
-        )
+    // SHORT OPTIONS GROUP. GNU accepts `-vt/tmp/backups` as readily as
+    // `-t/tmp/backups`, and matching only the latter left the grouped spelling
+    // unrecognised — the lone source then reached the mention fallback and a
+    // backup was reported as a rewrite (Codex #2066 r2).
+    const groupedT = hasTargetFlag
+      ? operands.find((w) => /^-[A-Za-z]*t.+/.test(w) && !w.startsWith('--'))
       : undefined;
+    const inlineT = hasTargetFlag
+      ? operands.find((w) => w.startsWith('--target-directory=')) ?? groupedT
+      : undefined;
+    // `--parents` puts the FULL source path under the destination:
+    // `cp --parents configs/custom.jsonc build` writes
+    // `build/configs/custom.jsonc`. Comparing the bare destination against the
+    // config's directory decided they differed and recorded no rewrite
+    // (Codex #2066 r2).
+    const parents = hasTargetFlag && operands.some((w) => w === '--parents' || w === '-P');
     const positional = operands.filter(
       (w, i) => !w.startsWith('-') && !(tIdx >= 0 && i === tIdx + 1),
     );
@@ -3538,7 +3561,7 @@ function copyWriteOffsets(text, base, cfgDir) {
       inlineT !== undefined
         ? inlineT.startsWith('--target-directory=')
           ? inlineT.slice('--target-directory='.length)
-          : inlineT.slice(2)
+          : inlineT.slice(inlineT.indexOf('t', 1) + 1)
         : tIdx >= 0
           ? operands[tIdx + 1]
           : last !== undefined && baseOf(last) !== base
@@ -3552,7 +3575,14 @@ function copyWriteOffsets(text, base, cfgDir) {
       // matching source basename and still writes nothing here; treating the
       // form itself as a write just moves #2053's false red rather than fixing
       // it. A directory this reader cannot place stays conservative.
-      if (sources.some((w) => baseOf(w) === base) && dirCouldBe(dirTarget, cfgDir)) {
+      const lands = (w) => {
+        if (baseOf(w) !== base) return false;
+        // Under `--parents` the source's own directory is recreated beneath
+        // the target, so that is the directory to compare.
+        const sub = parents ? w.slice(0, w.lastIndexOf('/')) : '';
+        return dirCouldBe(sub ? `${dirTarget}/${sub}` : dirTarget, cfgDir);
+      };
+      if (sources.some(lands)) {
         hits.push(m.index);
         continue;
       }
@@ -3571,7 +3601,19 @@ function copyWriteOffsets(text, base, cfgDir) {
     const open = m.index + m[0].length - 1;
     const args = callArgs(text, open);
     if (args === null || args.length < 2) {
-      if (mentions(text.slice(m.index, m.index + 400))) hits.push(m.index);
+      // Bounded to the CALL, not to a fixed window. Reading 400 characters
+      // past the match let a one-argument helper borrow the config mention
+      // from a deploy that merely follows it, and blocked a safe deploy
+      // (Codex #2066 r2). An unclosed call has no readable extent at all, so
+      // only its own line is considered.
+      const own =
+        args === null
+          ? text.slice(m.index, (() => {
+              const nl = text.indexOf('\n', m.index);
+              return nl === -1 ? text.length : nl;
+            })())
+          : args.join(',');
+      if (mentions(own)) hits.push(m.index);
       continue;
     }
     if (mentions(args[1])) hits.push(m.index);

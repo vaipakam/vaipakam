@@ -9349,6 +9349,81 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(safe.ok).toBe(true);
   });
 
+  it('a terminal-dot directory target is the same directory (#2066 r2)', () => {
+    // `configs/.`, `configs/` and `configs` all name one directory; only the
+    // trailing slash was normalised.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'w.sh',
+      'cp generated/custom.jsonc configs/.\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('an ESCAPED separator stays inside the source word (#2066 r2)', () => {
+    // The shell carries `generated\\;file.jsonc` as one word; reading the
+    // semicolon as a command boundary truncated the scan before the
+    // destination and lost the overwrite.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'w.sh',
+      'cp generated\\;file.jsonc configs/custom.jsonc\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('cp --parents recreates the source path under the target (#2066 r2)', () => {
+    // `cp --parents configs/custom.jsonc build` writes
+    // `build/configs/custom.jsonc`, not `build/custom.jsonc`.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('build/configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'w.sh',
+      'cp --parents configs/custom.jsonc build\n' +
+        'wrangler deploy --config build/configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a grouped short option still carries the target directory (#2066 r2)', () => {
+    // GNU accepts `-vtDIR`; matching only `-tDIR` left the backup looking
+    // like a rewrite.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const backup = runWith(
+      'w.sh',
+      'cp -vt/tmp/backups configs/custom.jsonc\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(backup.ok).toBe(true);
+
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const into = runWith(
+      'w.sh',
+      'cp -vtconfigs generated/custom.jsonc\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(into.ok).toBe(false);
+  });
+
+  it('the library fallback is bounded to its own call (#2066 r2)', () => {
+    // A fixed 400-character window let a one-argument helper borrow the
+    // config mention from a deploy that merely follows it.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'c.mjs',
+      'copy("/tmp/source");\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
   it('the PROSE path invalidates a rewritten config too', () => {
     // That path passed the rewrite context to the safety reader and not to the
     // identity reader, so the identity half trusted the stale copy and sent the
