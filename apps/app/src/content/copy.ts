@@ -126,6 +126,20 @@ const copySource = {
       description:
         'Plain-language answers about lending, borrowing, NFT rentals, fees, and the risks — plus build and contract info for this deployment.',
     },
+    // #1959 — the two public transparency surfaces. Indexable like the
+    // rows above, not like the per-user block below: both are meant to
+    // be findable, and both render identically for a visitor with no
+    // wallet.
+    analytics: {
+      title: 'Analytics — Vaipakam',
+      description:
+        'Live loan and offer counts for this deployment, read from the public indexer — the same keyless endpoints anyone can call and check for themselves.',
+    },
+    protocolConsole: {
+      title: 'Protocol console — Vaipakam',
+      description:
+        'The current value of every governance-tunable protocol parameter — fees, thresholds, durations, and feature flags — read-only and open to anyone.',
+    },
     // Wallet-gated, per-user surfaces — carried for the browser tab
     // title only; SeoMeta marks all of these noindex.
     positions: { title: 'My positions — Vaipakam' },
@@ -4483,6 +4497,9 @@ const copySource = {
     refresh: 'Refresh',
     unreachable:
       'The indexer did not answer, so no figures are shown. Nothing is inferred from the silence — an unreachable indexer is not evidence of zero activity.',
+    uninitialized:
+      'The indexer answered, but has not read any blocks yet, so there are no figures to show. That is a fact about the indexer, not about the protocol — a database that has ingested nothing would report zero of everything, which is exactly why those zeros are withheld here rather than displayed.',
+    contractLabel: 'Diamond contract',
     notReported: 'not reported',
     loansHeading: 'Loans',
     offersHeading: 'Offers',
@@ -4520,8 +4537,13 @@ const copySource = {
     ),
     refresh: 'Refresh',
     reference: 'Parameter reference',
-    hiddenBody: 'Parameter visibility is turned off on this deployment. The reference documentation remains public.',
-    hiddenLink: 'Read the parameter reference',
+    // The off-state used to promise the reference "remains public" and
+    // link to it. It does not: the marketing site's reference page reads
+    // the SAME flag and redirects to its home page, so the only action
+    // this posture offered could not deliver what it said (review round
+    // 2 P2). Says nothing about the reference now, and offers no link.
+    hiddenBody:
+      'Parameter visibility is turned off on this deployment, so the live values are not shown here. This is a display setting only — the parameters themselves are on-chain and readable by anyone directly from the contracts.',
     unavailable:
       'No configuration snapshot is available for this chain. Nothing is inferred from that — it means the value is unknown here, not that it is unset on-chain.',
     stale:

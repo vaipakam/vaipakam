@@ -829,6 +829,12 @@ export interface LoanStats {
    *  exists to report honestly. */
   volumeByAsset?: Record<string, string>;
   loansByAsset?: Record<string, number>;
+  /** Ingest cursor, mirroring `/offers/stats`. `/loans/stats` has
+   *  always returned this and the type simply omitted it — which
+   *  mattered once the transparency page began requiring a cursor
+   *  before treating counters as authoritative, since a missing type
+   *  made this endpoint look unable to answer that question. */
+  indexer?: { lastBlock: number; updatedAt: number } | null;
 }
 
 export interface OfferStats {

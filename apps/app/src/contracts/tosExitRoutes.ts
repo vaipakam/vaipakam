@@ -78,6 +78,15 @@ const EXIT_PREFIXES = [
   // exporting or erasing their own data. A right that can be withheld
   // pending acceptance of new terms is not one.
   '/data-rights',
+  // #1959 review round 2 P2 — the two public transparency surfaces.
+  // Same rule as `/help` and `/nft` above: neither writes anything,
+  // Diamond or otherwise, so neither lets a user take on new exposure.
+  // Withholding them is worse than pointless here, because these two
+  // are PUBLIC pages the marketing site deep-links to: a visitor with
+  // no wallet reads them fine, and connecting one would take them away.
+  // A transparency page a wallet can lose access to is not one.
+  '/analytics',
+  '/protocol-console',
   // ...and `/activity`'s own alias (review round 13 P2). An alias
   // renders its `<Navigate>` INSIDE the gate, so exempting only the
   // canonical path leaves the alias held and the redirect never runs.

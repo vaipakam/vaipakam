@@ -38,8 +38,27 @@ import { Home } from './pages/Home';
  * back-stack, or Back from the docs bounces the reader straight out
  * again instead of returning them here.
  */
+/**
+ * Leaves this origin for `url`, CARRYING THE FRAGMENT.
+ *
+ * The destination reference supports stable `#<knob-id>` deep links, so
+ * a bookmark or an old connected-app link to one parameter's section
+ * has to survive the hop. Dropping the hash lands every one of them at
+ * the top of a long document — the reader is on the right page and has
+ * to hunt for the row they asked for, which is the quiet half of a
+ * broken link (review round 2 P2). Search is carried for the same
+ * reason; a redirect that discards what the URL said is not a redirect
+ * to the same place.
+ *
+ * An incoming hash wins only when the target does not name one itself.
+ */
 function ExternalRedirect({ url }: { url: string }) {
-  if (typeof window !== 'undefined') window.location.replace(url);
+  if (typeof window !== 'undefined') {
+    const target = new URL(url);
+    if (!target.hash && window.location.hash) target.hash = window.location.hash;
+    if (!target.search && window.location.search) target.search = window.location.search;
+    window.location.replace(target.toString());
+  }
   return null;
 }
 const Borrow = lazy(() =>

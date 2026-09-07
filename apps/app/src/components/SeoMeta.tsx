@@ -101,6 +101,16 @@ function metaForPath(rawPathname: string): RouteMeta {
     return { ...seo.nftVerifier, index: true };
   }
   if (pathname === '/help') return { ...seo.help, index: true };
+  // #1959 review round 2 P2 — both are public marketing deep-link
+  // targets. Without a row here they fell through to the NotFound row,
+  // so a working page announced itself as "Page not found" in the tab,
+  // emitted `noindex`, and dropped its canonical — the exact regression
+  // the `/data-rights` row below was added for. Indexable, unlike the
+  // per-user surfaces: these two are the public record.
+  if (pathname === '/analytics') return { ...seo.analytics, index: true };
+  if (pathname === '/protocol-console') {
+    return { ...seo.protocolConsole, index: true };
+  }
   if (inSection(pathname, '/positions')) return { ...seo.positions, index: false };
   if (pathname === '/claims') return { ...seo.claims, index: false };
   if (pathname === '/vault') return { ...seo.vault, index: false };

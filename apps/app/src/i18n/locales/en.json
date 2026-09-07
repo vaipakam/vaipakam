@@ -76,6 +76,14 @@
         "title": "Help — Vaipakam",
         "description": "Plain-language answers about lending, borrowing, NFT rentals, fees, and the risks — plus build and contract info for this deployment."
       },
+      "analytics": {
+        "title": "Analytics — Vaipakam",
+        "description": "Live loan and offer counts for this deployment, read from the public indexer — the same keyless endpoints anyone can call and check for themselves."
+      },
+      "protocolConsole": {
+        "title": "Protocol console — Vaipakam",
+        "description": "The current value of every governance-tunable protocol parameter — fees, thresholds, durations, and feature flags — read-only and open to anyone."
+      },
       "positions": {
         "title": "My positions — Vaipakam"
       },
@@ -2358,6 +2366,8 @@
       "lede": "Live counts from the public indexer for chain {{chain}}. No wallet needed — these are the same keyless endpoints anyone can query.",
       "refresh": "Refresh",
       "unreachable": "The indexer did not answer, so no figures are shown. Nothing is inferred from the silence — an unreachable indexer is not evidence of zero activity.",
+      "uninitialized": "The indexer answered, but has not read any blocks yet, so there are no figures to show. That is a fact about the indexer, not about the protocol — a database that has ingested nothing would report zero of everything, which is exactly why those zeros are withheld here rather than displayed.",
+      "contractLabel": "Diamond contract",
       "notReported": "not reported",
       "loansHeading": "Loans",
       "offersHeading": "Offers",
@@ -2389,8 +2399,7 @@
       "lede": "Every governance-tunable parameter’s current value on chain {{chain}}. Public and read-only — no wallet needed, and no controls here change anything. Governance changes go through the timelock, not this page.",
       "refresh": "Refresh",
       "reference": "Parameter reference",
-      "hiddenBody": "Parameter visibility is turned off on this deployment. The reference documentation remains public.",
-      "hiddenLink": "Read the parameter reference",
+      "hiddenBody": "Parameter visibility is turned off on this deployment, so the live values are not shown here. This is a display setting only — the parameters themselves are on-chain and readable by anyone directly from the contracts.",
       "unavailable": "No configuration snapshot is available for this chain. Nothing is inferred from that — it means the value is unknown here, not that it is unset on-chain.",
       "stale": "This snapshot is more than a day old, so treat the values below as historical. Config changes normally reach the snapshot within one ingest scan.",
       "notReported": "not reported",

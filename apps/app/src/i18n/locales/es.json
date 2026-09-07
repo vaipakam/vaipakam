@@ -106,6 +106,14 @@
       },
       "notFound": {
         "title": "Página no encontrada — Vaipakam"
+      },
+      "analytics": {
+        "title": "Analíticas — Vaipakam",
+        "description": "Recuentos de préstamos y ofertas en vivo de este despliegue, leídos desde el indexador público — los mismos endpoints sin clave que cualquiera puede consultar y comprobar por su cuenta."
+      },
+      "protocolConsole": {
+        "title": "Consola del protocolo — Vaipakam",
+        "description": "El valor actual de cada parámetro del protocolo ajustable por gobernanza — comisiones, umbrales, duraciones e indicadores de funcionalidad — de solo lectura y abierto a cualquiera."
       }
     },
     "home": {
@@ -2387,15 +2395,16 @@
       "caveat": "Estos recuentos están tan actualizados como el cursor anterior, no como la cadena. Si la última ingesta es antigua, las cifras son antiguas: por eso se muestra la antigüedad aquí en vez de dejarla a tu suposición. Las cifras de cierre proceden de eventos indexados, así que un cambio de estado aún no ingerido no aparecerá.",
       "ageSeconds": "hace {{n}} s",
       "ageMinutes": "hace {{n}} min",
-      "ageHours": "hace {{n}} h"
+      "ageHours": "hace {{n}} h",
+      "uninitialized": "El indexador respondió, pero aún no ha leído ningún bloque, así que no hay cifras que mostrar. Eso es un hecho sobre el indexador, no sobre el protocolo: una base de datos que no ha ingerido nada informaría cero de todo, y por eso esos ceros se omiten aquí en lugar de mostrarse.",
+      "contractLabel": "Contrato Diamond"
     },
     "protocolConsole": {
       "title": "Consola del protocolo",
       "lede": "Valor actual de cada parámetro ajustable por gobernanza en la cadena {{chain}}. Público y de solo lectura: no hace falta monedero y ningún control aquí cambia nada. Los cambios de gobernanza pasan por el timelock, no por esta página.",
       "refresh": "Actualizar",
       "reference": "Referencia de parámetros",
-      "hiddenBody": "La visibilidad de parámetros está desactivada en este despliegue. La documentación de referencia sigue siendo pública.",
-      "hiddenLink": "Leer la referencia de parámetros",
+      "hiddenBody": "La visibilidad de los parámetros está desactivada en este despliegue, así que aquí no se muestran los valores en vivo. Es solo un ajuste de visualización — los parámetros están on-chain y cualquiera puede leerlos directamente desde los contratos.",
       "unavailable": "No hay instantánea de configuración disponible para esta cadena. No se infiere nada de ello: significa que el valor se desconoce aquí, no que esté sin definir en la cadena.",
       "stale": "Esta instantánea tiene más de un día, así que trata los valores siguientes como históricos. Los cambios de configuración suelen llegar a la instantánea en un ciclo de ingesta.",
       "notReported": "no informado",

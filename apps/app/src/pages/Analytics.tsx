@@ -29,7 +29,13 @@
  */
 import { useQuery } from '@tanstack/react-query';
 import { copy } from '../content/copy';
-import { BarChart3, RefreshCw, ShieldCheck, AlertTriangle } from 'lucide-react';
+import {
+  BarChart3,
+  RefreshCw,
+  ShieldCheck,
+  AlertTriangle,
+  ExternalLink,
+} from 'lucide-react';
 import {
   fetchLoanStats,
   fetchOfferStats,
@@ -97,6 +103,23 @@ export function Analytics() {
     stats.isError ||
     (stats.isSuccess && loans === null && offers === null);
 
+  // NO CURSOR MEANS NOTHING HAS BEEN INDEXED — which is not the same
+  // fact as "nothing has happened" (review round 2 P2). A fresh, reset
+  // or mid-backfill database answers both endpoints successfully with
+  // every counter at zero and no cursor at all. Those objects are
+  // non-null, so without this the page rendered a full board of
+  // authoritative-looking zeros for a deployment that may have years of
+  // history the indexer simply has not read yet.
+  //
+  // That is the one failure this page cannot afford. It exists so a
+  // reader does not have to take a number on trust, and "0 defaulted"
+  // sourced from an empty database is the most reassuring number here
+  // and the least earned. The freshness line cannot rescue it either:
+  // with no cursor there is no age to state.
+  const cursor = offers?.indexer ?? loans?.indexer ?? null;
+  const uninitialized =
+    !unreachable && stats.isSuccess && typeof cursor?.lastBlock !== 'number';
+
   return (
     <div className="an-page">
       <header className="an-head">
@@ -117,7 +140,13 @@ export function Analytics() {
         </p>
       )}
 
-      {!unreachable && (
+      {uninitialized && (
+        <p className="an-unreachable" role="status">
+          <AlertTriangle aria-hidden="true" /> {copy.analytics.uninitialized}
+        </p>
+      )}
+
+      {!unreachable && !uninitialized && (
         <>
           <section className="an-section" aria-labelledby="an-loans">
             <h2 id="an-loans">{copy.analytics.loansHeading}</h2>
@@ -161,17 +190,41 @@ export function Analytics() {
             <p>
               {copy.analytics.transparencyBody}
             </p>
+            {/*
+              THE CONTRACT ITSELF. The marketing footer routes its
+              "Smart Contracts" resource here, and until review round 2
+              this section answered with indexer provenance and a chain
+              number — nothing a reader could actually verify a contract
+              against. Someone following a link labelled "Smart
+              Contracts" wants the address and a way to open it, so
+              state both, and put them ABOVE the indexer facts: the
+              chain is the primary source, and the indexer is a
+              second-hand reading of it.
+            */}
             <dl className="an-facts">
+              <dt>{copy.analytics.contractLabel}</dt>
+              <dd>
+                <a
+                  className="an-addr"
+                  href={`${readChain.blockExplorer}/address/${readChain.diamondAddress}`}
+                  target="_blank"
+                  rel="noreferrer noopener"
+                >
+                  {readChain.diamondAddress} <ExternalLink aria-hidden="true" />
+                </a>
+              </dd>
+              <dt>{copy.analytics.chain}</dt>
+              <dd>
+                {readChain.name} ({chainId})
+              </dd>
               <dt>{copy.analytics.cursorBlock}</dt>
               <dd>
-                {typeof offers?.indexer?.lastBlock === 'number'
-                  ? offers.indexer.lastBlock.toLocaleString()
+                {typeof cursor?.lastBlock === 'number'
+                  ? cursor.lastBlock.toLocaleString()
                   : copy.analytics.unknown}
               </dd>
               <dt>{copy.analytics.lastIngest}</dt>
-              <dd>{ageLabel(offers?.indexer?.updatedAt)}</dd>
-              <dt>{copy.analytics.chain}</dt>
-              <dd>{chainId}</dd>
+              <dd>{ageLabel(cursor?.updatedAt)}</dd>
             </dl>
             <p className="an-caveat">
               {copy.analytics.caveat}

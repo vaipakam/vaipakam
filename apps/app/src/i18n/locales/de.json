@@ -106,6 +106,14 @@
       },
       "notFound": {
         "title": "Seite nicht gefunden — Vaipakam"
+      },
+      "analytics": {
+        "title": "Analysen — Vaipakam",
+        "description": "Live-Zahlen zu Krediten und Angeboten dieses Deployments, gelesen aus dem öffentlichen Indexer — dieselben schlüssellosen Endpunkte, die jede und jeder abfragen und selbst überprüfen kann."
+      },
+      "protocolConsole": {
+        "title": "Protokoll-Konsole — Vaipakam",
+        "description": "Der aktuelle Wert jedes durch Governance einstellbaren Protokollparameters — Gebühren, Schwellenwerte, Laufzeiten und Funktionsschalter — schreibgeschützt und für alle offen."
       }
     },
     "home": {
@@ -2387,15 +2395,16 @@
       "caveat": "Diese Zahlen sind so aktuell wie der Cursor oben, nicht so aktuell wie die Chain. Ist die letzte Erfassung alt, sind die Zahlen alt — deshalb steht das Alter hier und bleibt nicht Ihrer Vermutung überlassen. Abwicklungszahlen stammen aus indexierten Events; eine noch nicht erfasste Zustandsänderung erscheint nicht.",
       "ageSeconds": "vor {{n}} s",
       "ageMinutes": "vor {{n}} Min.",
-      "ageHours": "vor {{n}} Std."
+      "ageHours": "vor {{n}} Std.",
+      "uninitialized": "Der Indexer hat geantwortet, aber noch keine Blöcke gelesen, deshalb gibt es keine Zahlen anzuzeigen. Das ist eine Aussage über den Indexer, nicht über das Protokoll — eine Datenbank, die nichts eingelesen hat, würde überall null melden, und genau darum werden diese Nullen hier zurückgehalten statt angezeigt.",
+      "contractLabel": "Diamond-Vertrag"
     },
     "protocolConsole": {
       "title": "Protokoll-Konsole",
       "lede": "Aktueller Wert jedes per Governance einstellbaren Parameters auf Chain {{chain}}. Öffentlich und schreibgeschützt — keine Wallet nötig, und kein Bedienelement hier ändert etwas. Governance-Änderungen laufen über den Timelock, nicht über diese Seite.",
       "refresh": "Aktualisieren",
       "reference": "Parameter-Referenz",
-      "hiddenBody": "Die Parameter-Sichtbarkeit ist in diesem Deployment abgeschaltet. Die Referenzdokumentation bleibt öffentlich.",
-      "hiddenLink": "Parameter-Referenz lesen",
+      "hiddenBody": "Die Sichtbarkeit der Parameter ist in diesem Deployment ausgeschaltet, daher werden die Live-Werte hier nicht angezeigt. Das ist nur eine Anzeigeeinstellung — die Parameter selbst liegen on-chain und sind für alle direkt aus den Verträgen lesbar.",
       "unavailable": "Für diese Chain liegt kein Konfigurations-Snapshot vor. Daraus wird nichts gefolgert: der Wert ist hier unbekannt, nicht etwa on-chain ungesetzt.",
       "stale": "Dieser Snapshot ist älter als ein Tag — behandeln Sie die Werte unten als historisch. Konfigurationsänderungen erreichen den Snapshot normalerweise innerhalb eines Erfassungslaufs.",
       "notReported": "nicht gemeldet",

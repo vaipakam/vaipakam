@@ -6,11 +6,12 @@
   // bare build — see the guard note in vite.config.ts); a bare build
   // ships without operator env and only warns.
   //
-  // The marketing site's links still resolve to the legacy host anyway.
-  // That is now a DELIBERATE HOLD rather than a missing prerequisite —
-  // `APP_TARGET` in apps/www/src/lib/appUrl.ts waits on the Vpfi deposit
-  // anchor, and the recovery links wait on the legacy host actually
-  // being retired. The checklist beside `APP_TARGET` is the authority.
+  // The marketing site's links now resolve HERE: #1959 ported the last
+  // two destinations (`/analytics`, `/protocol-console`) and flipped
+  // `APP_TARGET` in apps/www/src/lib/appUrl.ts. Still held back on
+  // purpose are the `/recover` guide links, which wait on the legacy
+  // host's in-flight recovery attempts draining rather than on any
+  // route existing here. The note beside `APP_TARGET` is the authority.
   //
   // apps/app is THE connected app: the naive-user-first surface that
   // replaced the retired apps/defi (defi.vaipakam.com) in #1854. It was

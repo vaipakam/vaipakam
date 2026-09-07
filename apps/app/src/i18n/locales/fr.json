@@ -106,6 +106,14 @@
       },
       "notFound": {
         "title": "Page introuvable — Vaipakam"
+      },
+      "analytics": {
+        "title": "Analyses — Vaipakam",
+        "description": "Le décompte en direct des prêts et des offres de ce déploiement, lu depuis l'indexeur public — les mêmes points d'accès sans clé que tout le monde peut interroger et vérifier soi-même."
+      },
+      "protocolConsole": {
+        "title": "Console du protocole — Vaipakam",
+        "description": "La valeur actuelle de chaque paramètre du protocole réglable par la gouvernance — frais, seuils, durées et indicateurs de fonctionnalité — en lecture seule et ouverte à tous."
       }
     },
     "home": {
@@ -2387,15 +2395,16 @@
       "caveat": "Ces comptages sont aussi récents que le curseur ci-dessus, pas que la chaîne. Si la dernière ingestion est ancienne, les chiffres le sont aussi : c'est pourquoi l'ancienneté est affichée ici plutôt que laissée à votre estimation. Les chiffres de dénouement viennent d'événements indexés ; un changement d'état non encore ingéré n'apparaîtra pas.",
       "ageSeconds": "il y a {{n}} s",
       "ageMinutes": "il y a {{n}} min",
-      "ageHours": "il y a {{n}} h"
+      "ageHours": "il y a {{n}} h",
+      "uninitialized": "L'indexeur a répondu, mais n'a encore lu aucun bloc : il n'y a donc aucun chiffre à afficher. C'est un fait sur l'indexeur, pas sur le protocole — une base qui n'a rien ingéré annoncerait zéro partout, et c'est précisément pourquoi ces zéros sont tus ici plutôt qu'affichés.",
+      "contractLabel": "Contrat Diamond"
     },
     "protocolConsole": {
       "title": "Console du protocole",
       "lede": "Valeur actuelle de chaque paramètre réglable par la gouvernance sur la chaîne {{chain}}. Public et en lecture seule : aucun portefeuille requis, et aucun contrôle ici ne modifie quoi que ce soit. Les changements de gouvernance passent par le timelock, pas par cette page.",
       "refresh": "Actualiser",
       "reference": "Référence des paramètres",
-      "hiddenBody": "La visibilité des paramètres est désactivée sur ce déploiement. La documentation de référence reste publique.",
-      "hiddenLink": "Lire la référence des paramètres",
+      "hiddenBody": "La visibilité des paramètres est désactivée sur ce déploiement, les valeurs en direct ne sont donc pas affichées ici. Il s'agit uniquement d'un réglage d'affichage — les paramètres eux-mêmes sont on-chain et lisibles par tout le monde directement depuis les contrats.",
       "unavailable": "Aucun instantané de configuration n'est disponible pour cette chaîne. Rien n'en est déduit : la valeur est inconnue ici, elle n'est pas pour autant non définie on-chain.",
       "stale": "Cet instantané a plus d'un jour : traitez les valeurs ci-dessous comme historiques. Les changements de configuration atteignent normalement l'instantané en un cycle d'ingestion.",
       "notReported": "non communiqué",

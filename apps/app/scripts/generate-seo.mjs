@@ -50,6 +50,8 @@ const PUBLIC_ROUTES = [
   '/vpfi',
   '/nft',
   '/help',
+  '/analytics',
+  '/protocol-console',
 ];
 
 function buildSitemap() {

@@ -118,12 +118,14 @@ export function ProtocolConsole() {
     return (
       <div className="pc-page">
         <h1>{copy.protocolConsole.title}</h1>
-        <p role="status">
-          {copy.protocolConsole.hiddenBody}{' '}
-          <a href={DOCS_URL} target="_blank" rel="noreferrer noopener">
-            {copy.protocolConsole.hiddenLink} <ExternalLink aria-hidden="true" />
-          </a>
-        </p>
+        {/*
+          NO DOCS LINK IN THIS POSTURE. The reference page on the
+          marketing site reads the SAME `VITE_ADMIN_DASHBOARD_PUBLIC`
+          flag and redirects to its home page when it is off, so linking
+          there from here promised the reader something the very flag
+          that produced this state had already taken away.
+        */}
+        <p role="status">{copy.protocolConsole.hiddenBody}</p>
       </div>
     );
   }

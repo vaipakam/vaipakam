@@ -418,6 +418,39 @@ for (const r of wanted) {
   }
 }
 
+// ONE reachability probe for the WHOLE RUN, not one per role (review
+// round 2 P2). `visit()` calls the shared BLOCKED exit directly on a
+// timeout or HTTP error — correct before anything has been observed,
+// and wrong afterwards. Declared per-role, `probed` reset on every
+// launch, so the lender's or borrower's first navigation went through
+// `visit()` again: a 500 there terminated the process with exit 2 and
+// threw away product failures the visitor scenarios had already found,
+// which is the precise inversion of the failure-over-blocked precedence
+// this driver applies at the end.
+//
+// Run-scoped, so exactly the first served page of the run can report
+// BLOCKED and every navigation after it is a guarded goto.
+let probed = false;
+
+/** Navigates, as a precondition on the very first page and as an
+ *  ordinary product assertion from then on. Throws on HTTP >= 400 so
+ *  the caller records it against the route it happened on. */
+async function navigate(page, route) {
+  if (!probed) {
+    await visit(page, route);
+    probed = true;
+    return;
+  }
+  const resp = await page.goto(`${SITE}${route}`, {
+    waitUntil: 'domcontentloaded',
+    timeout: 60_000,
+  });
+  const status = resp?.status();
+  if (typeof status === 'number' && status >= 400) {
+    throw new Error(`${route} answered HTTP ${status}`);
+  }
+}
+
 const results = [];
 const setupFailures = [];
 let hardFail = 0;
@@ -450,21 +483,13 @@ for (const roleKey of wanted) {
   }
   const { page, done, blockedRequests } = session;
 
-  // First navigation uses `visit()`, which is the REACHABILITY probe: it
-  // exits 2 on an HTTP error, which is right before anything has been
-  // observed. Later routes use a guarded goto so a 500 on one route is
-  // recorded as that route's FAIL instead of aborting the run as BLOCKED
-  // and discarding what earlier scenarios already found.
-  let probed = false;
-
   if (posture.preAuthorized) {
     // preAuthorized alone does not prove wagmi ACCEPTED the provider. If
     // connector rehydration regresses, several connected-role checks
     // still pass against public or connect-prompt content, because they
     // count body text and generic buttons. Prove the connection first.
     try {
-      await visit(page, '/');
-      probed = true;
+      await navigate(page, '/');
       await ensureConnected(page);
       await page.waitForTimeout(1_200);
       const connected = !(await page
@@ -503,19 +528,7 @@ for (const roleKey of wanted) {
     let actual = '';
     let note = '';
     try {
-      if (!probed) {
-        await visit(page, s.route);
-        probed = true;
-      } else {
-        const resp = await page.goto(`${SITE}${s.route}`, {
-          waitUntil: 'domcontentloaded',
-          timeout: 60_000,
-        });
-        const status = resp?.status();
-        if (typeof status === 'number' && status >= 400) {
-          throw new Error(`${s.route} answered HTTP ${status}`);
-        }
-      }
+      await navigate(page, s.route);
       // Per-scenario settle: a surface whose state arrives from an async
       // chain/config read needs longer than one that renders from props.
       // A scenario may replace it with a bounded poll (see R1).
@@ -544,8 +557,28 @@ for (const roleKey of wanted) {
   // reports "these journeys are fine" about a build that tried to sign
   // unprompted — the single most important thing a read-only review could
   // have told you, silently swallowed.
-  const writeAttempts = (blockedRequests ?? []).filter((b) =>
-    /wallet rpc|sign|sendTransaction/i.test(b.reason ?? ''),
+  //
+  // CLASSIFY BY EXCLUSION, NOT BY MATCHING (review round 2 P1). The
+  // first version of this listed the reasons it expected to see —
+  // `wallet rpc`, `sign`, `sendTransaction` — and a substring list is
+  // the wrong shape for a guard. A bundle that bypasses the injected
+  // provider and posts JSON-RPC over the network is recorded with
+  // reasons like `json-rpc eth_sendRawTransaction`, `wallet_sendCalls`
+  // or `eth_sendUserOperation`, and NOT ONE of those matched: the
+  // request was denied, and the run still reported green. Every method
+  // that ever gets added to the wallet's write set would have had to be
+  // remembered here too, silently, forever.
+  //
+  // `blockedRequests` only ever holds things the driver REFUSED, so
+  // there is nothing benign in it to filter for. Every entry is a
+  // read-only violation. The one exception is the visitor's account
+  // prompt, which is not a write and has its own check immediately
+  // below — excluded only for that posture, so a prompt appearing where
+  // no check owns it still fails here rather than falling through both.
+  const isAccountPrompt = (b) =>
+    /requestAccounts|requestPermissions/i.test(b.reason ?? '');
+  const writeAttempts = (blockedRequests ?? []).filter(
+    (b) => !(!posture.preAuthorized && isAccountPrompt(b)),
   );
 
   // A VISITOR must not be asked to connect unprompted. The driver rejects
@@ -554,9 +587,7 @@ for (const roleKey of wanted) {
   // assertion — leaving a green first-arrival report for a build that
   // would have thrown a wallet dialog at a real newcomer.
   if (!posture.preAuthorized) {
-    const prompts = (blockedRequests ?? []).filter((b) =>
-      /requestAccounts|requestPermissions/i.test(b.reason ?? ''),
-    );
+    const prompts = (blockedRequests ?? []).filter(isAccountPrompt);
     if (prompts.length > 0) {
       hardFail += 1;
       results.push({
