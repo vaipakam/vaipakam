@@ -1593,19 +1593,21 @@ phase_cf_app() {
   #
   # CUTOVER ADVISORY (#1854). This phase publishes the `vaipakam-app`
   # Worker. Whether users can REACH what it publishes depends on two
-  # operator-side facts no script can read from the repository: whether
-  # `app.vaipakam.com` is bound to that Worker, and whether apps/www was
-  # built with VITE_APP_TARGET=app. While either is outstanding, every
-  # Launch App link still resolves to the legacy host, so a contract
-  # redeploy's new addresses reach this Worker and the repo but NOT the
-  # surface users are actually on. There is no second frontend to fall
-  # back on: the retired app's source was deleted with #1854, so
-  # `vaipakam-defi` CANNOT be rebuilt to carry the new addresses. Hence a
-  # banner rather than a silent publish — and an advisory rather than a
-  # hard stop, because blocking every contract deploy until the cutover
-  # blockers (#1959 unported tools, #1960 Data Rights, #1961 ToS gate)
-  # clear would be a worse failure mode than an operator who has been
-  # told.
+  # an operator-side fact no script can read from the repository: whether
+  # apps/www was built with VITE_APP_TARGET=app. (`app.vaipakam.com` IS
+  # bound now — that half is settled — but binding alone routes nobody:
+  # the marketing site decides where Launch App points.) While the flip
+  # is outstanding, every Launch App link still resolves to the legacy
+  # host, so a contract redeploy's new addresses reach this Worker and
+  # the repo but NOT the surface users are actually on. There is no
+  # second frontend to fall back on: the retired app's source was deleted
+  # with #1854, so `vaipakam-defi` CANNOT be rebuilt to carry the new
+  # addresses. Hence a banner rather than a silent publish — and an
+  # advisory rather than a hard stop, because blocking every contract
+  # deploy until the remaining blocker (the VPFI deposit anchor; #1960
+  # and #1961 are cleared, and #1959 blocks retiring the legacy host
+  # rather than the flip) clears would be a worse failure mode than an
+  # operator who has been told.
   cat >&2 <<'ADVISORY'
 
   ─────────────────────────────────────────────────────────────────────

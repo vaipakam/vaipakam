@@ -135,8 +135,12 @@ type AppTarget = 'legacy' | 'app';
  * host/path drift this helper exists to prevent, reintroduced through
  * the dev path.
  *
- * Anything other than 'app' reads as 'legacy' — an unset or typo'd value
- * lands on the served surface rather than the unbound one.
+ * Anything other than 'app' reads as 'legacy'. That default is no longer
+ * about one host being unserved — BOTH are served now. It is the safe
+ * side of the remaining hold: legacy is where the cutover checklist says
+ * users still belong until the Vpfi deposit anchor lands, so an unset or
+ * typo'd value falls back to the intended destination rather than
+ * completing the cutover by accident.
  */
 const APP_TARGET: AppTarget =
   import.meta.env.VITE_APP_TARGET === 'app' ? 'app' : 'legacy';
