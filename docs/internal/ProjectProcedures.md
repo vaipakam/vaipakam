@@ -359,6 +359,19 @@ source of truth and is unchanged by this section.
     request, even though the submission object itself never changes state,
     while a later comment from the same reviewer does not answer an
     earlier one.
+  - **A later `APPROVED` from the SAME reviewer clears their own earlier
+    `COMMENTED` requests.** An approval is that reviewer's verdict on the
+    state of the PR at that moment, so it is definitive evidence they
+    accepted the newer state — including whatever they had asked for
+    earlier. Without this, a standalone request answered by a fix rather
+    than a reply stays outstanding forever and can hold a merge-ready PR
+    indefinitely, since only a reply from us would ever clear it.
+    Scoped deliberately: it clears only requests from **that** reviewer,
+    and only ones **older** than the approval. It does not touch another
+    reviewer's requests, a later request from the same reviewer, or an
+    open `CHANGES_REQUESTED` — which the rule above already says only an
+    approval withdraws, and which this is the same principle applied to
+    the weaker signal.
 
   A "no major issues" summary is not a verdict that overrides the inline
   threads either — those are judged by rule 1, independently.
