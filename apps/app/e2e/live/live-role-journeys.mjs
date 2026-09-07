@@ -24,21 +24,48 @@
  *                 a first visit.
  *   - `lender` / `borrower`  connected, funded testnet roles.
  *
- * READ-ONLY. No scenario here signs or broadcasts. The signing journeys
- * are already driven by `live-dryrun-review.mjs`, `live-signed-book.mjs`
- * and `live-rate-desk.mjs`; duplicating them here would spend testnet
- * gas to re-prove covered ground.
+ * READ-ONLY, AND ENFORCED RATHER THAN PROMISED. Every session launches
+ * with `readOnly: true`, so the injected wallet DENIES `personal_sign`,
+ * typed-data signing and `eth_sendTransaction` at the provider. A run
+ * that records any such attempt FAILS.
+ *
+ * That enforcement is the point, and an earlier revision of this file
+ * got it wrong in a way worth recording: it made this same claim in
+ * prose while launching with the default `readOnly: false`. A funded
+ * wallet is injected for the connected roles, so a regressed or
+ * hostile bundle served from the caller-controlled `SITE_URL` could
+ * have had a signature approved automatically on page load — spending
+ * testnet funds or creating signed commitments with no scenario doing
+ * anything. A comment is not a guard.
+ *
+ * The signing journeys are already driven by `live-dryrun-review.mjs`,
+ * `live-signed-book.mjs` and `live-rate-desk.mjs`; duplicating them
+ * here would spend testnet gas to re-prove covered ground.
  *
  * Usage:
  *   SITE_URL=https://app.vaipakam.com \
- *   NODE_USE_ENV_PROXY=1 \
- *   LIVE_CHROMIUM_PATH=/opt/pw-browsers/chromium-1194/chrome-linux/chrome \
+ *   TESTNET_WALLETS_FILE=~/secrets/vaipakam-dev-wallets.json \
  *     node live-role-journeys.mjs
  *
- *   JOURNEY_ROLES=visitor       # optional subset, comma-separated
+ *   JOURNEY_ROLES=visitor        # optional subset, comma-separated
  *   JOURNEY_JSON=out/report.json # optional machine-readable dump
+ *
+ * `TESTNET_WALLETS_FILE` is REQUIRED even for `visitor`: every posture
+ * goes through `launch()`, which loads the role's key to build the
+ * injected provider. The visitor posture simply refuses to ANNOUNCE or
+ * grant that account. The key is never used to sign here — `readOnly`
+ * denies write RPCs outright.
  */
-import { launch, visit, SITE, requireSiteUrl } from './driver.mjs';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
+import {
+  launch,
+  visit,
+  ensureConnected,
+  LiveSetupError,
+  SITE,
+  requireSiteUrl,
+} from './driver.mjs';
 
 requireSiteUrl();
 
@@ -161,8 +188,12 @@ const SCENARIOS = [
       const inputs = await page.locator('form, input').count();
       const gates = /connect a wallet|connect wallet/i.test(txt);
       const warns = /blocked|don.t recognise|don.t recognize/i.test(txt);
+      // `warns` is part of `ok`, not just reported. The desired outcome
+      // and the coverage claim both say this warning was verified; if it
+      // is only printed, losing it leaves the scenario green and the
+      // claim false.
       return {
-        ok: gates && inputs === 0 && txt.length > 100,
+        ok: gates && inputs === 0 && warns && txt.length > 100,
         actual: `connect-gate=${gates}, inputs=${inputs}, risk-warning=${warns}`,
       };
     },
@@ -177,32 +208,64 @@ const SCENARIOS = [
       'view should present recovery as unavailable rather than offer a form ' +
       'that is guaranteed to fail. This is the arm the Anvil fork cannot ' +
       'check honestly, because its spec installs a mock oracle.',
-    // The oracle state is read ASYNCHRONOUSLY after mount, so this needs
-    // longer than the default settle. At 1800ms the page had rendered
-    // neither posture yet, which reads identically to the disconnected
-    // view and produced a false FAIL on the first run of this driver.
-    settleMs: 3500,
+    // Polled, not slept. `/recover` runs parallel availability checks and
+    // can legitimately sit on "Checking whether recovery is available
+    // here…" for longer than any fixed delay — `live-recover.mjs` uses a
+    // bounded poll for exactly this reason. A fixed sleep reports a
+    // healthy-but-slow page as a product FAIL.
+    async settle(page) {
+      const deadline = Date.now() + 45_000;
+      while (Date.now() < deadline) {
+        const t = (await page.locator('body').innerText().catch(() => '')) || '';
+        const inputs = await page.locator('input').count();
+        if (inputs > 0 || /(is|are)n[''\u2019]?t available|not available|unavailable/i.test(t)) return;
+        await page.waitForTimeout(1_500);
+      }
+    },
     async check(page) {
       const txt = await bodyText(page);
       const inputs = await page.locator('input').count();
-      // Match the SHIPPED copy, including its curly apostrophe: "Recovery
-      // isn't available on this network yet". A pattern written from
-      // imagination ("not available") misses "isn’t available" and fails
-      // a page that is behaving correctly — which is what happened here.
-      const unavailable =
-        /(is|are)n[''’]?t available|not available|unavailable|isn[''’]t configured|not configured/i.test(
+      // The shared "Recovery isn't available on this network yet" TITLE is
+      // also rendered for a sanctions-flagged wallet. Matching only the
+      // title would let a wallet-specific block be reported as
+      // "oracle UNSET", asserting a configuration fact the run never
+      // established. So the oracle arm keys on the SCREENING-SERVICE body
+      // copy, and a wallet-specific block is reported as its own posture.
+      const oracleUnset =
+        /screening service|isn[''\u2019]t configured on this network|not configured on this network/i.test(
           txt,
         );
+      const walletBlocked = /your wallet|this wallet|flagged|sanction/i.test(txt);
+      const anyUnavailable =
+        /(is|are)n[''\u2019]?t available|not available|unavailable/i.test(txt);
+
+      if (oracleUnset) {
+        // An unavailable posture that ALSO renders the form is the
+        // regression this scenario exists to catch — the banner says
+        // nothing can be recovered while the doomed form sits under it.
+        return {
+          ok: inputs === 0,
+          actual: `oracle-unset=true, inputs=${inputs}`,
+          note:
+            inputs === 0
+              ? 'unavailable posture with no form (correct for retail)'
+              : 'REGRESSION: form rendered beneath the unavailable banner',
+        };
+      }
+      if (anyUnavailable && walletBlocked) {
+        return {
+          ok: inputs === 0,
+          actual: `wallet-specific block, inputs=${inputs}`,
+          note: 'blocked for THIS wallet — says nothing about the oracle setting',
+        };
+      }
       return {
-        // Either posture can be correct depending on the LIVE oracle
-        // setting, so this records rather than asserts a single answer —
-        // what must never happen is a form with NEITHER a stated posture
-        // NOR inputs, which means the page told the user nothing.
-        ok: unavailable || inputs > 0,
-        actual: `states-unavailable=${unavailable}, inputs=${inputs}`,
-        note: unavailable
-          ? 'oracle UNSET — unavailable posture shown, no doomed form (correct for retail)'
-          : `form rendered (${inputs} input(s)) — implies an oracle IS set; confirm that is intended`,
+        ok: inputs > 0,
+        actual: `oracle-unset=false, unavailable=${anyUnavailable}, inputs=${inputs}`,
+        note:
+          inputs > 0
+            ? 'form rendered — implies an oracle IS configured; confirm that is intended'
+            : 'neither a posture nor a form after polling — inspect',
       };
     },
   },
@@ -327,10 +390,26 @@ const ROLE_POSTURE = {
   borrower: { role: 'borrower', preAuthorized: true, allowRequestAccounts: true },
 };
 
+/** Applied to EVERY posture. Not a per-role option on purpose: a driver
+ *  that can be made to sign by editing one table entry has no read-only
+ *  guarantee, only a read-only default. */
+const READ_ONLY = { readOnly: true };
+
 const wanted = (process.env.JOURNEY_ROLES ?? 'visitor,lender,borrower')
   .split(',')
   .map((s) => s.trim())
   .filter(Boolean);
+
+// An empty normalized selection means the advertised review ran NOTHING.
+// Exiting 0 there reports green for a run that verified nothing at all,
+// which a mistyped CI variable would produce silently.
+if (wanted.length === 0) {
+  console.error(
+    'BLOCKED: JOURNEY_ROLES normalized to no roles. ' +
+      `Known roles: ${Object.keys(ROLE_POSTURE).join(', ')}`,
+  );
+  process.exit(2);
+}
 
 for (const r of wanted) {
   if (!ROLE_POSTURE[r]) {
@@ -340,6 +419,7 @@ for (const r of wanted) {
 }
 
 const results = [];
+const setupFailures = [];
 let hardFail = 0;
 
 for (const roleKey of wanted) {
@@ -347,17 +427,100 @@ for (const roleKey of wanted) {
   if (!scenarios.length) continue;
 
   const posture = ROLE_POSTURE[roleKey];
-  const { page, done } = await launch({ ...posture, freshProfile: true });
+  // `onSetupFailure: 'throw'` because this driver ACCUMULATES findings
+  // across three launches. The default exits 2 immediately, which after a
+  // visitor regression has already been recorded would discard it and
+  // report the whole run as BLOCKED — claiming nothing was verified when
+  // something was, and something was wrong.
+  let session;
+  try {
+    session = await launch({
+      ...posture,
+      ...READ_ONLY,
+      freshProfile: true,
+      onSetupFailure: 'throw',
+    });
+  } catch (err) {
+    if (err instanceof LiveSetupError) {
+      setupFailures.push(`${roleKey}: ${err.message}`);
+      console.log(`BLOCKED-SETUP  [${roleKey}] ${err.message}`);
+      continue;
+    }
+    throw err;
+  }
+  const { page, done, blockedRequests } = session;
+
+  // First navigation uses `visit()`, which is the REACHABILITY probe: it
+  // exits 2 on an HTTP error, which is right before anything has been
+  // observed. Later routes use a guarded goto so a 500 on one route is
+  // recorded as that route's FAIL instead of aborting the run as BLOCKED
+  // and discarding what earlier scenarios already found.
+  let probed = false;
+
+  if (posture.preAuthorized) {
+    // preAuthorized alone does not prove wagmi ACCEPTED the provider. If
+    // connector rehydration regresses, several connected-role checks
+    // still pass against public or connect-prompt content, because they
+    // count body text and generic buttons. Prove the connection first.
+    try {
+      await visit(page, '/');
+      probed = true;
+      await ensureConnected(page);
+      await page.waitForTimeout(1_200);
+      const connected = !(await page
+        .getByRole('button', { name: /connect wallet/i })
+        .first()
+        .isVisible()
+        .catch(() => false));
+      if (!connected) {
+        hardFail += 1;
+        results.push({
+          id: `CONN-${roleKey}`,
+          roleKey,
+          role: roleKey,
+          route: '/',
+          goal: 'The connected role is actually connected before its scenarios run',
+          desired: 'The Connect CTA is gone, proving wagmi accepted the injected provider.',
+          ok: false,
+          actual: 'Connect CTA still visible — scenarios below did NOT exercise a connected session.',
+        });
+        console.log(
+          `FAIL  CONN-${roleKey}  [${roleKey}] /\n` +
+            '      goal    : connected role is actually connected\n' +
+            '      actual  : Connect CTA still visible',
+        );
+      }
+    } catch (err) {
+      setupFailures.push(`${roleKey} connect: ${String(err.message || err).slice(0, 120)}`);
+      console.log(`BLOCKED-SETUP  [${roleKey}] connect: ${String(err.message || err).slice(0, 120)}`);
+      await done();
+      continue;
+    }
+  }
 
   for (const s of scenarios) {
     let ok = false;
     let actual = '';
     let note = '';
     try {
-      await visit(page, s.route);
+      if (!probed) {
+        await visit(page, s.route);
+        probed = true;
+      } else {
+        const resp = await page.goto(`${SITE}${s.route}`, {
+          waitUntil: 'domcontentloaded',
+          timeout: 60_000,
+        });
+        const status = resp?.status();
+        if (typeof status === 'number' && status >= 400) {
+          throw new Error(`${s.route} answered HTTP ${status}`);
+        }
+      }
       // Per-scenario settle: a surface whose state arrives from an async
       // chain/config read needs longer than one that renders from props.
-      await page.waitForTimeout(s.settleMs ?? 1800);
+      // A scenario may replace it with a bounded poll (see R1).
+      if (s.settle) await s.settle(page);
+      else await page.waitForTimeout(s.settleMs ?? 1800);
       const r = await s.check(page);
       ok = r.ok;
       actual = r.actual;
@@ -374,6 +537,67 @@ for (const roleKey of wanted) {
         `      actual  : ${actual}${note ? `\n      note    : ${note}` : ''}`,
     );
   }
+
+  // THE READ-ONLY GUARANTEE, CHECKED. `readOnly: true` makes the injected
+  // wallet refuse write RPCs; this turns a refusal into a FAILED RUN.
+  // Without it the driver would deny the write and carry on green, which
+  // reports "these journeys are fine" about a build that tried to sign
+  // unprompted — the single most important thing a read-only review could
+  // have told you, silently swallowed.
+  const writeAttempts = (blockedRequests ?? []).filter((b) =>
+    /wallet rpc|sign|sendTransaction/i.test(b.reason ?? ''),
+  );
+
+  // A VISITOR must not be asked to connect unprompted. The driver rejects
+  // `eth_requestAccounts` / `wallet_requestPermissions` for this posture,
+  // but the page can catch that rejection and still satisfy every
+  // assertion — leaving a green first-arrival report for a build that
+  // would have thrown a wallet dialog at a real newcomer.
+  if (!posture.preAuthorized) {
+    const prompts = (blockedRequests ?? []).filter((b) =>
+      /requestAccounts|requestPermissions/i.test(b.reason ?? ''),
+    );
+    if (prompts.length > 0) {
+      hardFail += 1;
+      results.push({
+        id: `PROMPT-${roleKey}`,
+        roleKey,
+        role: roleKey,
+        route: '(session)',
+        goal: 'A first-time visitor is never asked for accounts unprompted',
+        desired: 'Zero eth_requestAccounts / wallet_requestPermissions during the visitor run.',
+        ok: false,
+        actual: `${prompts.length} unsolicited account request(s)`,
+      });
+      console.log(
+        `FAIL  PROMPT-${roleKey}  [${roleKey}] (session)\n` +
+          '      goal    : a first-time visitor is never asked for accounts unprompted\n' +
+          `      actual  : ${prompts.length} unsolicited account request(s)`,
+      );
+    }
+  }
+  if (writeAttempts.length > 0) {
+    hardFail += 1;
+    const detail = writeAttempts.map((b) => b.reason).join('; ');
+    results.push({
+      id: `RO-${roleKey}`,
+      roleKey,
+      role: roleKey,
+      route: '(session)',
+      goal: 'No surface attempts a signature or transaction during a read-only review',
+      desired: 'Zero write RPCs reach the injected wallet across every scenario.',
+      ok: false,
+      actual: `${writeAttempts.length} blocked write attempt(s): ${detail}`,
+      note: 'Denied at the provider, so nothing was signed — but a page tried.',
+    });
+    console.log(
+      `FAIL  RO-${roleKey}  [${roleKey}] (session)\n` +
+        `      goal    : No signature or transaction attempts during a read-only review\n` +
+        `      desired : Zero write RPCs reach the injected wallet\n` +
+        `      actual  : ${writeAttempts.length} blocked attempt(s): ${detail}`,
+    );
+  }
+
   await done();
 }
 
@@ -383,12 +607,27 @@ console.log(
 );
 
 if (process.env.JOURNEY_JSON) {
-  const fs = await import('node:fs');
-  fs.writeFileSync(
+  // The usage example advertises `out/report.json`. Without this, every
+  // scenario can pass and the driver then dies on ENOENT, producing exit
+  // 1 and no report — a green run reported as a failure.
+  mkdirSync(dirname(process.env.JOURNEY_JSON), { recursive: true });
+  writeFileSync(
     process.env.JOURNEY_JSON,
-    JSON.stringify({ site: SITE, at: new Date().toISOString(), results }, null, 2),
+    JSON.stringify(
+      { site: SITE, at: new Date().toISOString(), results, setupFailures },
+      null,
+      2,
+    ),
   );
   console.log(`report → ${process.env.JOURNEY_JSON}`);
 }
 
-process.exit(hardFail ? 1 : 0);
+// FAILURE OUTRANKS BLOCKED. A real regression found before a later role's
+// setup broke is still a regression, and reporting it as "we could not
+// check" would bury it. Only a run that found nothing wrong AND could not
+// complete is BLOCKED (exit 2).
+if (setupFailures.length) {
+  console.log(`\nsetup failures: ${setupFailures.length}\n  ${setupFailures.join('\n  ')}`);
+}
+if (hardFail > 0) process.exit(1);
+process.exit(setupFailures.length ? 2 : 0);

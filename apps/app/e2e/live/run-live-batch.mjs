@@ -56,6 +56,11 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
  */
 const THREE_VERDICT_DRIVERS = new Set([
   'live-alerts-link.mjs',
+  // Exits 2 for a bad role selector, a browser/profile setup failure, or
+  // an unreachable site — all PRECONDITIONS, not product regressions.
+  // Without this entry the batch relabels those BLOCKED exits as FAIL and
+  // points the operator at the product during an infrastructure problem.
+  'live-role-journeys.mjs',
   'live-collateral-precheck.mjs',
   'live-desk-i18n-capture.mjs',
   'live-dryrun-review.mjs',
