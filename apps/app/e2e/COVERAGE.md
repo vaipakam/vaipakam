@@ -554,6 +554,8 @@ tests a returning user), plus connected `lender` / `borrower`.
 | First-arrival journeys — landing page offers a way in; offer book readable unconnected; a wallet-gated route explains itself instead of rendering blank; Help populated; Data Rights reachable unconnected (#1960); unknown URL renders the app's own not-found; `/recover` gates on connection with ZERO inputs before offering anything | Live-only | `live/live-role-journeys.mjs` (`JOURNEY_ROLES=visitor`) | The disconnected posture depends on the DEPLOYED build's routing and gating; the fork suite runs pre-authorized, so it cannot reproduce a first arrival |
 | Connected journeys — lend/borrow entry points render usable controls; `/desk` URL-reachable in Basic mode (#1129); vault, claims, faucet, rent reachable; `/recover` states its ORACLE posture once connected (#1547) | Live-only | `live/live-role-journeys.mjs` (`JOURNEY_ROLES=lender,borrower`) | The `/recover` oracle arm is the one the fork **cannot** check honestly — its spec installs a mock oracle, so only the live deploy shows the retail unset posture |
 
+| Public transparency surfaces — `/analytics` and `/protocol-console` render for a visitor with NO wallet, carry their own page title rather than the not-found one, and stay reachable once a wallet is connected (they are exempt from the Terms gate) | Gap | — | Not yet driven. Both are new in #1959 and were verified by hand against the deployed app and the live indexer; the automated drive is owed. |
+
 **Known weakness of this driver, stated rather than hidden.** Several
 assertions are body-length thresholds, and observed lengths swing between
 runs as async reads land (`/rent` 183→507 chars, `/borrow` 224→515). A
@@ -570,3 +572,22 @@ the shipped copy's `isn’t available` with a curly apostrophe, and an
 1800 ms settle was too short for an async oracle read, which renders
 identically to the disconnected view. Write assertions against captured
 copy, and give chain/config-backed surfaces their own settle.
+
+**Three defects the live checks did not catch, recorded because they say
+what this kind of verification is blind to.** #1959's two pages were
+driven live and looked right; review then found that neither had ANY
+styles — every layout class was undefined — which a browser renders as
+perfectly readable text, so no amount of looking at the page would have
+surfaced it. The analytics page also reported zero for every counter when
+the indexer had ingested nothing at all, which the live deploy could not
+reveal because its indexer is populated. And the footer's "Smart
+Contracts" link led to a section with no contract address on it, which
+reads as fine unless you know what the link promised.
+
+The pattern in all three: a live drive confirms a page RENDERS and its
+figures MATCH the source it read. It does not confirm the page looks the
+way it was designed to, that a differently-populated backend produces an
+honest posture, or that arriving from a particular link finds what the
+link said. Assertions that would have caught these are style-presence,
+an empty-source posture, and per-entry-point content — none of them body
+length.
