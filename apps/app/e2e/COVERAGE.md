@@ -532,3 +532,41 @@ answer from the node, that has to reach the same BLOCKED verdict.
 the one-sentence reason — "easier" is not a reason. If a live-only
 feature later grows an Anvil-fakeable core (as the alerts CARD's
 fail-closed rendering could), split the row.
+
+## Role-based journeys — a second axis, deliberately not a third tier
+
+Every row above is organised by FEATURE: one per PR or issue, each
+asserting a mechanism works. That answers *"did #1131 ship?"* It does not
+answer *"can someone who has never seen this product reach a lending
+offer without hitting a dead end?"* — and a surface can pass every
+feature row while failing that.
+
+`live/live-role-journeys.mjs` covers the second question. Each scenario
+is a user GOAL with a DESIRED outcome written down before the run and the
+ACTUAL captured from the live page, so a run diffs against the last one
+instead of just going green. Roles are wallet postures: `visitor` (no
+announced account **and** `eth_requestAccounts` refused — the only honest
+reproduction of a first arrival; letting the injected wallet auto-connect
+tests a returning user), plus connected `lender` / `borrower`.
+
+| Journey | Tier | Where | Live-only reason |
+| --- | --- | --- | --- |
+| First-arrival journeys — landing page offers a way in; offer book readable unconnected; a wallet-gated route explains itself instead of rendering blank; Help populated; Data Rights reachable unconnected (#1960); unknown URL renders the app's own not-found; `/recover` gates on connection with ZERO inputs before offering anything | Live-only | `live/live-role-journeys.mjs` (`JOURNEY_ROLES=visitor`) | The disconnected posture depends on the DEPLOYED build's routing and gating; the fork suite runs pre-authorized, so it cannot reproduce a first arrival |
+| Connected journeys — lend/borrow entry points render usable controls; `/desk` URL-reachable in Basic mode (#1129); vault, claims, faucet, rent reachable; `/recover` states its ORACLE posture once connected (#1547) | Live-only | `live/live-role-journeys.mjs` (`JOURNEY_ROLES=lender,borrower`) | The `/recover` oracle arm is the one the fork **cannot** check honestly — its spec installs a mock oracle, so only the live deploy shows the retail unset posture |
+
+**Known weakness of this driver, stated rather than hidden.** Several
+assertions are body-length thresholds, and observed lengths swing between
+runs as async reads land (`/rent` 183→507 chars, `/borrow` 224→515). A
+threshold low enough to pass both is a weak assertion: it catches a blank
+or not-found page and little else. Tightening these needs per-route
+semantic anchors (a known heading, a named control) rather than size, and
+that is the next increment — do not read a green run as proof these
+surfaces are *correct*, only that they are not empty or missing.
+
+Two false FAILs from the driver's first runs are worth keeping as a
+warning, because both were the CHECK being wrong rather than the product:
+a `/recover` assertion written from imagination (`not available`) missed
+the shipped copy's `isn’t available` with a curly apostrophe, and an
+1800 ms settle was too short for an async oracle read, which renders
+identically to the disconnected view. Write assertions against captured
+copy, and give chain/config-backed surfaces their own settle.
