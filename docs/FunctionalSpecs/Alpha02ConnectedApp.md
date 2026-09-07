@@ -71,6 +71,13 @@ including people who never will.
   being read and offers a way to open it on a public explorer, so a
   reader can go to the primary source rather than accept the page's
   reading of it.
+- Any total the analytics view reports is the sum of the categories it
+  shows beside it. Every state counted toward a total is either named or
+  gathered into a stated remainder, so a reader can add up the parts and
+  arrive at the whole. A total that exceeds its visible parts is a defect
+  on a page whose purpose is that its figures can be checked rather than
+  taken on trust — the reader is left with a discrepancy and no account
+  of it.
 - The protocol console reports each parameter against its own name, and
   never by inferring which value belongs to which name from ordering.
 - The console states that it shows a subset rather than implying it is

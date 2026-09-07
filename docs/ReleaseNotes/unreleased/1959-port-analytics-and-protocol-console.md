@@ -83,8 +83,36 @@ links to when an operator has hidden the live values turned out to be
 hidden by that same setting, so that link is gone rather than promising
 something the setting had already taken away.
 
+A later look found the analytics totals could not be checked by the
+reader they are for. Both the loan and offer counters totalled every
+state the records hold while naming only some of them on the page, so a
+position that closed as fully filled, or a loan waiting on a fallback
+read, was counted in the total and shown nowhere — the total would
+simply exceed the buckets beneath it, with nothing to say where the
+difference went. On a page whose entire claim is that its figures can be
+checked rather than trusted, a total that does not add up is the one
+number that must not appear. The counters now name those states and
+carry an explicit "other" for anything added later, and the total is
+computed from the buckets themselves, so it adds up by construction
+rather than by two separate counts happening to agree.
+
+Worth recording honestly: on the deployment's current data every figure
+already reconciled, because none of the unnamed states happens to exist
+there right now. The defect was latent rather than visible, and the fix
+is what stops it becoming visible the first time an ordinary lifecycle
+produces one.
+
 One gap is recorded rather than closed: the console shows every
 parameter the indexer publishes, and the operator reference names some
 it does not publish yet. Widening that is an indexer change, tracked
 separately; the full reference remains public and the values remain
 readable directly from the contracts in the meantime.
+
+A second gap is recorded the same way, and it is about trust in the
+labels rather than in the numbers. The console reads governance values
+by name, but the naming is applied when the page is served rather than
+when the values were captured — so a future contract change that
+reorders those values without changing how many there are could show a
+real figure under the wrong parameter name until the next capture. That
+is a change to how the indexer stores its snapshot, tracked separately;
+it predates these pages, which only make the surface public.
