@@ -9062,6 +9062,62 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(r.ok).toBe(true);
   });
 
+  it('a child-process deploy split across lines is detected (#2041)', () => {
+    // Detection was line-based, so a call a formatter wrapped — which it does
+    // unprompted once the argument list is long enough — left the protected
+    // surface silently.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    const tuple = runWith(
+      'apps/agent/t.py',
+      'subprocess.run(\n    ("wrangler", "deploy"),\n)\n',
+    );
+    expect(tuple.ok).toBe(false);
+
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    const list = runWith(
+      'apps/agent/l.py',
+      'subprocess.run(\n    ["wrangler", "deploy"],\n)\n',
+    );
+    expect(list.ok).toBe(false);
+
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    const js = runWith('apps/agent/a.mjs', 'spawnSync("wrangler", [\n  "deploy",\n]);\n');
+    expect(js.ok).toBe(false);
+  });
+
+  it('a multi-line deploy that DOES carry --keep-vars still passes (#2041)', () => {
+    // The fold must not turn a safe call into a finding.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    const r = runWith(
+      'apps/agent/safe.mjs',
+      'spawnSync("wrangler", [\n  "deploy",\n  "--keep-vars",\n]);\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a folded finding reports the line the call STARTS on (#2041)', () => {
+    // That is the line an operator opens; the shell folder already follows
+    // this convention and the plain folder now matches it.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    const r = runWith(
+      'apps/agent/where.mjs',
+      '// a comment\nconst a = 1;\nspawnSync("wrangler", [\n  "deploy",\n]);\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent/where.mjs:3');
+  });
+
+  it('an UNCLOSED child call does not swallow the rest of the file (#2041)', () => {
+    // A truncated file degrades to the previous line-by-line reading rather
+    // than folding everything after it into one "line".
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    const r = runWith(
+      'apps/agent/broken.mjs',
+      'spawnSync("wrangler", [\n  "versions", "upload"\nconst x = 1;\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
   it('the PROSE path invalidates a rewritten config too', () => {
     // That path passed the rewrite context to the safety reader and not to the
     // identity reader, so the identity half trusted the stale copy and sent the

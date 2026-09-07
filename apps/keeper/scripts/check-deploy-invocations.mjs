@@ -7626,7 +7626,93 @@ function plainLines(text) {
   // all sort before the embedded blocks, so one file's `cd apps/keeper` in
   // prose still rejected an unrelated agent deploy further down (Codex #1924
   // r30). Directory state now belongs exclusively to real shell blocks.
-  return text.split('\n').map((t, i) => ({ text: t, line: i + 1, physical: true }));
+  // A CHILD-PROCESS CALL IS ONE LINE, however it is formatted. Detection is
+  // line-based: `ARGV_DEPLOY_RE` tolerates newlines between the wrangler token
+  // and the verb, but the text handed to it was a single physical line, so a
+  // call written across several never reached it and every multi-line spelling
+  // passed the guard (#2041) — including the ones a formatter produces
+  // unprompted once the argument list is long enough.
+  //
+  // Folded ONLY inside a child-process call's own parentheses. Folding by
+  // indentation, or by any rule that reads ordinary prose, is what produced
+  // four false positives on a clean tree when shell semantics were run over
+  // markdown (#1924 r27); the region here starts at a call this guard already
+  // recognises and stops at its matching close paren, so nothing outside one
+  // is joined. Each folded entry keeps the 1-based number of the line it
+  // STARTED on — the line an operator needs to open — which is the convention
+  // the shell folder already follows.
+  const regions = childCallRegions(text);
+  if (regions.length === 0) {
+    return text.split('\n').map((t, i) => ({ text: t, line: i + 1, physical: true }));
+  }
+  const out = [];
+  let buf = '';
+  let lineNo = 1;
+  let bufLine = 1;
+  let r = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    if (ch !== '\n') {
+      buf += ch;
+      continue;
+    }
+    while (r < regions.length && regions[r].end <= i) r += 1;
+    const inside = r < regions.length && i > regions[r].start && i < regions[r].end;
+    lineNo += 1;
+    if (inside) {
+      buf += ' ';
+      continue;
+    }
+    out.push({ text: buf, line: bufLine, physical: true });
+    buf = '';
+    bufLine = lineNo;
+  }
+  out.push({ text: buf, line: bufLine, physical: true });
+  return out;
+}
+
+/**
+ * Spans of child-process calls whose argument list crosses a newline.
+ *
+ * Bounded on both axes: a call is followed only to its matching close paren,
+ * and only while it stays under a line and character ceiling. An unclosed
+ * paren — a truncated file, a heredoc, a construct this reader does not
+ * model — yields no region at all rather than swallowing the rest of the file,
+ * so a malformed input degrades to the previous line-by-line reading instead
+ * of folding a whole file into one "line".
+ */
+function childCallRegions(text) {
+  const MAX_CHARS = 4000;
+  const MAX_LINES = 60;
+  const regions = [];
+  for (const m of text.matchAll(new RegExp(CHILD_CALL_RE, 'g'))) {
+    const open = m.index + m[0].length - 1;
+    if (regions.length > 0 && open < regions[regions.length - 1].end) continue; // nested
+    let depth = 0;
+    let quote = null;
+    let lines = 0;
+    let end = -1;
+    for (let i = open; i < text.length && i - open < MAX_CHARS; i += 1) {
+      const c = text[i];
+      if (quote) {
+        if (c === '\\') i += 1;
+        else if (c === quote) quote = null;
+        else if (c === '\n' && ++lines > MAX_LINES) break;
+        continue;
+      }
+      if (c === '"' || c === "'" || c === '`') quote = c;
+      else if (c === '(' || c === '[' || c === '{') depth += 1;
+      else if (c === ')' || c === ']' || c === '}') {
+        depth -= 1;
+        if (depth === 0) {
+          end = i;
+          break;
+        }
+      } else if (c === '\n' && ++lines > MAX_LINES) break;
+    }
+    if (end > open && lines > 0) regions.push({ start: open, end });
+  }
+  return regions;
 }
 
 const walkedDirs = new Set();
