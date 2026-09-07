@@ -457,6 +457,44 @@ async function navigate(page, route) {
   if (typeof status === 'number' && status >= 400) {
     throw new Error(`${route} answered HTTP ${status}`);
   }
+  // A 200 IS NOT PROOF THE REQUESTED ROUTE RENDERED (review round 5 P2).
+  // A route redirected away — by the edge, or client-side by a guard on
+  // mount — answers 200 from wherever it landed. Every check below reads
+  // body text and control counts, so a redirect to `/` sails through the
+  // length thresholds on homepage content while the surface under review
+  // was never shown: a green report for a scenario that did not run.
+  //
+  // Both hops, because they fail differently and are visible at
+  // different moments: the RESPONSE url is where the document was
+  // committed (an edge redirect), and the PAGE url after the settle is
+  // where the app ended up (a React Router redirect, which never moves
+  // the response url). `live-ux-sweep.mjs` checks the same two.
+  //
+  // Compared on pathname only: a scenario may legitimately request a
+  // fragment (`/vpfi#deposit`), and the app may normalise or drop it.
+  const want = new URL(`${SITE}${route}`).pathname.replace(/\/+$/, '') || '/';
+  const servedPath = (() => {
+    try {
+      return new URL(resp?.url() ?? '').pathname.replace(/\/+$/, '') || '/';
+    } catch {
+      return null;
+    }
+  })();
+  if (servedPath !== null && servedPath !== want) {
+    throw new Error(`${route} was redirected to ${servedPath} before rendering`);
+  }
+  return want;
+}
+
+/** Where the app actually sat after settling. Read AFTER the per-scenario
+ *  settle, because a client-side redirect happens on mount and is
+ *  invisible to the response url. */
+function landedPathOf(page) {
+  try {
+    return new URL(page.url()).pathname.replace(/\/+$/, '') || '/';
+  } catch {
+    return null;
+  }
 }
 
 const results = [];
@@ -575,12 +613,19 @@ for (const roleKey of wanted) {
     let note = '';
     let unverifiable = false;
     try {
-      await navigate(page, s.route);
+      const wantPath = await navigate(page, s.route);
       // Per-scenario settle: a surface whose state arrives from an async
       // chain/config read needs longer than one that renders from props.
       // A scenario may replace it with a bounded poll (see R1).
       if (s.settle) await s.settle(page);
       else await page.waitForTimeout(s.settleMs ?? 1800);
+      // Checked HERE rather than in `navigate`: a client-side guard
+      // redirects on mount, so before the settle the app may not have
+      // moved yet.
+      const landed = landedPathOf(page);
+      if (wantPath && landed !== null && landed !== wantPath) {
+        throw new Error(`redirected to ${landed} after mount — ${s.route} never rendered`);
+      }
       const r = await s.check(page);
       ok = r.ok;
       actual = r.actual;
@@ -724,5 +769,12 @@ if (process.env.JOURNEY_JSON) {
 if (setupFailures.length) {
   console.log(`\nsetup failures: ${setupFailures.length}\n  ${setupFailures.join('\n  ')}`);
 }
+// UNVERIFIED REACHES THE EXIT CODE (review round 5 P2). Adding the
+// verdict to the printed summary and not to `process.exit` left the
+// batch runner reporting PASS for a run whose own output said a
+// scenario was "not evidence of correctness" — the same contradiction
+// the verdict was introduced to remove, moved one layer out. A run that
+// could not verify something it set out to verify is BLOCKED, not
+// green; a real failure still outranks it.
 if (hardFail > 0) process.exit(1);
-process.exit(setupFailures.length ? 2 : 0);
+process.exit(setupFailures.length || unverified ? 2 : 0);

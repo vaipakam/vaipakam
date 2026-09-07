@@ -1843,12 +1843,26 @@ too. Those links move once the legacy host's in-flight attempts have
 drained, which is a decision about elapsed time and observed traffic,
 not about code.
 
-So: converting `defi.vaipakam.com` into a redirect is safe for every
-tool link today. Retiring it **outright** should wait for the recovery
-drain. See the notes beside `APP_TARGET` in
-`apps/www/src/lib/appUrl.ts` for the current state.
+**So: do NOT touch `defi.vaipakam.com` yet — neither delete it NOR
+convert it into a redirect.** Both send a recovery user to the new
+origin, which is the whole problem; a redirect is not the safe half of
+this choice, it is the same failure with a friendlier name. An earlier
+version of this very section said a redirect was "safe for every tool
+link today", two sentences after stating that a redirect lands on the
+new origin too — the correct fact and the opposite conclusion, side by
+side. That is worth recording because this hazard has now been reached
+by three different routes, and the seductive step each time is the one
+that looks partial and reversible.
 
-For a host that is genuinely superseded, converting its Worker into a
+The host stays as it is until the legacy `/recover` attempts have
+drained. Then the guide links move, and only then is the host
+retirable — by redirect or otherwise.
+
+See the notes beside `APP_TARGET` in `apps/www/src/lib/appUrl.ts` for
+the current state.
+
+For a host that is genuinely superseded — which, per the above,
+`defi.vaipakam.com` is NOT yet — converting its Worker into a
 redirect beats deleting it: bookmarks and external links keep working,
 and per-origin browser storage is lost on an origin change regardless,
 so a redirect at least lands people on a working app instead of a dead

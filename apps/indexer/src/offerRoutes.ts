@@ -209,12 +209,15 @@ export async function handleOffersStats(req: Request, env: Env): Promise<Respons
       cancelled: tally.cancelled,
       expired: tally.expired,
       consumedBySale: tally.consumed_by_sale,
-      total:
-        tally.active +
-        tally.accepted +
-        tally.cancelled +
-        tally.expired +
-        tally.consumed_by_sale,
+      // EVERY PERSISTED STATUS, for the same reason `/loans/stats`
+      // sums every tally: a range offer that closes as fully filled (or
+      // as dust) is persisted with status `fullyFilled`, and adding only
+      // the five named statuses undercounted the book whenever any range
+      // offer had completed. The public transparency dashboard now
+      // renders this as the deployment's offer total, so a category
+      // silently missing from a figure labelled "Total" is exactly what
+      // that page exists to prevent.
+      total: Object.values(tally).reduce((a, b) => a + b, 0),
       // Deploy provenance (version-metadata binding): every deploy —
       // Workers Builds auto-deploys and manual wrangler alike — mints a
       // new version id, so "is the merged code live?" is answerable
