@@ -6,10 +6,16 @@ full and C's deposit half; **C's NON-REFUNDABLE arming-fee purchase is a
 separate legal shape the recorded sign-off does not reach**, so
 selecting C additionally requires its own bounded legal glance (or an
 explicit recorded owner approval of the fee shape) before C builds.
-Awaiting **FOUR owner decisions**, then
-build: the **A/C fork**; the **capacity terms** (4× ceiling, no minimum,
-clamp); the **unbond option** (i) immediate vs (ii) 7-day delayed; and —
-under C only — the **fee parameters**. Selecting the fork alone does not
+**All four owner decisions are RATIFIED (2026-09-07)** — see §owner
+decisions: **fork C**; the **capacity terms as proposed** (4× ceiling per
+`(role, address)`, no minimum bond, clamp on any capacity reduction);
+**unbond option (i)**, immediate withdrawal; and C's **fee parameters as a
+SHAPE** — a governance-set figure with a positive floor enforced in code,
+armed only after the fee-shape glance, never a number frozen here. The
+build is unblocked to the extent the glance allows: C's mechanism may be
+built and shipped dark; **the fee may not be armed until the fee-shape
+glance is recorded.** Retained for readers of older revisions: selecting
+the fork alone did not
 unblock the build. Card:
 #1219. Umbrella: #1221. Legal frame: #694. Part of the VPFI circular-flow
 programme ([`VpfiCrossChainRecyclingDesign.md`](VpfiCrossChainRecyclingDesign.md)).
@@ -2877,9 +2883,44 @@ no schedule attached to it.
 Everything in this note that survived review is about capacity; everything that
 collapsed is about slashing.
 
-**Open for the owner.** The fork is the **first** blocking decision, and under
-one branch it is not the last: choosing **(C)** immediately raises item 2, which
-§3 states is not buildable without a number. So **the owner ask is: the A/C fork, PLUS the capacity terms (4×
+**RATIFIED BY THE OWNER, 2026-09-07 — this section is retained as the
+reasoning that produced the ask, not as an open question.** The four
+decisions and what settled them:
+
+1. **Fork: (C)** — ship (A) plus the non-refundable arming fee. The
+   deciding argument is architectural rather than economic: C's fee is
+   the SAME SHAPE as a mechanism already live and already reviewed —
+   `PerkFacet.purchasePerk` does pull → rollup → `credit(…)` through the
+   recycle chokepoint — so C adds a second CALLER to an existing
+   chokepoint and invents no mechanism. (A) would have abandoned the
+   permanent half of this card's stated temporal+permanent sink, which
+   this note records as an objective change rather than a scoping
+   detail; any slash-based route would instead require an adjudication
+   subsystem for a predicate §2 shows nobody has written down.
+2. **Capacity terms: as proposed** — 4× ceiling per `(role, address)`,
+   no minimum bond, clamp on any capacity reduction. The clamp is the
+   safety invariant (it closes spend-then-withdraw), the ceiling bounds
+   capacity-buying, and no-minimum preserves the permissionless
+   baseline — conditional on the free tier being sized per ACTION
+   CLASS, not per role, exactly as the floor rule below requires.
+3. **Unbond: option (i), immediate.** Neither shipped fork carries a
+   confiscation predicate, so a delay waits for evidence that cannot
+   arrive: it is a pure lockup, and it weakens the refundable
+   characterization the legal glance was granted on. The delayed-unbond
+   machinery stays SPECIFIED for any future predicate-enabled tier,
+   reachable only through affirmative per-operator enrolment.
+4. **C's fee: the SHAPE is ratified, the figure is not set here.** A
+   governance-set fee with a **positive floor enforced in code** — a
+   zero fee silently degrades C into A while the programme records C as
+   shipped, which §"a zero floor collapses C into A silently" forbids —
+   armed only after the **fee-shape legal glance**. The fee tracks
+   capacity GRANTED, never the transaction.
+
+**The build is therefore unblocked with one gate still standing:** C's
+mechanism may be built and shipped dark behind `serviceBondsEnabled`;
+arming the fee requires the recorded fee-shape glance.
+
+The original ask, retained: **the A/C fork, PLUS the capacity terms (4×
 ceiling, no minimum, clamp), PLUS the unbond option (i)/(ii) — under
 either fork — and under (C) additionally its fee parameters.** An
 earlier revision called (A) "the single-decision path" and (C) "the
@@ -3010,18 +3051,18 @@ The implementation pass defines the units and the envelope, then brings the
 numbers back with their actual throughput meaning attached.
 
 **Already ratified, recorded here so nothing re-opens them:** the no-yield
-refundable-deposit shape, and objective-lies-only for v1 (which collapsed to
-no predicate at all — see the fork). **NOT on this list — the capacity
-terms**: the 4× ceiling per `(role, address)`, no minimum bond, and
-clamp-on-any-capacity-reduction are the PROPOSED shape the capacity section
-is explicitly asking the owner to ratify (an earlier revision listed them
-here as ratified, which would let an implementation ship throughput and
-entry economics no owner decision approved). They join the owner ask beside
-the A/C fork, C's fee parameters, and the unbond option. **NOT on this list: the v1 no-unbond-delay
-conclusion** — it is a design conclusion riding with the A/C fork ask, not
-yet owner-ratified (the decisions section records the provenance; an earlier
-revision listed it here as ratified, which would ship an unapproved
-funds-withdrawal policy). Its reasoning stands as written — no delayed-proof
+refundable-deposit shape; objective-lies-only for v1 (which collapsed to
+no predicate at all — see the fork); and, **as of 2026-09-07, all four of
+the remaining owner decisions** — **fork C**, the **capacity terms** (4×
+ceiling per `(role, address)`, no minimum bond, clamp on any capacity
+reduction), **unbond option (i)** immediate, and C's **fee shape**
+(governance-set, positive floor in code, armed only after the fee-shape
+glance). Earlier revisions of this list flagged the capacity terms and the
+no-unbond-delay conclusion as NOT ratified — correctly at the time, and
+both are now carried by the 2026-09-07 decision rather than by a design
+conclusion. The one gate that remains is the **fee-shape legal glance**,
+without which the fee may not be armed. The no-delay reasoning stands as
+written — no delayed-proof
 predicate in v1, NOT "the delay belongs to the liveness tier" (which would
 let equivocation ship without liveness and permit immediate withdrawal after
 conflicting statements are signed, exactly as rule 2 forbids).

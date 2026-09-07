@@ -73,12 +73,33 @@ no securities-shaped fact pattern, and the Ecosystem bucket is only the
 - No credit for mere sign-ups — only completed clean loans (usage-based,
   consistent with the interaction-reward frame).
 
-## Open decisions
+## Decisions — all settled
 
-1. Perk prices / tier mapping (governance-config, bounded).
-2. Referral credit size + caps + expiry.
+1. ~~Perk prices / tier mapping~~ — **DECIDED 2026-09-07: no decision is
+   needed to SHIP.** Price zero is the deploy default and means "not for
+   sale", so the channel is already dark-by-default and pricing is an
+   ARMING action, not a build input. **Priority solver routing is armed
+   first and alone**; every other catalog entry stays unpriced until its
+   own effect is built. Prices remain governance-config, bounded.
+2. ~~Referral credit size + caps + expiry~~ — **DEFERRED for Phase 1
+   (owner, 2026-09-07).** A recorded deferral, which §6 of the completion
+   plan counts as a decided state — not an omission. The reasons are the
+   ones this section already gives: referral is the legally heaviest piece
+   here (#694's *Tomahawk* pattern is why it pays fee credits rather than
+   tokens at all), it needs its own glance, and a fee-credit ledger with
+   caps and expiry is a liability surface that buys the recycling
+   programme nothing — the absorption channel is already built and
+   crediting without it. Re-opening it is a new scoping decision, not a
+   continuation of this one.
 3. ~~Whether visibility boost ships at all~~ — **DECIDED 2026-08-31: it does
    not ship.** See the ruling above.
+
+**Programme status (2026-09-07):** the absorption half — the thing the VPFI
+recycling programme depends on — is BUILT and crediting, and with the two
+decisions above settled #1204 no longer gates that programme. What remains
+is per-perk EFFECT work (starting with priority solver routing) plus the
+deferred referral half; both are product work that belongs on their own
+cards rather than under the recycling umbrella.
 
 ## Tests
 

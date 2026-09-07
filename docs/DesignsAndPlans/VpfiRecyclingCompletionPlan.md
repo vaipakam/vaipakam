@@ -1091,8 +1091,16 @@ armed channel is most wanted and where a `whenNotPaused` setter would
 have taken the lever away. Only the meaning is frozen; a new meaning
 takes a new `perkId`, and those are free.
 
-§6 counts perks complete in a DECIDED state. The absorption half is now
-built and crediting; the per-perk effects remain owner-scoped.
+§6 counts perks complete in a DECIDED state, and **as of 2026-09-07 that
+state is reached**: the absorption half is built and crediting, and the two
+remaining decisions are settled (owner) — **prices need no decision to
+SHIP** (price zero is the deploy default and means "not for sale", so
+pricing is an ARMING action; **priority solver routing is armed first and
+alone**), and the **referral half is DEFERRED for Phase 1**, a recorded
+deferral being a decided state rather than an omission. **#1204 therefore
+no longer gates this programme.** What remains is per-perk EFFECT work and
+the deferred referral, which belong on their own cards outside the
+recycling umbrella.
 
 **#1569 C3 keeper allocation — ARMED (2026-08-31).** The per-chain
 `keeperAllocate` instruction had ridden the wire since B2 with no
@@ -1121,6 +1129,32 @@ timing rather than letting a chain exceed what it holds. Both are tracked
 for the design pass rather than patched unilaterally — the sizing rule has
 already moved twice under review. Zero — the deploy default — instructs nothing.
 
+**DECIDED 2026-09-07 (owner) — #2047 takes BOTH fixes, in this shape, and
+runs AFTER #1566 with the M4 follow-up rather than on the critical path**
+(neither limit is a solvency bug — the availability clamp holds in both —
+so this is correctness-of-shape work, not a fund-safety blocker):
+
+- **The demand gate is DECOUPLED, not loosened.**
+  `resolveAndStampDayFunding` early-returns when the day has no claim
+  demand, and the keeper stamp sits downstream of that return, so a chain
+  that absorbed receipts on a quiet day earmarks nothing. That is a
+  COUPLING defect rather than a sizing one: §3.5 already establishes the
+  earmark as *a separate draw with its own Base-side ledger term*, so it
+  gets its own resolution step inside the same finalization and the same
+  broadcast. "One authority, one message" is preserved; only the
+  dependence on another concern's precondition is removed.
+- **The mirror-reported numerator is BOUNDED, and the authority does not
+  move.** Base cannot independently observe a mirror's local receipts, so
+  demanding a Base-observable numerator would mean either abandoning
+  "deep chains fund their own housekeeping from local receipts" — the
+  point of §3.5 — or building a new attestation path for a non-solvency
+  concern. Instead the per-day ATTRIBUTION is capped: a day draws on its
+  own reported credit plus a bounded catch-up rate, so cumulative
+  unattributed headroom cannot be compressed into one day. The quantity
+  the finding names as unbounded — the allocation MIX and its TIMING —
+  becomes bounded, while the availability clamp continues to bound the
+  total.
+
 **NOT `chainConsumedRecycled`**, which an earlier revision of this line
 said and which the implementation deliberately rejects (Codex #2031 r2).
 That counter is one half of `outstanding + retired == consumed`, and only
@@ -1143,10 +1177,18 @@ unchanged.
 **#1219 service bonds** — legal glance DISCHARGED **for the no-yield
 refundable-deposit shape** (fork A in full, C's deposit half; **C's
 non-refundable arming-fee purchase is a separate legal shape needing
-its own bounded glance or recorded owner approval before C builds**;
-the remaining open items are FOUR
-owner decisions — the A/C fork, the capacity terms (4×/no-minimum/
-clamp), the unbond option (i)/(ii), and under C the fee parameters);
+its own bounded glance or recorded owner approval before the FEE IS
+ARMED** — the mechanism may be built and shipped dark meanwhile).
+**All four owner decisions are RATIFIED (2026-09-07): fork C; the
+capacity terms as proposed (4× ceiling per `(role, address)`, no minimum
+bond, clamp on any capacity reduction, with the free tier sized per
+ACTION CLASS); unbond option (i), immediate; and C's fee as a SHAPE —
+governance-set with a positive floor enforced in code, armed only after
+the fee-shape glance.** The deciding argument for C was architectural:
+its fee is the same pull → rollup → `credit(…)` shape `PerkFacet`
+already runs through the recycle chokepoint, so C adds a second CALLER
+to a reviewed mechanism rather than inventing one, and it restores the
+permanent half of this card's temporal+permanent sink that (A) drops;
 slash path →
 `credit(ServiceBondSlash, …)` **only if a slash predicate is ever
 ratified** — the #1219 design's selectable forks ship with NO slash
@@ -1756,7 +1798,38 @@ constituent cards below remain the working tickets.
    practice: B2-b (#1417) landed the D1 + mesh field sets as ONE 15-word
    kind-5 evolution rather than two, exactly per this rule.
 
+4. **D2 — #1219 service bonds: DECIDED (2026-09-07)** — **fork C**
+   (capacity deposit plus a non-refundable arming fee), the **capacity
+   terms as proposed** (4× ceiling per `(role, address)`, no minimum bond,
+   clamp on any capacity reduction, free tier sized per action class),
+   **unbond option (i)** immediate, and C's **fee as a shape**
+   (governance-set, positive floor in code, armed only after the fee-shape
+   glance). C was chosen because its fee reuses the `PerkFacet` pull →
+   rollup → `credit(…)` shape already running through the chokepoint,
+   adding a caller rather than a mechanism, and because (A) would have
+   dropped the permanent half of the card's sink. See §M6 and
+   `VpfiServiceBondsDesign.md`.
+5. **D3 — #1204 perks: DECIDED (2026-09-07)** — prices are an arming
+   action, not a build input (priority solver routing armed first and
+   alone); the **referral half is deferred for Phase 1** as a recorded
+   deferral. #1204 no longer gates this programme.
+6. **D4 — #2047 keeper allocation: DECIDED (2026-09-07)** — decouple the
+   earmark from the claim-demand gate (its own resolution step, same
+   finalization and broadcast) and cap the per-day mirror attribution
+   rather than moving the authority; scheduled **after #1566**, with the
+   M4 follow-up. See §M6.
+7. **D5 — #1566 sequencing: DECIDED (2026-09-07)** — a **read-only
+   grandfathered census runs first**, before any migration machinery, and
+   its committed artifact decides whether slices 0–3 are live work or a
+   certified no-op (and therefore whether the slice-0 shortfall question
+   reaches the owner at all). Then closure 3's resolver + `Detached`-only
+   behaviour and closure 2 in parallel, with slice 4 last. See
+   `Vpfi1566CanonicalDeliveredBoundDesign.md` §Slicing.
+
 > Every decision in this section is now settled: D1 (2026-07-18), the two
-> confirmations above (2026-07-27), and the §2b gate retiming ratified
-> 2026-07-27 (recorded as §1a supersession 2). No owner decision is
-> outstanding against this plan.
+> confirmations above (2026-07-27), the §2b gate retiming ratified
+> 2026-07-27 (recorded as §1a supersession 2), and D2–D5 (2026-09-07). No
+> owner decision is outstanding against this plan. **The remaining gates
+> are not decisions:** the #1219 fee-shape legal glance, the operator
+> ceremonies, and M7 — which the owner has sequenced LAST, after the
+> engineering above is complete.

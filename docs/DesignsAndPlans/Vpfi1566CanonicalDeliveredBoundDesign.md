@@ -4611,7 +4611,28 @@ and it applies here. It is more work than five `+=` lines — and the five
 
 ### Sequencing
 
-Closure 3's RESOLVER is independent and small and can land early — but its
+**RATIFIED 2026-09-07: a read-only GRANDFATHERED CENSUS runs FIRST, before
+any migration machinery is written.** Slices 0–3 exist only to move four
+GRANDFATHERED custody classes; the path that creates `vpfiHeld` was retired
+by #1352, and the FunctionalSpecs say plainly that a platform deployed
+fresh has no such loans. So the population is an empirical question with a
+cheap answer, and it decides the size of everything below: **if a class is
+empty on every deployed chain, its slice collapses to a certified no-op —
+and the shortfall disposition slice 0 would otherwise put to the owner does
+not arise at all**, because there is nothing to be short of.
+
+The census is READ-ONLY and enumerates, per deployed chain and per class:
+the grandfathered `vpfiHeld` rows, the `fallbackSnapshot` custody rows, the
+live VPFI-denominated intent commits (`custodialCollateral`), and the
+prepay/rebate rows — each with its count and total, plus the loan-id range
+scanned so the result is reproducible. Its output is a committed artifact,
+because "the set was empty" is a claim a later reader must be able to
+re-run rather than trust: an empty result certifies the no-op, and a
+non-empty one is what carries the owner the shortfall question, with
+figures attached.
+
+**Only after the census does slice sequencing begin.** Closure 3's RESOLVER
+is independent and small and can land early — but its
 **canonical matrix cells cannot land before slice 4**, and an earlier revision
 of this sequencing line said the whole closure could go "first and alone".
 Landing the cells first switches every canonical reward consumer from `max` to
