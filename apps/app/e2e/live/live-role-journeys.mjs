@@ -287,7 +287,7 @@ const SCENARIOS = [
     desired: 'Lend surface renders form/controls, not an empty shell.',
     async check(page) {
       const txt = await bodyText(page);
-      const controls = await page.locator('input, select, button').count();
+      const controls = await controlCount(page);
       return {
         ok: txt.length > 150 && controls >= 3,
         actual: `body=${txt.length} chars, ${controls} control(s)`,
@@ -329,7 +329,7 @@ const SCENARIOS = [
     desired: 'Borrow surface renders form/controls.',
     async check(page) {
       const txt = await bodyText(page);
-      const controls = await page.locator('input, select, button').count();
+      const controls = await controlCount(page);
       return {
         ok: txt.length > 150 && controls >= 3,
         actual: `body=${txt.length} chars, ${controls} control(s)`,
@@ -355,7 +355,7 @@ const SCENARIOS = [
     desired: 'Renders mint controls.',
     async check(page) {
       const txt = await bodyText(page);
-      const controls = await page.locator('button').count();
+      const controls = await controlCount(page, 'button');
       return {
         ok: txt.length > 150 && controls >= 1,
         actual: `body=${txt.length} chars, ${controls} button(s)`,
@@ -394,6 +394,22 @@ async function bodyText(page) {
     return (await main.innerText().catch(() => '')) || '';
   }
   return (await page.locator('body').innerText().catch(() => '')) || '';
+}
+
+/**
+ * Interactive controls in the ROUTED content, for the same reason
+ * `bodyText` is scoped (review round 8 P2): scoping the text and
+ * leaving the control counts on the whole document only half-fixed it.
+ * `AppShell`'s topbar, mode switch and wallet controls clear a
+ * `>= 3` threshold on their own, so `/lend` could lose its entire form
+ * and still pass as long as the remaining routed copy ran long enough.
+ */
+async function controlCount(page, selector = 'input, select, button') {
+  const scoped = page.locator(`#main-content ${selector}`);
+  if ((await page.locator('#main-content').count().catch(() => 0)) > 0) {
+    return await scoped.count().catch(() => 0);
+  }
+  return await page.locator(selector).count().catch(() => 0);
 }
 
 /**
@@ -618,6 +634,16 @@ for (const roleKey of wanted) {
             '      goal    : connected role is actually connected\n' +
             '      actual  : Connect CTA still visible',
         );
+        // STOP THIS ROLE HERE (review round 8 P2). Having just
+        // established the session is NOT connected, running the
+        // connected scenarios anyway exercises the wrong posture: some
+        // pass on public or connect-prompt content and others fail for
+        // reasons that have nothing to do with the surface under review,
+        // so the report fills with verdicts about a session that does
+        // not exist. The thrown-error path already closes and moves on;
+        // this branch fell through.
+        await done();
+        continue;
       }
     } catch (err) {
       // A FAILED CONNECTION IS A PRODUCT FAILURE, NOT A SETUP ONE

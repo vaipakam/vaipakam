@@ -173,7 +173,18 @@ export async function handleOffersStats(req: Request, env: Env): Promise<Respons
   const chainId = parseChainId(url.searchParams.get('chainId')) ?? 8453;
   try {
     const counts = await env.DB.prepare(
-      `SELECT status, COUNT(*) as n FROM offers WHERE chain_id = ? GROUP BY status`,
+      // BOOKKEEPING ROWS ARE NOT OFFERS (#2069 review round 8).
+      // Lender-sale and preclose-offset vehicles mint a temporary offer
+      // row to carry the mechanics; migrations 0029 and 0031 flag them
+      // precisely so they are excluded from anything a person reads, and
+      // every other query in this file that faces a user already filters
+      // them. This one did not — tolerable while it was an internal
+      // aggregate, and not once the public transparency dashboard
+      // renders it as the deployment's offer count, where a vehicle
+      // inflates `total` and an open one inflates `active` too.
+      `SELECT status, COUNT(*) as n FROM offers
+        WHERE chain_id = ? AND is_sale_vehicle = 0 AND is_offset_vehicle = 0
+        GROUP BY status`,
     )
       .bind(chainId)
       .all<{ status: string; n: number }>();

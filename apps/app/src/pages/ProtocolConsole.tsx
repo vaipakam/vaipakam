@@ -150,7 +150,9 @@ export function ProtocolConsole() {
   // so is the point of the console; quietly rendering day-old governance
   // parameters as current would be the failure this guard exists for.
   const stale =
-    typeof snap?.updatedAt === 'number' && !protocolConfigFresh(snap.updatedAt);
+    typeof snap?.updatedAt === 'number' &&
+    snap.updatedAt > 0 &&
+    !protocolConfigFresh(snap.updatedAt);
   // UNDATED IS NOT FRESH (review round 3 P2). `fetchProtocolKnobs`
   // deliberately accepts a response with no `updatedAt`, and that case
   // was neither `stale` nor `unavailable` — so an old or malformed
@@ -159,7 +161,19 @@ export function ProtocolConsole() {
   // type's own comment requires callers to surface this timestamp.
   // Silence about age is the one thing this page must not do: it exists
   // so a reader knows what they are looking at.
-  const undated = snap !== null && typeof snap.updatedAt !== 'number';
+  //
+  // ZERO IS A SENTINEL, NOT A TIMESTAMP (review round 8 P2).
+  // `markStaleBelow` zeroes `updated_at` when a catch-up scan saw a
+  // governance event the row predates, and the endpoint emits
+  // `stale: true` alongside it. Zero is a real `number`, so it fell
+  // through as a capture time and the provenance sentence read "taken
+  // 56 years ago" — a confident, precise, entirely invented figure on
+  // the page whose whole claim is that its numbers can be trusted.
+  // The honest reading of the sentinel is that the capture time is
+  // UNKNOWN and the values are known-behind, which is what `undated`
+  // already says.
+  const undated =
+    snap !== null && (typeof snap.updatedAt !== 'number' || snap.updatedAt === 0);
 
   return (
     <div className="pc-page">
@@ -273,7 +287,7 @@ export function ProtocolConsole() {
             {/* The age rides in the provenance sentence, so it is read
                 whenever the source is — not only when a day-old
                 threshold trips a warning. */}
-            {typeof snap.updatedAt === 'number'
+            {typeof snap.updatedAt === 'number' && snap.updatedAt > 0
               ? copy.protocolConsole.provenanceAge(
                   ageText(snap.updatedAt, nowSec),
                 )
