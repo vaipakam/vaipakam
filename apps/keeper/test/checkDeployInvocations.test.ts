@@ -9156,6 +9156,199 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(r.ok).toBe(false);
   });
 
+  it('a directory destination without a trailing slash is a rewrite (#2066 r1)', () => {
+    // `cp generated/custom.jsonc configs` lands ON the config; nothing in the
+    // word marks it as a directory.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'w.sh',
+      'cp generated/custom.jsonc configs\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('rsync -t is --times, not a target directory (#2066 r1)', () => {
+    // Reading it as cp's target-directory flag made `generated.jsonc` look
+    // like a directory and missed the write.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'w.sh',
+      'rsync -t generated.jsonc configs/custom.jsonc\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a trailing comment or redirection is not the destination (#2066 r1)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const commented = runWith(
+      'w.sh',
+      'cp generated.jsonc configs/custom.jsonc # refresh\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(commented.ok).toBe(false);
+
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const redirected = runWith(
+      'w2.sh',
+      'cp generated.jsonc configs/custom.jsonc >/dev/null\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(redirected.ok).toBe(false);
+  });
+
+  it('the compact -t form is read as a target directory (#2066 r1)', () => {
+    // GNU accepts the argument attached; only the spaced form was handled, so
+    // a backup was reported as a rewrite.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const backup = runWith(
+      'w.sh',
+      'cp -t/tmp/backups configs/custom.jsonc\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(backup.ok).toBe(true);
+
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const into = runWith(
+      'w2.sh',
+      'cp -tconfigs generated/custom.jsonc\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(into.ok).toBe(false);
+  });
+
+  it('an unreadable copy does not borrow a later deploy mention (#2066 r1)', () => {
+    // The fallback read to end of line, found the config named in the deploy
+    // that follows, and blamed an unrelated copy for rewriting it.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'w.sh',
+      'cp $(generate) /tmp/unrelated.jsonc ; wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a commented-out reassignment does not disable the bound reading (#2066 r1)', () => {
+    // The count scanned raw text, so one comment line discarded the binding —
+    // a comment-only bypass of the safety check.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'r.mjs',
+      'const cfg = "configs/custom.jsonc";\n' +
+        '// cfg = "documentation only"\n' +
+        'writeFileSync(cfg, "{}");\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a type-annotated binding is still a binding (#2066 r1)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const ts = runWith(
+      'r.mts',
+      'const cfg: string = "configs/custom.jsonc";\n' +
+        'writeFileSync(cfg, "{}");\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(ts.ok).toBe(false);
+
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const py = runWith(
+      'r.py',
+      'from pathlib import Path\n' +
+        'import subprocess\n' +
+        'cfg: Path = Path("configs/custom.jsonc")\n' +
+        'cfg.write_text("{}")\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(py.ok).toBe(false);
+  });
+
+  it('a keyword write mode is still a write mode (#2066 r1)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const a = runWith(
+      'r.py',
+      'import subprocess\n' +
+        'cfg = "configs/custom.jsonc"\n' +
+        'open(cfg, mode="w").write("{}")\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(a.ok).toBe(false);
+
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const b = runWith(
+      'r2.py',
+      'from pathlib import Path\n' +
+        'import subprocess\n' +
+        'cfg = Path("configs/custom.jsonc")\n' +
+        'cfg.open(mode="w").write("{}")\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(b.ok).toBe(false);
+  });
+
+  it('a SHADOWED parameter is not the bound config (#2066 r1)', () => {
+    // A module-level `cfg` and `def write_tmp(cfg)` are different variables.
+    // Scope is not modelled, so the name is declined rather than assumed.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'shadow.py',
+      'from pathlib import Path\n' +
+        'import subprocess\n' +
+        'cfg = Path("configs/custom.jsonc")\n' +
+        'def write_tmp(cfg):\n' +
+        '    cfg.write_text("{}")\n' +
+        'write_tmp(Path("/tmp/scratch.jsonc"))\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a comma inside a comment does not shift the copy destination (#2066 r1)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'c.mjs',
+      'copyFileSync("gen.jsonc", /* generated, validated */ "configs/custom.jsonc");\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a `)` inside a comment does not end a wrapped call (#2066 r1)', () => {
+    // The walk stopped at the comment's paren, emitted no region, and the
+    // wrapped deploy was never seen — the exact miss the fold exists to close.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    const unsafe = runWith(
+      'apps/agent/d.mjs',
+      'spawnSync(\n  // helper )\n  "wrangler",\n  ["deploy"],\n);\n',
+    );
+    expect(unsafe.ok).toBe(false);
+
+    // The SAME path, so the safe form replaces the unsafe one rather than
+    // joining it: `beforeEach` gives each test a fresh tree, not each run.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    const safe = runWith(
+      'apps/agent/d.mjs',
+      'spawnSync(\n  // helper )\n  "wrangler",\n  ["deploy", "--keep-vars"],\n);\n',
+    );
+    expect(safe.ok).toBe(true);
+  });
+
   it('the PROSE path invalidates a rewritten config too', () => {
     // That path passed the rewrite context to the safety reader and not to the
     // identity reader, so the identity half trusted the stale copy and sent the

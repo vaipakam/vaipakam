@@ -3269,15 +3269,43 @@ function lineStartOffset(text, lineNo, within = null) {
  * at the write is no longer decidable from the assignment alone, and reporting
  * on a name that may hold something else is how a guard earns distrust.
  */
-function boundConfigNames(text, base) {
+function boundConfigNames(rawText, base) {
+  // Read from the COMMENT-STRIPPED form. The reassignment count scanned raw
+  // text, so a line as innocuous as `// cfg = "documentation only"` pushed the
+  // count to two, discarded the binding, and silently disabled this check —
+  // a comment-only bypass of a safety gate (Codex #2066 r1).
+  const text = stripSourceComments(rawText);
   const names = new Set();
-  const BIND_RE =
-    /(?:^|[;{(,\s])(?:const|let|var)?\s*([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*(?:(?:pathlib\.)?Path\s*\(\s*)?(['"`])([^'"`\n]*)\2/gm;
+  // A TYPE ANNOTATION still declares the same binding. `const cfg: string =
+  // "configs/custom.jsonc"` and `cfg: Path = Path(...)` are ordinary
+  // declarations, and requiring `=` immediately after the identifier missed
+  // both, so writes through them went unrecognised (Codex #2066 r1).
+  const DECL = String.raw`(?:const|let|var)?\s*([A-Za-z_$][A-Za-z0-9_$]*)\s*(?::\s*[^=;\n()]+)?\s*=(?!=)`;
+  const BIND_RE = new RegExp(
+    String.raw`(?:^|[;{(,\s])` + DECL + String.raw`\s*(?:(?:pathlib\.)?Path\s*\(\s*)?(['"\`])([^'"\`\n]*)\2`,
+    'gm',
+  );
+  // A name that is also a PARAMETER anywhere in the file is not this binding
+  // at every use: a module-level `cfg` and a `def write_tmp(cfg)` are
+  // different variables, and marking the config rewritten because the helper
+  // wrote a temporary blocked a safe deploy (Codex #2066 r1). Scope is not
+  // modelled here, so the honest move is to decline the name rather than to
+  // pretend the shadow does not exist.
+  const shadowed = new Set();
+  for (const m of text.matchAll(
+    /(?:function\s+[A-Za-z_$][\w$]*|def\s+[A-Za-z_]\w*)\s*\(([^)]*)\)|\(([^)]*)\)\s*=>/g,
+  )) {
+    for (const raw of (m[1] ?? m[2] ?? '').split(',')) {
+      const n = raw.trim().replace(/[:=].*$/, '').replace(/^\**/, '').trim();
+      if (/^[A-Za-z_$][\w$]*$/.test(n)) shadowed.add(n);
+    }
+  }
   for (const m of text.matchAll(BIND_RE)) {
     const [, name, , literal] = m;
     if (literal.slice(literal.lastIndexOf('/') + 1) !== base) continue;
+    if (shadowed.has(name)) continue;
     const assigns = text.match(
-      new RegExp(String.raw`(?:^|[;{(,\s])(?:const|let|var)?\s*` + name + String.raw`\s*=(?!=)`, 'gm'),
+      new RegExp(String.raw`(?:^|[;{(,\s])(?:const|let|var)?\s*` + name + String.raw`\s*(?::\s*[^=;\n()]+)?\s*=(?!=)`, 'gm'),
     );
     if (assigns && assigns.length === 1) names.add(name);
   }
@@ -3362,7 +3390,13 @@ function shellWords(text) {
  * nesting. `null` when the region does not close inside `text`, which the
  * caller treats the same way as an unreadable shell word list.
  */
-function callArgs(text, openParenAt) {
+function callArgs(rawText, openParenAt) {
+  // Walked over the COMMENT-STRIPPED form. A comma inside `/* generated,
+  // validated */` was counted as an argument separator, moving the
+  // destination from args[1] to args[2] and losing the overwrite entirely
+  // (Codex #2066 r1). Blanking preserves offsets, so positions still line up
+  // with the original text.
+  const text = stripSourceComments(rawText);
   const args = [];
   let depth = 0;
   let quote = null;
@@ -3438,9 +3472,13 @@ function copyWriteOffsets(text, base, cfgDir) {
     if (typeof cfg !== 'string' || cfg === '') return true;
     return d === cfg || cfg.endsWith(`/${d}`) || d.endsWith(`/${cfg}`);
   };
+  // Comments are blanked before the shell walk: a trailing `# refresh` left
+  // its words in the argument list and the last of them was read as the
+  // destination (Codex #2066 r1).
+  const shellText = stripSourceComments(text);
   const shellRe = new RegExp(COPY_SHELL_RE.source, 'g');
   let m;
-  while ((m = shellRe.exec(text)) !== null) {
+  while ((m = shellRe.exec(shellText)) !== null) {
     // The command ends at the first UNQUOTED separator. The scan is REWOUND to
     // that separator rather than left past the whole match: the argument
     // capture runs to end of line, so a second copy on the same line was
@@ -3448,47 +3486,86 @@ function copyWriteOffsets(text, base, cfgDir) {
     // cp gen configs/custom.jsonc` missed the write entirely. Cutting on a
     // quote-aware boundary rather than in the pattern keeps a quoted `;`
     // inside a filename from truncating the arguments.
+    const cmd = m[1];
     const argsAt = m.index + m[0].length - m[2].length;
     const cut = firstUnquoted(m[2], ';&|');
     const rest = cut >= 0 ? m[2].slice(0, cut) : m[2];
     if (cut >= 0) shellRe.lastIndex = argsAt + cut;
     const words = shellWords(rest);
     if (words === null) {
-      if (mentions(m[2])) hits.push(m.index);
+      // The FALLBACK reads the truncated command, not the rest of the line.
+      // With `m[2]` it found the config named in a LATER deploy on the same
+      // line and blamed an unrelated copy for rewriting it (Codex #2066 r1).
+      if (mentions(rest)) hits.push(m.index);
       continue;
     }
-    const tIdx = words.findIndex((w) => w === '-t' || w === '--target-directory');
-    const inlineT = words.find((w) => w.startsWith('--target-directory='));
-    const positional = words.filter(
+    // Redirections are shell syntax, not operands. `cp gen.jsonc
+    // configs/custom.jsonc >/dev/null` left `>/dev/null` as the last word and
+    // the real destination was missed (Codex #2066 r1).
+    const operands = [];
+    for (let i = 0; i < words.length; i += 1) {
+      const w = words[i];
+      if (/^(?:&?\d*>>?|<)/.test(w)) {
+        if (/^(?:&?\d*>>?|<)$/.test(w)) i += 1; // the redirect's target
+        continue;
+      }
+      operands.push(w);
+    }
+    // `-t` IS NOT UNIVERSAL. For rsync, `-t` is `--times` (preserve
+    // modification times), not a target directory, so reading it as one made
+    // `rsync -t generated.jsonc configs/custom.jsonc` look like a copy into a
+    // directory called `generated.jsonc` and miss the write (Codex #2066 r1).
+    const hasTargetFlag = cmd === 'cp' || cmd === 'mv' || cmd === 'install';
+    const tIdx = hasTargetFlag
+      ? operands.findIndex((w) => w === '-t' || w === '--target-directory')
+      : -1;
+    const inlineT = hasTargetFlag
+      ? operands.find(
+          // The attached short form is what GNU accepts too: `-t/tmp/backups`.
+          (w) => w.startsWith('--target-directory=') || /^-t.+/.test(w),
+        )
+      : undefined;
+    const positional = operands.filter(
       (w, i) => !w.startsWith('-') && !(tIdx >= 0 && i === tIdx + 1),
     );
     // COPYING INTO A DIRECTORY KEEPS THE SOURCE'S NAME. `cp x/wrangler.jsonc
-    // apps/thing/` and `cp -t apps/thing x/wrangler.jsonc` both land ON the
-    // config, so reading only the last word — a directory, which never carries
-    // the basename — would call a real overwrite a read. In that form the
-    // sources decide it.
-    const intoDir =
-      inlineT !== undefined || tIdx >= 0 || (positional.length >= 2 && isDirWord(positional[positional.length - 1]));
-    if (intoDir) {
-      const sources = inlineT !== undefined || tIdx >= 0 ? positional : positional.slice(0, -1);
-      const dir =
-        inlineT !== undefined
+    // apps/thing/`, `cp -t apps/thing x/wrangler.jsonc` and — with no trailing
+    // slash to mark it — `cp x/wrangler.jsonc apps/thing` all land ON the
+    // config, so reading only the last word would call a real overwrite a
+    // read. In that form the sources decide it.
+    const last = positional.length >= 2 ? positional[positional.length - 1] : undefined;
+    const dirTarget =
+      inlineT !== undefined
+        ? inlineT.startsWith('--target-directory=')
           ? inlineT.slice('--target-directory='.length)
-          : tIdx >= 0
-            ? words[tIdx + 1]
-            : positional[positional.length - 1];
+          : inlineT.slice(2)
+        : tIdx >= 0
+          ? operands[tIdx + 1]
+          : last !== undefined && baseOf(last) !== base
+            ? last
+            : undefined;
+    const explicitTarget = inlineT !== undefined || tIdx >= 0;
+    if (dirTarget !== undefined) {
+      const sources = explicitTarget ? positional : positional.slice(0, -1);
       // …but only if that directory can be the CONFIG's directory. Backing the
-      // config up with `cp -t /tmp/backups apps/thing/wrangler.jsonc` carries a
+      // config up with `cp -t /tmp/backups configs/custom.jsonc` carries a
       // matching source basename and still writes nothing here; treating the
       // form itself as a write just moves #2053's false red rather than fixing
-      // it. A directory this reader cannot place — `.`, `..`, or a config whose
-      // own directory is unknown — stays conservative.
-      if (sources.some((w) => baseOf(w) === base) && dirCouldBe(dir, cfgDir)) hits.push(m.index);
-      continue;
+      // it. A directory this reader cannot place stays conservative.
+      if (sources.some((w) => baseOf(w) === base) && dirCouldBe(dirTarget, cfgDir)) {
+        hits.push(m.index);
+        continue;
+      }
+      // An EXPLICIT `-t` / `--target-directory` names the destination, so the
+      // question is answered either way and the unresolved-destination
+      // fallback below must not run. It filters the flag's argument out of
+      // `positional`, leaving one word, which made that fallback fire and
+      // report the backup it had just correctly cleared (found re-probing
+      // Codex r1's compact-`-t` finding).
+      if (explicitTarget) continue;
     }
-    const dest = positional.length >= 2 ? positional[positional.length - 1] : undefined;
-    if (dest !== undefined && baseOf(dest) === base) hits.push(m.index);
-    else if (dest === undefined && mentions(m[2])) hits.push(m.index);
+    if (last !== undefined && baseOf(last) === base) hits.push(m.index);
+    else if (last === undefined && mentions(rest)) hits.push(m.index);
   }
   for (const m of text.matchAll(COPY_CALL_RE)) {
     const open = m.index + m[0].length - 1;
@@ -3552,8 +3629,11 @@ function configIsRewritten(text, cfgPath, at = null) {
       String.raw`(?:writeFile(?:Sync)?|appendFile(?:Sync)?|createWriteStream` +
         String.raw`|outputFile(?:Sync)?)\s*\(\s*` + n + String.raw`\s*[,)]`,
       String.raw`\b` + n + String.raw`\s*\.\s*(?:write_text|write_bytes)\s*\(`,
-      String.raw`\b` + n + String.raw`\s*\.\s*open\s*\(\s*` + Q + String.raw`[rbt]*[wax+]`,
-      String.raw`\bopen\s*\(\s*` + n + String.raw`\s*,\s*` + Q + String.raw`[rbt]*[wax+]`,
+      // `mode=` is the ordinary keyword spelling of the same call; requiring
+      // the quote to follow the comma or paren directly missed both
+      // `open(cfg, mode="w")` and `cfg.open(mode="w")` (Codex #2066 r1).
+      String.raw`\b` + n + String.raw`\s*\.\s*open\s*\(\s*(?:mode\s*=\s*)?` + Q + String.raw`[rbt]*[wax+]`,
+      String.raw`\bopen\s*\(\s*` + n + String.raw`\s*,\s*(?:mode\s*=\s*)?` + Q + String.raw`[rbt]*[wax+]`,
     );
   }
   // A COPY IS A WRITE — BUT ONLY INTO THE DESTINATION. `cp generated.jsonc
@@ -7675,6 +7755,13 @@ function plainLines(text) {
   if (regions.length === 0) {
     return text.split('\n').map((t, i) => ({ text: t, line: i + 1, physical: true }));
   }
+  // Characters INSIDE a call's parentheses are taken comment-blanked. A
+  // comment cannot be part of an invocation, and leaving `// helper )` in the
+  // joined line put a `/` where the argv pattern needs the opening quote, so
+  // the fold succeeded and the match still failed (Codex #2066 r1). Everything
+  // OUTSIDE a call is copied byte-for-byte: the scoring readers must keep
+  // seeing exactly what the file says.
+  const blanked = stripSourceComments(text);
   const out = [];
   let buf = '';
   let lineNo = 1;
@@ -7683,7 +7770,9 @@ function plainLines(text) {
   for (let i = 0; i < text.length; i += 1) {
     const ch = text[i];
     if (ch !== '\n') {
-      buf += ch;
+      while (r < regions.length && regions[r].end <= i) r += 1;
+      const within = r < regions.length && i > regions[r].start && i < regions[r].end;
+      buf += within ? blanked[i] : ch;
       continue;
     }
     while (r < regions.length && regions[r].end <= i) r += 1;
@@ -7711,7 +7800,11 @@ function plainLines(text) {
  * so a malformed input degrades to the previous line-by-line reading instead
  * of folding a whole file into one "line".
  */
-function childCallRegions(text) {
+function childCallRegions(rawText) {
+  // Also walked comment-stripped: a `)` inside `// helper )` ended the call
+  // early, no region was emitted, and the wrapped deploy went unseen — the
+  // exact miss this fold exists to close (Codex #2066 r1).
+  const text = stripSourceComments(rawText);
   const MAX_CHARS = 4000;
   const MAX_LINES = 60;
   const regions = [];
