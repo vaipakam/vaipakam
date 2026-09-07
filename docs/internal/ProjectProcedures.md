@@ -152,10 +152,12 @@ final stage.
   infer who owns a commit from the shared reflog or from the author
   field (every session writes the same reflog, and §2.2/§12.1 require
   every commit to carry the `Raja4Shekar` identity regardless of which
-  session made it). Coordinate explicitly instead: list the other live
-  sessions (`ListAgents`), read `git log origin/<branch>` for what has
-  actually landed, and treat a branch as yours only when you know you
-  pushed its tip.
+  session made it). Coordinate explicitly instead: agree with the
+  owner or the other session's operator who holds a branch before
+  touching it, read `git log origin/<branch>` for what has actually
+  landed, and treat a branch as yours only when you know you pushed its
+  tip. (How an AI session enumerates its peers is harness plumbing and
+  stays in agent state, per §11.)
 - **Verify the branch before editing after any interruption** — a power
   outage, a session resume, or a "files modified by user" reminder:
   `git branch --show-current` first, then `git status --porcelain`. On a
@@ -296,9 +298,16 @@ workspaces keep their own poller procedure as written in `AGENTS.md`
 source of truth and is unchanged by this section.
 
 - **Read with `curl` against the REST API; GraphQL only for
-  `resolveReviewThread`.** Fetch the PR, the head SHA's check-runs, and
-  the review comments in one batch; read `gh pr view --json comments` never
-  — it silently misses inline ` ```suggestion ` blocks and check-runs.
+  `resolveReviewThread`.** The batch must cover every surface the retired
+  poller covered (§9.1): `pulls/<N>` (state, head, mergeability),
+  `commits/<head-sha>/check-runs` (job results), `pulls/<N>/reviews`
+  (approve / request-changes submissions, which carry no inline comment),
+  `pulls/<N>/comments` (inline threads, ` ```suggestion ` blocks — each
+  comment's `reactions` object carries the 👀/👍 counts, so reactions need
+  no separate call), `issues/<N>/comments` (bot summaries, triggers), and
+  `actions/runs?head_sha=<head-sha>` when a workflow-level status matters.
+  Never read `gh pr view --json comments` — it silently misses inline
+  suggestion blocks and check-runs.
 - **A secondary rate limit does not show in `/rate_limit`** — that endpoint
   keeps reporting 5000/5000 while reads return a VALID-JSON
   `{"message":"API rate limit exceeded ..."}` body. Detect that body shape
@@ -323,8 +332,10 @@ source of truth and is unchanged by this section.
   `pull_request` trigger DO still run (the path-filtered
   `app-e2e.yml`, the always-on docs-drift check), so a few green checks on
   a stacked PR are not evidence the gate ran. Verify with
-  `gh run list --branch`; retarget the base via the API and push to get
-  the real suite.
+  `gh pr checks <PR>` or `gh run list --commit <head-sha>` — `--branch`
+  mixes runs from earlier pushes and retargets, so it can show an old
+  main-targeted suite the current head never ran; retarget the base via
+  the API and push to get the real suite.
 
 ### 3.4 Iterating on Codex findings — discipline
 
@@ -1204,12 +1215,16 @@ to a decision. Listed by category.
   `nice -n -10 ionice -c 2 -n 0` for the same priority reason — **but
   `nice -n -10` needs CAP_SYS_NICE**: for a normal user it fails with
   `nice: cannot set niceness: Permission denied` and the command never
-  starts (verified 2026-05-04). Probe the capability itself, not sudo:
-  `nice -n -10 true` exits 125 when the caller lacks it (passwordless sudo
-  proves nothing about the unprivileged process that follows). If the
-  probe fails, either run the whole command under `sudo` or drop the
-  `nice` and run `ionice -c 2 -n 0 forge ...` — the I/O class is
-  available unprivileged, and it is the knob that matters:
+  starts (verified 2026-05-04). Do not probe it by exit status: on coreutils 9.4 an
+  unprivileged `nice -n -10 cmd` prints `nice: cannot set niceness:
+  Permission denied`, still runs `cmd` at niceness 0, and returns `cmd`'s
+  own exit status (verified on this machine: `nice -n -10 true` exits 0),
+  so a `sudo -n true` or exit-code check selects the wrong branch. Probe
+  the EFFECTIVE niceness — `nice -n -10 nice` prints `0` when the caller
+  lacks the capability and `-10` when it has it — or simply run the
+  prioritized command under `sudo` when that is available and omit `nice`
+  otherwise, keeping `ionice -c 2 -n 0 forge ...` in both cases — the I/O
+  class is available unprivileged, and it is the knob that matters:
   ```bash
   nice -n -10 ionice -c 2 -n 0 forge build
   nice -n -10 ionice -c 2 -n 0 forge test
@@ -1380,15 +1395,15 @@ to a decision. Listed by category.
 - **Tests run with `nice -n -10 ionice -c 2 -n 0`** for the same
   performance reason as the build (§12.3).
 
-- **Inner loop is `FOUNDRY_PROFILE=quick forge build` plus
-  `forge test --match-*`;** the full regression (`run-regression.sh`) is not a
+- **Inner loop is `FOUNDRY_PROFILE=quick forge build` plus a targeted
+  `forge test --match-path <glob>` (or `--match-test` / `--match-contract`);** the full regression (`run-regression.sh`) is not a
   routine per-PR gate — it runs before a testnet deployment, and CI runs it
   on PRs targeting `release/**` (`mainnet-gate.yml`'s
   `predeploy-check.sh --full`), which is the one PR shape where it IS the
   gate. Kill any stale
   `forge`/`solc` process before starting a new build, and use the priority
   prefix from §12.3 (`ionice -c 2 -n 0`, plus `nice -n -10` only when
-  `nice -n -10 true` succeeds) — viaIR runs take 5–15 minutes and ~8 GB, and low
+  `nice -n -10 nice` prints `-10`) — viaIR runs take 5–15 minutes and ~8 GB, and low
   I/O priority makes them 2–3× slower under desktop load.
 
 ### 12.9 Workers + frontend
@@ -1423,9 +1438,14 @@ to a decision. Listed by category.
   post/update/match-via-offer, and any future English or matched-orders
   shape): one signed transaction per user action, never a multi-step
   sequence the user can abandon midway.
-- **The general/retail path never gates asset ELIGIBILITY on admin or
-  governance configuration;** only the treasury backstop may gate. Do not
-  add an allowlist check to a general origination path.
+- **General origination and liquidity classification never gate asset
+  ELIGIBILITY on admin or governance configuration;** the treasury
+  backstop may gate, and so may an explicitly specialised surface whose
+  design makes an allowlist its primary defence — the swap-to-repay
+  intent path requires both legs on its per-token allowlists
+  (`SwapToRepayIntentFacet`, `cfgIntentAllowed*Tokens`) against
+  fee-on-transfer and rebasing tokens, and that guard stays. Do not add
+  an allowlist check to a general origination path.
 
 ### 12.10 Project-board nuances
 
