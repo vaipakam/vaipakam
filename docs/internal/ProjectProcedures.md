@@ -327,16 +327,32 @@ source of truth and is unchanged by this section.
   so in one line and do API-free work until the next wake. Never poll
   repeatedly inside one wake.
 - **Select unanswered feedback by STATE, never by time.** Unanswered
-  means any of: an inline thread whose LATEST comment is not ours (a
-  reviewer follow-up after our reply re-opens it), or a review submission
-  (`pulls/<N>/reviews`) whose returned `state` is `CHANGES_REQUESTED`
-  (the API's read value — `REQUEST_CHANGES` is only the event name used
-  when creating one) or `COMMENTED` with a non-empty body, that has no
-  inline thread and no reply from us. "No reply from the
-  author at all" is not the test — a thread we answered once can still
-  need action. A `created_at` window silently skips findings that were
-  posted before the window and never answered. A "no major issues" summary comment is not
-  the verdict — the inline threads are.
+  means either of:
+  1. an inline thread whose LATEST comment is not ours — a reviewer
+     follow-up after our reply re-opens a thread we already answered, so
+     "no reply from the author at all" is NOT the test; or
+  2. a review submission (`pulls/<N>/reviews`) that is both **current**
+     and **actionable**.
+
+  **Current** means the LATEST non-dismissed submission from that
+  reviewer: the collection keeps every historical object, so an earlier
+  `CHANGES_REQUESTED` stays in the payload after the same reviewer later
+  approves, and acting on it chases feedback that has already been
+  withdrawn. Reduce each reviewer's history to their newest submission
+  before judging it, and drop anything `DISMISSED`.
+
+  **Actionable** means `CHANGES_REQUESTED` (that is the API's READ value —
+  `REQUEST_CHANGES` is only the event name used when CREATING a review),
+  or `COMMENTED` whose body actually asks for something. A clean verdict
+  is `COMMENTED` with a non-empty body too, so body-is-non-empty is not
+  the test: a summary that reports no findings is informational, and
+  treating it as actionable leaves the heartbeat stuck on a PR that is
+  ready to merge. Conversely a "no major issues" summary is not a
+  verdict that overrides the inline threads — those are judged by rule 1
+  independently.
+
+  A `created_at` window silently skips findings posted before the window
+  and never answered, which is why none of this keys on time.
 - **Resolve every answered thread before merging — paginated.** Branch
   protection requires all review threads resolved, and Codex's inline
   threads stay open after the finding is addressed. Resolve them with the
