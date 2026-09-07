@@ -9521,6 +9521,76 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(r.ok).toBe(true);
   });
 
+  it('a bound name used as a copy DESTINATION is a rewrite (#2066 r4)', () => {
+    // The destination was compared as the bare identifier `cfg`, matching
+    // nothing, so the overwrite was missed. A destination this reader cannot
+    // see is not cleared.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'c.mjs',
+      'const cfg = "configs/custom.jsonc";\n' +
+        'copyFileSync("gen.jsonc", cfg);\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('assignment-looking text inside a string is not an assignment (#2066 r4)', () => {
+    // A template literal reading ` cfg = documentation` was counted as a
+    // second assignment, discarding the binding — the comment bypass one
+    // layer in.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'r.mjs',
+      'const cfg = "configs/custom.jsonc";\n' +
+        'const note = ` cfg = documentation`;\n' +
+        'writeFileSync(cfg, "{}");\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a commented-out copy is not a rewrite (#2066 r4)', () => {
+    // `#` opens a shell comment at a word boundary only, which is why this is
+    // computed here rather than reusing the JavaScript stripper that blanked
+    // `//` inside a path.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'w.sh',
+      '# cp generated.jsonc configs/custom.jsonc\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a separator inside a substitution is not the command boundary (#2066 r4)', () => {
+    // The shell runs the `;` inside `$(true; echo …)` as part of the
+    // substitution; treating it as the boundary truncated the arguments and
+    // left too little text for even the conservative match to fire.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'w.sh',
+      'cp $(true; echo generated.jsonc) configs/custom.jsonc\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a regex literal does not hide a wrapped call (#2066 r4)', () => {
+    // The apostrophe in `/'/.test(input)` opened quote state, so the call's
+    // closing delimiters were never found and no region was emitted.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    const r = runWith(
+      'apps/agent/rx.mjs',
+      'spawnSync(\n  "wrangler",\n  /\'/.test(input) ? ["deploy"] : ["deploy"],\n);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
   it('the PROSE path invalidates a rewritten config too', () => {
     // That path passed the rewrite context to the safety reader and not to the
     // identity reader, so the identity half trusted the stale copy and sent the

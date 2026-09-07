@@ -3275,6 +3275,9 @@ function boundConfigNames(rawText, base) {
   // count to two, discarded the binding, and silently disabled this check —
   // a comment-only bypass of a safety gate (Codex #2066 r1).
   const text = stripSourceComments(rawText);
+  // BIND_RE needs the literal it binds, so the string-blanked form is used
+  // only where string CONTENT could be mistaken for code.
+  const codeOnly = blankStringBodies(text);
   const names = new Set();
   // A TYPE ANNOTATION still declares the same binding. `const cfg: string =
   // "configs/custom.jsonc"` and `cfg: Path = Path(...)` are ordinary
@@ -3296,12 +3299,45 @@ function boundConfigNames(rawText, base) {
   for (const m of text.matchAll(BIND_RE)) {
     const [, name, , literal] = m;
     if (literal.slice(literal.lastIndexOf('/') + 1) !== base) continue;
-    const assigns = text.match(
+    // Counted over a form with STRING BODIES blanked as well. A template
+    // literal reading `` ` cfg = documentation` `` was counted as a second
+    // assignment, which discarded the binding and silently disabled this
+    // check — the same bypass shape as the comment one, one layer in
+    // (Codex #2066 r4).
+    const assigns = codeOnly.match(
       new RegExp(String.raw`(?:^|[;{(,\s])(?:const|let|var)?\s*` + name + String.raw`\s*(?::\s*[^=;\n()]+)?\s*=(?!=)`, 'gm'),
     );
     if (assigns && assigns.length === 1) names.add(name);
   }
   return names;
+}
+
+/**
+ * Blank the CONTENTS of string literals to spaces, preserving offsets.
+ *
+ * The quotes themselves are kept so the text still reads as a literal; only
+ * what is between them is erased. Used where prose inside a string would
+ * otherwise be read as code.
+ */
+function blankStringBodies(text) {
+  const chars = [...text];
+  let quote = null;
+  for (let i = 0; i < chars.length; i += 1) {
+    const c = chars[i];
+    if (quote) {
+      if (c === '\\') {
+        chars[i] = ' ';
+        if (i + 1 < chars.length) chars[i + 1] = ' ';
+        i += 1;
+        continue;
+      }
+      if (c === quote) quote = null;
+      else chars[i] = ' ';
+      continue;
+    }
+    if (c === '"' || c === "'" || c === '`') quote = c;
+  }
+  return chars.join('');
 }
 
 /**
@@ -3315,6 +3351,27 @@ function firstUnquoted(text, chars) {
   let quote = null;
   for (let i = 0; i < text.length; i += 1) {
     const c = text[i];
+    // A SUBSTITUTION IS NOT THE OUTER COMMAND. The shell runs the `;` inside
+    // `$(true; echo gen.jsonc)` as part of the substitution, so treating it as
+    // the command boundary truncated the arguments before the destination and
+    // left too little text for even the conservative match to fire
+    // (Codex #2066 r4).
+    if (!quote && (c === '`' || (c === '$' && (text[i + 1] === '(' || text[i + 1] === '{')))) {
+      const close = c === '`' ? '`' : text[i + 1] === '(' ? ')' : '}';
+      const open = c === '`' ? '`' : text[i + 1];
+      let depth = 0;
+      let j = c === '`' ? i + 1 : i + 1;
+      for (; j < text.length; j += 1) {
+        if (text[j] === '\\') { j += 1; continue; }
+        if (c !== '`' && text[j] === open) depth += 1;
+        else if (text[j] === close) {
+          depth -= 1;
+          if (depth <= 0) break;
+        }
+      }
+      i = j;
+      continue;
+    }
     if (quote) {
       if (c === '\\' && quote === '"') i += 1;
       else if (c === quote) quote = null;
@@ -3502,9 +3559,35 @@ function copyWriteOffsets(text, base, cfgDir) {
   // line comment, so it blanked the destination of
   // `cp generated//custom.jsonc configs/custom.jsonc` and lost the overwrite
   // entirely (Codex #2066 r3) — a shell path is not JavaScript source.
+  // Ranges a shell comment covers. `#` opens one at a word boundary only, so
+  // `file#1` is a filename and `//` in a path is untouched — the reason this
+  // is computed here rather than reusing the JavaScript stripper, which
+  // blanked `cp a//b.jsonc` in r3. A commented-out `# cp gen.jsonc cfg` was
+  // otherwise matched and reported a copy that does not run (Codex #2066 r4).
+  const commentAt = [];
+  {
+    let q = null;
+    for (let i = 0; i < text.length; i += 1) {
+      const c = text[i];
+      if (q) {
+        if (c === '\\') i += 1;
+        else if (c === q) q = null;
+        continue;
+      }
+      if (c === '"' || c === "'") q = c;
+      else if (c === '\n') q = null;
+      else if (c === '#' && (i === 0 || /\s/.test(text[i - 1]))) {
+        const nl = text.indexOf('\n', i);
+        commentAt.push([i, nl === -1 ? text.length : nl]);
+        i = nl === -1 ? text.length : nl;
+      }
+    }
+  }
+  const inShellComment = (at) => commentAt.some(([a, b]) => at >= a && at < b);
   const shellRe = new RegExp(COPY_SHELL_RE.source, 'g');
   let m;
   while ((m = shellRe.exec(text)) !== null) {
+    if (inShellComment(m.index)) continue;
     // The command ends at the first UNQUOTED separator, and the scan is
     // REWOUND there: the argument capture runs to end of line, so a second
     // copy on the same line was swallowed by the first one's match.
@@ -3561,7 +3644,16 @@ function copyWriteOffsets(text, base, cfgDir) {
     // BASENAME, not substring: `copyFileSync("configs/custom.jsonc",
     // "/tmp/custom.jsonc.bak")` mentions the name in its DESTINATION and
     // still writes nothing here (Codex #2066 r3).
-    const destWord = (args[1].match(/["'\`]([^"'\`]*)["'\`]/) ?? [, args[1]])[1].trim();
+    const lit = args[1].match(/["'\`]([^"'\`]*)["'\`]/);
+    if (lit === null) {
+      // A DESTINATION THIS READER CANNOT SEE IS NOT CLEARED. `copyFileSync(
+      // "gen.jsonc", cfg)` names the config through a variable, and comparing
+      // the bare identifier matched nothing, so the overwrite was missed
+      // (Codex #2066 r4). Non-literal destinations stay conservative.
+      hits.push(m.index);
+      continue;
+    }
+    const destWord = lit[1].trim();
     if (baseOf(destWord) === base || dirCouldBe(destWord, cfgDir)) hits.push(m.index);
   }
   return hits;
@@ -7831,12 +7923,34 @@ function childCallRegions(rawText) {
     let quote = null;
     let lines = 0;
     let end = -1;
+    let prev = '';
     for (let i = open; i < text.length && i - open < MAX_CHARS; i += 1) {
       const c = text[i];
       if (quote) {
         if (c === '\\') i += 1;
         else if (c === quote) quote = null;
         else if (c === '\n' && ++lines > MAX_LINES) break;
+        continue;
+      }
+      // A REGEX LITERAL IS NOT A STRING. `/'/.test(input)` carries an
+      // apostrophe that opened quote state, so the call's closing delimiters
+      // were never recognised, no region was emitted, and the wrapped deploy
+      // stayed split across physical lines (Codex #2066 r3, r4). A `/` starts
+      // a regex only where a value may begin, which is what separates it from
+      // division.
+      if (c === '/' && /[([{,;:=!&|?+\-*%~^<>]|^$/.test(prev)) {
+        let j = i + 1;
+        let cls = false;
+        for (; j < text.length; j += 1) {
+          const d = text[j];
+          if (d === '\\') { j += 1; continue; }
+          if (d === '\n') break;
+          if (cls) { if (d === ']') cls = false; continue; }
+          if (d === '[') cls = true;
+          else if (d === '/') break;
+        }
+        i = j;
+        prev = '/';
         continue;
       }
       if (c === '"' || c === "'" || c === '`') quote = c;
@@ -7848,6 +7962,7 @@ function childCallRegions(rawText) {
           break;
         }
       } else if (c === '\n' && ++lines > MAX_LINES) break;
+      if (!/\s/.test(c)) prev = c;
     }
     if (end > open && lines > 0) regions.push({ start: open, end });
   }
