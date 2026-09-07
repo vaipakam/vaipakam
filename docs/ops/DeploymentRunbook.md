@@ -1845,11 +1845,21 @@ navigable. Give redirects a bounded life rather than leaving them
 forever. Prototype hosts with no audience (`alpha.vaipakam.com`,
 `alpha01.vaipakam.com`) can just be deleted.
 
-One user-facing capability still has no counterpart on the successor and
-must be built before users are moved across, not after: the Data Rights
-export/erase controls (#1960 — the marketing site's copy cannot
-substitute, because browser storage is same-origin). It is listed as a
-blocker beside the cutover switch in `apps/www/src/lib/appUrl.ts`.
+The Data Rights export/erase controls (#1960) WERE such a capability and
+are now built: `apps/app` serves its own `/data-rights` route, verified
+rendering on the bound host. The concern was well founded and is spent —
+the marketing site's copy could never have substituted, because browser
+storage is same-origin and those controls run on the other origin.
+
+That same same-origin property is now the blocker on a DIFFERENT
+surface, and it is the one to carry forward: the recovery flow's pending
+marker is per-origin browser storage, so the ten user-guide `/recover`
+links must NOT be repointed until no legacy attempt can still be in
+flight — every pending marker and signed deadline drained and the legacy
+flow disabled, or a real cross-origin handoff built. Redirecting the
+legacy host does not satisfy this: a redirect lands the user on the new
+origin, which still cannot read the old one's storage. See the note
+beside the cutover switch in `apps/www/src/lib/appUrl.ts`.
 
 The Terms-of-Service gate (#1961) WAS the other one and is now built:
 `apps/app` gates its routed surfaces on the in-force ToS version and

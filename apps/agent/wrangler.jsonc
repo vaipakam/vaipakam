@@ -481,13 +481,17 @@
     // notification deep links the same way, so the FIRST entry must be a
     // host that actually SERVES those paths.
     //
-    // It is `defi.` today, not `app.`, because `app.vaipakam.com` is not
-    // bound yet (see apps/app/wrangler.jsonc). Entry zero and the paths
-    // in frames.ts are ONE decision: the legacy app serves `/app` and
-    // `/nft-verifier`, the new one serves `/` and `/nft`. Move them
-    // together at cutover — same coupling `appUrl`'s APP_TARGET models
-    // on the marketing side — or the links break in whichever direction
-    // you half-changed.
+    // It is `defi.` today, not `app.`. NOT because `app.vaipakam.com` is
+    // unbound — it is bound and serving (see apps/app/wrangler.jsonc).
+    // The reason is the coupling: entry zero and the paths in frames.ts
+    // are ONE decision, since the legacy app serves `/app` and
+    // `/nft-verifier` while the new one serves `/` and `/nft`. Moving
+    // entry zero alone points notification deep links at paths the new
+    // host does not serve. They move together — same coupling `appUrl`'s
+    // APP_TARGET models on the marketing side — or the links break in
+    // whichever direction you half-changed. That paired move is deferred
+    // to its own change because it alters LIVE notification deep links
+    // and wants its own review.
     //
     // `defi.` and `alpha02.` are RETAINED past the #1854 rename on
     // purpose: their Workers still serve real users until the operator

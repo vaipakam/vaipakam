@@ -1201,10 +1201,12 @@ elif [ "$SKIP_APP" = "0" ]; then
   ─────────────────────────────────────────────────────────────────────
   NOTE — check the app cutover before trusting this deploy (#1854)
 
-  This publishes the `vaipakam-app` Worker. If `app.vaipakam.com` is
-  not yet bound to it, or apps/www was not built with
-  VITE_APP_TARGET=app, users are still being sent to the LEGACY host
-  and will not see any contract addresses this run changed.
+  This publishes the `vaipakam-app` Worker. `app.vaipakam.com` IS bound
+  to it now, but that alone does not route users here: if apps/www was
+  not built with VITE_APP_TARGET=app, users are still being sent to the
+  LEGACY host and will not see any contract addresses this run changed.
+  As of 2026-09-07 APP_TARGET is still `legacy`, so this warning is
+  LIVE — check the cutover checklist in apps/www/src/lib/appUrl.ts.
 
   The legacy frontend cannot be rebuilt to carry them — its source was
   deleted with #1854. Until the cutover completes, treat an
