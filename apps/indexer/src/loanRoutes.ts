@@ -851,7 +851,19 @@ export async function handleLoansStats(req: Request, env: Env): Promise<Response
   try {
     // Counts per status.
     const counts = await env.DB.prepare(
-      `SELECT status, COUNT(*) as n FROM loans WHERE chain_id = ? GROUP BY status`,
+      // SALE VEHICLES ARE NOT BORROWER POSITIONS (#2069 review round 8).
+      // Selling a lender position emits a temporary bookkeeping loan,
+      // which migration 0029 flags precisely so it stays out of anything
+      // a person reads — and `getLoans`, the activity feed and the
+      // claimables query all already filter it. This one did not, so
+      // every secondary sale raised the count as though a new loan had
+      // originated. Invisible while this was an internal aggregate;
+      // not once the public dashboard prints it as the deployment's
+      // loan total. (`loans` carries no `is_offset_vehicle` column —
+      // that flag exists on `offers` only.)
+      `SELECT status, COUNT(*) as n FROM loans
+        WHERE chain_id = ? AND is_sale_vehicle = 0
+        GROUP BY status`,
     )
       .bind(chainId)
       .all<{ status: string; n: number }>();
