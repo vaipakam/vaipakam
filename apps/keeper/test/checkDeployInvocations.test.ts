@@ -8937,14 +8937,34 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(r.ok).toBe(true);
   });
 
-  it('a write BEFORE the config is named does not invalidate it (#2052)', () => {
-    // Same ordering rule the named forms obey.
+  it('the named rule does not order the name against the write (#2066 r8)', () => {
+    // This asserted the opposite until r8. Requiring the write to come after
+    // the name discarded a real rewrite whose CALL begins before it —
+    // `writeFileSync(path.join(process.cwd(), "configs/custom.jsonc"), …)` —
+    // and deciding whether a name sits inside a given call means finding that
+    // call's extent, which is the parsing this reader stopped doing. So a file
+    // that names the config and writes before the deploy reports, whatever the
+    // order of the two. Ordering against the DEPLOY is still enforced, which
+    // is the one that protects a legitimate command.
     seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
     seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
     const r = runWith(
       'b.mjs',
       'writeFileSync("/tmp/other.json", "{}");\n' +
         'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a write only AFTER the deploy still does not invalidate it (#2066 r8)', () => {
+    // The ordering that matters is against the deploy: maintenance below a
+    // command cannot invalidate the config that command already read.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'a.mjs',
+      'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n' +
+        'writeFileSync("configs/custom.jsonc", "{}");\n',
     );
     expect(r.ok).toBe(true);
   });
@@ -9001,6 +9021,48 @@ describe('check-deploy-invocations — #1996 config identity', () => {
       'export CFG=configs/custom.jsonc\n' +
         'node -e "require(\'fs\').writeFileSync(process.env.CFG,\'{}\')"\n' +
         'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a bound shell redirection is a named write (#2066 r8)', () => {
+    // The direct form is already a write; this is the same write through a
+    // binding.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'w.sh',
+      'CFG=configs/custom.jsonc\n' +
+        'printf "{}" > "$CFG"\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a name INSIDE the write call still counts (#2066 r8)', () => {
+    // `writeFileSync(path.join(process.cwd(), "configs/custom.jsonc"), …)`
+    // names the config within its own arguments.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'j.mjs',
+      'writeFileSync(path.join(process.cwd(), "configs/custom.jsonc"), "{}");\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('shutil copy variants are named writes (#2066 r8)', () => {
+    // The ordinary Python spellings; the destination is the bound name, so
+    // the name-bearing copy pattern cannot see it.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      's.py',
+      'import shutil, subprocess\n' +
+        'cfg = "configs/custom.jsonc"\n' +
+        'shutil.copyfile("gen.jsonc", cfg)\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
     );
     expect(r.ok).toBe(false);
   });

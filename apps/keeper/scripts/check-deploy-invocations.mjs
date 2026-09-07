@@ -3329,23 +3329,36 @@ function configIsRewritten(text, cfgPath, at = null) {
   // Collected UNCONDITIONALLY, not only when nothing else matched. Gating this
   // on an empty list let a directly-named write AFTER the deploy suppress the
   // scan entirely, so a bound write BEFORE it went unseen (Codex #2066 r7).
-  const named = new RegExp(esc).exec(text);
-  if (named !== null) {
+  const named = new RegExp(esc).test(text);
+  if (named) {
     // Copies are writes here too: `copyFileSync("gen.jsonc", cfg)` puts no
     // name in the call, so the name-bearing COPY pattern above cannot see it
-    // either (r7).
+    // either (r7) — including the `shutil` spellings, which are the ordinary
+    // Python ones (r8). Redirections likewise: the direct form is already a
+    // write above, and `printf '{}' > "$CFG"` is the same write through a
+    // binding (r8).
     const ANY_WRITE = new RegExp(
       String.raw`(?:writeFile(?:Sync)?|appendFile(?:Sync)?|createWriteStream` +
         String.raw`|outputFile(?:Sync)?|write_text|write_bytes` +
-        String.raw`|copyFile(?:Sync)?|cpSync|rename(?:Sync)?|copy|move)\s*\(` +
+        String.raw`|copyFile(?:Sync)?|cpSync|rename(?:Sync)?|copy|move` +
+        String.raw`|shutil\.(?:copyfile|copy2?|copytree|move))\s*\(` +
         String.raw`|(?:^|[\s;&|(])(?:cp|mv|install|rsync)\s` +
+        String.raw`|>\s*` +
         String.raw`|\.\s*open\s*\(\s*(?:mode\s*=\s*)?` + Q + String.raw`[rbt]*[wax+]` +
         String.raw`|\bopen\s*\([^)]*,\s*(?:mode\s*=\s*)?` + Q + String.raw`[rbt]*[wax+]`,
       'gm',
     );
-    for (const w of text.matchAll(ANY_WRITE)) {
-      if (w.index > named.index) writes.push(w.index);
-    }
+    // NO ORDERING BETWEEN THE NAME AND THE WRITE. Requiring the write to come
+    // after the name discarded a real rewrite whose call BEGINS before it —
+    // `writeFileSync(path.join(process.cwd(), "configs/custom.jsonc"), …)`
+    // starts at `writeFileSync` and names the config inside its own arguments
+    // (Codex #2066 r8). Deciding whether a name sits inside a given call means
+    // finding that call's extent, which is the parsing this reader stopped
+    // doing. The question is asked without the ordering instead: the file
+    // names the config and writes before the deploy. Ordering against the
+    // DEPLOY is still enforced below, which is the one that protects a
+    // legitimate command.
+    for (const w of text.matchAll(ANY_WRITE)) writes.push(w.index);
     writes.sort((a, b) => a - b);
   }
   if (writes.length === 0) return false;
