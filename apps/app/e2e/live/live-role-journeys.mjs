@@ -537,7 +537,7 @@ for (const roleKey of wanted) {
     }
     throw err;
   }
-  const { page, done, blockedRequests } = session;
+  const { page, done, blockedRequests, consoleErrors } = session;
 
   if (posture.preAuthorized) {
     // preAuthorized alone does not prove wagmi ACCEPTED the provider. If
@@ -677,6 +677,52 @@ for (const roleKey of wanted) {
   // prompt, which is not a write and has its own check immediately
   // below — excluded only for that posture, so a prompt appearing where
   // no check owns it still fails here rather than falling through both.
+  // UNCAUGHT PAGE ERRORS FAIL THE RUN (review round 6 P2). Every check
+  // here is shallow by design — body length, control counts — so a route
+  // that throws AFTER painting enough shell to clear those thresholds
+  // reported PASS while the surface was broken underneath. `launch()`
+  // has been collecting console errors and uncaught `pageerror` events
+  // all along; this driver simply threw the array away, which is the
+  // same shape of mistake as discarding `blockedRequests` was.
+  //
+  // ONE exclusion, and it is the HARNESS rather than the app. `driver.mjs`
+  // serves every page request from this process via undici, because the
+  // egress gateway resets Chromium's own TLS handshakes — and its comment
+  // states plainly that WebSockets are NOT covered by that shim. So a
+  // `wss://` connection failure here is this environment refusing the
+  // transport, not the deployed build misbehaving, and without this the
+  // check would fail every run for a reason the driver documents about
+  // itself.
+  //
+  // This is deliberately NOT the start of an allowlist of "expected"
+  // errors — a curated denylist is how a real one eventually gets waved
+  // through. It excludes exactly one class, on the grounds that the
+  // harness cannot support it, and the honest cost is recorded rather
+  // than hidden: a genuine WebSocket regression in the app is invisible
+  // to THIS driver and needs a run where the transport actually works.
+  const HARNESS_WS = /WebSocket connection to .*failed/i;
+  const pageErrors = (consoleErrors ?? []).filter((e) => !HARNESS_WS.test(String(e)));
+  if (pageErrors.length > 0) {
+    hardFail += 1;
+    const shown = pageErrors.slice(0, 5).map((e) => String(e).slice(0, 160));
+    results.push({
+      id: `PAGEERR-${roleKey}`,
+      roleKey,
+      role: roleKey,
+      route: '(session)',
+      goal: 'The deployed build raises no uncaught errors during this role\'s journeys',
+      desired: 'Zero console errors and zero uncaught pageerror events across the session.',
+      ok: false,
+      actual: `${pageErrors.length} error(s): ${shown.join(' | ')}`,
+    });
+    console.log(
+      `FAIL  PAGEERR-${roleKey}  [${roleKey}] (session)\n` +
+        `      goal    : no uncaught errors during this role's journeys\n` +
+        `      actual  : ${pageErrors.length} error(s)\n` +
+        shown.map((e) => `                - ${e}`).join('\n'),
+    );
+  }
+
   const isAccountPrompt = (b) =>
     /requestAccounts|requestPermissions/i.test(b.reason ?? '');
   const writeAttempts = (blockedRequests ?? []).filter(

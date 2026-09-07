@@ -34,6 +34,7 @@ import { useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { copy } from '../content/copy';
+import { isProtocolConsolePublic } from '../lib/protocolConsoleVisibility';
 
 /** Production origin every canonical is rooted at. Hardcoded on
  *  purpose (same rationale as www): the canonical is what crawlers
@@ -109,7 +110,14 @@ function metaForPath(rawPathname: string): RouteMeta {
   // per-user surfaces: these two are the public record.
   if (pathname === '/analytics') return { ...seo.analytics, index: true };
   if (pathname === '/protocol-console') {
-    return { ...seo.protocolConsole, index: true };
+    // INDEXABLE ONLY WHEN IT ACTUALLY SHOWS ANYTHING (review round 6 P2).
+    // With `VITE_ADMIN_DASHBOARD_PUBLIC=false` the page renders only its
+    // hidden-state message, so indexing it advertises a surface the
+    // deployment has decided to withhold — and this row's own
+    // description promises current parameter values, which that posture
+    // does not provide. `generate-seo.mjs` drops the sitemap entry under
+    // the same flag; both must agree or one contradicts the other.
+    return { ...seo.protocolConsole, index: isProtocolConsolePublic() };
   }
   if (inSection(pathname, '/positions')) return { ...seo.positions, index: false };
   if (pathname === '/claims') return { ...seo.claims, index: false };

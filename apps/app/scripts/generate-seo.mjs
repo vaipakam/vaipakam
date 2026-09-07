@@ -30,12 +30,27 @@
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { readViteEnv } from './viteEnv.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const ORIGIN = (
-  process.env.VITE_APP_PUBLIC_ORIGIN ?? 'https://app.vaipakam.com'
+  readViteEnv('VITE_APP_PUBLIC_ORIGIN') ?? 'https://app.vaipakam.com'
 ).replace(/\/+$/, '');
+
+/** The protocol console is env-gated: `VITE_ADMIN_DASHBOARD_PUBLIC=false`
+ *  (industrial fork, pre-launch deploys) makes the page render only its
+ *  hidden-state message. The SEO registry honours the SAME flag with the
+ *  SAME default-true semantics, so a restricted deployment never
+ *  advertises a surface it withholds — a sitemap entry pointing at a
+ *  "visibility is turned off" page is a promise the deployment has
+ *  already decided not to keep. Mirrors `apps/www/scripts/seo-routes.mjs`.
+ *
+ *  Read through `readViteEnv`, not `process.env`: this script would
+ *  otherwise default a `.env.production`-hidden console back to public
+ *  while the bundle beside it hid the page. */
+const PROTOCOL_CONSOLE_PUBLIC =
+  (readViteEnv('VITE_ADMIN_DASHBOARD_PUBLIC') ?? '').toLowerCase() !== 'false';
 
 /** Indexable routes — mirrors the `index: true` rows in
  *  src/components/SeoMeta.tsx. Order: likely-importance for a
@@ -51,7 +66,8 @@ const PUBLIC_ROUTES = [
   '/nft',
   '/help',
   '/analytics',
-  '/protocol-console',
+  // Conditional, unlike every other entry here — see the flag above.
+  ...(PROTOCOL_CONSOLE_PUBLIC ? ['/protocol-console'] : []),
 ];
 
 function buildSitemap() {
