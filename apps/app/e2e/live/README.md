@@ -28,13 +28,19 @@ SITE_URL=https://<the-deployed-worker>.workers.dev \
   holding testnet dust). **Never commit this file.** Shape:
   `{ "lender": { "address": "0x…", "privateKey": "0x…" }, … }` or an
   array of `{ role, address, privateKey }`.
-- `SITE_URL` — **REQUIRED.** There is deliberately no default while the
-  #1854 cutover is blocked: `app.vaipakam.com` is unbound, and
-  `alpha02.vaipakam.com` is served by the frozen `vaipakam-alpha02`
-  Worker rather than the `vaipakam-app` one the deploy scripts publish —
-  so a default would silently test the wrong deployment and could report
-  green on a broken build. Pass the `workers.dev` URL printed by
-  `pnpm run deploy`, or the custom domain once it is bound.
+- `SITE_URL` — **REQUIRED.** Deliberately no default, because a wrong
+  default fails silently and could report green on a broken build.
+  `app.vaipakam.com` is now bound and serving `vaipakam-app`, so it is a
+  valid target — but still not a default, because a deploy publishes to
+  `workers.dev` first and the custom domain can lag or sit on an older
+  version; only the caller knows which deployment the review is for.
+  `alpha02.vaipakam.com` remains a trap: it is served, but by the frozen
+  `vaipakam-alpha02` Worker rather than the `vaipakam-app` one the
+  deploy scripts publish. Pass the `workers.dev` URL printed by
+  `pnpm run deploy`, or `app.vaipakam.com` once you have confirmed it
+  serves the same build (compare the `/assets/index-*.js` hash — both
+  hosts return the same 200 SPA shell for every path, so a status code
+  proves nothing).
 - `LIVE_PROXY_SETUP` — optional path to an egress-proxy shim module,
   for sandboxes whose gateway resets Chromium TLS (the driver then
   routes page traffic through undici in-process). Honoured by
