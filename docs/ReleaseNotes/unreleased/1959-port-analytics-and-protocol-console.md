@@ -48,3 +48,41 @@ rendered empty for the visitors they exist for. They asked the wallet
 library which chain to use, and with no wallet connected the honest
 answer is Ethereum mainnet — a chain this deployment does not index. They
 now use the app's own "where reads land when disconnected" resolution.
+
+Review then found three more of the same shape — things that look right
+in a live check and are not. Neither page had any styles at all: every
+layout class it named was undefined, so both rendered as a plain
+vertical stream. A browser makes unstyled text perfectly readable, which
+is exactly why a glance at the deployed page did not catch it, and on
+these two the cost is more than tidiness — a counter loses its label
+when the pairing is only visual, and a value read against the wrong
+label is the failure the console exists to prevent.
+
+The analytics page also treated an indexer that had read nothing as an
+indexer reporting nothing. A database still filling up answers every
+question successfully with zero, so the page showed a full board of
+authoritative-looking zeros for a deployment that may have years of
+history behind it. "No defaults" from an empty database is the most
+reassuring figure on that page and the least earned; it now says the
+indexer has not started rather than showing the numbers.
+
+And the "Smart Contracts" link in the marketing footer, which points at
+the transparency section, arrived somewhere with no contract on it. It
+now leads with the contract's address and a link to open it on a block
+explorer, above the indexer's own provenance — the chain is the source,
+and the indexer only a second-hand reading of it.
+
+Both pages were also missing from the site's page-title and sitemap
+tables, so each announced itself as "Page not found" in the browser tab
+and asked search engines not to index it; and from the list of pages the
+Terms prompt never withholds, so connecting a wallet could take away a
+page anyone could read without one. The parameter reference the console
+links to when an operator has hidden the live values turned out to be
+hidden by that same setting, so that link is gone rather than promising
+something the setting had already taken away.
+
+One gap is recorded rather than closed: the console shows every
+parameter the indexer publishes, and the operator reference names some
+it does not publish yet. Widening that is an indexer change, tracked
+separately; the full reference remains public and the values remain
+readable directly from the contracts in the meantime.

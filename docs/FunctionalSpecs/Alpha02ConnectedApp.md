@@ -38,6 +38,42 @@ reveal denser market and management tools without leaving the same product.
 - The global support control remains reachable without covering primary mobile
   action buttons.
 
+## Public Transparency Surfaces
+
+Two surfaces exist to be read by people who have not connected anything,
+including people who never will.
+
+- An analytics view reports the deployment's loan and offer counts, and a
+  protocol console reports the current value of each governance-tunable
+  parameter. Both are read-only. Neither offers any control that changes
+  protocol state; parameter changes are a governance action elsewhere.
+- Both render fully without a wallet, and both are reachable by direct
+  link from outside the app. They resolve their chain the same way every
+  other read does when no wallet is connected, so arriving cold shows
+  real figures rather than an empty page.
+- Connecting a wallet must never take either away. Whatever the terms
+  prompt withholds, it does not withhold these: withholding a page
+  anyone could read without a wallet, because a wallet is present, is a
+  contradiction rather than a restriction.
+- Both are indexable and carry their own page titles and descriptions.
+- Figures are reported with their age. A reader is told how current the
+  data is beside the data itself, and an unknown age is never presented
+  as a fresh one.
+- A counter the source did not report is distinguished from a counter
+  that is genuinely zero, and neither is inferred from the other. Where
+  nothing has been indexed at all, that is stated instead of reporting
+  zero for everything — an unread source is a fact about the source, not
+  about the protocol.
+- The analytics view names the protocol's contract address for the chain
+  being read and offers a way to open it on a public explorer, so a
+  reader can go to the primary source rather than accept the page's
+  reading of it.
+- The protocol console reports each parameter against its own name, and
+  never by inferring which value belongs to which name from ordering.
+- An operator may hide the live parameter values on a deployment. In
+  that state the console says so plainly, and does not direct the reader
+  to any resource that the same setting has also withheld.
+
 ## Wallet and Network Behaviour
 
 - Wallet connection should make the active address and network clear.
