@@ -1717,7 +1717,7 @@ pointed at.
 
 | Hostname | Worker | Source | Notes |
 | --- | --- | --- | --- |
-| `app.vaipakam.com` | `vaipakam-app` | `apps/app` | The connected app. **NOT BOUND YET** — the Worker exists, but the hostname awaits a deploy made with operator env. See the cutover note below. |
+| `app.vaipakam.com` | `vaipakam-app` | `apps/app` | The connected app. **BOUND** (verified 2026-09-07: the hostname served the exact `/assets/index-*.js` hash a `pnpm run deploy` had just published). Verify it that way, never by status code — this host and `defi.vaipakam.com` both return an identical 200 SPA shell for *every* path, including ones that do not exist. The marketing site's links still resolve to the legacy host, which is now a deliberate hold, not a missing prerequisite: see the cutover note below. |
 | `vaipakam.com` | `vaipakam-www` | `apps/www` | Marketing + docs, wallet-free. Apex, not `www`. |
 | `agent.vaipakam.com` | `vaipakam-agent` | `apps/agent` | Origin-gated API. A bare `GET /` answering **403 `Forbidden` is correct, not an outage** — `apps/agent/src/index.ts:258` rejects any request whose `Origin` is not in `FRONTEND_ORIGIN`, and a curl sends none. **To actually health-check it, send an allowed Origin**: `curl -H 'origin: https://vaipakam.com' https://agent.vaipakam.com/nope` should return **404**, the Worker's own fallback. 403 with an allowed Origin means that origin is missing from `FRONTEND_ORIGIN`; 403 *without* one proves nothing. (#1971 — filed on the belief this was an outage, closed as designed behaviour.) |
 | `indexer.vaipakam.com` | `vaipakam-indexer` | `apps/indexer` | |
@@ -1845,11 +1845,21 @@ navigable. Give redirects a bounded life rather than leaving them
 forever. Prototype hosts with no audience (`alpha.vaipakam.com`,
 `alpha01.vaipakam.com`) can just be deleted.
 
-One user-facing capability still has no counterpart on the successor and
-must be built before users are moved across, not after: the Data Rights
-export/erase controls (#1960 — the marketing site's copy cannot
-substitute, because browser storage is same-origin). It is listed as a
-blocker beside the cutover switch in `apps/www/src/lib/appUrl.ts`.
+The Data Rights export/erase controls (#1960) WERE such a capability and
+are now built: `apps/app` serves its own `/data-rights` route, verified
+rendering on the bound host. The concern was well founded and is spent —
+the marketing site's copy could never have substituted, because browser
+storage is same-origin and those controls run on the other origin.
+
+That same same-origin property is now the blocker on a DIFFERENT
+surface, and it is the one to carry forward: the recovery flow's pending
+marker is per-origin browser storage, so the ten user-guide `/recover`
+links must NOT be repointed until no legacy attempt can still be in
+flight — every pending marker and signed deadline drained and the legacy
+flow disabled, or a real cross-origin handoff built. Redirecting the
+legacy host does not satisfy this: a redirect lands the user on the new
+origin, which still cannot read the old one's storage. See the note
+beside the cutover switch in `apps/www/src/lib/appUrl.ts`.
 
 The Terms-of-Service gate (#1961) WAS the other one and is now built:
 `apps/app` gates its routed surfaces on the in-force ToS version and

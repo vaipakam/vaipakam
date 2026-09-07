@@ -466,11 +466,13 @@ export const CHAINS = {
   },
 };
 
-// SITE_URL is REQUIRED — there is deliberately no default while the
-// #1854 cutover is blocked, because every candidate default is wrong in a
-// way that fails silently:
+// SITE_URL is REQUIRED — deliberately no default, because a wrong
+// default fails SILENTLY. That reasoning survives `app.vaipakam.com`
+// being bound; only one of its two premises has changed:
 //
-//   - `app.vaipakam.com` is not bound yet, so a run answers nothing.
+//   - `app.vaipakam.com` IS now bound and serves `vaipakam-app`, so it
+//     is a valid target — pass it explicitly. It is still not a default:
+//     see below.
 //   - `alpha02.vaipakam.com` IS served, but by the `vaipakam-alpha02`
 //     Worker, which no deploy script publishes to any more — they all
 //     publish `vaipakam-app`. A run there tests a frozen build and can
@@ -478,19 +480,25 @@ export const CHAINS = {
 //     reads `alpha02.*` browser-storage keys while these drivers write
 //     `app.*`, so state-dependent steps quietly diverge.
 //
-// A live driver that silently tests the wrong deployment is worse than
-// one that refuses to start, so this refuses. Pass the `workers.dev` URL
-// printed by `pnpm run deploy`, or the custom domain once it is bound and
-// the checklist at APP_TARGET in apps/www/src/lib/appUrl.ts is done.
+// Why no default even now: a deploy publishes to `workers.dev` first,
+// and the custom domain can lag or be pinned to an older version. The
+// DoD is to review THE DEPLOYMENT YOU JUST MADE, and only the caller
+// knows which URL that is. A default would quietly review a different
+// one. Pass the `workers.dev` URL printed by `pnpm run deploy`, or
+// `app.vaipakam.com` once you have confirmed it serves the same build
+// (compare the `/assets/index-*.js` hash — every path on both hosts
+// returns the same 200 SPA shell, so a status code proves nothing).
 export function requireSiteUrl() {
   const url = process.env.SITE_URL;
   if (!url) {
     throw new Error(
-      'SITE_URL is required. There is no safe default while the #1854 ' +
-        'cutover is blocked: app.vaipakam.com is unbound, and ' +
-        'alpha02.vaipakam.com serves the frozen vaipakam-alpha02 Worker ' +
-        'rather than the vaipakam-app one the deploy scripts publish. ' +
-        'Pass the workers.dev URL from `pnpm run deploy`.',
+      'SITE_URL is required. There is no safe default: the review must ' +
+        'target the deployment you just made, and only you know which ' +
+        'URL that is. alpha02.vaipakam.com serves the frozen ' +
+        'vaipakam-alpha02 Worker rather than the vaipakam-app one the ' +
+        'deploy scripts publish. Pass the workers.dev URL from ' +
+        '`pnpm run deploy`, or app.vaipakam.com once you have confirmed ' +
+        'it serves that same build.',
     );
   }
   return url;

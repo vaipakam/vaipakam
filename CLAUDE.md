@@ -970,13 +970,18 @@ Rules:
 
 Every user-facing change merged to a deployed surface (`apps/*`) gets a
 LIVE review on the deployed testnet site **after the production deploy**.
-Review the deployment you just made: until the #1854 cutover completes,
-`app.vaipakam.com` is NOT bound, so the target is the `workers.dev` URL
-`pnpm run deploy` prints. Do not review `alpha02.vaipakam.com` as a
-stand-in — it serves the frozen `vaipakam-alpha02` Worker, not the
-`vaipakam-app` one the deploy publishes, so a green review there says
-nothing about what shipped. Once the hostname is bound it becomes the
-target. Then — drive the actual
+Review the deployment you just made — that phrase is the rule, and it is
+why there is no fixed target. `app.vaipakam.com` IS now bound and serves
+`vaipakam-app`, so it is a valid target; but a deploy publishes to the
+`workers.dev` URL first and the custom domain can lag or sit on an older
+version, so confirm the two serve the same build before reviewing the
+domain (compare the `/assets/index-*.js` hash — both hosts return an
+identical 200 SPA shell for every path, so a status code proves nothing).
+Otherwise review the `workers.dev` URL `pnpm run deploy` prints. Do not
+review `alpha02.vaipakam.com` as a stand-in — it serves the frozen
+`vaipakam-alpha02` Worker, not the `vaipakam-app` one the deploy
+publishes, so a green review there says nothing about what shipped.
+Then — drive the actual
 feature end-to-end with the dev test wallets (the scratchpad Playwright
 driver), and confirm the observable behaviour, not just preview builds,
 typecheck, or CI. Contract-consuming changes additionally verify against

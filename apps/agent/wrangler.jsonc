@@ -481,27 +481,38 @@
     // notification deep links the same way, so the FIRST entry must be a
     // host that actually SERVES those paths.
     //
-    // It is `defi.` today, not `app.`, because `app.vaipakam.com` is not
-    // bound yet (see apps/app/wrangler.jsonc). Entry zero and the paths
-    // in frames.ts are ONE decision: the legacy app serves `/app` and
-    // `/nft-verifier`, the new one serves `/` and `/nft`. Move them
-    // together at cutover — same coupling `appUrl`'s APP_TARGET models
-    // on the marketing side — or the links break in whichever direction
-    // you half-changed.
+    // It is `defi.` today, not `app.`. NOT because `app.vaipakam.com` is
+    // unbound — it is bound and serving (see apps/app/wrangler.jsonc).
+    // The reason is the coupling: entry zero and the paths in frames.ts
+    // are ONE decision, since the legacy app serves `/app` and
+    // `/nft-verifier` while the new one serves `/` and `/nft`. Moving
+    // entry zero alone points notification deep links at paths the new
+    // host does not serve. They move together — same coupling `appUrl`'s
+    // APP_TARGET models on the marketing side — or the links break in
+    // whichever direction you half-changed. That paired move is deferred
+    // to its own change because it alters LIVE notification deep links
+    // and wants its own review.
     //
     // `defi.` and `alpha02.` are RETAINED past the #1854 rename on
     // purpose: their Workers still serve real users until the operator
     // converts them to redirects. Remove them in the same change that
     // retires those hosts, not before. (#1958 Codex F5.)
-    // The trailing `*.workers.dev` entry is the PRE-CUTOVER REVIEW target.
-    // CLAUDE.md requires a live review of the deployment just made, and
-    // until `app.vaipakam.com` is bound that deployment is only reachable
-    // on its workers.dev URL. Without it here, every agent-backed flow
-    // (alerts, support ticket, diagnostics/erasure) fails CORS on the
-    // mandated review target, so the review cannot exercise them. It is a
-    // single exact origin, not a wildcard. REMOVE IT once the custom
-    // domain is bound — see step 5 of the cutover checklist in
-    // apps/www/src/lib/appUrl.ts.
+    // The trailing `*.workers.dev` entry is the POST-DEPLOY REVIEW target
+    // and must be RETAINED. CLAUDE.md requires a live review of the
+    // deployment just made, and a deploy reaches its workers.dev URL
+    // before the custom domain does — the domain can lag or sit on an
+    // older version — so that URL, not `app.vaipakam.com`, is what the
+    // review and the staging plan's smoke test (§ step 7) actually
+    // target. Without this entry every agent-backed flow (alerts,
+    // support ticket, diagnostics/erasure) fails CORS on the mandated
+    // review target, so the review cannot exercise them. It is a single
+    // exact origin, not a wildcard.
+    //
+    // An earlier revision said to REMOVE IT "once the custom domain is
+    // bound". The domain IS bound now, and following that instruction
+    // would break the very smoke test the staging plan prescribes — so
+    // it is withdrawn rather than acted on. Retire this entry only if
+    // the review target itself stops being the workers.dev URL.
     "FRONTEND_ORIGIN": "https://defi.vaipakam.com,https://app.vaipakam.com,https://labs.vaipakam.com,https://www.vaipakam.com,https://vaipakam.com,https://alpha02.vaipakam.com,https://vaipakam-app.dawn-fire-139e.workers.dev",
     "DIAG_SAMPLE_RATE": "1.0",
     "DIAG_RETENTION_DAYS": "90",

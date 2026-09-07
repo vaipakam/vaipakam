@@ -5,9 +5,11 @@
   // (basic + advanced), Terms, Privacy, Data Rights, Discord, Help
   // Search. Wallet-free; cross-domain link-outs to the connected-
   // app surface via the `appUrl(...)` helper (env-driven by
-  // `VITE_APP_URL`). The default is still the LEGACY host, on purpose:
-  // `app.vaipakam.com` is not bound yet, so defaulting to it would point
-  // every Launch App CTA at an unserved hostname. Both the
+  // `VITE_APP_URL`). The default is still the LEGACY host, on purpose —
+  // but no longer because the new one is unserved: `app.vaipakam.com` IS
+  // bound. The hold is now the cutover checklist beside `APP_TARGET`
+  // (the Vpfi deposit anchor the Launch CTA's landing position needs).
+  // Both the
   // helper and the variable were renamed from `defiUrl` /
   // `VITE_DEFI_URL` in #1854; the old variable name is no longer
   // read, so a preview or local build that still sets it silently
@@ -28,9 +30,12 @@
   //                          there. Verified against the live
   //                          account (2026-08-27): it appears in no
   //                          Workers custom-domain binding, and a
-  //                          request to it fails to connect exactly
-  //                          as the deliberately-unbound
-  //                          app.vaipakam.com does. This comment
+  //                          request to it fails to connect. Re-checked
+  //                          2026-09-07: still no connection, while
+  //                          app.vaipakam.com — which this note used to
+  //                          cite as the comparable unbound host — now
+  //                          returns 200. Do NOT reason about labs from
+  //                          app any more; test labs itself. This comment
   //                          previously said it was "still bound to
   //                          this Worker" as a harmless duplicate;
   //                          that was true when the labs → www
