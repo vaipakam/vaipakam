@@ -1,0 +1,210 @@
+{
+  "generatedAt": "2026-09-07T17:52:53.750Z",
+  "purpose": "#1566 grandfathered-custody census — decides whether slices 0-3 are live work or a certified no-op",
+  "allClassesEmpty": true,
+  "chainsCensused": 5,
+  "chainsFailed": [],
+  "indeterminateClasses": [],
+  "results": [
+    {
+      "chainSlug": "arb-sepolia",
+      "chainId": 421614,
+      "diamond": "0x55d7872cC9738994cc6b04F89d128cB4c8745431",
+      "atBlock": "306456075",
+      "scanned": {
+        "loanIdsEnumerated": 13,
+        "totalLoansEverCreated": "13",
+        "loanIdRange": "1..13",
+        "intentSource": "getIntentCommit view (live state, history-independent)",
+        "intentSurfaceRouted": true,
+        "intentCorroboration": null
+      },
+      "classes": {
+        "vpfiHeldCustody": {
+          "status": "proven",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "rebateRows": {
+          "status": "proven",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "fallbackSnapshotCustody": {
+          "status": "proven",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "liveIntentCommits": {
+          "status": "proven",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        }
+      }
+    },
+    {
+      "chainSlug": "base-sepolia",
+      "chainId": 84532,
+      "diamond": "0xd89fd7F787e4415460b23891E97570a4881fb995",
+      "atBlock": "46517609",
+      "scanned": {
+        "loanIdsEnumerated": 21,
+        "totalLoansEverCreated": "21",
+        "loanIdRange": "1..21",
+        "intentSource": "getIntentCommit view (live state, history-independent)",
+        "intentSurfaceRouted": true,
+        "intentCorroboration": null
+      },
+      "classes": {
+        "vpfiHeldCustody": {
+          "status": "proven",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "rebateRows": {
+          "status": "proven",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "fallbackSnapshotCustody": {
+          "status": "proven",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "liveIntentCommits": {
+          "status": "proven",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        }
+      }
+    },
+    {
+      "chainSlug": "bnb-testnet",
+      "chainId": 97,
+      "diamond": "0x7D4BfD2CA7908Fb088300f29276bF5A2E4FfBAd2",
+      "atBlock": "129682242",
+      "scanned": {
+        "loanIdsEnumerated": 4,
+        "totalLoansEverCreated": "4",
+        "loanIdRange": "1..4",
+        "intentSource": "getIntentCommit view (live state, history-independent)",
+        "intentSurfaceRouted": true,
+        "intentCorroboration": null
+      },
+      "classes": {
+        "vpfiHeldCustody": {
+          "status": "proven",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "rebateRows": {
+          "status": "proven",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "fallbackSnapshotCustody": {
+          "status": "proven",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "liveIntentCommits": {
+          "status": "proven",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        }
+      }
+    },
+    {
+      "chainSlug": "op-sepolia",
+      "chainId": 11155420,
+      "diamond": "0x58824401F769b0A760b6CD98Af503Bd5ED648377",
+      "atBlock": "48500497",
+      "scanned": {
+        "loanIdsEnumerated": 33,
+        "totalLoansEverCreated": "33",
+        "loanIdRange": "1..33",
+        "intentSource": "not applicable — the intent surface is not routed on this Diamond, so no commit can exist",
+        "intentSurfaceRouted": false,
+        "intentCorroboration": null
+      },
+      "classes": {
+        "vpfiHeldCustody": {
+          "status": "proven",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "rebateRows": {
+          "status": "proven",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "fallbackSnapshotCustody": {
+          "status": "proven",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "liveIntentCommits": {
+          "status": "proven",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        }
+      }
+    },
+    {
+      "chainSlug": "sepolia",
+      "chainId": 11155111,
+      "diamond": "0x492f83F2Ab99B7b13E1F8CAf6fbAeB7300B85302",
+      "atBlock": "11655736",
+      "scanned": {
+        "loanIdsEnumerated": 0,
+        "totalLoansEverCreated": "0",
+        "loanIdRange": "none",
+        "intentSource": "not applicable — the intent surface is not routed on this Diamond, so no commit can exist",
+        "intentSurfaceRouted": false,
+        "intentCorroboration": null
+      },
+      "classes": {
+        "vpfiHeldCustody": {
+          "status": "proven",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "rebateRows": {
+          "status": "proven",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "fallbackSnapshotCustody": {
+          "status": "proven",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "liveIntentCommits": {
+          "status": "proven",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        }
+      }
+    }
+  ]
+}

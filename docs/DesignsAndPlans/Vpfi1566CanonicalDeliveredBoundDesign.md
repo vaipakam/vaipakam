@@ -4631,6 +4631,44 @@ re-run rather than trust: an empty result certifies the no-op, and a
 non-empty one is what carries the owner the shortfall question, with
 figures attached.
 
+**The census is `packages/contracts/scripts/census-grandfathered-custody.mjs`**
+and its artifact is `docs/DesignsAndPlans/census/grandfathered-custody-census.json`.
+Three properties are deliberate, and each closes a way the census could have
+reported a comfortable answer it had not earned:
+
+- **Class 3 is read from LIVE STATE, and its absence has two proofs.** The
+  primary read is `getIntentCommit`, the facet's own view: both teardown
+  paths `delete s.intentCommits`, and the view reverts `IntentNoCommit`
+  exactly when `commit.orderHash == 0`, so that revert IS the proof of
+  absence — while any OTHER revert propagates rather than being read as an
+  empty row. Before that, the loupe is asked whether the intent selector is
+  routed on the Diamond at all: an unrouted surface cannot have produced a
+  commit, which settles the class without touching a single loan. Both proofs
+  are history-INDEPENDENT, which is what makes them usable — public nodes
+  prune, and an earlier revision of this census reconstructed the class from
+  the event lifecycle and was left unable to answer on a pruned endpoint.
+  Hand-computed storage slots were never an option: they fail SILENTLY as
+  zero, manufacturing the exact "empty" result the census exists to
+  establish. The event reconstruction is retained behind `--corroborate` as
+  an independent second source.
+- **Scanning nothing is a HARD ERROR**, and "could not determine" is never
+  recorded as "empty". If the chain reports loans ever created and
+  enumeration returns none, or the enumerated count disagrees with
+  pagination's own total, the run fails; and any class the endpoint could not
+  establish is marked `indeterminate`, which blocks the empty verdict rather
+  than passing as a zero.
+- **An empty result is only trusted once the machinery has been shown to
+  DISCRIMINATE.** An all-zero census is indistinguishable from a broken one
+  by inspection, so each read path was made to produce a non-empty answer:
+  the identical log path returned 21 `LoanInitiated` events against 21
+  enumerated loan ids on Base Sepolia; the per-loan view calls resolved for
+  every enumerated id; the loupe probe reports `routed=true` on the three
+  chains that cut the facet and `routed=false` on the two that do not,
+  matching their deployment artifacts; and the revert classifier was shown to
+  distinguish `IntentNoCommit` from `FunctionDoesNotExist` — it surfaced the
+  latter as a failure on op-sepolia rather than silently counting it as an
+  absent commit.
+
 **Only after the census does slice sequencing begin.** Closure 3's RESOLVER
 is independent and small and can land early — but its
 **canonical matrix cells cannot land before slice 4**, and an earlier revision
