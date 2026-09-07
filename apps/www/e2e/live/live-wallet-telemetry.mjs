@@ -57,9 +57,11 @@
  *   node apps/www/e2e/live/live-wallet-telemetry.mjs \
  *     <deployed-app-origin>/
  *
- * Pass the app deployment you want checked. `app.vaipakam.com` is the
- * intended host but is NOT bound yet (#1854), so today that means the
- * workers.dev URL `pnpm run deploy` prints for `vaipakam-app`.
+ * Pass the app deployment you want checked. `app.vaipakam.com` IS bound
+ * and serves `vaipakam-app`, but pass the workers.dev URL
+ * `pnpm run deploy` prints unless you have confirmed the domain serves
+ * the same build — a deploy reaches workers.dev first and the domain can
+ * lag, so the domain may answer for an older version (#1854).
  *
  * From the agent container, add the two launch overrides and the
  * host-side setup described in this directory's README:

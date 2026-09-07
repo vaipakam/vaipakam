@@ -32,8 +32,9 @@ Apply schema changes with `wrangler d1 migrations apply vaipakam-archive
 > current. The heading used to assert that every Worker served a
 > placeholder 503, which was true at provisioning and is not true now:
 > `vaipakam.com`, `defi.vaipakam.com` and `indexer.vaipakam.com` all
-> answer **200**. `app.vaipakam.com` does not resolve at all — it is not
-> bound.
+> answer **200**. `app.vaipakam.com` did not resolve at all at the time
+> of that check — it was not bound. **Superseded 2026-09-07: it IS bound
+> now and answers 200**, serving `vaipakam-app`.
 >
 > **`agent.vaipakam.com` answers 403 to an ordinary probe, and that is
 > correct.** `apps/agent/src/index.ts:258` gates every frontend-facing
@@ -52,10 +53,11 @@ Apply schema changes with `wrangler d1 migrations apply vaipakam-archive
 > without an Origin header and concluding the Worker was unreachable.
 >
 > **Reconciled for #1854.** The dApp Worker is
-> now `vaipakam-app`, built from `apps/app`; its intended hostname is
-> `app.vaipakam.com` but that binding does NOT exist yet, so the Worker is
-> reachable only on its emitted `workers.dev` URL
-> (`@vaipakam/app`).
+> now `vaipakam-app`, built from `apps/app`; its hostname is
+> `app.vaipakam.com`. **Superseded 2026-09-07: that binding EXISTS** —
+> the host serves this Worker. The emitted `workers.dev` URL
+> (`@vaipakam/app`) is still the post-deploy review target, because a
+> deploy reaches it before the custom domain does.
 >
 > **RE-VERIFIED 2026-08-27** against the account's Workers custom-domain
 > inventory — the check this banner used to defer to an operator. The

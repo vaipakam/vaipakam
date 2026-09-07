@@ -53,9 +53,10 @@ positional arguments instead, because it checks several apps in one run and
 a single environment variable cannot express that:
 
 ```bash
-# Pass the app deployment to check. `app.vaipakam.com` is the intended
-# host but is not bound yet (#1854) — use the workers.dev URL the app's
-# `pnpm run deploy` prints until it is.
+# Pass the app deployment to check. `app.vaipakam.com` IS bound and
+# serves vaipakam-app, but use the workers.dev URL the app's
+# `pnpm run deploy` prints unless you have confirmed the domain serves
+# the same build — a deploy reaches workers.dev first (#1854).
 node apps/www/e2e/live/live-wallet-telemetry.mjs <deployed-app-origin>/
 ```
 
