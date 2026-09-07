@@ -1333,7 +1333,7 @@ function isHelpInvocation(cmd) {
  * Worker's directory could bless an upload through a DIFFERENT file than the
  * one selected (#1995 r22).
  */
-function commandIsSafe(cmd, scopeHint = null, cmdCwd = '', fileText = '', fileAt = null) {
+function commandIsSafe(cmd, scopeHint = null, cmdCwd = '', fileText = '', fileAt = null, shellish = true) {
   if (isHelpInvocation(cmd)) return true;
   // `run deploy` gets the same option-value strip the flags do: it was a raw
   // substring test, so `--message="run deploy"` blessed a bare deploy that
@@ -1656,7 +1656,7 @@ function commandIsSafe(cmd, scopeHint = null, cmdCwd = '', fileText = '', fileAt
         // stands, which this one does not.
         if (
           cfgName !== null &&
-          configIsRewritten(fileText, cfgName, fileAt)
+          configIsRewritten(fileText, cfgName, fileAt, shellish)
         ) {
           continue;
         }
@@ -3260,7 +3260,7 @@ function lineStartOffset(text, lineNo, within = null) {
  * the identity goes UNREAD — the inversion's case, which reports — so the
  * conservative direction is the cheap one.
  */
-function configIsRewritten(text, cfgPath, at = null) {
+function configIsRewritten(text, cfgPath, at = null, shellish = true) {
   const base = cfgPath.slice(cfgPath.lastIndexOf('/') + 1);
   if (!base) return false;
   const esc = base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -3337,32 +3337,46 @@ function configIsRewritten(text, cfgPath, at = null) {
     // Python ones (r8). Redirections likewise: the direct form is already a
     // write above, and `printf '{}' > "$CFG"` is the same write through a
     // binding (r8).
+    // A CLOSED, BOUNDED SET, written to be robust at its edges rather than
+    // extended at them. Every r10 finding was one of these entries spelled
+    // more fully — a dotted qualifier, an IO-number prefix, a path-qualified
+    // command — not a new kind of write, so they are handled by making the
+    // existing entries exact instead of by lengthening the list.
     const ANY_WRITE = new RegExp(
-      String.raw`(?:writeFile(?:Sync)?|appendFile(?:Sync)?|createWriteStream` +
+      // A word boundary that admits MEMBER ACCESS but not a suffix. Consuming
+      // the preceding character and excluding `.` blocked
+      // `require("fs").writeFileSync(...)` (found re-running the suite), while
+      // a plain `\b` let `os.remove(` match `move` and `copy.deepcopy(` match
+      // `copy` — both reported a config nothing had touched (r10). The
+      // lookbehind rejects only an identifier character, so `.cp(` is a call
+      // and `remove(` is not.
+      String.raw`(?<![A-Za-z0-9_$])` +
+        String.raw`(?:writeFile(?:Sync)?|appendFile(?:Sync)?|createWriteStream` +
         String.raw`|outputFile(?:Sync)?|write_text|write_bytes` +
-        String.raw`|copyFile(?:Sync)?|cpSync|rename(?:Sync)?|copy|move` +
-        // Node exposes the async `cp` as well as `cpSync`; `fs.cp(...)` and
-        // `fs.promises.cp(...)` overwrite just the same (r9).
-        String.raw`|(?:^|[^A-Za-z0-9_$.])(?:fs\.|fsp\.|promises\.)?cp` +
-        String.raw`|shutil\.(?:copyfile|copy2?|copytree|move))\s*\(` +
-        String.raw`|(?:^|[\s;&|(])(?:cp|mv|install|rsync|tee)\s` +
+        String.raw`|copyFile(?:Sync)?|cpSync|cp|rename(?:Sync)?|copy|move` +
+        String.raw`|copyfile|copy2|copytree)\s*\(` +
+        // Shell write commands, optionally reached through a path.
+        String.raw`|(?:^|[\s;&|(])(?:[\w./-]*/)?(?:cp|mv|install|rsync|tee)\s` +
         // A REDIRECTION, not every `>`. The bare alternative also matched the
         // arrow in `=>` and the comparison in `2 > 1`, and since the deploy's
         // own `--config` already satisfies the name test, any such operator
         // reported a config that was never touched (Codex #2066 r9). A
         // redirection sits at a command boundary and is followed by a target.
-        // …and its TARGET is a path or a variable. Allowing a bare word after
-        // `>` still matched the comparison in `2 > 1` (r9, and my own probe
-        // missed it by only testing that form on a flagged deploy). The
-        // directly-named redirection is already covered above; what this
-        // alternative is for is the write through a BINDING, which is spelled
-        // `> "$CFG"`, `> $CFG` or `> /path`.
-        String.raw`|(?:^|[\s;&|)])>{1,2}\s*["'$~/.]` +
+        // …and its TARGET is a path or a variable, with the IO-number prefix
+        // shells allow (`2>"$CFG"`). Only in SHELL text: whitespace is not a
+        // command boundary in JavaScript, so `if (value > "$CFG")` matched
+        // here and reported a config nothing had touched (r9 narrowed this
+        // once and r10 showed the narrowing was still language-blind). The
+        // directly-named redirection is covered above; this alternative exists
+        // for the write through a BINDING.
+        (shellish ? String.raw`|(?:^|[\s;&|)])\d*>{1,2}\s*["'$~/.]` : '') +
         String.raw`|\.\s*open\s*\(\s*(?:mode\s*=\s*)?` + Q + String.raw`[rbt]*[wax+]` +
         // `mode=` may come FIRST: Python accepts `open(mode="w", file=cfg)`,
         // and requiring it after a comma missed that ordering (r9).
-        String.raw`|\bopen\s*\(\s*(?:[^()]*,\s*)?mode\s*=\s*` + Q + String.raw`[rbt]*[wax+]` +
-        String.raw`|\bopen\s*\([^)]*,\s*` + Q + String.raw`[rbt]*[wax+]`,
+        String.raw`|\bopen\s*\(\s*(?:(?:[^()]|\([^()]*\))*,\s*)?mode\s*=\s*` + Q + String.raw`[rbt]*[wax+]` +
+        // `open(Path(cfg), "w")` wraps the path, and stopping at the first
+        // `)` never reached the positional mode (r10).
+        String.raw`|\bopen\s*\((?:[^()]|\([^()]*\))*,\s*` + Q + String.raw`[rbt]*[wax+]`,
       'gm',
     );
     // NO ORDERING BETWEEN THE NAME AND THE WRITE. Requiring the write to come
@@ -3390,6 +3404,16 @@ function configIsRewritten(text, cfgPath, at = null) {
   // file deploying safely, rewriting, then deploying again made the SECOND
   // selection satisfy the ordering for the FIRST deploy, and reported a command
   // that runs before the rewrite (#2036 r20).
+  // REFUTED, r10: "count writes evaluated inside deploy arguments". A write in
+  // the deploy's own argument list — `spawnSync("wrangler", [...],
+  // (writeFileSync(cfg, "{}"), {}))` — does run first, and its lexical offset
+  // is later, so this comparison misses it. Extending the bound to the end of
+  // the deploy's LINE was tried and breaks a pinned behaviour: a rewrite AFTER
+  // a deploy on the same line must not invalidate it
+  // (`wrangler deploy --config side.jsonc; echo … > side.jsonc`, r26).
+  // Separating the two means knowing where the deploy's call ENDS, which is
+  // the extent-finding this reader does not do. The pinned false-red case
+  // outranks the contrived false-green one.
   if (at !== null) return writes.some((w) => w < at);
   const uses = [
     ...text.matchAll(
@@ -4701,7 +4725,7 @@ function selectorScope(seg, states, hasCwdState = true, vars = null, fileText = 
       // A config the surrounding file REWRITES before the deploy is not the
       // file wrangler will load, so the checkout's copy answers nothing
       // (#2036 r13). Unread reaches the inversion, which reports.
-      const read = configIsRewritten(fileText ?? '', cfg, fileAt)
+      const read = configIsRewritten(fileText ?? '', cfg, fileAt, isShellFile(rel, fileText ?? ''))
         ? null
         : declaredWorkerNames(`${REPO_ROOT}/${rel}`, envSelected, envName);
       const declared = read === null ? null : read.names;
@@ -7573,6 +7597,9 @@ for (const file of walk(REPO_ROOT)) {
   // tests that follow. Not for scoring: the concatenation is a JavaScript fact,
   // and rewriting a line before `commandIsSafe` reads it would put text in
   // front of the safety predicate that the file does not contain.
+  // Shell semantics apply to SHELL files. A redirection is a redirection in
+  // shell text; in JavaScript the same character is a comparison (#2066 r10).
+  const fileIsShell = Boolean(winInterp) || isShellFile(rel, text);
   const foldedText = foldStringConcat(text);
   const folded = winInterp || isShellFile(rel, text)
     ? logicalLines(text)
@@ -7866,7 +7893,14 @@ for (const file of walk(REPO_ROOT)) {
         // negation.
         const aliased = resolveRunAlias(seg, packageContextOf(rel));
         if (
-          commandIsSafe(aliased ?? seg, safeHint, '', text, lineStartOffset(text, lineNo, part.start)) ||
+          commandIsSafe(
+            aliased ?? seg,
+            safeHint,
+            '',
+            text,
+            lineStartOffset(text, lineNo, part.start),
+            fileIsShell,
+          ) ||
           (aliased === null &&
             commandIsSafe(
               expandCommandVars(seg, fileVars),
@@ -8617,7 +8651,7 @@ for (const file of walk(REPO_ROOT)) {
         const atInFile = lineStartOffset(text, lineNo, part.start);
         const safeEverywhere = (text) =>
           cmdCwds.every((cwd) =>
-            commandIsSafe(text, safeHint, cwd, fileTextForSafety, atInFile),
+            commandIsSafe(text, safeHint, cwd, fileTextForSafety, atInFile, fileIsShell),
           );
         if (
           safeEverywhere(aliased ?? seg) ||

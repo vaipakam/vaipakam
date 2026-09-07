@@ -8883,13 +8883,19 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(r.ok).toBe(false);
   });
 
-  it('a config NAMED and then written through a variable is a rewrite (#2052)', () => {
+  it('a config named then written via a bound path is a rewrite (#2052)', () => {
     // Every other pattern here needs the name AT the write, which a binding
-    // removes: the ordinary pathlib spelling named the file once and wrote
-    // through `p`, so the rewrite was blessed.
+    // removes: the ordinary pathlib spelling names the file once and writes
+    // through `p`.
+    //
+    // One assertion per test, deliberately. `runWith` scans the whole
+    // temporary root and `beforeEach` resets it once per `it`, so a second
+    // failing case in the same test keeps the guard failing and the later
+    // assertion passes even if its own detection is broken (#2066 r10) — a
+    // trap this PR fell into twice before it was named.
     seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
     seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
-    const py = runWith(
+    const r = runWith(
       'r.py',
       'from pathlib import Path\n' +
         'import subprocess\n' +
@@ -8897,28 +8903,32 @@ describe('check-deploy-invocations — #1996 config identity', () => {
         'p.write_text("{}")\n' +
         'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
     );
-    expect(py.ok).toBe(false);
+    expect(r.ok).toBe(false);
+  });
 
+  it('a config named then passed to writeFileSync is a rewrite (#2052)', () => {
     seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
     seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
-    const js = runWith(
+    const r = runWith(
       'r.mjs',
       'const cfg = "configs/custom.jsonc";\n' +
         'writeFileSync(cfg, "{}");\n' +
         'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
     );
-    expect(js.ok).toBe(false);
+    expect(r.ok).toBe(false);
+  });
 
+  it('a config named then opened for writing is a rewrite (#2052)', () => {
     seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
     seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
-    const mode = runWith(
+    const r = runWith(
       'r2.py',
       'import subprocess\n' +
         'cfg = "configs/custom.jsonc"\n' +
         'open(cfg, "w").write("{}")\n' +
         'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
     );
-    expect(mode.ok).toBe(false);
+    expect(r.ok).toBe(false);
   });
 
   it('naming the config and only READING it is not a rewrite (#2052)', () => {
@@ -9106,27 +9116,110 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(teed.ok).toBe(false);
   });
 
-  it('an arrow or comparison is not a redirection (#2066 r9)', () => {
+  it('an arrow is not a redirection (#2066 r9)', () => {
     // The deploy's own `--config` satisfies the name test, so a bare `>`
-    // alternative reported a config nothing had touched. A redirection sits
-    // at a command boundary and is followed by a target.
+    // alternative reported a config nothing had touched.
     seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
     seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
-    const arrow = runWith(
+    const r = runWith(
       'arrow.mjs',
       'const pick = (a) => a;\n' +
         'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
     );
-    expect(arrow.ok).toBe(true);
+    expect(r.ok).toBe(true);
+  });
 
+  it('a comparison is not a redirection (#2066 r9)', () => {
     seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
     seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
-    const cmp = runWith(
+    const r = runWith(
       'cmp.mjs',
       'if (2 > 1) { log("x"); }\n' +
         'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
     );
-    expect(cmp.ok).toBe(true);
+    expect(r.ok).toBe(true);
+  });
+
+  it('a JavaScript comparison with a quoted target is not a redirection (#2066 r10)', () => {
+    // Whitespace is not a command boundary outside shell text.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'q.mjs',
+      'if (value > "$CFG") { log(1); }\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a dotted qualifier still reaches the write verb (#2066 r10)', () => {
+    // `fs.promises.cp(...)` and `require("fs").writeFileSync(...)` are both
+    // member calls; the boundary must admit `.` while still refusing a
+    // suffix.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'a.mjs',
+      'const cfg = "configs/custom.jsonc";\n' +
+        'await fs.promises.cp("generated.jsonc", cfg);\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a suffix is not a write verb (#2066 r10)', () => {
+    // `os.remove(` ends in `move` and `copy.deepcopy(` in `copy`; neither
+    // touches a file this guard cares about.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'g.py',
+      'import copy, os, subprocess\n' +
+        'v = copy.deepcopy({})\n' +
+        'os.remove("/tmp/x")\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a descriptor-prefixed redirection is a write (#2066 r10)', () => {
+    // `printf ignored 2>"$CFG"` truncates the bound path.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'b.sh',
+      'CFG=configs/custom.jsonc\n' +
+        'printf ignored 2>"$CFG"\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a path-qualified shell write command is a write (#2066 r10)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'd.sh',
+      'CFG=configs/custom.jsonc\n' +
+        'printf "{}" | /usr/bin/tee "$CFG"\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a nested expression in open() still reaches the mode (#2066 r10)', () => {
+    // `open(Path(cfg), "w")` — the first `)` is not the call's.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'c.py',
+      'from pathlib import Path\n' +
+        'import subprocess\n' +
+        'cfg = "configs/custom.jsonc"\n' +
+        'open(Path(cfg), "w").write("{}")\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(false);
   });
 
   it('the PROSE path invalidates a rewritten config too', () => {
