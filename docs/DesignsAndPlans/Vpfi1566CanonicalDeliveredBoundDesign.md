@@ -4825,12 +4825,27 @@ rounding it to zero.
 
 **The refusal was then confirmed independently, and the confirmation is the
 part worth keeping.** Archive `eth_getCode` probes bound the Diamond's creation
-to a ~27k-block window: no code at the artifact's recorded `deployBlock`
-(43,137,050), code present by 43,164,017. So the scan's lower bound was
-*valid* — the contract genuinely did not exist before it — and the range was
-not the problem. Querying the public endpoint for **any** log from that address
-across the whole creation window returns **zero**, with no error, even though
-the contract demonstrably came into existence inside it.
+to `(43,137,050, 43,150,533]`: **no code at the artifact's recorded
+`deployBlock`** (43,137,050), code present by 43,150,533. So the scan's lower
+bound was *valid* — the contract genuinely did not exist before it — and the
+range was not the problem. Querying the public endpoint for **any** log from
+that address across the whole creation window returns **zero**, with no error,
+even though the contract demonstrably came into existence inside it.
+
+⚠️ **Separately: `contracts/deployments/op-sepolia/addresses.json` carries a
+`deployBlock` at which the Diamond has no code.** That is a data defect in its
+own right — every history scan keyed to it starts from a block the contract did
+not exist at, and a value wrong in the other direction would silently *truncate*
+a scan instead. It did not cause this indeterminate (the value happens to be a
+valid lower bound), but it must not be trusted as ground truth. **Operator
+action: correct the artifact from the true creation block**, which a bisection
+against an archive endpoint pins exactly.
+
+The scanning machinery itself was audited and cleared: `fetchRange` surfaces a
+pruned range, retries a rate limit with backoff and then throws, and narrows an
+unknown refusal to a single block before throwing — there is no path that
+swallows a failure into a short result. The zero really was a successful,
+empty answer.
 
 So that endpoint prunes receipts as well as state and reports the gap as
 **emptiness rather than as failure**. There is no error to catch and no
