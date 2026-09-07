@@ -1,17 +1,29 @@
 ## Thread — the links that could move, moved; the claims that had gone stale, went
 
-`app.vaipakam.com` is bound and serving the connected app. Three places
-in the tree still said it was not, and that stale premise had been
-load-bearing: it was the stated reason the user-guide recovery links, the
-indexer's API catalog and the AI-crawler surface all still advertised the
-legacy `defi.vaipakam.com` host. Those three link surfaces now point at
-`app.vaipakam.com`, and the claims that held them back are corrected.
+`app.vaipakam.com` is bound and serving the connected app. Seven places
+in the tree still said it was not — including the authoritative
+hostname→Worker table in the deployment runbook — and that stale premise
+had been load-bearing: it was the stated reason the user-guide recovery
+links, the indexer's API catalog and the AI-crawler surface all still
+advertised the legacy `defi.vaipakam.com` host. Every one of those claims
+is now corrected.
+
+**Two of those three link surfaces moved; the recovery links did not.**
+The indexer's API catalog and the AI-crawler pointer now advertise
+`app.vaipakam.com`. The ten localized recovery links deliberately stay on
+the legacy host — the safety-sensitive part of this cutover has NOT
+happened, and the next section is why.
 
 What moved is narrower than it first looks, and the reason is worth
 keeping. The two automated-consumer pointers at the app home moved. The
-ten localized user-guide recovery links did **not**, and are now
-explicitly coupled to the legacy host being retired rather than to the
-new one coming up. `/recover` is the one flow carrying durable
+ten localized user-guide recovery links did **not**, and are now coupled
+to a condition rather than to the new host coming up: that no legacy
+attempt can still be in flight — every pending marker and signed
+deadline on that origin drained and the legacy flow disabled, or a real
+cross-origin handoff built. Note that redirecting the legacy host does
+NOT satisfy this, which is a correction to a first draft of the same
+note: a redirect lands the user on the new origin, which still cannot
+read the old one's storage. `/recover` is the one flow carrying durable
 per-origin safety state: the pending-recovery marker lives in browser
 storage, which is same-origin, and that pending card is the only safe
 landing for a broadcast whose receipt could not be read. A user

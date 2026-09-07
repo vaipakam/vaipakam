@@ -74,10 +74,22 @@
  *      The risk is asymmetric, which is what settles the ordering: a
  *      fresh user sent to the still-served legacy host loses nothing,
  *      while a mid-recovery user sent to the new one can lose real
- *      value. So these links are coupled to `defi.vaipakam.com` actually
- *      going away (or redirecting), not to `app.vaipakam.com` coming up.
- *      Confirming `/recover` RENDERS on the new host — it does — is not
- *      evidence of state continuity, and must not be read as it.
+ *      value. Confirming `/recover` RENDERS on the new host — it does —
+ *      is not evidence of state continuity, and must not be read as it.
+ *
+ *      REDIRECTING THE LEGACY HOST IS NOT THE CONDITION EITHER, and an
+ *      earlier revision of this note wrongly said it was. A redirect
+ *      lands the user on the new origin, which still cannot read the old
+ *      origin's storage — the identical blank form, the identical second
+ *      broadcast. Two recoveries racing the same nonce means whichever
+ *      mines first decides what executes and the other reverts having
+ *      spent gas.
+ *
+ *      The condition is that no legacy attempt can still be in flight:
+ *      every pending marker and every signed deadline on that origin has
+ *      DRAINED and the legacy recovery flow is DISABLED — or a real
+ *      cross-origin handoff exists. Host retirement is what that permits,
+ *      not what proves it.
  *   5. Move the agent's `FRONTEND_ORIGIN` entry zero to the app host,
  *      together with the Frame paths in `frames.ts` — that CSV's first
  *      entry and those paths are the same coupling this file models.
