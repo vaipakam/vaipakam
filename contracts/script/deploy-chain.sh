@@ -1213,8 +1213,11 @@ elif [ "$SKIP_APP" = "0" ]; then
   address-changing deploy as reaching the repository and this Worker
   only.
 
-  Cutover blockers: #1961 (ToS gate), #1960 (Data Rights), #1959
-  (Analytics + Protocol Console not ported).
+  Cutover blocker: the VPFI deposit anchor on the app's Vpfi page,
+  which the marketing CTA's landing position depends on. (#1961 ToS
+  gate and #1960 Data Rights are both CLEARED. #1959 — Analytics and
+  Protocol Console not ported — does NOT block APP_TARGET; those links
+  bypass it. It does block retiring defi.vaipakam.com.)
   Full sequence: the cutover checklist in apps/www/src/lib/appUrl.ts and
   the hostname map in docs/ops/DeploymentRunbook.md.
   ─────────────────────────────────────────────────────────────────────

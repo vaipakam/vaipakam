@@ -328,14 +328,22 @@ NO secrets — the frontend bundle is static.
   TG_BOT_USERNAME=<staging bot @-handle>
   # Entry ZERO is the Frame / notification link host (frames.ts and
   # periodicPreNotify.ts read split(',')[0]), so it must be a host that
-  # SERVES those paths. It is `defi.` until `app.vaipakam.com` is bound
-  # (#1854). Keep this in lockstep with apps/agent/wrangler.jsonc, which
+  # SERVES those paths. It is `defi.` — and NOT because
+  # `app.vaipakam.com` is unbound, which it no longer is. Entry zero and
+  # the frames.ts paths are ONE decision (legacy serves `/app` and
+  # `/nft-verifier`, the new host `/` and `/nft`), so moving entry zero
+  # alone points notification deep links at paths the new host does not
+  # serve. Do not move it here; that paired change is deferred to its own
+  # review. Keep this in lockstep with apps/agent/wrangler.jsonc, which
   # is authoritative — and keep every still-live origin listed, or their
   # sites' agent calls fail CORS.
-  # The trailing `workers.dev` entry is the #1854 review origin — the URL
-  # `cd apps/app && pnpm run deploy` prints, which is where the post-deploy
-  # live review runs until `app.vaipakam.com` is bound. Omitting it fails
-  # every agent call the review makes, on CORS.
+  # The trailing `workers.dev` entry is the POST-DEPLOY review origin —
+  # the URL `cd apps/app && pnpm run deploy` prints — and it is PERMANENT,
+  # not a stopgap until the domain is bound. A deploy reaches workers.dev
+  # before the custom domain does, so that URL stays the review target;
+  # step 7's smoke test targets it too. Omitting it fails every agent call
+  # the review makes, on CORS. Do NOT remove it on the grounds that
+  # `app.vaipakam.com` is now bound (#1854).
   FRONTEND_ORIGIN=https://defi.vaipakam.com,https://app.vaipakam.com,https://labs.vaipakam.com,https://www.vaipakam.com,https://vaipakam.com,https://alpha02.vaipakam.com,https://vaipakam-app.dawn-fire-139e.workers.dev
   DIAG_SAMPLE_RATE=1.0
   DIAG_RETENTION_DAYS=90
