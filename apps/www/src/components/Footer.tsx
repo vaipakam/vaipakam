@@ -2,7 +2,7 @@ import { L as Link } from './L';
 import { useTranslation } from 'react-i18next';
 import { useTheme } from '../context/ThemeContext';
 import { openConsentBanner } from '../lib/consent';
-import { appUrl, legacyToolUrl } from '../lib/appUrl';
+import { appUrl } from '../lib/appUrl';
 import './Footer.css';
 
 const GITHUB_URL = 'https://github.com/vaipakam';
@@ -27,13 +27,13 @@ export default function Footer() {
               }}
             />
             <p className="footer-tagline">{t('footer.tagline')}</p>
-            {/* Per-chain Diamond verify links live on `/analytics#transparency`,
-                which `apps/app` does NOT define — the link below therefore
-                uses `legacyToolUrl`, resolving to the deployment that still
-                serves it (#1959) — see
-                the "Smart Contracts" link in the Resources column. The
-                marketing footer is intentionally chain-agnostic so the
-                deployed-network set can change without a labs build. */}
+            {/* Per-chain Diamond verify links live on
+                `/analytics#transparency`, which `apps/app` now defines
+                (#1959), so this goes through `appUrl` and follows the
+                cutover like every other destination — see the "Smart
+                Contracts" link in the Resources column. The marketing
+                footer is intentionally chain-agnostic so the deployed
+                network set can change without a rebuild here. */}
           </div>
 
           <div className="footer-col">
@@ -52,14 +52,14 @@ export default function Footer() {
                 — see Navbar for the rationale. Plain `<a>` with
                 `target="_blank"` so the marketing tab stays open. */}
             <a
-              href={legacyToolUrl('/analytics#transparency')}
+              href={appUrl('analyticsTransparency')}
               target="_blank"
               rel="noopener noreferrer"
             >
               {t('footer.smartContracts')}
             </a>
             <a
-              href={legacyToolUrl('/protocol-console')}
+              href={appUrl('protocolConsole')}
               target="_blank"
               rel="noopener noreferrer"
             >

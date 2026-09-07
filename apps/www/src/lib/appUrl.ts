@@ -25,12 +25,15 @@
 /**
  * THE CUTOVER SWITCH — host and paths move together, on purpose.
  *
- * The rename landed before `app.vaipakam.com` served a
- * production-configured build, so these links still resolve to the
- * legacy host. The host is now bound and serving (step 2 below), so what
- * remains is a deliberate hold, not a missing prerequisite — see step 3.
- * That deferral is only half the problem, and the half
- * that is easy to miss: the two surfaces do not agree on paths. The
+ * THE CUTOVER IS DONE for every destination this helper builds:
+ * `APP_TARGET` now defaults to `'app'`, so all six resolve to
+ * `app.vaipakam.com`. The switch is KEPT rather than inlined, because
+ * the property it guarantees outlives the migration — the host and the
+ * route table can still only move as a pair, and a rollback is one
+ * constant rather than a hunt through call sites.
+ *
+ * The half that was easy to miss, and still is: the two surfaces do not
+ * agree on paths. The
  * verifier is `/nft-verifier` on the legacy app and `/nft` on the new
  * one; the VPFI vault is `/vpfi-vault` and `/vpfi`. Deferring the host
  * while leaving new-app paths in the call sites produces exactly the
@@ -52,9 +55,11 @@
  *      proves nothing. The bound host served the exact
  *      `/assets/index-*.js` hash a local `pnpm run deploy` had just
  *      produced. Check it that way if you need to re-confirm.
- *   3. Set `APP_TARGET` to `'app'` here. Still OPEN — blocked only by
- *      step 7 below (the Vpfi deposit anchor), since flipping without it
- *      regresses the marketing CTA's promised landing position.
+ *   3. DONE — `APP_TARGET` defaults to `'app'`. The sense of the
+ *      override is INVERTED with it: `VITE_APP_TARGET=legacy` now opts
+ *      OUT. That direction matters — an unset or typo'd value must land
+ *      on the surface users are meant to be on, and after the flip that
+ *      is the app.
  *   4. Repoint the hard-coded recovery links in the ten
  *      `src/content/userguide/Advanced.*.md` files, which cannot call
  *      this helper — markdown has no access to it, so they are moved by
@@ -96,9 +101,11 @@
  *   6. DONE — the discovery links in `apps/indexer/src/apiIndex.ts` and
  *      `apps/www/scripts/generate-llms.mjs`, which automated consumers
  *      read, now advertise `app.vaipakam.com`.
- *   7. Give the app's Vpfi page a deposit anchor equivalent to the
- *      legacy `#step-2`, then add it to the `app` route above — the
- *      marketing CTA promises that landing position.
+ *   7. DONE — the app's Vpfi page carries `id="deposit"` on its first
+ *      actionable deposit card, and the `app` route above resolves
+ *      `vpfiVault` to `/vpfi#deposit`. The legacy name `step-2` was an
+ *      artifact of a card that rendered as "Step 1"; the new id says
+ *      what it is.
  *
  * BLOCKERS — do not flip while any of these is open:
  *   - #1961 — CLEARED. `apps/app` now gates every routed surface on the
@@ -114,14 +121,17 @@
  *     what the app keeps (preferences, alert settings, notification
  *     cursors, pending transactions, diagnostics). The app now carries
  *     its own.
- *   - #1959: Analytics and the Protocol Console are not ported, which is
- *     why `legacyToolUrl` below exists. This does NOT block `APP_TARGET`
- *     — those two links do not travel through `appUrl` — but it does
- *     block retiring `defi.vaipakam.com`. See the note on
- *     `legacyToolUrl`.
+ *   - #1959 — CLEARED. `apps/app` now serves both `/analytics` (with the
+ *     `#transparency` section the footer deep-links) and
+ *     `/protocol-console`, so `legacyToolUrl` is deleted and all six
+ *     destinations travel through `appUrl`. This was the last thing
+ *     keeping `defi.vaipakam.com` alive for LINK reasons.
  *
- * Steps 4-7 are the ones that get forgotten; they are listed here because
- * this file is where somebody will be standing when they do step 3.
+ * WHAT REMAINS: steps 4 and 5. Step 4 (the ten `/recover` guide links)
+ * is NOT unblocked by the port — it turns on cross-origin pending state,
+ * not on a missing route, and a redirect does not satisfy it either.
+ * Step 5 (the agent's `FRONTEND_ORIGIN` entry zero) is coupled to the
+ * `frames.ts` paths and changes live notification deep links.
  */
 type AppTarget = 'legacy' | 'app';
 
@@ -135,15 +145,15 @@ type AppTarget = 'legacy' | 'app';
  * host/path drift this helper exists to prevent, reintroduced through
  * the dev path.
  *
- * Anything other than 'app' reads as 'legacy'. That default is no longer
- * about one host being unserved — BOTH are served now. It is the safe
- * side of the remaining hold: legacy is where the cutover checklist says
- * users still belong until the Vpfi deposit anchor lands, so an unset or
- * typo'd value falls back to the intended destination rather than
- * completing the cutover by accident.
+ * Anything other than 'legacy' reads as 'app'. The sense is INVERTED
+ * from the pre-cutover version, and deliberately so: an unset or typo'd
+ * value must land on the surface users are meant to be on, and that is
+ * now the app. Before the flip the same reasoning pointed the other way.
+ * `VITE_APP_TARGET=legacy` is the explicit opt-out, kept so a rollback
+ * needs no code change.
  */
 const APP_TARGET: AppTarget =
-  import.meta.env.VITE_APP_TARGET === 'app' ? 'app' : 'legacy';
+  import.meta.env.VITE_APP_TARGET === 'legacy' ? 'legacy' : 'app';
 
 /** Per-surface routes. Same destinations, different paths. */
 // Entries carry any FRAGMENT too, because the anchor is part of the
@@ -155,12 +165,34 @@ const APP_TARGET: AppTarget =
 // anchor yet — give it one before switching `vpfiVault` to the app
 // target, or that CTA regresses at the cutover.
 const ROUTES: Record<AppTarget, Record<AppDestination, string>> = {
-  legacy: { home: '/', nftVerifier: '/nft-verifier', vpfiVault: '/vpfi-vault#step-2' },
-  app: { home: '/', nftVerifier: '/nft', vpfiVault: '/vpfi' },
+  legacy: {
+    home: '/',
+    nftVerifier: '/nft-verifier',
+    vpfiVault: '/vpfi-vault#step-2',
+    analytics: '/analytics',
+    analyticsTransparency: '/analytics#transparency',
+    protocolConsole: '/protocol-console',
+  },
+  app: {
+    home: '/',
+    nftVerifier: '/nft',
+    // The app's deposit card carries `id="deposit"`; the legacy name
+    // `step-2` was an artifact of a card that rendered as "Step 1".
+    vpfiVault: '/vpfi#deposit',
+    analytics: '/analytics',
+    analyticsTransparency: '/analytics#transparency',
+    protocolConsole: '/protocol-console',
+  },
 };
 
 /** Where a link can point. Add a member here, not a raw path at a call site. */
-export type AppDestination = 'home' | 'nftVerifier' | 'vpfiVault';
+export type AppDestination =
+  | 'home'
+  | 'nftVerifier'
+  | 'vpfiVault'
+  | 'analytics'
+  | 'analyticsTransparency'
+  | 'protocolConsole';
 
 const DEFAULT_HOST =
   APP_TARGET === 'app' ? 'https://app.vaipakam.com' : 'https://defi.vaipakam.com';
@@ -176,36 +208,26 @@ export function appUrl(destination: AppDestination): string {
   return `${APP_URL}${ROUTES[APP_TARGET][destination]}`;
 }
 
-/**
- * Link builder for the public-read tools that have NOT been ported to
- * the connected app yet — currently Analytics and the Protocol Console.
+/*
+ * `legacyToolUrl` USED TO LIVE HERE, and its removal is the point.
  *
- * #1854 renamed the connected app and rehomed it, but it did not port
- * every surface the retired one served: `apps/app` defines no
- * `/analytics` and no `/protocol-console` route, so pointing these
- * links at the new host lands users on the app's in-shell NotFound
- * page. They keep resolving to the legacy surface, which still serves
- * them, until the tools are ported.
+ * It existed for the two surfaces #1854 rehomed but did not port —
+ * Analytics and the Protocol Console — pinning their links to the one
+ * deployment that served them while every other destination followed
+ * `APP_TARGET`. Its own docstring said it existed to be removed rather
+ * than to become a second permanent surface. Both tools are now ported
+ * (#1959), so it is gone and all six destinations move together.
  *
- * Two consequences worth stating plainly, because they are easy to get
- * wrong later:
+ * That was also the last thing keeping `defi.vaipakam.com` alive: it can
+ * now be retired or redirected as far as THESE links are concerned.
  *
- *  - `defi.vaipakam.com` CANNOT be retired — or blanket-redirected to
- *    `app.vaipakam.com` — while it is the only host serving these two
- *    tools. Port them first, then retire.
- *  - When they are ported, delete this helper and move the call sites
- *    back to `appUrl`. It exists to be removed, not to become a second
- *    permanent surface.
- *
- * The NFT Verifier is deliberately NOT here: it WAS ported, so its
- * links use `appUrl('nftVerifier')`, which resolves to `/nft-verifier`
- * or `/nft` depending on the cutover target above.
+ * ONE EXCEPTION, and it is not about links. The ten user-guide
+ * `/recover` links still point at the legacy host, and repointing them
+ * is NOT unblocked by this change. `/recover` carries durable
+ * per-origin browser state — the pending-recovery marker — and a user
+ * mid-recovery who follows a repointed link arrives where that marker
+ * cannot be read, meets a blank form, and can broadcast a SECOND
+ * recovery racing the first. A redirect does not help: it lands on the
+ * new origin, which still cannot read the old one's storage. Those links
+ * move only when no legacy attempt can still be in flight. See step 4.
  */
-const LEGACY_TOOL_URL = (
-  import.meta.env.VITE_LEGACY_TOOL_URL ?? 'https://defi.vaipakam.com'
-).replace(/\/$/, '');
-
-export function legacyToolUrl(path: string): string {
-  const normalised = path.startsWith('/') ? path : `/${path}`;
-  return `${LEGACY_TOOL_URL}${normalised}`;
-}

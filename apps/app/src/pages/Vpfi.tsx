@@ -477,7 +477,21 @@ export function Vpfi() {
       </div>
 
       {!isConnected ? (
-        <div className="card" style={{ textAlign: 'center' }}>
+        // THE SAME DEEP-LINK TARGET, in the disconnected state.
+        //
+        // The marketing CTA links to `/vpfi#deposit`, and most arrivals
+        // from it have no wallet — so if this id existed only on the
+        // deposit card below, the fragment would resolve to nothing for
+        // the majority of the people it was built for, silently leaving
+        // them at the top of an educational page. That is precisely the
+        // regression the cutover note warned about, reintroduced by
+        // anchoring only the connected branch.
+        //
+        // The two branches are mutually exclusive, so exactly one
+        // element carries the id at a time and the document stays valid.
+        // For a disconnected visitor the connect prompt IS the first
+        // actionable step toward depositing, so it is the honest target.
+        <div className="card" id="deposit" style={{ textAlign: 'center' }}>
           <p className="muted">{copy.wallet.connectFirst}</p>
           <button type="button" className="btn btn-primary" onClick={() => setOpen(true)}>
             {copy.wallet.connect}
@@ -626,7 +640,23 @@ export function Vpfi() {
             ) : null}
           </section>
 
-          <section className="card">
+          {/*
+            THE DEEP-LINK TARGET (#1854 cutover step 7).
+
+            The marketing site's VPFI CTA promises a landing position, not
+            just a page: on the retired app it linked to
+            `/vpfi-vault#step-2`, where `step-2` was the id on the first
+            ACTIONABLE deposit card. The name is a legacy artifact — that
+            card rendered as "Step 1" in the UI — so this uses `deposit`,
+            which says what it is.
+
+            Load-bearing: `appUrl`'s `vpfiVault` destination carries this
+            fragment, so removing the id silently drops CTA arrivals at
+            the top of an educational page instead of the control they
+            came for. That regression is invisible to a route test, which
+            is why it is called out here rather than left to a reviewer.
+          */}
+          <section className="card" id="deposit">
             <div className="segmented" role="radiogroup" aria-label={copy.vpfi.vaultActionLabel}>
               {(['deposit', 'withdraw'] as const).map((a) => (
                 <button

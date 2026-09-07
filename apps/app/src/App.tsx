@@ -24,6 +24,24 @@ import { AppShell } from './components/AppShell';
 // /borrow or /lend — the same treatment the other action routes already
 // have, painted inside the already-live shell.
 import { Home } from './pages/Home';
+
+/**
+ * Hard navigation to a URL outside this SPA (#1959).
+ *
+ * A react-router <Navigate> cannot leave the origin, and an <a> would
+ * need the user to click. This is for paths the app deliberately does
+ * NOT own but must keep working — currently only
+ * `/protocol-console/docs`, whose prose lives on the marketing apex so
+ * it indexes beside the other public explainers.
+ *
+ * `replace` rather than `assign`: the redirect should not sit in the
+ * back-stack, or Back from the docs bounces the reader straight out
+ * again instead of returning them here.
+ */
+function ExternalRedirect({ url }: { url: string }) {
+  if (typeof window !== 'undefined') window.location.replace(url);
+  return null;
+}
 const Borrow = lazy(() =>
   import('./pages/Borrow').then((m) => ({ default: m.Borrow })),
 );
@@ -67,6 +85,16 @@ const Recover = lazy(() =>
   import('./pages/Recover').then((m) => ({ default: m.Recover })),
 );
 const Help = lazy(() => import('./pages/Help').then((m) => ({ default: m.Help })));
+// #1959 — the two surfaces the #1854 cutover did not port. Until these
+// existed, `defi.vaipakam.com` could not be retired: the marketing site
+// links to both, and pointing those links here would have landed
+// visitors on the in-shell NotFound below.
+const Analytics = lazy(() =>
+  import('./pages/Analytics').then((m) => ({ default: m.Analytics })),
+);
+const ProtocolConsole = lazy(() =>
+  import('./pages/ProtocolConsole').then((m) => ({ default: m.ProtocolConsole })),
+);
 const NotFound = lazy(() =>
   import('./pages/NotFound').then((m) => ({ default: m.NotFound })),
 );
@@ -101,6 +129,20 @@ export function App() {
             marketing site's page cannot reach this origin's storage,
             so this is a separate page, not a link to that one. */}
         <Route path="/data-rights" element={<DataRights />} />
+
+        {/* #1959 — both are PUBLIC and wallet-free by design. They are
+            the marketing site's deep-link targets, so a visitor arriving
+            cold must get the real page, not a connect wall. */}
+        <Route path="/analytics" element={<Analytics />} />
+        <Route path="/protocol-console" element={<ProtocolConsole />} />
+        {/* The prose reference lives on the marketing apex so it indexes
+            with the other public explainers; this app owns only the live
+            values. Sending `/protocol-console/docs` there keeps the old
+            defi URL working instead of 404ing. */}
+        <Route
+          path="/protocol-console/docs"
+          element={<ExternalRedirect url="https://vaipakam.com/protocol-console/docs" />}
+        />
 
         {/* Aliases people will guess or carry over from apps/defi. */}
         <Route path="/earn" element={<Navigate to="/lend" replace />} />

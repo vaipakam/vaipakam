@@ -799,3 +799,112 @@ export async function probeIndexerFreshness(
     ? { kind: 'cursor', freshness: res.indexer }
     : { kind: 'no-cursor' };
 }
+
+/* ── Public protocol statistics (/analytics) ───────────────────────────
+ *
+ * The transparency dashboard reads the SAME keyless, open-CORS endpoints
+ * any third party can call. That is deliberate and is the page's whole
+ * claim: a number a visitor cannot reproduce independently is a number
+ * they have to take on trust, which is the opposite of transparency.
+ *
+ * Every field is optional on the wire. The indexer adds counters over
+ * time, and an older Worker answering a newer app must degrade to "not
+ * reported" rather than render 0 — a fabricated zero is worse than an
+ * absent figure on a page whose purpose is accuracy.
+ */
+export interface LoanStats {
+  chainId: number;
+  active?: number;
+  repaid?: number;
+  defaulted?: number;
+  liquidated?: number;
+  settled?: number;
+  total?: number;
+  erc20ActiveLoans?: number;
+  nftRentalsActive?: number;
+  /** asset address → summed principal, as a decimal STRING in the
+   *  asset's smallest unit. Kept as a string on purpose: these exceed
+   *  Number.MAX_SAFE_INTEGER for 18-decimal assets, and parsing them
+   *  into a float here would silently round the very figures the page
+   *  exists to report honestly. */
+  volumeByAsset?: Record<string, string>;
+  loansByAsset?: Record<string, number>;
+}
+
+export interface OfferStats {
+  chainId: number;
+  active?: number;
+  accepted?: number;
+  cancelled?: number;
+  expired?: number;
+  consumedBySale?: number;
+  total?: number;
+  indexer?: { lastBlock: number; updatedAt: number } | null;
+}
+
+export async function fetchLoanStats(chainId: number): Promise<LoanStats | null> {
+  return getJson<LoanStats>(`/loans/stats?chainId=${chainId}`);
+}
+
+export async function fetchOfferStats(chainId: number): Promise<OfferStats | null> {
+  return getJson<OfferStats>(`/offers/stats?chainId=${chainId}`);
+}
+
+/* ── Named protocol knobs (/protocol-console) ──────────────────────────
+ *
+ * `fetchProtocolConfig` above returns the POSITIONAL `bundle`, which is
+ * right for the display path that already knows its indices. A console
+ * that lists knobs by name must not decode positionally: the release
+ * record has a whole incident about hand-typed tuples silently shifting
+ * field positions, and a governance parameter shown against the wrong
+ * label is worse than one not shown at all.
+ *
+ * So this reads the endpoint's NAMED `values` object instead. Every
+ * field is optional — the indexer adds knobs as governance gains them,
+ * and an older Worker must degrade to "not reported" rather than
+ * mislabel whatever happens to sit at that index.
+ */
+export interface ProtocolKnobValues {
+  treasuryFeeBps?: string;
+  loanInitiationFeeBps?: string;
+  liquidationHandlingFeeBps?: string;
+  maxLiquidationSlippageBps?: string;
+  maxLiquidatorIncentiveBps?: string;
+  volatilityLtvThresholdBps?: string;
+  rentalBufferBps?: string;
+  lifMatcherFeeBps?: string;
+  autoPauseDurationSeconds?: string;
+  maxOfferDurationDays?: string;
+  tierThresholds?: string[];
+  tierDiscountBps?: string[];
+  rangeAmountEnabled?: boolean;
+  rangeRateEnabled?: boolean;
+  partialFillEnabled?: boolean;
+}
+
+export interface ProtocolKnobSnapshot {
+  values: ProtocolKnobValues;
+  flags: Record<string, boolean>;
+  sourceBlock?: number;
+  /** Unix SECONDS. Callers MUST surface this — see `protocolConfigFresh`. */
+  updatedAt?: number;
+}
+
+export async function fetchProtocolKnobs(
+  chainId: number,
+): Promise<ProtocolKnobSnapshot | null> {
+  const res = await getJson<{
+    available?: boolean;
+    values?: ProtocolKnobValues;
+    flags?: Record<string, boolean>;
+    sourceBlock?: number;
+    updatedAt?: number;
+  }>(`/config/${chainId}`);
+  if (!res || res.available !== true || !res.values) return null;
+  return {
+    values: res.values,
+    flags: res.flags ?? {},
+    sourceBlock: res.sourceBlock,
+    updatedAt: res.updatedAt,
+  };
+}
