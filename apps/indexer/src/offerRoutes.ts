@@ -168,6 +168,18 @@ function toJson(row: OfferRow): Record<string, unknown> {
  * Used by the homepage hero card and by the offer-book preloader to
  * decide whether to pull a fresh page or trust the cached payload.
  */
+/** Statuses this endpoint publishes under their own name. Anything else
+ *  a future indexer persists lands in `other`, so the published buckets
+ *  always sum to the published `total`. */
+const KNOWN_OFFER_STATUSES = new Set([
+  'active',
+  'accepted',
+  'cancelled',
+  'expired',
+  'consumed_by_sale',
+  'fullyFilled',
+]);
+
 export async function handleOffersStats(req: Request, env: Env): Promise<Response> {
   const url = new URL(req.url);
   const chainId = parseChainId(url.searchParams.get('chainId')) ?? 8453;
@@ -224,6 +236,10 @@ export async function handleOffersStats(req: Request, env: Env): Promise<Respons
       accepted: 0,
       cancelled: 0,
       expired: 0,
+      // A normal terminal state for a range offer (filled, or dust
+      // remainder). Seeded so it is always present in the response
+      // rather than appearing only once one exists.
+      fullyFilled: 0,
       // T-086 Round-8 §19.7e + Codex round-20 P2 — Scenario A
       // parallel-sale terminal. Without this bucket the public
       // `total` (used by dashboard / lifetime-metrics widgets) would
@@ -240,6 +256,16 @@ export async function handleOffersStats(req: Request, env: Env): Promise<Respons
       cancelled: tally.cancelled,
       expired: tally.expired,
       consumedBySale: tally.consumed_by_sale,
+      // NAMED so `total` can be reconciled. `fullyFilled` is a normal
+      // terminal state for a range offer, and `other` catches any status
+      // this endpoint has not been taught yet — without them a reader
+      // adding up the published buckets got less than the published
+      // Total and had no way to find the difference, on a page whose
+      // whole claim is that its figures can be checked.
+      fullyFilled: tally.fullyFilled ?? 0,
+      other: Object.entries(tally)
+        .filter(([k]) => !KNOWN_OFFER_STATUSES.has(k))
+        .reduce((a, [, n]) => a + n, 0),
       // EVERY PERSISTED STATUS, for the same reason `/loans/stats`
       // sums every tally: a range offer that closes as fully filled (or
       // as dust) is persisted with status `fullyFilled`, and adding only

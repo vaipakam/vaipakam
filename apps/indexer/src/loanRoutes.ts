@@ -845,6 +845,18 @@ export async function handleClaimCandidates(
  * via `getAssetPrice` and multiplies. This endpoint stays
  * deterministic and fast (no oracle dep).
  */
+/** Statuses this endpoint publishes under their own name. Anything else
+ *  lands in `other`, so the published buckets always sum to `total`. */
+const KNOWN_LOAN_STATUSES = new Set([
+  'active',
+  'repaid',
+  'defaulted',
+  'liquidated',
+  'settled',
+  'fallback_pending',
+  'internal_matched',
+]);
+
 export async function handleLoansStats(req: Request, env: Env): Promise<Response> {
   const url = new URL(req.url);
   const chainId = parseChainId(url.searchParams.get('chainId')) ?? 8453;
@@ -873,6 +885,10 @@ export async function handleLoansStats(req: Request, env: Env): Promise<Response
       defaulted: 0,
       liquidated: 0,
       settled: 0,
+      // Normal lifecycle states, seeded so they are always present in
+      // the response rather than appearing only once one exists.
+      fallback_pending: 0,
+      internal_matched: 0,
     };
     for (const row of counts.results ?? []) {
       tally[row.status] = row.n;
@@ -990,6 +1006,15 @@ export async function handleLoansStats(req: Request, env: Env): Promise<Response
       defaulted: tally.defaulted,
       liquidated: tally.liquidated,
       settled: tally.settled,
+      // NAMED so `total` reconciles — see the offers endpoint. The loans
+      // table also holds `fallback_pending` and the terminal
+      // `internal_matched`, both normal lifecycle states, and `other`
+      // absorbs anything added later.
+      fallbackPending: tally.fallback_pending ?? 0,
+      internalMatched: tally.internal_matched ?? 0,
+      other: Object.entries(tally)
+        .filter(([k]) => !KNOWN_LOAN_STATUSES.has(k))
+        .reduce((a, [, n]) => a + n, 0),
       // EVERY PERSISTED STATUS, not the five named above. The GROUP BY
       // returns whatever statuses exist, and this table also holds
       // `fallback_pending` and the terminal `internal_matched` — so

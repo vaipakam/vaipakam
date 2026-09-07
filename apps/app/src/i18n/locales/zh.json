@@ -2398,7 +2398,11 @@
       "ageHours": "{{n}} 小时前",
       "uninitialized": "索引器已响应，但尚未读取任何区块，因此没有可显示的数字。这是关于索引器的事实，而非关于协议的事实 — 一个尚未摄取任何数据的数据库会把所有项都报成零，正因如此，这些零在此处被隐去而不是显示出来。",
       "contractLabel": "Diamond 合约",
-      "loading": "正在从公开索引器读取最新数据…"
+      "loading": "正在从公开索引器读取最新数据…",
+      "fullyFilled": "已全部成交",
+      "fallbackPending": "等待详情",
+      "internalMatched": "内部撮合",
+      "other": "其他"
     },
     "protocolConsole": {
       "title": "协议控制台",

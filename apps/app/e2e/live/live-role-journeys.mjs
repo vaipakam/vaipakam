@@ -822,8 +822,47 @@ for (const roleKey of wanted) {
     (b) => !(!posture.preAuthorized && isAccountPrompt(b)),
   );
 
-  // A VISITOR must not be asked to connect unprompted. The driver rejects
-  // `eth_requestAccounts` / `wallet_requestPermissions` for this posture,
+  // A VISITOR must not be asked to connect unprompted — and with a
+  // KEYLESS session the RPC check alone can no longer see that (review
+  // round 15 P2). `keyless: true` installs no provider, so there is no
+  // handler for `eth_requestAccounts` to reach and `blockedRequests`
+  // always reports zero prompts for this role. The posture became more
+  // honest about what a visitor's browser looks like and, in doing so,
+  // lost the signal that caught a build opening the wallet UI by itself.
+  //
+  // So this now asks the question at the level the user experiences it:
+  // is a connection dialog on screen that nobody asked for? ConnectKit
+  // renders its picker into a portal with `aria-modal`, and no visitor
+  // scenario clicks anything, so any modal present after a scenario
+  // settles was opened by the page.
+  if (!posture.preAuthorized) {
+    const modals = await page
+      .locator('[aria-modal="true"], [data-testid="connectkit-modal"]')
+      .count()
+      .catch(() => 0);
+    if (modals > 0) {
+      hardFail += 1;
+      results.push({
+        id: `MODAL-${roleKey}`,
+        roleKey,
+        role: roleKey,
+        route: '(session)',
+        goal: 'A first-time visitor is not shown a wallet dialog they did not ask for',
+        desired: 'No connection modal is open at any point during the visitor journeys.',
+        ok: false,
+        actual: `${modals} modal(s) open without any scenario having clicked connect`,
+      });
+      console.log(
+        `FAIL  MODAL-${roleKey}  [${roleKey}] (session)\n` +
+          "      goal    : no unsolicited wallet dialog for a first arrival\n" +
+          `      actual  : ${modals} modal(s) open`,
+      );
+    }
+  }
+
+  // The RPC-level check still runs for any posture that DOES install a
+  // provider, and stays as the stronger signal where it applies: the
+  // driver rejects `eth_requestAccounts` / `wallet_requestPermissions`,
   // but the page can catch that rejection and still satisfy every
   // assertion — leaving a green first-arrival report for a build that
   // would have thrown a wallet dialog at a real newcomer.

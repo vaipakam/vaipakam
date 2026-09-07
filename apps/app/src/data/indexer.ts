@@ -819,6 +819,13 @@ export interface LoanStats {
   defaulted?: number;
   liquidated?: number;
   settled?: number;
+  /** Normal lifecycle states the dashboard must render, because `total`
+   *  counts them — see the endpoint's own note. Without these a reader
+   *  adding up the visible buckets got less than the published Total. */
+  fallbackPending?: number;
+  internalMatched?: number;
+  /** Any status the endpoint has not been taught to name yet. */
+  other?: number;
   total?: number;
   erc20ActiveLoans?: number;
   nftRentalsActive?: number;
@@ -844,6 +851,10 @@ export interface OfferStats {
   cancelled?: number;
   expired?: number;
   consumedBySale?: number;
+  /** Terminal state for a filled (or dust-remainder) range offer, plus
+   *  the catch-all — both counted in `total`, so both are rendered. */
+  fullyFilled?: number;
+  other?: number;
   total?: number;
   indexer?: { lastBlock: number; updatedAt: number } | null;
 }

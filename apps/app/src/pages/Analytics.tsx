@@ -241,6 +241,15 @@ export function Analytics() {
               <Stat label={copy.analytics.defaulted} value={loans?.defaulted} />
               <Stat label={copy.analytics.liquidated} value={loans?.liquidated} />
               <Stat label={copy.analytics.settled} value={loans?.settled} />
+              {/*
+                RENDERED BECAUSE `total` COUNTS THEM. These are normal
+                lifecycle states; leaving them out made Total exceed
+                every visible bucket combined, which a reader could see
+                and not explain — the opposite of what this page is for.
+              */}
+              <Stat label={copy.analytics.fallbackPending} value={loans?.fallbackPending} />
+              <Stat label={copy.analytics.internalMatched} value={loans?.internalMatched} />
+              <Stat label={copy.analytics.other} value={loans?.other} />
               <Stat label={copy.analytics.total} value={loans?.total} />
             </div>
             <div className="an-grid an-grid-sub">
@@ -257,6 +266,8 @@ export function Analytics() {
               <Stat label={copy.analytics.cancelled} value={offers?.cancelled} />
               <Stat label={copy.analytics.expired} value={offers?.expired} />
               <Stat label={copy.analytics.consumedBySale} value={offers?.consumedBySale} />
+              <Stat label={copy.analytics.fullyFilled} value={offers?.fullyFilled} />
+              <Stat label={copy.analytics.other} value={offers?.other} />
               <Stat label={copy.analytics.total} value={offers?.total} />
             </div>
           </section>

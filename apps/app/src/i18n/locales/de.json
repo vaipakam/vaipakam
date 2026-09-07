@@ -2398,7 +2398,11 @@
       "ageHours": "vor {{n}} Std.",
       "uninitialized": "Der Indexer hat geantwortet, aber noch keine Blöcke gelesen, deshalb gibt es keine Zahlen anzuzeigen. Das ist eine Aussage über den Indexer, nicht über das Protokoll — eine Datenbank, die nichts eingelesen hat, würde überall null melden, und genau darum werden diese Nullen hier zurückgehalten statt angezeigt.",
       "contractLabel": "Diamond-Vertrag",
-      "loading": "Die neuesten Zahlen werden aus dem öffentlichen Indexer gelesen…"
+      "loading": "Die neuesten Zahlen werden aus dem öffentlichen Indexer gelesen…",
+      "fullyFilled": "Vollständig gefüllt",
+      "fallbackPending": "Warten auf Details",
+      "internalMatched": "Intern gematcht",
+      "other": "Sonstige"
     },
     "protocolConsole": {
       "title": "Protokoll-Konsole",

@@ -4517,6 +4517,10 @@ const copySource = {
     cancelled: 'Cancelled',
     expired: 'Expired',
     consumedBySale: 'Consumed by sale',
+    fullyFilled: 'Fully filled',
+    fallbackPending: 'Awaiting details',
+    internalMatched: 'Internally matched',
+    other: 'Other',
     transparencyHeading: 'Transparency',
     transparencyBody:
       'Every figure above is read from the public indexer API, which is keyless and open-CORS. You do not have to trust this page — query the same endpoints yourself and compare.',

@@ -2398,7 +2398,11 @@
       "ageHours": "{{n}}시간 전",
       "uninitialized": "인덱서는 응답했지만 아직 어떤 블록도 읽지 않아 표시할 수치가 없습니다. 이는 프로토콜이 아니라 인덱서에 관한 사실입니다 — 아무것도 수집하지 않은 데이터베이스는 모든 항목을 0으로 보고하므로, 그 0들은 여기에 표시하지 않고 보류합니다.",
       "contractLabel": "Diamond 컨트랙트",
-      "loading": "공개 인덱서에서 최신 수치를 읽는 중…"
+      "loading": "공개 인덱서에서 최신 수치를 읽는 중…",
+      "fullyFilled": "전량 체결",
+      "fallbackPending": "세부 정보 대기",
+      "internalMatched": "내부 매칭",
+      "other": "기타"
     },
     "protocolConsole": {
       "title": "프로토콜 콘솔",

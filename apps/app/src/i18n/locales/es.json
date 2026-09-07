@@ -2398,7 +2398,11 @@
       "ageHours": "hace {{n}} h",
       "uninitialized": "El indexador respondió, pero aún no ha leído ningún bloque, así que no hay cifras que mostrar. Eso es un hecho sobre el indexador, no sobre el protocolo: una base de datos que no ha ingerido nada informaría cero de todo, y por eso esos ceros se omiten aquí en lugar de mostrarse.",
       "contractLabel": "Contrato Diamond",
-      "loading": "Leyendo las cifras más recientes del indexador público…"
+      "loading": "Leyendo las cifras más recientes del indexador público…",
+      "fullyFilled": "Completadas",
+      "fallbackPending": "Pendientes de detalles",
+      "internalMatched": "Emparejadas internamente",
+      "other": "Otros"
     },
     "protocolConsole": {
       "title": "Consola del protocolo",

@@ -677,8 +677,15 @@ export async function launch({
   //   'throw' — raise a `LiveSetupError` for the caller to handle.
   //     For a drive that launches repeatedly and ACCUMULATES findings
   //     across launches, where exiting here would discard evidence
-  //     already gathered and claim the run verified nothing. Only
-  //     `live-recover-locales.mjs` needs it (Codex #1621 r1).
+  //     already gathered. TWO callers need it: `live-recover-locales.mjs`
+  //     (a browser per locale, Codex #1621 r1) and
+  //     `live-role-journeys.mjs` (a browser per role, #2069). Both also
+  //     pass `throwOnUnreadable` through to the wallet loader, since an
+  //     unreadable credential file fails before this wrapper is reached.
+  //
+  //     Name any new accumulating caller here. A maintainer reading only
+  //     this block and seeing one name has, in the past, treated the
+  //     option as unnecessary elsewhere.
   //
   // The default is the safe one on purpose: forgetting the option costs
   // a correct-but-blunt verdict, never a silently discarded finding.

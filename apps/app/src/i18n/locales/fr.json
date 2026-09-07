@@ -2398,7 +2398,11 @@
       "ageHours": "il y a {{n}} h",
       "uninitialized": "L'indexeur a répondu, mais n'a encore lu aucun bloc : il n'y a donc aucun chiffre à afficher. C'est un fait sur l'indexeur, pas sur le protocole — une base qui n'a rien ingéré annoncerait zéro partout, et c'est précisément pourquoi ces zéros sont tus ici plutôt qu'affichés.",
       "contractLabel": "Contrat Diamond",
-      "loading": "Lecture des derniers chiffres depuis l'indexeur public…"
+      "loading": "Lecture des derniers chiffres depuis l'indexeur public…",
+      "fullyFilled": "Entièrement remplies",
+      "fallbackPending": "En attente de détails",
+      "internalMatched": "Appariées en interne",
+      "other": "Autres"
     },
     "protocolConsole": {
       "title": "Console du protocole",
