@@ -375,12 +375,33 @@ let WALLETS;
  * `launch()`, which is the first thing it does, so the BLOCKED exit
  * still fires before any browser work.
  */
-function loadWallets() {
+/**
+ * @param {{ throwOnUnreadable?: boolean }} [opts] — when the caller
+ *   asked for `onSetupFailure: 'throw'`, an unreadable or malformed
+ *   wallet FILE has to reach them as a `LiveSetupError` like every other
+ *   setup failure. `blockedSync` exits the process, which for a
+ *   multi-role driver throws away the results already gathered and the
+ *   JSON report with them — so a missing file after the visitor run
+ *   reported BLOCKED and hid whatever the visitor scenarios had found.
+ *
+ *   Distinct from the unusable-KEY case fixed earlier: this happens
+ *   before any per-role validation, at the read/parse step, so that fix
+ *   could not cover it. Exiting stays the default, for drivers that
+ *   never asked to accumulate.
+ */
+function loadWallets(opts = {}) {
   if (WALLETS !== undefined) return WALLETS;
   let raw;
   try {
     raw = JSON.parse(fs.readFileSync(WALLETS_PATH, 'utf8'));
   } catch (err) {
+    if (opts.throwOnUnreadable) {
+      throw new LiveSetupError(
+        `cannot read the dev wallet file.\n  path: ${WALLETS_PATH}\n  ${err.message}`,
+        err,
+        'credential',
+      );
+    }
     // Exit 2 = BLOCKED, per the contract in run-live-batch.mjs. An absent
     // dev-wallet file is a missing PRECONDITION, not a product regression:
     // letting this throw exits 1 and makes every ordinary
@@ -678,7 +699,7 @@ export async function launch({
       // Resolve without the exiting path: read the file directly and
       // raise a LiveSetupError the caller can catch, matching how every
       // other setup failure reaches an accumulating caller.
-      const wallets = loadWallets();
+      const wallets = loadWallets({ throwOnUnreadable: true });
       const key = wallets?.[role]?.privateKey;
       if (typeof key !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(key)) {
         const roles = Object.keys(wallets ?? {});

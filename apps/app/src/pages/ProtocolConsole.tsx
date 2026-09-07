@@ -29,8 +29,8 @@
  * governance parameter displayed against the wrong label is worse than
  * one not displayed at all, because it looks authoritative.
  *
- * PUBLIC BY DEFAULT, AND WALLET-FREE. Anyone can read every parameter
- * without connecting — the same posture the retired console had, and the
+ * PUBLIC BY DEFAULT, AND WALLET-FREE. Anyone can read the published
+ * parameters without connecting — the same posture the retired console had, and the
  * one every major protocol has settled on. Operators who would rather
  * not surface it (a pre-launch deploy mid-tuning, or the industrial fork
  * where parameter visibility is itself restricted) set
