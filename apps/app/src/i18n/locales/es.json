@@ -113,7 +113,7 @@
       },
       "protocolConsole": {
         "title": "Consola del protocolo — Vaipakam",
-        "description": "El valor actual de cada parámetro del protocolo ajustable por gobernanza — comisiones, umbrales, duraciones e indicadores de funcionalidad — de solo lectura y abierto a cualquiera."
+        "description": "Valores actuales de los parámetros del protocolo que publica el indexador público — comisiones, umbrales, duraciones e indicadores de funcionalidad — de solo lectura y abierto a cualquiera."
       }
     },
     "home": {
@@ -2402,7 +2402,7 @@
     },
     "protocolConsole": {
       "title": "Consola del protocolo",
-      "lede": "Valor actual de cada parámetro ajustable por gobernanza en la cadena {{chain}}. Público y de solo lectura: no hace falta monedero y ningún control aquí cambia nada. Los cambios de gobernanza pasan por el timelock, no por esta página.",
+      "lede": "Valores actuales de los parámetros del protocolo que publica el indexador público para la cadena {{chain}}: comisiones, umbrales, duraciones e indicadores de funcionalidad. Aquí todavía no se publican todos los ajustes regulables por gobernanza, así que léalo como un subconjunto y no como el panorama completo; la referencia de parámetros los enumera todos. Público y de solo lectura: no hace falta wallet y ningún control de esta página cambia nada. Los cambios de gobernanza pasan por el timelock, no por aquí.",
       "refresh": "Actualizar",
       "reference": "Referencia de parámetros",
       "hiddenBody": "La visibilidad de los parámetros está desactivada en este despliegue, así que aquí no se muestran los valores en vivo. Es solo un ajuste de visualización — los parámetros están on-chain y cualquiera puede leerlos directamente desde los contratos.",

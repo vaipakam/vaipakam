@@ -138,7 +138,7 @@ const copySource = {
     protocolConsole: {
       title: 'Protocol console — Vaipakam',
       description:
-        'The current value of every governance-tunable protocol parameter — fees, thresholds, durations, and feature flags — read-only and open to anyone.',
+        'Current values for the protocol parameters the public indexer publishes — fees, thresholds, durations, and feature flags — read-only and open to anyone.',
     },
     // Wallet-gated, per-user surfaces — carried for the browser tab
     // title only; SeoMeta marks all of these noindex.
@@ -4534,7 +4534,7 @@ const copySource = {
   protocolConsole: {
     title: 'Protocol console',
     lede: tmpl(
-      'Every governance-tunable parameter’s current value on chain {{chain}}. Public and read-only — no wallet needed, and no controls here change anything. Governance changes go through the timelock, not this page.',
+      'Current values for the protocol parameters the public indexer publishes for chain {{chain}} — fees, thresholds, durations and feature flags. Not every governance-tunable setting is published here yet, so read this as a subset rather than the full picture; the parameter reference lists them all. Public and read-only — no wallet needed, and no controls here change anything. Governance changes go through the timelock, not this page.',
       ['chain'],
     ),
     refresh: 'Refresh',

@@ -113,7 +113,7 @@
       },
       "protocolConsole": {
         "title": "Console du protocole — Vaipakam",
-        "description": "La valeur actuelle de chaque paramètre du protocole réglable par la gouvernance — frais, seuils, durées et indicateurs de fonctionnalité — en lecture seule et ouverte à tous."
+        "description": "Valeurs actuelles des paramètres du protocole publiés par l'indexeur public — frais, seuils, durées et indicateurs de fonctionnalité — en lecture seule et ouvertes à tous."
       }
     },
     "home": {
@@ -2402,7 +2402,7 @@
     },
     "protocolConsole": {
       "title": "Console du protocole",
-      "lede": "Valeur actuelle de chaque paramètre réglable par la gouvernance sur la chaîne {{chain}}. Public et en lecture seule : aucun portefeuille requis, et aucun contrôle ici ne modifie quoi que ce soit. Les changements de gouvernance passent par le timelock, pas par cette page.",
+      "lede": "Valeurs actuelles des paramètres du protocole publiés par l'indexeur public pour la chaîne {{chain}} : frais, seuils, durées et indicateurs de fonctionnalité. Tous les réglages modifiables par la gouvernance ne sont pas encore publiés ici : lisez ceci comme un sous-ensemble et non comme le tableau complet ; la référence des paramètres les répertorie tous. Public et en lecture seule — aucun portefeuille requis, et aucune commande ici ne modifie quoi que ce soit. Les changements de gouvernance passent par le timelock, pas par cette page.",
       "refresh": "Actualiser",
       "reference": "Référence des paramètres",
       "hiddenBody": "La visibilité des paramètres est désactivée sur ce déploiement, les valeurs en direct ne sont donc pas affichées ici. Il s'agit uniquement d'un réglage d'affichage — les paramètres eux-mêmes sont on-chain et lisibles par tout le monde directement depuis les contrats.",

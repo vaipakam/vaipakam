@@ -41,7 +41,7 @@ import {
   type ProtocolKnobSnapshot,
 } from '../data/indexer';
 import { useActiveChain } from '../chain/useActiveChain';
-import { formatTokenAmount } from '../lib/format';
+import { exactAmountString } from '../lib/format';
 import { VPFI_DECIMALS } from '../data/vpfi';
 import { useNowSec } from '../hooks/useNowSec';
 import { isProtocolConsolePublic } from '../lib/protocolConsoleVisibility';
@@ -263,15 +263,20 @@ export function ProtocolConsole() {
                   key={t}
                   label={copy.protocolConsole.tierThreshold(i + 1)}
                   value={copy.protocolConsole.tierValue(
-                    // BASE UNITS IN, TOKEN UNITS OUT (review round 5 P2).
-                    // `tierThresholds` arrives as 18-decimal VPFI base-unit
-                    // STRINGS, so rendering `t` directly printed an integer
-                    // with eighteen extra digits — the wei-for-token display
-                    // failure this repo has hit before, on a public page
-                    // whose figures are meant to be checkable. The raw
-                    // string is what gets converted, so nothing is rounded
-                    // on the way in.
-                    formatTokenAmount(t, VPFI_DECIMALS),
+                    // BASE UNITS IN, TOKEN UNITS OUT (review round 5 P2),
+                    // WITHOUT ROUNDING (round 8 P2). `tierThresholds`
+                    // arrives as 18-decimal VPFI base-unit STRINGS, so
+                    // rendering `t` directly printed an integer with
+                    // eighteen extra digits. The first fix routed it
+                    // through `formatTokenAmount`, which goes via `Number`
+                    // and caps at four fraction digits — fine for a
+                    // balance, wrong for a governance parameter: a
+                    // threshold is an arbitrary `uint256` a person chose,
+                    // and a page that exists so figures can be checked
+                    // must not quietly round the figure being checked.
+                    // `exactAmountString` is `formatUnits` with no
+                    // numeric round-trip.
+                    exactAmountString(BigInt(t), VPFI_DECIMALS),
                     bps(v.tierDiscountBps?.[i]),
                   )}
                 />

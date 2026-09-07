@@ -34,9 +34,18 @@ import { readViteEnv } from './viteEnv.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-const ORIGIN = (
-  readViteEnv('VITE_APP_PUBLIC_ORIGIN') ?? 'https://app.vaipakam.com'
-).replace(/\/+$/, '');
+/** EMPTY IS UNSET HERE, and `??` does not know that.
+ *
+ *  `loadEnv` preserves an empty assignment as an empty STRING — which is
+ *  the right call in general, since `VAR=` can be a deliberate value.
+ *  For an origin it cannot be: an operator who copies `.env.example`
+ *  gets `VITE_APP_PUBLIC_ORIGIN=`, the nullish fallback is skipped, and
+ *  the prebuild emits `<loc>/analytics</loc>` and `Sitemap: /sitemap.xml`
+ *  — relative where the formats require absolute, so the artifacts are
+ *  broken for the exact configuration the example documents. Introduced
+ *  by making the example assignable in the first place. */
+const originFromEnv = (readViteEnv('VITE_APP_PUBLIC_ORIGIN') ?? '').trim();
+const ORIGIN = (originFromEnv || 'https://app.vaipakam.com').replace(/\/+$/, '');
 
 /** The protocol console is env-gated: `VITE_ADMIN_DASHBOARD_PUBLIC=false`
  *  (industrial fork, pre-launch deploys) makes the page render only its

@@ -113,7 +113,7 @@
       },
       "protocolConsole": {
         "title": "Protokoll-Konsole — Vaipakam",
-        "description": "Der aktuelle Wert jedes durch Governance einstellbaren Protokollparameters — Gebühren, Schwellenwerte, Laufzeiten und Funktionsschalter — schreibgeschützt und für alle offen."
+        "description": "Aktuelle Werte der Protokollparameter, die der öffentliche Indexer veröffentlicht — Gebühren, Schwellenwerte, Laufzeiten und Funktionsschalter — schreibgeschützt und für alle offen."
       }
     },
     "home": {
@@ -2402,7 +2402,7 @@
     },
     "protocolConsole": {
       "title": "Protokoll-Konsole",
-      "lede": "Aktueller Wert jedes per Governance einstellbaren Parameters auf Chain {{chain}}. Öffentlich und schreibgeschützt — keine Wallet nötig, und kein Bedienelement hier ändert etwas. Governance-Änderungen laufen über den Timelock, nicht über diese Seite.",
+      "lede": "Aktuelle Werte der Protokollparameter, die der öffentliche Indexer für Chain {{chain}} veröffentlicht — Gebühren, Schwellenwerte, Laufzeiten und Funktionsschalter. Noch nicht jede durch Governance einstellbare Größe wird hier veröffentlicht; lesen Sie dies daher als Teilmenge und nicht als Gesamtbild — die Parameterreferenz führt alle auf. Öffentlich und schreibgeschützt: keine Wallet nötig, und kein Bedienelement auf dieser Seite ändert etwas. Governance-Änderungen laufen über den Timelock, nicht über diese Seite.",
       "refresh": "Aktualisieren",
       "reference": "Parameter-Referenz",
       "hiddenBody": "Die Sichtbarkeit der Parameter ist in diesem Deployment ausgeschaltet, daher werden die Live-Werte hier nicht angezeigt. Das ist nur eine Anzeigeeinstellung — die Parameter selbst liegen on-chain und sind für alle direkt aus den Verträgen lesbar.",

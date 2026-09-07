@@ -17,11 +17,16 @@
  * even though every feature test passes.
  *
  * ROLES are wallet postures, not personas for their own sake:
- *   - `visitor`   no wallet announced, and `eth_requestAccounts` refused.
- *                 This is the only posture that reproduces a first-time
- *                 arrival honestly; a driver that lets the injected
- *                 wallet auto-connect tests a returning user and calls it
- *                 a first visit.
+ *   - `visitor`   KEYLESS: no `window.ethereum` installed and no
+ *                 EIP-6963 provider announced. This is the only posture
+ *                 that reproduces a first-time arrival honestly. Two
+ *                 weaker versions were tried and are worth naming: an
+ *                 auto-connecting wallet tests a RETURNING user, and an
+ *                 installed-but-account-less wallet tests someone who
+ *                 has an extension and has not connected it. Neither
+ *                 reaches the app's no-provider branches, so a
+ *                 regression confined to visitors without a wallet
+ *                 extension passes both.
  *   - `lender` / `borrower`  connected, funded testnet roles.
  *
  * READ-ONLY, AND ENFORCED RATHER THAN PROMISED. Every session launches
@@ -50,11 +55,10 @@
  *   JOURNEY_ROLES=visitor        # optional subset, comma-separated
  *   JOURNEY_JSON=out/report.json # optional machine-readable dump
  *
- * `TESTNET_WALLETS_FILE` is REQUIRED even for `visitor`: every posture
- * goes through `launch()`, which loads the role's key to build the
- * injected provider. The visitor posture simply refuses to ANNOUNCE or
- * grant that account. The key is never used to sign here — `readOnly`
- * denies write RPCs outright.
+ * `TESTNET_WALLETS_FILE` is required for the CONNECTED roles, whose
+ * sessions build an injected provider from the role's key. The visitor
+ * posture is keyless and needs no credential at all. No key is ever used
+ * to sign here — `readOnly` denies write RPCs outright.
  */
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
@@ -449,7 +453,14 @@ async function countMatches(page, re) {
 
 const ROLE_POSTURE = {
   // A first-time arrival: no announced account, and requestAccounts refused.
-  visitor: { role: 'lender', preAuthorized: false, allowRequestAccounts: false },
+  // KEYLESS, so no `window.ethereum` is installed and no EIP-6963
+  // provider is announced (review round 8 P2). `preAuthorized: false`
+  // alone still INSTALLS a wallet and merely has it report no accounts —
+  // which is a user who has an extension and has not connected it, not
+  // the first arrival this posture is described as. The app's
+  // no-provider branches were never reached, so a regression confined to
+  // visitors without a wallet extension passed this driver silently.
+  visitor: { keyless: true, preAuthorized: false, allowRequestAccounts: false },
   lender: { role: 'lender', preAuthorized: true, allowRequestAccounts: true },
   borrower: { role: 'borrower', preAuthorized: true, allowRequestAccounts: true },
 };
