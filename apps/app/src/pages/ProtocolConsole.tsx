@@ -32,7 +32,8 @@
  * this route: governance changes go through the timelock and the admin
  * multisig, not a web form.
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { copy } from '../content/copy';
 import { SlidersHorizontal, RefreshCw, ExternalLink, AlertTriangle } from 'lucide-react';
 import {
   fetchProtocolKnobs,
@@ -51,16 +52,21 @@ function bps(v: string | undefined): string {
   if (v === undefined) return '—';
   const n = Number(v);
   if (!Number.isFinite(n)) return v;
-  return `${(n / 100).toLocaleString(undefined, { maximumFractionDigits: 2 })}% (${n} bps)`;
+  return copy.protocolConsole.bpsValue(
+    (n / 100).toLocaleString(undefined, { maximumFractionDigits: 2 }),
+    n,
+  );
 }
 
 function seconds(v: string | undefined): string {
   if (v === undefined) return '—';
   const n = Number(v);
   if (!Number.isFinite(n)) return v;
-  if (n % 3600 === 0) return `${n / 3600} h (${n}s)`;
-  if (n % 60 === 0) return `${n / 60} min (${n}s)`;
-  return `${n}s`;
+  if (n % 3600 === 0)
+    return copy.protocolConsole.hoursValue(n / 3600, n);
+  if (n % 60 === 0)
+    return copy.protocolConsole.minutesValue(n / 60, n);
+  return copy.protocolConsole.secondsValue(n);
 }
 
 function plain(v: string | undefined, unit = ''): string {
@@ -68,7 +74,8 @@ function plain(v: string | undefined, unit = ''): string {
 }
 
 function flag(v: boolean | undefined): string {
-  return v === undefined ? '—' : v ? 'enabled' : 'disabled';
+  if (v === undefined) return '—';
+  return v ? copy.protocolConsole.enabled : copy.protocolConsole.disabled;
 }
 
 function Row({ label, value, note }: { label: string; value: string; note?: string }) {
@@ -78,7 +85,7 @@ function Row({ label, value, note }: { label: string; value: string; note?: stri
       <div className="pc-row-label">{label}</div>
       <div className="pc-row-value" data-reported={reported}>
         {value}
-        {!reported && <span className="pc-row-note"> not reported</span>}
+        {!reported && <span className="pc-row-note"> {copy.protocolConsole.notReported}</span>}
       </div>
       {note && <div className="pc-row-hint">{note}</div>}
     </div>
@@ -94,29 +101,27 @@ export function ProtocolConsole() {
   // resolution, honouring VITE_DEFAULT_CHAIN_ID.
   const { readChain } = useActiveChain();
   const chainId = readChain.chainId;
-  const [snap, setSnap] = useState<ProtocolKnobSnapshot | null>(null);
-  const [state, setState] = useState<'loading' | 'ready' | 'unavailable'>('loading');
 
-  const load = useCallback(async () => {
-    setState('loading');
-    const s = await fetchProtocolKnobs(chainId);
-    setSnap(s);
-    setState(s ? 'ready' : 'unavailable');
-  }, [chainId]);
+  // useQuery, not useEffect+setState — matches every other async surface
+  // here, and the effect form trips `react-hooks/set-state-in-effect`,
+  // whose point is that a synchronous setState in an effect body
+  // cascades renders.
+  const knobs = useQuery({
+    queryKey: ['protocol-knobs', chainId],
+    queryFn: () => fetchProtocolKnobs(chainId),
+  });
 
-  useEffect(() => {
-    void load();
-  }, [load]);
+  const snap: ProtocolKnobSnapshot | null = knobs.data ?? null;
+  const unavailable = knobs.isError || (knobs.isSuccess && snap === null);
 
   if (!isProtocolConsolePublic()) {
     return (
       <div className="pc-page">
-        <h1>Protocol console</h1>
+        <h1>{copy.protocolConsole.title}</h1>
         <p role="status">
-          Parameter visibility is turned off on this deployment. The reference
-          documentation remains public.{' '}
+          {copy.protocolConsole.hiddenBody}{' '}
           <a href={DOCS_URL} target="_blank" rel="noreferrer noopener">
-            Read the parameter reference <ExternalLink aria-hidden="true" />
+            {copy.protocolConsole.hiddenLink} <ExternalLink aria-hidden="true" />
           </a>
         </p>
       </div>
@@ -134,76 +139,70 @@ export function ProtocolConsole() {
     <div className="pc-page">
       <header className="pc-head">
         <h1>
-          <SlidersHorizontal aria-hidden="true" /> Protocol console
+          <SlidersHorizontal aria-hidden="true" /> {copy.protocolConsole.title}
         </h1>
         <p className="pc-sub">
-          Every governance-tunable parameter's current value on chain {chainId}. Public
-          and read-only — no wallet needed, and no controls here change anything.
-          Governance changes go through the timelock, not this page.
+          {copy.protocolConsole.lede(chainId)}
         </p>
         <div className="pc-actions">
-          <button type="button" onClick={() => void load()}>
-            <RefreshCw aria-hidden="true" /> Refresh
+          <button type="button" onClick={() => void knobs.refetch()}>
+            <RefreshCw aria-hidden="true" /> {copy.protocolConsole.refresh}
           </button>
           <a href={DOCS_URL} target="_blank" rel="noreferrer noopener">
-            Parameter reference <ExternalLink aria-hidden="true" />
+            {copy.protocolConsole.reference} <ExternalLink aria-hidden="true" />
           </a>
         </div>
       </header>
 
-      {state === 'unavailable' && (
+      {unavailable && (
         <p className="pc-unavailable" role="status">
-          <AlertTriangle aria-hidden="true" /> No configuration snapshot is available for
-          this chain. Nothing is inferred from that — it means the value is unknown here,
-          not that it is unset on-chain.
+          <AlertTriangle aria-hidden="true" /> {copy.protocolConsole.unavailable}
         </p>
       )}
 
       {stale && (
         <p className="pc-stale" role="status">
-          <AlertTriangle aria-hidden="true" /> This snapshot is more than a day old, so
-          treat the values below as historical. Config changes normally reach the snapshot
-          within one ingest scan.
+          <AlertTriangle aria-hidden="true" /> {copy.protocolConsole.stale}
         </p>
       )}
 
-      {state === 'ready' && v && (
+      {!unavailable && v && (
         <>
           <section className="pc-section" aria-labelledby="pc-fees">
-            <h2 id="pc-fees">Fees</h2>
-            <Row label="Treasury fee" value={bps(v.treasuryFeeBps)} note="Cut of interest at settlement." />
-            <Row label="Loan initiation fee" value={bps(v.loanInitiationFeeBps)} note="Charged once, at accept." />
-            <Row label="Liquidation handling fee" value={bps(v.liquidationHandlingFeeBps)} />
-            <Row label="Matcher fee" value={bps(v.lifMatcherFeeBps)} />
+            <h2 id="pc-fees">{copy.protocolConsole.feesHeading}</h2>
+            <Row label={copy.protocolConsole.treasuryFee} value={bps(v.treasuryFeeBps)} note={copy.protocolConsole.treasuryFeeHint} />
+            <Row label={copy.protocolConsole.loanInitiationFee} value={bps(v.loanInitiationFeeBps)} note={copy.protocolConsole.loanInitiationFeeHint} />
+            <Row label={copy.protocolConsole.liquidationHandlingFee} value={bps(v.liquidationHandlingFeeBps)} />
+            <Row label={copy.protocolConsole.matcherFee} value={bps(v.lifMatcherFeeBps)} />
           </section>
 
           <section className="pc-section" aria-labelledby="pc-risk">
-            <h2 id="pc-risk">Risk</h2>
-            <Row label="Max liquidation slippage" value={bps(v.maxLiquidationSlippageBps)} />
-            <Row label="Max liquidator incentive" value={bps(v.maxLiquidatorIncentiveBps)} />
+            <h2 id="pc-risk">{copy.protocolConsole.riskHeading}</h2>
+            <Row label={copy.protocolConsole.maxSlippage} value={bps(v.maxLiquidationSlippageBps)} />
+            <Row label={copy.protocolConsole.maxIncentive} value={bps(v.maxLiquidatorIncentiveBps)} />
             <Row
-              label="Volatility LTV threshold"
+              label={copy.protocolConsole.volatilityLtv}
               value={bps(v.volatilityLtvThresholdBps)}
-              note="LTV at which the volatility collapse rule applies."
+              note={copy.protocolConsole.volatilityLtvHint}
             />
-            <Row label="NFT rental buffer" value={bps(v.rentalBufferBps)} />
+            <Row label={copy.protocolConsole.rentalBuffer} value={bps(v.rentalBufferBps)} />
           </section>
 
           <section className="pc-section" aria-labelledby="pc-limits">
-            <h2 id="pc-limits">Limits &amp; timing</h2>
-            <Row label="Auto-pause duration" value={seconds(v.autoPauseDurationSeconds)} />
-            <Row label="Max offer duration" value={plain(v.maxOfferDurationDays, ' days')} />
+            <h2 id="pc-limits">{copy.protocolConsole.limitsHeading}</h2>
+            <Row label={copy.protocolConsole.autoPause} value={seconds(v.autoPauseDurationSeconds)} />
+            <Row label={copy.protocolConsole.maxOfferDuration} value={plain(v.maxOfferDurationDays, ` ${copy.protocolConsole.days}`)} />
           </section>
 
           <section className="pc-section" aria-labelledby="pc-flags">
-            <h2 id="pc-flags">Feature flags</h2>
-            <Row label="Range amount offers" value={flag(v.rangeAmountEnabled)} />
-            <Row label="Range rate offers" value={flag(v.rangeRateEnabled)} />
-            <Row label="Partial fill" value={flag(v.partialFillEnabled)} />
+            <h2 id="pc-flags">{copy.protocolConsole.flagsHeading}</h2>
+            <Row label={copy.protocolConsole.rangeAmount} value={flag(v.rangeAmountEnabled)} />
+            <Row label={copy.protocolConsole.rangeRate} value={flag(v.rangeRateEnabled)} />
+            <Row label={copy.protocolConsole.partialFill} value={flag(v.partialFillEnabled)} />
           </section>
 
           <section className="pc-section" aria-labelledby="pc-tiers">
-            <h2 id="pc-tiers">VPFI discount tiers</h2>
+            <h2 id="pc-tiers">{copy.protocolConsole.tiersHeading}</h2>
             {/*
               Thresholds are 18-decimal amounts far beyond
               Number.MAX_SAFE_INTEGER, so they are rendered as the strings
@@ -211,25 +210,24 @@ export function ProtocolConsole() {
               would round the very figures this page exists to report.
             */}
             {(v.tierThresholds ?? []).length === 0 ? (
-              <Row label="Tiers" value="—" />
+              <Row label={copy.protocolConsole.tiers} value="—" />
             ) : (
               (v.tierThresholds ?? []).map((t, i) => (
                 <Row
                   key={t}
-                  label={`Tier ${i + 1} threshold`}
-                  value={`${t} (raw) → ${bps(v.tierDiscountBps?.[i])} discount`}
+                  label={copy.protocolConsole.tierThreshold(i + 1)}
+                  value={copy.protocolConsole.tierValue(t, bps(v.tierDiscountBps?.[i]))}
                 />
               ))
             )}
           </section>
 
           <p className="pc-provenance">
-            Read from the public indexer's configuration snapshot
+            {copy.protocolConsole.provenance}
             {typeof snap.sourceBlock === 'number'
-              ? ` at block ${snap.sourceBlock.toLocaleString()}`
+              ? copy.protocolConsole.provenanceBlock(snap.sourceBlock.toLocaleString())
               : ''}
-            . The same endpoint is keyless and open-CORS, so you can verify any figure
-            here independently rather than taking this page's word for it.
+            {copy.protocolConsole.provenanceTail}
           </p>
         </>
       )}

@@ -27,7 +27,8 @@
  * page exists to avoid — and "unknown" is kept distinct from "fresh",
  * because an unreachable indexer must never read as an up-to-date one.
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { copy } from '../content/copy';
 import { BarChart3, RefreshCw, ShieldCheck, AlertTriangle } from 'lucide-react';
 import {
   fetchLoanStats,
@@ -47,17 +48,17 @@ function Stat({ label, value }: { label: string; value: number | undefined }) {
         {reported ? value.toLocaleString() : '—'}
       </div>
       <div className="an-stat-label">{label}</div>
-      {!reported && <div className="an-stat-note">not reported</div>}
+      {!reported && <div className="an-stat-note">{copy.analytics.notReported}</div>}
     </div>
   );
 }
 
 function ageLabel(updatedAtSec: number | undefined): string {
-  if (typeof updatedAtSec !== 'number') return 'unknown';
+  if (typeof updatedAtSec !== 'number') return copy.analytics.unknown;
   const secs = Math.max(0, Math.floor(Date.now() / 1000) - updatedAtSec);
-  if (secs < 90) return `${secs}s ago`;
-  if (secs < 5400) return `${Math.round(secs / 60)} min ago`;
-  return `${Math.round(secs / 3600)} h ago`;
+  if (secs < 90) return copy.analytics.ageSeconds(secs);
+  if (secs < 5400) return copy.analytics.ageMinutes(Math.round(secs / 60));
+  return copy.analytics.ageHours(Math.round(secs / 3600));
 }
 
 export function Analytics() {
@@ -69,79 +70,80 @@ export function Analytics() {
   // resolution, honouring VITE_DEFAULT_CHAIN_ID.
   const { readChain } = useActiveChain();
   const chainId = readChain.chainId;
-  const [loans, setLoans] = useState<LoanStats | null>(null);
-  const [offers, setOffers] = useState<OfferStats | null>(null);
-  const [state, setState] = useState<'loading' | 'ready' | 'unreachable'>('loading');
 
-  const load = useCallback(async () => {
-    if (!indexerConfigured()) {
-      setState('unreachable');
-      return;
-    }
-    setState('loading');
-    const [l, o] = await Promise.all([fetchLoanStats(chainId), fetchOfferStats(chainId)]);
-    setLoans(l);
-    setOffers(o);
-    // BOTH null means the endpoint did not answer. One null is a partial
-    // read and still worth rendering — half a picture beats none, as
-    // long as the missing half reads as missing rather than as zero.
-    setState(l === null && o === null ? 'unreachable' : 'ready');
-  }, [chainId]);
+  // useQuery, not useEffect+setState. Beyond matching how every other
+  // async surface here loads, the effect form trips
+  // `react-hooks/set-state-in-effect` — the rule exists because a
+  // synchronous setState in an effect body cascades renders.
+  const stats = useQuery({
+    queryKey: ['analytics-stats', chainId],
+    enabled: indexerConfigured(),
+    queryFn: async (): Promise<{ loans: LoanStats | null; offers: OfferStats | null }> => {
+      const [loans, offers] = await Promise.all([
+        fetchLoanStats(chainId),
+        fetchOfferStats(chainId),
+      ]);
+      return { loans, offers };
+    },
+  });
 
-  useEffect(() => {
-    void load();
-  }, [load]);
+  const loans = stats.data?.loans ?? null;
+  const offers = stats.data?.offers ?? null;
+  // BOTH null means the endpoint did not answer. One null is a partial
+  // read and still worth rendering — half a picture beats none, as long
+  // as the missing half reads as missing rather than as zero.
+  const unreachable =
+    !indexerConfigured() ||
+    stats.isError ||
+    (stats.isSuccess && loans === null && offers === null);
 
   return (
     <div className="an-page">
       <header className="an-head">
         <h1>
-          <BarChart3 aria-hidden="true" /> Protocol analytics
+          <BarChart3 aria-hidden="true" /> {copy.analytics.title}
         </h1>
         <p className="an-sub">
-          Live counts from the public indexer for chain {chainId}. No wallet needed —
-          these are the same keyless endpoints anyone can query.
+          {copy.analytics.lede(chainId)}
         </p>
-        <button type="button" className="an-refresh" onClick={() => void load()}>
-          <RefreshCw aria-hidden="true" /> Refresh
+        <button type="button" className="an-refresh" onClick={() => void stats.refetch()}>
+          <RefreshCw aria-hidden="true" /> {copy.analytics.refresh}
         </button>
       </header>
 
-      {state === 'unreachable' && (
+      {unreachable && (
         <p className="an-unreachable" role="status">
-          <AlertTriangle aria-hidden="true" /> The indexer did not answer, so no figures
-          are shown. Nothing is inferred from the silence — an unreachable indexer is not
-          evidence of zero activity.
+          <AlertTriangle aria-hidden="true" /> {copy.analytics.unreachable}
         </p>
       )}
 
-      {state !== 'unreachable' && (
+      {!unreachable && (
         <>
           <section className="an-section" aria-labelledby="an-loans">
-            <h2 id="an-loans">Loans</h2>
+            <h2 id="an-loans">{copy.analytics.loansHeading}</h2>
             <div className="an-grid">
-              <Stat label="Active" value={loans?.active} />
-              <Stat label="Repaid" value={loans?.repaid} />
-              <Stat label="Defaulted" value={loans?.defaulted} />
-              <Stat label="Liquidated" value={loans?.liquidated} />
-              <Stat label="Settled" value={loans?.settled} />
-              <Stat label="Total" value={loans?.total} />
+              <Stat label={copy.analytics.active} value={loans?.active} />
+              <Stat label={copy.analytics.repaid} value={loans?.repaid} />
+              <Stat label={copy.analytics.defaulted} value={loans?.defaulted} />
+              <Stat label={copy.analytics.liquidated} value={loans?.liquidated} />
+              <Stat label={copy.analytics.settled} value={loans?.settled} />
+              <Stat label={copy.analytics.total} value={loans?.total} />
             </div>
             <div className="an-grid an-grid-sub">
-              <Stat label="ERC-20 loans active" value={loans?.erc20ActiveLoans} />
-              <Stat label="NFT rentals active" value={loans?.nftRentalsActive} />
+              <Stat label={copy.analytics.erc20Active} value={loans?.erc20ActiveLoans} />
+              <Stat label={copy.analytics.nftRentalsActive} value={loans?.nftRentalsActive} />
             </div>
           </section>
 
           <section className="an-section" aria-labelledby="an-offers">
-            <h2 id="an-offers">Offers</h2>
+            <h2 id="an-offers">{copy.analytics.offersHeading}</h2>
             <div className="an-grid">
-              <Stat label="Active" value={offers?.active} />
-              <Stat label="Accepted" value={offers?.accepted} />
-              <Stat label="Cancelled" value={offers?.cancelled} />
-              <Stat label="Expired" value={offers?.expired} />
-              <Stat label="Consumed by sale" value={offers?.consumedBySale} />
-              <Stat label="Total" value={offers?.total} />
+              <Stat label={copy.analytics.active} value={offers?.active} />
+              <Stat label={copy.analytics.accepted} value={offers?.accepted} />
+              <Stat label={copy.analytics.cancelled} value={offers?.cancelled} />
+              <Stat label={copy.analytics.expired} value={offers?.expired} />
+              <Stat label={copy.analytics.consumedBySale} value={offers?.consumedBySale} />
+              <Stat label={copy.analytics.total} value={offers?.total} />
             </div>
           </section>
 
@@ -154,31 +156,25 @@ export function Analytics() {
           */}
           <section className="an-section" id="transparency" aria-labelledby="an-transparency">
             <h2 id="an-transparency">
-              <ShieldCheck aria-hidden="true" /> Transparency
+              <ShieldCheck aria-hidden="true" /> {copy.analytics.transparencyHeading}
             </h2>
             <p>
-              Every figure above is read from the public indexer API, which is keyless and
-              open-CORS. You do not have to trust this page — query the same endpoints
-              yourself and compare.
+              {copy.analytics.transparencyBody}
             </p>
             <dl className="an-facts">
-              <dt>Indexer cursor block</dt>
+              <dt>{copy.analytics.cursorBlock}</dt>
               <dd>
                 {typeof offers?.indexer?.lastBlock === 'number'
                   ? offers.indexer.lastBlock.toLocaleString()
-                  : 'unknown'}
+                  : copy.analytics.unknown}
               </dd>
-              <dt>Last ingest</dt>
+              <dt>{copy.analytics.lastIngest}</dt>
               <dd>{ageLabel(offers?.indexer?.updatedAt)}</dd>
-              <dt>Chain</dt>
+              <dt>{copy.analytics.chain}</dt>
               <dd>{chainId}</dd>
             </dl>
             <p className="an-caveat">
-              These counts are as current as the cursor above, not as current as the
-              chain. If the last ingest is old, the numbers are old — that is why the age
-              is shown here rather than left for you to guess. Settlement figures come
-              from indexed events, so a state change that has not been ingested yet will
-              not appear.
+              {copy.analytics.caveat}
             </p>
           </section>
         </>
