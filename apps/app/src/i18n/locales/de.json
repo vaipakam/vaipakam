@@ -2397,7 +2397,8 @@
       "ageMinutes": "vor {{n}} Min.",
       "ageHours": "vor {{n}} Std.",
       "uninitialized": "Der Indexer hat geantwortet, aber noch keine Blöcke gelesen, deshalb gibt es keine Zahlen anzuzeigen. Das ist eine Aussage über den Indexer, nicht über das Protokoll — eine Datenbank, die nichts eingelesen hat, würde überall null melden, und genau darum werden diese Nullen hier zurückgehalten statt angezeigt.",
-      "contractLabel": "Diamond-Vertrag"
+      "contractLabel": "Diamond-Vertrag",
+      "loading": "Die neuesten Zahlen werden aus dem öffentlichen Indexer gelesen…"
     },
     "protocolConsole": {
       "title": "Protokoll-Konsole",
@@ -2441,7 +2442,10 @@
       "bpsValue": "{{pct}} % ({{bps}} bps)",
       "hoursValue": "{{h}} Std. ({{s}} s)",
       "minutesValue": "{{m}} Min. ({{s}} s)",
-      "secondsValue": "{{s}} s"
+      "secondsValue": "{{s}} s",
+      "undated": "Diese Momentaufnahme trägt keinen Zeitstempel, daher lässt sich nicht sagen, wie alt diese Werte sind. Sie können aktuell oder längst überholt sein — lesen Sie sie als ungeprüft, nicht als die gegenwärtige Konfiguration des Protokolls.",
+      "provenanceAge": ", aufgenommen vor {{age}}",
+      "provenanceAgeUnknown": ", ohne Zeitstempel — wie aktuell diese Werte sind, ist daher unbekannt"
     }
   },
   "contractError": {

@@ -944,8 +944,19 @@ export async function handleLoansStats(req: Request, env: Env): Promise<Response
       defaulted: tally.defaulted,
       liquidated: tally.liquidated,
       settled: tally.settled,
-      total:
-        tally.active + tally.repaid + tally.defaulted + tally.liquidated + tally.settled,
+      // EVERY PERSISTED STATUS, not the five named above. The GROUP BY
+      // returns whatever statuses exist, and this table also holds
+      // `fallback_pending` and the terminal `internal_matched` — so
+      // adding only the named five reported a total lower than the
+      // number of loan rows whenever either existed, with neither
+      // population represented anywhere else in the response.
+      //
+      // That was survivable while this was an internal aggregate. It is
+      // not now that the public transparency dashboard presents this
+      // figure to readers as the deployment's total loan count: a total
+      // that silently omits a category is exactly the kind of number
+      // that page exists so nobody has to take on trust.
+      total: Object.values(tally).reduce((a, b) => a + b, 0),
       erc20ActiveLoans,
       nftRentalsActive,
       volumeByAsset: volumeByAssetSerialized,

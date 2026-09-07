@@ -41,6 +41,7 @@ import {
   type ProtocolKnobSnapshot,
 } from '../data/indexer';
 import { useActiveChain } from '../chain/useActiveChain';
+import { useNowSec } from '../hooks/useNowSec';
 import { isProtocolConsolePublic } from '../lib/protocolConsoleVisibility';
 
 /** Where the prose lives. Kept as one constant so the link cannot drift
@@ -67,6 +68,15 @@ function seconds(v: string | undefined): string {
   if (n % 60 === 0)
     return copy.protocolConsole.minutesValue(n / 60, n);
   return copy.protocolConsole.secondsValue(n);
+}
+
+/** Snapshot age, against a caller-supplied ticking clock (never
+ *  `Date.now()` in render — that freezes the reading). */
+function ageText(updatedAtSec: number, nowSec: number): string {
+  const secs = Math.max(0, nowSec - updatedAtSec);
+  if (secs < 90) return copy.analytics.ageSeconds(secs);
+  if (secs < 5400) return copy.analytics.ageMinutes(Math.round(secs / 60));
+  return copy.analytics.ageHours(Math.round(secs / 3600));
 }
 
 function plain(v: string | undefined, unit = ''): string {
@@ -101,6 +111,9 @@ export function ProtocolConsole() {
   // resolution, honouring VITE_DEFAULT_CHAIN_ID.
   const { readChain } = useActiveChain();
   const chainId = readChain.chainId;
+  // Ticks, so the snapshot age below advances instead of freezing at
+  // whenever React last rendered.
+  const nowSec = useNowSec();
 
   // useQuery, not useEffect+setState — matches every other async surface
   // here, and the effect form trips `react-hooks/set-state-in-effect`,
@@ -136,6 +149,15 @@ export function ProtocolConsole() {
   // parameters as current would be the failure this guard exists for.
   const stale =
     typeof snap?.updatedAt === 'number' && !protocolConfigFresh(snap.updatedAt);
+  // UNDATED IS NOT FRESH (review round 3 P2). `fetchProtocolKnobs`
+  // deliberately accepts a response with no `updatedAt`, and that case
+  // was neither `stale` nor `unavailable` — so an old or malformed
+  // worker could present indefinitely old governance parameters beneath
+  // copy calling them current, with no qualification at all. The wire
+  // type's own comment requires callers to surface this timestamp.
+  // Silence about age is the one thing this page must not do: it exists
+  // so a reader knows what they are looking at.
+  const undated = snap !== null && typeof snap.updatedAt !== 'number';
 
   return (
     <div className="pc-page">
@@ -159,6 +181,12 @@ export function ProtocolConsole() {
       {unavailable && (
         <p className="pc-unavailable" role="status">
           <AlertTriangle aria-hidden="true" /> {copy.protocolConsole.unavailable}
+        </p>
+      )}
+
+      {undated && (
+        <p className="pc-stale" role="status">
+          <AlertTriangle aria-hidden="true" /> {copy.protocolConsole.undated}
         </p>
       )}
 
@@ -229,6 +257,14 @@ export function ProtocolConsole() {
             {typeof snap.sourceBlock === 'number'
               ? copy.protocolConsole.provenanceBlock(snap.sourceBlock.toLocaleString())
               : ''}
+            {/* The age rides in the provenance sentence, so it is read
+                whenever the source is — not only when a day-old
+                threshold trips a warning. */}
+            {typeof snap.updatedAt === 'number'
+              ? copy.protocolConsole.provenanceAge(
+                  ageText(snap.updatedAt, nowSec),
+                )
+              : copy.protocolConsole.provenanceAgeUnknown}
             {copy.protocolConsole.provenanceTail}
           </p>
         </>

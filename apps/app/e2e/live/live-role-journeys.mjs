@@ -516,8 +516,36 @@ for (const roleKey of wanted) {
         );
       }
     } catch (err) {
-      setupFailures.push(`${roleKey} connect: ${String(err.message || err).slice(0, 120)}`);
-      console.log(`BLOCKED-SETUP  [${roleKey}] connect: ${String(err.message || err).slice(0, 120)}`);
+      // A FAILED CONNECTION IS A PRODUCT FAILURE, NOT A SETUP ONE
+      // (review round 3 P2). `ensureConnected()` throwing means the
+      // deployed app did not accept an injected provider that was
+      // announced and pre-authorized — which is the precise regression
+      // this preflight was added to detect. Routing it into
+      // `setupFailures` reported the whole run as BLOCKED whenever the
+      // rest of it was clean, so the finding arrived dressed as an
+      // infrastructure problem and pointed the operator at their own
+      // environment instead of at the app.
+      //
+      // BLOCKED stays reserved for what it means: the browser or profile
+      // could not be created at all, which is decided in `launch()`
+      // above and reaches this loop as a `LiveSetupError`.
+      const why = String(err.message || err).slice(0, 120);
+      hardFail += 1;
+      results.push({
+        id: `CONN-${roleKey}`,
+        roleKey,
+        role: roleKey,
+        route: '/',
+        goal: 'The connected role is actually connected before its scenarios run',
+        desired: 'wagmi accepts the announced, pre-authorized provider.',
+        ok: false,
+        actual: `connection never established: ${why}`,
+      });
+      console.log(
+        `FAIL  CONN-${roleKey}  [${roleKey}] /\n` +
+          '      goal    : connected role is actually connected\n' +
+          `      actual  : connection never established: ${why}`,
+      );
       await done();
       continue;
     }

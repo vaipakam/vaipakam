@@ -2397,7 +2397,8 @@
       "ageMinutes": "hace {{n}} min",
       "ageHours": "hace {{n}} h",
       "uninitialized": "El indexador respondió, pero aún no ha leído ningún bloque, así que no hay cifras que mostrar. Eso es un hecho sobre el indexador, no sobre el protocolo: una base de datos que no ha ingerido nada informaría cero de todo, y por eso esos ceros se omiten aquí en lugar de mostrarse.",
-      "contractLabel": "Contrato Diamond"
+      "contractLabel": "Contrato Diamond",
+      "loading": "Leyendo las cifras más recientes del indexador público…"
     },
     "protocolConsole": {
       "title": "Consola del protocolo",
@@ -2441,7 +2442,10 @@
       "bpsValue": "{{pct}} % ({{bps}} bps)",
       "hoursValue": "{{h}} h ({{s}} s)",
       "minutesValue": "{{m}} min ({{s}} s)",
-      "secondsValue": "{{s}} s"
+      "secondsValue": "{{s}} s",
+      "undated": "Esta instantánea no lleva marca de tiempo, así que no hay forma de saber qué antigüedad tienen estos valores. Pueden ser actuales o estar largamente superados: léalos como no verificados, no como la configuración presente del protocolo.",
+      "provenanceAge": ", tomada hace {{age}}",
+      "provenanceAgeUnknown": ", sin marca de tiempo, por lo que se desconoce cuán actuales son estos valores"
     }
   },
   "contractError": {

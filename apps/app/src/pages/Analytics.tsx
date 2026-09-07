@@ -44,6 +44,7 @@ import {
   type OfferStats,
 } from '../data/indexer';
 import { useActiveChain } from '../chain/useActiveChain';
+import { useNowSec } from '../hooks/useNowSec';
 
 /** Renders a counter, keeping "not reported" distinct from zero. */
 function Stat({ label, value }: { label: string; value: number | undefined }) {
@@ -59,9 +60,21 @@ function Stat({ label, value }: { label: string; value: number | undefined }) {
   );
 }
 
-function ageLabel(updatedAtSec: number | undefined): string {
+/**
+ * How old the last ingest is, against a clock the CALLER supplies.
+ *
+ * `nowSec` is a parameter rather than a `Date.now()` read inside here on
+ * purpose. Reading the clock during render freezes the answer at whenever
+ * React happened to render: a visitor who leaves this page open would sit
+ * on "12s ago" for hours, which is worse than showing no age at all —
+ * this page states the age precisely so that stale figures cannot pass as
+ * current, and a frozen age is the failure it exists to prevent, wearing
+ * the mask of the fix. `useNowSec` is the app's existing ticking clock and
+ * its own docstring names this exact bug.
+ */
+function ageLabel(updatedAtSec: number | undefined, nowSec: number): string {
   if (typeof updatedAtSec !== 'number') return copy.analytics.unknown;
-  const secs = Math.max(0, Math.floor(Date.now() / 1000) - updatedAtSec);
+  const secs = Math.max(0, nowSec - updatedAtSec);
   if (secs < 90) return copy.analytics.ageSeconds(secs);
   if (secs < 5400) return copy.analytics.ageMinutes(Math.round(secs / 60));
   return copy.analytics.ageHours(Math.round(secs / 3600));
@@ -76,6 +89,9 @@ export function Analytics() {
   // resolution, honouring VITE_DEFAULT_CHAIN_ID.
   const { readChain } = useActiveChain();
   const chainId = readChain.chainId;
+  // Ticks, so the freshness line below keeps telling the truth for a
+  // visitor who leaves the page open.
+  const nowSec = useNowSec();
 
   // useQuery, not useEffect+setState. Beyond matching how every other
   // async surface here loads, the effect form trips
@@ -120,6 +136,14 @@ export function Analytics() {
   const uninitialized =
     !unreachable && stats.isSuccess && typeof cursor?.lastBlock !== 'number';
 
+  // PENDING IS NOT AN ANSWER. Before the first response settles, both
+  // `isSuccess` and `isError` are false, so every counter fell through to
+  // "not reported" — a statement ABOUT THE SOURCE made before the source
+  // had been heard from. On a slow connection a visitor was told the
+  // indexer had omitted fields it was still in the middle of sending.
+  // Loading is its own posture and says only that.
+  const loading = indexerConfigured() && stats.isPending;
+
   return (
     <div className="an-page">
       <header className="an-head">
@@ -134,6 +158,12 @@ export function Analytics() {
         </button>
       </header>
 
+      {loading && (
+        <p className="an-unreachable" role="status">
+          <RefreshCw aria-hidden="true" /> {copy.analytics.loading}
+        </p>
+      )}
+
       {unreachable && (
         <p className="an-unreachable" role="status">
           <AlertTriangle aria-hidden="true" /> {copy.analytics.unreachable}
@@ -146,7 +176,12 @@ export function Analytics() {
         </p>
       )}
 
-      {!unreachable && !uninitialized && (
+      {/*
+        COUNTERS ONLY. What follows is behind the stats guard because it
+        is what the indexer told us; the transparency section below is
+        NOT, because it is not.
+      */}
+      {!loading && !unreachable && !uninitialized && (
         <>
           <section className="an-section" aria-labelledby="an-loans">
             <h2 id="an-loans">{copy.analytics.loansHeading}</h2>
@@ -175,16 +210,30 @@ export function Analytics() {
               <Stat label={copy.analytics.total} value={offers?.total} />
             </div>
           </section>
+        </>
+      )}
 
-          {/*
-            THE DEEP-LINK TARGET. The marketing site links to
-            `/analytics#transparency`, so this id is load-bearing: drop it
-            and that CTA silently lands at the top of the page instead of
-            the section it promised. Keep the id even if the heading text
-            changes.
-          */}
-          <section className="an-section" id="transparency" aria-labelledby="an-transparency">
-            <h2 id="an-transparency">
+      {/*
+        THE DEEP-LINK TARGET, AND DELIBERATELY OUTSIDE EVERY GUARD ABOVE.
+        The marketing site links to `/analytics#transparency` and labels
+        that resource "Smart Contracts", so this id is load-bearing: drop
+        it and the CTA lands at the top of the page instead of the
+        section it promised.
+
+        Round 2 added the contract address here; round 3 caught that it
+        had been added INSIDE the stats-success guard, so an indexer
+        outage or a fresh database took the address and the explorer link
+        away with the counters — the "Smart Contracts" link arriving at
+        no contract again, in precisely the conditions where a reader is
+        most likely to want to check the chain themselves.
+        `readChain` is local config: the address, the chain and the
+        explorer are known whether or not any endpoint answers, so they
+        are stated unconditionally. Only the two indexer-sourced facts
+        below degrade, and they degrade to "unknown" rather than
+        vanishing.
+      */}
+      <section className="an-section" id="transparency" aria-labelledby="an-transparency">
+        <h2 id="an-transparency">
               <ShieldCheck aria-hidden="true" /> {copy.analytics.transparencyHeading}
             </h2>
             <p>
@@ -224,14 +273,12 @@ export function Analytics() {
                   : copy.analytics.unknown}
               </dd>
               <dt>{copy.analytics.lastIngest}</dt>
-              <dd>{ageLabel(cursor?.updatedAt)}</dd>
+              <dd>{ageLabel(cursor?.updatedAt, nowSec)}</dd>
             </dl>
             <p className="an-caveat">
               {copy.analytics.caveat}
             </p>
           </section>
-        </>
-      )}
     </div>
   );
 }

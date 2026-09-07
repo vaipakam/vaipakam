@@ -13,7 +13,7 @@
  * the platform-level consent toggle, and deposit/withdraw with the
  * standard review receipt before signing.
  */
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { CircleCheck, Coins, LoaderCircle } from 'lucide-react';
 import { useModal } from 'connectkit';
 import { usePublicClient, useWalletClient } from 'wagmi';
@@ -398,6 +398,40 @@ export function Vpfi() {
       </p>
     </section>
   );
+
+  // RE-SCROLL WHEN THE TARGET FINALLY EXISTS (review round 3 P2).
+  //
+  // A cold `/vpfi#deposit` load renders the availability-loading branch
+  // below FIRST, and that branch has no `deposit` element. The browser
+  // resolves a fragment once, at load, against a document that does not
+  // yet contain it — and React Router does not replay fragment scrolling
+  // when a matching element appears later. So the newly repointed
+  // marketing CTA could still drop visitors at the top of a long
+  // educational page, which is the exact regression the anchor was added
+  // to prevent: the id existing is necessary and not sufficient.
+  //
+  // Runs after the async read settles, when whichever branch owns the id
+  // has mounted. `getElementById`, not `querySelector`, because the
+  // fragment is user-controlled and an invalid selector would throw
+  // during mount — the same reasoning as `/help`, whose effect this
+  // mirrors.
+  useEffect(() => {
+    if (vpfi.isLoading) return;
+    const hash = window.location.hash;
+    if (!hash) return;
+    let id = hash.slice(1);
+    try {
+      id = decodeURIComponent(id);
+    } catch {
+      /* malformed escape — fall back to the raw fragment */
+    }
+    // One frame, so the branch that owns the id is painted before the
+    // scroll is asked for.
+    const raf = requestAnimationFrame(() => {
+      document.getElementById(id)?.scrollIntoView();
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [vpfi.isLoading, isConnected]);
 
   // ---- Page states -------------------------------------------------
   if (vpfi.isLoading) {

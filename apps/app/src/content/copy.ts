@@ -4497,6 +4497,8 @@ const copySource = {
     refresh: 'Refresh',
     unreachable:
       'The indexer did not answer, so no figures are shown. Nothing is inferred from the silence — an unreachable indexer is not evidence of zero activity.',
+    loading:
+      'Reading the latest figures from the public indexer…',
     uninitialized:
       'The indexer answered, but has not read any blocks yet, so there are no figures to show. That is a fact about the indexer, not about the protocol — a database that has ingested nothing would report zero of everything, which is exactly why those zeros are withheld here rather than displayed.',
     contractLabel: 'Diamond contract',
@@ -4546,6 +4548,8 @@ const copySource = {
       'Parameter visibility is turned off on this deployment, so the live values are not shown here. This is a display setting only — the parameters themselves are on-chain and readable by anyone directly from the contracts.',
     unavailable:
       'No configuration snapshot is available for this chain. Nothing is inferred from that — it means the value is unknown here, not that it is unset on-chain.',
+    undated:
+      'This snapshot carries no timestamp, so there is no way to tell how old these values are. They may be current or they may be long superseded — read them as unverified rather than as the protocol’s present configuration.',
     stale:
       'This snapshot is more than a day old, so treat the values below as historical. Config changes normally reach the snapshot within one ingest scan.',
     notReported: 'not reported',
@@ -4578,6 +4582,12 @@ const copySource = {
     days: 'days',
     provenance: 'Read from the public indexer’s configuration snapshot',
     provenanceBlock: tmpl(' at block {{block}}', ['block']),
+    // The age is stated in the SAME sentence as the source, so a reader
+    // cannot take in where a figure came from without also taking in how
+    // old it is. An undated snapshot says so rather than saying nothing.
+    provenanceAge: tmpl(', taken {{age}} ago', ['age']),
+    provenanceAgeUnknown:
+      ', with no timestamp on it — so how current these values are is unknown',
     provenanceTail:
       '. The same endpoint is keyless and open-CORS, so you can verify any figure here independently rather than taking this page’s word for it.',
     bpsValue: tmpl('{{pct}}% ({{bps}} bps)', ['pct', 'bps']),

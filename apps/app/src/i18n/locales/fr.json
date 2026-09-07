@@ -2397,7 +2397,8 @@
       "ageMinutes": "il y a {{n}} min",
       "ageHours": "il y a {{n}} h",
       "uninitialized": "L'indexeur a répondu, mais n'a encore lu aucun bloc : il n'y a donc aucun chiffre à afficher. C'est un fait sur l'indexeur, pas sur le protocole — une base qui n'a rien ingéré annoncerait zéro partout, et c'est précisément pourquoi ces zéros sont tus ici plutôt qu'affichés.",
-      "contractLabel": "Contrat Diamond"
+      "contractLabel": "Contrat Diamond",
+      "loading": "Lecture des derniers chiffres depuis l'indexeur public…"
     },
     "protocolConsole": {
       "title": "Console du protocole",
@@ -2441,7 +2442,10 @@
       "bpsValue": "{{pct}} % ({{bps}} bps)",
       "hoursValue": "{{h}} h ({{s}} s)",
       "minutesValue": "{{m}} min ({{s}} s)",
-      "secondsValue": "{{s}} s"
+      "secondsValue": "{{s}} s",
+      "undated": "Cet instantané ne porte aucun horodatage : impossible de savoir quel âge ont ces valeurs. Elles peuvent être à jour comme largement dépassées — lisez-les comme non vérifiées, et non comme la configuration actuelle du protocole.",
+      "provenanceAge": ", prise il y a {{age}}",
+      "provenanceAgeUnknown": ", sans horodatage — l'actualité de ces valeurs est donc inconnue"
     }
   },
   "contractError": {
