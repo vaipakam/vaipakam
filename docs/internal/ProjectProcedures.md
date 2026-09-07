@@ -145,6 +145,25 @@ Convention: never use `--delete-branch` on merge. Branches stay in place
 for troubleshooting. Project owner sweep-deletes stale branches at the
 final stage.
 
+### 2.5 Shared worktree, outages, and staging discipline
+
+- **Concurrent local sessions share ONE worktree.** Never `checkout` or
+  `stash` to "stand down" for another session — touch nothing. To tell
+  whose commits are on a branch, read the remote-tracking reflog
+  (`git reflog show origin/<branch>`: fetch entries are theirs, push
+  entries are yours); peer-session commits are authored `Claude`, ours
+  `Raja4Shekar`.
+- **Verify the branch before editing after any interruption** — a power
+  outage, a session resume, or a "files modified by user" reminder:
+  `git branch --show-current` first, then `git status --porcelain`. On a
+  stacked branch pair, do it before EVERY edit; review-round edits have
+  repeatedly landed on the wrong branch.
+- **`git fetch` and check ahead/behind before every push; never
+  force-push.** A shared worktree means the remote may have moved.
+- **Stage with `git add <explicit paths>`, never `-A`.** The shared
+  worktree accumulates untracked directories that belong to other
+  sessions or scratch work.
+
 ---
 
 ## 3. Pull request workflow
@@ -257,19 +276,40 @@ Working rule until #106's substantive probe resolves: **modes are
 load-bearing; profile suffixes are self-documenting + possibly read.**
 Use both per the trigger-shape above.
 
-### 3.3 Background-poller — never `gh pr view --json comments`
+### 3.3 PR monitoring — heartbeat + direct reads; pollers are RETIRED
 
-Use `~/.claude/scripts/pr-poll.sh <pr-num>` instead. The poller covers
-review submissions + inline ` ```suggestion ` blocks + 👀 reactions +
-check-runs + workflow-runs — surfaces that `gh pr view --json comments`
-silently misses.
+**All background poller processes are retired (owner directive
+2026-08-10).** Earlier revisions of this section prescribed
+`~/.claude/scripts/pr-poll.sh`; do not launch it. Pollers left over from
+prior sessions accumulated and hammered the GitHub API until the account
+tripped a SECONDARY rate limit. Monitoring is now a periodic heartbeat
+(15–30 min) that does ONE batched read per wake and acts on the result.
 
-Launch with the harness's background mechanism (NOT shell `&`/`disown`):
-```bash
-~/.claude/scripts/pr-poll.sh 84 --interval 60
-```
-
-Exits on first delta; harness re-invokes the agent.
+- **Read with `curl` against the REST API; GraphQL only for
+  `resolveReviewThread`.** Fetch the PR, the head SHA's check-runs, and
+  the review comments in one batch; read `gh pr view --json comments` never
+  — it silently misses inline ` ```suggestion ` blocks and check-runs.
+- **A secondary rate limit does not show in `/rate_limit`** — that endpoint
+  keeps reporting 5000/5000 while reads return a VALID-JSON
+  `{"message":"API rate limit exceeded ..."}` body. Detect that body shape
+  before parsing; if limited, say so in one line and do API-free work until
+  the next wake. Never poll repeatedly inside one wake.
+- **Select unanswered findings by STATE, never by time.** An unanswered
+  finding is a top-level review comment with no reply from us; a
+  `created_at` window silently skips findings that were posted before the
+  window and never answered. A "no major issues" summary comment is not
+  the verdict — the inline threads are.
+- **Resolve every answered thread before merging — paginated.** Branch
+  protection requires all review threads resolved, and Codex's inline
+  threads stay open after the finding is addressed. Resolve them with the
+  `resolveReviewThread` GraphQL mutation, enumerating threads with
+  `reviewThreads(first:100, after:<cursor>)` until `hasNextPage` is false —
+  a single `first:100` page once reported `unresolved=0` over 33 hidden
+  threads. Re-census after resolving.
+- **A stacked PR (base = another feature branch) runs ZERO
+  `pull_request` CI** — the workflows target `main`, so absent checks look
+  like "not required". Verify with `gh run list --branch`; retarget the
+  base via the API and push to get a real run.
 
 ### 3.4 Iterating on Codex findings — discipline
 
@@ -288,6 +328,30 @@ For every finding:
 7. **Push + reply.** Reply to the inline thread with the commit hash
    that addressed it. Move card In review → In progress at step 1,
    back to In review at step 7.
+
+**Convergence discipline learned in the long review loops (#1995, #2031,
+#2042, #2051):**
+
+- **Fix ALL coding findings; leniency is for docs-only PRs only.** A
+  coding PR iterates until a round returns zero P1/P2. Escalate to the
+  owner rather than continuing past round 12 without a substantive
+  surface change.
+- **Findings are verified; remedies are only suggestions.** Verify a
+  finding against the code before accepting it, then design the fix
+  yourself and prove it with a discriminating test — a reviewer's
+  proposed remedy is an input, not an instruction. On the THIRD
+  recurrence of a finding class, restructure rather than patch.
+- **Arrest a recurring finding at its SOURCE, not at each path.** When a
+  round finds the same defect class in a new place, stop patching
+  instances on the second occurrence: close the cause where it
+  originates and predict its siblings in the same push.
+- **Re-slice when review surfaces a coupling.** If a loop keeps hitting
+  the same root because a slice was cut across a real safety coupling,
+  stop patching across the wrong cut, re-slice, and surface it to the
+  owner.
+- **Never write "does NOT close #N" in a commit or PR body.** GitHub's
+  linker matches the substring and closes the issue anyway. Use
+  `Refs #N`.
 
 ### 3.5 Merge — squash-merge, never delete
 
@@ -954,11 +1018,13 @@ own auto-add is one-repo-per-UI-rule.
 
 ## 9. Tooling reference
 
-### 9.1 PR poller — `~/.claude/scripts/pr-poll.sh`
+### 9.1 PR poller — `~/.claude/scripts/pr-poll.sh` (RETIRED 2026-08-10)
 
-Persistent across sessions. Covers reviews + inline ` ```suggestion `
-blocks + reactions + check-runs + workflow-runs. Has a `--watch-all`
-mode for cross-PR polling via the GitHub `/notifications` endpoint.
+Retired by owner directive — see §3.3. Do not launch it; the script is
+kept only for its read recipe (which REST surfaces a PR monitor must
+cover: reviews, inline ` ```suggestion ` blocks, reactions, check-runs,
+workflow-runs). Monitoring is a heartbeat with one batched `curl` read
+per wake.
 
 ### 9.2 Graphify with Solidity support — `~/.claude/scripts/graphify-apply-solidity-patch.py`
 
@@ -1120,7 +1186,12 @@ to a decision. Listed by category.
 
 - **`viaIR = true` + `optimizer_runs = 200` is non-negotiable.** Drives
   every build. Prefix every long forge invocation with
-  `nice -n -10 ionice -c 2 -n 0` for the same priority reason:
+  `nice -n -10 ionice -c 2 -n 0` for the same priority reason — **but
+  `nice -n -10` needs CAP_SYS_NICE**: for a normal user it fails with
+  `nice: cannot set niceness: Permission denied` and the command never
+  starts (verified 2026-05-04). Unless `sudo -n true` succeeds, drop the
+  `nice` and run `ionice -c 2 -n 0 forge ...` — the I/O class is the only
+  knob available unprivileged, and it is the one that matters:
   ```bash
   nice -n -10 ionice -c 2 -n 0 forge build
   nice -n -10 ionice -c 2 -n 0 forge test
@@ -1128,6 +1199,40 @@ to a decision. Listed by category.
   ```
   viaIR runs 5-15 min and ~8 GB RSS; low priority causes 2-3×
   slowdowns under parallel desktop load.
+
+**Design-and-change discipline (folded from agent memory, 2026-09-07):**
+
+- **Scout → Design → Code, for any non-trivial change.** Survey the
+  existing code BEFORE writing design text so the design is grounded in
+  what exists; then write the design; then code to it. Never act from
+  memory of the tree.
+- **Grep for an existing primitive before writing a new one** — an
+  existing function, formula, or storage shape that does the same thing
+  is reused, not re-implemented. When deriving a quantity, search for the
+  EXACT helper first: a name containing `UpperBound`, `preview`, or
+  `approx` is announcing that it is not the exact one.
+- **Exhaust the frozen plan before asking a design fork.** Before an
+  `AskUserQuestion`, re-read the governing plan/spec and every document it
+  binds to — the answer is usually already there. And check whether the
+  governing design doc has a NEWER revision on a named card or open PR
+  than the copy on `main`.
+- **Propagate renames and deletions to every ASSERTION**, not just code:
+  grep the OLD name across `docs/`, `ops/`, runbooks, and release notes.
+  A count is a claim; a changed formula falsifies every artifact that
+  states it. Read the files rather than trusting a single grep.
+- **One PR per design-doc step** (owner, 2026-08-17) — not per
+  sub-round, not per multi-step feature. Inner-loop work stays local
+  until the step is complete; push once with a pre-open adversarial and
+  security self-review, and run one CI cycle per push.
+- **Every change follows the project coding standards and carries
+  NatSpec/JSDoc that explains WHY** — a constraint the code cannot show,
+  never a narration of the next line.
+- **viaIR stack-too-deep lever:** lean DTOs (reducing the data that
+  crosses the ABI boundary) FIX "Variable size is N too deep"; sub-structing
+  the types that cross the boundary makes it WORSE. And viaIR's CSE turns
+  two identical `vm.warp(block.timestamp + N)` expressions into one — the
+  second warp is a no-op — so Foundry tests use distinct absolute warp
+  targets.
 
 ### 12.4 Retail-deploy gating policy — sanctions ON; KYC and country-pair OFF
 
@@ -1204,6 +1309,38 @@ to a decision. Listed by category.
 - **Always propose alternatives BEFORE committing to a non-trivial
   design path.** Let the user decide. Surface tradeoffs honestly.
 
+**Verification discipline — what a passing check actually proves:**
+
+- **The vacuous-test rule.** A test asserting a fix proves nothing until
+  the fix is reverted and the test fails for the RIGHT reason. Assert
+  persisted state, not just a returned value.
+- **Mutation-killed is not non-vacuous.** A mutation matrix proves a test
+  DISTINGUISHES two implementations, not that it pins the right value —
+  assert the fixture actually reached a non-trivial state first.
+- **Reachability is not discrimination.** A gate test must make the two
+  competing formulas STRADDLE the threshold; making a branch reachable
+  proves nothing. Instrument after two surviving mutations.
+- **A guard must RUN on its own case.** After adding a check, construct
+  the minimal PR containing the defect and confirm the check executes on
+  it — a trigger condition is at least as important as the check body.
+- **Make a check FAIL before trusting it.** Mutate the thing it guards and
+  watch it go red; "scanned nothing" must be a hard error, never a green.
+- **Don't overclaim what a check proves.** State which regression it
+  kills AND which it misses; an overclaimed check is worse than a known
+  gap because it stops people looking.
+- **Make the check BE the operation.** A validity check that
+  re-implements the operation it guards diverges from it; collapse to one
+  implementation that performs the operation and reports what it refuses.
+- **Verify with a tool that can SEE the failure.** Name the failure mode
+  first, then pick the tool: `bash -n` cannot see function scoping,
+  `--help` never exercises the code path, an exit code says nothing about
+  content.
+- **Scripted text edits replace EXACT strings only** — never bound an
+  edit by a positional marker such as the next blank line — and confirm
+  each edit LANDED (`grep` the new text; `wc -l` after) before any reply
+  references it. Mutate each call site by index when testing a scripted
+  change.
+
 ### 12.8 Testing
 
 - **Test scope includes flows NOT in the Advanced User Guide.** The
@@ -1214,6 +1351,14 @@ to a decision. Listed by category.
 
 - **Tests run with `nice -n -10 ionice -c 2 -n 0`** for the same
   performance reason as the build (§12.3).
+
+- **Inner loop is `FOUNDRY_PROFILE=quick forge build` plus
+  `forge test --match-*`;** the full regression (`run-regression.sh`) runs
+  ONLY before a testnet deployment, never as a per-PR gate. Kill any stale
+  `forge`/`solc` process before starting a new build, and use the priority
+  prefix from §12.3 (`ionice -c 2 -n 0`, plus `nice -n -10` only when
+  `sudo` is available) — viaIR runs take 5–15 minutes and ~8 GB, and low
+  I/O priority makes them 2–3× slower under desktop load.
 
 ### 12.9 Workers + frontend
 
@@ -1239,6 +1384,17 @@ to a decision. Listed by category.
   tagged `@custom:event-category state-change/loan-mutation` or
   `state-change/offer-mutation` lacks an indexer handler AND isn't
   in the script's `DELIBERATELY_NOT_HANDLED` allowlist.
+
+- **A source tree cannot be made undeployable by configuration** — every
+  guard in `wrangler.jsonc` sits in the artifact the operator overrides.
+  Delete the tree instead.
+- **Auction-shaped dapp flows are single-transaction** (prepay-listing
+  post/update/match-via-offer, and any future English or matched-orders
+  shape): one signed transaction per user action, never a multi-step
+  sequence the user can abandon midway.
+- **The general/retail path never gates asset ELIGIBILITY on admin or
+  governance configuration;** only the treasury backstop may gate. Do not
+  add an allowlist check to a general origination path.
 
 ### 12.10 Project-board nuances
 
@@ -1275,6 +1431,15 @@ to a decision. Listed by category.
   shell `&` / `disown`.** Mixing them silently orphans the poller
   (zero-byte output file, no task-notification). Hit this once during
   the PR #84 iteration cycle.
+
+- **Never build an API payload with `python -c` inside a double-quoted
+  shell string** — backticks in the body expand as command substitution
+  and silently strip identifiers. Write the body to a file with a
+  quoted heredoc and read the result back.
+- **MetaMask in the chrome-devtools MCP browser** must be loaded with
+  `install_extension` on every fresh browser; the `--load-extension` flag
+  is dead. Setup is recorded in agent memory
+  (`reference_metamask_mcp_browser_setup`).
 
 ### 12.12 Release-notes intro paragraphs
 
