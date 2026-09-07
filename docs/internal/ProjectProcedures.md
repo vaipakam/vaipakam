@@ -327,16 +327,57 @@ source of truth and is unchanged by this section.
   so in one line and do API-free work until the next wake. Never poll
   repeatedly inside one wake.
 - **Select unanswered feedback by STATE, never by time.** Unanswered
-  means any of: an inline thread whose LATEST comment is not ours (a
-  reviewer follow-up after our reply re-opens it), or a review submission
-  (`pulls/<N>/reviews`) whose returned `state` is `CHANGES_REQUESTED`
-  (the API's read value — `REQUEST_CHANGES` is only the event name used
-  when creating one) or `COMMENTED` with a non-empty body, that has no
-  inline thread and no reply from us. "No reply from the
-  author at all" is not the test — a thread we answered once can still
-  need action. A `created_at` window silently skips findings that were
-  posted before the window and never answered. A "no major issues" summary comment is not
-  the verdict — the inline threads are.
+  means either of:
+  1. an inline thread whose LATEST comment is not ours — a reviewer
+     follow-up after our reply re-opens a thread we already answered, so
+     "no reply from the author at all" is NOT the test; or
+  2. a review submission (`pulls/<N>/reviews`) that is still in force and
+     still unanswered.
+
+  Read the collection per reviewer, **dropping `DISMISSED` objects first**
+  (dismissing the newest must expose the one beneath it, not empty that
+  reviewer out), then judge two things SEPARATELY — they do not supersede
+  each other:
+
+  - **The standing verdict** is that reviewer's latest `APPROVED` or
+    `CHANGES_REQUESTED`. `CHANGES_REQUESTED` is actionable until the same
+    reviewer approves; a later `COMMENTED` does NOT withdraw it, so
+    "newest submission wins" is the wrong reduction — it hides a live
+    verdict behind an informational note. (`CHANGES_REQUESTED` is the
+    API's READ value; `REQUEST_CHANGES` is only the event name used when
+    CREATING a review.)
+  - **Each `COMMENTED` submission stands on its own**, oldest first. One
+    is actionable when its body carries an INDEPENDENT request — something
+    not already carried by that submission's own inline threads — AND we
+    have not replied to it. Both halves matter. Body-is-non-empty is not
+    the test: a clean verdict is also `COMMENTED` with a non-empty body.
+    Neither is "has a request": a review whose body just introduces the
+    findings it posted inline is a COVER NOTE, and counting it separately
+    keeps a PR marked outstanding after every one of those threads has
+    been answered — the threads are rule 1's job, and answering them
+    answers the summary. And our reply does answer a genuinely independent
+    request, even though the submission object itself never changes state,
+    while a later comment from the same reviewer does not answer an
+    earlier one.
+  - **A later `APPROVED` from the SAME reviewer clears their own earlier
+    `COMMENTED` requests.** An approval is that reviewer's verdict on the
+    state of the PR at that moment, so it is definitive evidence they
+    accepted the newer state — including whatever they had asked for
+    earlier. Without this, a standalone request answered by a fix rather
+    than a reply stays outstanding forever and can hold a merge-ready PR
+    indefinitely, since only a reply from us would ever clear it.
+    Scoped deliberately: it clears only requests from **that** reviewer,
+    and only ones **older** than the approval. It does not touch another
+    reviewer's requests, a later request from the same reviewer, or an
+    open `CHANGES_REQUESTED` — which the rule above already says only an
+    approval withdraws, and which this is the same principle applied to
+    the weaker signal.
+
+  A "no major issues" summary is not a verdict that overrides the inline
+  threads either — those are judged by rule 1, independently.
+
+  A `created_at` window silently skips findings posted before the window
+  and never answered, which is why none of this keys on time.
 - **Resolve every answered thread before merging — paginated.** Branch
   protection requires all review threads resolved, and Codex's inline
   threads stay open after the finding is addressed. Resolve them with the
