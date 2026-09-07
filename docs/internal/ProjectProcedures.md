@@ -347,13 +347,18 @@ source of truth and is unchanged by this section.
     API's READ value; `REQUEST_CHANGES` is only the event name used when
     CREATING a review.)
   - **Each `COMMENTED` submission stands on its own**, oldest first. One
-    is actionable when its body actually asks for something AND we have
-    not replied to it — a later comment from the same reviewer does not
-    answer an earlier request, and our reply does answer it even though
-    the object itself never changes state. Body-is-non-empty is not the
-    test: a clean verdict is also `COMMENTED` with a non-empty body, and
-    treating it as actionable leaves the heartbeat stuck on a PR that is
-    ready to merge.
+    is actionable when its body carries an INDEPENDENT request — something
+    not already carried by that submission's own inline threads — AND we
+    have not replied to it. Both halves matter. Body-is-non-empty is not
+    the test: a clean verdict is also `COMMENTED` with a non-empty body.
+    Neither is "has a request": a review whose body just introduces the
+    findings it posted inline is a COVER NOTE, and counting it separately
+    keeps a PR marked outstanding after every one of those threads has
+    been answered — the threads are rule 1's job, and answering them
+    answers the summary. And our reply does answer a genuinely independent
+    request, even though the submission object itself never changes state,
+    while a later comment from the same reviewer does not answer an
+    earlier one.
 
   A "no major issues" summary is not a verdict that overrides the inline
   threads either — those are judged by rule 1, independently.
