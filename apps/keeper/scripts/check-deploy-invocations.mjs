@@ -3285,25 +3285,17 @@ function boundConfigNames(rawText, base) {
     String.raw`(?:^|[;{(,\s])` + DECL + String.raw`\s*(?:(?:pathlib\.)?Path\s*\(\s*)?(['"\`])([^'"\`\n]*)\2`,
     'gm',
   );
-  // A name that is also a PARAMETER anywhere in the file is not this binding
-  // at every use: a module-level `cfg` and a `def write_tmp(cfg)` are
-  // different variables, and marking the config rewritten because the helper
-  // wrote a temporary blocked a safe deploy (Codex #2066 r1). Scope is not
-  // modelled here, so the honest move is to decline the name rather than to
-  // pretend the shadow does not exist.
-  const shadowed = new Set();
-  for (const m of text.matchAll(
-    /(?:function\s+[A-Za-z_$][\w$]*|def\s+[A-Za-z_]\w*)\s*\(([^)]*)\)|\(([^)]*)\)\s*=>/g,
-  )) {
-    for (const raw of (m[1] ?? m[2] ?? '').split(',')) {
-      const n = raw.trim().replace(/[:=].*$/, '').replace(/^\**/, '').trim();
-      if (/^[A-Za-z_$][\w$]*$/.test(n)) shadowed.add(n);
-    }
-  }
+  // NO SHADOW SUPPRESSION. Declining a name because some function elsewhere
+  // takes a parameter of the same name was accepted in r1 as a fix for a
+  // false red — and it is a file-wide BYPASS of this check: one unrelated
+  // `function f(cfg) {}` anywhere silenced a real module-level write
+  // (Codex #2066 r3). Between a rare false red and a one-line disable of a
+  // safety gate, the false red is the right failure, so the r1 remedy is
+  // withdrawn. Scoping the shadow properly needs real scope analysis, which
+  // is the unbounded predicate this reader stays out of.
   for (const m of text.matchAll(BIND_RE)) {
     const [, name, , literal] = m;
     if (literal.slice(literal.lastIndexOf('/') + 1) !== base) continue;
-    if (shadowed.has(name)) continue;
     const assigns = text.match(
       new RegExp(String.raw`(?:^|[;{(,\s])(?:const|let|var)?\s*` + name + String.raw`\s*(?::\s*[^=;\n()]+)?\s*=(?!=)`, 'gm'),
     );
@@ -3447,6 +3439,12 @@ function callArgs(rawText, openParenAt) {
 // cheaper than the alternative of resolving paths.
 const COPY_SHELL_RE = /(?:^|[\s;&|(])(cp|mv|install|rsync)\s([^\n]*)/g;
 const COPY_CALL_RE = /\b(?:copyFile|copyFileSync|rename|renameSync|cpSync|copy|move)\s*\(/g;
+// Options that do not change which operand is the source and which the
+// destination. Anything outside this set — `-t`, `--target-directory`,
+// `--parents`, or a flag nobody has classified — makes the command
+// unprovable, and unprovable means conservative.
+const POSITION_SAFE_FLAG =
+  /^-(?:[abdfHiLnPpRrsuvx]+|-(?:archive|backup|force|interactive|link|no-clobber|no-dereference|dereference|preserve(?:=.*)?|recursive|symbolic-link|update|verbose|one-file-system|strip-trailing-slashes|sparse=.*|reflink=.*))$/;
 
 /**
  * Offsets of copy/move commands that write INTO `base`.
@@ -3485,117 +3483,61 @@ function copyWriteOffsets(text, base, cfgDir) {
     if (typeof cfg !== 'string' || cfg === '') return true;
     return d === cfg || cfg.endsWith(`/${d}`) || d.endsWith(`/${cfg}`);
   };
-  // Comments are blanked before the shell walk: a trailing `# refresh` left
-  // its words in the argument list and the last of them was read as the
-  // destination (Codex #2066 r1).
-  const shellText = stripSourceComments(text);
+  // PROVE THE READ, DO NOT COMPUTE THE DESTINATION. Three review rounds of
+  // destination arithmetic — `-t`, grouped `-vt`, `--parents`, `-P`,
+  // redirections attached and spaced, `configs/.`, `//`, escaped separators —
+  // each fixed one spelling and exposed the next, because deriving where a
+  // copy lands means modelling the whole of `cp`. The direction is inverted
+  // here: a copy is skipped ONLY when it is provably a read, and every other
+  // shape stays with the conservative whole-command match this replaced.
+  //
+  // That is enough for #2053, whose report is the plain two-operand backup,
+  // and it does not grow with the flag set: an unrecognised flag makes the
+  // command unprovable, which reports. A flagged backup like
+  // `cp -t /tmp/backups configs/custom.jsonc` therefore still reports — a
+  // known false red, kept deliberately, because the alternative is a reader
+  // that must know what every option does to stay correct.
+  //
+  // NOT comment-stripped. `stripSourceComments` reads `//` as a JavaScript
+  // line comment, so it blanked the destination of
+  // `cp generated//custom.jsonc configs/custom.jsonc` and lost the overwrite
+  // entirely (Codex #2066 r3) — a shell path is not JavaScript source.
   const shellRe = new RegExp(COPY_SHELL_RE.source, 'g');
   let m;
-  while ((m = shellRe.exec(shellText)) !== null) {
-    // The command ends at the first UNQUOTED separator. The scan is REWOUND to
-    // that separator rather than left past the whole match: the argument
-    // capture runs to end of line, so a second copy on the same line was
-    // swallowed by the first one's match and never examined — `cp a /tmp/x ;
-    // cp gen configs/custom.jsonc` missed the write entirely. Cutting on a
-    // quote-aware boundary rather than in the pattern keeps a quoted `;`
-    // inside a filename from truncating the arguments.
-    const cmd = m[1];
+  while ((m = shellRe.exec(text)) !== null) {
+    // The command ends at the first UNQUOTED separator, and the scan is
+    // REWOUND there: the argument capture runs to end of line, so a second
+    // copy on the same line was swallowed by the first one's match.
     const argsAt = m.index + m[0].length - m[2].length;
     const cut = firstUnquoted(m[2], ';&|');
-    const rest = cut >= 0 ? m[2].slice(0, cut) : m[2];
+    let rest = cut >= 0 ? m[2].slice(0, cut) : m[2];
     if (cut >= 0) shellRe.lastIndex = argsAt + cut;
+    // A shell comment ends the command too, and `#` only starts one at a word
+    // boundary (`file#1` is a filename).
+    const hash = firstUnquoted(rest, '#');
+    if (hash > 0 && /\s/.test(rest[hash - 1])) rest = rest.slice(0, hash);
     const words = shellWords(rest);
-    if (words === null) {
-      // The FALLBACK reads the truncated command, not the rest of the line.
-      // With `m[2]` it found the config named in a LATER deploy on the same
-      // line and blamed an unrelated copy for rewriting it (Codex #2066 r1).
-      if (mentions(rest)) hits.push(m.index);
-      continue;
+    const provable =
+      words !== null &&
+      // A redirection, attached or spaced, means a word is syntax rather than
+      // an operand — unprovable rather than parsed.
+      firstUnquoted(rest, '<>') === -1 &&
+      // Only flags that leave the operand ORDER alone. `-t`, `--parents` and
+      // anything unrecognised make the positions unknowable.
+      words.filter((w) => w.startsWith('-')).every((w) => POSITION_SAFE_FLAG.test(w));
+    const operands = provable ? words.filter((w) => !w.startsWith('-')) : [];
+    if (
+      provable &&
+      operands.length === 2 &&
+      baseOf(operands[0]) === base &&
+      baseOf(operands[1]) !== base &&
+      // …and the destination cannot be the config's own directory, which is
+      // the form that keeps the source's basename.
+      !dirCouldBe(operands[1], cfgDir)
+    ) {
+      continue; // proven read
     }
-    // Redirections are shell syntax, not operands. `cp gen.jsonc
-    // configs/custom.jsonc >/dev/null` left `>/dev/null` as the last word and
-    // the real destination was missed (Codex #2066 r1).
-    const operands = [];
-    for (let i = 0; i < words.length; i += 1) {
-      const w = words[i];
-      if (/^(?:&?\d*>>?|<)/.test(w)) {
-        if (/^(?:&?\d*>>?|<)$/.test(w)) i += 1; // the redirect's target
-        continue;
-      }
-      operands.push(w);
-    }
-    // `-t` IS NOT UNIVERSAL. For rsync, `-t` is `--times` (preserve
-    // modification times), not a target directory, so reading it as one made
-    // `rsync -t generated.jsonc configs/custom.jsonc` look like a copy into a
-    // directory called `generated.jsonc` and miss the write (Codex #2066 r1).
-    const hasTargetFlag = cmd === 'cp' || cmd === 'mv' || cmd === 'install';
-    const tIdx = hasTargetFlag
-      ? operands.findIndex((w) => w === '-t' || w === '--target-directory')
-      : -1;
-    // SHORT OPTIONS GROUP. GNU accepts `-vt/tmp/backups` as readily as
-    // `-t/tmp/backups`, and matching only the latter left the grouped spelling
-    // unrecognised — the lone source then reached the mention fallback and a
-    // backup was reported as a rewrite (Codex #2066 r2).
-    const groupedT = hasTargetFlag
-      ? operands.find((w) => /^-[A-Za-z]*t.+/.test(w) && !w.startsWith('--'))
-      : undefined;
-    const inlineT = hasTargetFlag
-      ? operands.find((w) => w.startsWith('--target-directory=')) ?? groupedT
-      : undefined;
-    // `--parents` puts the FULL source path under the destination:
-    // `cp --parents configs/custom.jsonc build` writes
-    // `build/configs/custom.jsonc`. Comparing the bare destination against the
-    // config's directory decided they differed and recorded no rewrite
-    // (Codex #2066 r2).
-    const parents = hasTargetFlag && operands.some((w) => w === '--parents' || w === '-P');
-    const positional = operands.filter(
-      (w, i) => !w.startsWith('-') && !(tIdx >= 0 && i === tIdx + 1),
-    );
-    // COPYING INTO A DIRECTORY KEEPS THE SOURCE'S NAME. `cp x/wrangler.jsonc
-    // apps/thing/`, `cp -t apps/thing x/wrangler.jsonc` and — with no trailing
-    // slash to mark it — `cp x/wrangler.jsonc apps/thing` all land ON the
-    // config, so reading only the last word would call a real overwrite a
-    // read. In that form the sources decide it.
-    const last = positional.length >= 2 ? positional[positional.length - 1] : undefined;
-    const dirTarget =
-      inlineT !== undefined
-        ? inlineT.startsWith('--target-directory=')
-          ? inlineT.slice('--target-directory='.length)
-          : inlineT.slice(inlineT.indexOf('t', 1) + 1)
-        : tIdx >= 0
-          ? operands[tIdx + 1]
-          : last !== undefined && baseOf(last) !== base
-            ? last
-            : undefined;
-    const explicitTarget = inlineT !== undefined || tIdx >= 0;
-    if (dirTarget !== undefined) {
-      const sources = explicitTarget ? positional : positional.slice(0, -1);
-      // …but only if that directory can be the CONFIG's directory. Backing the
-      // config up with `cp -t /tmp/backups configs/custom.jsonc` carries a
-      // matching source basename and still writes nothing here; treating the
-      // form itself as a write just moves #2053's false red rather than fixing
-      // it. A directory this reader cannot place stays conservative.
-      const lands = (w) => {
-        if (baseOf(w) !== base) return false;
-        // Under `--parents` the source's own directory is recreated beneath
-        // the target, so that is the directory to compare.
-        const sub = parents ? w.slice(0, w.lastIndexOf('/')) : '';
-        return dirCouldBe(sub ? `${dirTarget}/${sub}` : dirTarget, cfgDir);
-      };
-      if (sources.some(lands)) {
-        hits.push(m.index);
-        continue;
-      }
-      // An EXPLICIT `-t` / `--target-directory` names the destination, so the
-      // question is answered either way and the unresolved-destination
-      // fallback below must not run. It filters the flag's argument out of
-      // `positional`, leaving one word, which made that fallback fire and
-      // report the backup it had just correctly cleared (found re-probing
-      // Codex r1's compact-`-t` finding).
-      if (explicitTarget) continue;
-    }
-    if (last !== undefined && baseOf(last) === base) hits.push(m.index);
-    else if (last === undefined && mentions(rest)) hits.push(m.index);
+    if (mentions(rest)) hits.push(m.index);
   }
   for (const m of text.matchAll(COPY_CALL_RE)) {
     const open = m.index + m[0].length - 1;
@@ -3616,7 +3558,11 @@ function copyWriteOffsets(text, base, cfgDir) {
       if (mentions(own)) hits.push(m.index);
       continue;
     }
-    if (mentions(args[1])) hits.push(m.index);
+    // BASENAME, not substring: `copyFileSync("configs/custom.jsonc",
+    // "/tmp/custom.jsonc.bak")` mentions the name in its DESTINATION and
+    // still writes nothing here (Codex #2066 r3).
+    const destWord = (args[1].match(/["'\`]([^"'\`]*)["'\`]/) ?? [, args[1]])[1].trim();
+    if (baseOf(destWord) === base || dirCouldBe(destWord, cfgDir)) hits.push(m.index);
   }
   return hits;
 }
@@ -7820,7 +7766,15 @@ function plainLines(text) {
     while (r < regions.length && regions[r].end <= i) r += 1;
     const inside = r < regions.length && i > regions[r].start && i < regions[r].end;
     lineNo += 1;
-    if (inside) {
+    // SYNTACTIC newlines only. A newline INSIDE a string literal is data —
+    // `execFileSync("echo", { input: `wrangler\ndeploy` })` sends two lines to
+    // echo and runs no deploy — and joining across it manufactured a command
+    // the program never issues (Codex #2066 r3). Keeping the newline character
+    // was not enough: the text matchers read it as ordinary whitespace, so the
+    // two tokens still met. Such a line is not folded at all, which degrades
+    // that call to the previous line-by-line reading rather than inventing a
+    // deploy.
+    if (inside && !inString(text, regions[r].start, i)) {
       buf += ' ';
       continue;
     }
@@ -7830,6 +7784,26 @@ function plainLines(text) {
   }
   out.push({ text: buf, line: bufLine, physical: true });
   return out;
+}
+
+/**
+ * Is offset `at` inside a string literal that opened at or after `from`?
+ *
+ * Used only to decide whether a newline is syntax or data while folding, so
+ * it starts from the call's own opening paren rather than the file.
+ */
+function inString(text, from, at) {
+  let quote = null;
+  for (let i = from; i < at; i += 1) {
+    const c = text[i];
+    if (quote) {
+      if (c === '\\') i += 1;
+      else if (c === quote) quote = null;
+      continue;
+    }
+    if (c === '"' || c === "'" || c === '`') quote = c;
+  }
+  return quote !== null;
 }
 
 /**

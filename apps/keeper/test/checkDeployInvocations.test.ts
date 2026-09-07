@@ -8922,9 +8922,14 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(r.ok).toBe(false);
   });
 
-  it('`cp -t` to an UNRELATED directory is a backup, not a rewrite (#2053)', () => {
-    // Same inverted form, matching source basename — and still no write here.
-    // Treating the form itself as a write just moves the false red.
+  it('`cp -t` is unprovable, so it stays conservative (#2066 r3)', () => {
+    // This asserted "not a rewrite" until r3. Deriving where a flagged copy
+    // lands means modelling all of `cp` — three rounds of `-t`, `-vt`,
+    // `--parents`, `-P` and redirections each fixed one spelling and exposed
+    // the next — so the reader now proves READS instead, and an unrecognised
+    // flag makes the command unprovable. A flagged backup therefore reports:
+    // a known false red, kept deliberately over a reader that must know what
+    // every option does to stay correct.
     seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
     seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
     const r = runWith(
@@ -8932,7 +8937,7 @@ describe('check-deploy-invocations — #1996 config identity', () => {
       'cp -t /tmp/backups configs/custom.jsonc\n' +
         'wrangler deploy --config configs/custom.jsonc\n',
     );
-    expect(r.ok).toBe(true);
+    expect(r.ok).toBe(false);
   });
 
   it('a copy whose destination cannot be read stays conservative (#2053)', () => {
@@ -9202,9 +9207,10 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(redirected.ok).toBe(false);
   });
 
-  it('the compact -t form is read as a target directory (#2066 r1)', () => {
-    // GNU accepts the argument attached; only the spaced form was handled, so
-    // a backup was reported as a rewrite.
+  it('the compact -t form is unprovable too (#2066 r3)', () => {
+    // r1 taught this reader `-tDIR`, r2 taught it `-vtDIR`, r3 found `-vt DIR`
+    // still missing. The flag set is the wrong thing to chase; both spellings
+    // are simply unprovable now, and both report.
     seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
     seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
     const backup = runWith(
@@ -9212,7 +9218,7 @@ describe('check-deploy-invocations — #1996 config identity', () => {
       'cp -t/tmp/backups configs/custom.jsonc\n' +
         'wrangler deploy --config configs/custom.jsonc\n',
     );
-    expect(backup.ok).toBe(true);
+    expect(backup.ok).toBe(false);
 
     seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
     seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
@@ -9300,9 +9306,12 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(b.ok).toBe(false);
   });
 
-  it('a SHADOWED parameter is not the bound config (#2066 r1)', () => {
-    // A module-level `cfg` and `def write_tmp(cfg)` are different variables.
-    // Scope is not modelled, so the name is declined rather than assumed.
+  it('a shadowed parameter no longer suppresses the bound reading (#2066 r3)', () => {
+    // The r1 remedy — decline any name that is also a parameter somewhere —
+    // was a file-wide BYPASS: one unrelated `function f(cfg) {}` silenced a
+    // real module-level write. Between a rare false red and a one-line
+    // disable of a safety gate, the false red is the right failure, so that
+    // remedy is withdrawn and this shape reports.
     seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
     seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
     const r = runWith(
@@ -9315,7 +9324,21 @@ describe('check-deploy-invocations — #1996 config identity', () => {
         'write_tmp(Path("/tmp/scratch.jsonc"))\n' +
         'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
     );
-    expect(r.ok).toBe(true);
+    expect(r.ok).toBe(false);
+  });
+
+  it('an unrelated same-named parameter cannot disable the check (#2066 r3)', () => {
+    // The bypass the withdrawal closes: the write is real and module-level.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'bypass.mjs',
+      'const cfg = "configs/custom.jsonc";\n' +
+        'function unrelated(cfg) { return cfg; }\n' +
+        'writeFileSync(cfg, "{}");\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
   });
 
   it('a comma inside a comment does not shift the copy destination (#2066 r1)', () => {
@@ -9389,9 +9412,9 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(r.ok).toBe(false);
   });
 
-  it('a grouped short option still carries the target directory (#2066 r2)', () => {
-    // GNU accepts `-vtDIR`; matching only `-tDIR` left the backup looking
-    // like a rewrite.
+  it('a grouped short option is unprovable as well (#2066 r3)', () => {
+    // Both halves report now: the guard no longer claims to know where a
+    // flagged copy lands.
     seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
     seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
     const backup = runWith(
@@ -9399,7 +9422,7 @@ describe('check-deploy-invocations — #1996 config identity', () => {
       'cp -vt/tmp/backups configs/custom.jsonc\n' +
         'wrangler deploy --config configs/custom.jsonc\n',
     );
-    expect(backup.ok).toBe(true);
+    expect(backup.ok).toBe(false);
 
     seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
     seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
@@ -9420,6 +9443,80 @@ describe('check-deploy-invocations — #1996 config identity', () => {
       'c.mjs',
       'copy("/tmp/source");\n' +
         'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a shell path with // is not a JavaScript comment (#2066 r3)', () => {
+    // Applying the JS/Python comment stripper to shell text blanked the
+    // destination of `cp generated//custom.jsonc configs/custom.jsonc` and
+    // lost the overwrite — a false green introduced by the r1 fix.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'w.sh',
+      'cp generated//custom.jsonc configs/custom.jsonc\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('cp -P and cp --parents both report (#2066 r3)', () => {
+    // `-P` is --no-dereference, not --parents; the reader no longer claims to
+    // tell them apart, and neither is provably a read.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const p = runWith(
+      'w.sh',
+      'cp -P generated/custom.jsonc configs\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(p.ok).toBe(false);
+
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const par = runWith(
+      'w.sh',
+      'cp --parents generated/custom.jsonc configs\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(par.ok).toBe(false);
+  });
+
+  it('a redirection attached to the destination still reports (#2066 r3)', () => {
+    // Shell syntax needs no whitespace before `>`; a redirection anywhere
+    // makes the operands unprovable.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'w.sh',
+      'cp generated.jsonc configs/custom.jsonc>/dev/null\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a library backup to the same basename is a read (#2066 r3)', () => {
+    // Substring matching counted the name in the DESTINATION of
+    // `copyFileSync("configs/custom.jsonc", "/tmp/custom.jsonc.bak")`.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'c.mjs',
+      'copyFileSync("configs/custom.jsonc", "/tmp/custom.jsonc.bak");\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a newline inside a string stays data when folding (#2066 r3)', () => {
+    // `input: `wrangler\ndeploy`` sends two lines to echo and runs no
+    // deploy; folding it to a space manufactured a command the program never
+    // issues.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    const r = runWith(
+      'apps/agent/data.mjs',
+      'execFileSync(\n  "echo",\n  { input: `wrangler\ndeploy` },\n);\n',
     );
     expect(r.ok).toBe(true);
   });
