@@ -9591,6 +9591,108 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(r.ok).toBe(false);
   });
 
+  it('one lexer: regex literals are not code, comments or strings (#2066 r5)', () => {
+    // Five separate scanners each had their own idea of what a literal is, so
+    // teaching one about regex literals put it out of step with the other
+    // four. These four shapes were four findings of the same defect.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const asAssignment = runWith(
+      'r.mjs',
+      'const cfg = "configs/custom.jsonc";' + '\n' +
+        'const pattern = / cfg = documentation/;' + '\n' +
+        'writeFileSync(cfg, "{}");' + '\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);' + '\n',
+    );
+    expect(asAssignment.ok).toBe(false);
+
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const asCallClose = runWith(
+      'c.mjs',
+      'copyFileSync(' + '\n' +
+        '  /\\)/.source,' + '\n' +
+        '  "configs/custom.jsonc",' + '\n' +
+        ');' + '\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);' + '\n',
+    );
+    expect(asCallClose.ok).toBe(false);
+
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    const asComment = runWith(
+      'apps/agent/f.mjs',
+      'spawnSync(' + '\n' +
+        '  "wrangler",' + '\n' +
+        '  /\\//.test(input) ? ["deploy"] : ["deploy"],' + '\n' +
+        ');' + '\n',
+    );
+    expect(asComment.ok).toBe(false);
+
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    const asStringState = runWith(
+      'apps/agent/g.mjs',
+      'spawnSync(' + '\n' +
+        '  "wrangler",' + '\n' +
+        "  /'/.test(input) ?" + '\n' +
+        '  ["deploy"] : ["deploy"],' + '\n' +
+        ');' + '\n',
+    );
+    expect(asStringState.ok).toBe(false);
+  });
+
+  it('a compound library destination is unresolved (#2066 r5)', () => {
+    // Accepting the first quoted substring read the harmless branch of
+    // `backup ? "/tmp/other.jsonc" : "configs/custom.jsonc"`.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'c.mjs',
+      'copyFileSync("gen.jsonc", backup ? "/tmp/other.jsonc" : "configs/custom.jsonc");\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a write mode is found anywhere in the argument list (#2066 r5)', () => {
+    // Python allows keyword arguments in any order.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'r.py',
+      'import subprocess\n' +
+        'cfg = "configs/custom.jsonc"\n' +
+        'open(cfg, encoding="utf8", mode="w").write("{}")\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('an escaped bound literal still names the config (#2066 r5)', () => {
+    // A `\\u002e` escape evaluates to `.`, so this names the config; the raw
+    // spelling compared unequal and the binding was discarded.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'e.mjs',
+      'const cfg = "configs/custom\\u002ejsonc";\n' +
+        'writeFileSync(cfg, "{}");\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a shell comment after a control operator is still a comment (#2066 r5)', () => {
+    // `:;# cp …` runs no copy; bash opens a comment after a control operator.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'w.sh',
+      ':;# cp generated.jsonc configs/custom.jsonc\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
   it('the PROSE path invalidates a rewritten config too', () => {
     // That path passed the rewrite context to the safety reader and not to the
     // identity reader, so the identity half trusted the stale copy and sent the

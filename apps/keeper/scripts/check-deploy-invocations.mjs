@@ -3277,7 +3277,7 @@ function boundConfigNames(rawText, base) {
   const text = stripSourceComments(rawText);
   // BIND_RE needs the literal it binds, so the string-blanked form is used
   // only where string CONTENT could be mistaken for code.
-  const codeOnly = blankStringBodies(text);
+  const codeOnly = blankNonCode(rawText, jsSpans(rawText));
   const names = new Set();
   // A TYPE ANNOTATION still declares the same binding. `const cfg: string =
   // "configs/custom.jsonc"` and `cfg: Path = Path(...)` are ordinary
@@ -3298,7 +3298,14 @@ function boundConfigNames(rawText, base) {
   // is the unbounded predicate this reader stays out of.
   for (const m of text.matchAll(BIND_RE)) {
     const [, name, , literal] = m;
-    if (literal.slice(literal.lastIndexOf('/') + 1) !== base) continue;
+    // AN ESCAPE IS NOT THE PATH. `"configs/custom\u002ejsonc"` evaluates to
+    // the config and compared unequal in its raw spelling, so the binding was
+    // discarded and the rewrite missed (r5). Decoded where the host language
+    // makes that unambiguous; a literal that cannot be decoded is kept as a
+    // candidate rather than silently dropped.
+    const decoded = /\\/.test(literal) ? decodeJsonString(literal) : literal;
+    const undecodable = /\\/.test(literal) && decoded === literal;
+    if (!undecodable && decoded.slice(decoded.lastIndexOf('/') + 1) !== base) continue;
     // Counted over a form with STRING BODIES blanked as well. A template
     // literal reading `` ` cfg = documentation` `` was counted as a second
     // assignment, which discarded the binding and silently disabled this
@@ -3310,6 +3317,91 @@ function boundConfigNames(rawText, base) {
     if (assigns && assigns.length === 1) names.add(name);
   }
   return names;
+}
+
+/**
+ * ONE lexical pass over host-language source, consulted by every reader here.
+ *
+ * Returns a same-length array classifying each offset as CODE, STR, CMT or
+ * RGX. Five separate hand-rolled scanners used to walk this text — the
+ * comment stripper, the string blanker, the argument splitter, the child-call
+ * region finder and the folded-newline classifier — each with its own partial
+ * idea of what a literal is. Teaching ONE of them about regex literals put it
+ * out of step with the other four, and Codex #2066 r5 returned four findings
+ * that were all the same defect wearing different hats. A single classifier is
+ * the cause-fix: readers ask where they are instead of each deciding.
+ *
+ * A `/` opens a regex only where a VALUE may begin, which is what separates it
+ * from division — and in Python, where `/` is always division, that test fails
+ * for `a /b/ c` because the preceding significant character is an identifier.
+ */
+const SPAN_CODE = 0;
+const SPAN_STR = 1;
+const SPAN_CMT = 2;
+const SPAN_RGX = 3;
+function jsSpans(text) {
+  const span = new Uint8Array(text.length);
+  let prev = '';
+  for (let i = 0; i < text.length; i += 1) {
+    const c = text[i];
+    if (c === '/' && text[i + 1] === '*') {
+      const end = text.indexOf('*/', i + 2);
+      const stop = end === -1 ? text.length : end + 2;
+      span.fill(SPAN_CMT, i, stop);
+      i = stop - 1;
+      continue;
+    }
+    if ((c === '/' && text[i + 1] === '/') || c === '#') {
+      let nl = text.indexOf('\n', i);
+      if (nl === -1) nl = text.length;
+      span.fill(SPAN_CMT, i, nl);
+      i = nl - 1;
+      continue;
+    }
+    if (c === '"' || c === "'" || c === '`') {
+      let j = i + 1;
+      for (; j < text.length; j += 1) {
+        if (text[j] === '\\') { j += 1; continue; }
+        if (text[j] === c) break;
+      }
+      const stop = Math.min(j + 1, text.length);
+      span.fill(SPAN_STR, i, stop);
+      i = stop - 1;
+      prev = c;
+      continue;
+    }
+    if (c === '/' && /[([{,;:=!&|?+\-*%~^<>]|^$/.test(prev)) {
+      let j = i + 1;
+      let cls = false;
+      let closed = false;
+      for (; j < text.length; j += 1) {
+        const d = text[j];
+        if (d === '\\') { j += 1; continue; }
+        if (d === '\n') break;
+        if (cls) { if (d === ']') cls = false; continue; }
+        if (d === '[') cls = true;
+        else if (d === '/') { closed = true; break; }
+      }
+      // An unterminated `/` on the line is division, not a literal.
+      if (closed) {
+        span.fill(SPAN_RGX, i, j + 1);
+        i = j;
+        prev = '/';
+        continue;
+      }
+    }
+    if (!/\s/.test(c)) prev = c;
+  }
+  return span;
+}
+
+/**
+ * Blank everything that is not CODE to spaces, preserving offsets.
+ */
+function blankNonCode(text, span) {
+  const chars = [...text];
+  for (let i = 0; i < chars.length; i += 1) if (span[i] !== SPAN_CODE) chars[i] = ' ';
+  return chars.join('');
 }
 
 /**
@@ -3450,26 +3542,17 @@ function callArgs(rawText, openParenAt) {
   // destination from args[1] to args[2] and losing the overwrite entirely
   // (Codex #2066 r1). Blanking preserves offsets, so positions still line up
   // with the original text.
-  const text = stripSourceComments(rawText);
+  // Delimiters count only where the lexer says CODE. A `)` inside `/\)/` was
+  // read as the call's close, so the destination was never seen (r5).
+  const text = rawText;
+  const span = jsSpans(rawText);
   const args = [];
   let depth = 0;
-  let quote = null;
   let buf = '';
   for (let i = openParenAt; i < text.length; i += 1) {
     const ch = text[i];
-    if (quote) {
-      if (ch === '\\') {
-        buf += ch + (text[i + 1] ?? '');
-        i += 1;
-      } else {
-        if (ch === quote) quote = null;
-        buf += ch;
-      }
-      continue;
-    }
-    if (ch === '"' || ch === "'" || ch === '`') {
-      quote = ch;
-      buf += ch;
+    if (span[i] !== SPAN_CODE) {
+      if (depth >= 1) buf += ch;
       continue;
     }
     if (ch === '(' || ch === '[' || ch === '{') {
@@ -3576,7 +3659,9 @@ function copyWriteOffsets(text, base, cfgDir) {
       }
       if (c === '"' || c === "'") q = c;
       else if (c === '\n') q = null;
-      else if (c === '#' && (i === 0 || /\s/.test(text[i - 1]))) {
+      // …and after a control operator, where bash also starts one: `:;# cp …`
+      // runs no copy (r5).
+      else if (c === '#' && (i === 0 || /[\s;&|(]/.test(text[i - 1]))) {
         const nl = text.indexOf('\n', i);
         commentAt.push([i, nl === -1 ? text.length : nl]);
         i = nl === -1 ? text.length : nl;
@@ -3644,7 +3729,11 @@ function copyWriteOffsets(text, base, cfgDir) {
     // BASENAME, not substring: `copyFileSync("configs/custom.jsonc",
     // "/tmp/custom.jsonc.bak")` mentions the name in its DESTINATION and
     // still writes nothing here (Codex #2066 r3).
-    const lit = args[1].match(/["'\`]([^"'\`]*)["'\`]/);
+    // ONE COMPLETE LITERAL, or nothing. Accepting the first quoted substring
+    // anywhere in the expression read `backup ? "/tmp/other.jsonc" :
+    // "configs/custom.jsonc"` as the harmless branch and missed the other
+    // one (r5).
+    const lit = args[1].trim().match(/^(["'\`])([^"'\`]*)\1$/);
     if (lit === null) {
       // A DESTINATION THIS READER CANNOT SEE IS NOT CLEARED. `copyFileSync(
       // "gen.jsonc", cfg)` names the config through a variable, and comparing
@@ -3653,7 +3742,7 @@ function copyWriteOffsets(text, base, cfgDir) {
       hits.push(m.index);
       continue;
     }
-    const destWord = lit[1].trim();
+    const destWord = lit[2].trim();
     if (baseOf(destWord) === base || dirCouldBe(destWord, cfgDir)) hits.push(m.index);
   }
   return hits;
@@ -3712,8 +3801,12 @@ function configIsRewritten(text, cfgPath, at = null) {
       // `mode=` is the ordinary keyword spelling of the same call; requiring
       // the quote to follow the comma or paren directly missed both
       // `open(cfg, mode="w")` and `cfg.open(mode="w")` (Codex #2066 r1).
-      String.raw`\b` + n + String.raw`\s*\.\s*open\s*\(\s*(?:mode\s*=\s*)?` + Q + String.raw`[rbt]*[wax+]`,
-      String.raw`\bopen\s*\(\s*` + n + String.raw`\s*,\s*(?:mode\s*=\s*)?` + Q + String.raw`[rbt]*[wax+]`,
+      // Python allows keyword arguments in any order, so `mode=` is searched
+      // across the whole list rather than only in the position after the
+      // paren or the path — `open(cfg, encoding="utf8", mode="w")` is an
+      // ordinary rewrite and was missed (r5).
+      String.raw`\b` + n + String.raw`\s*\.\s*open\s*\((?:[^()]*,)?\s*(?:mode\s*=\s*)?` + Q + String.raw`[rbt]*[wax+]`,
+      String.raw`\bopen\s*\(\s*` + n + String.raw`\s*,[^()]*?(?:mode\s*=\s*)?` + Q + String.raw`[rbt]*[wax+]`,
     );
   }
   // A COPY IS A WRITE — BUT ONLY INTO THE DESTINATION. `cp generated.jsonc
@@ -7841,7 +7934,11 @@ function plainLines(text) {
   // the fold succeeded and the match still failed (Codex #2066 r1). Everything
   // OUTSIDE a call is copied byte-for-byte: the scoring readers must keep
   // seeing exactly what the file says.
-  const blanked = stripSourceComments(text);
+  // Comment-blanking for the fold comes from the LEXER, not the standalone
+  // stripper: that stripper read the escaped slash in `/\//` as the start of
+  // a `//` comment and blanked the deploy arguments behind it (r5).
+  const plainSpan = jsSpans(text);
+  const blanked = [...text].map((c, i) => (plainSpan[i] === SPAN_CMT ? ' ' : c)).join('');
   const out = [];
   let buf = '';
   let lineNo = 1;
@@ -7866,7 +7963,7 @@ function plainLines(text) {
     // two tokens still met. Such a line is not folded at all, which degrades
     // that call to the previous line-by-line reading rather than inventing a
     // deploy.
-    if (inside && !inString(text, regions[r].start, i)) {
+    if (inside && plainSpan[i] !== SPAN_STR) {
       buf += ' ';
       continue;
     }
@@ -7912,7 +8009,8 @@ function childCallRegions(rawText) {
   // Also walked comment-stripped: a `)` inside `// helper )` ended the call
   // early, no region was emitted, and the wrapped deploy went unseen — the
   // exact miss this fold exists to close (Codex #2066 r1).
-  const text = stripSourceComments(rawText);
+  const text = rawText;
+  const span = jsSpans(rawText);
   const MAX_CHARS = 4000;
   const MAX_LINES = 60;
   const regions = [];
@@ -7926,43 +8024,16 @@ function childCallRegions(rawText) {
     let prev = '';
     for (let i = open; i < text.length && i - open < MAX_CHARS; i += 1) {
       const c = text[i];
-      if (quote) {
-        if (c === '\\') i += 1;
-        else if (c === quote) quote = null;
-        else if (c === '\n' && ++lines > MAX_LINES) break;
-        continue;
-      }
-      // A REGEX LITERAL IS NOT A STRING. `/'/.test(input)` carries an
-      // apostrophe that opened quote state, so the call's closing delimiters
-      // were never recognised, no region was emitted, and the wrapped deploy
-      // stayed split across physical lines (Codex #2066 r3, r4). A `/` starts
-      // a regex only where a value may begin, which is what separates it from
-      // division.
-      if (c === '/' && /[([{,;:=!&|?+\-*%~^<>]|^$/.test(prev)) {
-        let j = i + 1;
-        let cls = false;
-        for (; j < text.length; j += 1) {
-          const d = text[j];
-          if (d === '\\') { j += 1; continue; }
-          if (d === '\n') break;
-          if (cls) { if (d === ']') cls = false; continue; }
-          if (d === '[') cls = true;
-          else if (d === '/') break;
-        }
-        i = j;
-        prev = '/';
-        continue;
-      }
-      if (c === '"' || c === "'" || c === '`') quote = c;
-      else if (c === '(' || c === '[' || c === '{') depth += 1;
+      if (c === '\n' && ++lines > MAX_LINES) break;
+      if (span[i] !== SPAN_CODE) continue;
+      if (c === '(' || c === '[' || c === '{') depth += 1;
       else if (c === ')' || c === ']' || c === '}') {
         depth -= 1;
         if (depth === 0) {
           end = i;
           break;
         }
-      } else if (c === '\n' && ++lines > MAX_LINES) break;
-      if (!/\s/.test(c)) prev = c;
+      }
     }
     if (end > open && lines > 0) regions.push({ start: open, end });
   }
