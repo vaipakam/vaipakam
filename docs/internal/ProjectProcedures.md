@@ -297,8 +297,10 @@ workspaces keep their own poller procedure as written in `AGENTS.md`
 (single-instance delta poller / `pr-poll-watch.sh`) — that file is their
 source of truth and is unchanged by this section.
 
-- **Read with `curl` against the REST API; GraphQL only for
-  `resolveReviewThread`.** The batch must cover every surface the retired
+- **Read with `curl` against the REST API; GraphQL only for the
+  review-thread census (`reviewThreads`, which REST does not expose —
+  node ids and resolution state) and the `resolveReviewThread`
+  mutation.** The batch must cover every surface the retired
   poller covered (§9.1): `pulls/<N>` (state, head, mergeability),
   `commits/<head-sha>/check-runs` (job results), `pulls/<N>/reviews`
   (approve / request-changes submissions, which carry no inline comment),
@@ -319,10 +321,14 @@ source of truth and is unchanged by this section.
   `{"message":"API rate limit exceeded ..."}` body. Detect that body shape
   before parsing; if limited, say so in one line and do API-free work until
   the next wake. Never poll repeatedly inside one wake.
-- **Select unanswered findings by STATE, never by time.** An unanswered
-  finding is a top-level review comment with no reply from us; a
-  `created_at` window silently skips findings that were posted before the
-  window and never answered. A "no major issues" summary comment is not
+- **Select unanswered feedback by STATE, never by time.** Unanswered
+  means any of: an inline thread whose LATEST comment is not ours (a
+  reviewer follow-up after our reply re-opens it), or a review submission
+  (`pulls/<N>/reviews`) with `REQUEST_CHANGES` or a non-empty `COMMENTED`
+  body that has no inline thread and no reply from us. "No reply from the
+  author at all" is not the test — a thread we answered once can still
+  need action. A `created_at` window silently skips findings that were
+  posted before the window and never answered. A "no major issues" summary comment is not
   the verdict — the inline threads are.
 - **Resolve every answered thread before merging — paginated.** Branch
   protection requires all review threads resolved, and Codex's inline
@@ -366,8 +372,9 @@ For every finding:
 
 - **Fix ALL coding findings; leniency is for docs-only PRs only.** A
   coding PR iterates until a round returns zero P1/P2. Escalate to the
-  owner rather than continuing past round 12 without a substantive
-  surface change.
+  owner rather than continuing past **ten** rounds after the last
+  substantive surface change — the backstop `CLAUDE.md` sets; an earlier
+  revision here said twelve, which came from a stale agent note.
 - **Findings are verified; remedies are only suggestions.** Verify a
   finding against the code before accepting it, then design the fix
   yourself and prove it with a discriminating test — a reviewer's
