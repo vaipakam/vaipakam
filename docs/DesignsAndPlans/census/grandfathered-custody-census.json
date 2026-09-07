@@ -1,22 +1,31 @@
 {
-  "generatedAt": "2026-09-07T17:52:53.750Z",
+  "generatedAt": "2026-09-07T18:49:33.768Z",
   "purpose": "#1566 grandfathered-custody census — decides whether slices 0-3 are live work or a certified no-op",
-  "allClassesEmpty": true,
+  "allClassesEmpty": false,
   "chainsCensused": 5,
   "chainsFailed": [],
-  "indeterminateClasses": [],
+  "indeterminateClasses": [
+    {
+      "chainSlug": "op-sepolia",
+      "class": "liveIntentCommits",
+      "reason": "the cut-history scan returned ZERO DiamondCut events, but every Diamond emits at least one at deploy — the history was not actually read (pruned endpoint, or a deployBlock that does not match this address), so absence is not established. Re-run against an archive endpoint."
+    }
+  ],
   "results": [
     {
       "chainSlug": "arb-sepolia",
       "chainId": 421614,
       "diamond": "0x55d7872cC9738994cc6b04F89d128cB4c8745431",
-      "atBlock": "306456075",
+      "atBlock": "306464834",
+      "atBlockHash": "0x456c101d536f2b375b3049556ef5037634a4c14acde3d5f74828dc0d17429082",
+      "blockTag": "finalized",
       "scanned": {
         "loanIdsEnumerated": 13,
         "totalLoansEverCreated": "13",
         "loanIdRange": "1..13",
         "intentSource": "getIntentCommit view (live state, history-independent)",
         "intentSurfaceRouted": true,
+        "intentProducerRouted": true,
         "intentCorroboration": null
       },
       "classes": {
@@ -50,13 +59,16 @@
       "chainSlug": "base-sepolia",
       "chainId": 84532,
       "diamond": "0xd89fd7F787e4415460b23891E97570a4881fb995",
-      "atBlock": "46517609",
+      "atBlock": "46518634",
+      "atBlockHash": "0xd154a4480ed91046e0f253358867caa89d6c8c938c1135745d10bb2098d2b0b4",
+      "blockTag": "finalized",
       "scanned": {
         "loanIdsEnumerated": 21,
         "totalLoansEverCreated": "21",
         "loanIdRange": "1..21",
         "intentSource": "getIntentCommit view (live state, history-independent)",
         "intentSurfaceRouted": true,
+        "intentProducerRouted": true,
         "intentCorroboration": null
       },
       "classes": {
@@ -90,13 +102,16 @@
       "chainSlug": "bnb-testnet",
       "chainId": 97,
       "diamond": "0x7D4BfD2CA7908Fb088300f29276bF5A2E4FfBAd2",
-      "atBlock": "129682242",
+      "atBlock": "129689782",
+      "atBlockHash": "0x665399054d59e2d8f62a6edec85487865edf8ab0b10d72a445601a4fe5ed273e",
+      "blockTag": "finalized",
       "scanned": {
         "loanIdsEnumerated": 4,
         "totalLoansEverCreated": "4",
         "loanIdRange": "1..4",
         "intentSource": "getIntentCommit view (live state, history-independent)",
         "intentSurfaceRouted": true,
+        "intentProducerRouted": true,
         "intentCorroboration": null
       },
       "classes": {
@@ -130,13 +145,16 @@
       "chainSlug": "op-sepolia",
       "chainId": 11155420,
       "diamond": "0x58824401F769b0A760b6CD98Af503Bd5ED648377",
-      "atBlock": "48500497",
+      "atBlock": "48501716",
+      "atBlockHash": "0x58bac1bbc4792707e6c6f09c321ba8aeb9846297de28a2d9d2f137ad74085ff4",
+      "blockTag": "finalized",
       "scanned": {
         "loanIdsEnumerated": 33,
         "totalLoansEverCreated": "33",
         "loanIdRange": "1..33",
-        "intentSource": "not applicable — the intent surface is not routed on this Diamond, so no commit can exist",
+        "intentSource": "getter unrouted — absence rests on the DiamondCut routing history (see classes.liveIntentCommits.absenceProof)",
         "intentSurfaceRouted": false,
+        "intentProducerRouted": false,
         "intentCorroboration": null
       },
       "classes": {
@@ -159,7 +177,13 @@
           "rows": []
         },
         "liveIntentCommits": {
-          "status": "proven",
+          "status": "indeterminate",
+          "indeterminateReason": "the cut-history scan returned ZERO DiamondCut events, but every Diamond emits at least one at deploy — the history was not actually read (pruned endpoint, or a deployBlock that does not match this address), so absence is not established. Re-run against an archive endpoint.",
+          "absenceProof": {
+            "proven": false,
+            "reason": "the cut-history scan returned ZERO DiamondCut events, but every Diamond emits at least one at deploy — the history was not actually read (pruned endpoint, or a deployBlock that does not match this address), so absence is not established. Re-run against an archive endpoint.",
+            "cutsScanned": 0
+          },
           "count": 0,
           "total": "0",
           "rows": []
@@ -170,13 +194,16 @@
       "chainSlug": "sepolia",
       "chainId": 11155111,
       "diamond": "0x492f83F2Ab99B7b13E1F8CAf6fbAeB7300B85302",
-      "atBlock": "11655736",
+      "atBlock": "11655942",
+      "atBlockHash": "0x14f709c7d5fe506713a47055846c126d268677f5e9ce114c9abb7f49a67a398b",
+      "blockTag": "finalized",
       "scanned": {
         "loanIdsEnumerated": 0,
         "totalLoansEverCreated": "0",
         "loanIdRange": "none",
-        "intentSource": "not applicable — the intent surface is not routed on this Diamond, so no commit can exist",
+        "intentSource": "getter unrouted — absence rests on the DiamondCut routing history (see classes.liveIntentCommits.absenceProof)",
         "intentSurfaceRouted": false,
+        "intentProducerRouted": false,
         "intentCorroboration": null
       },
       "classes": {
@@ -200,6 +227,11 @@
         },
         "liveIntentCommits": {
           "status": "proven",
+          "absenceProof": {
+            "proven": true,
+            "reason": "the intent producer never appears in any DiamondCut in this Diamond's complete history, so no commit can ever have been created",
+            "cutsScanned": 3
+          },
           "count": 0,
           "total": "0",
           "rows": []

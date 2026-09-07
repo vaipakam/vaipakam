@@ -2143,7 +2143,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](20);
+        selectors = new bytes4[](21);
         selectors[0] = RewardReporterFacet.closeDay.selector;
         selectors[1] = RewardReporterFacet.onRewardBroadcastReceived.selector;
         // #1222 M3 B2-b — per-destination V2 broadcast ingress.
@@ -2171,6 +2171,8 @@ contract HelperTest {
         // Single-field getter for the protocol-console knob registry.
         selectors[10] = RewardReporterFacet.getRewardGraceSeconds.selector;
         selectors[19] = RewardReporterFacet.getBroadcastV2Applied.selector;
+        // #1566 closure 3 — the resolved role.
+        selectors[20] = RewardReporterFacet.getRewardRole.selector;
         return selectors;
     }
 

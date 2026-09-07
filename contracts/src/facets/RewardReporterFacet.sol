@@ -1253,6 +1253,14 @@ contract RewardReporterFacet is
         uint32 old = s.baseChainId;
         bool wasMirror = LibVaipakam.isMirrorRewardChain(s);
         s.baseChainId = chainId;
+        // #1566 closure 3 — stamp the role as CONFIGURED. This is what makes
+        // `setBaseChainId(0)` resolve to `Detached` (fail-closed) rather than
+        // `Unconfigured` (canonical / single-chain semantics), which is the
+        // whole point of the flag: the two states share these field values.
+        // Stamped unconditionally, including for `chainId == 0`, because
+        // detaching IS a configuration act — and stamped by BOTH setters, so
+        // the role can never reach `Detached` without the bit being written.
+        s.rewardRoleConfigured = true;
         // Pre-merge adversarial review (2026-08-17) P2 — mirror-ness has TWO
         // inputs (`!isCanonicalRewardChain && baseChainId != 0`), and the r9
         // residual retirement guarded only the canonical knob. Detaching a
@@ -1300,6 +1308,11 @@ contract RewardReporterFacet is
         bool old = s.isCanonicalRewardChain;
         bool wasMirror = LibVaipakam.isMirrorRewardChain(s);
         s.isCanonicalRewardChain = on;
+        // #1566 closure 3 — see the twin stamp in {setBaseChainId}. Demoting a
+        // canonical chain that has no `baseChainId` lands on the same two
+        // field values a fresh deploy has; this bit is the only thing that
+        // distinguishes the two, so it must be written here as well.
+        s.rewardRoleConfigured = true;
         // #1662 r9 — a FRESH canonical deployment uses per-receipt
         // attribution from inception, so mark it armed at watermark ZERO
         // (constraining nothing: receipt ids start at 1). Without this it
@@ -1524,5 +1537,24 @@ contract RewardReporterFacet is
                 ? DEFAULT_REWARD_GRACE_SECONDS
                 : s.rewardGraceSeconds
         );
+    }
+
+    /// @notice #1566 closure 3 — this Diamond's resolved reward-mesh role.
+    /// @dev    {getRewardReporterConfig} returns the two raw role fields, and
+    ///         they are NOT sufficient to determine the role: a detached chain
+    ///         and a never-configured one both report
+    ///         `baseChainId == 0, isCanonicalRewardChain == false` while
+    ///         behaving oppositely. Reading those two fields off a live
+    ///         deployment and inferring the role is exactly the mistake this
+    ///         view exists to prevent — the operator cannot see the deciding
+    ///         bit, and neither could the fourteen call sites before
+    ///         {LibVaipakam.rewardRole}.
+    ///
+    ///         Returned as `uint8` rather than the enum so an off-chain
+    ///         consumer decodes a stable width if the enum ever grows.
+    /// @return role `LibVaipakam.RewardRole` — 0 Canonical, 1 Mirror,
+    ///         2 Unconfigured, 3 Detached.
+    function getRewardRole() external view returns (uint8 role) {
+        return uint8(LibVaipakam.rewardRole(LibVaipakam.storageSlot()));
     }
 }

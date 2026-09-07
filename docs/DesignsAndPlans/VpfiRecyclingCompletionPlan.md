@@ -24,15 +24,39 @@
 > (§M6) — the owner settled its gate on 2026-08-31 ("configurable by
 > admin, later governance"), and it is ARMED, not pending.
 >
-> Still owner-gated and deliberately untouched: **#1566** (which quantity
-> bounds a canonical payout), **#1219**'s FOUR owner decisions — A/C
-> fork, capacity terms, unbond option, C's fee parameters (its legal
-> glance is DISCHARGED for the refundable-deposit shape only; **C's
-> non-refundable arming fee needs its own glance or recorded owner
-> approval** — see M6), the per-perk
-> effects behind #1204's remaining design decisions, and the M7
-> ceremonies. **#1949** is open engineering with a design fork recorded on
-> the card.
+> **#1566 is no longer owner-gated** (ratified 2026-09-07: census first, then
+> closure 3's resolver, then closure 2, slice 4 last). The census is DONE and
+> found every grandfathered custody class empty on **four of the five**
+> deployed chains. **op-sepolia's class 3 (live intent commits) is
+> INDETERMINATE**, not empty: its intent surface is unrouted, so absence rests
+> on the Diamond's cut history, and that history is unreadable from a pruned
+> public endpoint (the scan returns zero `DiamondCut` events, which cannot be
+> true of a Diamond that exists — every one emits at least one at deploy). It
+> needs **one re-run against an archive endpoint** to settle. On that evidence
+> the MIGRATION half of slices 0–3 is a certified no-op and slice 0's
+> shortfall question does not arise — pending that single re-run. **Their prospective producer/consumer
+> changes still ship** — the fallback and intent producers are live and can
+> create a qualifying row after the scan, so an empty census retires the
+> moving, not the isolation. Closure 3's resolver has LANDED — four-state, not three: the
+> designed `Detached` fail-closed column would have frozen arb-sepolia and
+> bnb-testnet, which sit in the ambiguous state today. Remaining on #1566:
+> closure 2, and slice 4 with the canonical column.
+>
+> **#1219's four owner decisions are RATIFIED** (2026-09-07): fork **C**,
+> capacity terms as proposed, unbond option (i), and C's fee as a SHAPE —
+> governance-set with a positive floor enforced in code. Its legal glance is
+> DISCHARGED for the refundable-deposit shape only, so **C's non-refundable
+> arming fee still needs its own glance or recorded owner approval** — the
+> mechanism may be built and shipped dark, but the fee may not be ARMED until
+> that glance is recorded (see M6).
+>
+> **#1204 is decided too** (2026-09-07): prices are an arming action, not a
+> build input, and the referral half is deferred for Phase 1. Its absorption
+> half is already built and crediting, so it no longer gates the programme.
+>
+> Still genuinely open: the **#1219 fee-shape legal glance**, the **M7
+> ceremonies** (owner-sequenced LAST), and **#1949**, which is open
+> engineering with a design fork recorded on the card.
 
 ## 0. Purpose
 
@@ -1148,12 +1172,25 @@ so this is correctness-of-shape work, not a fund-safety blocker):
   demanding a Base-observable numerator would mean either abandoning
   "deep chains fund their own housekeeping from local receipts" — the
   point of §3.5 — or building a new attestation path for a non-solvency
-  concern. Instead the per-day ATTRIBUTION is capped: a day draws on its
-  own reported credit plus a bounded catch-up rate, so cumulative
+  concern. Instead the per-day ATTRIBUTION is capped, so cumulative
   unattributed headroom cannot be compressed into one day. The quantity
   the finding names as unbounded — the allocation MIX and its TIMING —
   becomes bounded, while the availability clamp continues to bound the
   total.
+
+  ⚠️ **The cap must apply to the WHOLE accepted daily numerator, not to a
+  catch-up term beside an uncapped "own reported credit"** — an earlier
+  revision of this bullet said "its own reported credit plus a bounded
+  catch-up rate", and that split does not bound anything. Base has no
+  trusted way to tell the two apart: `LibVpfiRecycle.recordChainRecycled`
+  accepts `min(forDayReported, reported - attributed)` and **the mirror
+  supplies both terms**, so a mirror holding accumulated headroom simply
+  labels all of it as today's own credit and walks around a limit placed
+  only on catch-up — reproducing the exact one-day allocation-mix shift
+  this decision exists to remove. So: **one Base-independent ceiling on the
+  total accepted per day**, or authenticated per-day absorption buckets.
+  The design pass picks between those two; it may not reintroduce a
+  mirror-supplied split.
 
 **NOT `chainConsumedRecycled`**, which an earlier revision of this line
 said and which the implementation deliberately rejects (Codex #2031 r2).

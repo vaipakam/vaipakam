@@ -57,7 +57,16 @@
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createPublicClient, http, toFunctionSelector } from 'viem';
+import { createPublicClient, http, toFunctionSelector, parseAbiItem } from 'viem';
+
+/**
+ * EIP-2535's cut event — the COMPLETE routing history of a Diamond. Declared
+ * here rather than loaded because the exported ABI bundle carries the loupe
+ * but not the cut facet, and this is the standard's own signature.
+ */
+const DIAMOND_CUT_EVENT = parseAbiItem(
+  'event DiamondCut((address facetAddress, uint8 action, bytes4[] functionSelectors)[] _diamondCut, address _init, bytes _calldata)',
+);
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(HERE, '../../..');
@@ -231,6 +240,122 @@ async function getLogsChunked(client, { address, events, fromBlock, toBlock }) {
   return out;
 }
 
+/**
+ * Resolve the block this census reads at, as a (number, hash) IDENTITY.
+ *
+ * Prefers `finalized`, then `safe`. Both are reorg-proof by construction, which
+ * is the property a certification artifact needs — a `latest` head can be
+ * replaced after the run, leaving an artifact that names a height nobody can
+ * reproduce. If the endpoint offers neither tag we REFUSE rather than fall back
+ * to the head: silently certifying against a reorg-able block is precisely the
+ * comfortable answer this census must not give.
+ */
+async function resolveCensusBlock(client, slug) {
+  const forced = arg('--block');
+  if (forced) {
+    const b = await client.getBlock({ blockNumber: BigInt(forced) });
+    return { number: b.number, hash: b.hash, tag: 'explicit' };
+  }
+  for (const blockTag of ['finalized', 'safe']) {
+    try {
+      const b = await client.getBlock({ blockTag });
+      if (b?.number != null && b?.hash) return { number: b.number, hash: b.hash, tag: blockTag };
+    } catch {
+      // Not every chain/RPC implements both tags; try the next one.
+    }
+  }
+  throw new Error(
+    `${slug}: the endpoint exposes neither a 'finalized' nor a 'safe' block. Pass --block <height at or below finality> ` +
+      `rather than certifying custody away against a head that can still be reorganized`,
+  );
+}
+
+/**
+ * Establish, from the Diamond's COMPLETE routing history, that the intent
+ * producer was never routed — and therefore that no intent commit can ever have
+ * been created on this chain.
+ *
+ * This is the discharge for an unrouted getter. It is a real proof rather than
+ * an inference: `DiamondCut` is emitted by every cut a Diamond has ever taken,
+ * so a producer selector absent from all of them was never callable. If the
+ * history cannot be read in full (pruning, range caps, a missing deploy block)
+ * the answer is `indeterminate` — never "empty".
+ *
+ * @returns {{proven: boolean, reason: string, cutsScanned?: number}}
+ */
+async function proveProducerNeverRouted({
+  client,
+  diamond,
+  fromBlock,
+  toBlock,
+  producerSelector,
+  producerRouted,
+}) {
+  // The producer answering right now settles it without any history at all.
+  if (producerRouted) {
+    return {
+      proven: false,
+      reason:
+        'the intent PRODUCER is routed on this Diamond while its getter is not — commits may exist and cannot be read',
+    };
+  }
+  try {
+    const logs = await getLogsChunked(client, {
+      address: diamond,
+      events: [DIAMOND_CUT_EVENT],
+      fromBlock,
+      toBlock,
+    });
+    const everRouted = logs.some((log) =>
+      (log.args?._diamondCut ?? []).some((cut) =>
+        (cut.functionSelectors ?? []).some(
+          (sel) => sel.toLowerCase() === producerSelector.toLowerCase(),
+        ),
+      ),
+    );
+    if (everRouted) {
+      return {
+        proven: false,
+        reason:
+          'the intent producer WAS routed at some point in this Diamond\'s cut history — rows may have been written before the facet was removed',
+        cutsScanned: logs.length,
+      };
+    }
+    // A Diamond that EXISTS has taken at least one cut — its deploy cuts every
+    // facet in. So zero cuts does not mean "never routed"; it means the scan
+    // did not see the history at all (a pruned endpoint, a range that misses
+    // the deploy, a stale `deployBlock` in the artifact). Reading that as proof
+    // is the precise failure this census is built to refuse: an empty scan
+    // manufacturing the comfortable answer.
+    //
+    // This guard is not hypothetical. It fired on op-sepolia and sepolia, whose
+    // recorded `deployBlock` yields no logs at all — and the endpoints prune
+    // state, so the true creation block cannot be recovered by bisection there
+    // either. Those chains are INDETERMINATE until read from an archive node.
+    if (logs.length === 0) {
+      return {
+        proven: false,
+        reason:
+          'the cut-history scan returned ZERO DiamondCut events, but every Diamond emits at least one at deploy — ' +
+          'the history was not actually read (pruned endpoint, or a deployBlock that does not match this address), ' +
+          'so absence is not established. Re-run against an archive endpoint.',
+        cutsScanned: 0,
+      };
+    }
+    return {
+      proven: true,
+      reason:
+        'the intent producer never appears in any DiamondCut in this Diamond\'s complete history, so no commit can ever have been created',
+      cutsScanned: logs.length,
+    };
+  } catch (err) {
+    return {
+      proven: false,
+      reason: `the cut history could not be read in full (${classifyRpcError(err)}), so absence cannot be established`,
+    };
+  }
+}
+
 async function censusChain(slug) {
   const addresses = JSON.parse(readFileSync(join(DEPLOYMENTS, slug, 'addresses.json'), 'utf8'));
   const diamond = addresses.diamond;
@@ -245,6 +370,9 @@ async function censusChain(slug) {
   // absence. Without the error in the ABI viem cannot name it, and an absent
   // commit would be indistinguishable from a genuine failure.
   const intentView = pick(loadAbi('SwapToRepayIntentFacet'), ['getIntentCommit', 'IntentNoCommit']);
+  // The PRODUCER, for the routing-history proof: an unrouted getter says
+  // nothing about whether this selector was ever callable.
+  const intentProducer = pick(loadAbi('SwapToRepayIntentFacet'), ['commitSwapToRepayIntent']);
   const loupe = pick(loadAbi('DiamondLoupeFacet'), ['facetAddress']);
   const intentEvents = pick(loadAbi('SwapToRepayIntentFacet'), [
     'SwapToRepayIntentCommitted',
@@ -260,7 +388,15 @@ async function censusChain(slug) {
       `${slug}: RPC reports chainId ${chainId} but the deployment artifact says ${addresses.chainId} — wrong endpoint`,
     );
   }
-  const atBlock = arg('--block') ? BigInt(arg('--block')) : await client.getBlockNumber();
+  // Codex #2070 P1 — pin to a block IDENTITY, not a height. A height does not
+  // name the state that was read: during a reorg two `eth_call`s at the same
+  // height can resolve against different blocks, and a later reproduction can
+  // resolve that height to a replacement. Since this artifact is used to
+  // certify custody migrations away, prefer a FINALIZED block (reorg-proof by
+  // construction) and record its hash so the run is reproducible and its
+  // integrity is checkable after the fact.
+  const censusBlock = await resolveCensusBlock(client, slug);
+  const atBlock = censusBlock.number;
 
   const read = (functionName, args = []) =>
     client.readContract({
@@ -301,13 +437,43 @@ async function censusChain(slug) {
   // ── Classes 1 & 4 — vpfiHeld custody and rebate rows ──────────────────
   // ── Class 2 — fallback snapshot custody ───────────────────────────────
   // Is the intent surface even ROUTED on this Diamond? Ask the loupe directly
-  // rather than inferring it from a `FunctionDoesNotExist` revert. An unrouted
-  // surface is a COMPLETE proof of absence for class 3 — no commit can ever
-  // have been created through a selector the Diamond does not answer — and it
-  // needs no history, so it holds on pruned endpoints too.
+  // rather than inferring it from a `FunctionDoesNotExist` revert.
+  //
+  // Codex #2070 P1 — an unrouted GETTER is NOT proof of absence, and an earlier
+  // revision of this comment claimed it was. Diamond routing is mutable and the
+  // PRODUCER (`commitSwapToRepayIntent`) has its own selector: a facet that was
+  // cut in, wrote `intentCommits`, and was later cut out leaves rows behind that
+  // an unrouted getter cannot see. "The getter does not answer" and "no commit
+  // was ever created" are different claims.
+  //
+  // What IS a complete proof is the Diamond's own routing HISTORY: `DiamondCut`
+  // is emitted by every cut, so if the producer's selector was never added by
+  // any cut, no commit can ever have been created. That scan needs history and
+  // can therefore fail on a pruned endpoint — in which case the class is
+  // INDETERMINATE, which blocks the empty verdict instead of passing as a zero.
   const intentSelector = toFunctionSelector(intentView.find((e) => e.name === 'getIntentCommit'));
   const intentHost = await read('facetAddress', [intentSelector]);
   const intentSurfaceRouted = intentHost && intentHost !== ZERO_ADDRESS;
+
+  const producerSelector = toFunctionSelector(
+    intentProducer.find((e) => e.name === 'commitSwapToRepayIntent'),
+  );
+  const producerHost = await read('facetAddress', [producerSelector]);
+  const producerRouted = producerHost && producerHost !== ZERO_ADDRESS;
+
+  // Only needed when the getter is unrouted; when it IS routed we read live
+  // state directly, which subsumes the history question entirely.
+  let intentAbsenceProof = null;
+  if (!intentSurfaceRouted) {
+    intentAbsenceProof = await proveProducerNeverRouted({
+      client,
+      diamond,
+      fromBlock: BigInt(addresses.deployBlock ?? 0),
+      toBlock: atBlock,
+      producerSelector,
+      producerRouted,
+    });
+  }
 
   const vpfiHeldRows = [];
   const rebateRows = [];
@@ -387,6 +553,14 @@ async function censusChain(slug) {
         liveLoanIdsFromLogs: fromLogs,
         agreesWithView: JSON.stringify(fromLogs) === JSON.stringify(fromView),
       };
+      // Codex #2070 P1 — a DISAGREEMENT is the one outcome this corroboration
+      // exists to catch, so it must not be recorded as a note beside an
+      // otherwise-certified verdict. History contradicting live state means the
+      // primary absence proof is no longer trustworthy, and the honest answer
+      // is that class 3 is undetermined — which blocks the empty verdict.
+      if (!corroboration.agreesWithView) {
+        corroboration.contradictsPrimaryProof = true;
+      }
     } catch (err) {
       corroboration = {
         source: 'event-lifecycle',
@@ -398,6 +572,19 @@ async function censusChain(slug) {
     }
   }
 
+  // Codex #2070 P1 — re-read the census block and confirm it still has the hash
+  // we pinned. On a finalized block this can only fail catastrophically, which
+  // is exactly why it is worth asserting: a silent reorg underneath the scan
+  // would otherwise produce an artifact naming a height whose contents nobody
+  // can reproduce.
+  const blockNow = await client.getBlock({ blockNumber: atBlock });
+  if (blockNow.hash !== censusBlock.hash) {
+    throw new Error(
+      `${slug}: block ${atBlock} was ${censusBlock.hash} when the scan began and is ${blockNow.hash} now — ` +
+        `the chain reorganized under the census; refusing to certify a mixed snapshot`,
+    );
+  }
+
   const sum = (rows, field) => rows.reduce((a, r) => a + BigInt(r[field]), 0n).toString();
 
   return {
@@ -405,14 +592,19 @@ async function censusChain(slug) {
     chainId: Number(chainId),
     diamond,
     atBlock: atBlock.toString(),
+    // The block IDENTITY, not just its height — a height alone is not
+    // reproducible across a reorg.
+    atBlockHash: censusBlock.hash,
+    blockTag: censusBlock.tag,
     scanned: {
       loanIdsEnumerated: loanIds.length,
       totalLoansEverCreated: totalLoansEverCreated.toString(),
       loanIdRange: loanIds.length ? `${loanIds[0]}..${loanIds[loanIds.length - 1]}` : 'none',
       intentSource: intentSurfaceRouted
         ? 'getIntentCommit view (live state, history-independent)'
-        : 'not applicable — the intent surface is not routed on this Diamond, so no commit can exist',
+        : 'getter unrouted — absence rests on the DiamondCut routing history (see classes.liveIntentCommits.absenceProof)',
       intentSurfaceRouted,
+      intentProducerRouted: producerRouted,
       intentCorroboration: corroboration,
     },
     classes: {
@@ -434,8 +626,29 @@ async function censusChain(slug) {
         total: sum(fallbackRows, 'collateralTotal'),
         rows: fallbackRows,
       },
+      // Class 3 earns `proven` in exactly two ways: the getter was routed and
+      // live state was read, or the getter was unrouted AND the cut history
+      // shows the producer was never routed. Anything else — an unreadable cut
+      // history, a producer that WAS routed, or a corroboration that
+      // contradicts the view — is `indeterminate`, which blocks the empty
+      // verdict rather than passing as a zero.
       liveIntentCommits: {
-        status: 'proven',
+        status:
+          intentSurfaceRouted
+            ? corroboration?.contradictsPrimaryProof
+              ? 'indeterminate'
+              : 'proven'
+            : intentAbsenceProof?.proven
+              ? 'proven'
+              : 'indeterminate',
+        indeterminateReason: intentSurfaceRouted
+          ? corroboration?.contradictsPrimaryProof
+            ? 'the event-lifecycle reconstruction disagrees with the live-state view'
+            : undefined
+          : intentAbsenceProof?.proven
+            ? undefined
+            : intentAbsenceProof?.reason,
+        absenceProof: intentSurfaceRouted ? undefined : intentAbsenceProof,
         count: intentRows.length,
         total: sum(intentRows, 'custodialCollateral'),
         rows: intentRows,
@@ -501,7 +714,14 @@ async function main() {
   }
   process.stdout.write(
     report.allClassesEmpty
-      ? 'RESULT: every grandfathered class is PROVEN EMPTY on every censused chain — slices 0-3 are a certified no-op.\n'
+      // Codex #2070 P1 — this line used to say the slices were "a certified
+      // no-op" outright. An empty population retires the MIGRATION only: the
+      // fallback and intent producers are live and can create a qualifying row
+      // the moment after this read-only scan, so the prospective
+      // producer/consumer isolation in slices 2-3 still ships.
+      ? 'RESULT: every grandfathered class is PROVEN EMPTY on every censused chain — the MIGRATION half of slices 0-3\n' +
+        '        is a certified no-op (nothing to move, no shortfall disposition). The prospective custody isolation\n' +
+        '        in slices 2-3 is NOT retired by this result — its producers are still live.\n'
       : 'RESULT: not established — a class is non-empty, indeterminate, or a chain failed. See the artifact.\n',
   );
 

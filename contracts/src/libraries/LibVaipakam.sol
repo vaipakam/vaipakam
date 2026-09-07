@@ -867,6 +867,37 @@ library LibVaipakam {
     }
 
     /**
+     * @notice #1566 closure 3 — this Diamond's role in the reward mesh.
+     * @dev    Resolved by {rewardRole}, which is TOTAL over the role storage.
+     *         The order is the resolution order and the zero value is
+     *         `Canonical` deliberately: this enum is never persisted, so no
+     *         default-value hazard exists, and reading the resolver is the
+     *         only supported way to obtain it.
+     *
+     *         - `Canonical`    — `isCanonicalRewardChain`. Base; the schedule
+     *           and the delivered ledger's ingress live here.
+     *         - `Mirror`       — non-canonical with a configured base. Bounded
+     *           by what was DELIVERED to it.
+     *         - `Unconfigured` — never written into a role by either setter. A
+     *           single-chain deploy: no delivery, no residual, no
+     *           counterparty. Keeps canonical / single-chain semantics.
+     *         - `Detached`     — WAS in a role and no longer has one. Has
+     *           spent delivery backing it cannot re-earn, so it fails closed.
+     *
+     *         `Unconfigured` and `Detached` share the same two field values
+     *         and are separated only by {Storage.rewardRoleConfigured}. They
+     *         are NOT interchangeable: collapsing them either freezes live
+     *         single-chain deploys or hands a detached chain an unbounded
+     *         allowance.
+     */
+    enum RewardRole {
+        Canonical,
+        Mirror,
+        Unconfigured,
+        Detached
+    }
+
+    /**
      * @notice Enum for offer types.
      * @dev Lender offers to lend, Borrower requests to borrow.
      */
@@ -7201,6 +7232,33 @@ library LibVaipakam {
         ///         `chainKeeperAllocDebited` while the mirror still treated
         ///         those tokens as fundable for claims and repatriation.
         mapping(uint256 => bool) mirrorKeeperEarmarkApplied;
+        /// @notice #1566 closure 3 — TRUE once this Diamond has ever been
+        ///         written into a reward-mesh role by either role setter
+        ///         ({RewardReporterFacet.setBaseChainId} or
+        ///         {RewardReporterFacet.setIsCanonicalRewardChain}).
+        ///
+        ///         This is the ONE bit that separates a DETACHED chain from a
+        ///         never-configured one. Both present as
+        ///         `!isCanonicalRewardChain && baseChainId == 0`, and they need
+        ///         OPPOSITE answers: a detached chain has spent delivery
+        ///         backing it can no longer re-earn, so it must fail closed at
+        ///         bound `0`; a single-chain deploy has no delivery, no
+        ///         residual and no counterparty, and keeps the canonical
+        ///         semantics {setBaseChainId}'s own natspec documents for it.
+        ///
+        ///         Inferring the distinction from the two existing fields is
+        ///         what produced the defect — their zero values are overloaded.
+        ///         Recording it at the transition cannot be ambiguous: the two
+        ///         setters are the only sites that mutate the role, and both
+        ///         stamp this flag, so {rewardRole} is total by construction.
+        ///
+        ///         Defaulting to FALSE is correct for every already-deployed
+        ///         chain and needs no migration — canonical and mirror chains
+        ///         resolve on the earlier arms regardless of it, and a chain
+        ///         still sitting at the defaults IS unconfigured. As of
+        ///         2026-09-07 arb-sepolia and bnb-testnet are in exactly that
+        ///         state, and this flag is what keeps them working.
+        bool rewardRoleConfigured;
     }
 
     /// @notice #1434 P2-w4 (§5.2 R6a) — a lapsed day's recorded loss: the
@@ -9974,7 +10032,48 @@ library LibVaipakam {
     function isMirrorRewardChain(
         Storage storage s
     ) internal view returns (bool) {
-        return !s.isCanonicalRewardChain && s.baseChainId != 0;
+        return rewardRole(s) == RewardRole.Mirror;
+    }
+
+    /// @notice #1566 closure 3 — this Diamond's reward-mesh role, resolved
+    ///         TOTALLY. Replaces reading the two-valued
+    ///         {isMirrorRewardChain} negation at fourteen sites, each of
+    ///         which independently decided *am I bounded* and *do I record*
+    ///         from one boolean that had no case for a chain which is
+    ///         neither canonical nor a mirror.
+    ///
+    ///         That missing case failed in two directions at once — the same
+    ///         expression made the delivered bound `max` (fail-OPEN) while
+    ///         stopping every paid-side writer, and made mirror-only
+    ///         authorization gates deny (fail-CLOSED). No single boolean
+    ///         value is right for both, which is why the fix is a role rather
+    ///         than a better boolean.
+    ///
+    ///         **Four states, not three.** `!canonical && baseChainId == 0`
+    ///         is not the detached role — it is the detached role UNIONED
+    ///         with a never-configured deployment, and the two want opposite
+    ///         behaviour. {Storage.rewardRoleConfigured} carries the bit that
+    ///         separates them; see its natspec for why the distinction cannot
+    ///         be inferred from the other two fields.
+    ///
+    /// @dev    {isMirrorRewardChain} is now defined AS `role == Mirror` and is
+    ///         exactly equivalent to the expression it replaced — the Mirror
+    ///         arm is reached only when `!isCanonicalRewardChain` (Canonical
+    ///         returned already) and `baseChainId != 0`. So every existing
+    ///         reader keeps its behaviour verbatim, and the roles they had no
+    ///         way to distinguish become nameable without a flag day. Callers
+    ///         that must treat `Detached` differently read {rewardRole}
+    ///         directly.
+    /// @param s Diamond storage.
+    /// @return The resolved role.
+    function rewardRole(
+        Storage storage s
+    ) internal view returns (RewardRole) {
+        if (s.isCanonicalRewardChain) return RewardRole.Canonical;
+        if (s.baseChainId != 0) return RewardRole.Mirror;
+        return s.rewardRoleConfigured
+            ? RewardRole.Detached
+            : RewardRole.Unconfigured;
     }
 
     /// @param who The address to check.

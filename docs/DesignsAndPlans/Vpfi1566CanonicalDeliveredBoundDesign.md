@@ -1837,10 +1837,16 @@ writer stops recording — not through separate bugs but through the same
 expression, read fourteen times, with no case for the third state.
 
 **Root fix: replace the boolean with one exhaustive role resolver** —
-`{Canonical, Mirror, Detached}` — and give `Detached` a DEFINED behaviour
-instead of letting it inherit "not a mirror ⇒ unbounded". Every site then
-reads one function, and the third state stops being an accident of negation.
-Fourteen call sites collapse to fourteen reads of the same decision.
+`{Canonical, Mirror, Unconfigured, Detached}` — and give the non-canonical,
+no-base states a DEFINED behaviour instead of letting them inherit "not a
+mirror ⇒ unbounded". Every site then reads one function, and the extra states
+stop being an accident of negation. Fourteen call sites collapse to fourteen
+reads of the same decision.
+
+*(This paragraph said `{Canonical, Mirror, Detached}` until the correction
+below. Three states are not enough: the third predicate covers both a detached
+chain and a never-configured one, which need opposite answers — and two live
+deployments sit in it today.)*
 
 Fail-closed is the right default for `Detached`: bound `0` (nothing new is
 claimable) rather than `max`. A detached deployment has no authenticated
@@ -1885,10 +1891,108 @@ matrix for all fourteen sites.** An earlier revision said writing it was "the
 remaining work" — which is a plan for a matrix, not a matrix, and leaves the
 implementer exactly where they were. Here it is.
 
+##### ⚠️ Correction — the role is FOUR states, and `Detached` cannot be inferred
+
+Every revision of this section up to now defined **`Detached` as
+`baseChainId == 0` on a non-canonical chain**. That predicate is not the
+detached role. It is the detached role **unioned with a deployment that was
+never configured at all**, and the two want opposite behaviour:
+
+- A chain that was a mirror and lost its base **has** spent delivery backing it
+  cannot re-earn, so it must fail closed.
+- A chain that never joined the mesh has **no delivery, no residual and no
+  counterparty** — it is a single-chain deploy, and the codebase deliberately
+  gives it canonical semantics today. `RewardReporterFacet.setBaseChainId`'s
+  own natspec (`:1240-1247`) says so in terms: a non-canonical deployment that
+  leaves this at zero "receives canonical / single-chain semantics… Zero here
+  is a real configuration state with consequences, not an absence."
+
+**This is not hypothetical, and it is not a future risk — it is the live state
+of the deployed mesh.** Reading `getRewardReporterConfig()` on every chain in
+`contracts/deployments/` on 2026-09-07:
+
+| Chain | `baseChainId` | `isCanonical` | Role under the OLD definition |
+| --- | --- | --- | --- |
+| base-sepolia | 84532 | true | Canonical |
+| sepolia | (pre-T-068 facet — see below) | false | Mirror |
+| **arb-sepolia** | **0** | **false** | **`Detached`** |
+| **bnb-testnet** | **0** | **false** | **`Detached`** |
+| op-sepolia | (pre-T-068 facet — see below) | false | — |
+
+So shipping the matrix's `Detached` column as specified would move
+**arb-sepolia and bnb-testnet from working single-chain semantics to bound `0`
+— freezing every reward consumer on both.** That is precisely the failure the
+⚠️ note below reserves for the *canonical* column, arriving instead through the
+column this design nominates as the safe independently-deployable piece. The
+`Detached`-only scoping does **not** de-risk the change; it relocates the
+freeze.
+
+*(Method note: the probe cross-checks each returned `localChainId` against the
+endpoint's live `eth_chainId`. op-sepolia and sepolia FAIL that check —
+sepolia returns the LayerZero endpoint-id pair 40161/40245, so those Diamonds
+still carry a pre-T-068 `RewardReporterFacet` whose return shape differs from
+source. Their role is therefore **unknown**, not "as tabulated", and the two
+that matter above are the two whose shape does match. A decode that had been
+trusted without the cross-check would have reported four detached chains with
+equal confidence.)*
+
+**Root cause: the role is INFERRED from two fields whose zero values are
+overloaded**, and the resolver as specified keeps inferring it from the same
+overloaded pair — so it makes the third state nameable while inheriting the
+exact ambiguity that produced the defect. Naming a state does not disambiguate
+it.
+
+**Fix: record the role transition instead of inferring it.** Rows 8–10 already
+establish that the two setters are the *only* sites that mutate the role, so
+the missing bit is observable exactly where it is created. Add one storage
+flag — `rewardRoleConfigured`, set by **both** setters on every call — and the
+resolver becomes total over four states:
+
+| Predicate | Role | Behaviour |
+| --- | --- | --- |
+| `isCanonicalRewardChain` | **Canonical** | canonical column |
+| `!canonical && baseChainId != 0` | **Mirror** | mirror column |
+| `!canonical && baseChainId == 0 && !rewardRoleConfigured` | **Unconfigured** | **canonical / single-chain semantics — today's behaviour, unchanged** |
+| `!canonical && baseChainId == 0 && rewardRoleConfigured` | **Detached** | the fail-closed column below |
+
+**This needs no storage migration, and that is a property of the design rather
+than luck.** The flag defaults to `false`, which is correct for every chain now
+deployed: the canonical and mirror arms dominate for base-sepolia and sepolia,
+and arb-sepolia / bnb-testnet resolve to `Unconfigured` — keeping the semantics
+they run on today. And because *the only path into `Detached` is through a
+setter, and every setter stamps the flag*, no chain can reach the fail-closed
+role without the bit being written. The resolver is total by construction, not
+by migration.
+
+Rejected alternative — **infer "was configured" from
+`rewardBudgetArmedFreshReceived != 0`.** A mirror that received nothing before
+detaching reads as `Unconfigured` and fails open. Inference over overloaded
+state is the disease, not the cure.
+
+Rejected alternative — **store a `RewardRole` enum outright.** It duplicates
+`baseChainId`, which is read directly at ~20 further sites (`TreasuryFacet`,
+`MirrorTierReceiverFacet`, `RepatriationFacet`, `RewardCommitmentFacet`,
+`RewardRemittanceFacet`, `RewardAggregatorFacet`), so the enum and the chain id
+can disagree and every one of those sites is then reading a stale role. The
+flag adds exactly the one bit genuinely missing and keeps a single source for
+the chain id.
+
+**Consequence for the table below: it has a fourth column.** `Unconfigured`
+takes the **Canonical** column's answer at every row *as that column reads
+today* (`max` bound, no paid-delta recording) — deliberately, because a
+single-chain deploy has no delivered ledger to bind to, and slice 4 is what
+gives the canonical column its real answers. When slice 4 lands, `Unconfigured`
+stays with the pre-slice-4 canonical behaviour rather than following it; a
+single-chain deploy has no `received` writer either.
+
+---
+
 The fourteen readers of `LibVaipakam.isMirrorRewardChain`, with what each is
-actually asking and the answer for each role. **`Detached` means
-`baseChainId == 0` on a non-canonical chain: no authenticated source of further
-delivery and nobody to report to.**
+actually asking and the answer for each role. **`Detached` means a chain that
+was configured into a reward role and no longer has one** (`baseChainId == 0`,
+non-canonical, **and** `rewardRoleConfigured`): no authenticated source of
+further delivery and nobody to report to. A never-configured deployment is
+`Unconfigured`, not `Detached` — see the correction above.
 
 | # | Site | Real question | Canonical | Mirror | **Detached** |
 | --- | --- | --- | --- | --- | --- |
@@ -2192,6 +2296,14 @@ So either **slice 4 and the ledger migration sequence BEFORE these matrix
 cells**, or the independently deployable piece is scoped to **`Detached`-only
 behaviour** — and in that case it must not be called closure 3, because the
 canonical column is where the bound actually binds.
+
+⚠️ **`Detached`-only scoping is safe ONLY with the four-state resolver above.**
+Under the old three-state definition it is not an independently deployable
+piece at all: `arb-sepolia` and `bnb-testnet` are live in the
+`!canonical && baseChainId == 0` state today, so a `Detached`-only change
+freezes both — the same freeze this note reserves for the canonical column,
+reached through the column nominated as safe. The `Unconfigured` role is what
+makes the scoping claim true, and it must land in the same change.
 
 **Transition tests are required in BOTH directions**, since rows 8–10 are the
 only sites that mutate the role: entering `Detached` must retire the delivered
@@ -4617,9 +4729,27 @@ GRANDFATHERED custody classes; the path that creates `vpfiHeld` was retired
 by #1352, and the FunctionalSpecs say plainly that a platform deployed
 fresh has no such loans. So the population is an empirical question with a
 cheap answer, and it decides the size of everything below: **if a class is
-empty on every deployed chain, its slice collapses to a certified no-op —
-and the shortfall disposition slice 0 would otherwise put to the owner does
-not arise at all**, because there is nothing to be short of.
+empty on every deployed chain, its slice's MIGRATION half collapses to a
+certified no-op — and the shortfall disposition slice 0 would otherwise put to
+the owner does not arise at all**, because there is nothing to be short of.
+
+⚠️ **The census retires MIGRATION, never the prospective producer/consumer
+changes, and an earlier revision of this paragraph said "its slice collapses"
+without that qualifier.** The producers are still live:
+`RiskFacet._fullCollateralTransferFallback`,
+`DefaultedFacet._fullCollateralTransferFallback` and `SwapToRepayIntentFacet`
+can all create a qualifying row the moment after a read-only census reads zero.
+Slices 2 and 3 carry the changes that keep such a row out of the shared balance
+in the first place; dropping them because today's population is empty leaves
+every FUTURE row commingled and reachable by a reward payout — which is the
+defect #1566 exists to close, reintroduced by way of an optimisation.
+
+So the census answers exactly one question — *is there anything to move?* — and
+"no" removes the moving, the shortfall disposition and the operator ceremony
+that would have accompanied it. It does not remove the isolation. A slice may
+be certified a no-op in FULL only under one of two conditions: the scan was
+taken under a producer freeze at cutover, or the prospective custody changes
+are already deployed on that chain.
 
 The census is READ-ONLY and enumerates, per deployed chain and per class:
 the grandfathered `vpfiHeld` rows, the `fallbackSnapshot` custody rows, the
@@ -4669,6 +4799,30 @@ reported a comfortable answer it had not earned:
   latter as a failure on op-sepolia rather than silently counting it as an
   absent commit.
 
+**RESULT (2026-09-07): four of five chains are PROVEN EMPTY on every class;
+op-sepolia's class 3 is INDETERMINATE.** The empty verdict is therefore not yet
+earned outright, and this is the census working rather than failing.
+
+The unrouted-getter chains rest on the Diamond's `DiamondCut` history, because
+an unrouted getter alone is not proof of absence — routing is mutable, the
+producer has its own selector, and a facet cut in and later cut out leaves rows
+behind (Codex #2070 P1). That scan **discriminates**: sepolia reads three cuts,
+finds the producer in none of them, and earns `proven`. op-sepolia reads
+**zero** cuts — which cannot be true of a Diamond that exists, since every one
+emits at least one at deploy — so the history was not read at all. Its recorded
+`deployBlock` yields no logs whatsoever at that address, and the public
+endpoint prunes state, so the true creation block cannot be recovered by
+bisection there either.
+
+Zero cuts is a hard refusal, not a proof. **The first revision of this scan
+returned zero on both unrouted chains and reported both as proven** — an empty
+scan manufacturing the comfortable answer, which is the exact failure this
+census exists to refuse, reintroduced by the machinery meant to prevent it.
+
+**Outstanding: one re-run of op-sepolia against an ARCHIVE endpoint.** Until
+then class 3 there is undetermined, and the artifact says so rather than
+rounding it to zero.
+
 **Only after the census does slice sequencing begin.** Closure 3's RESOLVER
 is independent and small and can land early — but its
 **canonical matrix cells cannot land before slice 4**, and an earlier revision
@@ -4681,6 +4835,46 @@ the larger piece and shares its migration question with nothing else. Neither
 depends on Option F, and F depends on neither — the three closures are
 genuinely parallel, which is why arming waits on all of them rather than on a
 chain.
+
+#### LANDED 2026-09-07 — the resolver, four-state, with `Detached`-only behaviour
+
+Shipped as the standalone early piece described above, with the **four-state**
+correction §5c records (the three-state form would have frozen two live
+deployments):
+
+- `LibVaipakam.RewardRole` + `LibVaipakam.rewardRole`, total over the role
+  storage; `isMirrorRewardChain` redefined AS `role == Mirror`, which is
+  exactly equivalent to the expression it replaced, so all fourteen readers
+  keep their behaviour verbatim.
+- `Storage.rewardRoleConfigured`, stamped by **both** role setters. Appended to
+  the struct (layout-safe) and defaulting to `false`, which is correct for
+  every deployed chain — **no migration**.
+- `Detached` behaviour at the sites that need no new machinery: the bound
+  itself returns `0` (row 14), and the forfeit-sweep allowance, expiry-sweep
+  allowance, expiry payability test and the executability predicate
+  (rows 1, 5, 12, 13) now **ask the bound instead of re-deriving the role**.
+  Each of those four was a local re-derivation that handed `Detached` an
+  unbounded allowance; because `deliveredFreshBound` already returns `max` for
+  Canonical and Unconfigured, collapsing them is behaviour-preserving for
+  every other role.
+- Rows 3, 4, 7 (the reportability and mirror-only authorization gates) were
+  **already correct** for `Detached` — they fail closed on `!Mirror`.
+- `RewardReporterFacet.getRewardRole()` exposes the resolved role. The raw
+  fields cannot determine it, which is not a theoretical complaint: reading
+  them off the live chains is what produced the wrong classification this
+  correction fixes.
+
+**Deferred with the machinery they depend on**, and deliberately not
+approximated: rows 1/5's transport-epoch-then-era-balance ordering, rows 2/6's
+fell-through-only paid-delta rule, and row 13's prepared-coverage preparation
+operation. Until those land a `Detached` chain bounds at a flat zero — the safe
+direction, and the one §5c warns makes a retired era immortal. **That warning
+is not yet live and must not be forgotten**: no chain can reach `Detached`
+without an operator action, and none has, so there is no era to strand. The
+constraint is that the era machinery must land *before* a chain is detached in
+anger, not before this piece ships.
+
+The canonical column still lands with slice 4, unchanged.
 
 ## 6. Recommendation (superseded by §5b — retained for its reasoning)
 

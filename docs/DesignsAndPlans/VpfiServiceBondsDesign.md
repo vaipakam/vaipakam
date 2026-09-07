@@ -5,7 +5,17 @@ refundable-deposit shape** (§owner decisions) — which covers fork A in
 full and C's deposit half; **C's NON-REFUNDABLE arming-fee purchase is a
 separate legal shape the recorded sign-off does not reach**, so
 selecting C additionally requires its own bounded legal glance (or an
-explicit recorded owner approval of the fee shape) before C builds.
+explicit recorded owner approval of the fee shape).
+
+> **THE AUTHORITATIVE GATE — build vs. arm.** The glance gates **ARMING the
+> fee**, not building the mechanism. C's mechanism may be built, reviewed,
+> merged and deployed **dark**; the fee may not be given a non-zero value
+> until the fee-shape glance is recorded. Wherever this document says the
+> glance is required "before C builds", or that C "is not buildable"
+> without a fee number, **that wording is SUPERSEDED by this line** — it
+> predates the 2026-09-07 ratification of the fee as a SHAPE rather than a
+> figure. It is left in place below because the reasoning around it is still
+> sound; only the gate it names has moved.
 **All four owner decisions are RATIFIED (2026-09-07)** — see §owner
 decisions: **fork C**; the **capacity terms as proposed** (4× ceiling per
 `(role, address)`, no minimum bond, clamp on any capacity reduction);
@@ -2960,9 +2970,16 @@ is no longer a choice about *when* deterrence arrives, because no route to it
 has been specified — see item 3.
 
 **2. If (C): the arming fee's value, floor and ceiling — and the FLOOR MUST BE
-POSITIVE.** Flat per arming, paid in addition to the deposit, per §3. Without a
-number (C) is not buildable, and its permanent-sink property is exactly what the
-number sets.
+POSITIVE.** Flat per arming, paid in addition to the deposit, per §3.
+
+> **RATIFIED 2026-09-07 — as a SHAPE, not a number.** The fee is a
+> governance-set figure with a **positive floor enforced in code**; no value is
+> frozen in this document. ~~Without a number (C) is not buildable~~ — that
+> sentence is **superseded**: what the build needs is the shape (a bounded
+> governance knob whose floor cannot be zero), which is now decided, so C is
+> buildable today and ships dark at a zero value. The permanent-sink property
+> the number sets is what ARMING turns on, and arming is what the fee-shape
+> glance gates. See the authoritative build-vs-arm gate in the status header.
 
 **The permissionless FREE TIER needs a positive floor too**, for the same class
 of reason and in the opposite direction. Dark mode is specified to preserve the

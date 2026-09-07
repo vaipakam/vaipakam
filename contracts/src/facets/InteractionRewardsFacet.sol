@@ -98,9 +98,14 @@ contract InteractionRewardsFacet is
             freshRecoverable = backingRoom < headroom;
             if (backingRoom < headroom) headroom = backingRoom;
         }
-        uint256 allowance = LibVaipakam.isMirrorRewardChain(s)
-            ? LibInteractionRewards.deliveredFreshBound(s)
-            : type(uint256).max;
+        // #1566 closure 3 — ask the bound, do not re-derive it from the role.
+        // This ternary was exactly equivalent to calling `deliveredFreshBound`
+        // for Canonical, Mirror and Unconfigured (it returns `max` for the
+        // roles the ternary was protecting), and WRONG for `Detached`: the
+        // negation read "not a mirror" and handed a detached chain `max`,
+        // which is the fail-OPEN half of the defect. One implementation of the
+        // rule, so a role added later cannot be honoured here and missed there.
+        uint256 allowance = LibInteractionRewards.deliveredFreshBound(s);
 
         (
             uint256 freshCredited,

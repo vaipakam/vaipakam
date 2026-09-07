@@ -2396,7 +2396,7 @@ contract DeployDiamond is Script {
     }
 
     function _getRewardReporterSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](20);
+        s = new bytes4[](21);
         s[0] = RewardReporterFacet.closeDay.selector;
         s[1] = RewardReporterFacet.onRewardBroadcastReceived.selector;
         // #1222 M3 B2-b — per-destination V2 broadcast ingress.
@@ -2424,6 +2424,9 @@ contract DeployDiamond is Script {
         s[10] = RewardReporterFacet.getRewardGraceSeconds.selector;
         // #1944 — per-mirror readback the M7 arming ceremony needs.
         s[19] = RewardReporterFacet.getBroadcastV2Applied.selector;
+        // #1566 closure 3 — the resolved role. The two raw fields above
+        // cannot distinguish Detached from Unconfigured.
+        s[20] = RewardReporterFacet.getRewardRole.selector;
     }
 
     /// #1222 M3 B2-c — mirror→Base per-loan headroom commitment report.

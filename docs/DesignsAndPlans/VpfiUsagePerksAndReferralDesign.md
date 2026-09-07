@@ -2,7 +2,13 @@
 
 **Status:** legal glance **DISCHARGED** (owner, 2026-08-03); the spend-gated
 absorption channel is **BUILT** (`PerkFacet`, `RecycleSource.SpendGatedPerk`).
-Remaining: per-perk effects, and the pricing decisions below. Card: #1204.
+**All owner decisions are SETTLED (2026-09-07)** — see "Decisions" below;
+#1204 no longer gates the recycling programme. Remaining is ENGINEERING and
+OPERATIONS, not a decision: the per-perk **effects** (starting with priority
+solver routing), and then setting each perk's price as the last step of
+shipping it. Prices are an arming action, and a non-zero one is only safe once
+that perk's effect is deployed and verified — the deploy default of zero means
+"not for sale". Referral is deferred for Phase 1. Card: #1204.
 Umbrella: #1221. Legal frame: #694.
 
 ## Objective
@@ -81,6 +87,22 @@ no securities-shaped fact pattern, and the Ecosystem bucket is only the
    ARMING action, not a build input. **Priority solver routing is armed
    first and alone**; every other catalog entry stays unpriced until its
    own effect is built. Prices remain governance-config, bounded.
+
+   ⚠️ **Arming order, and it is a fund-safety rule rather than a
+   preference.** "Armed first" means first AMONG THE PERKS — never before
+   its own effect exists. `purchasePerk` moves the buyer's VPFI into
+   recycling immediately and irreversibly, and there is no refund; a
+   priced perk whose consumer is not deployed therefore sells nothing for
+   real money. Priority solver routing has **no production consumer of
+   `consumePerkCredit` / `getPerkEntitlement` outside `PerkFacet` today**,
+   so it is not armable yet.
+
+   **The gate: a non-zero price may be configured for a perk only once
+   that perk's effect is deployed on that chain and verified to consume
+   the entitlement.** Governance sets the price as the LAST step of
+   shipping a perk, not the first — the deploy default of zero is what
+   makes that safe by construction, and nothing about "armed first"
+   relaxes it.
 2. ~~Referral credit size + caps + expiry~~ — **DEFERRED for Phase 1
    (owner, 2026-09-07).** A recorded deferral, which §6 of the completion
    plan counts as a decided state — not an omission. The reasons are the
