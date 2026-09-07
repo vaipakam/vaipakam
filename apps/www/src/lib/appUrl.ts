@@ -55,12 +55,29 @@
  *   3. Set `APP_TARGET` to `'app'` here. Still OPEN — blocked only by
  *      step 7 below (the Vpfi deposit anchor), since flipping without it
  *      regresses the marketing CTA's promised landing position.
- *   4. DONE — the hard-coded recovery links in the ten
- *      `src/content/userguide/Advanced.*.md` files now point at
- *      `app.vaipakam.com/recover`. They cannot call this helper —
- *      markdown has no access to it — so they are repointed by hand and
- *      do NOT move with `APP_TARGET`. `/recover` was confirmed to render
- *      on the bound host before the switch.
+ *   4. Repoint the hard-coded recovery links in the ten
+ *      `src/content/userguide/Advanced.*.md` files, which cannot call
+ *      this helper — markdown has no access to it, so they are moved by
+ *      hand and do NOT travel with `APP_TARGET`.
+ *
+ *      THESE MOVE LAST, WITH THE HOST RETIREMENT — not with the binding,
+ *      and not with the rest of this list. `/recover` is the one flow
+ *      carrying durable PER-ORIGIN safety state: `Recover.tsx`'s
+ *      `pendingRecoveryStore` is browser storage, and its own comment
+ *      calls the pending card the only safe landing for a broadcast
+ *      whose receipt could not be read. Browser storage is same-origin,
+ *      so a user mid-recovery on the legacy host who follows a repointed
+ *      link arrives where that marker cannot be seen, meets a blank
+ *      form, and can broadcast a SECOND recovery — the exact
+ *      double-recovery the pending card exists to prevent.
+ *
+ *      The risk is asymmetric, which is what settles the ordering: a
+ *      fresh user sent to the still-served legacy host loses nothing,
+ *      while a mid-recovery user sent to the new one can lose real
+ *      value. So these links are coupled to `defi.vaipakam.com` actually
+ *      going away (or redirecting), not to `app.vaipakam.com` coming up.
+ *      Confirming `/recover` RENDERS on the new host — it does — is not
+ *      evidence of state continuity, and must not be read as it.
  *   5. Move the agent's `FRONTEND_ORIGIN` entry zero to the app host,
  *      together with the Frame paths in `frames.ts` — that CSV's first
  *      entry and those paths are the same coupling this file models.

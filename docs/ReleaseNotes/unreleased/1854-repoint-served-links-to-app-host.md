@@ -7,16 +7,28 @@ indexer's API catalog and the AI-crawler surface all still advertised the
 legacy `defi.vaipakam.com` host. Those three link surfaces now point at
 `app.vaipakam.com`, and the claims that held them back are corrected.
 
-Only links whose destination was confirmed to render on the bound host
-moved — the ten localized user-guide recovery links (`/recover`) and the
-two automated-consumer pointers at the app home. The verification matters
-more than it sounds: both hosts return an identical 200 SPA shell for
-every path, including paths that do not exist, so a status-code probe
-proves nothing. Identity was established by asset hash instead — the
-bound host served the exact bundle a deploy had just produced — and the
-route table in source is the authority on what exists. That method is now
-written down in each place that tells someone to verify a host, so the
-next person does not read a 200 as an answer.
+What moved is narrower than it first looks, and the reason is worth
+keeping. The two automated-consumer pointers at the app home moved. The
+ten localized user-guide recovery links did **not**, and are now
+explicitly coupled to the legacy host being retired rather than to the
+new one coming up. `/recover` is the one flow carrying durable
+per-origin safety state: the pending-recovery marker lives in browser
+storage, which is same-origin, and that pending card is the only safe
+landing for a broadcast whose receipt could not be read. A user
+mid-recovery who followed a repointed link would arrive where the marker
+cannot be seen, meet a blank form, and could broadcast a second recovery
+— the exact double-recovery the card exists to prevent. The risk is
+asymmetric, which settles the ordering: a fresh user sent to the
+still-served legacy host loses nothing.
+
+The verification method matters more than it sounds, and one half of it
+was initially mistaken for the other. Both hosts return an identical 200
+SPA shell for every path, including paths that do not exist, so a
+status-code probe proves nothing; identity was established by asset hash
+instead, and the route table in source is the authority on what exists.
+But confirming a page RENDERS is not evidence that state carries across
+to it — that distinction is what the recovery links turn on, and it is
+now written down beside them.
 
 Two blockers were re-checked rather than assumed. **#1960 is cleared**:
 the app serves its own Data Rights route, which was the whole concern —
