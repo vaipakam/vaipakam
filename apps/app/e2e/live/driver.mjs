@@ -663,12 +663,22 @@ export async function launch({
   // represent a first visit (Codex #1181 P2).
   freshProfile = false,
   // keyless: launch the browser + egress route shim with NO wallet
-  // injected and no key read. For drives that only read PUBLIC pages
-  // (live-recover-locales.mjs): the page sees no provider at all, which
-  // is both the honest posture for a public probe and the reason the
-  // drive can run in an environment with no dev-wallet file. The route
-  // shim, viewport, profile handling and `done()` cleanup are shared
-  // with every other drive rather than copied (Codex #1590 r1).
+  // injected and no key read. For a run that only reads PUBLIC pages:
+  // the page sees no provider at all, which is both the honest posture
+  // for a public probe and the reason the run can proceed in an
+  // environment with no dev-wallet file. The route shim, viewport,
+  // profile handling and `done()` cleanup are shared with every other
+  // drive rather than copied (Codex #1590 r1).
+  //
+  // Set per LAUNCH, not per drive — `live-recover-locales.mjs` is
+  // keyless throughout, while `live-role-journeys.mjs` is keyless for
+  // its visitor role and keyed for the connected ones, in the same
+  // process. Note what it costs: with no provider there is no RPC to
+  // observe, so a keyless launch cannot use the blocked-request signal
+  // to show the app does not solicit a connection unprompted. A drive
+  // relying on that has to assert the UI observable instead — the
+  // visitor journey counts connection modals for exactly this reason
+  // (#2069 r15).
   keyless = false,
   // onSetupFailure: what a browser/context SETUP failure does.
   //
