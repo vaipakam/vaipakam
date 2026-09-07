@@ -15,6 +15,7 @@ import {
 import './Navbar.css';
 import { LanguagePicker } from './LanguagePicker';
 import { appUrl } from '../lib/appUrl';
+import { isProtocolConsolePublic } from '../lib/protocolConsoleVisibility';
 
 type NavLink = {
   labelKey: string;
@@ -76,7 +77,14 @@ const NAV_GROUPS: NavGroup[] = [
       // two-helper split existed only while one deployment served them.
       { labelKey: 'nav.analytics', href: appUrl('analytics'), newTab: true },
       { labelKey: 'nav.nftVerifier', href: appUrl('nftVerifier'), newTab: true },
-      { labelKey: 'nav.protocolConsole', href: appUrl('protocolConsole'), newTab: true },
+      // Conditional for the same reason the footer link is: with
+      // `VITE_ADMIN_DASHBOARD_PUBLIC=false` both this link's destination
+      // and the reference page behind it withhold themselves, so
+      // offering it navigates a reader into a dead end the deployment
+      // chose.
+      ...(isProtocolConsolePublic()
+        ? [{ labelKey: 'nav.protocolConsole', href: appUrl('protocolConsole'), newTab: true }]
+        : []),
     ],
   },
 ];

@@ -15,7 +15,7 @@
  *
  * The `/protocol-console` dashboard route on defi continues to
  * default to publicly readable so anyone visiting the site can see
- * every governance-tunable parameter's current value, hard bound,
+ * the published governance parameters' current values, hard bound,
  * and recommended operational zone. Transparency is good optics for
  * DeFi — the pattern every major protocol has settled on.
  *

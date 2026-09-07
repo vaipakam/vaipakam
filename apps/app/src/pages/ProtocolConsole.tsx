@@ -1,6 +1,14 @@
 /**
- * Protocol Console — public, read-only view of every governance-tunable
- * parameter's current value (#1959).
+ * Protocol Console — public, read-only view of the governance-tunable
+ * parameters the indexer publishes (#1959).
+ *
+ * A SUBSET, AND IT SAYS SO. This renders what `getProtocolConfigBundle`
+ * exposes; lifecycle and automation switches, the grace schedule,
+ * sanctions-oracle configuration and several risk controls are not in
+ * that snapshot. The lede states this outright, because an incomplete
+ * view asserting completeness is worse than an incomplete one — it
+ * stops the reader looking further. Widening the published set is
+ * tracked separately (#2071).
  *
  * WHY IT LIVES HERE. `/protocol-console` was served by the retired
  * `apps/defi` and was the second of two surfaces the #1854 cutover did

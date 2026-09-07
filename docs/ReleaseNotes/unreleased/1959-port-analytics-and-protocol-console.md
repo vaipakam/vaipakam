@@ -17,8 +17,10 @@ current as the last ingest, and it distinguishes a counter the indexer
 did not report from a counter that is genuinely zero. On a page whose
 purpose is accuracy, an invented zero is worse than an admitted gap.
 
-The protocol console shows every governance-tunable parameter's current
-value, read by NAME rather than by position in the config bundle — the
+The protocol console shows the current values of the governance
+parameters the public indexer publishes — a subset rather than the whole
+catalogue, and the page says so rather than letting a reader assume
+otherwise. Those it does show are read by NAME rather than by position in the config bundle — the
 release record already carries an incident where hand-typed positional
 tuples silently shifted, and a governance parameter displayed against the
 wrong label looks authoritative while being wrong. It holds no controls

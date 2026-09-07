@@ -46,8 +46,9 @@ Two surfaces exist to be read by people who have not connected anything,
 including people who never will.
 
 - An analytics view reports the deployment's loan and offer counts, and a
-  protocol console reports the current value of each governance-tunable
-  parameter. Both are read-only. Neither offers any control that changes
+  protocol console reports the current value of the governance-tunable
+  parameters the public indexer publishes — a bounded subset, not the
+  whole catalogue. Both are read-only. Neither offers any control that changes
   protocol state; parameter changes are a governance action elsewhere.
 - Both render fully without a wallet, and both are reachable by direct
   link from outside the app. They resolve their chain the same way every
@@ -72,6 +73,14 @@ including people who never will.
   reading of it.
 - The protocol console reports each parameter against its own name, and
   never by inferring which value belongs to which name from ordering.
+- The console states that it shows a subset rather than implying it is
+  complete. Settings that exist but are not published — lifecycle and
+  automation switches, the grace schedule, sanctions-oracle
+  configuration and several risk controls among them — are absent, and
+  a reader is pointed at the full parameter reference rather than left
+  to infer that what is shown is all there is. An incomplete view that
+  asserts completeness is worse than an incomplete view, because it
+  stops the reader looking further.
 - An operator may hide the live parameter values on a deployment. In
   that state the console says so plainly, and does not direct the reader
   to any resource that the same setting has also withheld.
