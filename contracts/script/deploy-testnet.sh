@@ -1623,7 +1623,7 @@ phase_cf_app() {
   still serving a build made before the flip, users are being sent to
   the LEGACY host and will not see any contract addresses this run
   changed. The legacy frontend cannot be rebuilt to carry them — its
-  source was deleted with #1854.
+  code was deleted with #1854.
 
   Check: load the marketing site and confirm a tool link (Analytics,
   NFT Verifier, Protocol Console) points at app.vaipakam.com rather
