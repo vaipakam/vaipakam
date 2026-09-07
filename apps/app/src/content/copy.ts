@@ -4548,6 +4548,10 @@ const copySource = {
       'Parameter visibility is turned off on this deployment, so the live values are not shown here. This is a display setting only — the parameters themselves are on-chain and readable by anyone directly from the contracts.',
     unavailable:
       'No configuration snapshot is available for this chain. Nothing is inferred from that — it means the value is unknown here, not that it is unset on-chain.',
+    // Distinct from `undated` on purpose: this is the indexer telling us
+    // the values ARE behind, not that their age is unknown.
+    knownStale:
+      'The indexer has seen a governance change that came after this snapshot, so these values are known to be out of date — not merely of uncertain age. Treat them as historical and check the parameter reference or the contracts directly for what is in force now.',
     undated:
       'This snapshot carries no timestamp, so there is no way to tell how old these values are. They may be current or they may be long superseded — read them as unverified rather than as the protocol’s present configuration.',
     stale:

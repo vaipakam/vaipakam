@@ -883,9 +883,22 @@ export async function handleLoansStats(req: Request, env: Env): Promise<Response
        // ERC-20 / NFT active subtotals could EXCEED the `active` count
        // beside them while a sale vehicle is open — two figures on one
        // card disagreeing, which is worse than either being wrong alone.
+      // STUBS CARRY A PLACEHOLDER asset_type, NOT A READING OF ONE.
+      // When `LoanInitiatedDetails` is absent and the canonical read-back
+      // fails, the indexer inserts an active stub with `asset_type = 0`
+      // regardless of what the loan actually is, and leaves it there
+      // while healing keeps failing. Counting those published every such
+      // NFT rental as an active ERC-20 loan — a wrong classification
+      // presented as a measurement, which is the one thing the
+      // transparency page must not do. Excluded here; the `active` count
+      // above still includes them, so the subtotals may legitimately sum
+      // to less than `active` while stubs await healing. That direction
+      // is the honest one: undercounting a type is an admitted gap,
+      // where misfiling it is a false statement.
       `SELECT asset_type, COUNT(*) as n
        FROM loans
-       WHERE chain_id = ? AND is_sale_vehicle = 0 AND status = 'active'
+       WHERE chain_id = ? AND is_sale_vehicle = 0 AND is_stub = 0
+         AND status = 'active'
        GROUP BY asset_type`,
     )
       .bind(chainId)

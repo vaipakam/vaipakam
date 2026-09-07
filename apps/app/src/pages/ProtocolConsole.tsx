@@ -172,8 +172,18 @@ export function ProtocolConsole() {
   // The honest reading of the sentinel is that the capture time is
   // UNKNOWN and the values are known-behind, which is what `undated`
   // already says.
+  //
+  // AND KNOWN-STALE IS NOT MERELY UNDATED (review round 10 P2). The
+  // indexer sets `stale` when a catch-up scan saw a governance event
+  // this snapshot predates. That is a positive verdict — the values ARE
+  // behind — and strictly stronger than "we cannot tell how old this
+  // is". Folding it into `undated` had the page say the values "may be
+  // current" about values it had been told are not.
+  const knownStale = snap?.stale === true;
   const undated =
-    snap !== null && (typeof snap.updatedAt !== 'number' || snap.updatedAt === 0);
+    !knownStale &&
+    snap !== null &&
+    (typeof snap.updatedAt !== 'number' || snap.updatedAt === 0);
 
   return (
     <div className="pc-page">
@@ -197,6 +207,12 @@ export function ProtocolConsole() {
       {unavailable && (
         <p className="pc-unavailable" role="status">
           <AlertTriangle aria-hidden="true" /> {copy.protocolConsole.unavailable}
+        </p>
+      )}
+
+      {knownStale && (
+        <p className="pc-stale" role="status">
+          <AlertTriangle aria-hidden="true" /> {copy.protocolConsole.knownStale}
         </p>
       )}
 

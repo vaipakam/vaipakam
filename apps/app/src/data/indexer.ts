@@ -894,6 +894,10 @@ export interface ProtocolKnobSnapshot {
   sourceBlock?: number;
   /** Unix SECONDS. Callers MUST surface this — see `protocolConfigFresh`. */
   updatedAt?: number;
+  /** The indexer's own verdict: this snapshot predates a governance
+   *  event a catch-up scan already saw. Distinct from an unknown age —
+   *  it is a positive statement that the values are out of date. */
+  stale?: boolean;
 }
 
 export async function fetchProtocolKnobs(
@@ -905,6 +909,7 @@ export async function fetchProtocolKnobs(
     flags?: Record<string, boolean>;
     sourceBlock?: number;
     updatedAt?: number;
+    stale?: boolean;
   }>(`/config/${chainId}`);
   if (!res || res.available !== true || !res.values) return null;
   return {
@@ -912,5 +917,12 @@ export async function fetchProtocolKnobs(
     flags: res.flags ?? {},
     sourceBlock: res.sourceBlock,
     updatedAt: res.updatedAt,
+    // CARRY THE VERDICT, DON'T RE-DERIVE IT. The indexer sets `stale`
+    // when a catch-up scan saw a governance event this snapshot
+    // predates — it KNOWS the values are behind, which is strictly more
+    // than "we cannot tell how old this is". Dropping the flag left the
+    // page showing its undated copy, which says the values may be
+    // current; they are known not to be.
+    stale: res.stale === true,
   };
 }

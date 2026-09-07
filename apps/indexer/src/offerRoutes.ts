@@ -182,11 +182,31 @@ export async function handleOffersStats(req: Request, env: Env): Promise<Respons
       // aggregate, and not once the public transparency dashboard
       // renders it as the deployment's offer count, where a vehicle
       // inflates `total` and an open one inflates `active` too.
-      `SELECT status, COUNT(*) as n FROM offers
+      // EXPIRY IS LAZY ON-CHAIN, so a lapsed GTT offer's row still reads
+      // `status='active'` until some later event touches it — this file
+      // documents that at the `/offers/active` handler, and that handler
+      // offers `excludeExpired` precisely because of it. Grouping on the
+      // raw status published a public "Active" count full of offers
+      // nobody can fill, next to an "Expired" count that read ~0.
+      //
+      // Reclassified rather than dropped: the row is still a real offer
+      // that really existed, so the lifetime `total` must not move. Only
+      // which bucket it lands in changes. `expires_at = 0` is GTC — never
+      // expires — and must not be swept in by a `<=` against now.
+      `SELECT
+         CASE
+           WHEN status = 'active' AND expires_at != 0 AND expires_at <= ?
+             THEN 'expired'
+           ELSE status
+         END AS status,
+         COUNT(*) as n
+       FROM offers
         WHERE chain_id = ? AND is_sale_vehicle = 0 AND is_offset_vehicle = 0
-        GROUP BY status`,
+        GROUP BY 1`,
     )
-      .bind(chainId)
+      // Bind order follows the SQL text, not the clause order you'd say
+      // aloud: the `?` inside the CASE appears before the one in WHERE.
+      .bind(Math.floor(Date.now() / 1000), chainId)
       .all<{ status: string; n: number }>();
     // Note: chainIndexer.ts writes the cursor with `kind = 'diamond'`
     // (it scans the diamond's full event surface — offers + loans).
