@@ -9067,6 +9067,68 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(r.ok).toBe(false);
   });
 
+  it('a write mode BEFORE the file keyword still counts (#2066 r9)', () => {
+    // Python accepts `open(mode="w", file=cfg)`.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'm.py',
+      'import subprocess\n' +
+        'cfg = "configs/custom.jsonc"\n' +
+        'open(mode="w", file=cfg).write("{}")\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it("Node's async cp and shell tee are named writes (#2066 r9)", () => {
+    // `cpSync` was in the set and `fs.cp` was not; `tee` overwrites a path
+    // held in a variable exactly as a redirection does.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const async = runWith(
+      'cp.mjs',
+      'import * as fs from "node:fs/promises";\n' +
+        'const cfg = "configs/custom.jsonc";\n' +
+        'await fs.cp("generated.jsonc", cfg);\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(async.ok).toBe(false);
+
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const teed = runWith(
+      'w.sh',
+      'CFG=configs/custom.jsonc\n' +
+        'printf "{}" | tee "$CFG"\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(teed.ok).toBe(false);
+  });
+
+  it('an arrow or comparison is not a redirection (#2066 r9)', () => {
+    // The deploy's own `--config` satisfies the name test, so a bare `>`
+    // alternative reported a config nothing had touched. A redirection sits
+    // at a command boundary and is followed by a target.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const arrow = runWith(
+      'arrow.mjs',
+      'const pick = (a) => a;\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(arrow.ok).toBe(true);
+
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const cmp = runWith(
+      'cmp.mjs',
+      'if (2 > 1) { log("x"); }\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(cmp.ok).toBe(true);
+  });
+
   it('the PROSE path invalidates a rewritten config too', () => {
     // That path passed the rewrite context to the safety reader and not to the
     // identity reader, so the identity half trusted the stale copy and sent the

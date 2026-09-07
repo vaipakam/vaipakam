@@ -3341,11 +3341,28 @@ function configIsRewritten(text, cfgPath, at = null) {
       String.raw`(?:writeFile(?:Sync)?|appendFile(?:Sync)?|createWriteStream` +
         String.raw`|outputFile(?:Sync)?|write_text|write_bytes` +
         String.raw`|copyFile(?:Sync)?|cpSync|rename(?:Sync)?|copy|move` +
+        // Node exposes the async `cp` as well as `cpSync`; `fs.cp(...)` and
+        // `fs.promises.cp(...)` overwrite just the same (r9).
+        String.raw`|(?:^|[^A-Za-z0-9_$.])(?:fs\.|fsp\.|promises\.)?cp` +
         String.raw`|shutil\.(?:copyfile|copy2?|copytree|move))\s*\(` +
-        String.raw`|(?:^|[\s;&|(])(?:cp|mv|install|rsync)\s` +
-        String.raw`|>\s*` +
+        String.raw`|(?:^|[\s;&|(])(?:cp|mv|install|rsync|tee)\s` +
+        // A REDIRECTION, not every `>`. The bare alternative also matched the
+        // arrow in `=>` and the comparison in `2 > 1`, and since the deploy's
+        // own `--config` already satisfies the name test, any such operator
+        // reported a config that was never touched (Codex #2066 r9). A
+        // redirection sits at a command boundary and is followed by a target.
+        // …and its TARGET is a path or a variable. Allowing a bare word after
+        // `>` still matched the comparison in `2 > 1` (r9, and my own probe
+        // missed it by only testing that form on a flagged deploy). The
+        // directly-named redirection is already covered above; what this
+        // alternative is for is the write through a BINDING, which is spelled
+        // `> "$CFG"`, `> $CFG` or `> /path`.
+        String.raw`|(?:^|[\s;&|)])>{1,2}\s*["'$~/.]` +
         String.raw`|\.\s*open\s*\(\s*(?:mode\s*=\s*)?` + Q + String.raw`[rbt]*[wax+]` +
-        String.raw`|\bopen\s*\([^)]*,\s*(?:mode\s*=\s*)?` + Q + String.raw`[rbt]*[wax+]`,
+        // `mode=` may come FIRST: Python accepts `open(mode="w", file=cfg)`,
+        // and requiring it after a comma missed that ordering (r9).
+        String.raw`|\bopen\s*\(\s*(?:[^()]*,\s*)?mode\s*=\s*` + Q + String.raw`[rbt]*[wax+]` +
+        String.raw`|\bopen\s*\([^)]*,\s*` + Q + String.raw`[rbt]*[wax+]`,
       'gm',
     );
     // NO ORDERING BETWEEN THE NAME AND THE WRITE. Requiring the write to come
