@@ -306,8 +306,14 @@ source of truth and is unchanged by this section.
   comment's `reactions` object carries the 👀/👍 counts, so reactions need
   no separate call), `issues/<N>/comments` (bot summaries, triggers), and
   `actions/runs?head_sha=<head-sha>` when a workflow-level status matters.
-  Never read `gh pr view --json comments` — it silently misses inline
-  suggestion blocks and check-runs.
+  **Every one of those collection reads is PAGINATED** — follow the REST
+  `Link: <…>; rel="next"` cursor (or `gh api --paginate`) until it is
+  absent, for reviews, review comments, issue comments, check-runs and
+  workflow runs alike; a bare first-page read of a long-running PR drops
+  the newest findings and lets the heartbeat conclude nothing remains —
+  the same trap §3.3 already closes for GraphQL threads. Never read
+  `gh pr view --json comments` — it silently misses inline suggestion
+  blocks and check-runs.
 - **A secondary rate limit does not show in `/rate_limit`** — that endpoint
   keeps reporting 5000/5000 while reads return a VALID-JSON
   `{"message":"API rate limit exceeded ..."}` body. Detect that body shape
@@ -1213,9 +1219,8 @@ to a decision. Listed by category.
 - **`viaIR = true` + `optimizer_runs = 200` is non-negotiable.** Drives
   every build. Prefix every long forge invocation with
   `nice -n -10 ionice -c 2 -n 0` for the same priority reason — **but
-  `nice -n -10` needs CAP_SYS_NICE**: for a normal user it fails with
-  `nice: cannot set niceness: Permission denied` and the command never
-  starts (verified 2026-05-04). Do not probe it by exit status: on coreutils 9.4 an
+  `nice -n -10` needs CAP_SYS_NICE**, and without it the prefix is
+  silently ineffective rather than fatal. Do not probe it by exit status: on coreutils 9.4 an
   unprivileged `nice -n -10 cmd` prints `nice: cannot set niceness:
   Permission denied`, still runs `cmd` at niceness 0, and returns `cmd`'s
   own exit status (verified on this machine: `nice -n -10 true` exits 0),
