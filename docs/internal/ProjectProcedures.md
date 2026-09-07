@@ -145,6 +145,30 @@ Convention: never use `--delete-branch` on merge. Branches stay in place
 for troubleshooting. Project owner sweep-deletes stale branches at the
 final stage.
 
+### 2.5 Shared worktree, outages, and staging discipline
+
+- **Concurrent local sessions share ONE worktree.** Never `checkout` or
+  `stash` to "stand down" for another session — touch nothing. Do not
+  infer who owns a commit from the shared reflog or from the author
+  field (every session writes the same reflog, and §2.2/§12.1 require
+  every commit to carry the `Raja4Shekar` identity regardless of which
+  session made it). Coordinate explicitly instead: agree with the
+  owner or the other session's operator who holds a branch before
+  touching it, read `git log origin/<branch>` for what has actually
+  landed, and treat a branch as yours only when you know you pushed its
+  tip. (How an AI session enumerates its peers is harness plumbing and
+  stays in agent state, per §11.)
+- **Verify the branch before editing after any interruption** — a power
+  outage, a session resume, or a "files modified by user" reminder:
+  `git branch --show-current` first, then `git status --porcelain`. On a
+  stacked branch pair, do it before EVERY edit; review-round edits have
+  repeatedly landed on the wrong branch.
+- **`git fetch` and check ahead/behind before every push; never
+  force-push.** A shared worktree means the remote may have moved.
+- **Stage with `git add <explicit paths>`, never `-A`.** The shared
+  worktree accumulates untracked directories that belong to other
+  sessions or scratch work.
+
 ---
 
 ## 3. Pull request workflow
@@ -167,7 +191,7 @@ final stage.
 ☐ gh pr create with body covering: What, Why, Verification, Closes #N
 ☐ Card on @vaipakam-labs moved to "In review" (§5.3 — happens after the PR exists)
 ☐ Codex review request: `@codex review <mode>` (§3.2 — mode ∈ `normal` / `adversarial` / `full` / `full security-critical`)
-☐ Background-poller running for the PR (§3.3)
+☐ PR monitoring armed (§3.3): the 15-min heartbeat from a Claude session, or the workspace's own poller per `AGENTS.md`
 ```
 
 ### 3.2 Codex review — canonical triggers
@@ -257,19 +281,84 @@ Working rule until #106's substantive probe resolves: **modes are
 load-bearing; profile suffixes are self-documenting + possibly read.**
 Use both per the trigger-shape above.
 
-### 3.3 Background-poller — never `gh pr view --json comments`
+### 3.3 PR monitoring — heartbeat + direct reads; pollers are RETIRED
 
-Use `~/.claude/scripts/pr-poll.sh <pr-num>` instead. The poller covers
-review submissions + inline ` ```suggestion ` blocks + 👀 reactions +
-check-runs + workflow-runs — surfaces that `gh pr view --json comments`
-silently misses.
+**The Claude-agent poller processes are retired (owner directive
+2026-08-10, verbatim: "rather than running the pr poll, you just wake
+yourself up every 15 mins and check the PR(s) yourself").** Earlier
+revisions of this section prescribed `~/.claude/scripts/pr-poll.sh`; do
+not launch it, nor `pr-poll-once.sh` / `pr-watch-loop.sh` from a Claude
+session. Pollers left over from prior sessions accumulated and hammered
+the GitHub API until the account tripped a SECONDARY rate limit.
+Monitoring from a Claude session is a periodic heartbeat (15–30 min) that
+does ONE batched read per wake and acts on the result. **Scope:** this
+governs the Claude agent's monitoring; the Codex and VaipakamGrok
+workspaces keep their own poller procedure as written in `AGENTS.md`
+(single-instance delta poller / `pr-poll-watch.sh`) — that file is their
+source of truth and is unchanged by this section.
 
-Launch with the harness's background mechanism (NOT shell `&`/`disown`):
-```bash
-~/.claude/scripts/pr-poll.sh 84 --interval 60
-```
-
-Exits on first delta; harness re-invokes the agent.
+- **Read with `curl` against the REST API; GraphQL only for the
+  review-thread census (`reviewThreads`, which REST does not expose —
+  node ids and resolution state) and the `resolveReviewThread`
+  mutation.** The batch must cover every surface the retired
+  poller covered (§9.1): `pulls/<N>` (state, head, mergeability),
+  `commits/<head-sha>/check-runs` (job results), `pulls/<N>/reviews`
+  (approve / request-changes submissions, which carry no inline comment),
+  `pulls/<N>/comments` (inline threads, ` ```suggestion ` blocks — each
+  comment's `reactions` object carries the 👀/👍 counts, so reactions need
+  no separate call), `issues/<N>/comments` (bot summaries, triggers), and
+  `actions/runs?head_sha=<head-sha>` when a workflow-level status matters.
+  **Every one of those collection reads is PAGINATED** — follow the REST
+  `Link: <…>; rel="next"` cursor (or `gh api --paginate`) until it is
+  absent, for reviews, review comments, issue comments, check-runs and
+  workflow runs alike; a bare first-page read of a long-running PR drops
+  the newest findings and lets the heartbeat conclude nothing remains —
+  the same trap §3.3 already closes for GraphQL threads. Never read
+  `gh pr view --json comments` — it silently misses inline suggestion
+  blocks and check-runs.
+- **A secondary rate limit does not show in `/rate_limit`** — that endpoint
+  keeps reporting 5000/5000 while reads come back HTTP 403 or 429 with a
+  VALID-JSON error body: `You have exceeded a secondary rate limit ...`
+  (the secondary form) or `API rate limit exceeded ...` (the primary form,
+  which the same account has also received while `/rate_limit` read
+  5000). Check the HTTP status and the `retry-after` /
+  `x-ratelimit-remaining` headers, and treat EITHER message form as
+  limited, before handing any body to the endpoint parser; if limited, say
+  so in one line and do API-free work until the next wake. Never poll
+  repeatedly inside one wake.
+- **Select unanswered feedback by STATE, never by time.** Unanswered
+  means any of: an inline thread whose LATEST comment is not ours (a
+  reviewer follow-up after our reply re-opens it), or a review submission
+  (`pulls/<N>/reviews`) whose returned `state` is `CHANGES_REQUESTED`
+  (the API's read value — `REQUEST_CHANGES` is only the event name used
+  when creating one) or `COMMENTED` with a non-empty body, that has no
+  inline thread and no reply from us. "No reply from the
+  author at all" is not the test — a thread we answered once can still
+  need action. A `created_at` window silently skips findings that were
+  posted before the window and never answered. A "no major issues" summary comment is not
+  the verdict — the inline threads are.
+- **Resolve every answered thread before merging — paginated.** Branch
+  protection requires all review threads resolved, and Codex's inline
+  threads stay open after the finding is addressed. Resolve them with the
+  `resolveReviewThread` GraphQL mutation, enumerating threads with
+  `reviewThreads(first:100, after:<cursor>)` until `hasNextPage` is false —
+  a single `first:100` page once reported `unresolved=0` over 33 hidden
+  threads. Re-census after resolving.
+- **A stacked PR (base = another feature branch) does not run the
+  main-targeted core suite** — `contracts-fast`, Slither and the other
+  workflows whose `pull_request` trigger is filtered to `main` are simply
+  absent, which looks like "not required". Workflows with an unfiltered
+  `pull_request` trigger DO still run (the path-filtered
+  `app-e2e.yml`, the always-on docs-drift check), so a few green checks on
+  a stacked PR are not evidence the gate ran. Verify with
+  `gh pr checks <PR>` or `gh run list --commit <head-sha>` — `--branch`
+  mixes runs from earlier pushes and retargets, so it can show an old
+  main-targeted suite the current head never ran; to get the real suite, wait for
+  the parent to merge and then retarget the child to `main` — retargeting
+  while the parent is still open folds the parent's commits into the child
+  and lets the stack be reviewed or merged out of order. A temporary
+  CI-only retarget is acceptable only if it is announced in the PR and the
+  base is restored before any review verdict is acted on.
 
 ### 3.4 Iterating on Codex findings — discipline
 
@@ -288,6 +377,36 @@ For every finding:
 7. **Push + reply.** Reply to the inline thread with the commit hash
    that addressed it. Move card In review → In progress at step 1,
    back to In review at step 7.
+
+**Convergence discipline learned in the long review loops (#1995, #2031,
+#2042, #2051):**
+
+- **Every accepted P1/P2 finding on a coding PR is FIXED in the PR —
+  never spun into a follow-up to reach a merge.** The three-way triage
+  gate still applies to every finding (accept-and-fix / refute with
+  evidence / defer to a follow-up issue), and per `CLAUDE.md` a P3-only
+  round counts as converged, with P3s fixed or deferred at the agent's
+  judgment. A coding PR iterates until a round returns zero P1/P2; escalate
+  to the owner rather than continuing past **ten** rounds after the last
+  substantive surface change — the backstop `CLAUDE.md` sets (an earlier
+  revision here said twelve, from a stale agent note). Docs-only PRs
+  merge after two rounds, converged or not.
+- **Findings are verified; remedies are only suggestions.** Verify a
+  finding against the code before accepting it, then design the fix
+  yourself and prove it with a discriminating test — a reviewer's
+  proposed remedy is an input, not an instruction. On the THIRD
+  recurrence of a finding class, restructure rather than patch.
+- **Arrest a recurring finding at its SOURCE, not at each path.** When a
+  round finds the same defect class in a new place, stop patching
+  instances on the second occurrence: close the cause where it
+  originates and predict its siblings in the same push.
+- **Re-slice when review surfaces a coupling.** If a loop keeps hitting
+  the same root because a slice was cut across a real safety coupling,
+  stop patching across the wrong cut, re-slice, and surface it to the
+  owner.
+- **Never write "does NOT close #N" in a commit or PR body.** GitHub's
+  linker matches the substring and closes the issue anyway. Use
+  `Refs #N`.
 
 ### 3.5 Merge — squash-merge, never delete
 
@@ -954,11 +1073,13 @@ own auto-add is one-repo-per-UI-rule.
 
 ## 9. Tooling reference
 
-### 9.1 PR poller — `~/.claude/scripts/pr-poll.sh`
+### 9.1 PR poller — `~/.claude/scripts/pr-poll.sh` (RETIRED 2026-08-10)
 
-Persistent across sessions. Covers reviews + inline ` ```suggestion `
-blocks + reactions + check-runs + workflow-runs. Has a `--watch-all`
-mode for cross-PR polling via the GitHub `/notifications` endpoint.
+Retired by owner directive — see §3.3. Do not launch it; the script is
+kept only for its read recipe (which REST surfaces a PR monitor must
+cover: reviews, inline ` ```suggestion ` blocks, reactions, check-runs,
+workflow-runs). Monitoring is a heartbeat with one batched `curl` read
+per wake.
 
 ### 9.2 Graphify with Solidity support — `~/.claude/scripts/graphify-apply-solidity-patch.py`
 
@@ -1120,7 +1241,21 @@ to a decision. Listed by category.
 
 - **`viaIR = true` + `optimizer_runs = 200` is non-negotiable.** Drives
   every build. Prefix every long forge invocation with
-  `nice -n -10 ionice -c 2 -n 0` for the same priority reason:
+  `nice -n -10 ionice -c 2 -n 0` for the same priority reason — **but
+  `nice -n -10` needs CAP_SYS_NICE**, and without it the prefix is
+  silently ineffective rather than fatal. Do not probe it by exit status: on coreutils 9.4 an
+  unprivileged `nice -n -10 cmd` prints `nice: cannot set niceness:
+  Permission denied`, still runs `cmd` at niceness 0, and returns `cmd`'s
+  own exit status (verified on this machine: `nice -n -10 true` exits 0),
+  so a `sudo -n true` or exit-code check selects the wrong branch. Probe
+  the EFFECTIVE niceness — `nice -n -10 nice` prints `0` when the caller
+  lacks the capability and `-10` when it has it — and when the caller lacks it,
+  OMIT the CPU boost — do NOT run the build under `sudo`: a root-run
+  `forge` leaves root-owned `out/` and `cache/` entries that break the
+  next unprivileged build or cleanup. (Granting the capability to the
+  user is an operator decision outside this runbook.) Keep
+  `ionice -c 2 -n 0 forge ...` in every case — the I/O
+  class is available unprivileged, and it is the knob that matters:
   ```bash
   nice -n -10 ionice -c 2 -n 0 forge build
   nice -n -10 ionice -c 2 -n 0 forge test
@@ -1128,6 +1263,47 @@ to a decision. Listed by category.
   ```
   viaIR runs 5-15 min and ~8 GB RSS; low priority causes 2-3×
   slowdowns under parallel desktop load.
+
+**Design-and-change discipline (folded from agent memory, 2026-09-07):**
+
+- **Scout → Design → Code, for any non-trivial change.** Survey the
+  existing code BEFORE writing design text so the design is grounded in
+  what exists; then write the design; then code to it. Never act from
+  memory of the tree.
+- **Grep for an existing primitive before writing a new one** — an
+  existing function, formula, or storage shape that does the same thing
+  is reused, not re-implemented. When deriving a quantity, search for the
+  EXACT helper first, and read the candidate's contract (NatSpec plus the
+  primitives it calls) before deriving anything: a name containing
+  `UpperBound` or `approx` usually announces an inexact figure, but a
+  `preview` may be exact — `previewPeriodicSettle` computes its figures
+  through the same `LibPeriodicInterest` helpers settlement uses — so the
+  name is a reason to inspect, never proof either way.
+- **Exhaust the frozen plan before asking a design fork.** Before an
+  `AskUserQuestion`, re-read the governing plan/spec and every document it
+  binds to — the answer is usually already there. And check whether the
+  governing design doc has a NEWER revision on a named card or open PR
+  than the copy on `main`.
+- **Propagate renames and deletions to every ASSERTION**, not just code:
+  grep the OLD name across `docs/`, `ops/`, runbooks, and release notes.
+  A count is a claim; a changed formula falsifies every artifact that
+  states it. Read the files rather than trusting a single grep.
+- **One PR per design-doc step** (owner, 2026-08-17) — not per
+  sub-round, not per multi-step feature. Inner-loop work stays local
+  until the step is complete; push once with a pre-open adversarial and
+  security self-review, and run one CI cycle per push.
+- **Every change follows the project coding standards and explains WHY
+  in the file type's own idiom** — NatSpec for Solidity, JSDoc for
+  JavaScript/TypeScript APIs, and a plain rationale comment only where a
+  SQL migration, shell script, workflow YAML, or config file genuinely
+  needs one. The comment states a constraint the code cannot show, never
+  a narration of the next line.
+- **viaIR stack-too-deep lever:** lean DTOs (reducing the data that
+  crosses the ABI boundary) FIX "Variable size is N too deep"; sub-structing
+  the types that cross the boundary makes it WORSE. And viaIR's CSE turns
+  two identical `vm.warp(block.timestamp + N)` expressions into one — the
+  second warp is a no-op — so Foundry tests use distinct absolute warp
+  targets.
 
 ### 12.4 Retail-deploy gating policy — sanctions ON; KYC and country-pair OFF
 
@@ -1204,6 +1380,41 @@ to a decision. Listed by category.
 - **Always propose alternatives BEFORE committing to a non-trivial
   design path.** Let the user decide. Surface tradeoffs honestly.
 
+**Verification discipline — what a passing check actually proves:**
+
+- **The vacuous-test rule.** A test asserting a fix proves nothing until
+  the fix is reverted and the test fails for the RIGHT reason. When the
+  fix is supposed to mutate state, assert the persisted state, not just a
+  returned value; for pure or view logic (risk math, previews) the
+  returned value IS the behaviour under test and a discriminating
+  assertion on it is sufficient.
+- **Mutation-killed is not non-vacuous.** A mutation matrix proves a test
+  DISTINGUISHES two implementations, not that it pins the right value —
+  assert the fixture actually reached a non-trivial state first.
+- **Reachability is not discrimination.** A gate test must make the two
+  competing formulas STRADDLE the threshold; making a branch reachable
+  proves nothing. Instrument after two surviving mutations.
+- **A guard must RUN on its own case.** After adding a check, construct
+  the minimal PR containing the defect and confirm the check executes on
+  it — a trigger condition is at least as important as the check body.
+- **Make a check FAIL before trusting it.** Mutate the thing it guards and
+  watch it go red; "scanned nothing" must be a hard error, never a green.
+- **Don't overclaim what a check proves.** State which regression it
+  kills AND which it misses; an overclaimed check is worse than a known
+  gap because it stops people looking.
+- **Make the check BE the operation.** A validity check that
+  re-implements the operation it guards diverges from it; collapse to one
+  implementation that performs the operation and reports what it refuses.
+- **Verify with a tool that can SEE the failure.** Name the failure mode
+  first, then pick the tool: `bash -n` cannot see function scoping,
+  `--help` never exercises the code path, an exit code says nothing about
+  content.
+- **Scripted text edits replace EXACT strings only** — never bound an
+  edit by a positional marker such as the next blank line — and confirm
+  each edit LANDED (`grep` the new text; `wc -l` after) before any reply
+  references it. Mutate each call site by index when testing a scripted
+  change.
+
 ### 12.8 Testing
 
 - **Test scope includes flows NOT in the Advanced User Guide.** The
@@ -1214,6 +1425,19 @@ to a decision. Listed by category.
 
 - **Tests run with `nice -n -10 ionice -c 2 -n 0`** for the same
   performance reason as the build (§12.3).
+
+- **Inner loop is `FOUNDRY_PROFILE=quick forge build` plus a targeted
+  `forge test --match-path <glob>` (or `--match-test` / `--match-contract`);** the full regression (`run-regression.sh`) is not a
+  routine per-PR gate — it runs before a testnet deployment, and CI runs it
+  on PRs targeting `release/**` (`mainnet-gate.yml`'s
+  `predeploy-check.sh --full`), which is the one PR shape where it IS the
+  gate. Kill any stale
+  `forge`/`solc` process before starting a new build, and use the priority
+  prefix from §12.3 (`ionice -c 2 -n 0`, plus `nice -n -10` only when
+  `nice -n -10 nice` prints `-10`) — the cost is per profile (`CLAUDE.md` table): `quick` ≈ 44 s /
+  677 MB cold, `cifast` ≈ 5 min / 3.2 GB, and the `default` whole unit
+  14–19 min / ≈ 17.7 GB peak — and low I/O priority makes the long ones
+  2–3× slower under desktop load.
 
 ### 12.9 Workers + frontend
 
@@ -1239,6 +1463,22 @@ to a decision. Listed by category.
   tagged `@custom:event-category state-change/loan-mutation` or
   `state-change/offer-mutation` lacks an indexer handler AND isn't
   in the script's `DELIBERATELY_NOT_HANDLED` allowlist.
+
+- **A source tree cannot be made undeployable by configuration** — every
+  guard in `wrangler.jsonc` sits in the artifact the operator overrides.
+  Delete the tree instead.
+- **Auction-shaped dapp flows are single-transaction** (prepay-listing
+  post/update/match-via-offer, and any future English or matched-orders
+  shape): one signed transaction per user action, never a multi-step
+  sequence the user can abandon midway.
+- **General origination and liquidity classification never gate asset
+  ELIGIBILITY on admin or governance configuration;** the treasury
+  backstop may gate, and so may an explicitly specialised surface whose
+  design makes an allowlist its primary defence — the swap-to-repay
+  intent path requires both legs on its per-token allowlists
+  (`SwapToRepayIntentFacet`, `cfgIntentAllowed*Tokens`) against
+  fee-on-transfer and rebasing tokens, and that guard stays. Do not add
+  an allowlist check to a general origination path.
 
 ### 12.10 Project-board nuances
 
@@ -1271,10 +1511,16 @@ to a decision. Listed by category.
   freshness; the expensive one only after major refactors that need
   community-structure re-detection.
 
-- **`pr-poll.sh` must launch via `Bash run_in_background:true`, NOT
-  shell `&` / `disown`.** Mixing them silently orphans the poller
-  (zero-byte output file, no task-notification). Hit this once during
-  the PR #84 iteration cycle.
+- **(Historical — `pr-poll.sh` is retired, §3.3.)** When it was in use it
+  had to launch via `Bash run_in_background:true`, NOT shell `&` /
+  `disown` — mixing them silently orphaned the poller (zero-byte output
+  file, no task-notification; PR #84). The same rule applies to any
+  background command a task-notification is expected from.
+
+- **Never build an API payload with `python -c` inside a double-quoted
+  shell string** — backticks in the body expand as command substitution
+  and silently strip identifiers. Write the body to a file with a
+  quoted heredoc and read the result back.
 
 ### 12.12 Release-notes intro paragraphs
 
