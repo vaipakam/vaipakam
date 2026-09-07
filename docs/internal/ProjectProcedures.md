@@ -317,15 +317,22 @@ source of truth and is unchanged by this section.
   `gh pr view --json comments` — it silently misses inline suggestion
   blocks and check-runs.
 - **A secondary rate limit does not show in `/rate_limit`** — that endpoint
-  keeps reporting 5000/5000 while reads return a VALID-JSON
-  `{"message":"API rate limit exceeded ..."}` body. Detect that body shape
-  before parsing; if limited, say so in one line and do API-free work until
-  the next wake. Never poll repeatedly inside one wake.
+  keeps reporting 5000/5000 while reads come back HTTP 403 or 429 with a
+  VALID-JSON error body: `You have exceeded a secondary rate limit ...`
+  (the secondary form) or `API rate limit exceeded ...` (the primary form,
+  which the same account has also received while `/rate_limit` read
+  5000). Check the HTTP status and the `retry-after` /
+  `x-ratelimit-remaining` headers, and treat EITHER message form as
+  limited, before handing any body to the endpoint parser; if limited, say
+  so in one line and do API-free work until the next wake. Never poll
+  repeatedly inside one wake.
 - **Select unanswered feedback by STATE, never by time.** Unanswered
   means any of: an inline thread whose LATEST comment is not ours (a
   reviewer follow-up after our reply re-opens it), or a review submission
-  (`pulls/<N>/reviews`) with `REQUEST_CHANGES` or a non-empty `COMMENTED`
-  body that has no inline thread and no reply from us. "No reply from the
+  (`pulls/<N>/reviews`) whose returned `state` is `CHANGES_REQUESTED`
+  (the API's read value — `REQUEST_CHANGES` is only the event name used
+  when creating one) or `COMMENTED` with a non-empty body, that has no
+  inline thread and no reply from us. "No reply from the
   author at all" is not the test — a thread we answered once can still
   need action. A `created_at` window silently skips findings that were
   posted before the window and never answered. A "no major issues" summary comment is not
@@ -346,8 +353,12 @@ source of truth and is unchanged by this section.
   a stacked PR are not evidence the gate ran. Verify with
   `gh pr checks <PR>` or `gh run list --commit <head-sha>` — `--branch`
   mixes runs from earlier pushes and retargets, so it can show an old
-  main-targeted suite the current head never ran; retarget the base via
-  the API and push to get the real suite.
+  main-targeted suite the current head never ran; to get the real suite, wait for
+  the parent to merge and then retarget the child to `main` — retargeting
+  while the parent is still open folds the parent's commits into the child
+  and lets the stack be reviewed or merged out of order. A temporary
+  CI-only retarget is acceptable only if it is announced in the PR and the
+  base is restored before any review verdict is acted on.
 
 ### 3.4 Iterating on Codex findings — discipline
 
@@ -370,11 +381,16 @@ For every finding:
 **Convergence discipline learned in the long review loops (#1995, #2031,
 #2042, #2051):**
 
-- **Fix ALL coding findings; leniency is for docs-only PRs only.** A
-  coding PR iterates until a round returns zero P1/P2. Escalate to the
-  owner rather than continuing past **ten** rounds after the last
-  substantive surface change — the backstop `CLAUDE.md` sets; an earlier
-  revision here said twelve, which came from a stale agent note.
+- **Every accepted P1/P2 finding on a coding PR is FIXED in the PR —
+  never spun into a follow-up to reach a merge.** The three-way triage
+  gate still applies to every finding (accept-and-fix / refute with
+  evidence / defer to a follow-up issue), and per `CLAUDE.md` a P3-only
+  round counts as converged, with P3s fixed or deferred at the agent's
+  judgment. A coding PR iterates until a round returns zero P1/P2; escalate
+  to the owner rather than continuing past **ten** rounds after the last
+  substantive surface change — the backstop `CLAUDE.md` sets (an earlier
+  revision here said twelve, from a stale agent note). Docs-only PRs
+  merge after two rounds, converged or not.
 - **Findings are verified; remedies are only suggestions.** Verify a
   finding against the code before accepting it, then design the fix
   yourself and prove it with a discriminating test — a reviewer's
@@ -1233,9 +1249,12 @@ to a decision. Listed by category.
   own exit status (verified on this machine: `nice -n -10 true` exits 0),
   so a `sudo -n true` or exit-code check selects the wrong branch. Probe
   the EFFECTIVE niceness — `nice -n -10 nice` prints `0` when the caller
-  lacks the capability and `-10` when it has it — or simply run the
-  prioritized command under `sudo` when that is available and omit `nice`
-  otherwise, keeping `ionice -c 2 -n 0 forge ...` in both cases — the I/O
+  lacks the capability and `-10` when it has it — and when the caller lacks it,
+  OMIT the CPU boost — do NOT run the build under `sudo`: a root-run
+  `forge` leaves root-owned `out/` and `cache/` entries that break the
+  next unprivileged build or cleanup. (Granting the capability to the
+  user is an operator decision outside this runbook.) Keep
+  `ionice -c 2 -n 0 forge ...` in every case — the I/O
   class is available unprivileged, and it is the knob that matters:
   ```bash
   nice -n -10 ionice -c 2 -n 0 forge build
@@ -1415,8 +1434,10 @@ to a decision. Listed by category.
   gate. Kill any stale
   `forge`/`solc` process before starting a new build, and use the priority
   prefix from §12.3 (`ionice -c 2 -n 0`, plus `nice -n -10` only when
-  `nice -n -10 nice` prints `-10`) — viaIR runs take 5–15 minutes and ~8 GB, and low
-  I/O priority makes them 2–3× slower under desktop load.
+  `nice -n -10 nice` prints `-10`) — the cost is per profile (`CLAUDE.md` table): `quick` ≈ 44 s /
+  677 MB cold, `cifast` ≈ 5 min / 3.2 GB, and the `default` whole unit
+  14–19 min / ≈ 17.7 GB peak — and low I/O priority makes the long ones
+  2–3× slower under desktop load.
 
 ### 12.9 Workers + frontend
 
