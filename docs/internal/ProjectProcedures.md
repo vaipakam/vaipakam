@@ -148,11 +148,14 @@ final stage.
 ### 2.5 Shared worktree, outages, and staging discipline
 
 - **Concurrent local sessions share ONE worktree.** Never `checkout` or
-  `stash` to "stand down" for another session — touch nothing. To tell
-  whose commits are on a branch, read the remote-tracking reflog
-  (`git reflog show origin/<branch>`: fetch entries are theirs, push
-  entries are yours); peer-session commits are authored `Claude`, ours
-  `Raja4Shekar`.
+  `stash` to "stand down" for another session — touch nothing. Do not
+  infer who owns a commit from the shared reflog or from the author
+  field (every session writes the same reflog, and §2.2/§12.1 require
+  every commit to carry the `Raja4Shekar` identity regardless of which
+  session made it). Coordinate explicitly instead: list the other live
+  sessions (`ListAgents`), read `git log origin/<branch>` for what has
+  actually landed, and treat a branch as yours only when you know you
+  pushed its tip.
 - **Verify the branch before editing after any interruption** — a power
   outage, a session resume, or a "files modified by user" reminder:
   `git branch --show-current` first, then `git status --porcelain`. On a
@@ -186,7 +189,7 @@ final stage.
 ☐ gh pr create with body covering: What, Why, Verification, Closes #N
 ☐ Card on @vaipakam-labs moved to "In review" (§5.3 — happens after the PR exists)
 ☐ Codex review request: `@codex review <mode>` (§3.2 — mode ∈ `normal` / `adversarial` / `full` / `full security-critical`)
-☐ Background-poller running for the PR (§3.3)
+☐ PR monitoring armed (§3.3): the 15-min heartbeat from a Claude session, or the workspace's own poller per `AGENTS.md`
 ```
 
 ### 3.2 Codex review — canonical triggers
@@ -278,12 +281,19 @@ Use both per the trigger-shape above.
 
 ### 3.3 PR monitoring — heartbeat + direct reads; pollers are RETIRED
 
-**All background poller processes are retired (owner directive
-2026-08-10).** Earlier revisions of this section prescribed
-`~/.claude/scripts/pr-poll.sh`; do not launch it. Pollers left over from
-prior sessions accumulated and hammered the GitHub API until the account
-tripped a SECONDARY rate limit. Monitoring is now a periodic heartbeat
-(15–30 min) that does ONE batched read per wake and acts on the result.
+**The Claude-agent poller processes are retired (owner directive
+2026-08-10, verbatim: "rather than running the pr poll, you just wake
+yourself up every 15 mins and check the PR(s) yourself").** Earlier
+revisions of this section prescribed `~/.claude/scripts/pr-poll.sh`; do
+not launch it, nor `pr-poll-once.sh` / `pr-watch-loop.sh` from a Claude
+session. Pollers left over from prior sessions accumulated and hammered
+the GitHub API until the account tripped a SECONDARY rate limit.
+Monitoring from a Claude session is a periodic heartbeat (15–30 min) that
+does ONE batched read per wake and acts on the result. **Scope:** this
+governs the Claude agent's monitoring; the Codex and VaipakamGrok
+workspaces keep their own poller procedure as written in `AGENTS.md`
+(single-instance delta poller / `pr-poll-watch.sh`) — that file is their
+source of truth and is unchanged by this section.
 
 - **Read with `curl` against the REST API; GraphQL only for
   `resolveReviewThread`.** Fetch the PR, the head SHA's check-runs, and
@@ -306,10 +316,15 @@ tripped a SECONDARY rate limit. Monitoring is now a periodic heartbeat
   `reviewThreads(first:100, after:<cursor>)` until `hasNextPage` is false —
   a single `first:100` page once reported `unresolved=0` over 33 hidden
   threads. Re-census after resolving.
-- **A stacked PR (base = another feature branch) runs ZERO
-  `pull_request` CI** — the workflows target `main`, so absent checks look
-  like "not required". Verify with `gh run list --branch`; retarget the
-  base via the API and push to get a real run.
+- **A stacked PR (base = another feature branch) does not run the
+  main-targeted core suite** — `contracts-fast`, Slither and the other
+  workflows whose `pull_request` trigger is filtered to `main` are simply
+  absent, which looks like "not required". Workflows with an unfiltered
+  `pull_request` trigger DO still run (the path-filtered
+  `app-e2e.yml`, the always-on docs-drift check), so a few green checks on
+  a stacked PR are not evidence the gate ran. Verify with
+  `gh run list --branch`; retarget the base via the API and push to get
+  the real suite.
 
 ### 3.4 Iterating on Codex findings — discipline
 
@@ -1189,9 +1204,12 @@ to a decision. Listed by category.
   `nice -n -10 ionice -c 2 -n 0` for the same priority reason — **but
   `nice -n -10` needs CAP_SYS_NICE**: for a normal user it fails with
   `nice: cannot set niceness: Permission denied` and the command never
-  starts (verified 2026-05-04). Unless `sudo -n true` succeeds, drop the
-  `nice` and run `ionice -c 2 -n 0 forge ...` — the I/O class is the only
-  knob available unprivileged, and it is the one that matters:
+  starts (verified 2026-05-04). Probe the capability itself, not sudo:
+  `nice -n -10 true` exits 125 when the caller lacks it (passwordless sudo
+  proves nothing about the unprivileged process that follows). If the
+  probe fails, either run the whole command under `sudo` or drop the
+  `nice` and run `ionice -c 2 -n 0 forge ...` — the I/O class is
+  available unprivileged, and it is the knob that matters:
   ```bash
   nice -n -10 ionice -c 2 -n 0 forge build
   nice -n -10 ionice -c 2 -n 0 forge test
@@ -1209,8 +1227,12 @@ to a decision. Listed by category.
 - **Grep for an existing primitive before writing a new one** — an
   existing function, formula, or storage shape that does the same thing
   is reused, not re-implemented. When deriving a quantity, search for the
-  EXACT helper first: a name containing `UpperBound`, `preview`, or
-  `approx` is announcing that it is not the exact one.
+  EXACT helper first, and read the candidate's contract (NatSpec plus the
+  primitives it calls) before deriving anything: a name containing
+  `UpperBound` or `approx` usually announces an inexact figure, but a
+  `preview` may be exact — `previewPeriodicSettle` computes its figures
+  through the same `LibPeriodicInterest` helpers settlement uses — so the
+  name is a reason to inspect, never proof either way.
 - **Exhaust the frozen plan before asking a design fork.** Before an
   `AskUserQuestion`, re-read the governing plan/spec and every document it
   binds to — the answer is usually already there. And check whether the
@@ -1224,9 +1246,12 @@ to a decision. Listed by category.
   sub-round, not per multi-step feature. Inner-loop work stays local
   until the step is complete; push once with a pre-open adversarial and
   security self-review, and run one CI cycle per push.
-- **Every change follows the project coding standards and carries
-  NatSpec/JSDoc that explains WHY** — a constraint the code cannot show,
-  never a narration of the next line.
+- **Every change follows the project coding standards and explains WHY
+  in the file type's own idiom** — NatSpec for Solidity, JSDoc for
+  JavaScript/TypeScript APIs, and a plain rationale comment only where a
+  SQL migration, shell script, workflow YAML, or config file genuinely
+  needs one. The comment states a constraint the code cannot show, never
+  a narration of the next line.
 - **viaIR stack-too-deep lever:** lean DTOs (reducing the data that
   crosses the ABI boundary) FIX "Variable size is N too deep"; sub-structing
   the types that cross the boundary makes it WORSE. And viaIR's CSE turns
@@ -1312,8 +1337,11 @@ to a decision. Listed by category.
 **Verification discipline — what a passing check actually proves:**
 
 - **The vacuous-test rule.** A test asserting a fix proves nothing until
-  the fix is reverted and the test fails for the RIGHT reason. Assert
-  persisted state, not just a returned value.
+  the fix is reverted and the test fails for the RIGHT reason. When the
+  fix is supposed to mutate state, assert the persisted state, not just a
+  returned value; for pure or view logic (risk math, previews) the
+  returned value IS the behaviour under test and a discriminating
+  assertion on it is sufficient.
 - **Mutation-killed is not non-vacuous.** A mutation matrix proves a test
   DISTINGUISHES two implementations, not that it pins the right value —
   assert the fixture actually reached a non-trivial state first.
@@ -1353,11 +1381,14 @@ to a decision. Listed by category.
   performance reason as the build (§12.3).
 
 - **Inner loop is `FOUNDRY_PROFILE=quick forge build` plus
-  `forge test --match-*`;** the full regression (`run-regression.sh`) runs
-  ONLY before a testnet deployment, never as a per-PR gate. Kill any stale
+  `forge test --match-*`;** the full regression (`run-regression.sh`) is not a
+  routine per-PR gate — it runs before a testnet deployment, and CI runs it
+  on PRs targeting `release/**` (`mainnet-gate.yml`'s
+  `predeploy-check.sh --full`), which is the one PR shape where it IS the
+  gate. Kill any stale
   `forge`/`solc` process before starting a new build, and use the priority
   prefix from §12.3 (`ionice -c 2 -n 0`, plus `nice -n -10` only when
-  `sudo` is available) — viaIR runs take 5–15 minutes and ~8 GB, and low
+  `nice -n -10 true` succeeds) — viaIR runs take 5–15 minutes and ~8 GB, and low
   I/O priority makes them 2–3× slower under desktop load.
 
 ### 12.9 Workers + frontend
@@ -1427,19 +1458,16 @@ to a decision. Listed by category.
   freshness; the expensive one only after major refactors that need
   community-structure re-detection.
 
-- **`pr-poll.sh` must launch via `Bash run_in_background:true`, NOT
-  shell `&` / `disown`.** Mixing them silently orphans the poller
-  (zero-byte output file, no task-notification). Hit this once during
-  the PR #84 iteration cycle.
+- **(Historical — `pr-poll.sh` is retired, §3.3.)** When it was in use it
+  had to launch via `Bash run_in_background:true`, NOT shell `&` /
+  `disown` — mixing them silently orphaned the poller (zero-byte output
+  file, no task-notification; PR #84). The same rule applies to any
+  background command a task-notification is expected from.
 
 - **Never build an API payload with `python -c` inside a double-quoted
   shell string** — backticks in the body expand as command substitution
   and silently strip identifiers. Write the body to a file with a
   quoted heredoc and read the result back.
-- **MetaMask in the chrome-devtools MCP browser** must be loaded with
-  `install_extension` on every fresh browser; the `--load-extension` flag
-  is dead. Setup is recorded in agent memory
-  (`reference_metamask_mcp_browser_setup`).
 
 ### 12.12 Release-notes intro paragraphs
 
