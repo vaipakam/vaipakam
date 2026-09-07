@@ -7,9 +7,9 @@ already deployed — so this adds a read-only census that answers it, and commit
 its output as an artifact rather than a claim. "The set was empty" is something
 a later reader must be able to re-run, not take on trust.
 
-The result: on four of the five deployed chains every class is empty. On the
-fifth a single class could not be established at all, and the interesting part
-of this change is that the census says so instead of reporting zero.
+The result: on three of the five deployed chains every class is empty. On the
+other two a single class could not be established at all, and the interesting
+part of this change is that the census says so instead of reporting zero.
 
 Most of the design here is about the ways a census can produce a comfortable
 answer it has not earned. An all-zero result is indistinguishable by inspection
@@ -34,8 +34,14 @@ records that block's identity, not merely its height, and re-checks it
 afterwards — a height alone does not identify what was read, and this artifact
 is used to certify work away.
 
-One follow-up remains: re-running the affected chain against an endpoint that
-retains full history, which is expected to settle the last class either way.
+One follow-up remains: re-running the two affected chains against an endpoint
+that retains full history, which is expected to settle the last class either
+way. Those two are precisely the chains where the relevant view is absent, so
+they are the only ones that depend on history at all — and the public endpoints
+proved unreliable there in a specific way worth recording: the same endpoint
+answered the identical history query two different ways within an hour, once
+with real data and once with nothing. A result that cannot be reproduced is not
+a result, which is why neither chain is reported as settled.
 
 Two claims were also corrected in the surrounding design. An empty population
 retires the *migration* — there is nothing to move, and the shortfall question

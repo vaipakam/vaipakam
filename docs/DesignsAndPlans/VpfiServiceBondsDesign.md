@@ -1074,9 +1074,13 @@ decodes is the same gap one step later.
    **Bond sizes are DEFERRED TO IMPLEMENTATION**, not a proposal awaiting
    ratification: §3 defers `bondAt4x` and `refillWindow` until the
    implementation pass defines their units and envelope. The owner-facing list
-   asks for the A/C fork and, under C, the fee parameters — those are the open
-   decisions; an earlier revision pointed here at "two open numbers at the end",
-   which made an undefined capacity number look ready to ratify.
+   asked for the A/C fork and, under C, the fee parameters; an earlier revision
+   pointed here at "two open numbers at the end", which made an undefined
+   capacity number look ready to ratify. **Those decisions are RATIFIED as of
+   2026-09-07** (fork C, capacity terms as proposed, unbond option (i), and the
+   fee as a governance-set shape with a positive floor enforced in code), so
+   nothing in this bullet is an open ask any more — the sizes remain deferred
+   to implementation exactly as stated.
 3. **No-yield refundable-deposit shape: RATIFIED.** The legal glance is
    discharged. Bonds earn nothing, are refundable at will subject to the
    any unbond delay in force. NAMING IS CONDITIONAL on the fork below and

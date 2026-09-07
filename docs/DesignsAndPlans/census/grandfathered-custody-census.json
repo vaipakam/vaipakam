@@ -1,12 +1,26 @@
 {
-  "generatedAt": "2026-09-07T18:49:33.768Z",
+  "generatedAt": "2026-09-07T20:15:03.841Z",
   "purpose": "#1566 grandfathered-custody census — decides whether slices 0-3 are live work or a certified no-op",
+  "scope": "all-deployed-chains",
   "allClassesEmpty": false,
+  "chainsDeployed": [
+    "arb-sepolia",
+    "base-sepolia",
+    "bnb-testnet",
+    "op-sepolia",
+    "sepolia"
+  ],
   "chainsCensused": 5,
   "chainsFailed": [],
+  "chainsNotCensused": [],
   "indeterminateClasses": [
     {
       "chainSlug": "op-sepolia",
+      "class": "liveIntentCommits",
+      "reason": "the cut-history scan returned ZERO DiamondCut events, but every Diamond emits at least one at deploy — the history was not actually read (pruned endpoint, or a deployBlock that does not match this address), so absence is not established. Re-run against an archive endpoint."
+    },
+    {
+      "chainSlug": "sepolia",
       "class": "liveIntentCommits",
       "reason": "the cut-history scan returned ZERO DiamondCut events, but every Diamond emits at least one at deploy — the history was not actually read (pruned endpoint, or a deployBlock that does not match this address), so absence is not established. Re-run against an archive endpoint."
     }
@@ -16,8 +30,8 @@
       "chainSlug": "arb-sepolia",
       "chainId": 421614,
       "diamond": "0x55d7872cC9738994cc6b04F89d128cB4c8745431",
-      "atBlock": "306464834",
-      "atBlockHash": "0x456c101d536f2b375b3049556ef5037634a4c14acde3d5f74828dc0d17429082",
+      "atBlock": "306486310",
+      "atBlockHash": "0xa8845dc422599cbbedc41c750aa3b61efc30b5d98c95c96c5969e384005c9c3f",
       "blockTag": "finalized",
       "scanned": {
         "loanIdsEnumerated": 13,
@@ -59,8 +73,8 @@
       "chainSlug": "base-sepolia",
       "chainId": 84532,
       "diamond": "0xd89fd7F787e4415460b23891E97570a4881fb995",
-      "atBlock": "46518634",
-      "atBlockHash": "0xd154a4480ed91046e0f253358867caa89d6c8c938c1135745d10bb2098d2b0b4",
+      "atBlock": "46521183",
+      "atBlockHash": "0x2be8b0b16c792647c34d7cfdf4b1840b8bf4a678b625da1cbc752a9ec07c4443",
       "blockTag": "finalized",
       "scanned": {
         "loanIdsEnumerated": 21,
@@ -102,8 +116,8 @@
       "chainSlug": "bnb-testnet",
       "chainId": 97,
       "diamond": "0x7D4BfD2CA7908Fb088300f29276bF5A2E4FfBAd2",
-      "atBlock": "129689782",
-      "atBlockHash": "0x665399054d59e2d8f62a6edec85487865edf8ab0b10d72a445601a4fe5ed273e",
+      "atBlock": "129701171",
+      "atBlockHash": "0x309a42d6c0e8c7af9f64d6f5b73049f66161b35eca474221b65260fb684d7327",
       "blockTag": "finalized",
       "scanned": {
         "loanIdsEnumerated": 4,
@@ -145,8 +159,8 @@
       "chainSlug": "op-sepolia",
       "chainId": 11155420,
       "diamond": "0x58824401F769b0A760b6CD98Af503Bd5ED648377",
-      "atBlock": "48501716",
-      "atBlockHash": "0x58bac1bbc4792707e6c6f09c321ba8aeb9846297de28a2d9d2f137ad74085ff4",
+      "atBlock": "48504183",
+      "atBlockHash": "0x4c9358aba861a14d423462dd8eca6fe165d1f26ad2df895886ee471fcbdeceac",
       "blockTag": "finalized",
       "scanned": {
         "loanIdsEnumerated": 33,
@@ -194,8 +208,8 @@
       "chainSlug": "sepolia",
       "chainId": 11155111,
       "diamond": "0x492f83F2Ab99B7b13E1F8CAf6fbAeB7300B85302",
-      "atBlock": "11655942",
-      "atBlockHash": "0x14f709c7d5fe506713a47055846c126d268677f5e9ce114c9abb7f49a67a398b",
+      "atBlock": "11656344",
+      "atBlockHash": "0x1f02b14246662fd6d2208721f7c4173c00db589146c1c51545bde4eb34acadbc",
       "blockTag": "finalized",
       "scanned": {
         "loanIdsEnumerated": 0,
@@ -226,11 +240,12 @@
           "rows": []
         },
         "liveIntentCommits": {
-          "status": "proven",
+          "status": "indeterminate",
+          "indeterminateReason": "the cut-history scan returned ZERO DiamondCut events, but every Diamond emits at least one at deploy — the history was not actually read (pruned endpoint, or a deployBlock that does not match this address), so absence is not established. Re-run against an archive endpoint.",
           "absenceProof": {
-            "proven": true,
-            "reason": "the intent producer never appears in any DiamondCut in this Diamond's complete history, so no commit can ever have been created",
-            "cutsScanned": 3
+            "proven": false,
+            "reason": "the cut-history scan returned ZERO DiamondCut events, but every Diamond emits at least one at deploy — the history was not actually read (pruned endpoint, or a deployBlock that does not match this address), so absence is not established. Re-run against an archive endpoint.",
+            "cutsScanned": 0
           },
           "count": 0,
           "total": "0",

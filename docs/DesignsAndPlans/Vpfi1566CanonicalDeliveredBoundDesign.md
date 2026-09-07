@@ -4771,12 +4771,21 @@ reported a comfortable answer it had not earned:
   paths `delete s.intentCommits`, and the view reverts `IntentNoCommit`
   exactly when `commit.orderHash == 0`, so that revert IS the proof of
   absence — while any OTHER revert propagates rather than being read as an
-  empty row. Before that, the loupe is asked whether the intent selector is
-  routed on the Diamond at all: an unrouted surface cannot have produced a
-  commit, which settles the class without touching a single loan. Both proofs
-  are history-INDEPENDENT, which is what makes them usable — public nodes
-  prune, and an earlier revision of this census reconstructed the class from
-  the event lifecycle and was left unable to answer on a pruned endpoint.
+  empty row. That read is history-INDEPENDENT, which is what makes it usable —
+  public nodes prune, and an earlier revision of this census reconstructed the
+  class from the event lifecycle and was left unable to answer on a pruned
+  endpoint.
+
+  ⚠️ **An UNROUTED getter is a different case and is NOT a proof of absence.**
+  An earlier revision of this bullet said "an unrouted surface cannot have
+  produced a commit, which settles the class without touching a single loan",
+  and called both proofs history-independent. That is wrong (Codex #2070 r2 P1):
+  routing is mutable and the producer `commitSwapToRepayIntent` has its own
+  selector, so a facet cut in, used, and later cut out leaves rows the missing
+  getter cannot see. Where the getter is unrouted the class rests on the
+  Diamond's `DiamondCut` history — which is NOT history-independent, and is
+  exactly why op-sepolia is indeterminate below. Do not reintroduce the
+  shortcut; it is the one that made two chains read as proven when neither was.
   Hand-computed storage slots were never an option: they fail SILENTLY as
   zero, manufacturing the exact "empty" result the census exists to
   establish. The event reconstruction is retained behind `--corroborate` as
@@ -4799,29 +4808,48 @@ reported a comfortable answer it had not earned:
   latter as a failure on op-sepolia rather than silently counting it as an
   absent commit.
 
-**RESULT (2026-09-07): four of five chains are PROVEN EMPTY on every class;
-op-sepolia's class 3 is INDETERMINATE.** The empty verdict is therefore not yet
-earned outright, and this is the census working rather than failing.
+**RESULT (2026-09-07): three of five chains are PROVEN EMPTY on every class;
+op-sepolia's and sepolia's class 3 are INDETERMINATE.** The empty verdict is
+therefore not yet earned outright, and this is the census working rather than
+failing.
+
+⚠️ **The two indeterminate chains are exactly the two whose intent getter is
+unrouted — i.e. the two that depend on cut history rather than live state.**
+The three chains that route the getter read live state and are unaffected by
+any of this.
 
 The unrouted-getter chains rest on the Diamond's `DiamondCut` history, because
 an unrouted getter alone is not proof of absence — routing is mutable, the
 producer has its own selector, and a facet cut in and later cut out leaves rows
-behind (Codex #2070 P1). That scan **discriminates**: sepolia reads three cuts,
-finds the producer in none of them, and earns `proven`. op-sepolia reads
-**zero** cuts — which cannot be true of a Diamond that exists, since every one
-emits at least one at deploy — so the history was not read at all. Its recorded
-`deployBlock` yields no logs whatsoever at that address, and the public
-endpoint prunes state, so the true creation block cannot be recovered by
-bisection there either.
+behind (Codex #2070 P1). That scan **discriminates** — demonstrated, not assumed: on one run sepolia
+returned three real cuts, found the producer in none of them, and earned
+`proven`, while op-sepolia returned **zero**. Zero cannot be true of a Diamond
+that exists, since every one emits at least one cut at deploy, so the history
+was not read at all.
+
+**And then sepolia returned zero on the next run, from the same endpoint and
+the same address.** That is not a change on-chain; it is the endpoint answering
+the identical query two different ways within the hour. So a `proven` earned
+through the cut-history path on a public endpoint is **not reproducible**, and
+the census now records both unrouted chains as indeterminate. The flakiness is
+evidence for the guard rather than against it: a run that had only ever seen
+the three-cut answer would have certified sepolia on a result the next run
+could not reproduce.
+
+op-sepolia additionally has no logs whatsoever at its recorded `deployBlock`,
+and the public endpoint prunes state, so the true creation block cannot be
+recovered by bisection there either.
 
 Zero cuts is a hard refusal, not a proof. **The first revision of this scan
 returned zero on both unrouted chains and reported both as proven** — an empty
 scan manufacturing the comfortable answer, which is the exact failure this
 census exists to refuse, reintroduced by the machinery meant to prevent it.
 
-**Outstanding: one re-run of op-sepolia against an ARCHIVE endpoint.** Until
-then class 3 there is undetermined, and the artifact says so rather than
-rounding it to zero.
+**Outstanding: re-run op-sepolia AND sepolia against an ARCHIVE endpoint.**
+Until then class 3 on both is undetermined, and the artifact says so rather
+than rounding it to zero. An archive endpoint also removes the reproducibility
+problem: the flakiness above is a property of pruned public nodes serving
+partial history, not of the chains.
 
 **The refusal was then confirmed independently, and the confirmation is the
 part worth keeping.** Archive `eth_getCode` probes bound the Diamond's creation

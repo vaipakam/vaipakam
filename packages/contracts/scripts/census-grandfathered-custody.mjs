@@ -290,6 +290,7 @@ async function proveProducerNeverRouted({
   toBlock,
   producerSelector,
   producerRouted,
+  routedSelectors,
 }) {
   // The producer answering right now settles it without any history at all.
   if (producerRouted) {
@@ -342,11 +343,43 @@ async function proveProducerNeverRouted({
         cutsScanned: 0,
       };
     }
+
+    // Codex #2070 r3 P1 — a NON-ZERO cut count is still not a complete history.
+    // An endpoint that omits the earliest receipts but serves later ones passes
+    // the zero check while hiding exactly the deploy-era cuts most likely to
+    // carry the producer: added in an omitted early cut, removed in a returned
+    // later one, leaving a live commit this census would certify absent.
+    //
+    // Continuity test that needs no extra trust: if the history is complete,
+    // every selector the Diamond CURRENTLY routes must have been introduced by
+    // some cut in it. Any routed selector the history cannot account for proves
+    // the scan is missing cuts, and the answer is `indeterminate`.
+    const seenSelectors = new Set();
+    for (const log of logs) {
+      for (const cut of log.args?._diamondCut ?? []) {
+        for (const sel of cut.functionSelectors ?? []) seenSelectors.add(sel.toLowerCase());
+      }
+    }
+    const unexplained = routedSelectors.filter((sel) => !seenSelectors.has(sel.toLowerCase()));
+    if (unexplained.length !== 0) {
+      return {
+        proven: false,
+        reason:
+          `the cut history does not account for ${unexplained.length} of the ${routedSelectors.length} selectors the ` +
+          'Diamond currently routes, so it is INCOMPLETE — the endpoint served some cuts and omitted others. The ' +
+          'producer could have been added in an omitted cut and removed in a returned one. Re-run against an archive endpoint.',
+        cutsScanned: logs.length,
+        routedSelectors: routedSelectors.length,
+        unexplainedSelectors: unexplained.length,
+      };
+    }
     return {
       proven: true,
       reason:
-        'the intent producer never appears in any DiamondCut in this Diamond\'s complete history, so no commit can ever have been created',
+        'the intent producer never appears in any DiamondCut in this Diamond\'s history, and that history accounts for ' +
+        'every selector the Diamond currently routes (so it is complete) — no commit can ever have been created',
       cutsScanned: logs.length,
+      routedSelectors: routedSelectors.length,
     };
   } catch (err) {
     return {
@@ -373,7 +406,9 @@ async function censusChain(slug) {
   // The PRODUCER, for the routing-history proof: an unrouted getter says
   // nothing about whether this selector was ever callable.
   const intentProducer = pick(loadAbi('SwapToRepayIntentFacet'), ['commitSwapToRepayIntent']);
-  const loupe = pick(loadAbi('DiamondLoupeFacet'), ['facetAddress']);
+  // `facets()` gives the Diamond's CURRENT routed surface, which is what makes
+  // the cut history checkable for continuity — see {proveProducerNeverRouted}.
+  const loupe = pick(loadAbi('DiamondLoupeFacet'), ['facetAddress', 'facets']);
   const intentEvents = pick(loadAbi('SwapToRepayIntentFacet'), [
     'SwapToRepayIntentCommitted',
     'SwapToRepayIntentFilled',
@@ -465,6 +500,10 @@ async function censusChain(slug) {
   // state directly, which subsumes the history question entirely.
   let intentAbsenceProof = null;
   if (!intentSurfaceRouted) {
+    // The Diamond's CURRENT routed surface — the yardstick the cut history has
+    // to explain for its continuity to be established.
+    const facetList = await read('facets');
+    const routedSelectors = facetList.flatMap((f) => f.functionSelectors ?? f[1] ?? []);
     intentAbsenceProof = await proveProducerNeverRouted({
       client,
       diamond,
@@ -472,6 +511,7 @@ async function censusChain(slug) {
       toBlock: atBlock,
       producerSelector,
       producerRouted,
+      routedSelectors,
     });
   }
 
@@ -684,18 +724,42 @@ async function main() {
       .filter(([, c]) => c.status !== 'proven')
       .map(([name, c]) => ({ chainSlug: r.chainSlug, class: name, reason: c.indeterminateReason })),
   );
+  // Codex #2070 r3 P1 — `allClassesEmpty` is a claim about EVERY deployed
+  // chain, so only a run that actually covered every deployed chain may assert
+  // it. A `--chain <slug>` run (the documented mode for the outstanding
+  // op-sepolia archive re-run) proves nothing about the chains it skipped, and
+  // must never replace five-chain evidence with a one-chain positive.
+  const allDeployed = deployedChains();
+  const covered = new Set(results.map((r) => r.chainSlug));
+  const coversEveryDeployedChain =
+    allDeployed.length > 0 && allDeployed.every((slug) => covered.has(slug));
   const report = {
     generatedAt: new Date().toISOString(),
     purpose: '#1566 grandfathered-custody census — decides whether slices 0-3 are live work or a certified no-op',
-    allClassesEmpty: failures.length === 0 && results.length > 0 && empty,
+    scope: coversEveryDeployedChain ? 'all-deployed-chains' : 'partial',
+    // `null`, not `false`: a partial run did not establish the global claim
+    // either way, and a `false` here would read as "something was found".
+    allClassesEmpty: coversEveryDeployedChain
+      ? failures.length === 0 && results.length > 0 && empty
+      : null,
+    chainsDeployed: allDeployed,
     chainsCensused: results.length,
     chainsFailed: failures,
+    chainsNotCensused: allDeployed.filter((slug) => !covered.has(slug)),
     indeterminateClasses: indeterminate,
     results,
   };
 
   mkdirSync(outDir, { recursive: true });
-  const outFile = join(outDir, 'grandfathered-custody-census.json');
+  // A partial run writes to its OWN file. The canonical artifact is the
+  // programme's evidence for every deployed chain; a single-chain follow-up
+  // overwriting it would destroy that evidence to publish a narrower claim.
+  const outFile = join(
+    outDir,
+    coversEveryDeployedChain
+      ? 'grandfathered-custody-census.json'
+      : `grandfathered-custody-census.partial-${results.map((r) => r.chainSlug).join('-') || 'none'}.json`,
+  );
   writeFileSync(outFile, `${JSON.stringify(report, null, 2)}\n`);
 
   for (const r of results) {
@@ -722,10 +786,19 @@ async function main() {
       ? 'RESULT: every grandfathered class is PROVEN EMPTY on every censused chain — the MIGRATION half of slices 0-3\n' +
         '        is a certified no-op (nothing to move, no shortfall disposition). The prospective custody isolation\n' +
         '        in slices 2-3 is NOT retired by this result — its producers are still live.\n'
-      : 'RESULT: not established — a class is non-empty, indeterminate, or a chain failed. See the artifact.\n',
+      : report.allClassesEmpty === null
+        ? `RESULT: PARTIAL RUN — covered ${results.length} of ${report.chainsDeployed.length} deployed chains ` +
+          `(missing: ${report.chainsNotCensused.join(', ') || 'none'}).\n` +
+          '        No global verdict is claimable from this run, and the canonical artifact was NOT overwritten.\n' +
+          `        Written to: ${outFile}\n`
+        : 'RESULT: not established — a class is non-empty, indeterminate, or a chain failed. See the artifact.\n',
   );
 
-  if (failures.length || indeterminate.length) process.exitCode = 1;
+  // A partial run has not established the programme's claim, so it must not
+  // exit 0 as though it had.
+  if (failures.length || indeterminate.length || report.allClassesEmpty === null) {
+    process.exitCode = 1;
+  }
 }
 
 main().catch((err) => {
