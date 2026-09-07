@@ -2445,7 +2445,8 @@
       "secondsValue": "{{s}} s",
       "undated": "Esta instantánea no lleva marca de tiempo, así que no hay forma de saber qué antigüedad tienen estos valores. Pueden ser actuales o estar largamente superados: léalos como no verificados, no como la configuración presente del protocolo.",
       "provenanceAge": ", tomada {{age}}",
-      "provenanceAgeUnknown": ", sin marca de tiempo, por lo que se desconoce cuán actuales son estos valores"
+      "provenanceAgeUnknown": ", sin marca de tiempo, por lo que se desconoce cuán actuales son estos valores",
+      "knownStale": "El indexador ha visto un cambio de gobernanza posterior a esta instantánea, por lo que se sabe que estos valores están desactualizados, no solo que su antigüedad es incierta. Trátelos como históricos y consulte la referencia de parámetros o los contratos directamente para saber qué rige ahora."
     }
   },
   "contractError": {

@@ -2445,7 +2445,8 @@
       "secondsValue": "{{s}} s",
       "undated": "Cet instantané ne porte aucun horodatage : impossible de savoir quel âge ont ces valeurs. Elles peuvent être à jour comme largement dépassées — lisez-les comme non vérifiées, et non comme la configuration actuelle du protocole.",
       "provenanceAge": ", prise {{age}}",
-      "provenanceAgeUnknown": ", sans horodatage — l'actualité de ces valeurs est donc inconnue"
+      "provenanceAgeUnknown": ", sans horodatage — l'actualité de ces valeurs est donc inconnue",
+      "knownStale": "L'indexeur a vu une modification de gouvernance postérieure à cet instantané : ces valeurs sont donc connues comme obsolètes, et pas seulement d'âge incertain. Considérez-les comme historiques et consultez la référence des paramètres ou directement les contrats pour savoir ce qui s'applique actuellement."
     }
   },
   "contractError": {

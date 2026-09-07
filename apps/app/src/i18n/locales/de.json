@@ -2445,7 +2445,8 @@
       "secondsValue": "{{s}} s",
       "undated": "Diese Momentaufnahme trägt keinen Zeitstempel, daher lässt sich nicht sagen, wie alt diese Werte sind. Sie können aktuell oder längst überholt sein — lesen Sie sie als ungeprüft, nicht als die gegenwärtige Konfiguration des Protokolls.",
       "provenanceAge": ", aufgenommen {{age}}",
-      "provenanceAgeUnknown": ", ohne Zeitstempel — wie aktuell diese Werte sind, ist daher unbekannt"
+      "provenanceAgeUnknown": ", ohne Zeitstempel — wie aktuell diese Werte sind, ist daher unbekannt",
+      "knownStale": "Der Indexer hat eine Governance-Änderung gesehen, die nach dieser Momentaufnahme erfolgte — diese Werte sind also bekanntermaßen veraltet und nicht bloß von unsicherem Alter. Behandeln Sie sie als historisch und prüfen Sie die Parameterreferenz oder direkt die Verträge, um zu sehen, was derzeit gilt."
     }
   },
   "contractError": {
