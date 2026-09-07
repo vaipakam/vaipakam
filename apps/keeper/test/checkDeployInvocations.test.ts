@@ -8968,6 +8968,100 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(write.ok).toBe(false);
   });
 
+  it('a config bound to a NAME before it is written is a rewrite (#2052)', () => {
+    // The ordinary pathlib idiom. Every other write form spells the file out
+    // at the write, so this one was blessed — a script that regenerates the
+    // config to drop keep_vars and then deploys it passed the guard, which is
+    // the failure the guard exists to prevent.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'regen.py',
+      'from pathlib import Path\n' +
+        'import subprocess\n' +
+        'p = Path("configs/custom.jsonc")\n' +
+        'p.write_text("{}")\n' +
+        'subprocess.run(["wrangler", "deploy", "--config", "configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a bound name written through open(…, "w") is a rewrite (#2052)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'regen2.py',
+      'import subprocess\n' +
+        'cfg = "configs/custom.jsonc"\n' +
+        'open(cfg, "w").write("{}")\n' +
+        'subprocess.run(["wrangler", "deploy", "--config", "configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a bound name passed to writeFileSync is a rewrite (#2052)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'regen.mjs',
+      'const cfg = "configs/custom.jsonc";\n' +
+        'writeFileSync(cfg, "{}");\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a bound name that is only READ is not a rewrite (#2052)', () => {
+    // Binding the path is not writing through it; inspecting the config a
+    // deploy is about to use is ordinary.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'inspect.py',
+      'from pathlib import Path\n' +
+        'import subprocess\n' +
+        'p = Path("configs/custom.jsonc")\n' +
+        'print(p.read_text())\n' +
+        'subprocess.run(["wrangler", "deploy", "--config", "configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a REASSIGNED name is not trusted as the config (#2052)', () => {
+    // Its value at the write is no longer decidable from the assignment alone,
+    // and reporting on a name that may hold something else is how a guard
+    // earns distrust. The bound reading is deliberately this narrow.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'rebind.py',
+      'from pathlib import Path\n' +
+        'import subprocess\n' +
+        'p = Path("configs/custom.jsonc")\n' +
+        'p = Path("/tmp/elsewhere.jsonc")\n' +
+        'p.write_text("{}")\n' +
+        'subprocess.run(["wrangler", "deploy", "--config", "configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a bound-name write AFTER the deploy does not invalidate it (#2052)', () => {
+    // The ordering rule the basename forms already obey applies to the bound
+    // forms too: maintenance below a deploy cannot invalidate the config that
+    // deploy read.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'after.py',
+      'from pathlib import Path\n' +
+        'import subprocess\n' +
+        'p = Path("configs/custom.jsonc")\n' +
+        'subprocess.run(["wrangler", "deploy", "--config", "configs/custom.jsonc"])\n' +
+        'p.write_text("{}")\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
   it('the PROSE path invalidates a rewritten config too', () => {
     // That path passed the rewrite context to the safety reader and not to the
     // identity reader, so the identity half trusted the stale copy and sent the

@@ -3261,6 +3261,30 @@ function lineStartOffset(text, lineNo, within = null) {
  * conservative direction is the cheap one.
  */
 /**
+ * Names bound ONCE, in this file, to a literal path whose basename is `base`.
+ *
+ * The initialiser may be a bare string or a `Path(…)` / `pathlib.Path(…)`
+ * wrapper, because that wrapper is how the idiom is actually written. A name
+ * that is assigned more than once is dropped rather than guessed at: its value
+ * at the write is no longer decidable from the assignment alone, and reporting
+ * on a name that may hold something else is how a guard earns distrust.
+ */
+function boundConfigNames(text, base) {
+  const names = new Set();
+  const BIND_RE =
+    /(?:^|[;{(,\s])(?:const|let|var)?\s*([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*(?:(?:pathlib\.)?Path\s*\(\s*)?(['"`])([^'"`\n]*)\2/gm;
+  for (const m of text.matchAll(BIND_RE)) {
+    const [, name, , literal] = m;
+    if (literal.slice(literal.lastIndexOf('/') + 1) !== base) continue;
+    const assigns = text.match(
+      new RegExp(String.raw`(?:^|[;{(,\s])(?:const|let|var)?\s*` + name + String.raw`\s*=(?!=)`, 'gm'),
+    );
+    if (assigns && assigns.length === 1) names.add(name);
+  }
+  return names;
+}
+
+/**
  * Quote-aware whitespace split of a shell argument list.
  *
  * Returns `null` when the text contains something whose word boundaries this
@@ -3478,6 +3502,30 @@ function configIsRewritten(text, cfgPath, at = null) {
     Q + String.raw`[^"'\`]*` + esc + Q +
     String.raw`\s*\)?\s*\.\s*open\s*\(\s*` + Q + String.raw`[rbt]*[wax+]`;
   const REDIRECT = String.raw`>\s*\S*` + esc;
+  // A PATH BOUND TO A NAME IS STILL THE PATH. Every form above spells the file
+  // out at the write, so `p = Path("configs/custom.jsonc")` followed by
+  // `p.write_text(…)` — the ordinary pathlib idiom — was not a rewrite to this
+  // reader, and a script that regenerates the config to drop `keep_vars` and
+  // then deploys it was BLESSED (#2052). That is the failure this guard exists
+  // to prevent, so the miss mattered more than the noisy direction did.
+  //
+  // Bounded deliberately. Only a name assigned EXACTLY ONCE in the file, whose
+  // initialiser is a plain literal (optionally wrapped in `Path(…)`) naming
+  // this config: no reassignment, no computation, no following the binding
+  // across a function boundary. Chasing further is constant-folding the host
+  // language, which is the unbounded predicate that sank the step-4c deploy
+  // parser; a name this narrow can be read without becoming that.
+  const boundWrites = [];
+  for (const name of boundConfigNames(text, base)) {
+    const n = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    boundWrites.push(
+      String.raw`(?:writeFile(?:Sync)?|appendFile(?:Sync)?|createWriteStream` +
+        String.raw`|outputFile(?:Sync)?)\s*\(\s*` + n + String.raw`\s*[,)]`,
+      String.raw`\b` + n + String.raw`\s*\.\s*(?:write_text|write_bytes)\s*\(`,
+      String.raw`\b` + n + String.raw`\s*\.\s*open\s*\(\s*` + Q + String.raw`[rbt]*[wax+]`,
+      String.raw`\bopen\s*\(\s*` + n + String.raw`\s*,\s*` + Q + String.raw`[rbt]*[wax+]`,
+    );
+  }
   // A COPY IS A WRITE — BUT ONLY INTO THE DESTINATION. `cp generated.jsonc
   // configs/custom.jsonc` replaces the file wrangler will load just as surely
   // as writing it does, and a scan for write CALLS saw none (#2036 r28). That
@@ -3495,7 +3543,9 @@ function configIsRewritten(text, cfgPath, at = null) {
   const writes = [
     ...text.matchAll(
       new RegExp(
-        [WRITE_CALL, OPEN_WRITE, RECEIVER_WRITE, RECEIVER_OPEN, REDIRECT].join('|'),
+        [WRITE_CALL, OPEN_WRITE, RECEIVER_WRITE, RECEIVER_OPEN, REDIRECT, ...boundWrites].join(
+          '|',
+        ),
         'g',
       ),
     ),
