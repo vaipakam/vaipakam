@@ -3355,8 +3355,12 @@ function configIsRewritten(text, cfgPath, at = null, shellish = true) {
         String.raw`|outputFile(?:Sync)?|write_text|write_bytes` +
         String.raw`|copyFile(?:Sync)?|cpSync|cp|rename(?:Sync)?|copy|move` +
         String.raw`|copyfile|copy2|copytree)\s*\(` +
-        // Shell write commands, optionally reached through a path.
-        String.raw`|(?:^|[\s;&|(])(?:[\w./-]*/)?(?:cp|mv|install|rsync|tee)\s` +
+        // Shell write commands, optionally reached through a path — and only
+        // in SHELL text. `const ratio = cp / total;` is ordinary JavaScript
+        // and matched the whitespace-delimited `cp` branch (r11).
+        (shellish
+          ? String.raw`|(?:^|[\s;&|(])(?:[\w./-]*/)?(?:cp|mv|install|rsync|tee)\s`
+          : '') +
         // A REDIRECTION, not every `>`. The bare alternative also matched the
         // arrow in `=>` and the comparison in `2 > 1`, and since the deploy's
         // own `--config` already satisfies the name test, any such operator
@@ -3370,7 +3374,9 @@ function configIsRewritten(text, cfgPath, at = null, shellish = true) {
         // directly-named redirection is covered above; this alternative exists
         // for the write through a BINDING.
         (shellish ? String.raw`|(?:^|[\s;&|)])\d*>{1,2}\s*["'$~/.]` : '') +
-        String.raw`|\.\s*open\s*\(\s*(?:mode\s*=\s*)?` + Q + String.raw`[rbt]*[wax+]` +
+        // The mode literal must CLOSE. Accepting a prefix let
+        // `webbrowser.open("welcome")` match `"w` (r11).
+        String.raw`|\.\s*open\s*\(\s*(?:mode\s*=\s*)?(["'\`])[rbt]*[wax+][rbt+]*\1` +
         // `mode=` may come FIRST: Python accepts `open(mode="w", file=cfg)`,
         // and requiring it after a comma missed that ordering (r9).
         String.raw`|\bopen\s*\(\s*(?:(?:[^()]|\([^()]*\))*,\s*)?mode\s*=\s*` + Q + String.raw`[rbt]*[wax+]` +
@@ -3389,7 +3395,38 @@ function configIsRewritten(text, cfgPath, at = null, shellish = true) {
     // names the config and writes before the deploy. Ordering against the
     // DEPLOY is still enforced below, which is the one that protects a
     // legitimate command.
-    for (const w of text.matchAll(ANY_WRITE)) writes.push(w.index);
+    // NON-EXECUTABLE TEXT IS NOT A WRITE. `# cp generated elsewhere` above a
+    // safe deploy was recorded as one, purely because the deploy itself names
+    // the config (Codex #2066 r11). Line comments only — `#` at a word
+    // boundary, `//` outside a string — which is bounded and leaves a `//`
+    // inside a path alone, the mistake r3 made with the JavaScript stripper.
+    const commented = [];
+    {
+      let q = null;
+      for (let i = 0; i < text.length; i += 1) {
+        const c = text[i];
+        if (q) {
+          if (c === '\\') i += 1;
+          else if (c === q) q = null;
+          else if (c === '\n') q = null;
+          continue;
+        }
+        if (c === '"' || c === "'" || c === '`') q = c;
+        else if (
+          (c === '#' && (i === 0 || /\s/.test(text[i - 1]))) ||
+          (c === '/' && text[i + 1] === '/' && /(?:^|[\s;({=])/.test(text[i - 1] ?? ''))
+        ) {
+          const nl = text.indexOf('\n', i);
+          const end = nl === -1 ? text.length : nl;
+          commented.push([i, end]);
+          i = end;
+        }
+      }
+    }
+    const inComment = (at) => commented.some(([a, b]) => at >= a && at < b);
+    for (const w of text.matchAll(ANY_WRITE)) {
+      if (!inComment(w.index)) writes.push(w.index);
+    }
     writes.sort((a, b) => a - b);
   }
   if (writes.length === 0) return false;
@@ -4097,7 +4134,7 @@ function declaredWorkerName(absPath) {
  * against every REACHABLE cwd, the same states the `cd` walk maintains, so a
  * relative selector lands where the shell would put it.
  */
-function selectorScope(seg, states, hasCwdState = true, vars = null, fileText = '', fileAt = null) {
+function selectorScope(seg, states, hasCwdState = true, vars = null, fileText = '', fileAt = null, srcIsShell = true) {
   // A value is ONE SHELL WORD, and a word can mix adjacent quoted and unquoted
   // chunks: `--name vaipakam"-"agent` is the single argument `vaipakam-agent`.
   // Capturing only the first chunk made the value `vaipakam`, which matched no
@@ -4725,7 +4762,12 @@ function selectorScope(seg, states, hasCwdState = true, vars = null, fileText = 
       // A config the surrounding file REWRITES before the deploy is not the
       // file wrangler will load, so the checkout's copy answers nothing
       // (#2036 r13). Unread reaches the inversion, which reports.
-      const read = configIsRewritten(fileText ?? '', cfg, fileAt, isShellFile(rel, fileText ?? ''))
+      // `srcIsShell` describes the file being SCANNED. `rel` here is the
+      // resolved CONFIG path — passing it to `isShellFile` asked whether a
+      // `.jsonc` is a shell script, which is always false, so the shell
+      // alternatives switched off for every real `.sh` wrapper without a
+      // shebang (Codex #2066 r11, a bug I introduced in r10).
+      const read = configIsRewritten(fileText ?? '', cfg, fileAt, srcIsShell)
         ? null
         : declaredWorkerNames(`${REPO_ROOT}/${rel}`, envSelected, envName);
       const declared = read === null ? null : read.names;
@@ -7763,6 +7805,13 @@ for (const file of walk(REPO_ROOT)) {
   // parsed — so the gate is read at the call site, not at the definition.
   let aliasesOn = false;
   folded.forEach(({ text: line, line: lineNo, block, physical, cwd: blockCwd, env: blockEnv }) => {
+    // SHELL-NESS IS PER LINE, not per file. A fenced `bash` block in Markdown
+    // and a workflow `run:` body are extracted and processed as shell although
+    // the containing file is `.md` or `.yml`, so a file-wide flag switched the
+    // shell alternatives off for exactly the text that needs them
+    // (Codex #2066 r11). `physical` marks a line that is NOT from a shell
+    // block; anything from a block is shell.
+    const lineIsShell = fileIsShell || !physical;
     // Each embedded block is a SEPARATE shell — an Actions step starts fresh,
     // and so does the next fenced example. Carrying `cwdIsKeeper` across them
     // made one block's `cd apps/keeper` reject the NEXT block's agent deploy
@@ -7899,7 +7948,7 @@ for (const file of walk(REPO_ROOT)) {
             '',
             text,
             lineStartOffset(text, lineNo, part.start),
-            fileIsShell,
+            lineIsShell,
           ) ||
           (aliased === null &&
             commandIsSafe(
@@ -7928,6 +7977,7 @@ for (const file of walk(REPO_ROOT)) {
           null,
           text,
           lineStartOffset(text, lineNo, part.start),
+          lineIsShell,
         );
         // A single filter can select BOTH packages, and each needs its own
         // remedy in the same report (#1995 r7).
@@ -8581,7 +8631,15 @@ for (const file of walk(REPO_ROOT)) {
         // reporting it under the keeper handed the reader the wrong remedy
         // (#1995 r2). Textual and cwd scope apply only when no selector
         // resolved.
-        const sel = selectorScope(seg, input, true, shellVars, text, lineStartOffset(text, lineNo, part.start));
+        const sel = selectorScope(
+          seg,
+          input,
+          true,
+          shellVars,
+          text,
+          lineStartOffset(text, lineNo, part.start),
+          lineIsShell,
+        );
         // An explicit `cd` OUTRANKS where the wrapper file happens to live
         // (#1995 r9). `scopeOf`'s last resort is "this file is inside a scoped
         // package", and it ran before the modelled cwd — so in a script under
@@ -8651,7 +8709,7 @@ for (const file of walk(REPO_ROOT)) {
         const atInFile = lineStartOffset(text, lineNo, part.start);
         const safeEverywhere = (text) =>
           cmdCwds.every((cwd) =>
-            commandIsSafe(text, safeHint, cwd, fileTextForSafety, atInFile, fileIsShell),
+            commandIsSafe(text, safeHint, cwd, fileTextForSafety, atInFile, lineIsShell),
           );
         if (
           safeEverywhere(aliased ?? seg) ||

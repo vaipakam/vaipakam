@@ -9091,29 +9091,32 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(r.ok).toBe(false);
   });
 
-  it("Node's async cp and shell tee are named writes (#2066 r9)", () => {
-    // `cpSync` was in the set and `fs.cp` was not; `tee` overwrites a path
-    // held in a variable exactly as a redirection does.
+  it("Node's async cp is a named write (#2066 r9)", () => {
     seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
     seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
-    const async = runWith(
+    const r = runWith(
       'cp.mjs',
       'import * as fs from "node:fs/promises";\n' +
         'const cfg = "configs/custom.jsonc";\n' +
         'await fs.cp("generated.jsonc", cfg);\n' +
         'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
     );
-    expect(async.ok).toBe(false);
+    expect(r.ok).toBe(false);
+  });
 
+  it('shell tee is a named write (#2066 r9)', () => {
+    // Its own test: sharing one with the async-cp case left that fixture's
+    // failing file in the root, so this assertion held even with `tee`
+    // detection removed entirely (#2066 r11).
     seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
     seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
-    const teed = runWith(
+    const r = runWith(
       'w.sh',
       'CFG=configs/custom.jsonc\n' +
         'printf "{}" | tee "$CFG"\n' +
         'wrangler deploy --config configs/custom.jsonc\n',
     );
-    expect(teed.ok).toBe(false);
+    expect(r.ok).toBe(false);
   });
 
   it('an arrow is not a redirection (#2066 r9)', () => {
@@ -9220,6 +9223,59 @@ describe('check-deploy-invocations — #1996 config identity', () => {
         'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
     );
     expect(r.ok).toBe(false);
+  });
+
+  it('a shell wrapper without a shebang is still shell (#2066 r11)', () => {
+    // The shell-ness flag was computed from the resolved CONFIG path, so it
+    // asked whether a `.jsonc` is a shell script — always false — and the
+    // shell alternatives switched off for every real `.sh` wrapper.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'w.sh',
+      'CFG=configs/custom.jsonc\n' +
+        'printf "{}" > "$CFG"\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a JavaScript division is not a copy command (#2066 r11)', () => {
+    // `const ratio = cp / total;` matched the whitespace-delimited `cp`
+    // branch; shell commands are shell-gated now.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'r.mjs',
+      'const ratio = cp / total;\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('an unrelated open() is not a write mode (#2066 r11)', () => {
+    // `webbrowser.open("welcome")` matched the mode prefix `"w`; the literal
+    // has to close.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'b.py',
+      'import webbrowser, subprocess\n' +
+        'webbrowser.open("welcome")\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a commented-out copy is not a named write (#2066 r11)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'c.sh',
+      '# cp generated elsewhere\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(true);
   });
 
   it('the PROSE path invalidates a rewritten config too', () => {
