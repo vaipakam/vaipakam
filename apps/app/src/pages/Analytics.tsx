@@ -45,6 +45,8 @@ import {
 } from '../data/indexer';
 import { useActiveChain } from '../chain/useActiveChain';
 import { useNowSec } from '../hooks/useNowSec';
+import { idleAware } from '../lib/idle';
+import { useEffect } from 'react';
 
 /** Renders a counter, keeping "not reported" distinct from zero. */
 function Stat({ label, value }: { label: string; value: number | undefined }) {
@@ -100,6 +102,22 @@ export function Analytics() {
   const stats = useQuery({
     queryKey: ['analytics-stats', chainId],
     enabled: indexerConfigured(),
+    // AUTO-REFRESH AT THE `cool` TIER, and no manual button (review
+    // round 7 P2). The connected-app spec is explicit on both halves:
+    // public Analytics "should not expose a spam-clickable manual
+    // refresh button; it should auto-refresh", and Analytics sits at
+    // `cool` — 180 seconds active — among the named watermark tiers.
+    // This page shipped with the exact inverse: a click-to-refresh
+    // control and no interval at all, so a visitor who left it open saw
+    // counters frozen indefinitely on a page whose stated purpose is
+    // showing the current state of the protocol.
+    //
+    // `idleAware` is how every other polling surface here honours "pause
+    // while the tab is hidden and catch up on focus": TanStack already
+    // suspends interval refetches on a hidden tab and refetches on
+    // focus, and this stretches the cadence further once the session
+    // goes quiet without a timer of its own.
+    refetchInterval: idleAware(180_000),
     queryFn: async (): Promise<{ loans: LoanStats | null; offers: OfferStats | null }> => {
       const [loans, offers] = await Promise.all([
         fetchLoanStats(chainId),
@@ -144,6 +162,34 @@ export function Analytics() {
   // Loading is its own posture and says only that.
   const loading = indexerConfigured() && stats.isPending;
 
+  // RE-SCROLL TO THE LAZY TARGET (review round 7 P2). The marketing
+  // footer links `/analytics#transparency`, but this route is lazy: on a
+  // cold navigation the browser resolves the fragment against the SPA
+  // shell and the loading fallback, neither of which contains a
+  // `transparency` element, and React Router does not replay fragment
+  // scrolling once the chunk mounts. So the "Smart Contracts" link
+  // landed readers at the top of the dashboard rather than at the
+  // contract address it promises — the same defect the `/vpfi#deposit`
+  // anchor had, one route over.
+  //
+  // Depends on the posture flags because the section is inside a
+  // conditional: it exists only once the page has settled into a state
+  // that renders it.
+  useEffect(() => {
+    const hash = window.location.hash;
+    if (!hash) return;
+    let id = hash.slice(1);
+    try {
+      id = decodeURIComponent(id);
+    } catch {
+      /* malformed escape — fall back to the raw fragment */
+    }
+    const raf = requestAnimationFrame(() => {
+      document.getElementById(id)?.scrollIntoView();
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [loading, unreachable, uninitialized]);
+
   return (
     <div className="an-page">
       <header className="an-head">
@@ -153,9 +199,13 @@ export function Analytics() {
         <p className="an-sub">
           {copy.analytics.lede(chainId)}
         </p>
-        <button type="button" className="an-refresh" onClick={() => void stats.refetch()}>
-          <RefreshCw aria-hidden="true" /> {copy.analytics.refresh}
-        </button>
+        {/*
+          NO MANUAL REFRESH CONTROL. The spec reserves those for pages
+          where a user inspects mutable lists; this page auto-refreshes
+          and states its data age instead, which is the honest signal —
+          a refresh button invites clicking at a figure that is already
+          as current as the last ingest.
+        */}
       </header>
 
       {loading && (

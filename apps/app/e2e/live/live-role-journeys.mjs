@@ -378,8 +378,48 @@ const SCENARIOS = [
   },
 ];
 
+/**
+ * The ROUTED content, not the whole document.
+ *
+ * `body` includes the persistent shell — navigation, mode switch,
+ * wallet controls, footer — which on its own clears every body-length
+ * and control-count threshold in this file. Scoping to the shell's main
+ * landmark means a check describes the surface under review rather than
+ * the chrome around it (review round 7 P2). Falls back to `body` when
+ * the landmark is absent, so a page outside the shell still reads.
+ */
 async function bodyText(page) {
+  const main = page.locator('#main-content');
+  if ((await main.count().catch(() => 0)) > 0) {
+    return (await main.innerText().catch(() => '')) || '';
+  }
   return (await page.locator('body').innerText().catch(() => '')) || '';
+}
+
+/**
+ * True when the Terms gate has replaced the route WITHOUT changing the
+ * URL.
+ *
+ * A connected wallet that has not accepted the current Terms gets the
+ * gate's card in place of the routed surface. Scoping to `#main-content`
+ * is not enough to see that, because the gate renders THERE — so a
+ * gated `/lend` still satisfies "renders controls" using the gate's own
+ * heading and its accept button, and the journey reports PASS having
+ * never exercised lending.
+ *
+ * A legitimate posture, not a product failure: the scenario simply did
+ * not run, which is what UNVERIFIED is for.
+ */
+async function gateMasked(page) {
+  // A DOM MARKER, NOT A WORD. The first version of this matched
+  // /terms/i against the routed text, which fired on `/lend`, `/borrow`
+  // and `/desk` — whose ordinary copy says "terms you choose" — and
+  // reported three healthy surfaces as unverified. Every gate state
+  // renders inside `.legal-gate`, so the container is the fact; the
+  // word is a coincidence, and writing the check from what the copy
+  // probably says rather than from what the component renders is the
+  // same mistake that produced a false `/recover` failure earlier.
+  return (await page.locator('.legal-gate').count().catch(() => 0)) > 0;
 }
 async function firstHeading(page) {
   return (
@@ -444,10 +484,19 @@ let probed = false;
  *  ordinary product assertion from then on. Throws on HTTP >= 400 so
  *  the caller records it against the route it happened on. */
 async function navigate(page, route) {
+  const want = new URL(`${SITE}${route}`).pathname.replace(/\/+$/, '') || '/';
   if (!probed) {
     await visit(page, route);
     probed = true;
-    return;
+    // RETURN THE WANTED PATH HERE TOO (review round 7 P2). This branch
+    // used to return nothing, so the caller's post-settle landing check
+    // was skipped for the FIRST scenario of the run — and `visit()`
+    // checks only HTTP status. A `/` redirected by the edge or a client
+    // guard to another substantive page still cleared V1's body-length
+    // and action thresholds, so the one scenario that establishes the
+    // site is reachable was also the one that could not tell whether it
+    // had reached the right place.
+    return want;
   }
   const resp = await page.goto(`${SITE}${route}`, {
     waitUntil: 'domcontentloaded',
@@ -472,7 +521,6 @@ async function navigate(page, route) {
   //
   // Compared on pathname only: a scenario may legitimately request a
   // fragment (`/vpfi#deposit`), and the app may normalise or drop it.
-  const want = new URL(`${SITE}${route}`).pathname.replace(/\/+$/, '') || '/';
   const servedPath = (() => {
     try {
       return new URL(resp?.url() ?? '').pathname.replace(/\/+$/, '') || '/';
@@ -626,11 +674,19 @@ for (const roleKey of wanted) {
       if (wantPath && landed !== null && landed !== wantPath) {
         throw new Error(`redirected to ${landed} after mount — ${s.route} never rendered`);
       }
-      const r = await s.check(page);
-      ok = r.ok;
-      actual = r.actual;
-      note = r.note ?? '';
-      unverifiable = r.unverified === true;
+      // The URL can be right and the surface still absent: see
+      // `gateMasked`. Neither pass nor fail — the journey did not run.
+      if (posture.preAuthorized && (await gateMasked(page))) {
+        unverifiable = true;
+        actual = 'the Terms gate replaced this route — the surface never mounted';
+        note = 'legitimate posture, but this scenario verified nothing. Accept the current Terms with the dev wallet and re-run.';
+      } else {
+        const r = await s.check(page);
+        ok = r.ok;
+        actual = r.actual;
+        note = r.note ?? '';
+        unverifiable = r.unverified === true;
+      }
     } catch (err) {
       actual = `ERROR: ${String(err.message || err).slice(0, 120)}`;
     }

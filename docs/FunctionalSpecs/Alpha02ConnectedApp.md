@@ -1,9 +1,11 @@
 # Connected App Functional Specification
 
 This document states the intended behaviour of the Vaipakam connected app —
-`apps/app`, served at `app.vaipakam.com` (bound as of 2026-09-07; the
-marketing site's links are still held on the legacy host by a separate
-decision — see #1854). It is the app-specific functional
+`apps/app`, served at `app.vaipakam.com` (bound as of 2026-09-07, and the
+marketing site's links resolve here since #1959 ported the last two
+destinations and flipped the cutover switch; the `/recover` guide links
+alone stay on the legacy host, held by same-origin recovery state rather
+than by any missing route). It is the app-specific functional
 spec distilled from the release notes through 2026-08-12. It is intentionally
 written without implementation snippets. (The app was called `alpha02` and
 served `alpha02.vaipakam.com` until #1854 renamed it; this file keeps the old

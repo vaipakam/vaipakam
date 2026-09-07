@@ -156,6 +156,15 @@
   X-Robots-Tag: noindex
 /help/*
   X-Robots-Tag: noindex
+# #1959 — the two public transparency routes are exact and childless in
+# App.tsx, so `/analytics/spam` is NotFound in the router. Cloudflare's
+# SPA fallback still answers 200 with the index shell, and a crawler
+# that does not execute `SeoMeta` would index that soft 404 — the same
+# reason every route above is listed.
+/analytics/*
+  X-Robots-Tag: noindex
+/protocol-console/*
+  X-Robots-Tag: noindex
 
 # SPA aliases (App.tsx Navigate routes). The redirect only happens
 # after JS runs, so a non-executing crawler fetching an alias gets

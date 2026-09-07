@@ -690,7 +690,24 @@ export async function launch({
           'credential',
         );
       }
-      account = privateKeyToAccount(key);
+      // A 32-byte hex string is not necessarily a USABLE key: the
+      // all-zero placeholder and any scalar outside the secp256k1 range
+      // pass the regex and make `privateKeyToAccount` throw a plain
+      // Error. An accumulating caller catches only `LiveSetupError`, so
+      // that plain throw exited 1 before the report was written and
+      // filed a credential precondition as a product failure — the
+      // classification this branch exists to get right.
+      try {
+        account = privateKeyToAccount(key);
+      } catch (err) {
+        throw new LiveSetupError(
+          `the dev wallet file's key for role "${role}" is not a usable` +
+            ` secp256k1 private key: ${String(err?.message ?? err).slice(0, 120)}` +
+            `\n  path:  ${WALLETS_PATH}`,
+          err,
+          'credential',
+        );
+      }
     } else {
       account = privateKeyToAccount(walletFor(role).privateKey);
     }
