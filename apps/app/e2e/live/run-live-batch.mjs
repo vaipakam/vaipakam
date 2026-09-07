@@ -15,8 +15,14 @@
  *
  *   0  PASS
  *   1  FAIL     — a regression the drive found, or one it hit itself
- *   2  BLOCKED  — it ran but could not verify anything (a precondition
- *                 the live chain didn't offer, a missing credential)
+ *   2  BLOCKED  — it did not COMPLETE, so its surfaces are not fully
+ *                 reviewed (a precondition the live chain didn't offer,
+ *                 a missing credential). Usually that means it verified
+ *                 nothing, and for most drives it does — but not always:
+ *                 an accumulating driver can complete one role, hit a
+ *                 setup failure on the next, keep the results it has and
+ *                 still exit 2. BLOCKED says "do not read this as a
+ *                 pass", not "nothing was seen".
  *
  * FAIL and BLOCKED are reported distinctly because the remedy differs: a
  * FAIL is a defect to fix, a BLOCKED is a review that still needs

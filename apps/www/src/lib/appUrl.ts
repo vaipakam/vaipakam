@@ -161,9 +161,16 @@ const APP_TARGET: AppTarget =
 // `id="step-2"` on its first actionable deposit card specifically as a
 // deep-link target, and the marketing CTA promises that landing position;
 // dropping the fragment silently lands users at the top of an
-// educational page instead. The new app's Vpfi page has NO equivalent
-// anchor yet — give it one before switching `vpfiVault` to the app
-// target, or that CTA regresses at the cutover.
+// educational page instead. The app's Vpfi page carries `id="deposit"`
+// for the same reason, on BOTH its connected and disconnected branches —
+// most CTA arrivals have no wallet, so anchoring only the connected view
+// would drop the majority at the top of the page. The page also
+// re-scrolls once its async availability read settles, because a lazy
+// route resolves the fragment against a shell that does not yet contain
+// the element. Keep all three properties together: the id, both
+// branches, and the re-scroll. (This note used to say the app had no
+// equivalent anchor and to give it one before switching `vpfiVault` —
+// #1959 did both, and the instruction outlived the work.)
 const ROUTES: Record<AppTarget, Record<AppDestination, string>> = {
   legacy: {
     home: '/',

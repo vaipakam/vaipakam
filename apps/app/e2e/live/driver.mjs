@@ -121,12 +121,17 @@ export async function blocked(why, err, cleanup) {
  * caller has asked to decide the verdict itself (Codex #1621 r1).
  *
  * `launch()` exiting BLOCKED directly is right for a drive that has
- * observed nothing yet — which is all of them at launch time, with one
- * exception. `live-recover-locales.mjs` launches a fresh browser PER
- * LOCALE and accumulates findings across them, so a setup failure on
- * locale 6 must not discard a real localization defect found on locale
- * 2: "verified nothing" would be a false statement about that run. It
- * catches this and lets its own `exitOnEvidence` choose.
+ * observed nothing yet — which is all of them at their FIRST launch, and
+ * not all of them at every launch. Two drivers launch repeatedly and
+ * accumulate across launches: `live-recover-locales.mjs` (a fresh
+ * browser per locale) and `live-role-journeys.mjs` (one per role). For
+ * those, a setup failure on locale 6 or on the borrower role must not
+ * discard what locale 2 or the visitor already found — "verified
+ * nothing" would be a false statement about such a run. They pass
+ * `onSetupFailure: 'throw'` and decide the verdict themselves.
+ *
+ * So exit 2 means the drive did not COMPLETE, not that it saw nothing;
+ * `run-live-batch.mjs` states the same contract in the same terms.
  *
  * Part 1 of #1581 broke exactly that, silently — moving the exit inside
  * `launch()` meant that catch could never run, and the precedence rule
