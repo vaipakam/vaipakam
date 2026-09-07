@@ -879,9 +879,13 @@ export async function handleLoansStats(req: Request, env: Env): Promise<Response
     }
     // Asset-type breakdown for the active set (ERC-20 vs NFT rental).
     const assetTypeBreakdown = await env.DB.prepare(
+      // Same exclusion as the status counters above. Without it the
+       // ERC-20 / NFT active subtotals could EXCEED the `active` count
+       // beside them while a sale vehicle is open — two figures on one
+       // card disagreeing, which is worse than either being wrong alone.
       `SELECT asset_type, COUNT(*) as n
        FROM loans
-       WHERE chain_id = ? AND status = 'active'
+       WHERE chain_id = ? AND is_sale_vehicle = 0 AND status = 'active'
        GROUP BY asset_type`,
     )
       .bind(chainId)
@@ -906,8 +910,14 @@ export async function handleLoansStats(req: Request, env: Env): Promise<Response
     // past memory pressure we can add a precomputed
     // `volume_by_asset` materialised view.
     const volumeRows = await env.DB.prepare(
+      // And again for lifetime volume and average APR: a secondary sale
+      // is not an origination, so counting its bookkeeping row inflates
+      // volume and drags the rate average toward a number nobody agreed
+      // to. Every aggregate in this handler now excludes vehicles —
+      // the previous commit fixed one query and left these two, which
+      // is the third time this exact omission has been found.
       `SELECT lending_asset, principal, interest_rate_bps
-       FROM loans WHERE chain_id = ?`,
+       FROM loans WHERE chain_id = ? AND is_sale_vehicle = 0`,
     )
       .bind(chainId)
       .all<{ lending_asset: string; principal: string; interest_rate_bps: number }>();
