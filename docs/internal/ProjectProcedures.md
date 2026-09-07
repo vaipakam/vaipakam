@@ -331,25 +331,32 @@ source of truth and is unchanged by this section.
   1. an inline thread whose LATEST comment is not ours — a reviewer
      follow-up after our reply re-opens a thread we already answered, so
      "no reply from the author at all" is NOT the test; or
-  2. a review submission (`pulls/<N>/reviews`) that is both **current**
-     and **actionable**.
+  2. a review submission (`pulls/<N>/reviews`) that is still in force and
+     still unanswered.
 
-  **Current** means the LATEST non-dismissed submission from that
-  reviewer: the collection keeps every historical object, so an earlier
-  `CHANGES_REQUESTED` stays in the payload after the same reviewer later
-  approves, and acting on it chases feedback that has already been
-  withdrawn. Reduce each reviewer's history to their newest submission
-  before judging it, and drop anything `DISMISSED`.
+  Read the collection per reviewer, **dropping `DISMISSED` objects first**
+  (dismissing the newest must expose the one beneath it, not empty that
+  reviewer out), then judge two things SEPARATELY — they do not supersede
+  each other:
 
-  **Actionable** means `CHANGES_REQUESTED` (that is the API's READ value —
-  `REQUEST_CHANGES` is only the event name used when CREATING a review),
-  or `COMMENTED` whose body actually asks for something. A clean verdict
-  is `COMMENTED` with a non-empty body too, so body-is-non-empty is not
-  the test: a summary that reports no findings is informational, and
-  treating it as actionable leaves the heartbeat stuck on a PR that is
-  ready to merge. Conversely a "no major issues" summary is not a
-  verdict that overrides the inline threads — those are judged by rule 1
-  independently.
+  - **The standing verdict** is that reviewer's latest `APPROVED` or
+    `CHANGES_REQUESTED`. `CHANGES_REQUESTED` is actionable until the same
+    reviewer approves; a later `COMMENTED` does NOT withdraw it, so
+    "newest submission wins" is the wrong reduction — it hides a live
+    verdict behind an informational note. (`CHANGES_REQUESTED` is the
+    API's READ value; `REQUEST_CHANGES` is only the event name used when
+    CREATING a review.)
+  - **Each `COMMENTED` submission stands on its own**, oldest first. One
+    is actionable when its body actually asks for something AND we have
+    not replied to it — a later comment from the same reviewer does not
+    answer an earlier request, and our reply does answer it even though
+    the object itself never changes state. Body-is-non-empty is not the
+    test: a clean verdict is also `COMMENTED` with a non-empty body, and
+    treating it as actionable leaves the heartbeat stuck on a PR that is
+    ready to merge.
+
+  A "no major issues" summary is not a verdict that overrides the inline
+  threads either — those are judged by rule 1, independently.
 
   A `created_at` window silently skips findings posted before the window
   and never answered, which is why none of this keys on time.
