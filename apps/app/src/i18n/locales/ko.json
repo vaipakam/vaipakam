@@ -2432,7 +2432,7 @@
       "tiersHeading": "VPFI 할인 등급",
       "tiers": "등급",
       "tierThreshold": "{{n}}등급 임계값",
-      "tierValue": "{{raw}}(원값) → {{discount}} 할인",
+      "tierValue": "{{amount}} VPFI → {{discount}} 할인",
       "enabled": "사용",
       "disabled": "사용 안 함",
       "days": "일",

@@ -2432,7 +2432,7 @@
       "tiersHeading": "VPFI-Rabattstufen",
       "tiers": "Stufen",
       "tierThreshold": "Schwelle für Stufe {{n}}",
-      "tierValue": "{{raw}} (roh) → {{discount}} Rabatt",
+      "tierValue": "{{amount}} VPFI → {{discount}} Rabatt",
       "enabled": "aktiviert",
       "disabled": "deaktiviert",
       "days": "Tage",

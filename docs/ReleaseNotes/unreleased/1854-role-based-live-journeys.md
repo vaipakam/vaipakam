@@ -10,10 +10,13 @@ A new live driver covers the second question. Each scenario is written as
 a user goal with its desired outcome recorded BEFORE the run, and the
 actual outcome captured from the live page, so a run can be diffed
 against the previous one rather than merely going green. Roles are wallet
-postures rather than personas: a first-time visitor is reproduced by
-announcing no account AND refusing the account request, because a driver
-that lets the injected wallet connect itself is testing a returning user
-and calling it a first arrival.
+postures rather than personas: a first-time visitor is reproduced with no
+wallet installed at all, so the app's no-provider paths are the ones
+exercised. Two weaker versions were tried first and are worth naming — a
+wallet that connects itself tests a returning user, and a wallet that is
+installed but reports no accounts tests someone who has an extension and
+has not connected it. Neither reaches the code a visitor without a wallet
+actually runs.
 
 Fifteen scenarios ran against the deployed app and all fifteen passed.
 The one worth naming is the recovery flow: disconnected, it explains what

@@ -2432,7 +2432,7 @@
       "tiersHeading": "VPFI छूट स्तर",
       "tiers": "स्तर",
       "tierThreshold": "स्तर {{n}} की सीमा",
-      "tierValue": "{{raw}} (कच्चा) → {{discount}} छूट",
+      "tierValue": "{{amount}} VPFI → {{discount}} छूट",
       "enabled": "सक्षम",
       "disabled": "अक्षम",
       "days": "दिन",

@@ -883,21 +883,32 @@ export async function handleLoansStats(req: Request, env: Env): Promise<Response
        // ERC-20 / NFT active subtotals could EXCEED the `active` count
        // beside them while a sale vehicle is open — two figures on one
        // card disagreeing, which is worse than either being wrong alone.
-      // STUBS CARRY A PLACEHOLDER asset_type, NOT A READING OF ONE.
-      // When `LoanInitiatedDetails` is absent and the canonical read-back
-      // fails, the indexer inserts an active stub with `asset_type = 0`
-      // regardless of what the loan actually is, and leaves it there
-      // while healing keeps failing. Counting those published every such
-      // NFT rental as an active ERC-20 loan — a wrong classification
-      // presented as a measurement, which is the one thing the
-      // transparency page must not do. Excluded here; the `active` count
-      // above still includes them, so the subtotals may legitimately sum
-      // to less than `active` while stubs await healing. That direction
-      // is the honest one: undercounting a type is an admitted gap,
-      // where misfiling it is a false statement.
+      // EXCLUDE ROWS WITH NO ASSET METADATA — which is NOT the same set
+      // as `is_stub = 1`.
+      //
+      // Two different paths set that flag. Fallback B (no
+      // `LoanInitiatedDetails`, canonical read-back failed) inserts
+      // `asset_type = 0` regardless of what the loan is, so counting
+      // those published every such NFT rental as an active ERC-20 loan.
+      // The companion-event path ALSO sets `is_stub = 1`, but only
+      // because the two position token IDs are missing — it writes the
+      // REAL `assetType` from the event. Keying on the flag therefore
+      // dropped correctly classified loans from both subtotals while
+      // healing was merely delayed, which is its own inaccuracy.
+      //
+      // `lending_asset` is the discriminator: fallback B writes the
+      // literal `'0x'` placeholder, the companion path writes the actual
+      // address. So this asks the question that matters — do we know
+      // what this loan is? — rather than a flag that answers a
+      // different one.
+      //
+      // The `active` count above still includes both kinds, so the
+      // subtotals may sum to less than `active` while metadata-less rows
+      // await healing. That direction is the honest one: undercounting a
+      // type is an admitted gap, misfiling it is a false statement.
       `SELECT asset_type, COUNT(*) as n
        FROM loans
-       WHERE chain_id = ? AND is_sale_vehicle = 0 AND is_stub = 0
+       WHERE chain_id = ? AND is_sale_vehicle = 0 AND lending_asset != '0x'
          AND status = 'active'
        GROUP BY asset_type`,
     )

@@ -2432,7 +2432,7 @@
       "tiersHeading": "مستويات خصم VPFI",
       "tiers": "المستويات",
       "tierThreshold": "عتبة المستوى {{n}}",
-      "tierValue": "{{raw}} (خام) ← خصم {{discount}}",
+      "tierValue": "{{amount}} VPFI ← خصم {{discount}}",
       "enabled": "مُفعَّل",
       "disabled": "مُعطَّل",
       "days": "يومًا",

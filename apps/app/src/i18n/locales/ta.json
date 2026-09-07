@@ -2432,7 +2432,7 @@
       "tiersHeading": "VPFI தள்ளுபடி நிலைகள்",
       "tiers": "நிலைகள்",
       "tierThreshold": "நிலை {{n}} வரம்பு",
-      "tierValue": "{{raw}} (மூலம்) → {{discount}} தள்ளுபடி",
+      "tierValue": "{{amount}} VPFI → {{discount}} தள்ளுபடி",
       "enabled": "இயக்கப்பட்டது",
       "disabled": "முடக்கப்பட்டது",
       "days": "நாட்கள்",

@@ -2429,7 +2429,7 @@
       "tiersHeading": "VPFI discount tiers",
       "tiers": "Tiers",
       "tierThreshold": "Tier {{n}} threshold",
-      "tierValue": "{{raw}} (raw) → {{discount}} discount",
+      "tierValue": "{{amount}} VPFI → {{discount}} discount",
       "enabled": "enabled",
       "disabled": "disabled",
       "days": "days",

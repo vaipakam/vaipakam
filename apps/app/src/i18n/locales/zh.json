@@ -2432,7 +2432,7 @@
       "tiersHeading": "VPFI 折扣等级",
       "tiers": "等级",
       "tierThreshold": "等级 {{n}} 门槛",
-      "tierValue": "{{raw}}（原始值）→ {{discount}} 折扣",
+      "tierValue": "{{amount}} VPFI → 折扣 {{discount}}",
       "enabled": "已启用",
       "disabled": "已停用",
       "days": "天",

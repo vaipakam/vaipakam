@@ -2432,7 +2432,7 @@
       "tiersHeading": "Paliers de remise VPFI",
       "tiers": "Paliers",
       "tierThreshold": "Seuil du palier {{n}}",
-      "tierValue": "{{raw}} (brut) → {{discount}} de remise",
+      "tierValue": "{{amount}} VPFI → {{discount}} de réduction",
       "enabled": "activé",
       "disabled": "désactivé",
       "days": "jours",

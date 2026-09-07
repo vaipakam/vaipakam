@@ -45,9 +45,16 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
  * rather than dropped because it is what makes the vocabulary HONEST:
  * membership is enforced at classification, so an exit 2 from a driver
  * outside it is recorded as a FAIL. Reading it as BLOCKED would assert
- * "this surface ran but verified nothing" about a driver that never
- * agreed to mean that by exiting 2 (#1529 review round 19), and a new
- * driver is exactly the case where that could still happen.
+ * "do not take this as a pass" about a driver that never agreed to mean
+ * that by exiting 2 (#1529 review round 19), and a new driver is exactly
+ * the case where that could still happen.
+ *
+ * NOTE what BLOCKED does and does not say. It means the drive did not
+ * complete, so its surfaces are not fully reviewed. It does NOT mean the
+ * drive observed nothing: a multi-role driver may pass every scenario
+ * for one role and then hit a setup failure on the next, keeping those
+ * results and its report while still exiting 2. This file used to say
+ * "ran but verified nothing", which erased exactly those observations.
  *
  * So: ADD A NEW DRIVER HERE when you add one. Honouring the contract is
  * a requirement for a driver in this directory, not an aspiration — and
@@ -155,9 +162,23 @@ if (unmigratedFails.length) {
 }
 const blocked = results.filter((r) => r.verdict === 'BLOCKED');
 if (blocked.length) {
+  // "VERIFIED NOTHING" IS NOT ALWAYS TRUE, and stating it flatly erased
+  // real observations (#2069 review round 13). A multi-role driver can
+  // pass every visitor scenario and then hit a setup failure on a later
+  // role: it deliberately keeps those results, writes its report, and
+  // exits 2 so the run is not called green. Reporting that as "ran but
+  // verified nothing" contradicted the very report the driver went to
+  // trouble to preserve — and told the operator to re-review surfaces
+  // that had just been reviewed.
+  //
+  // BLOCKED still means "do not read this as a pass". It does not mean
+  // the drive saw nothing, so the wording no longer claims it does and
+  // points at the report instead.
   console.log(
-    `\n${blocked.length} drive(s) BLOCKED — ran but verified nothing, so these` +
-      ` surfaces are still unreviewed:\n` +
+    `\n${blocked.length} drive(s) BLOCKED — did not complete, so their` +
+      ` surfaces are not fully reviewed. A blocked drive may still have` +
+      ` verified some scenarios before it stopped; check its report or` +
+      ` output rather than assuming nothing was covered:\n` +
       blocked.map((r) => `  ${r.script}`).join('\n'),
   );
 }

@@ -2432,7 +2432,7 @@
       "tiersHeading": "Niveles de descuento VPFI",
       "tiers": "Niveles",
       "tierThreshold": "Umbral del nivel {{n}}",
-      "tierValue": "{{raw}} (bruto) → {{discount}} de descuento",
+      "tierValue": "{{amount}} VPFI → {{discount}} de descuento",
       "enabled": "activado",
       "disabled": "desactivado",
       "days": "días",

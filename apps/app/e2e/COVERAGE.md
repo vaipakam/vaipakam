@@ -545,7 +545,8 @@ feature row while failing that.
 is a user GOAL with a DESIRED outcome written down before the run and the
 ACTUAL captured from the live page, so a run diffs against the last one
 instead of just going green. Roles are wallet postures: `visitor` (no
-announced account **and** `eth_requestAccounts` refused — the only honest
+announced account and NO injected provider at all — a keyless session, so
+the app's no-provider branches are the ones exercised; the only honest
 reproduction of a first arrival; letting the injected wallet auto-connect
 tests a returning user), plus connected `lender` / `borrower`.
 

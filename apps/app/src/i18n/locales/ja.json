@@ -2432,7 +2432,7 @@
       "tiersHeading": "VPFI 割引ティア",
       "tiers": "ティア",
       "tierThreshold": "ティア {{n}} のしきい値",
-      "tierValue": "{{raw}}（生値）→ {{discount}} の割引",
+      "tierValue": "{{amount}} VPFI → {{discount}} 割引",
       "enabled": "有効",
       "disabled": "無効",
       "days": "日",

@@ -284,7 +284,15 @@ export function ProtocolConsole() {
             ) : (
               (v.tierThresholds ?? []).map((t, i) => (
                 <Row
-                  key={t}
+                  // KEYED BY TIER INDEX, NOT BY VALUE. `ConfigFacet`
+                  // permits `e3 <= e4`, so two thresholds may be equal —
+                  // a valid governance configuration that gave two rows
+                  // the same React key, producing a duplicate-key error
+                  // and letting React reuse the wrong row when a later
+                  // snapshot changes. On a page whose purpose is
+                  // identifying each governance value precisely, the
+                  // identity is the tier, not the number in it.
+                  key={`tier-${i}`}
                   label={copy.protocolConsole.tierThreshold(i + 1)}
                   value={copy.protocolConsole.tierValue(
                     // BASE UNITS IN, TOKEN UNITS OUT (review round 5 P2),

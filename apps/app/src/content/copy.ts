@@ -4580,7 +4580,13 @@ const copySource = {
     tiersHeading: 'VPFI discount tiers',
     tiers: 'Tiers',
     tierThreshold: tmpl('Tier {{n}} threshold', ['n']),
-    tierValue: tmpl('{{raw}} (raw) → {{discount}} discount', ['raw', 'discount']),
+    // `{{amount}}` arrives in VPFI TOKEN units — `exactAmountString`
+    // converts the 18-decimal base-unit string before it gets here. The
+    // placeholder was named `raw` and the template said "(raw)" back
+    // when the value really was base units; after the conversion that
+    // label described the number as something it is no longer, which is
+    // worse than no label at all on a page read for exact figures.
+    tierValue: tmpl('{{amount}} VPFI → {{discount}} discount', ['amount', 'discount']),
     enabled: 'enabled',
     disabled: 'disabled',
     days: 'days',
