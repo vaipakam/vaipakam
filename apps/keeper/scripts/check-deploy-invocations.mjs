@@ -3326,20 +3326,27 @@ function configIsRewritten(text, cfgPath, at = null) {
   // Over-reports a file that names the config and writes something else. That
   // is the cheap direction by construction, and the remedy at the call site is
   // one flag.
-  if (writes.length === 0) {
-    const named = new RegExp(Q + String.raw`[^"'\`]*` + esc + Q).exec(text);
-    if (named !== null) {
-      const ANY_WRITE = new RegExp(
-        String.raw`(?:writeFile(?:Sync)?|appendFile(?:Sync)?|createWriteStream` +
-          String.raw`|outputFile(?:Sync)?|write_text|write_bytes)\s*\(` +
-          String.raw`|\.\s*open\s*\(\s*(?:mode\s*=\s*)?` + Q + String.raw`[rbt]*[wax+]` +
-          String.raw`|\bopen\s*\([^)]*,\s*(?:mode\s*=\s*)?` + Q + String.raw`[rbt]*[wax+]`,
-        'g',
-      );
-      for (const w of text.matchAll(ANY_WRITE)) {
-        if (w.index > named.index) writes.push(w.index);
-      }
+  // Collected UNCONDITIONALLY, not only when nothing else matched. Gating this
+  // on an empty list let a directly-named write AFTER the deploy suppress the
+  // scan entirely, so a bound write BEFORE it went unseen (Codex #2066 r7).
+  const named = new RegExp(esc).exec(text);
+  if (named !== null) {
+    // Copies are writes here too: `copyFileSync("gen.jsonc", cfg)` puts no
+    // name in the call, so the name-bearing COPY pattern above cannot see it
+    // either (r7).
+    const ANY_WRITE = new RegExp(
+      String.raw`(?:writeFile(?:Sync)?|appendFile(?:Sync)?|createWriteStream` +
+        String.raw`|outputFile(?:Sync)?|write_text|write_bytes` +
+        String.raw`|copyFile(?:Sync)?|cpSync|rename(?:Sync)?|copy|move)\s*\(` +
+        String.raw`|(?:^|[\s;&|(])(?:cp|mv|install|rsync)\s` +
+        String.raw`|\.\s*open\s*\(\s*(?:mode\s*=\s*)?` + Q + String.raw`[rbt]*[wax+]` +
+        String.raw`|\bopen\s*\([^)]*,\s*(?:mode\s*=\s*)?` + Q + String.raw`[rbt]*[wax+]`,
+      'gm',
+    );
+    for (const w of text.matchAll(ANY_WRITE)) {
+      if (w.index > named.index) writes.push(w.index);
     }
+    writes.sort((a, b) => a - b);
   }
   if (writes.length === 0) return false;
   // ...AND THE WRITE HAS TO COME FIRST. Scanning the whole file without

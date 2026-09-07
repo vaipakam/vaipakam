@@ -8963,6 +8963,48 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(r.ok).toBe(false);
   });
 
+  it('a COPY through a bound name is a rewrite (#2066 r7)', () => {
+    // The name-bearing copy pattern cannot see a basename that is not in the
+    // call, so copies belong in the named-write set too.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'c.mjs',
+      'const cfg = "configs/custom.jsonc";\n' +
+        'copyFileSync("gen.jsonc", cfg);\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a later direct write does not suppress the named scan (#2066 r7)', () => {
+    // Gating the scan on "nothing else matched" let a write AFTER the deploy
+    // hide a bound write BEFORE it.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'd.mjs',
+      'const cfg = "configs/custom.jsonc";\n' +
+        'writeFileSync(cfg, "{}");\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n' +
+        'writeFileSync("configs/custom.jsonc", "{}");\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('an UNQUOTED shell binding names the config too (#2066 r7)', () => {
+    // Shell assignments routinely leave constant paths unquoted.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'w.sh',
+      'export CFG=configs/custom.jsonc\n' +
+        'node -e "require(\'fs\').writeFileSync(process.env.CFG,\'{}\')"\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
   it('the PROSE path invalidates a rewritten config too', () => {
     // That path passed the rewrite context to the safety reader and not to the
     // identity reader, so the identity half trusted the stale copy and sent the
