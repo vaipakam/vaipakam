@@ -2434,7 +2434,7 @@
       "days": "days",
       "provenance": "Read from the public indexer’s configuration snapshot",
       "provenanceBlock": " at block {{block}}",
-      "provenanceAge": ", taken {{age}} ago",
+      "provenanceAge": ", taken {{age}}",
       "provenanceAgeUnknown": ", with no timestamp on it — so how current these values are is unknown",
       "provenanceTail": ". The same endpoint is keyless and open-CORS, so you can verify any figure here independently rather than taking this page’s word for it.",
       "bpsValue": "{{pct}}% ({{bps}} bps)",

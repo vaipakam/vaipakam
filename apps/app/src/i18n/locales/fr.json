@@ -2444,7 +2444,7 @@
       "minutesValue": "{{m}} min ({{s}} s)",
       "secondsValue": "{{s}} s",
       "undated": "Cet instantané ne porte aucun horodatage : impossible de savoir quel âge ont ces valeurs. Elles peuvent être à jour comme largement dépassées — lisez-les comme non vérifiées, et non comme la configuration actuelle du protocole.",
-      "provenanceAge": ", prise il y a {{age}}",
+      "provenanceAge": ", prise {{age}}",
       "provenanceAgeUnknown": ", sans horodatage — l'actualité de ces valeurs est donc inconnue"
     }
   },

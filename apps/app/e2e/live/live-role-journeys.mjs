@@ -253,10 +253,18 @@ const SCENARIOS = [
         };
       }
       if (anyUnavailable && walletBlocked) {
+        // NOT A PASS. The wallet-specific block renders the same
+        // "unavailable" title the oracle-unset posture does, so this
+        // scenario cannot tell them apart — and its whole purpose is to
+        // observe the ORACLE setting. Reporting PASS here would have the
+        // run assert it checked something it demonstrably did not, with
+        // the note underneath saying so. Re-run against an unflagged
+        // wallet to actually verify it.
         return {
-          ok: inputs === 0,
-          actual: `wallet-specific block, inputs=${inputs}`,
-          note: 'blocked for THIS wallet — says nothing about the oracle setting',
+          unverified: true,
+          ok: false,
+          actual: `wallet-specific block, inputs=${inputs} — oracle posture NOT observed`,
+          note: 'blocked for THIS wallet; the oracle setting is unverified. Re-run with an unflagged wallet.',
         };
       }
       return {
@@ -454,6 +462,16 @@ async function navigate(page, route) {
 const results = [];
 const setupFailures = [];
 let hardFail = 0;
+// A THIRD VERDICT, because two were not enough (review round 4 P2).
+// R1 can land in a posture where the page is correct and the scenario
+// still learned nothing: a sanctions-flagged wallet gets the same
+// "recovery isn't available" title the oracle-unset case produces, so
+// "no form rendered" is true and says nothing about the oracle setting
+// the scenario exists to check. Recording that as PASS let the run
+// claim it had verified something it had not — and the note beside it
+// already admitted as much, which is a verdict contradicting its own
+// evidence. FAIL is equally wrong: nothing is broken.
+let unverified = 0;
 
 for (const roleKey of wanted) {
   const scenarios = SCENARIOS.filter((s) => s.role === roleKey);
@@ -555,6 +573,7 @@ for (const roleKey of wanted) {
     let ok = false;
     let actual = '';
     let note = '';
+    let unverifiable = false;
     try {
       await navigate(page, s.route);
       // Per-scenario settle: a surface whose state arrives from an async
@@ -566,13 +585,23 @@ for (const roleKey of wanted) {
       ok = r.ok;
       actual = r.actual;
       note = r.note ?? '';
+      unverifiable = r.unverified === true;
     } catch (err) {
       actual = `ERROR: ${String(err.message || err).slice(0, 120)}`;
     }
-    if (!ok) hardFail += 1;
-    results.push({ ...s, roleKey, ok, actual, note, check: undefined });
+    if (unverifiable) unverified += 1;
+    else if (!ok) hardFail += 1;
+    results.push({
+      ...s,
+      roleKey,
+      ok: unverifiable ? null : ok,
+      unverified: unverifiable,
+      actual,
+      note,
+      check: undefined,
+    });
     console.log(
-      `${ok ? 'PASS' : 'FAIL'}  ${s.id}  [${roleKey}] ${s.route}\n` +
+      `${unverifiable ? 'UNVERIFIED' : ok ? 'PASS' : 'FAIL'}  ${s.id}  [${roleKey}] ${s.route}\n` +
         `      goal    : ${s.goal}\n` +
         `      desired : ${s.desired}\n` +
         `      actual  : ${actual}${note ? `\n      note    : ${note}` : ''}`,
@@ -662,8 +691,15 @@ for (const roleKey of wanted) {
 
 console.log(
   `\n=== ${SITE} — ${results.length} scenario(s), ` +
-    `${results.length - hardFail} pass, ${hardFail} fail ===`,
+    `${results.length - hardFail - unverified} pass, ${hardFail} fail` +
+    `${unverified ? `, ${unverified} unverified` : ''} ===`,
 );
+if (unverified) {
+  console.log(
+    `  ${unverified} scenario(s) could not be verified — counted as neither ` +
+      'pass nor fail. See their notes; they are not evidence of correctness.',
+  );
+}
 
 if (process.env.JOURNEY_JSON) {
   // The usage example advertises `out/report.json`. Without this, every

@@ -2444,7 +2444,7 @@
       "minutesValue": "{{m}}분 ({{s}}초)",
       "secondsValue": "{{s}}초",
       "undated": "이 스냅샷에는 타임스탬프가 없어 값이 얼마나 오래되었는지 알 수 없습니다. 최신일 수도, 이미 오래전에 대체되었을 수도 있습니다 — 프로토콜의 현재 설정이 아니라 검증되지 않은 값으로 읽으십시오.",
-      "provenanceAge": ", {{age}} 전에 수집됨",
+      "provenanceAge": ", {{age}} 수집됨",
       "provenanceAgeUnknown": ", 타임스탬프가 없어 얼마나 최신인지 알 수 없음"
     }
   },

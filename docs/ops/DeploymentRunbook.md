@@ -1824,15 +1824,29 @@ advertises a hostname that nothing answers.
 
 ### Retiring a surface — redirect, don't delete
 
-**`defi.vaipakam.com` is not retirable yet, and not just for bookmark
-reasons.** The #1854 rename rehomed the connected app but did not port
-every surface the old one served: `apps/app` defines no `/analytics`
-and no `/protocol-console`, so that host is still the only thing
-serving those two public tools, and the marketing site links to them
-there on purpose. Retiring it — or blanket-redirecting it to
-`app.vaipakam.com`, which would land those links on the app's NotFound
-page — breaks them. Port the tools first, then retire. (The NFT
-Verifier is fine: it WAS ported, as `/nft`.)
+**`defi.vaipakam.com` is now retirable as a link target, with one
+condition that is NOT about links.** The blocker recorded here for
+months was that `apps/app` defined neither `/analytics` nor
+`/protocol-console`, so that host was the only thing serving those two
+public tools. #1959 ported both, and `APP_TARGET` was flipped with
+them, so the marketing site's links resolve to `app.vaipakam.com` and
+every destination they name exists there. (The NFT Verifier was
+already fine: it was ported as `/nft`.)
+
+What remains is the `/recover` guide links, and they are held for a
+different reason than a missing route — porting them is not what
+unblocks it. That flow keeps its pending-recovery marker in
+**same-origin browser storage**, so somebody mid-recovery who is sent
+to the new origin cannot see their own marker and may broadcast a
+second recovery. A redirect does not help: it lands on the new origin
+too. Those links move once the legacy host's in-flight attempts have
+drained, which is a decision about elapsed time and observed traffic,
+not about code.
+
+So: converting `defi.vaipakam.com` into a redirect is safe for every
+tool link today. Retiring it **outright** should wait for the recovery
+drain. See the notes beside `APP_TARGET` in
+`apps/www/src/lib/appUrl.ts` for the current state.
 
 For a host that is genuinely superseded, converting its Worker into a
 redirect beats deleting it: bookmarks and external links keep working,

@@ -4585,7 +4585,15 @@ const copySource = {
     // The age is stated in the SAME sentence as the source, so a reader
     // cannot take in where a figure came from without also taking in how
     // old it is. An undated snapshot says so rather than saying nothing.
-    provenanceAge: tmpl(', taken {{age}} ago', ['age']),
+    //
+    // `{{age}}` ARRIVES AS A COMPLETE RELATIVE PHRASE — "12s ago",
+    // "vor 12 s", "12 秒前" — because it comes from the same
+    // `ageSeconds`/`ageMinutes`/`ageHours` templates the analytics page
+    // renders on their own. So this wrapper must NOT add a relative
+    // marker of its own. The first version did, in English and in all
+    // nine translations at once, producing "taken 12s ago ago" and
+    // "aufgenommen vor vor 12 s" everywhere.
+    provenanceAge: tmpl(', taken {{age}}', ['age']),
     provenanceAgeUnknown:
       ', with no timestamp on it — so how current these values are is unknown',
     provenanceTail:

@@ -133,8 +133,16 @@ export async function blocked(why, err, cleanup) {
  * #1590 r6 added went dead without any test noticing.
  */
 export class LiveSetupError extends Error {
-  constructor(what, cause) {
-    super(`browser setup failed (${what})`);
+  /**
+   * `kind` names WHAT failed to set up. It defaulted to the browser
+   * because that was the only thing this covered; credential resolution
+   * now raises it too, and reporting a missing dev-wallet key as
+   * "browser setup failed" sends the reader to check Chromium and their
+   * disk. The prefix is the first thing an operator reads on a blocked
+   * run, so it has to name the right thing.
+   */
+  constructor(what, cause, kind = 'browser') {
+    super(`${kind} setup failed (${what})`);
     this.name = 'LiveSetupError';
     this.cause = cause;
   }
@@ -651,9 +659,42 @@ export async function launch({
   onSetupFailure = 'blocked',
 } = {}) {
   requireSiteUrl();
-  const account = keyless
-    ? null
-    : privateKeyToAccount(walletFor(role).privateKey);
+  // CREDENTIAL RESOLUTION HONOURS `onSetupFailure` TOO (#2069 review
+  // round 4 P2). `walletFor` reports a bad or missing credential through
+  // `blockedSync`, which exits the PROCESS — and this call sits above
+  // the `setup()` wrapper below, so a caller that asked for `'throw'`
+  // got the exit anyway. For a multi-role driver that means a missing
+  // borrower key discards the visitor and lender findings already
+  // gathered, before the JSON report is written and before
+  // failure-over-blocked precedence is applied: the one outcome the
+  // throw mode exists to prevent, reached through the one setup step it
+  // did not cover.
+  //
+  // `blockedSync` is still the right default — a driver that never asked
+  // to accumulate should stop at a bad credential.
+  let account = null;
+  if (!keyless) {
+    if (onSetupFailure === 'throw') {
+      // Resolve without the exiting path: read the file directly and
+      // raise a LiveSetupError the caller can catch, matching how every
+      // other setup failure reaches an accumulating caller.
+      const wallets = loadWallets();
+      const key = wallets?.[role]?.privateKey;
+      if (typeof key !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(key)) {
+        const roles = Object.keys(wallets ?? {});
+        throw new LiveSetupError(
+          `the dev wallet file has no usable credential for role "${role}" —` +
+            ` no valid privateKey.\n  path:  ${WALLETS_PATH}` +
+            `\n  roles: ${roles.length ? roles.join(', ') : '(none)'}`,
+          undefined,
+          'credential',
+        );
+      }
+      account = privateKeyToAccount(key);
+    } else {
+      account = privateKeyToAccount(walletFor(role).privateKey);
+    }
+  }
   let chainId = startChainId;
   let authorized = preAuthorized;
 

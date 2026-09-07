@@ -2444,7 +2444,7 @@
       "minutesValue": "{{m}} Min. ({{s}} s)",
       "secondsValue": "{{s}} s",
       "undated": "Diese Momentaufnahme trägt keinen Zeitstempel, daher lässt sich nicht sagen, wie alt diese Werte sind. Sie können aktuell oder längst überholt sein — lesen Sie sie als ungeprüft, nicht als die gegenwärtige Konfiguration des Protokolls.",
-      "provenanceAge": ", aufgenommen vor {{age}}",
+      "provenanceAge": ", aufgenommen {{age}}",
       "provenanceAgeUnknown": ", ohne Zeitstempel — wie aktuell diese Werte sind, ist daher unbekannt"
     }
   },

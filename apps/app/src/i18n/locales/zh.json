@@ -2444,7 +2444,7 @@
       "minutesValue": "{{m}} 分钟（{{s}} 秒）",
       "secondsValue": "{{s}} 秒",
       "undated": "该快照没有时间戳，因此无法判断这些值有多旧。它们可能是最新的，也可能早已被取代 — 请将其视为未经核实的值，而非协议当前的配置。",
-      "provenanceAge": "，采集于 {{age}}前",
+      "provenanceAge": "，采集于 {{age}}",
       "provenanceAgeUnknown": "，且没有时间戳 — 因此这些值的新旧程度未知"
     }
   },
