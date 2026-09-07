@@ -4823,6 +4823,26 @@ census exists to refuse, reintroduced by the machinery meant to prevent it.
 then class 3 there is undetermined, and the artifact says so rather than
 rounding it to zero.
 
+**The refusal was then confirmed independently, and the confirmation is the
+part worth keeping.** Archive `eth_getCode` probes bound the Diamond's creation
+to a ~27k-block window: no code at the artifact's recorded `deployBlock`
+(43,137,050), code present by 43,164,017. So the scan's lower bound was
+*valid* — the contract genuinely did not exist before it — and the range was
+not the problem. Querying the public endpoint for **any** log from that address
+across the whole creation window returns **zero**, with no error, even though
+the contract demonstrably came into existence inside it.
+
+So that endpoint prunes receipts as well as state and reports the gap as
+**emptiness rather than as failure**. There is no error to catch and no
+exception to classify; the only signal is a count that cannot be true. That is
+precisely why the zero-cut check has to be an assertion about the *result*
+rather than a `try`/`catch` around the request — and why "the scan came back
+clean" is worth nothing here until something proves the scan could have come
+back dirty.
+
+(The census's other four chains are unaffected: three read live state through a
+routed getter, and sepolia's cut history returned three real cuts.)
+
 **Only after the census does slice sequencing begin.** Closure 3's RESOLVER
 is independent and small and can land early — but its
 **canonical matrix cells cannot land before slice 4**, and an earlier revision
