@@ -3260,6 +3260,194 @@ function lineStartOffset(text, lineNo, within = null) {
  * the identity goes UNREAD — the inversion's case, which reports — so the
  * conservative direction is the cheap one.
  */
+/**
+ * Quote-aware whitespace split of a shell argument list.
+ *
+ * Returns `null` when the text contains something whose word boundaries this
+ * reader cannot honestly resolve — an unterminated quote, or a substitution
+ * (`$(…)`, `${…}`, backticks) whose expansion could contain any number of
+ * words, including the destination. A null answer is the caller's signal to
+ * fall back to the imprecise-but-safe whole-command match rather than to guess
+ * at a position.
+ */
+function shellWords(text) {
+  if (/\$\(|\$\{|`/.test(text)) return null;
+  const words = [];
+  let buf = '';
+  let quote = null;
+  let started = false;
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    if (quote) {
+      if (ch === '\\' && quote === '"') {
+        buf += text[i + 1] ?? '';
+        i += 1;
+      } else if (ch === quote) quote = null;
+      else buf += ch;
+      continue;
+    }
+    if (ch === '\\') {
+      buf += text[i + 1] ?? '';
+      i += 1;
+      started = true;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      started = true;
+      continue;
+    }
+    if (/\s/.test(ch)) {
+      if (started) words.push(buf);
+      buf = '';
+      started = false;
+      continue;
+    }
+    buf += ch;
+    started = true;
+  }
+  if (quote) return null;
+  if (started) words.push(buf);
+  return words;
+}
+
+/**
+ * Split a call's argument region on TOP-LEVEL commas, honouring quotes and
+ * nesting. `null` when the region does not close inside `text`, which the
+ * caller treats the same way as an unreadable shell word list.
+ */
+function callArgs(text, openParenAt) {
+  const args = [];
+  let depth = 0;
+  let quote = null;
+  let buf = '';
+  for (let i = openParenAt; i < text.length; i += 1) {
+    const ch = text[i];
+    if (quote) {
+      if (ch === '\\') {
+        buf += ch + (text[i + 1] ?? '');
+        i += 1;
+      } else {
+        if (ch === quote) quote = null;
+        buf += ch;
+      }
+      continue;
+    }
+    if (ch === '"' || ch === "'" || ch === '`') {
+      quote = ch;
+      buf += ch;
+      continue;
+    }
+    if (ch === '(' || ch === '[' || ch === '{') {
+      depth += 1;
+      if (depth === 1) continue;
+    } else if (ch === ')' || ch === ']' || ch === '}') {
+      depth -= 1;
+      if (depth === 0) {
+        args.push(buf);
+        return args;
+      }
+    } else if (ch === ',' && depth === 1) {
+      args.push(buf);
+      buf = '';
+      continue;
+    }
+    if (depth >= 1) buf += ch;
+  }
+  return null;
+}
+
+// Shell copy/move commands, and the library calls with the same effect. Both
+// take the destination in a fixed position, which is what makes reading it
+// cheaper than the alternative of resolving paths.
+const COPY_SHELL_RE = /(?:^|[\s;&|(])(cp|mv|install|rsync)\s([^\n]*)/g;
+const COPY_CALL_RE = /\b(?:copyFile|copyFileSync|rename|renameSync|cpSync|copy|move)\s*\(/g;
+
+/**
+ * Offsets of copy/move commands that write INTO `base`.
+ *
+ * Shell: the destination is the last non-flag word, unless `-t` /
+ * `--target-directory` names it explicitly — that flag inverts the argument
+ * order, so reading "the last word" would mistake the final SOURCE for the
+ * destination. Library calls: the destination is the second argument.
+ *
+ * Every path that cannot be read confidently — an unresolvable word list, a
+ * call that does not close, too few arguments — falls back to reporting the
+ * whole command as a write, which is the behaviour this replaced.
+ */
+function copyWriteOffsets(text, base, cfgDir) {
+  const hits = [];
+  const mentions = (s) => typeof s === 'string' && s.includes(base);
+  const baseOf = (w) => (typeof w === 'string' ? w.slice(w.lastIndexOf('/') + 1) : '');
+  // A word that can only name a directory, so a copy into it preserves the
+  // source's basename rather than renaming to this word.
+  const isDirWord = (w) => typeof w === 'string' && (w.endsWith('/') || w === '.' || w === '..');
+  // Could this directory word name the config's own directory? Unresolvable
+  // words answer YES, so the conservative direction survives wherever the
+  // comparison cannot actually be made.
+  const dirCouldBe = (dir, cfg) => {
+    if (typeof dir !== 'string' || dir === '') return true;
+    const d = dir.endsWith('/') ? dir.slice(0, -1) : dir;
+    if (d === '' || d === '.' || d === '..' || d.includes('..')) return true;
+    if (typeof cfg !== 'string' || cfg === '') return true;
+    return d === cfg || cfg.endsWith(`/${d}`) || d.endsWith(`/${cfg}`);
+  };
+  for (const m of text.matchAll(COPY_SHELL_RE)) {
+    // The command ends at the first UNQUOTED separator; a later `cp` in the
+    // same line is matched separately, on its own offset.
+    let rest = m[2];
+    const cut = shellWords(rest) === null ? -1 : rest.search(/[;&|]/);
+    if (cut >= 0) rest = rest.slice(0, cut);
+    const words = shellWords(rest);
+    if (words === null) {
+      if (mentions(m[2])) hits.push(m.index);
+      continue;
+    }
+    const tIdx = words.findIndex((w) => w === '-t' || w === '--target-directory');
+    const inlineT = words.find((w) => w.startsWith('--target-directory='));
+    const positional = words.filter(
+      (w, i) => !w.startsWith('-') && !(tIdx >= 0 && i === tIdx + 1),
+    );
+    // COPYING INTO A DIRECTORY KEEPS THE SOURCE'S NAME. `cp x/wrangler.jsonc
+    // apps/thing/` and `cp -t apps/thing x/wrangler.jsonc` both land ON the
+    // config, so reading only the last word — a directory, which never carries
+    // the basename — would call a real overwrite a read. In that form the
+    // sources decide it.
+    const intoDir =
+      inlineT !== undefined || tIdx >= 0 || (positional.length >= 2 && isDirWord(positional[positional.length - 1]));
+    if (intoDir) {
+      const sources = inlineT !== undefined || tIdx >= 0 ? positional : positional.slice(0, -1);
+      const dir =
+        inlineT !== undefined
+          ? inlineT.slice('--target-directory='.length)
+          : tIdx >= 0
+            ? words[tIdx + 1]
+            : positional[positional.length - 1];
+      // …but only if that directory can be the CONFIG's directory. Backing the
+      // config up with `cp -t /tmp/backups apps/thing/wrangler.jsonc` carries a
+      // matching source basename and still writes nothing here; treating the
+      // form itself as a write just moves #2053's false red rather than fixing
+      // it. A directory this reader cannot place — `.`, `..`, or a config whose
+      // own directory is unknown — stays conservative.
+      if (sources.some((w) => baseOf(w) === base) && dirCouldBe(dir, cfgDir)) hits.push(m.index);
+      continue;
+    }
+    const dest = positional.length >= 2 ? positional[positional.length - 1] : undefined;
+    if (dest !== undefined && baseOf(dest) === base) hits.push(m.index);
+    else if (dest === undefined && mentions(m[2])) hits.push(m.index);
+  }
+  for (const m of text.matchAll(COPY_CALL_RE)) {
+    const open = m.index + m[0].length - 1;
+    const args = callArgs(text, open);
+    if (args === null || args.length < 2) {
+      if (mentions(text.slice(m.index, m.index + 400))) hits.push(m.index);
+      continue;
+    }
+    if (mentions(args[1])) hits.push(m.index);
+  }
+  return hits;
+}
+
 function configIsRewritten(text, cfgPath, at = null) {
   const base = cfgPath.slice(cfgPath.lastIndexOf('/') + 1);
   if (!base) return false;
@@ -3290,22 +3478,30 @@ function configIsRewritten(text, cfgPath, at = null) {
     Q + String.raw`[^"'\`]*` + esc + Q +
     String.raw`\s*\)?\s*\.\s*open\s*\(\s*` + Q + String.raw`[rbt]*[wax+]`;
   const REDIRECT = String.raw`>\s*\S*` + esc;
-  // A COPY IS A WRITE. `cp generated.jsonc configs/custom.jsonc` replaces the
-  // file wrangler will load just as surely as writing it does, and a scan for
-  // write CALLS saw none (#2036 r28). Matched as "a copy/move command
-  // mentioning this basename", not by parsing the destination: the conservative
-  // direction here is to treat the config as unreadable, which reports.
-  const COPY =
-    String.raw`(?:^|[\s;&|(])(?:cp|mv|install|rsync)\s[^\n]*?` + esc +
-    String.raw`|(?:copyFile|rename|cpSync|copyFileSync|renameSync|copy|move)\s*\([^)]*` + esc;
+  // A COPY IS A WRITE — BUT ONLY INTO THE DESTINATION. `cp generated.jsonc
+  // configs/custom.jsonc` replaces the file wrangler will load just as surely
+  // as writing it does, and a scan for write CALLS saw none (#2036 r28). That
+  // was first matched as "a copy/move command mentioning this basename",
+  // without reading which side the name was on, on the grounds that the
+  // conservative direction is to treat the config as unreadable.
+  //
+  // The direction is only conservative for a DESTINATION. Copying the config
+  // somewhere else is a READ — the file is untouched — and counting it refused
+  // the checked-in `keep_vars` and reported a legitimate deploy, blaming that
+  // deploy for a verdict a neighbouring `cp` caused (#2053). Destinations are
+  // read by position now; anything the reader cannot resolve confidently still
+  // falls back to the whole-command match, so the conservative behaviour is
+  // kept exactly where it earns something.
   const writes = [
     ...text.matchAll(
       new RegExp(
-        [WRITE_CALL, OPEN_WRITE, RECEIVER_WRITE, RECEIVER_OPEN, REDIRECT, COPY].join('|'),
+        [WRITE_CALL, OPEN_WRITE, RECEIVER_WRITE, RECEIVER_OPEN, REDIRECT].join('|'),
         'g',
       ),
     ),
   ].map((m) => m.index);
+  writes.push(...copyWriteOffsets(text, base, cfgPath.slice(0, cfgPath.lastIndexOf('/'))));
+  writes.sort((a, b) => a - b);
   if (writes.length === 0) return false;
   // ...AND THE WRITE HAS TO COME FIRST. Scanning the whole file without
   // comparing positions let maintenance code BELOW a deploy invalidate the

@@ -8883,6 +8883,91 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(r.ok).toBe(false);
   });
 
+  it('a COPY whose SOURCE is the config is a READ, not a rewrite (#2053)', () => {
+    // Backing the config up leaves it untouched. Counting the mention refused
+    // the checked-in keep_vars and reported a legitimate deploy, blaming that
+    // deploy for a verdict the neighbouring `cp` caused.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'w.sh',
+      'cp configs/custom.jsonc /tmp/backup-custom.jsonc\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a COPY INTO the config directory is still a rewrite (#2053)', () => {
+    // The destination is a directory, so the source keeps its basename and
+    // lands ON the config. Reading only the last word would call this a read.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-www", "keep_vars": true}\n');
+    const r = runWith(
+      'w.sh',
+      'cp generated/custom.jsonc configs/\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('`cp -t` INTO the config directory is a rewrite (#2053)', () => {
+    // `-t` inverts the argument order, so the final word is a SOURCE.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-www", "keep_vars": true}\n');
+    const r = runWith(
+      'w.sh',
+      'cp -t configs generated/custom.jsonc\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('`cp -t` to an UNRELATED directory is a backup, not a rewrite (#2053)', () => {
+    // Same inverted form, matching source basename — and still no write here.
+    // Treating the form itself as a write just moves the false red.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'w.sh',
+      'cp -t /tmp/backups configs/custom.jsonc\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a copy whose destination cannot be read stays conservative (#2053)', () => {
+    // A substitution can expand to any number of words, including the
+    // destination, so no position is trustworthy and the whole command counts.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-www", "keep_vars": true}\n');
+    const r = runWith(
+      'w.sh',
+      'cp $(generate) configs/custom.jsonc\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('copyFileSync FROM the config is a read; INTO it is a rewrite (#2053)', () => {
+    // The library form takes its destination in the second argument.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const read = runWith(
+      'backup.mjs',
+      'copyFileSync("configs/custom.jsonc", "/tmp/bak.jsonc");\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(read.ok).toBe(true);
+
+    seed('configs/other.jsonc', '{"name": "vaipakam-www", "keep_vars": true}\n');
+    const write = runWith(
+      'install.mjs',
+      'copyFileSync("gen.jsonc", "configs/other.jsonc");\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/other.jsonc"]);\n',
+    );
+    expect(write.ok).toBe(false);
+  });
+
   it('the PROSE path invalidates a rewritten config too', () => {
     // That path passed the rewrite context to the safety reader and not to the
     // identity reader, so the identity half trusted the stale copy and sent the
