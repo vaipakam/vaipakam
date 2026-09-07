@@ -9118,6 +9118,44 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(r.ok).toBe(true);
   });
 
+  it('a SECOND copy on the same line is examined on its own (#2053)', () => {
+    // The argument capture runs to end of line, so the first command's match
+    // swallowed the second and the write was never examined. Found by
+    // adversarial probe before review, not by a reviewer.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'w.sh',
+      'cp a.jsonc /tmp/x.jsonc ; cp generated.jsonc configs/custom.jsonc\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('two copies that are BOTH backups stay clean (#2053)', () => {
+    // The rewind must not turn the second read into a write either.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'w.sh',
+      'cp configs/custom.jsonc /tmp/a.jsonc ; cp configs/custom.jsonc /tmp/b.jsonc\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a QUOTED separator inside a filename does not truncate arguments (#2053)', () => {
+    // Cutting in the pattern would have split here and lost the destination.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'w.sh',
+      "cp 'a;b.jsonc' configs/custom.jsonc\n" +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
   it('the PROSE path invalidates a rewritten config too', () => {
     // That path passed the rewrite context to the safety reader and not to the
     // identity reader, so the identity half trusted the stale copy and sent the

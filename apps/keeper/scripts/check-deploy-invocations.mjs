@@ -3285,6 +3285,28 @@ function boundConfigNames(text, base) {
 }
 
 /**
+ * Index of the first of `chars` that is NOT inside a quoted region, or -1.
+ *
+ * Separate from `shellWords` because the caller needs the OFFSET, not the
+ * words: it rewinds the scan to that point so the next command on the line is
+ * examined on its own.
+ */
+function firstUnquoted(text, chars) {
+  let quote = null;
+  for (let i = 0; i < text.length; i += 1) {
+    const c = text[i];
+    if (quote) {
+      if (c === '\\' && quote === '"') i += 1;
+      else if (c === quote) quote = null;
+      continue;
+    }
+    if (c === '"' || c === "'") quote = c;
+    else if (chars.includes(c)) return i;
+  }
+  return -1;
+}
+
+/**
  * Quote-aware whitespace split of a shell argument list.
  *
  * Returns `null` when the text contains something whose word boundaries this
@@ -3416,12 +3438,20 @@ function copyWriteOffsets(text, base, cfgDir) {
     if (typeof cfg !== 'string' || cfg === '') return true;
     return d === cfg || cfg.endsWith(`/${d}`) || d.endsWith(`/${cfg}`);
   };
-  for (const m of text.matchAll(COPY_SHELL_RE)) {
-    // The command ends at the first UNQUOTED separator; a later `cp` in the
-    // same line is matched separately, on its own offset.
-    let rest = m[2];
-    const cut = shellWords(rest) === null ? -1 : rest.search(/[;&|]/);
-    if (cut >= 0) rest = rest.slice(0, cut);
+  const shellRe = new RegExp(COPY_SHELL_RE.source, 'g');
+  let m;
+  while ((m = shellRe.exec(text)) !== null) {
+    // The command ends at the first UNQUOTED separator. The scan is REWOUND to
+    // that separator rather than left past the whole match: the argument
+    // capture runs to end of line, so a second copy on the same line was
+    // swallowed by the first one's match and never examined — `cp a /tmp/x ;
+    // cp gen configs/custom.jsonc` missed the write entirely. Cutting on a
+    // quote-aware boundary rather than in the pattern keeps a quoted `;`
+    // inside a filename from truncating the arguments.
+    const argsAt = m.index + m[0].length - m[2].length;
+    const cut = firstUnquoted(m[2], ';&|');
+    const rest = cut >= 0 ? m[2].slice(0, cut) : m[2];
+    if (cut >= 0) shellRe.lastIndex = argsAt + cut;
     const words = shellWords(rest);
     if (words === null) {
       if (mentions(m[2])) hits.push(m.index);
