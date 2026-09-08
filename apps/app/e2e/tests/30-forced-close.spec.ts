@@ -18,6 +18,12 @@
  *  - the loan really is defaultable after the warp
  *    (`isLoanDefaultable`), so a grace bucket longer than the warp
  *    fails here instead of downstream as a confusing UI mismatch.
+ *  - there is NO internal-match candidate for the loan
+ *    (`hasInternalMatchCandidate`). The contract dispatches such a
+ *    match before the swap branch, so a fork carrying an opposing
+ *    position would legitimately put the card on the internal-match
+ *    arm — WITH a button — and every assertion below would fail on a
+ *    wording mismatch instead of naming the reason.
  *
  *  What this does NOT cover, and the attempt that established why: the
  *  in-kind SUBMIT path, the only case where the app actually sends
@@ -144,6 +150,29 @@ test('the close-out card tracks the grace boundary for the lender', async ({
   // longer than the ceiling above fails HERE, with an obvious cause,
   // rather than downstream as a puzzling UI mismatch.
   expect(defaultable).toBe(true);
+
+  // Precondition 3 — NO internal-match candidate for this loan.
+  //
+  // Added by an adversarial self-review of the round 31 change rather
+  // than by a failure, which is the point of stating it: the assertions
+  // below expect the `ready-needs-route` arm, and `triggerDefault`
+  // dispatches an internal match BEFORE it ever reaches the swap
+  // branch. So a fork carrying an opposing position for this pair would
+  // put the card on the internal-match copy WITH a submit button, and
+  // the two assertions below would fail on a wording mismatch and a
+  // stray button — telling the next reader nothing about the cause.
+  //
+  // The fork inherits live Base Sepolia's whole loan book, so whether
+  // such a counterparty exists is not something this spec controls. It
+  // asks the chain the same question the contract asks, and fails here
+  // with a named reason if the answer ever changes.
+  const [matchCandidate] = (await pub.readContract({
+    address: DIAMOND,
+    abi: DIAMOND_ABI_VIEM,
+    functionName: 'hasInternalMatchCandidate',
+    args: [loanId],
+  })) as readonly [boolean, bigint];
+  expect(matchCandidate).toBe(false);
 
   // ---- After grace: the same card, a different answer ----
   const afterWarp = await launchWallet('lender', { advanced: true });
