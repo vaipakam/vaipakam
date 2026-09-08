@@ -95,7 +95,7 @@ export async function lenderOfferFormToReview(
   await see.click();
   await page.getByRole('button', { name: /post my own lending offer/i }).click();
   await page.locator('input[placeholder="5"]').fill('9');
-  // Collateral: paste the faucet address (not in the curated list).
+  // Collateral: paste the faucet tLIQ address (not in the curated list).
   await pasteAsset(page, 'collateral-asset', MOCKS!.liquidToken as string);
   await page.locator('input[placeholder="0.0"]:visible').last().fill('100');
   const cont = page.getByRole('button', { name: /continue to review/i });
