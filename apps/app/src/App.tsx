@@ -179,9 +179,19 @@ function LegacyLocaleRedirect() {
   // carried a locale and the URL was the authority; here language is a
   // stored setting and the URL never mentions it. Matching the old
   // behaviour is the conservative reading of "keep bookmarks working",
-  // and the narrower alternative — apply it only when no explicit
-  // preference is stored — needs a new export from `@vaipakam/i18n`
-  // and is a product call, so it is flagged rather than taken.
+  // The narrower alternative — apply the prefix only when no explicit
+  // preference is stored — is a PRODUCT call and is flagged for the
+  // owner on that basis alone. Not on cost: `createI18n` already
+  // computes exactly the needed fact as `hadExplicitPref`, at the only
+  // moment it can be computed (its own docstring explains why —
+  // i18next's `caches: ['localStorage']` writes the navigator-detected
+  // language during init, so before that is the only point where a
+  // user's choice and a detection cache are distinguishable). It is a
+  // module-local const consumed for cookie-write suppression and never
+  // surfaced, so the narrow option costs surfacing it plus a condition
+  // here. An earlier version of this comment implied the export was
+  // the obstacle; it is not, and saying so kept a decidable question
+  // looking expensive.
   //
   // In an effect, not during render: this is a side effect, and i18n is
   // a module singleton so it survives this component unmounting as the
