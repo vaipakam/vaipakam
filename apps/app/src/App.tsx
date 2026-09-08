@@ -5,9 +5,10 @@
  *   - everything else lands on the in-shell NotFound page, never a
  *     blank screen.
  */
-import { lazy } from 'react';
+import { lazy, useEffect } from 'react';
 import { Navigate, Route, Routes, useLocation, useParams } from 'react-router-dom';
 import { SUPPORTED_LOCALES } from '@vaipakam/i18n/glossary';
+import i18n from './i18n';
 import { AppShell } from './components/AppShell';
 // The landing route (Home) stays in the boot chunk so the first paint
 // after mount is instant; everything else is a lazy chunk (UX-005) —
@@ -162,6 +163,35 @@ function LegacyLocaleRedirect() {
   const { search, hash } = useLocation();
   const locale = (params.locale ?? '').toLowerCase();
   const known = (SUPPORTED_LOCALES as readonly string[]).includes(locale);
+
+  // Apply the language the bookmark encoded. The retired app's
+  // `LocaleResolver` did exactly this (`i18n.changeLanguage(target)`
+  // from the `:locale` param), so `/en/analytics` rendered English
+  // whatever the visitor's stored preference was. Stripping the
+  // segment without applying it would silently answer a bookmark in a
+  // language it did not ask for.
+  //
+  // WORTH KNOWING, because it differs in consequence from the app this
+  // is inherited from: `changeLanguage` PERSISTS — localStorage plus
+  // the `.vaipakam.com` cookie the picker uses — so following one old
+  // link changes the visitor's language for this app and the marketing
+  // site until they change it back. That was harmless when every URL
+  // carried a locale and the URL was the authority; here language is a
+  // stored setting and the URL never mentions it. Matching the old
+  // behaviour is the conservative reading of "keep bookmarks working",
+  // and the narrower alternative — apply it only when no explicit
+  // preference is stored — needs a new export from `@vaipakam/i18n`
+  // and is a product call, so it is flagged rather than taken.
+  //
+  // In an effect, not during render: this is a side effect, and i18n is
+  // a module singleton so it survives this component unmounting as the
+  // redirect commits.
+  useEffect(() => {
+    if (known && i18n.resolvedLanguage !== locale) {
+      void i18n.changeLanguage(locale);
+    }
+  }, [known, locale]);
+
   if (!known) return <NotFound />;
   const rest = params['*'] ?? '';
   return <Navigate to={`/${rest}${search}${hash}`} replace />;
@@ -236,6 +266,17 @@ export function App() {
             the deployment runbook promises retiring the host will not
             do. */}
         <Route path="/nft-verifier" element={<Navigate to="/nft" replace />} />
+        {/* The pre-rename console paths. The retired router kept both
+            for stale bookmarks; dropping them here would have 404'd
+            every one the moment the old host started redirecting. The
+            docs half goes to the marketing apex, exactly as
+            `/protocol-console/docs` above does — same destination,
+            because it is the same document. */}
+        <Route path="/admin" element={<Navigate to="/protocol-console" replace />} />
+        <Route
+          path="/admin/docs"
+          element={<ExternalRedirect url="https://vaipakam.com/protocol-console/docs" />}
+        />
         <Route path="/vault-assets" element={<Navigate to="/vault" replace />} />
         <Route path="/history" element={<Navigate to="/activity" replace />} />
 
