@@ -2473,14 +2473,15 @@
         "youReceive": "Soit la garantie de l’emprunteur, soit — si le protocole peut plutôt régler cette position contre une position opposée — le montant que vous avez prêté, dans l’actif prêté. Le choix se fait pendant l’exécution de la transaction, et dans les deux cas vous le réclamez ensuite. Aucun montant n’est connu à l’avance.",
         "youLock": "Rien.",
         "youMayOwe": "Rien au-delà des frais de réseau.",
-        "youCanLose": "Si la garantie vaut moins que ce qui vous est dû, vous supportez la différence. La clôture est définitive : elle met fin au prêt, l’emprunteur ne peut donc plus le rembourser avec intérêts.",
+        "youCanLose": "Si la garantie vaut moins que ce qui vous est dû, vous absorbez la différence. Lorsque cette transaction met effectivement fin au prêt, elle y met fin définitivement : l’emprunteur ne peut plus le rembourser avec intérêts. Lorsqu’elle ne règle qu’une partie, ou que la vente n’aboutit pas, le prêt reste ouvert et l’emprunteur peut encore rembourser ou ajouter de la garantie.",
         "fees": "Les frais de réseau, plus la part du protocole sur le produit d’une éventuelle vente.",
         "whenThisEnds": "Généralement tout de suite — cette transaction met normalement fin au prêt. Si le protocole ne peut en régler qu’une partie, ou si la vente de la garantie n’aboutit pas, le prêt reste ouvert et vous pourrez le clôturer à nouveau plus tard."
       },
       "blockedPaused": "Le protocole est actuellement en pause : rien ne peut être clôturé tant que la gouvernance ne l’a pas levée. Votre position et la garantie qui la couvre ne sont pas affectées par cette pause.",
       "blockedNoConsent": "Ce prêt a dépassé son délai de grâce, mais il a été ouvert sans que les deux parties aient enregistré la reconnaissance des risques et conditions que le protocole exige avant de remettre une garantie sans prix de marché. La clôture est refusée à tout le monde, pas seulement à vous : contactez le support.",
       "submitted": "Clôture envoyée. Le prêt se termine ; laissez à la page un instant pour se mettre à jour, puis consultez la page Réclamations pour voir ce que vous pouvez réclamer.",
-      "readyInternalMatch": "Le délai de grâce est écoulé et ce prêt peut être clôturé maintenant. Le protocole dispose d’une position opposée contre laquelle il peut régler celle-ci : plutôt que de vendre la garantie, vous êtes remboursé dans l’actif que vous avez prêté, au prix de l’oracle au moment de la transaction. Vous le réclamez ensuite sur la page Réclamations."
+      "readyInternalMatch": "Le délai de grâce est écoulé et ce prêt peut être clôturé maintenant. Le protocole dispose d’une position opposée contre laquelle il peut régler celle-ci : plutôt que de vendre la garantie, vous êtes remboursé dans l’actif que vous avez prêté, au prix de l’oracle au moment de la transaction. Vous le réclamez ensuite sur la page Réclamations.",
+      "readyRental": "Le délai de grâce est écoulé : vous pouvez mettre fin à cette location. Votre NFT reste où il est et l’accès du locataire est retiré. Ce qui devient réclamable est le loyer payé d’avance, moins les frais — vous le réclamez sur la page Réclamations."
     }
   },
   "contractError": {

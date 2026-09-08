@@ -74,6 +74,16 @@ export type ForcedCloseReadiness =
    *  differs — an internal match settles at oracle price in the LENT
    *  asset, not in collateral — and the copy has to say so. */
   | 'ready-internal-match'
+  /** Past grace on an NFT RENTAL. Submittable, and deliberately not
+   *  `ready-in-kind` (round 34 P2).
+   *
+   *  A rental default is a different transaction in what it recovers:
+   *  `DefaultedFacet` clears the renter, leaves the lender's NFT where
+   *  it already is, and records a claim for the PREPAID RENTAL asset
+   *  after fees. Nothing moves out of a borrower's vault, and no
+   *  collateral valuation decides the outcome — so the in-kind copy,
+   *  which says exactly those two things, was wrong about both. */
+  | 'ready-rental'
   /** Still inside the term or its grace period. The chain said so. */
   | 'not-yet'
   /** The L2 sequencer is down or inside its 1h recovery window.
@@ -222,10 +232,32 @@ export function decideForcedClose(input: ForcedCloseInput): ForcedCloseReadiness
   // pending intent being cancelled is a consequence worth DISCLOSING in
   // the copy; it is not a reason to withhold the action.
 
+  // THE INTERNAL MATCH COMES FIRST, and this ordering is the contract's
+  // rather than a preference (round 34 P2).
+  //
+  // `triggerDefault` calls `attemptInternalMatchAutoDispatch` at line
+  // 287 and returns when it dispatches — BEFORE the liquidity read
+  // (312), before the ERC-20 branch (319), and before the LTV-collapse
+  // calculation (339). And `hasInternalMatchCandidate` does not exclude
+  // a collapsed subject. So a collapsed-but-matchable loan settles as a
+  // match, in the LENT asset, possibly partially — while the earlier
+  // version of this function had already returned `ready-in-kind` and
+  // promised the collateral would move as-is.
+  //
+  // I had this the wrong way round AND pinned it with a test that
+  // asserted the wrong answer for an illiquid matchable loan. Both are
+  // corrected; the case is now written as the ordering assertion it
+  // should always have been.
+  //
+  // An unread or failed probe falls through to the classification
+  // below, not to `unknown`: that keeps every route's own explanation
+  // available and never offers a button on an unproven match.
+  if (input.internalMatchCandidate === true) return 'ready-internal-match';
+
   // Which execution path the contract will take. NFT rentals never
   // swap, so they need no liquidity read at all.
   if (input.assetType === undefined) return 'unknown';
-  if (input.assetType === 'rental') return 'ready-in-kind';
+  if (input.assetType === 'rental') return 'ready-rental';
 
   // NFT collateral on an ERC-20 loan: no feed, so no liquidity read is
   // issued for it and none is needed — the contract resolves it
@@ -244,18 +276,6 @@ export function decideForcedClose(input: ForcedCloseInput): ForcedCloseReadiness
   if (input.ltvCollapsed === undefined) return 'unknown';
   if (input.ltvCollapsed) return 'ready-in-kind';
 
-  // Liquid, not collapsed — the swap branch WOULD demand a try-list,
-  // but only if the loan gets that far. An internal match is dispatched
-  // first and returns, so the empty list is fine when one exists.
-  //
-  // An unread or failed probe falls back to `ready-needs-route`, not to
-  // `unknown`: that is the conservative answer AND the honest one. It
-  // never offers a button the chain might refuse, and it keeps the
-  // explanation this state exists to give rather than replacing it with
-  // "still checking" on a loan whose route genuinely cannot be built
-  // here. The brief flip from that message to a button on a matched
-  // loan is the cost, and it is the right way round.
-  if (input.internalMatchCandidate === true) return 'ready-internal-match';
   return 'ready-needs-route';
 }
 
@@ -280,7 +300,11 @@ function inKindIfConsented(
  *  a submit button for it would be offering a revert. The card still
  *  SHOWS that state; it just does not pretend to act on it. */
 export function canSubmitFromApp(readiness: ForcedCloseReadiness): boolean {
-  return readiness === 'ready-in-kind' || readiness === 'ready-internal-match';
+  return (
+    readiness === 'ready-in-kind' ||
+    readiness === 'ready-internal-match' ||
+    readiness === 'ready-rental'
+  );
 }
 
 /** Whether the card should render at all.

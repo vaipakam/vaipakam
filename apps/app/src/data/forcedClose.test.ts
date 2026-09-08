@@ -47,7 +47,7 @@ describe('decideForcedClose — execution path', () => {
     expect(decideForcedClose({ ...base, ltvCollapsed: true })).toBe('ready-in-kind');
   });
 
-  it('routes an NFT rental to the in-kind path without a liquidity read', () => {
+  it('routes an NFT rental to its OWN state, without a liquidity read', () => {
     // A rental never swaps, so the resolver must not stall on
     // `collateralIlliquid` — passing `undefined` here is the point of
     // the case, not an oversight.
@@ -62,7 +62,7 @@ describe('decideForcedClose — execution path', () => {
         // an unread consent flag must not stall it either.
         consentFromBoth: undefined,
       }),
-    ).toBe('ready-in-kind');
+    ).toBe('ready-rental');
   });
 
   it('routes NFT collateral on an ERC-20 loan to the in-kind path', () => {
@@ -170,17 +170,44 @@ describe('decideForcedClose — the internal-match dispatch', () => {
     }
   });
 
-  it('prefers the in-kind route when the collateral is illiquid', () => {
-    // An illiquid loan reaches the in-kind branch and the match probe
-    // is irrelevant to it — the ordering must not let a candidate
-    // relabel a position whose settlement really is the collateral.
-    expect(
-      decideForcedClose({
-        ...base,
-        collateralIlliquid: true,
-        internalMatchCandidate: true,
-      }),
-    ).toBe('ready-in-kind');
+  it('puts the match AHEAD of every collateral classification', () => {
+    // THIS CASE ASSERTED THE OPPOSITE AND WAS WRONG (round 34 P2).
+    //
+    // I reasoned that an illiquid loan "reaches the in-kind branch and
+    // the match probe is irrelevant to it". The contract says
+    // otherwise: `attemptInternalMatchAutoDispatch` is called at
+    // DefaultedFacet.sol:287 and returns on success — before the
+    // liquidity read at 312, the ERC-20 branch at 319 and the collapse
+    // calculation at 339 — and `hasInternalMatchCandidate` does not
+    // exclude an illiquid or collapsed subject. So a matchable loan
+    // settles as a match whatever its collateral looks like, and the
+    // in-kind copy would have promised the wrong asset.
+    //
+    // Kept as one case over both shapes because the defect was the
+    // ORDER, not either branch.
+    for (const shape of [
+      { collateralIlliquid: true } as const,
+      { ltvCollapsed: true } as const,
+      { collateralIsNft: true, collateralIlliquid: undefined } as const,
+    ]) {
+      expect(
+        decideForcedClose({ ...base, ...shape, internalMatchCandidate: true }),
+      ).toBe('ready-internal-match');
+    }
+  });
+
+  it('leaves each collateral route intact when there is no candidate', () => {
+    // The other half: reordering must not swallow the routes it now
+    // sits in front of.
+    expect(decideForcedClose({ ...base, collateralIlliquid: true })).toBe(
+      'ready-in-kind',
+    );
+    expect(decideForcedClose({ ...base, ltvCollapsed: true })).toBe(
+      'ready-in-kind',
+    );
+    expect(decideForcedClose({ ...base, assetType: 'rental' })).toBe(
+      'ready-rental',
+    );
   });
 });
 
@@ -291,6 +318,10 @@ describe('canSubmitFromApp', () => {
     expect(canSubmitFromApp('ready-internal-match')).toBe(true);
   });
 
+  it('accepts the rental route', () => {
+    expect(canSubmitFromApp('ready-rental')).toBe(true);
+  });
+
   it('refuses every non-ready state', () => {
     for (const s of [
       'not-yet',
@@ -314,6 +345,7 @@ describe('shouldRenderForcedClose', () => {
       'ready-in-kind',
       'ready-needs-route',
       'ready-internal-match',
+      'ready-rental',
       'not-yet',
       'blocked-sequencer',
       'blocked-paused',

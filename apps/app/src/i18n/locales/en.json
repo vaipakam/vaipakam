@@ -1107,14 +1107,15 @@
         "youReceive": "Either the borrower’s collateral, or — if the protocol can settle this position against an opposing one instead — the amount you lent, in the asset you lent it in. Which of the two is decided while the transaction runs, and either way you claim it afterwards. No figure is known in advance.",
         "youLock": "Nothing.",
         "youMayOwe": "Nothing beyond the network fee.",
-        "youCanLose": "If the collateral is worth less than you are owed, you absorb the shortfall. Closing out is final: it ends the loan, so the borrower can no longer repay it with interest.",
+        "youCanLose": "If the collateral is worth less than you are owed, you absorb the shortfall. Where this transaction does end the loan, it ends it for good — the borrower can no longer repay it with interest. Where it only settles part, or the sale cannot go through, the loan stays open and the borrower may still repay or add collateral.",
         "fees": "The network fee, plus the protocol’s share of any sale proceeds.",
         "whenThisEnds": "Usually straight away — this transaction normally ends the loan. If the protocol can only settle part of it, or the sale of the collateral cannot go through, the loan stays open and you can close it again later."
       },
       "blockedPaused": "The protocol is paused right now, so nothing can be closed out until governance lifts it. Your position and the collateral behind it are unaffected by the pause.",
       "blockedNoConsent": "This loan is past its grace period, but it was opened without both sides recording the risk-and-terms acknowledgement the protocol requires before it will hand over collateral that has no market price. The close-out is refused for everyone, not just for you — contact support.",
       "submitted": "Close-out submitted. The loan is ending; give the page a moment to catch up, then check the Claims page for what is now yours to claim.",
-      "readyInternalMatch": "The grace period has passed and this loan can be closed out now. The protocol has an opposing position it can settle this one against, so instead of the collateral being sold you are repaid in the asset you lent, at the oracle price when the transaction runs. You claim it afterwards from the Claims page."
+      "readyInternalMatch": "The grace period has passed and this loan can be closed out now. The protocol has an opposing position it can settle this one against, so instead of the collateral being sold you are repaid in the asset you lent, at the oracle price when the transaction runs. You claim it afterwards from the Claims page.",
+      "readyRental": "The grace period has passed, so you can end this rental now. Your NFT stays where it is and the renter’s access is removed. What becomes claimable is the rent that was paid up front, less fees — you claim it from the Claims page."
     },
     "lenderExit": {
       "title": "Your options as the lender",

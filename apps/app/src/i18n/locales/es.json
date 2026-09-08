@@ -2473,14 +2473,15 @@
         "youReceive": "O bien la garantía del prestatario, o —si el protocolo puede liquidar esta posición contra otra opuesta— el importe que prestaste, en el activo en que lo prestaste. Cuál de las dos se decide mientras se ejecuta la transacción, y en ambos casos lo reclamas después. No se conoce ninguna cifra de antemano.",
         "youLock": "Nada.",
         "youMayOwe": "Nada más allá de la comisión de red.",
-        "youCanLose": "Si la garantía vale menos de lo que se te debe, asumes la diferencia. El cierre es definitivo: termina el préstamo, por lo que el prestatario ya no puede devolverlo con intereses.",
+        "youCanLose": "Si la garantía vale menos de lo que se te debe, asumes la diferencia. Cuando esta transacción sí termina el préstamo, lo termina de forma definitiva: el prestatario ya no puede devolverlo con intereses. Cuando solo liquida una parte, o la venta no puede realizarse, el préstamo sigue abierto y el prestatario aún puede pagar o añadir garantía.",
         "fees": "La comisión de red, más la parte del protocolo sobre cualquier producto de la venta.",
         "whenThisEnds": "Normalmente de inmediato: esta transacción suele terminar el préstamo. Si el protocolo solo puede liquidar una parte, o la venta de la garantía no puede realizarse, el préstamo sigue abierto y podrás cerrarlo de nuevo más adelante."
       },
       "blockedPaused": "El protocolo está en pausa en este momento, así que no se puede cerrar nada hasta que la gobernanza la levante. Tu posición y la garantía que la respalda no se ven afectadas por la pausa.",
       "blockedNoConsent": "Este préstamo ha superado su período de gracia, pero se abrió sin que ambas partes registraran la aceptación de riesgos y condiciones que el protocolo exige antes de entregar una garantía sin precio de mercado. El cierre se rechaza para todo el mundo, no solo para ti: contacta con soporte.",
       "submitted": "Cierre enviado. El préstamo está terminando; dale un momento a la página para actualizarse y luego consulta la página de Reclamaciones para ver qué te corresponde reclamar.",
-      "readyInternalMatch": "El período de gracia ha terminado y este préstamo puede cerrarse ahora. El protocolo tiene una posición opuesta contra la que puede liquidar esta, así que en lugar de venderse la garantía se te devuelve el activo que prestaste, al precio del oráculo en el momento de la transacción. Lo reclamas después en la página de Reclamaciones."
+      "readyInternalMatch": "El período de gracia ha terminado y este préstamo puede cerrarse ahora. El protocolo tiene una posición opuesta contra la que puede liquidar esta, así que en lugar de venderse la garantía se te devuelve el activo que prestaste, al precio del oráculo en el momento de la transacción. Lo reclamas después en la página de Reclamaciones.",
+      "readyRental": "El período de gracia ha terminado, así que ya puedes finalizar este alquiler. Tu NFT permanece donde está y se retira el acceso del arrendatario. Lo que queda reclamable es el alquiler pagado por adelantado, menos las comisiones — lo reclamas en la página de Reclamaciones."
     }
   },
   "contractError": {

@@ -2309,6 +2309,14 @@ const copySource = {
     // oracle price rather than handing over collateral.
     readyInternalMatch:
       'The grace period has passed and this loan can be closed out now. The protocol has an opposing position it can settle this one against, so instead of the collateral being sold you are repaid in the asset you lent, at the oracle price when the transaction runs. You claim it afterwards from the Claims page.',
+    // Round 34 P2 — a rental default recovers something else entirely.
+    // `DefaultedFacet` clears the renter, leaves the lender's NFT where
+    // it already is, and records a claim for the PREPAID rental asset
+    // after fees. The in-kind copy said collateral moves out of the
+    // borrower's vault and that the amount depends on what it is worth;
+    // neither is true here.
+    readyRental:
+      'The grace period has passed, so you can end this rental now. Your NFT stays where it is and the renter’s access is removed. What becomes claimable is the rent that was paid up front, less fees — you claim it from the Claims page.',
     blockedPaused:
       'The protocol is paused right now, so nothing can be closed out until governance lifts it. Your position and the collateral behind it are unaffected by the pause.',
     // Not "the app cannot" — nobody can. Worth saying plainly, because
@@ -2348,8 +2356,15 @@ const copySource = {
       // Both real, and neither obvious. A lender who closes out has
       // given up the loan running to term — which, if the borrower was
       // about to pay, was worth more than the collateral.
+      // Round 34 P2 — the second sentence used to say closing out is
+      // final and the borrower can never repay. That contradicted
+      // `whenThisEnds` directly below, which had already been corrected
+      // to admit partial settlement and a failed sale: a residual stays
+      // Active, and a fallback stays curable by the borrower. Two rows
+      // of one receipt disagreeing about the loan's lifecycle is worse
+      // than either being vague.
       youCanLose:
-        'If the collateral is worth less than you are owed, you absorb the shortfall. Closing out is final: it ends the loan, so the borrower can no longer repay it with interest.',
+        'If the collateral is worth less than you are owed, you absorb the shortfall. Where this transaction does end the loan, it ends it for good — the borrower can no longer repay it with interest. Where it only settles part, or the sale cannot go through, the loan stays open and the borrower may still repay or add collateral.',
       fees: 'The network fee, plus the protocol’s share of any sale proceeds.',
       // Round 28 P2 — "straight away" was not guaranteed. A partial
       // internal match settles part of the position and leaves the loan

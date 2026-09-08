@@ -46,15 +46,26 @@ export interface ForcedCloseReads {
   internalMatchCandidate: boolean | undefined;
   collateralIlliquid: boolean | undefined;
   ltvCollapsed: boolean | undefined;
-  /** When the read that decides ACTIONABILITY last returned.
+  /** When the OLDEST decision input last settled.
    *
-   *  `defaultable` alone, deliberately. The card uses this to release
-   *  its post-submit hold, and the question it is really asking is
-   *  "has anything been read since I submitted?" — a value that only
-   *  moved because a different query settled would answer yes without
-   *  the actionability verdict having been rechecked at all. Zero
-   *  while the read has never returned, which reads as "no evidence
-   *  yet" at every comparison site. */
+   *  The card releases its post-submit hold once this passes the submit
+   *  stamp, so the question it must answer is "has every fact behind
+   *  the verdict been rechecked since I submitted?" — not "has any of
+   *  them".
+   *
+   *  It was `defaultable` alone, on the reasoning that a composite
+   *  would answer the weaker question. Round 34 P2 showed the argument
+   *  had expired: round 31 made the independently-polled match
+   *  candidate part of actionability, so after a PARTIAL match — which
+   *  leaves the loan Active and consumes the opposing candidate — the
+   *  `defaultable` refetch could land first and release the hold while
+   *  `internalMatch` still served its stale `true`, re-offering an
+   *  empty-route close-out that the live simulation would then refuse.
+   *
+   *  Settled means data OR error: a query that fails after the submit
+   *  has genuinely been rechecked, and its `undefined` feeds the
+   *  decision honestly. Queries that are disabled for this loan shape
+   *  are excluded rather than pinning the minimum at zero forever. */
   updatedAt: number;
 }
 
@@ -227,6 +238,20 @@ export function useForcedCloseReads(opts: {
     internalMatchCandidate: internalMatch.isError ? undefined : internalMatch.data,
     collateralIlliquid: liquidity.isError ? undefined : liquidity.data,
     ltvCollapsed: ltv.isError ? undefined : ltv.data,
-    updatedAt: defaultable.dataUpdatedAt,
+    updatedAt: oldestSettledAt(),
   };
+
+  /** The earliest settle time across every query this decision reads.
+   *
+   *  `liquidity` is included only when it was actually issued — for NFT
+   *  collateral no asset is passed and the query never runs, so
+   *  including it would hold the minimum at zero and the card's
+   *  post-submit hold would never release. */
+  function oldestSettledAt(): number {
+    const settled = (q: { dataUpdatedAt: number; errorUpdatedAt: number }) =>
+      Math.max(q.dataUpdatedAt, q.errorUpdatedAt);
+    const inputs = [defaultable, sequencer, paused, consent, internalMatch, ltv];
+    if (opts.collateralAsset) inputs.push(liquidity);
+    return Math.min(...inputs.map(settled));
+  }
 }

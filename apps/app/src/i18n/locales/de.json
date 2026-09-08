@@ -2473,14 +2473,15 @@
         "youReceive": "Entweder die Sicherheit des Kreditnehmers oder – falls das Protokoll diese Position stattdessen gegen eine Gegenposition abwickeln kann – der von Ihnen verliehene Betrag in dem Vermögenswert, in dem Sie ihn verliehen haben. Was von beidem, entscheidet sich während der Transaktion; in beiden Fällen beanspruchen Sie es danach. Im Voraus ist keine Zahl bekannt.",
         "youLock": "Nichts.",
         "youMayOwe": "Nichts über die Netzwerkgebühr hinaus.",
-        "youCanLose": "Ist die Sicherheit weniger wert als Ihre Forderung, tragen Sie die Differenz. Der Abschluss ist endgültig: Er beendet das Darlehen, der Kreditnehmer kann es also nicht mehr mit Zinsen zurückzahlen.",
+        "youCanLose": "Ist die Sicherheit weniger wert als Ihre Forderung, tragen Sie die Differenz. Wo diese Transaktion den Kredit tatsächlich beendet, beendet sie ihn endgültig — der Kreditnehmer kann ihn nicht mehr mit Zinsen zurückzahlen. Wo sie nur einen Teil abwickelt oder der Verkauf nicht zustande kommt, bleibt der Kredit offen und der Kreditnehmer kann weiterhin zurückzahlen oder Sicherheit nachlegen.",
         "fees": "Die Netzwerkgebühr sowie der Anteil des Protokolls an einem etwaigen Verkaufserlös.",
         "whenThisEnds": "Normalerweise sofort – diese Transaktion beendet den Kredit in der Regel. Kann das Protokoll nur einen Teil abwickeln oder der Verkauf der Sicherheit nicht durchgeführt werden, bleibt der Kredit offen und Sie können ihn später erneut schließen."
       },
       "blockedPaused": "Das Protokoll ist derzeit pausiert, daher kann nichts geschlossen werden, bis die Governance die Pause aufhebt. Ihre Position und die dahinterliegende Sicherheit sind davon nicht betroffen.",
       "blockedNoConsent": "Dieser Kredit ist über seine Nachfrist hinaus, wurde aber eröffnet, ohne dass beide Seiten die Risiko- und Bedingungsbestätigung erfasst haben, die das Protokoll verlangt, bevor es eine Sicherheit ohne Marktpreis herausgibt. Der Abschluss wird für alle verweigert, nicht nur für Sie – wenden Sie sich an den Support.",
       "submitted": "Abschluss gesendet. Der Kredit wird beendet; geben Sie der Seite einen Moment zum Aktualisieren und sehen Sie dann auf der Ansprüche-Seite nach, was Sie nun beanspruchen können.",
-      "readyInternalMatch": "Die Nachfrist ist abgelaufen und dieser Kredit kann jetzt geschlossen werden. Das Protokoll hat eine Gegenposition, gegen die es diese abwickeln kann — statt die Sicherheit zu verkaufen, werden Sie in dem von Ihnen verliehenen Vermögenswert zurückgezahlt, zum Orakelpreis zum Zeitpunkt der Transaktion. Sie beanspruchen ihn danach auf der Ansprüche-Seite."
+      "readyInternalMatch": "Die Nachfrist ist abgelaufen und dieser Kredit kann jetzt geschlossen werden. Das Protokoll hat eine Gegenposition, gegen die es diese abwickeln kann — statt die Sicherheit zu verkaufen, werden Sie in dem von Ihnen verliehenen Vermögenswert zurückgezahlt, zum Orakelpreis zum Zeitpunkt der Transaktion. Sie beanspruchen ihn danach auf der Ansprüche-Seite.",
+      "readyRental": "Die Nachfrist ist abgelaufen, Sie können diese Vermietung jetzt beenden. Ihr NFT bleibt, wo es ist, und der Zugang des Mieters wird entfernt. Beanspruchbar wird die im Voraus gezahlte Miete abzüglich Gebühren — Sie beanspruchen sie auf der Ansprüche-Seite."
     }
   },
   "contractError": {

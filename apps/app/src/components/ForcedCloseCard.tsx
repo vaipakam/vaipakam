@@ -237,7 +237,9 @@ export function ForcedCloseCard({
                 ? copy.forcedClose.readyNeedsRoute
                 : readiness === 'ready-internal-match'
                   ? copy.forcedClose.readyInternalMatch
-                  : copy.forcedClose.readyInKind;
+                  : readiness === 'ready-rental'
+                    ? copy.forcedClose.readyRental
+                    : copy.forcedClose.readyInKind;
 
   /** The overdue heading ONLY where the chain has actually said so.
    *
@@ -252,6 +254,7 @@ export function ForcedCloseCard({
     readiness === 'ready-in-kind' ||
     readiness === 'ready-needs-route' ||
     readiness === 'ready-internal-match' ||
+    readiness === 'ready-rental' ||
     readiness === 'blocked-no-consent';
 
   return (
@@ -275,7 +278,8 @@ export function ForcedCloseCard({
       {!holdingAfterSubmit &&
       (readiness === 'ready-in-kind' ||
         readiness === 'ready-needs-route' ||
-        readiness === 'ready-internal-match') ? (
+        readiness === 'ready-internal-match' ||
+        readiness === 'ready-rental') ? (
         <>
           <p className="field-hint">{copy.forcedClose.notExclusive}</p>
           <p className="field-hint">{copy.forcedClose.outcomeNote}</p>
