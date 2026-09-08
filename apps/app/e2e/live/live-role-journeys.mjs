@@ -167,7 +167,16 @@ async function settledState(page) {
   // where someone is confirming a transaction would otherwise read as
   // still loading.
   const loading = (await page.locator(`${scope} .empty-state .spin`).count().catch(() => 0)) > 0;
-  return { rows, empties, loading };
+  // The Claim Center's THIRD settled shape, now marked rather than
+  // inferred (review round 21 P2). Round 20 accepted
+  // `{rows: 0, empties: 0, loading: false}` on the theory that it meant
+  // "the rewards card is showing" — but a subtree that regressed to
+  // rendering nothing produces exactly that shape too, so the fix
+  // restored the false green through a different door. `RewardsCard`
+  // now carries `data-testid="rewards-card"` on every branch that
+  // renders, so this is an observation instead of a deduction.
+  const rewards = await page.locator(`${scope} [data-testid="rewards-card"]`).count().catch(() => 0);
+  return { rows, empties, rewards, loading, content: rows + empties + rewards };
 }
 
 /**
@@ -423,12 +432,27 @@ const SCENARIOS = [
           note: 'blocked for THIS wallet; the oracle setting is unverified. Re-run with an unflagged wallet.',
         };
       }
+      // NOT A PASS EITHER (review round 21 P2). This returned PASS on
+      // `inputs > 0`, reasoning that a form implies a configured oracle
+      // — which INFERS the configuration fact from the very UI this
+      // scenario exists to check against it. The retail default is an
+      // unset oracle, so the case that matters is a regression rendering
+      // the form WITHOUT the unavailable copy: a guaranteed-to-fail
+      // recovery form, reported green, with the note underneath calling
+      // it confirmation.
+      //
+      // The oracle setting is not observable from this page, and reading
+      // it on-chain is outside a read-only UI drive. So the honest
+      // verdict is UNVERIFIED — the scenario ran and established
+      // nothing — which the run already propagates to exit 2 rather than
+      // burying in a note nobody reads on a green line.
       return {
-        ok: inputs > 0,
-        actual: `oracle-unset=false, unavailable=${anyUnavailable}, inputs=${inputs}`,
+        unverified: true,
+        ok: false,
+        actual: `oracle-unset=false, unavailable=${anyUnavailable}, inputs=${inputs} — oracle posture NOT observed`,
         note:
           inputs > 0
-            ? 'form rendered — implies an oracle IS configured; confirm that is intended'
+            ? 'a form rendered with no unavailable copy. That is EITHER a configured oracle OR the regression this scenario watches for, and the page cannot tell them apart. Read the oracle setting on-chain to resolve it.'
             : 'neither a posture nor a form after polling — inspect',
       };
     },
@@ -516,17 +540,22 @@ const SCENARIOS = [
     goal: 'Claim Center reachable',
     route: '/claims',
     desired:
-      'The Claim Center itself renders AND is not stuck loading. It does ' +
-      'NOT require rows or an empty state: with rewards pending and no ' +
-      'loan claimables the page shows the rewards card and suppresses ' +
-      'both, which is a settled, actionable posture.',
+      'The Claim Center renders, is not stuck loading, and shows ' +
+      'SOMETHING — claimable rows, its own empty state, or the rewards ' +
+      'card. All three are legitimate; rendering none of them is not, ' +
+      'and an earlier revision accepted that silently by treating the ' +
+      'reward-only shape as "no markers expected".',
     async check(page) {
       const r = await rendersPage(page, EXPECTED.claimsTitle);
       const st = await waitSettled(page);
       return {
-        ok: r.ok && !st.loading,
-        actual: `${r.actual}, rowList=${st.rows}, emptyState=${st.empties}, loading=${st.loading}`,
-        note: st.loading ? 'the Claim Center never left its loading state — a heading alone would have reported this healthy' : '',
+        ok: r.ok && !st.loading && st.content > 0,
+        actual: `${r.actual}, rowList=${st.rows}, emptyState=${st.empties}, rewardsCard=${st.rewards}, loading=${st.loading}`,
+        note: st.loading
+          ? 'the Claim Center never left its loading state'
+          : st.content === 0
+            ? 'settled but rendered NOTHING — no rows, no empty state, no rewards card'
+            : '',
       };
     },
   },
@@ -858,11 +887,31 @@ for (const roleKey of wanted) {
       await navigate(page, '/');
       await ensureConnected(page);
       await page.waitForTimeout(1_200);
-      const connected = !(await page
-        .getByRole('button', { name: /connect wallet/i })
-        .first()
-        .isVisible()
-        .catch(() => false));
+      // A POSITIVE MARKER, not the absence of a label (review round 21
+      // P2). This read `!(connect-wallet button visible)`, so anything
+      // that stopped the locator matching — a copy change from "Connect
+      // wallet" to "Connect" being the obvious one — was negated into
+      // "connected", and the lender journey would then run its whole set
+      // against a disconnected app. `/lend` still shows three controls
+      // disconnected, and `/desk` and `/vault` still render their
+      // headings, so nothing downstream would have caught it.
+      //
+      // `.connect-addr` renders only under `isConnected && address`
+      // (`ConnectButton.tsx`), so its presence is the app itself saying
+      // wagmi accepted the provider. Matching the injected account's
+      // short form inside that element — not anywhere on the page —
+      // additionally rules out a connection to some OTHER account; an
+      // ENS reverse name is accepted, since the chip legitimately
+      // renders one, and the marker's presence already carries the
+      // load-bearing claim.
+      const chip = page.locator('.connect-addr').first();
+      const chipText = ((await chip.textContent().catch(() => '')) ?? '').trim();
+      const want = (session.account?.address ?? '').toLowerCase();
+      const shortHex = want ? want.slice(2, 6) : '';
+      const looksLikeAddress = /0x[0-9a-fA-F]/.test(chipText);
+      const connected =
+        chipText.length > 0 &&
+        (!looksLikeAddress || (shortHex !== '' && chipText.toLowerCase().includes(shortHex)));
       if (!connected) {
         hardFail += 1;
         results.push({
@@ -871,14 +920,19 @@ for (const roleKey of wanted) {
           role: roleKey,
           route: '/',
           goal: 'The connected role is actually connected before its scenarios run',
-          desired: 'The Connect CTA is gone, proving wagmi accepted the injected provider.',
+          desired:
+            "The header chip renders this role's account, which the app " +
+            'only does once wagmi has accepted the injected provider.',
           ok: false,
-          actual: 'Connect CTA still visible — scenarios below did NOT exercise a connected session.',
+          actual:
+            chipText.length === 0
+              ? 'no .connect-addr chip — wagmi never accepted the provider, so the scenarios below did NOT exercise a connected session'
+              : `the chip renders ${JSON.stringify(chipText.slice(0, 40))}, which is not this role's account (${want.slice(0, 6)}…)`,
         });
         console.log(
           `FAIL  CONN-${roleKey}  [${roleKey}] /\n` +
             '      goal    : connected role is actually connected\n' +
-            '      actual  : Connect CTA still visible',
+            `      actual  : chip=${JSON.stringify(chipText.slice(0, 40))}`,
         );
         // STOP THIS ROLE HERE (review round 8 P2). Having just
         // established the session is NOT connected, running the
