@@ -4803,6 +4803,19 @@ reported a comfortable answer it had not earned:
   five chains at the time of writing. The global verdict requires every
   deployment, and a partial run cannot claim it.
 
+  **The inventory is the COMMITTED manifest,
+  `contracts/deployments/archive-manifest.json`** (Codex #2070 r6 P1):
+  `.gitignore` excludes the local `.archive/` directories, so a census that
+  enumerated them would, on a clean checkout, silently see only the five live
+  artifacts and pass its own coverage check against that same reduced set. The
+  census enumerates from the manifest; the local tree serves only to detect
+  that the manifest is stale (a hard refusal). And the writer that regenerates
+  it may ADD entries but never silently DROP one (r7 P1): from a clean
+  checkout the local tree is empty, and an unguarded rewrite would have
+  replaced the fourteen-entry inventory with nothing — the manifest's own
+  hole, one door over. Dropping needs an explicit override and prints what it
+  drops.
+
   **Every row is filtered to this deployment's VPFI** (Codex #2070 r5 P2). The
   four classes are VPFI custody specifically — the shared VPFI balance is the
   design's whole premise — so a fallback snapshot or intent commit whose asset
@@ -4837,8 +4850,16 @@ reported a comfortable answer it had not earned:
     write loan-keyed rows, and be cut out with storage intact. Recorded as
     `custodySurfaceUnrouted`; not a proof.
 
-  What survives: (1) no code at the address, and (4) zero loans ever created
-  where the loan counter is routed — every class is loan-keyed. Beyond those,
+  What survives: (1) no code at the address — **but only at a block known to
+  be at or after the deployment** (r7 P1): `0x` at a height before the
+  contract existed proves nothing, so a census block older than the recorded
+  `deployBlock` is refused outright, and an empty-code read on a deployment
+  with no recorded deploy height is indeterminate, not proven — and (4) zero
+  loans ever created where the loan counter is routed, every class being
+  loan-keyed. One more rule of scope (r7 P2): a row whose asset cannot be
+  COMPARED because no VPFI token resolved is recorded as unknown, not filed as
+  non-VPFI, and its class stays indeterminate unless a surviving bound
+  applies. Beyond those,
   the only proof is a STATE READ of the rows themselves: through a routed
   getter, or — the open follow-up — a calibrated storage read, proven against
   a routed getter on a live row before it is trusted. Each is a state read an endpoint cannot
@@ -4911,13 +4932,15 @@ reported a comfortable answer it had not earned:
   routed selector — proves the scan saw *some* of the history, never all of
   it: an omitted `Add`/`Remove` pair for the producer nets to zero routing
   change and is invisible to any such test, while a commit written inside that
-  interval may still be live. So where the getter is unrouted, the proof is
-  a STATE READ the endpoint cannot misreport by omission: **the Diamond's VPFI
-  balance at the census block.** All four classes are VPFI custody, and custody
-  the Diamond does not hold cannot exist — a zero balance settles class 3 with
-  no reliance on log completeness. A non-zero balance with an unrouted getter
-  stays indeterminate; the cut scan is retained and can downgrade (producer
-  seen routed), but its passing is not evidence.
+  interval may still be live. So where the getter is unrouted, class 3 is
+  **INDETERMINATE** (Codex #2070 r7 P2 — an earlier revision of this sentence
+  said a zero VPFI balance settled it; that is the withdrawn bound, and a
+  method section that kept saying it would have re-certified a live but
+  unbacked row as absent). The only state read that proves a row absent is a
+  read of the ROW: a routed getter, or a calibrated storage slot proven
+  against a routed getter on a live row first. The balance is recorded as
+  backing; the cut scan is retained and can downgrade (producer seen routed),
+  but its passing is not evidence.
   Hand-computed storage slots were never an option: they fail SILENTLY as
   zero, manufacturing the exact "empty" result the census exists to
   establish. The event reconstruction is retained behind `--corroborate` as
@@ -4940,7 +4963,7 @@ reported a comfortable answer it had not earned:
   latter as a failure on op-sepolia rather than silently counting it as an
   absent commit.
 
-**RESULT (2026-09-08, run 9 — all nineteen retained deployments across five
+**RESULT (2026-09-08, run 10 — all nineteen retained deployments across five
 chains, inventory from the committed manifest, the two unsound bounds
 withdrawn): ten deployments are PROVEN EMPTY on every class; nine are
 INDETERMINATE on at least one.** 202 loans were enumerated; **zero rows were

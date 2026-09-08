@@ -50,13 +50,17 @@
  *     as zero, manufacturing the exact "empty" answer this census exists to
  *     establish.
  *
- *     WHERE THE GETTER IS UNROUTED, the proof is the Diamond's VPFI BALANCE at
- *     the census block — a state read an endpoint cannot misreport by leaving
- *     something out. Zero VPFI held ⇒ no VPFI custody of any class can exist.
- *     The DiamondCut history is scanned too, but it can only REFUTE: no
- *     continuity test over eth_getLogs can rule out an omitted Add/Remove pair
- *     whose net routing change is zero, and a commit written inside that
- *     interval may still be live. Its passing is not evidence.
+ *     WHERE THE GETTER IS UNROUTED, class 3 is INDETERMINATE. A zero VPFI
+ *     balance does NOT settle it (an earlier revision of this header said it
+ *     did): a payout can spend the backing while the row survives, so zero
+ *     VPFI proves the rows UNBACKED, not absent — it is recorded as backing
+ *     against the rows' total instead. The only proof of an absent row is a
+ *     state read of the ROW: a routed getter, or a calibrated storage slot
+ *     proven against a routed getter on a live row first. The DiamondCut
+ *     history is scanned too, but it can only REFUTE: no continuity test over
+ *     eth_getLogs can rule out an omitted Add/Remove pair whose net routing
+ *     change is zero, and a commit written inside that interval may still be
+ *     live. Its passing is not evidence.
  *
  *     The event-lifecycle reconstruction is retained behind `--corroborate`
  *     as an INDEPENDENT second source. It pairs commit → teardown by
@@ -281,6 +285,32 @@ function readArchiveManifest() {
 
 function writeArchiveManifest() {
   const entries = localArchivedDiamonds();
+  // Codex #2070 r7 P1 — from a clean checkout `.archive/` is absent, so this
+  // would have rewritten the committed 14-entry inventory as EMPTY and the next
+  // census would have censused five deployments as "everything": the exact
+  // failure the manifest exists to prevent, one door over. Regeneration may
+  // ADD entries; it may never silently DROP one. Dropping requires the
+  // operator to say so, and even then the dropped entries are named.
+  const prior = readArchiveManifest();
+  if (prior) {
+    const now = new Set(entries.map((e) => `${e.slug}|${e.stamp}`));
+    const dropped = prior.entries.filter((e) => !now.has(`${e.slug}|${e.stamp}`));
+    if (dropped.length && !process.argv.includes('--force-archive-manifest-rewrite')) {
+      throw new Error(
+        `refusing to rewrite ${ARCHIVE_MANIFEST}: it would DROP ${dropped.length} committed archived deployment(s) ` +
+          `(${dropped.map((e) => `${e.slug}/${e.stamp}`).join(', ')}). The local .archive/ tree is gitignored, so this ` +
+          `usually means it is absent or partial on this checkout — not that those Diamonds are gone from the chain. ` +
+          `Run on a checkout that has them, or pass --force-archive-manifest-rewrite to drop them deliberately.`,
+      );
+    }
+    if (dropped.length) process.stderr.write(`archive manifest: DROPPING ${dropped.length} entr(y/ies) on explicit override\n`);
+  }
+  if (!entries.length && !process.argv.includes('--force-archive-manifest-rewrite')) {
+    throw new Error(
+      `refusing to write an EMPTY archive manifest: no local .archive/ entries were found (the tree is gitignored). ` +
+        `An empty inventory would make a five-deployment census look complete.`,
+    );
+  }
   const manifest = {
     purpose:
       'Committed inventory of every ARCHIVED Diamond (a --fresh redeploy archives the off-chain artifact but cannot wipe on-chain custody). ' +
@@ -676,9 +706,28 @@ async function censusDeployment(dep) {
   // Each is a STATE read an endpoint cannot misreport by omission, and each
   // on its own proves every class empty. Enumeration then only refines counts.
   //
-  // (1) No code at the address ⇒ nothing on-chain to census.
+  // (1) No code at the address ⇒ nothing on-chain to census — BUT ONLY at a
+  //     block at or after the deployment. Codex #2070 r7 P1: a finalized/safe
+  //     head that still predates a freshly deployed Diamond, or an operator
+  //     `--block` older than the deploy, reads `0x` at an address that simply
+  //     did not exist YET, and "no code" would certify every class empty
+  //     without ever reading the deployment's storage. So `no-code` is a proof
+  //     only when `atBlock >= deployBlock` is KNOWN; a census block that
+  //     predates the deployment is refused outright, and an unknown deploy
+  //     height makes an empty-code read indeterminate rather than proven.
+  const deployBlockKnown = addresses.deployBlock !== null && addresses.deployBlock !== undefined;
+  if (deployBlockKnown && atBlock < BigInt(addresses.deployBlock)) {
+    throw new Error(
+      `${who}: census block ${atBlock} PREDATES the recorded deployBlock ${addresses.deployBlock} — the Diamond did not exist ` +
+        `at that height, so nothing read there describes its storage. Use a later block.`,
+    );
+  }
   const code = await withReplicaRetry(atBlock, () => client.getCode({ address: diamond, blockNumber: atBlock }));
-  const noCode = !code || code === '0x';
+  const codeAbsent = !code || code === '0x';
+  // Only a KNOWN-post-deployment empty read is "no code"; otherwise it is an
+  // unexplained empty read and the deployment is indeterminate.
+  const noCode = codeAbsent && deployBlockKnown;
+  const codeAbsentUnexplained = codeAbsent && !deployBlockKnown;
   // (2) No CUSTODY SURFACE routed ⇒ no facet can have written a custody row.
   //     "The loupe is unrouted" is NOT sufficient on its own: a Diamond whose
   //     facets were cut without a loupe still answers its custody views, and
@@ -788,6 +837,30 @@ async function censusDeployment(dep) {
   // routed, zero loans ever created (every class is loan-keyed).
   const custodySurfaceUnrouted = noFacets;
   const provenBy = noCode ? 'no-code-at-address' : null;
+  if (codeAbsentUnexplained) {
+    // No code, but no deploy height to anchor the read to: cannot certify.
+    return {
+      chainSlug: slug,
+      deployment: label,
+      chainId: Number(chainId),
+      diamond,
+      vpfiToken: null,
+      vpfiTokenSource: 'unresolvable',
+      provenBy: undefined,
+      diamondVpfiBacking: null,
+      vpfiRowsTotal: null,
+      backingShortfall: null,
+      atBlock: atBlock.toString(),
+      atBlockHash: censusBlock.hash,
+      blockTag: censusBlock.tag,
+      scanned: { loanIdsEnumerated: 0, totalLoansEverCreated: 'n/a', loanIdRange: 'none', enumerable: false, noCode: false, codeAbsentUnexplained: true, custodySurfaceUnrouted: false, notADiamond: false, loupeRouted: false, intentSurfaceRouted: false, intentProducerRouted: false, intentCorroboration: null },
+      classes: Object.fromEntries(['vpfiHeldCustody', 'rebateRows', 'fallbackSnapshotCustody', 'liveIntentCommits'].map((k) => [k, {
+        status: 'indeterminate',
+        indeterminateReason: 'the address has no code at the census block but the artifact records no deployBlock, so this cannot be distinguished from a read that predates the deployment — undetermined',
+        count: 0, total: '0', rows: [],
+      }])),
+    };
+  }
 
   // Enumeration needs the metrics surface. Where it is unrouted and no bound
   // has already proven emptiness, the deployment is INDETERMINATE — a result,
@@ -955,6 +1028,10 @@ async function censusDeployment(dep) {
   // what the filter removed.
   const nonVpfiFallbackRows = [];
   const nonVpfiIntentRows = [];
+  // Rows whose asset could not be COMPARED because no VPFI token resolved.
+  // Unknown ≠ excluded: these keep their class indeterminate.
+  const unknownAssetFallbackRows = [];
+  const unknownAssetIntentRows = [];
   const intentRows = [];
   for (const id of loanIds) {
     const [rebateAmount, vpfiHeld] = await read('getBorrowerLifRebate', [id]);
@@ -969,7 +1046,13 @@ async function censusDeployment(dep) {
       // The snapshot carries amounts, not the asset — the LOAN names it.
       const loan = await read('getLoanDetails', [id]);
       const asset = (loan.collateralAsset ?? loan[0]?.collateralAsset ?? '').toString();
-      if (!vpfiToken || asset.toLowerCase() !== vpfiToken.toLowerCase()) {
+      if (!vpfiToken) {
+        // Codex #2070 r7 P2 — with no resolvable VPFI token the asset is UNKNOWN,
+        // not proven non-VPFI. Recorded separately; the class stays indeterminate.
+        unknownAssetFallbackRows.push({ loanId: id.toString(), asset, collateralTotal: custody.toString() });
+        continue;
+      }
+      if (asset.toLowerCase() !== vpfiToken.toLowerCase()) {
         nonVpfiFallbackRows.push({ loanId: id.toString(), asset, collateralTotal: custody.toString() });
         continue;
       }
@@ -989,7 +1072,11 @@ async function censusDeployment(dep) {
     if (!intentSurfaceRouted) continue;
     try {
       const order = await read('getIntentCommit', [id]);
-      if (!vpfiToken || `${order.makerAsset}`.toLowerCase() !== vpfiToken.toLowerCase()) {
+      if (!vpfiToken) {
+        unknownAssetIntentRows.push({ loanId: id.toString(), asset: `${order.makerAsset}`, custodialCollateral: order.makerAmount.toString() });
+        continue;
+      }
+      if (`${order.makerAsset}`.toLowerCase() !== vpfiToken.toLowerCase()) {
         nonVpfiIntentRows.push({ loanId: id.toString(), asset: `${order.makerAsset}`, custodialCollateral: order.makerAmount.toString() });
         continue;
       }
@@ -1145,6 +1232,7 @@ async function censusDeployment(dep) {
         total: sum(fallbackRows, 'collateralTotal'),
         rows: fallbackRows,
         nonVpfiRowsExcluded: nonVpfiFallbackRows,
+        unknownAssetRows: unknownAssetFallbackRows,
       },
       // Class 3 earns `proven` in exactly two ways: the getter was routed and
       // live state was read, or the getter was unrouted AND the cut history
@@ -1158,17 +1246,20 @@ async function censusDeployment(dep) {
           provenByEnumerable && !corroboration?.contradictsPrimaryProof
             ? 'proven'
             : intentSurfaceRouted
-              ? corroboration?.contradictsPrimaryProof
+              ? corroboration?.contradictsPrimaryProof || !vpfiToken
                 ? 'indeterminate'
                 : 'proven'
               : intentAbsenceProof?.proven
                 ? 'proven'
                 : 'indeterminate',
         provenBy: provenByEnumerable ?? undefined,
+        unknownAssetRows: unknownAssetIntentRows,
         indeterminateReason: intentSurfaceRouted
           ? corroboration?.contradictsPrimaryProof
             ? 'the event-lifecycle reconstruction disagrees with the live-state view'
-            : undefined
+            : !vpfiToken && !provenByEnumerable
+              ? 'the intent getter answered but no VPFI token resolved, so every returned intent has an UNKNOWN asset — not provably non-VPFI'
+              : undefined
           : intentAbsenceProof?.proven
             ? undefined
             : intentAbsenceProof?.reason,

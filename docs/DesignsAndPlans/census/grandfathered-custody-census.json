@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-08T20:17:39.211Z",
+  "generatedAt": "2026-09-08T21:06:34.870Z",
   "purpose": "#1566 grandfathered-custody census — decides whether slices 0-3 are live work or a certified no-op",
   "scope": "all-deployed-chains",
   "allClassesEmpty": false,
@@ -166,8 +166,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "306826450",
-      "atBlockHash": "0xdd297d89a1b33259ba70f5f52eecce4d4050d32b34c3b0bb1a9b52563de3f042",
+      "atBlock": "306838635",
+      "atBlockHash": "0x343be2827541fb601c074788e140597259bc6b5b6796f90b6d4a4c39032e0901",
       "blockTag": "finalized",
       "scanned": {
         "loanIdsEnumerated": 13,
@@ -200,10 +200,12 @@
           "count": 0,
           "total": "0",
           "rows": [],
-          "nonVpfiRowsExcluded": []
+          "nonVpfiRowsExcluded": [],
+          "unknownAssetRows": []
         },
         "liveIntentCommits": {
           "status": "proven",
+          "unknownAssetRows": [],
           "count": 0,
           "total": "0",
           "rows": [],
@@ -221,8 +223,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "306831015",
-      "atBlockHash": "0x5f8bd2df2e71aefe67cf41057652c4dda9c15d2fcdb2d240743fb90a9068e0e6",
+      "atBlock": "306843297",
+      "atBlockHash": "0xdcb463c432146e57e69eef439b4f2cc7ff665889c2ef21b6be48dcb09b34ff7a",
       "blockTag": "safe (finalized state pruned by endpoint)",
       "scanned": {
         "loanIdsEnumerated": 24,
@@ -255,10 +257,12 @@
           "count": 0,
           "total": "0",
           "rows": [],
-          "nonVpfiRowsExcluded": []
+          "nonVpfiRowsExcluded": [],
+          "unknownAssetRows": []
         },
         "liveIntentCommits": {
           "status": "indeterminate",
+          "unknownAssetRows": [],
           "indeterminateReason": "the intent getter is unrouted; a zero VPFI balance proves the rows would be UNBACKED, not that they are absent, and cut history can only refute — undetermined pending a calibrated storage read of intentCommits[loanId] or routing of the getter",
           "absenceProof": {
             "proven": false,
@@ -288,8 +292,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "306831015",
-      "atBlockHash": "0x5f8bd2df2e71aefe67cf41057652c4dda9c15d2fcdb2d240743fb90a9068e0e6",
+      "atBlock": "306843297",
+      "atBlockHash": "0xdcb463c432146e57e69eef439b4f2cc7ff665889c2ef21b6be48dcb09b34ff7a",
       "blockTag": "safe (finalized state pruned by endpoint)",
       "scanned": {
         "loanIdsEnumerated": 37,
@@ -322,10 +326,12 @@
           "count": 0,
           "total": "0",
           "rows": [],
-          "nonVpfiRowsExcluded": []
+          "nonVpfiRowsExcluded": [],
+          "unknownAssetRows": []
         },
         "liveIntentCommits": {
           "status": "indeterminate",
+          "unknownAssetRows": [],
           "indeterminateReason": "the intent getter is unrouted; a zero VPFI balance proves the rows would be UNBACKED, not that they are absent, and cut history can only refute — undetermined pending a calibrated storage read of intentCommits[loanId] or routing of the getter",
           "absenceProof": {
             "proven": false,
@@ -355,8 +361,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "306826450",
-      "atBlockHash": "0xdd297d89a1b33259ba70f5f52eecce4d4050d32b34c3b0bb1a9b52563de3f042",
+      "atBlock": "306838635",
+      "atBlockHash": "0x343be2827541fb601c074788e140597259bc6b5b6796f90b6d4a4c39032e0901",
       "blockTag": "finalized",
       "scanned": {
         "loanIdsEnumerated": 13,
@@ -389,10 +395,12 @@
           "count": 0,
           "total": "0",
           "rows": [],
-          "nonVpfiRowsExcluded": []
+          "nonVpfiRowsExcluded": [],
+          "unknownAssetRows": []
         },
         "liveIntentCommits": {
           "status": "proven",
+          "unknownAssetRows": [],
           "count": 0,
           "total": "0",
           "rows": [],
@@ -411,8 +419,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "46564321",
-      "atBlockHash": "0xfe6ea91ef158f9bc95083d986036427a4e1bead0f690dbc6c9197e23d35ff832",
+      "atBlock": "46565802",
+      "atBlockHash": "0xfce514cbb3a7383cb5278c48110dcdeb6e673c61df83ccab0f06a56c767843eb",
       "blockTag": "finalized",
       "scanned": {
         "loanIdsEnumerated": 21,
@@ -445,10 +453,12 @@
           "count": 0,
           "total": "0",
           "rows": [],
-          "nonVpfiRowsExcluded": []
+          "nonVpfiRowsExcluded": [],
+          "unknownAssetRows": []
         },
         "liveIntentCommits": {
           "status": "proven",
+          "unknownAssetRows": [],
           "count": 0,
           "total": "0",
           "rows": [],
@@ -467,8 +477,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "46564321",
-      "atBlockHash": "0xfe6ea91ef158f9bc95083d986036427a4e1bead0f690dbc6c9197e23d35ff832",
+      "atBlock": "46565802",
+      "atBlockHash": "0xfce514cbb3a7383cb5278c48110dcdeb6e673c61df83ccab0f06a56c767843eb",
       "blockTag": "finalized",
       "scanned": {
         "loanIdsEnumerated": 0,
@@ -504,11 +514,13 @@
           "count": 0,
           "total": "0",
           "rows": [],
-          "nonVpfiRowsExcluded": []
+          "nonVpfiRowsExcluded": [],
+          "unknownAssetRows": []
         },
         "liveIntentCommits": {
           "status": "proven",
           "provenBy": "no-loans-ever-created",
+          "unknownAssetRows": [],
           "indeterminateReason": "the intent getter is unrouted; a zero VPFI balance proves the rows would be UNBACKED, not that they are absent, and cut history can only refute — undetermined pending a calibrated storage read of intentCommits[loanId] or routing of the getter",
           "absenceProof": {
             "proven": false,
@@ -538,8 +550,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "46564321",
-      "atBlockHash": "0xfe6ea91ef158f9bc95083d986036427a4e1bead0f690dbc6c9197e23d35ff832",
+      "atBlock": "46565802",
+      "atBlockHash": "0xfce514cbb3a7383cb5278c48110dcdeb6e673c61df83ccab0f06a56c767843eb",
       "blockTag": "finalized",
       "scanned": {
         "loanIdsEnumerated": 0,
@@ -575,11 +587,13 @@
           "count": 0,
           "total": "0",
           "rows": [],
-          "nonVpfiRowsExcluded": []
+          "nonVpfiRowsExcluded": [],
+          "unknownAssetRows": []
         },
         "liveIntentCommits": {
           "status": "proven",
           "provenBy": "no-loans-ever-created",
+          "unknownAssetRows": [],
           "indeterminateReason": "the intent getter is unrouted; a zero VPFI balance proves the rows would be UNBACKED, not that they are absent, and cut history can only refute — undetermined pending a calibrated storage read of intentCommits[loanId] or routing of the getter",
           "absenceProof": {
             "proven": false,
@@ -608,8 +622,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "46564321",
-      "atBlockHash": "0xfe6ea91ef158f9bc95083d986036427a4e1bead0f690dbc6c9197e23d35ff832",
+      "atBlock": "46565802",
+      "atBlockHash": "0xfce514cbb3a7383cb5278c48110dcdeb6e673c61df83ccab0f06a56c767843eb",
       "blockTag": "finalized",
       "scanned": {
         "loanIdsEnumerated": 33,
@@ -642,10 +656,12 @@
           "count": 0,
           "total": "0",
           "rows": [],
-          "nonVpfiRowsExcluded": []
+          "nonVpfiRowsExcluded": [],
+          "unknownAssetRows": []
         },
         "liveIntentCommits": {
           "status": "indeterminate",
+          "unknownAssetRows": [],
           "indeterminateReason": "the intent getter is unrouted; a zero VPFI balance proves the rows would be UNBACKED, not that they are absent, and cut history can only refute — undetermined pending a calibrated storage read of intentCommits[loanId] or routing of the getter",
           "absenceProof": {
             "proven": false,
@@ -674,8 +690,8 @@
       "diamondVpfiBacking": null,
       "vpfiRowsTotal": null,
       "backingShortfall": null,
-      "atBlock": "46564321",
-      "atBlockHash": "0xfe6ea91ef158f9bc95083d986036427a4e1bead0f690dbc6c9197e23d35ff832",
+      "atBlock": "46565802",
+      "atBlockHash": "0xfce514cbb3a7383cb5278c48110dcdeb6e673c61df83ccab0f06a56c767843eb",
       "blockTag": "finalized",
       "scanned": {
         "loanIdsEnumerated": 0,
@@ -733,8 +749,8 @@
       "diamondVpfiBacking": null,
       "vpfiRowsTotal": null,
       "backingShortfall": null,
-      "atBlock": "46564321",
-      "atBlockHash": "0xfe6ea91ef158f9bc95083d986036427a4e1bead0f690dbc6c9197e23d35ff832",
+      "atBlock": "46565802",
+      "atBlockHash": "0xfce514cbb3a7383cb5278c48110dcdeb6e673c61df83ccab0f06a56c767843eb",
       "blockTag": "finalized",
       "scanned": {
         "loanIdsEnumerated": 0,
@@ -792,8 +808,8 @@
       "diamondVpfiBacking": null,
       "vpfiRowsTotal": null,
       "backingShortfall": null,
-      "atBlock": "46564321",
-      "atBlockHash": "0xfe6ea91ef158f9bc95083d986036427a4e1bead0f690dbc6c9197e23d35ff832",
+      "atBlock": "46565802",
+      "atBlockHash": "0xfce514cbb3a7383cb5278c48110dcdeb6e673c61df83ccab0f06a56c767843eb",
       "blockTag": "finalized",
       "scanned": {
         "loanIdsEnumerated": 0,
@@ -852,8 +868,8 @@
       "diamondVpfiBacking": null,
       "vpfiRowsTotal": "0",
       "backingShortfall": null,
-      "atBlock": "46564321",
-      "atBlockHash": "0xfe6ea91ef158f9bc95083d986036427a4e1bead0f690dbc6c9197e23d35ff832",
+      "atBlock": "46565802",
+      "atBlockHash": "0xfce514cbb3a7383cb5278c48110dcdeb6e673c61df83ccab0f06a56c767843eb",
       "blockTag": "finalized",
       "scanned": {
         "loanIdsEnumerated": 0,
@@ -889,11 +905,13 @@
           "count": 0,
           "total": "0",
           "rows": [],
-          "nonVpfiRowsExcluded": []
+          "nonVpfiRowsExcluded": [],
+          "unknownAssetRows": []
         },
         "liveIntentCommits": {
           "status": "proven",
           "provenBy": "no-loans-ever-created",
+          "unknownAssetRows": [],
           "count": 0,
           "total": "0",
           "rows": [],
@@ -911,8 +929,8 @@
       "diamondVpfiBacking": null,
       "vpfiRowsTotal": null,
       "backingShortfall": null,
-      "atBlock": "46564321",
-      "atBlockHash": "0xfe6ea91ef158f9bc95083d986036427a4e1bead0f690dbc6c9197e23d35ff832",
+      "atBlock": "46565802",
+      "atBlockHash": "0xfce514cbb3a7383cb5278c48110dcdeb6e673c61df83ccab0f06a56c767843eb",
       "blockTag": "finalized",
       "scanned": {
         "loanIdsEnumerated": 0,
@@ -970,8 +988,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "129893408",
-      "atBlockHash": "0x8c398b1873878db098e8dff900d5f453f10a0c13850a8b585c13ce491c1b3b4b",
+      "atBlock": "129899941",
+      "atBlockHash": "0xca8beffb5eab7188d828675cebd26363d60d54bc117787be4a75fd58e8e30f33",
       "blockTag": "finalized",
       "scanned": {
         "loanIdsEnumerated": 4,
@@ -1004,10 +1022,12 @@
           "count": 0,
           "total": "0",
           "rows": [],
-          "nonVpfiRowsExcluded": []
+          "nonVpfiRowsExcluded": [],
+          "unknownAssetRows": []
         },
         "liveIntentCommits": {
           "status": "proven",
+          "unknownAssetRows": [],
           "count": 0,
           "total": "0",
           "rows": [],
@@ -1026,8 +1046,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "129893408",
-      "atBlockHash": "0x8c398b1873878db098e8dff900d5f453f10a0c13850a8b585c13ce491c1b3b4b",
+      "atBlock": "129899941",
+      "atBlockHash": "0xca8beffb5eab7188d828675cebd26363d60d54bc117787be4a75fd58e8e30f33",
       "blockTag": "finalized",
       "scanned": {
         "loanIdsEnumerated": 0,
@@ -1063,11 +1083,13 @@
           "count": 0,
           "total": "0",
           "rows": [],
-          "nonVpfiRowsExcluded": []
+          "nonVpfiRowsExcluded": [],
+          "unknownAssetRows": []
         },
         "liveIntentCommits": {
           "status": "proven",
           "provenBy": "no-loans-ever-created",
+          "unknownAssetRows": [],
           "indeterminateReason": "the intent getter is unrouted; a zero VPFI balance proves the rows would be UNBACKED, not that they are absent, and cut history can only refute — undetermined pending a calibrated storage read of intentCommits[loanId] or routing of the getter",
           "absenceProof": {
             "proven": false,
@@ -1095,8 +1117,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "48547461",
-      "atBlockHash": "0x123239383ab2cec3bd389a39b9afe22e5c306d32981c47f6b32626fa83d8657a",
+      "atBlock": "48548943",
+      "atBlockHash": "0xa5db6551c4f5a24e180b4eec66c458a096e47b24e04ada6e55c6e9e9a1feed77",
       "blockTag": "finalized",
       "scanned": {
         "loanIdsEnumerated": 33,
@@ -1129,10 +1151,12 @@
           "count": 0,
           "total": "0",
           "rows": [],
-          "nonVpfiRowsExcluded": []
+          "nonVpfiRowsExcluded": [],
+          "unknownAssetRows": []
         },
         "liveIntentCommits": {
           "status": "indeterminate",
+          "unknownAssetRows": [],
           "indeterminateReason": "the intent getter is unrouted; a zero VPFI balance proves the rows would be UNBACKED, not that they are absent, and cut history can only refute — undetermined pending a calibrated storage read of intentCommits[loanId] or routing of the getter",
           "absenceProof": {
             "proven": false,
@@ -1162,8 +1186,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "11663204",
-      "atBlockHash": "0x7c72e287764503da012ac62bdfc592ebc4691c77bbed81593e2c4d60baefba6e",
+      "atBlock": "11663438",
+      "atBlockHash": "0x537902b67cdc240ae19ddfaefc8fd9bc31e6d93d427f77760a5ddba3d8174465",
       "blockTag": "finalized",
       "scanned": {
         "loanIdsEnumerated": 0,
@@ -1199,11 +1223,13 @@
           "count": 0,
           "total": "0",
           "rows": [],
-          "nonVpfiRowsExcluded": []
+          "nonVpfiRowsExcluded": [],
+          "unknownAssetRows": []
         },
         "liveIntentCommits": {
           "status": "proven",
           "provenBy": "no-loans-ever-created",
+          "unknownAssetRows": [],
           "indeterminateReason": "the intent getter is unrouted; a zero VPFI balance proves the rows would be UNBACKED, not that they are absent, and cut history can only refute — undetermined pending a calibrated storage read of intentCommits[loanId] or routing of the getter",
           "absenceProof": {
             "proven": false,
@@ -1232,8 +1258,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "11663204",
-      "atBlockHash": "0x7c72e287764503da012ac62bdfc592ebc4691c77bbed81593e2c4d60baefba6e",
+      "atBlock": "11663438",
+      "atBlockHash": "0x537902b67cdc240ae19ddfaefc8fd9bc31e6d93d427f77760a5ddba3d8174465",
       "blockTag": "finalized",
       "scanned": {
         "loanIdsEnumerated": 24,
@@ -1266,10 +1292,12 @@
           "count": 0,
           "total": "0",
           "rows": [],
-          "nonVpfiRowsExcluded": []
+          "nonVpfiRowsExcluded": [],
+          "unknownAssetRows": []
         },
         "liveIntentCommits": {
           "status": "indeterminate",
+          "unknownAssetRows": [],
           "indeterminateReason": "the intent getter is unrouted; a zero VPFI balance proves the rows would be UNBACKED, not that they are absent, and cut history can only refute — undetermined pending a calibrated storage read of intentCommits[loanId] or routing of the getter",
           "absenceProof": {
             "proven": false,
@@ -1299,8 +1327,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "11663204",
-      "atBlockHash": "0x7c72e287764503da012ac62bdfc592ebc4691c77bbed81593e2c4d60baefba6e",
+      "atBlock": "11663438",
+      "atBlockHash": "0x537902b67cdc240ae19ddfaefc8fd9bc31e6d93d427f77760a5ddba3d8174465",
       "blockTag": "finalized",
       "scanned": {
         "loanIdsEnumerated": 0,
@@ -1336,11 +1364,13 @@
           "count": 0,
           "total": "0",
           "rows": [],
-          "nonVpfiRowsExcluded": []
+          "nonVpfiRowsExcluded": [],
+          "unknownAssetRows": []
         },
         "liveIntentCommits": {
           "status": "proven",
           "provenBy": "no-loans-ever-created",
+          "unknownAssetRows": [],
           "indeterminateReason": "the intent getter is unrouted; a zero VPFI balance proves the rows would be UNBACKED, not that they are absent, and cut history can only refute — undetermined pending a calibrated storage read of intentCommits[loanId] or routing of the getter",
           "absenceProof": {
             "proven": false,

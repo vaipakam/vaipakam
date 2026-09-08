@@ -71,6 +71,18 @@ VPFI, since the four categories are specifically about VPFI sharing a balance
 with rewards — a snapshot in some other collateral is outside scope and is
 recorded as excluded rather than quietly dropped.
 
+Because those archived records are deliberately kept out of version control,
+the inventory the census works from is a committed manifest rather than the
+local directories; a fresh checkout censuses the same nineteen deployments as
+this one. The command that regenerates that manifest may add entries but will
+refuse to silently drop any it already lists — on a fresh checkout, where the
+local directories are absent, an unguarded rewrite would have emptied it and
+made a five-deployment census look complete. Dropping an entry requires an
+explicit override and is reported by name. One further guard: an address that
+holds no code at the block being read is only treated as empty when that block
+is known to be at or after the deployment; a read taken before the contract
+existed proves nothing, and is refused or reported as undetermined instead.
+
 Including the archived contracts also surfaced what an "archived deployment"
 can actually be. Some are complete earlier versions of the platform; some are
 bare shells where deployment was abandoned before any logic was installed; and
