@@ -45,6 +45,7 @@ import { copy } from '../content/copy';
 import { SlidersHorizontal, RefreshCw, ExternalLink, AlertTriangle } from 'lucide-react';
 import {
   fetchProtocolKnobs,
+  CLOCK_SKEW_ALLOWANCE_SEC,
   protocolConfigFresh,
   type ProtocolKnobSnapshot,
 } from '../data/indexer';
@@ -83,7 +84,13 @@ function seconds(v: string | undefined): string {
 /** Snapshot age, against a caller-supplied ticking clock (never
  *  `Date.now()` in render — that freezes the reading). */
 function ageText(updatedAtSec: number, nowSec: number): string {
-  const secs = Math.max(0, nowSec - updatedAtSec);
+  const secs = nowSec - updatedAtSec;
+  // Same rule as the analytics page, and it has to be the same rule:
+  // two surfaces disagreeing about whether a timestamp is usable is how
+  // one calls a reading fresh while the other calls it unknown (review
+  // round 22 P2).
+  if (secs < -CLOCK_SKEW_ALLOWANCE_SEC) return copy.analytics.unknown;
+  if (secs < 0) return copy.analytics.ageSeconds(0);
   if (secs < 90) return copy.analytics.ageSeconds(secs);
   if (secs < 5400) return copy.analytics.ageMinutes(Math.round(secs / 60));
   return copy.analytics.ageHours(Math.round(secs / 3600));

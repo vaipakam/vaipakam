@@ -37,6 +37,7 @@ import {
   ExternalLink,
 } from 'lucide-react';
 import {
+  CLOCK_SKEW_ALLOWANCE_SEC,
   fetchLoanStats,
   fetchOfferStats,
   indexerConfigured,
@@ -76,7 +77,15 @@ function Stat({ label, value }: { label: string; value: number | undefined }) {
  */
 function ageLabel(updatedAtSec: number | undefined, nowSec: number): string {
   if (typeof updatedAtSec !== 'number') return copy.analytics.unknown;
-  const secs = Math.max(0, nowSec - updatedAtSec);
+  const secs = nowSec - updatedAtSec;
+  // A STAMP FROM THE FUTURE IS UNKNOWN, NOT BRAND NEW (review round 22
+  // P2). `Math.max(0, …)` turned a negative age into "0s ago" — so a
+  // skewed or corrupted timestamp was rendered as the most current
+  // reading this page can show, which is the precise inverse of the
+  // rule it exists to honour: an unknown age must never pass as a fresh
+  // one. A small allowance keeps ordinary clock differences readable.
+  if (secs < -CLOCK_SKEW_ALLOWANCE_SEC) return copy.analytics.unknown;
+  if (secs < 0) return copy.analytics.ageSeconds(0);
   if (secs < 90) return copy.analytics.ageSeconds(secs);
   if (secs < 5400) return copy.analytics.ageMinutes(Math.round(secs / 60));
   return copy.analytics.ageHours(Math.round(secs / 3600));

@@ -27,7 +27,7 @@ export function ConnectButton({ block = false }: { block?: boolean }) {
                wider than a narrow viewport (Codex #1156 r2). Styling
                lives on .connect-addr (not inline) so the phone-width
                header rules can tighten it — UX2-001. */
-            <span className="connect-addr">
+            <span className="connect-addr" data-address={address}>
               <AddressName address={address} />
             </span>
           ) : (

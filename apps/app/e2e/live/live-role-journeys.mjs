@@ -100,6 +100,7 @@ const EXPECTED = {
   dataRightsTitle: EN.copy.dataRights.title,
   lendTitle: EN.copy.lend.title,
   borrowTitle: EN.copy.borrow.title,
+  helpTitle: EN.copy.help.title,
 };
 
 /** The route's own `h1`, trimmed. Empty string when absent. */
@@ -223,11 +224,22 @@ const SCENARIOS = [
       'Page renders substantive copy (>200 chars) AND surfaces at least one ' +
       'primary action (connect / lend / borrow). Not a bare shell.',
     async check(page) {
+      // INTERACTIVE ELEMENTS, NOT PROSE (review round 22 P2). This
+      // counted regex matches over the page TEXT, so a landing page that
+      // lost every link and button while keeping explanatory copy about
+      // lending still passed — the one scenario whose point is "offers a
+      // way in" could not tell a way in from a description of one.
       const txt = await bodyText(page);
-      const actions = await countMatches(page, /connect wallet|lend|borrow|get started/i);
+      const actions = await page
+        .locator(
+          '#main-content a[href="/lend"], #main-content a[href="/borrow"], ' +
+            '#main-content a[href="/offers"], #main-content button',
+        )
+        .count()
+        .catch(() => 0);
       return {
         ok: txt.length > 200 && actions > 0,
-        actual: `body=${txt.length} chars, ${actions} primary-action match(es)`,
+        actual: `body=${txt.length} chars, ${actions} actionable element(s)`,
       };
     },
   },
@@ -309,10 +321,17 @@ const SCENARIOS = [
     role: 'visitor',
     goal: 'Help is reachable and populated',
     route: '/help',
-    desired: 'Substantial help content (>500 chars).',
+    desired:
+      'The HELP page renders and is substantially populated (>500 chars). ' +
+      'Length alone would accept any other verbose surface served at this ' +
+      'URL — including the landing page or a wordy error.',
     async check(page) {
+      const r = await rendersPage(page, EXPECTED.helpTitle);
       const txt = await bodyText(page);
-      return { ok: txt.length > 500, actual: `body=${txt.length} chars` };
+      return {
+        ok: r.ok && txt.length > 500,
+        actual: `${r.actual}, body=${txt.length} chars`,
+      };
     },
   },
   {
@@ -902,31 +921,57 @@ for (const roleKey of wanted) {
       await ensureConnected(page);
       await page.waitForTimeout(1_200);
       // A POSITIVE MARKER, not the absence of a label (review round 21
-      // P2). This read `!(connect-wallet button visible)`, so anything
-      // that stopped the locator matching — a copy change from "Connect
-      // wallet" to "Connect" being the obvious one — was negated into
-      // "connected", and the lender journey would then run its whole set
-      // against a disconnected app. `/lend` still shows three controls
-      // disconnected, and `/desk` and `/vault` still render their
-      // headings, so nothing downstream would have caught it.
+      // P2). This began as `!(connect-wallet button visible)`, so
+      // anything that stopped that locator matching — a copy change to
+      // "Connect" being the obvious case — was negated into "connected",
+      // and the whole lender set would then run against a disconnected
+      // app: `/lend` shows controls disconnected, and `/desk` and
+      // `/vault` still render their headings, so nothing downstream
+      // would have caught it.
       //
-      // `.connect-addr` renders only under `isConnected && address`
-      // (`ConnectButton.tsx`), so its presence is the app itself saying
-      // wagmi accepted the provider. Matching the injected account's
-      // short form inside that element — not anywhere on the page —
-      // additionally rules out a connection to some OTHER account; an
-      // ENS reverse name is accepted, since the chip legitimately
-      // renders one, and the marker's presence already carries the
-      // load-bearing claim.
+      // Round 22 then caught the first fix comparing the DISPLAYED
+      // label: an ENS name matched on merely being non-empty, and a hex
+      // chip on four nibbles, so a wrong wallet with a reverse name or a
+      // 16-bit prefix collision still passed. The chip now carries
+      // `data-address`, and this compares the account wagmi actually
+      // bound rather than how it chose to render it.
       const chip = page.locator('.connect-addr').first();
       const chipText = ((await chip.textContent().catch(() => '')) ?? '').trim();
+      const shown = ((await chip.getAttribute('data-address').catch(() => null)) ?? '')
+        .trim()
+        .toLowerCase();
       const want = (session.account?.address ?? '').toLowerCase();
-      const shortHex = want ? want.slice(2, 6) : '';
-      const looksLikeAddress = /0x[0-9a-fA-F]/.test(chipText);
-      const connected =
-        chipText.length > 0 &&
-        (!looksLikeAddress || (shortHex !== '' && chipText.toLowerCase().includes(shortHex)));
-      if (!connected) {
+      // THREE OUTCOMES, NOT TWO. A build that predates `data-address`
+      // renders the chip without it, and treating that as "not
+      // connected" would be a false failure on every run until the app
+      // deploys — the mirror of the false pass this check exists to
+      // stop. The chip itself still proves wagmi accepted the provider;
+      // what cannot be established on such a build is WHICH account, so
+      // that is reported as unverified rather than decided either way.
+      const staleBuild = chipText.length > 0 && shown === '';
+      const connected = want !== '' && shown === want;
+      if (staleBuild) {
+        unverified += 1;
+        results.push({
+          id: `CONN-${roleKey}`,
+          roleKey,
+          role: roleKey,
+          route: '/',
+          goal: 'The connected role is actually connected before its scenarios run',
+          desired:
+            "The header chip carries this role's account, which the app " +
+            'only renders once wagmi has accepted the injected provider.',
+          ok: null,
+          unverified: true,
+          actual: `the header chip renders ${JSON.stringify(chipText.slice(0, 30))} but exposes no account marker — this build predates it, so WHICH account is bound could not be established`,
+          note: 'a session is connected; the account behind it is unverified until the app carrying `data-address` is deployed',
+        });
+        console.log(
+          `UNVERIFIED  CONN-${roleKey}  [${roleKey}] /\n` +
+            '      goal    : connected role is actually connected\n' +
+            '      actual  : chip present, no account marker (build predates it)',
+        );
+      } else if (!connected) {
         hardFail += 1;
         results.push({
           id: `CONN-${roleKey}`,
@@ -939,14 +984,14 @@ for (const roleKey of wanted) {
             'only does once wagmi has accepted the injected provider.',
           ok: false,
           actual:
-            chipText.length === 0
-              ? 'no .connect-addr chip — wagmi never accepted the provider, so the scenarios below did NOT exercise a connected session'
-              : `the chip renders ${JSON.stringify(chipText.slice(0, 40))}, which is not this role's account (${want.slice(0, 6)}…)`,
+            shown === ''
+              ? 'no connected-account marker — wagmi never accepted the provider, so the scenarios below did NOT exercise a connected session'
+              : `the header is bound to ${shown.slice(0, 10)}…, not this role's account ${want.slice(0, 10)}… (chip reads ${JSON.stringify(chipText.slice(0, 30))})`,
         });
         console.log(
           `FAIL  CONN-${roleKey}  [${roleKey}] /\n` +
             '      goal    : connected role is actually connected\n' +
-            `      actual  : chip=${JSON.stringify(chipText.slice(0, 40))}`,
+            `      actual  : bound=${shown.slice(0, 10) || '(none)'} want=${want.slice(0, 10)}`,
         );
         // STOP THIS ROLE HERE (review round 8 P2). Having just
         // established the session is NOT connected, running the

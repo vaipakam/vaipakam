@@ -707,12 +707,29 @@ export interface IndexerProtocolConfig {
   updatedAt: number;
 }
 
+/** How far ahead of us a source's clock may legitimately be.
+ *
+ *  Machine clocks differ by seconds; anything beyond this is not skew,
+ *  it is a stamp we cannot interpret. Exported so the pages that RENDER
+ *  an age apply the same threshold this guard does — two different
+ *  answers to "is this timestamp usable" is how one surface calls a
+ *  reading fresh while the other calls it unknown. */
+export const CLOCK_SKEW_ALLOWANCE_SEC = 120;
+
 /** Snapshot freshness guard: config flips reach the snapshot within
  *  ~one ingest scan (event-triggered), so a row older than a day means
  *  the refresh rail is wedged — refuse it and let the chain fallback
- *  serve display. */
+ *  serve display.
+ *
+ *  A FUTURE STAMP IS NOT FRESH (review round 22 P2). This was a bare
+ *  `now - updatedAt < 24h`, which a negative age satisfies trivially —
+ *  so a clock-skewed or corrupted timestamp was treated as the most
+ *  current reading possible, and the page beside it printed "0s ago".
+ *  The spec is explicit that an unknown age must never be presented as
+ *  a fresh one, and this was the exact inverse. */
 export function protocolConfigFresh(updatedAt: number): boolean {
-  return Date.now() / 1000 - updatedAt < 24 * 3600;
+  const age = Date.now() / 1000 - updatedAt;
+  return age >= -CLOCK_SKEW_ALLOWANCE_SEC && age < 24 * 3600;
 }
 
 export async function fetchProtocolConfig(
