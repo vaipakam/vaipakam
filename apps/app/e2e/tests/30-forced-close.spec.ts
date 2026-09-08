@@ -34,10 +34,30 @@ import {
 import { increaseTime } from '../lib/anvil';
 import { pub, DIAMOND, DIAMOND_ABI_VIEM, MOCKS } from '../lib/chain';
 
-/** Past maturity by well over the 1-day bucket a 9-day loan draws, but
- *  the assertion below is on `isLoanDefaultable`, not on this number —
- *  grace is governance-configurable and the chain is the authority. */
-const PAST_GRACE_SECONDS = 2 * 86_400;
+/** How far past maturity to step, and how many steps to allow.
+ *
+ *  The first version of this spec warped a flat 2 days on the reasoning
+ *  that a 9-day loan draws the compiled 1-day bucket. `isLoanDefaultable`
+ *  was still false, so that reasoning was wrong somewhere — most likely
+ *  because the fork carries REAL Base Sepolia state and `s.graceBuckets`
+ *  is whatever THAT deployment configured rather than the compiled
+ *  ladder. Stated as the likely cause rather than the established one:
+ *  the run proves the warp was insufficient, not why.
+ *
+ *  Which is the point of stepping instead of computing — the loop is
+ *  correct under either explanation, and if the loan is somehow not
+ *  Active at all it exhausts and fails on the same clear assertion. The
+ *  precondition caught this rather than letting the UI assertions run
+ *  against a still-in-grace loan, which is what it was put there for.
+ *
+ *  Reading the buckets and reimplementing `gracePeriod`'s walk here
+ *  would put a second copy of that rule in the test — the exact mistake
+ *  the production code refuses to make. So the spec steps forward and
+ *  asks `isLoanDefaultable` after each step, which is the chain's own
+ *  answer. The ceiling covers the longest compiled bucket (30 days) with
+ *  room to spare; beyond it the assertion below fails loudly. */
+const WARP_STEP_SECONDS = 86_400;
+const MAX_WARP_STEPS = 40;
 
 test('the close-out card tracks the grace boundary for the lender', async ({
   launchWallet,
@@ -88,16 +108,28 @@ test('the close-out card tracks the grace boundary for the lender', async ({
   })) as { startTime: bigint; durationDays: bigint };
   const endTime = loan.startTime + loan.durationDays * 86_400n;
   const now = (await pub.getBlock()).timestamp;
-  await increaseTime(Number(endTime - now) + PAST_GRACE_SECONDS);
+  // Step to maturity first, then one day at a time until the CHAIN says
+  // the loan is closable. Asking beats recomputing: this cannot drift
+  // from `gracePeriod` because it never models it.
+  await increaseTime(Number(endTime - now) + 60);
 
-  // Precondition 2 — the chain agrees the loan is now closable. If a
-  // configured grace bucket outran the warp, fail here.
-  const defaultable = await pub.readContract({
-    address: DIAMOND,
-    abi: DIAMOND_ABI_VIEM,
-    functionName: 'isLoanDefaultable',
-    args: [loanId],
-  });
+  const readDefaultable = () =>
+    pub.readContract({
+      address: DIAMOND,
+      abi: DIAMOND_ABI_VIEM,
+      functionName: 'isLoanDefaultable',
+      args: [loanId],
+    }) as Promise<boolean>;
+
+  let defaultable = await readDefaultable();
+  for (let i = 0; i < MAX_WARP_STEPS && !defaultable; i++) {
+    await increaseTime(WARP_STEP_SECONDS);
+    defaultable = await readDefaultable();
+  }
+
+  // Precondition 2 — the loan really is closable now. A grace schedule
+  // longer than the ceiling above fails HERE, with an obvious cause,
+  // rather than downstream as a puzzling UI mismatch.
   expect(defaultable).toBe(true);
 
   // ---- After grace: the same card, a different answer ----
