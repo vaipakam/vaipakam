@@ -3346,6 +3346,10 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
             void queryClient.invalidateQueries({ queryKey: ['forcedClose'] });
             void loan.refetch?.();
           }}
+          // Round 29 P2 — the card's post-submit hold releases on
+          // EVIDENCE, not on a timer, so it needs to know when the
+          // actionability read last returned.
+          readsUpdatedAt={forcedCloseReads.updatedAt}
         />
       ) : null}
 

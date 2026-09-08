@@ -45,6 +45,16 @@ export interface ForcedCloseReads {
   consentFromBoth: boolean | undefined;
   collateralIlliquid: boolean | undefined;
   ltvCollapsed: boolean | undefined;
+  /** When the read that decides ACTIONABILITY last returned.
+   *
+   *  `defaultable` alone, deliberately. The card uses this to release
+   *  its post-submit hold, and the question it is really asking is
+   *  "has anything been read since I submitted?" — a value that only
+   *  moved because a different query settled would answer yes without
+   *  the actionability verdict having been rechecked at all. Zero
+   *  while the read has never returned, which reads as "no evidence
+   *  yet" at every comparison site. */
+  updatedAt: number;
 }
 
 export function useForcedCloseReads(opts: {
@@ -191,5 +201,6 @@ export function useForcedCloseReads(opts: {
     consentFromBoth: consent.isError ? undefined : consent.data,
     collateralIlliquid: liquidity.isError ? undefined : liquidity.data,
     ltvCollapsed: ltv.isError ? undefined : ltv.data,
+    updatedAt: defaultable.dataUpdatedAt,
   };
 }

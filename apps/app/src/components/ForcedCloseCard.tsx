@@ -61,6 +61,7 @@ export function ForcedCloseCard({
   busy,
   setBusy,
   onClosedOut,
+  readsUpdatedAt,
 }: {
   loanId: string | number;
   /** Resolved by `decideForcedClose` from live reads — never derived
@@ -77,28 +78,74 @@ export function ForcedCloseCard({
   setBusy: (b: boolean) => void;
   /** Lets the page refetch status after the loan goes terminal. */
   onClosedOut: () => void;
+  /** When the readiness reads behind this card were last refreshed.
+   *
+   *  The card holds its post-submit state only until this passes the
+   *  submit stamp — see `submitted` below. Sourced from the queries
+   *  themselves rather than a timer, so the hold is released by
+   *  evidence rather than by a guess about how long a refetch takes. */
+  readsUpdatedAt: number;
 }) {
   const { write, ready } = useDiamondWrite();
   const { walletChain, address } = useActiveChain();
   const publicClient = usePublicClient({ chainId: walletChain?.chainId });
   const queryClient = useQueryClient();
   const [error, setError] = useState<string | null>(null);
-  /** Latched the moment a close-out confirms, and never unlatched.
+  /** Stamped when a close-out confirms, and released as soon as the
+   *  reads have caught up with it.
    *
-   *  Round 28 P2 — the refetch after a successful close is
-   *  fire-and-forget, so TanStack keeps serving `defaultable: true` and
-   *  the old route verdict while it revalidates, and `useLoan` can hold
-   *  a still-Active indexed row for longer still. Without this the
-   *  button reappeared under the lender within the same second and
-   *  invited a second wallet prompt for a loan that is now terminal —
-   *  a guaranteed `InvalidLoanStatus`. The page's own status
-   *  reconciliation removes the card properly a moment later; this only
-   *  has to cover the gap. */
-  const [closedThisSession, setClosedThisSession] = useState(false);
+   *  Round 28 P2 asked for the hold: the refetch after a successful
+   *  close is fire-and-forget, so TanStack keeps serving
+   *  `defaultable: true` and the old route verdict while it
+   *  revalidates, and `useLoan` can hold a still-Active indexed row
+   *  for longer still. Without it the button reappeared under the
+   *  lender within the same second and invited a second wallet prompt
+   *  for a loan that is now terminal.
+   *
+   *  Round 29 caught what the FIRST version of that hold got wrong: it
+   *  never released. `triggerDefault` can succeed on a PARTIAL internal
+   *  match, which settles part of the position and deliberately leaves
+   *  the loan Active — this card's own copy now says so. A permanent
+   *  latch answered that by replacing an actionable card with "the
+   *  loan is ending" forever, on a residual that genuinely still needs
+   *  closing.
+   *
+   *  So the hold is bounded by EVIDENCE rather than by time or by
+   *  optimism: it covers exactly the window between the submit and the
+   *  first read that postdates it. Once `readsUpdatedAt` passes the
+   *  stamp, the verdict on screen was computed from post-close data
+   *  and is trustworthy either way — a terminal loan unmounts the card
+   *  through the page's own reconciliation, and a live residual gets
+   *  its button back.
+   *
+   *  The stamp carries chain and loan identity because
+   *  `PositionDetailsInner` is keyed by loan id alone, so a chain
+   *  switch keeps this component mounted (round 29's second finding).
+   *  The page's chain-change block clears its own confirmation slot but
+   *  cannot reach child state, which would have shown loan N on the
+   *  destination chain as already closed. */
+  const [submitted, setSubmitted] = useState<{
+    at: number;
+    chainId: number | undefined;
+    loanId: string;
+  } | null>(null);
+
+  // A render-phase adjustment, matching how the page resets its own
+  // chain-scoped state: no frame is committed carrying the previous
+  // chain's or loan's stamp.
+  if (
+    submitted !== null &&
+    (submitted.chainId !== walletChain?.chainId ||
+      submitted.loanId !== String(loanId))
+  ) {
+    setSubmitted(null);
+  }
 
   if (!shouldRenderForcedClose(readiness)) return null;
 
-  const submittable = canSubmitFromApp(readiness) && !closedThisSession;
+  const holdingAfterSubmit =
+    submitted !== null && readsUpdatedAt <= submitted.at;
+  const submittable = canSubmitFromApp(readiness) && !holdingAfterSubmit;
 
   async function closeOut() {
     setError(null);
@@ -137,7 +184,11 @@ export function ForcedCloseCard({
         });
       }
       await write('triggerDefault', [BigInt(loanId), []]);
-      setClosedThisSession(true);
+      setSubmitted({
+        at: Date.now(),
+        chainId: walletChain?.chainId,
+        loanId: String(loanId),
+      });
       onClosedOut();
       onCloseConfirm();
       void queryClient.invalidateQueries({ queryKey: ['forcedClose'] });
@@ -148,7 +199,7 @@ export function ForcedCloseCard({
     }
   }
 
-  const body = closedThisSession
+  const body = holdingAfterSubmit
     ? copy.forcedClose.submitted
     : readiness === 'not-yet'
       ? copy.forcedClose.notYet
@@ -196,7 +247,7 @@ export function ForcedCloseCard({
       {/* Shown on both ready states — a lender who cannot submit here
           still needs to know a keeper may close it, so that finding the
           position already closed reads as normal rather than as loss. */}
-      {!closedThisSession &&
+      {!holdingAfterSubmit &&
       (readiness === 'ready-in-kind' || readiness === 'ready-needs-route') ? (
         <>
           <p className="field-hint">{copy.forcedClose.notExclusive}</p>
