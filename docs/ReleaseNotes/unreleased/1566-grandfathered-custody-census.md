@@ -8,13 +8,17 @@ its output as an artifact rather than a claim. "The set was empty" is something
 a later reader must be able to re-run, not take on trust.
 
 The result: across all nineteen retained deployments on the five chains —
-current contracts and the earlier ones a redeploy left behind — eighteen hold
-nothing in any of the four categories, and every contract whose VPFI could be
-identified holds none at all. The nineteenth cannot be assessed because the
-address on record turns out to hold something that is not the platform's
-contract; the census reports that as an open question about the record rather
-than as an empty result, and the interesting part of this change is that it
-says so instead of reporting zero.
+current contracts and the earlier ones a redeploy left behind — the census read
+202 loans and found no holding in any category anywhere it could actually read
+the records. Ten deployments are settled on that basis. Nine are not, and the
+census says so rather than rounding them to empty: five because the one
+function that would read the intent records is not installed on those
+contracts, three because they are bare shells with no reading function at all,
+and one because the address on record turns out to hold something that is not
+the platform's contract. An earlier run had counted eighteen as settled on two
+shortcuts since withdrawn; the contracts did not change, the standard of proof
+did. The interesting part of this change is that it reports undetermined
+instead of zero.
 
 Most of the design here is about the ways a census can produce a comfortable
 answer it has not earned. An all-zero result is indistinguishable by inspection
@@ -39,14 +43,24 @@ records that block's identity, not merely its height, and re-checks it
 afterwards — a height alone does not identify what was read, and this artifact
 is used to certify work away.
 
-One follow-up remains: re-running the two affected chains against an endpoint
-that retains full history, which is expected to settle the last class either
-way. Those two are precisely the chains where the relevant view is absent, so
-they are the only ones that depend on history at all — and the public endpoints
-proved unreliable there in a specific way worth recording: the same endpoint
-answered the identical history query two different ways within an hour, once
-with real data and once with nothing. A result that cannot be reproduced is not
-a result, which is why neither chain is reported as settled.
+Two shortcuts the census briefly took were withdrawn after review, and the
+reason is worth stating plainly. A contract holding no VPFI at all was at first
+treated as proof that no holdings were recorded — but the design's own opening
+reconciliation says the opposite can happen: a reward payout can spend the
+tokens that back a recorded holding while the record itself survives, and a
+zero balance alongside surviving records is the worst case, not an empty one.
+The balance is now reported as *backing*, set against what the records claim,
+so any shortfall is visible. Likewise, finding every relevant function absent
+from a contract today says nothing about records written before those
+functions were removed. Where the census cannot read the records directly, it
+now says so.
+
+What remains open is therefore not a history question at all — no amount of
+history can prove a record absent, only refute a claim that it is — but a state
+one: reading the record's storage directly, with the read first proven correct
+against a contract where the ordinary view still works. That, and correcting
+the one deployment record that names a contract which is not the platform's,
+are the follow-ups.
 
 Two further refinements changed what the census counts and what it will
 believe. It now censuses every retained deployment on a chain, not one address

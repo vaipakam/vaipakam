@@ -32,9 +32,19 @@ the only way into the detached state, and both now note that the chain has been
 placed in a role at all. That single piece of information is what separates
 "detached" from "never configured", and because it is written at the moment of
 the change rather than deduced later, the four roles are exhaustive by
-construction. Existing deployments need no migration: a canonical or mirror
-chain resolves on its own terms regardless, and a chain still sitting at its
-defaults genuinely is unconfigured.
+construction. Existing deployments need one explicit migration step, and an earlier
+version of this note said they needed none. The field that records the role
+did not exist before this change, so a deployment that had been placed in a
+role and then removed from it under the old configuration carries no record of
+that — and would read as never configured, which is the permissive case, when
+it must read as detached, which is the closed one. Nothing on-chain can tell
+those two apart, so the in-place refresh now requires the operator to declare
+each chain's role, reads the resolved role back while the contract is still
+paused, and applies exactly one correction: a chain declared detached that
+reads as never configured is recorded as detached. Any other disagreement
+between the declaration and the contract stops the refresh rather than
+guessing. A chain the operator declares never configured needs no call and
+keeps its single-chain behaviour, which is correct for it.
 
 The delivered-funding bound now answers for all four roles from one place, and
 several call sites that re-derived the role locally were collapsed into asking

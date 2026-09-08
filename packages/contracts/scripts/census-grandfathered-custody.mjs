@@ -240,11 +240,20 @@ function deployedChains() {
  * without ever looking at them. The unit of this census is therefore a
  * DEPLOYMENT, not a chain.
  */
-function deployedDiamonds() {
+/**
+ * Codex #2070 r6 P1 — `.gitignore` excludes `contracts/deployments/*\/.archive/`,
+ * so in a clean checkout the local archive directories DO NOT EXIST. A census
+ * that enumerated them would silently see only the live artifacts, compare its
+ * coverage against that same reduced set, and overwrite the 19-deployment
+ * artifact with a "complete" 5-deployment one. The inventory therefore lives in
+ * a COMMITTED manifest; the local `.archive` tree is used only to detect that
+ * the manifest is stale, never as the source of truth.
+ */
+const ARCHIVE_MANIFEST = join(DEPLOYMENTS, 'archive-manifest.json');
+
+function localArchivedDiamonds() {
   const out = [];
   for (const slug of deployedChains()) {
-    const live = JSON.parse(readFileSync(join(DEPLOYMENTS, slug, 'addresses.json'), 'utf8'));
-    out.push({ slug, label: 'live', addresses: live });
     const archiveDir = join(DEPLOYMENTS, slug, '.archive');
     if (!existsSync(archiveDir)) continue;
     for (const stamp of readdirSync(archiveDir).sort()) {
@@ -252,7 +261,67 @@ function deployedDiamonds() {
       if (!existsSync(f)) continue;
       const a = JSON.parse(readFileSync(f, 'utf8'));
       if (!a.diamond) continue; // an archive entry without a Diamond has nothing on-chain to census
-      out.push({ slug, label: `archived ${stamp}`, addresses: a });
+      out.push({
+        slug,
+        stamp,
+        chainId: a.chainId ?? null,
+        diamond: a.diamond,
+        deployBlock: a.deployBlock ?? null,
+        vpfiToken: a.vpfiToken ?? a.vpfiMirror ?? null,
+      });
+    }
+  }
+  return out;
+}
+
+function readArchiveManifest() {
+  if (!existsSync(ARCHIVE_MANIFEST)) return null;
+  return JSON.parse(readFileSync(ARCHIVE_MANIFEST, 'utf8'));
+}
+
+function writeArchiveManifest() {
+  const entries = localArchivedDiamonds();
+  const manifest = {
+    purpose:
+      'Committed inventory of every ARCHIVED Diamond (a --fresh redeploy archives the off-chain artifact but cannot wipe on-chain custody). ' +
+      'The local .archive/ directories are gitignored; this file is what a clean checkout censuses. Regenerate with --write-archive-manifest.',
+    generatedAt: new Date().toISOString(),
+    entries,
+  };
+  writeFileSync(ARCHIVE_MANIFEST, `${JSON.stringify(manifest, null, 2)}\n`);
+  return manifest;
+}
+
+function deployedDiamonds() {
+  const out = [];
+  const manifest = readArchiveManifest();
+  if (!manifest) {
+    throw new Error(
+      `${ARCHIVE_MANIFEST} is missing. The archived-deployment inventory must be committed, because .archive/ is gitignored ` +
+        `and a clean checkout would otherwise census only the live artifacts. Run with --write-archive-manifest on a checkout ` +
+        `that has the .archive/ directories, review the diff, and commit it.`,
+    );
+  }
+  // Staleness: any LOCAL archive entry absent from the manifest means the
+  // manifest no longer describes the deployments — refuse rather than census
+  // a subset that looks complete.
+  const inManifest = new Set(manifest.entries.map((e) => `${e.slug}|${e.stamp}`));
+  const missing = localArchivedDiamonds().filter((e) => !inManifest.has(`${e.slug}|${e.stamp}`));
+  if (missing.length) {
+    throw new Error(
+      `archive manifest is STALE — local .archive entries not in it: ${missing.map((e) => `${e.slug}/${e.stamp}`).join(', ')}. ` +
+        `Regenerate with --write-archive-manifest and commit.`,
+    );
+  }
+  for (const slug of deployedChains()) {
+    const live = JSON.parse(readFileSync(join(DEPLOYMENTS, slug, 'addresses.json'), 'utf8'));
+    out.push({ slug, label: 'live', addresses: live });
+    for (const e of manifest.entries.filter((x) => x.slug === slug)) {
+      out.push({
+        slug,
+        label: `archived ${e.stamp}`,
+        addresses: { chainId: e.chainId, diamond: e.diamond, deployBlock: e.deployBlock, vpfiToken: e.vpfiToken },
+      });
     }
   }
   return out;
@@ -618,8 +687,14 @@ async function censusDeployment(dep) {
   //     ALL of them revert too — the signature of a bare shell whose
   //     diamondCut never ran (three base-sepolia archives, 178 bytes each).
   //     Only a REVERT counts; an RPC failure must never be read as absence.
-  const isRevert = (err) =>
-    /revert|FunctionDoesNotExist|returned no data|0x$/i.test(`${err?.shortMessage ?? ''} ${err?.message ?? ''}`);
+  // CodeQL (js/regex/missing-regexp-anchor): the end anchor belongs to the
+  // bare-`0x` case ONLY — a revert with empty return data — so it is written
+  // as its own test rather than as an alternative whose precedence a reader
+  // has to work out.
+  const isRevert = (err) => {
+    const m = `${err?.shortMessage ?? ''} ${err?.message ?? ''}`;
+    return /revert|FunctionDoesNotExist|returned no data/i.test(m) || /0x$/.test(m.trimEnd());
+  };
   // The Diamond FALLBACK's own "no facet for this selector" error. Only THIS
   // shape proves a selector is unrouted on a Vaipakam Diamond. An EMPTY revert
   // is a different contract talking — a bare shell answers 0xa9ad62f8 on every
@@ -695,20 +770,31 @@ async function censusDeployment(dep) {
         client.readContract({ address: vpfiToken, abi: [ERC20_BALANCE_OF], functionName: 'balanceOf', args: [diamond], blockNumber: atBlock }),
       )
     : null;
-  const provenBy = noCode
-    ? 'no-code-at-address'
-    : noFacets
-      ? 'no-facets-cut'
-      : !notADiamond && diamondVpfiBalance === 0n
-        ? 'vpfi-balance-bound'
-        : null;
+  // Codex #2070 r6 P1 ×2 — TWO of the earlier bounds were NOT proofs of
+  // absence and are withdrawn as such:
+  //   • a ZERO VPFI BALANCE proves the rows are UNBACKED, not absent. The
+  //     design's own §0 (pre-migration solvency reconciliation) is the
+  //     counterexample: reward payouts may already have spent the backing
+  //     while the row — the entitlement — survives. Zero VPFI with live rows
+  //     is the WORST case for slice 0, not a no-op. The balance is therefore
+  //     recorded as `diamondVpfiBacking` and compared against row totals to
+  //     produce the shortfall figure that reconciliation needs — never used to
+  //     certify emptiness.
+  //   • `FunctionDoesNotExist` on every custody selector proves those
+  //     selectors are unrouted NOW, not that they never wrote rows: facets can
+  //     be cut in, write loan-keyed rows, and be cut out with storage intact.
+  //     Recorded as `custodySurfaceUnrouted`; not a proof.
+  // What remains sound: no code at the address; and, where the counter is
+  // routed, zero loans ever created (every class is loan-keyed).
+  const custodySurfaceUnrouted = noFacets;
+  const provenBy = noCode ? 'no-code-at-address' : null;
 
   // Enumeration needs the metrics surface. Where it is unrouted and no bound
   // has already proven emptiness, the deployment is INDETERMINATE — a result,
   // not a thrown failure, so it stays inside coverage and blocks the verdict.
   const statsSelector = toFunctionSelector(metrics.find((e) => e.name === 'getProtocolStats'));
   let enumerable = false;
-  if (!noCode && !noFacets && !notADiamond) {
+  if (!noCode && !notADiamond) {
     if (loupeRouted) enumerable = (await read('facetAddress', [statsSelector])) !== ZERO_ADDRESS;
     else {
       try { await read('getProtocolStats'); enumerable = true; } catch (err) { rethrowUnlessRevert(err); }
@@ -720,7 +806,9 @@ async function censusDeployment(dep) {
       ? undefined
       : notADiamond
         ? 'the contract at the recorded address is NOT a Vaipakam Diamond (every custody selector reverts without the Diamond fallback\'s FunctionDoesNotExist signature) — it cannot be scoped, and its artifact should be checked'
-        : `this Diamond routes no loan-enumeration surface (getProtocolStats unrouted) and holds ${diamondVpfiBalance ?? 'an unknown amount of'} VPFI — nothing here can be read per loan, and no bound proves it empty`;
+        : custodySurfaceUnrouted
+          ? 'every custody selector is UNROUTED on this Diamond today, which says nothing about rows written before they were removed — storage is unreadable without a getter, so absence cannot be established without a calibrated storage read'
+          : `this Diamond routes no loan-enumeration surface (getProtocolStats unrouted) — nothing here can be read per loan, and no sound bound proves it empty`;
     const cls = (extra = {}) => ({ status, indeterminateReason: reason, provenBy: provenBy ?? undefined, count: 0, total: '0', rows: [], ...extra });
     return {
       chainSlug: slug,
@@ -730,11 +818,13 @@ async function censusDeployment(dep) {
       vpfiToken,
       vpfiTokenSource,
       provenBy: provenBy ?? undefined,
-      diamondVpfiBalance: diamondVpfiBalance === null ? null : diamondVpfiBalance.toString(),
+      diamondVpfiBacking: diamondVpfiBalance === null ? null : diamondVpfiBalance.toString(),
+      vpfiRowsTotal: null,
+      backingShortfall: null,
       atBlock: atBlock.toString(),
       atBlockHash: censusBlock.hash,
       blockTag: censusBlock.tag,
-      scanned: { loanIdsEnumerated: 0, totalLoansEverCreated: 'n/a', loanIdRange: 'none', enumerable: false, noCode, noFacets, notADiamond, loupeRouted, intentSurfaceRouted: false, intentProducerRouted: false, intentCorroboration: null },
+      scanned: { loanIdsEnumerated: 0, totalLoansEverCreated: 'n/a', loanIdRange: 'none', enumerable: false, noCode, custodySurfaceUnrouted, notADiamond, loupeRouted, intentSurfaceRouted: false, intentProducerRouted: false, intentCorroboration: null },
       classes: { vpfiHeldCustody: cls(), rebateRows: cls(), fallbackSnapshotCustody: cls({ nonVpfiRowsExcluded: [] }), liveIntentCommits: cls({ nonVpfiRowsExcluded: [] }) },
     };
   }
@@ -840,15 +930,19 @@ async function censusDeployment(dep) {
       producerRouted,
       routedSelectors,
     });
-    const balanceIsZero = diamondVpfiBalance !== null && diamondVpfiBalance === 0n;
+    // Codex #2070 r6 P1 — a zero balance does NOT prove the intent rows are
+    // absent (a payout may have spent the backing while the row survives), and
+    // cut history can only refute. With the getter unrouted there is NO sound
+    // certification available to this script: the class is INDETERMINATE
+    // pending a CALIBRATED storage read of `intentCommits[loanId].orderHash`
+    // (slot derived from the Storage layout and proven against a routed getter
+    // on a live commit before it is trusted) — or routing the getter.
     intentAbsenceProof = {
-      proven: balanceIsZero,
-      reason: balanceIsZero
-        ? 'the Diamond holds ZERO VPFI at the census block, so no VPFI custody of any class can exist on it — a state read, independent of log completeness'
-        : diamondVpfiBalance === null
-          ? 'the deployment artifact names no VPFI token, so the balance bound cannot be taken and the getter is unrouted — undetermined'
-          : `the Diamond holds ${diamondVpfiBalance} VPFI wei and the getter is unrouted; cut history can refute but never certify (an omitted Add/Remove pair is invisible to it) — undetermined until the getter is routed or an archive read of storage is taken`,
-      diamondVpfiBalance: diamondVpfiBalance === null ? null : diamondVpfiBalance.toString(),
+      proven: false,
+      reason:
+        'the intent getter is unrouted; a zero VPFI balance proves the rows would be UNBACKED, not that they are absent, and cut history can only refute — ' +
+        'undetermined pending a calibrated storage read of intentCommits[loanId] or routing of the getter',
+      diamondVpfiBacking: diamondVpfiBalance === null ? null : diamondVpfiBalance.toString(),
       cutHistoryRefutation: cutHistory,
     };
   }
@@ -940,7 +1034,10 @@ async function censusDeployment(dep) {
         else live.delete(key); // Filled / Cancelled / ForceCancelled all tear the commit down
       }
       const fromLogs = [...live.keys()].map((k) => k.split(':')[0]).sort();
-      const fromView = intentRows.map((r) => r.loanId).sort();
+      // Codex #2070 r6 P2 — the view saw every live intent, VPFI or not; the
+      // VPFI filter is a SCOPE decision, not an observation, so agreement is
+      // tested against everything the view observed.
+      const fromView = [...intentRows, ...nonVpfiIntentRows].map((r) => r.loanId).sort();
       corroboration = {
         source: 'event-lifecycle',
         logsSeen: logs.length,
@@ -989,7 +1086,17 @@ async function censusDeployment(dep) {
     vpfiToken,
     vpfiTokenSource,
     provenBy: provenByEnumerable ?? undefined,
-    diamondVpfiBalance: diamondVpfiBalance === null ? null : diamondVpfiBalance.toString(),
+    // BACKING, not a proof: what the Diamond holds, against what its rows claim.
+    // Rows total > backing is exactly the shortfall slice 0 must reconcile.
+    diamondVpfiBacking: diamondVpfiBalance === null ? null : diamondVpfiBalance.toString(),
+    vpfiRowsTotal: (BigInt(sum(vpfiHeldRows, 'vpfiHeld')) + BigInt(sum(rebateRows, 'rebateAmount')) + BigInt(sum(fallbackRows, 'collateralTotal')) + BigInt(sum(intentRows, 'custodialCollateral'))).toString(),
+    backingShortfall:
+      diamondVpfiBalance === null
+        ? null
+        : (() => {
+            const rows = BigInt(sum(vpfiHeldRows, 'vpfiHeld')) + BigInt(sum(rebateRows, 'rebateAmount')) + BigInt(sum(fallbackRows, 'collateralTotal')) + BigInt(sum(intentRows, 'custodialCollateral'));
+            return (rows > diamondVpfiBalance ? rows - diamondVpfiBalance : 0n).toString();
+          })(),
     atBlock: atBlock.toString(),
     // The block IDENTITY, not just its height — a height alone is not
     // reproducible across a reorg.
@@ -1001,7 +1108,7 @@ async function censusDeployment(dep) {
       loanIdRange: loanIds.length ? `${loanIds[0]}..${loanIds[loanIds.length - 1]}` : 'none',
       enumerable: true,
       noCode: false,
-      noFacets: false,
+      custodySurfaceUnrouted: false,
       loupeRouted,
       intentSource: intentSurfaceRouted
         ? 'getIntentCommit view (live state, history-independent)'
@@ -1076,6 +1183,11 @@ async function censusDeployment(dep) {
 }
 
 async function main() {
+  if (process.argv.includes('--write-archive-manifest')) {
+    const m = writeArchiveManifest();
+    process.stdout.write(`archive manifest written: ${ARCHIVE_MANIFEST} (${m.entries.length} archived deployments)\n`);
+    return;
+  }
   const which = arg('--chain', 'all');
   const everything = deployedDiamonds();
   const deployments = which === 'all' ? everything : everything.filter((d) => d.slug === which);
@@ -1172,7 +1284,7 @@ async function main() {
   for (const r of results) {
     const c = r.classes;
     process.stdout.write(
-      `${r.chainSlug} [${r.deployment}] (chainId ${r.chainId}, block ${r.atBlock}, diamond holds ${r.diamondVpfiBalance ?? '?'} VPFI wei): ` +
+      `${r.chainSlug} [${r.deployment}] (chainId ${r.chainId}, block ${r.atBlock}, backing ${r.diamondVpfiBacking ?? '?'} VPFI wei${r.backingShortfall && r.backingShortfall !== '0' ? `, SHORTFALL ${r.backingShortfall}` : ''}): ` +
         `loans=${r.scanned.loanIdsEnumerated} ` +
         `vpfiHeld=${c.vpfiHeldCustody.count} rebate=${c.rebateRows.count} ` +
         `fallback=${c.fallbackSnapshotCustody.count} liveIntents=${c.liveIntentCommits.count}\n`,

@@ -1955,7 +1955,24 @@ resolver becomes total over four states:
 | `!canonical && baseChainId == 0 && !rewardRoleConfigured` | **Unconfigured** | **canonical / single-chain semantics — today's behaviour, unchanged** |
 | `!canonical && baseChainId == 0 && rewardRoleConfigured` | **Detached** | the fail-closed column below |
 
-**This needs no storage migration, and that is a property of the design rather
+⚠️ **It DOES need a role BACKFILL on in-place upgrade, and an earlier
+revision of this paragraph said it did not** (Codex #2070 r6 P1). A Diamond
+that was configured and then detached BEFORE this field existed carries
+`rewardRoleConfigured == false` after the upgrade, and the resolver reads it as
+`Unconfigured` — `max` bound, fail-open — when it must be `Detached`. State
+cannot close this: a demoted canonical chain and a never-configured one are
+byte-identical (`!canonical`, `baseChainId == 0`, and — base-sepolia proves it
+— even `rewardMessenger == 0` on a chain that WAS configured). So the record
+is backfilled by an explicit **migration step in the in-place refresh**: for
+every chain, re-assert its role through the setters from the operator's
+recorded topology (`ConfigureRewardReporter` is idempotent and stamps the
+flag; a known-detached chain gets `setBaseChainId(0)`), then read
+`getRewardRole()` back and compare it to the expectation — the refresh
+procedure carries that readback. A chain the operator declares
+never-configured needs no call and resolves `Unconfigured`, which is correct
+for it.
+
+**Apart from that step, this needs no storage migration, and that is a property of the design rather
 than luck.** The flag defaults to `false`, which is correct for every chain now
 deployed: the canonical and mirror arms dominate for base-sepolia and sepolia,
 and arb-sepolia / bnb-testnet resolve to `Unconfigured` — keeping the semantics
@@ -4804,16 +4821,31 @@ reported a comfortable answer it had not earned:
   reintroduce the shortcut; it is the one that made two chains read as proven
   when neither was.
 
-  **Four history-free bounds, and each on its own proves every class empty.**
-  Three are taken BEFORE any enumeration; the fourth falls out of it. Each is a state read an endpoint cannot
+  **Two history-free bounds prove every class empty; two more that an
+  earlier revision claimed do NOT, and are withdrawn** (Codex #2070 r6, two
+  P1s). The withdrawals matter more than the survivors:
+
+  - **A zero VPFI balance proves the rows are UNBACKED, not absent.** §0 of
+    this design is the counterexample: reward payouts may already have spent
+    the backing while the row — the entitlement — survives. Zero VPFI with
+    live rows is the WORST case for slice 0, not a no-op. The balance is now
+    recorded per deployment as `diamondVpfiBacking`, set against the rows'
+    total as `backingShortfall` — the figure the reconciliation needs — and
+    never used to certify emptiness.
+  - **`FunctionDoesNotExist` on every custody selector proves they are
+    unrouted NOW, not that they never wrote rows.** Facets can be cut in,
+    write loan-keyed rows, and be cut out with storage intact. Recorded as
+    `custodySurfaceUnrouted`; not a proof.
+
+  What survives: (1) no code at the address, and (4) zero loans ever created
+  where the loan counter is routed — every class is loan-keyed. Beyond those,
+  the only proof is a STATE READ of the rows themselves: through a routed
+  getter, or — the open follow-up — a calibrated storage read, proven against
+  a routed getter on a live row before it is trusted. Each is a state read an endpoint cannot
   misreport by omission. (1) **No code at the recorded address** — nothing
-  on-chain to census. (2) **No custody surface routed** — the Diamond fallback
-  itself answers `FunctionDoesNotExist` on the loupe AND on every custody
-  selector, the signature of a bare shell whose `diamondCut` never ran; three
-  base-sepolia archives are exactly this, 178 bytes each. "The loupe is
-  unrouted" is deliberately NOT sufficient: a Diamond cut without a loupe still
-  answers its custody views, and those facets may have written rows. (3) **The
-  Diamond holds zero VPFI** — see below. A contract that reverts EMPTY on every
+  on-chain to census. (2) ~~No custody surface routed~~ and (3) ~~zero VPFI
+  held~~ — **both withdrawn as proofs**, above; both remain recorded facts
+  (`custodySurfaceUnrouted`, `diamondVpfiBacking`). A contract that reverts EMPTY on every
   selector is none of these: it is not a Vaipakam Diamond at all (one
   base-sepolia archive, 18 KB at the recorded address), and it is
   INDETERMINATE with its artifact flagged for correction, never "empty".
@@ -4908,30 +4940,43 @@ reported a comfortable answer it had not earned:
   latter as a failure on op-sepolia rather than silently counting it as an
   absent commit.
 
-**RESULT (2026-09-08, all nineteen retained deployments across five chains):
-eighteen are PROVEN EMPTY on every class; one is INDETERMINATE because the
-contract at its recorded address is not a Vaipakam Diamond.** 202 loans were
-enumerated in total, and every Diamond whose VPFI token could be resolved holds
-**zero VPFI** at its census block. How each deployment was settled:
+**RESULT (2026-09-08, run 9 — all nineteen retained deployments across five
+chains, inventory from the committed manifest, the two unsound bounds
+withdrawn): ten deployments are PROVEN EMPTY on every class; nine are
+INDETERMINATE on at least one.** 202 loans were enumerated; **zero rows were
+found in any class on any deployment where rows could be read**; every Diamond
+whose VPFI token resolves holds zero, and no backing shortfall exists anywhere
+rows were readable. How each deployment stands:
 
-| Settled by | Deployments | What it proves |
+| Standing | Deployments | Basis |
 | --- | --- | --- |
-| `vpfi-balance-bound` | 14 | the Diamond holds 0 VPFI — no VPFI custody of any class can exist |
-| `no-facets-cut` | 3 | the Diamond fallback answers `FunctionDoesNotExist` on every custody selector — no facet ever wrote a row |
-| `no-loans-ever-created` | 1 | the loan counter is zero — every class is loan-keyed, so no row can exist |
-| indeterminate | 1 | `base-sepolia/.archive/2026-07-01T01-03-39Z`: 18 KB of code that reverts EMPTY on every selector — not a Diamond fallback, so not scopable |
+| proven — enumerated | 4 | every loan read through routed getters in all four classes: 0 rows |
+| proven — `no-loans-ever-created` | 6 | loan counter is zero (state read) and every class is loan-keyed |
+| indeterminate on class 3 ONLY | 5 | classes 1/2/4 enumerated empty; the intent getter is unrouted, so `intentCommits` cannot be read (arb-sepolia ×2 archives, base-sepolia 06-30 archive, op-sepolia live, sepolia 05-10 archive) |
+| indeterminate on every class | 3 | bare shells: every custody selector unrouted TODAY, storage unreadable without a getter |
+| indeterminate on every class | 1 | `base-sepolia/.archive/2026-07-01T01-03-39Z`: the recorded address is not a Vaipakam Diamond |
 
-**The empty verdict is therefore earned on every deployment that is a Vaipakam
-Diamond, and withheld on the one that is not** — which is the census working
-rather than failing: it will not certify around a recorded address it cannot
-explain.
+**Why the honest count is ten and not eighteen.** An earlier run of this
+census reported eighteen proven, on the strength of a zero VPFI balance and of
+`FunctionDoesNotExist` on every custody selector. Both are withdrawn above:
+the first proves rows would be unbacked, not absent; the second proves the
+selectors are unrouted now, not that they never wrote rows. The eight
+deployments that moved from "proven" to "indeterminate" did not change; the
+proof did. Nothing in the nine indeterminate cells is EVIDENCE of a row — no
+read anywhere returned one — but absence of a row is a claim about storage,
+and it is made only where storage was actually read.
 
-**The archive-endpoint re-run is RETIRED.** An earlier revision carried it as
-the outstanding action for op-sepolia and sepolia, whose unrouted getter had
-left class 3 resting on cut history. The balance bound answers from state:
-both hold 0 VPFI, so nothing about their history needs to be read. What
-follows below is the trail of how cut history was found wanting; it is kept
-because it is why the design moved to state reads.
+**The archive-endpoint re-run is not the remedy — and neither was the balance
+bound.** An earlier revision retired the re-run on the strength of the balance
+bound; the bound is withdrawn (above), so class 3 on every deployment whose
+intent getter is unrouted is OPEN again — but not to history, which can only
+refute. The remedy is a **calibrated storage read** of
+`intentCommits[loanId].orderHash`: the slot derived from the `Storage` layout,
+proven against a routed getter on a live commit before it is trusted, then
+applied where the getter is absent. What follows below is the trail of how cut
+history was found wanting; it is kept because it is why the design moved to
+state reads — and why the next step is a state read of the rows, not of the
+balance.
 
 The unrouted-getter chains rest on the Diamond's `DiamondCut` history, because
 an unrouted getter alone is not proof of absence — routing is mutable, the
@@ -4960,13 +5005,24 @@ returned zero on both unrouted chains and reported both as proven** — an empty
 scan manufacturing the comfortable answer, which is the exact failure this
 census exists to refuse, reintroduced by the machinery meant to prevent it.
 
-**Outstanding (superseding the archive re-run, which the balance bound
-retired): identify or correct the `base-sepolia/.archive/2026-07-01T01-03-39Z`
-artifact.** Its recorded `diamond` (`0x760e5727…`) holds 18 KB of code that is
-not a Vaipakam Diamond. Either the address is wrong in the artifact, or an
-unrelated contract was recorded as the Diamond at that redeploy; the census
-cannot tell which and will not guess. Until it is resolved that one archive
-stays indeterminate and `allClassesEmpty` stays `false` — deliberately.
+**Outstanding — two items, and neither is an archive endpoint.**
+
+1. **A calibrated storage read.** The eight deployments indeterminate for
+   want of a getter (five on class 3, three shells on every class) can be
+   settled only by reading the rows' storage directly: the slot of
+   `intentCommits[loanId].orderHash` (and, for the shells, the loan counter and
+   the other three mappings) derived from the `Storage` layout, **proven
+   against a routed getter on a live row before it is trusted** — a slot that
+   is merely computed fails silently as zero, which is the one answer this
+   census must never manufacture. Calibration needs a live intent commit,
+   which no deployed chain currently has; an anvil deployment can create one.
+   Until that read exists those cells stay indeterminate, and
+   `allClassesEmpty` stays `false` — deliberately.
+2. **Identify or correct the `base-sepolia/.archive/2026-07-01T01-03-39Z`
+   artifact.** Its recorded `diamond` (`0x760e5727…`) holds 18 KB of code
+   that is not a Vaipakam Diamond. Either the address is wrong in the artifact
+   or an unrelated contract was recorded as the Diamond at that redeploy; the
+   census cannot tell which and will not guess.
 
 **The refusal was then confirmed independently, and the confirmation is the
 part worth keeping.** Archive `eth_getCode` probes bound the Diamond's creation

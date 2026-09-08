@@ -26,17 +26,20 @@
 >
 > **#1566 is no longer owner-gated** (ratified 2026-09-07: census first, then
 > closure 3's resolver, then closure 2, slice 4 last). The census is DONE and
-> found every grandfathered custody class empty on **eighteen of the nineteen
-> retained deployments** (live plus archived, across five chains; 202 loans
-> enumerated; every Diamond whose VPFI token resolves holds 0 VPFI). The one
-> exception is an **artifact defect, not a custody question**:
-> `base-sepolia/.archive/2026-07-01T01-03-39Z` records an address holding a
-> contract that is not a Vaipakam Diamond, so it cannot be scoped and stays
-> indeterminate until the artifact is corrected. The archive-endpoint re-run
-> an earlier revision listed is RETIRED — the balance bound answers from
-> state. On that evidence the MIGRATION half of slices 0–3 is a certified
-> no-op and slice 0's shortfall question does not arise, pending that one
-> artifact correction. **Their prospective producer/consumer
+> read 202 loans across all **nineteen retained deployments** (live plus
+> archived, five chains) and found **zero custody rows in any class anywhere
+> rows could be read**, with zero backing shortfall. **Ten deployments are
+> PROVEN empty on every class; nine are indeterminate** — five on class 3
+> only (the intent getter is unrouted, so `intentCommits` cannot be read),
+> three bare shells with no custody getter at all, and one artifact defect
+> (`base-sepolia/.archive/2026-07-01T01-03-39Z` records an address that is
+> not a Vaipakam Diamond). An earlier revision claimed eighteen proven on two
+> bounds since withdrawn (a zero balance proves rows unbacked, not absent; an
+> unrouted selector today does not mean it never wrote). What settles the
+> nine is a **calibrated storage read of the rows** (not an archive endpoint —
+> history can only refute) plus that one artifact correction. Nothing found
+> so far is evidence of a row; the MIGRATION half of slices 0–3 is on course
+> to be a certified no-op, but the certification is not yet earned. **Their prospective producer/consumer
 > changes still ship** — the fallback and intent producers are live and can
 > create a qualifying row after the scan, so an empty census retires the
 > moving, not the isolation. Closure 3's resolver has LANDED — four-state, not three: the

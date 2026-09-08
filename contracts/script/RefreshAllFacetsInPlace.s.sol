@@ -903,6 +903,54 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             }
         }
 
+        // ─── #1566 closure 3 (Codex #2070 r6 P1) — reward ROLE backfill ──
+        //
+        // `rewardRoleConfigured` did not exist before this upgrade. A Diamond
+        // that was configured and then DETACHED under the old setters carries
+        // the field zero-initialized, and the four-state resolver reads that
+        // as `Unconfigured` — `max` delivered bound, fail-OPEN — where it must
+        // be `Detached`. State cannot tell the two apart (a demoted canonical
+        // chain and a never-configured one are byte-identical; base-sepolia
+        // is canonical with no messenger), so the record is backfilled from
+        // the OPERATOR'S declaration, in the same refuse-to-default posture as
+        // the P1-b seed above, while the Diamond is still paused.
+        //
+        //   REWARD_ROLE_EXPECTED=canonical|mirror|unconfigured|detached
+        //
+        // Only the detached case is APPLIED here (`setBaseChainId(0)` stamps
+        // the flag); a declared canonical/mirror role that the Diamond does
+        // not record is refused rather than guessed — `ConfigureRewardReporter`
+        // is the idempotent path that stamps those, with the real chain ids.
+        {
+            string memory expected = vm.envOr("REWARD_ROLE_EXPECTED", string(""));
+            require(
+                bytes(expected).length != 0,
+                "role-backfill: set REWARD_ROLE_EXPECTED=canonical|mirror|unconfigured|detached "
+                "(this Diamond's reward-mesh role per the recorded topology). Refusing to "
+                "default an irreversible role record."
+            );
+            uint8 want = _roleFromLabel(expected);
+            uint8 live = RewardReporterFacet(diamond).getRewardRole();
+            if (live != want) {
+                // The one transition this script may make: a pre-field detached
+                // chain reads Unconfigured (2) and must be recorded Detached (3).
+                require(
+                    want == 3 && live == 2,
+                    string.concat(
+                        "role-backfill: live role does not match REWARD_ROLE_EXPECTED and is not the "
+                        "detached backfill case - run ConfigureRewardReporter for canonical/mirror, or "
+                        "correct the declaration. expected=", expected
+                    )
+                );
+                RewardReporterFacet(diamond).setBaseChainId(0);
+                live = RewardReporterFacet(diamond).getRewardRole();
+                require(live == 3, "role-backfill: setBaseChainId(0) did not resolve to Detached");
+                console.log("role-backfill: recorded Detached (was pre-field Unconfigured)");
+            } else {
+                console.log("role-backfill: live role matches declaration:", expected);
+            }
+        }
+
         if (!wasPaused) AdminFacet(diamond).unpause();
 
         vm.stopBroadcast();
@@ -1325,6 +1373,17 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
                 reps[ri++] = sels[i];
             }
         }
+    }
+
+    /// @dev `REWARD_ROLE_EXPECTED` label -> `LibVaipakam.RewardRole` ordinal.
+    ///      Pinned by `RewardRoleResolverTest.test_RoleEnumWireValuesArePinned`.
+    function _roleFromLabel(string memory label) internal pure returns (uint8) {
+        bytes32 h = keccak256(bytes(label));
+        if (h == keccak256("canonical")) return 0;
+        if (h == keccak256("mirror")) return 1;
+        if (h == keccak256("unconfigured")) return 2;
+        if (h == keccak256("detached")) return 3;
+        revert("role-backfill: REWARD_ROLE_EXPECTED must be canonical|mirror|unconfigured|detached");
     }
 
     /// @dev Read an optional address key from this chain's `addresses.json`.
