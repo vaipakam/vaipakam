@@ -348,6 +348,14 @@ Thin-market honesty rules apply.
   by whoever submits it, and offers no button it cannot honour. Presenting an
   action that is certain to be refused is worse than presenting none: the user
   pays a network fee for the refusal.
+- A third route is available where the protocol can settle the overdue
+  position against an opposing one instead of selling anything. The app
+  can perform that close-out directly, and says so — it is distinguished
+  from the in-kind route in what the lender receives, since this one
+  repays the asset that was lent rather than handing over collateral.
+  Whether such an opposing position exists is asked of the protocol, not
+  inferred, and an unanswered question resolves to the more cautious of
+  the two descriptions rather than to a claim either way.
 - The in-kind route also covers collateral that is itself a non-fungible asset
   held against an ordinary loan. That is a supported shape and a distinct one
   from a rental: the leg being lent and the leg securing it are separate
@@ -399,7 +407,13 @@ Thin-market honesty rules apply.
   the protocol whether the action would succeed is preferred over the app
   re-deriving that answer from its own copy of the rules.
 - Forced close-out is not offered while a completed sale of the lender's position
-  is awaiting its final step. The buyer's funds have already moved and that
+  is awaiting its final step, nor while the app has not yet established
+  whether one is — an unanswered question about a pending sale withholds
+  the action rather than permitting it, because the protocol does not
+  check this itself and nothing downstream would catch the mistake. The
+  check is repeated against live state immediately before the action is
+  sent, since a sale can be accepted inside the window a cached answer
+  covers. The buyer's funds have already moved and that
   completion requires the loan to remain open, so closing it out here would end
   the loan and strand the recovery permanently.
 - Forced close-out remains available to a lender who has not accepted pending
