@@ -7,9 +7,14 @@ already deployed — so this adds a read-only census that answers it, and commit
 its output as an artifact rather than a claim. "The set was empty" is something
 a later reader must be able to re-run, not take on trust.
 
-The result: on three of the five deployed chains every class is empty. On the
-other two a single class could not be established at all, and the interesting
-part of this change is that the census says so instead of reporting zero.
+The result: across all nineteen retained deployments on the five chains —
+current contracts and the earlier ones a redeploy left behind — eighteen hold
+nothing in any of the four categories, and every contract whose VPFI could be
+identified holds none at all. The nineteenth cannot be assessed because the
+address on record turns out to hold something that is not the platform's
+contract; the census reports that as an open question about the record rather
+than as an empty result, and the interesting part of this change is that it
+says so instead of reporting zero.
 
 Most of the design here is about the ways a census can produce a comfortable
 answer it has not earned. An all-zero result is indistinguishable by inspection
@@ -42,6 +47,36 @@ proved unreliable there in a specific way worth recording: the same endpoint
 answered the identical history query two different ways within an hour, once
 with real data and once with nothing. A result that cannot be reproduced is not
 a result, which is why neither chain is reported as settled.
+
+Two further refinements changed what the census counts and what it will
+believe. It now censuses every retained deployment on a chain, not one address
+per chain: a fresh redeploy archives the off-chain record but cannot erase
+on-chain holdings, so the previous contracts and anything they still hold are
+part of the population. And every holding is filtered to the deployment's own
+VPFI, since the four categories are specifically about VPFI sharing a balance
+with rewards — a snapshot in some other collateral is outside scope and is
+recorded as excluded rather than quietly dropped.
+
+Including the archived contracts also surfaced what an "archived deployment"
+can actually be. Some are complete earlier versions of the platform; some are
+bare shells where deployment was abandoned before any logic was installed; and
+one recorded address turned out to hold an unrelated contract altogether. The
+census now distinguishes these by what the contract itself says when asked: a
+shell that has never had logic installed provably holds nothing and is settled
+on that basis, while an address that answers like something other than the
+platform is reported as undetermined with a note to correct the record. Before
+counting anything it also checks the simplest facts first — whether code exists
+at the address, and how much VPFI it holds — since either can settle a
+deployment outright without reading a single loan.
+
+The last point concerns what a chain's routing history can and cannot prove.
+No amount of checking that a history looks complete can rule out a gap whose
+net effect was nothing — an addition and removal both omitted — and such a gap
+can hide exactly the holding being looked for. So where the relevant view is
+absent, the census no longer treats a clean-looking history as proof. It reads
+the one fact an endpoint cannot misreport by leaving something out: how much
+VPFI the contract actually holds. Zero settles the question; anything else is
+reported as undetermined.
 
 Two claims were also corrected in the surrounding design. An empty population
 retires the *migration* — there is nothing to move, and the shortfall question

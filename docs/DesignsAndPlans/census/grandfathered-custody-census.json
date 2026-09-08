@@ -1,42 +1,79 @@
 {
-  "generatedAt": "2026-09-07T20:15:03.841Z",
+  "generatedAt": "2026-09-08T19:27:19.943Z",
   "purpose": "#1566 grandfathered-custody census — decides whether slices 0-3 are live work or a certified no-op",
   "scope": "all-deployed-chains",
   "allClassesEmpty": false,
-  "chainsDeployed": [
-    "arb-sepolia",
-    "base-sepolia",
-    "bnb-testnet",
-    "op-sepolia",
-    "sepolia"
+  "deploymentsDeployed": [
+    "arb-sepolia|live",
+    "arb-sepolia|archived 2026-05-10T02-37-43Z",
+    "arb-sepolia|archived 2026-07-01T01-28-35Z",
+    "arb-sepolia|archived 2026-07-01T01-36-25Z",
+    "base-sepolia|live",
+    "base-sepolia|archived 2026-05-10T01-28-54Z",
+    "base-sepolia|archived 2026-05-11T02-10-48Z",
+    "base-sepolia|archived 2026-06-30T23-56-49Z",
+    "base-sepolia|archived 2026-07-01T00-15-58Z",
+    "base-sepolia|archived 2026-07-01T00-27-51Z",
+    "base-sepolia|archived 2026-07-01T00-39-00Z",
+    "base-sepolia|archived 2026-07-01T00-54-13Z",
+    "base-sepolia|archived 2026-07-01T01-03-39Z",
+    "bnb-testnet|live",
+    "bnb-testnet|archived 2026-07-01T01-54-09Z",
+    "op-sepolia|live",
+    "sepolia|live",
+    "sepolia|archived 2026-05-10T13-02-26Z",
+    "sepolia|archived 2026-05-11T04-15-49Z"
   ],
-  "chainsCensused": 5,
+  "deploymentsCensused": 19,
   "chainsFailed": [],
-  "chainsNotCensused": [],
+  "deploymentsNotCensused": [],
   "indeterminateClasses": [
     {
-      "chainSlug": "op-sepolia",
-      "class": "liveIntentCommits",
-      "reason": "the cut-history scan returned ZERO DiamondCut events, but every Diamond emits at least one at deploy — the history was not actually read (pruned endpoint, or a deployBlock that does not match this address), so absence is not established. Re-run against an archive endpoint."
+      "chainSlug": "base-sepolia",
+      "deployment": "archived 2026-07-01T01-03-39Z",
+      "class": "vpfiHeldCustody",
+      "reason": "the contract at the recorded address is NOT a Vaipakam Diamond (every custody selector reverts without the Diamond fallback's FunctionDoesNotExist signature) — it cannot be scoped, and its artifact should be checked"
     },
     {
-      "chainSlug": "sepolia",
+      "chainSlug": "base-sepolia",
+      "deployment": "archived 2026-07-01T01-03-39Z",
+      "class": "rebateRows",
+      "reason": "the contract at the recorded address is NOT a Vaipakam Diamond (every custody selector reverts without the Diamond fallback's FunctionDoesNotExist signature) — it cannot be scoped, and its artifact should be checked"
+    },
+    {
+      "chainSlug": "base-sepolia",
+      "deployment": "archived 2026-07-01T01-03-39Z",
+      "class": "fallbackSnapshotCustody",
+      "reason": "the contract at the recorded address is NOT a Vaipakam Diamond (every custody selector reverts without the Diamond fallback's FunctionDoesNotExist signature) — it cannot be scoped, and its artifact should be checked"
+    },
+    {
+      "chainSlug": "base-sepolia",
+      "deployment": "archived 2026-07-01T01-03-39Z",
       "class": "liveIntentCommits",
-      "reason": "the cut-history scan returned ZERO DiamondCut events, but every Diamond emits at least one at deploy — the history was not actually read (pruned endpoint, or a deployBlock that does not match this address), so absence is not established. Re-run against an archive endpoint."
+      "reason": "the contract at the recorded address is NOT a Vaipakam Diamond (every custody selector reverts without the Diamond fallback's FunctionDoesNotExist signature) — it cannot be scoped, and its artifact should be checked"
     }
   ],
   "results": [
     {
       "chainSlug": "arb-sepolia",
+      "deployment": "live",
       "chainId": 421614,
       "diamond": "0x55d7872cC9738994cc6b04F89d128cB4c8745431",
-      "atBlock": "306486310",
-      "atBlockHash": "0xa8845dc422599cbbedc41c750aa3b61efc30b5d98c95c96c5969e384005c9c3f",
+      "vpfiToken": "0xDed6a45313E216ad4B74be089D2411f6E222d074",
+      "vpfiTokenSource": "deployment artifact",
+      "provenBy": "vpfi-balance-bound",
+      "diamondVpfiBalance": "0",
+      "atBlock": "306812775",
+      "atBlockHash": "0xb1c298b6e1fe4dc4fa6f3d8554d7d92a55d07344531f5d4a1414368683a76a88",
       "blockTag": "finalized",
       "scanned": {
         "loanIdsEnumerated": 13,
         "totalLoansEverCreated": "13",
         "loanIdRange": "1..13",
+        "enumerable": true,
+        "noCode": false,
+        "noFacets": false,
+        "loupeRouted": true,
         "intentSource": "getIntentCommit view (live state, history-independent)",
         "intentSurfaceRouted": true,
         "intentProducerRouted": true,
@@ -45,41 +82,253 @@
       "classes": {
         "vpfiHeldCustody": {
           "status": "proven",
+          "provenBy": "vpfi-balance-bound",
           "count": 0,
           "total": "0",
           "rows": []
         },
         "rebateRows": {
           "status": "proven",
+          "provenBy": "vpfi-balance-bound",
           "count": 0,
           "total": "0",
           "rows": []
         },
         "fallbackSnapshotCustody": {
           "status": "proven",
+          "provenBy": "vpfi-balance-bound",
           "count": 0,
           "total": "0",
-          "rows": []
+          "rows": [],
+          "nonVpfiRowsExcluded": []
         },
         "liveIntentCommits": {
           "status": "proven",
+          "provenBy": "vpfi-balance-bound",
           "count": 0,
           "total": "0",
-          "rows": []
+          "rows": [],
+          "nonVpfiRowsExcluded": []
         }
       }
     },
     {
+      "chainSlug": "arb-sepolia",
+      "deployment": "archived 2026-05-10T02-37-43Z",
+      "chainId": 421614,
+      "diamond": "0x8EcD41ecE070f6B68ae35A495AA820E1bFC19AeC",
+      "vpfiToken": "0x08c2937486B2215aFE6d1a69F011145fE023840F",
+      "vpfiTokenSource": "on-chain getVPFIToken()",
+      "provenBy": "vpfi-balance-bound",
+      "diamondVpfiBalance": "0",
+      "atBlock": "306818675",
+      "atBlockHash": "0xe5d7ed4b7e76f36fb27e2e581e08bda8f2d06024441baa86e18a720dba688fe5",
+      "blockTag": "safe (finalized state pruned by endpoint)",
+      "scanned": {
+        "loanIdsEnumerated": 24,
+        "totalLoansEverCreated": "24",
+        "loanIdRange": "1..24",
+        "enumerable": true,
+        "noCode": false,
+        "noFacets": false,
+        "loupeRouted": true,
+        "intentSource": "getter unrouted — absence rests on the DiamondCut routing history (see classes.liveIntentCommits.absenceProof)",
+        "intentSurfaceRouted": false,
+        "intentProducerRouted": false,
+        "intentCorroboration": null
+      },
+      "classes": {
+        "vpfiHeldCustody": {
+          "status": "proven",
+          "provenBy": "vpfi-balance-bound",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "rebateRows": {
+          "status": "proven",
+          "provenBy": "vpfi-balance-bound",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "fallbackSnapshotCustody": {
+          "status": "proven",
+          "provenBy": "vpfi-balance-bound",
+          "count": 0,
+          "total": "0",
+          "rows": [],
+          "nonVpfiRowsExcluded": []
+        },
+        "liveIntentCommits": {
+          "status": "proven",
+          "provenBy": "vpfi-balance-bound",
+          "absenceProof": {
+            "proven": true,
+            "reason": "the Diamond holds ZERO VPFI at the census block, so no VPFI custody of any class can exist on it — a state read, independent of log completeness",
+            "diamondVpfiBalance": "0",
+            "cutHistoryRefutation": {
+              "proven": true,
+              "reason": "the intent producer never appears in any DiamondCut in this Diamond's history, and that history carries an ADD for every selector the Diamond currently routes (so the deployment cut and every later addition are present) — no commit can ever have been created",
+              "cutsScanned": 4,
+              "routedSelectors": 396
+            }
+          },
+          "count": 0,
+          "total": "0",
+          "rows": [],
+          "nonVpfiRowsExcluded": []
+        }
+      }
+    },
+    {
+      "chainSlug": "arb-sepolia",
+      "deployment": "archived 2026-07-01T01-28-35Z",
+      "chainId": 421614,
+      "diamond": "0x17Fe0D808F8971D7A14994a1205ee6AFd949Be91",
+      "vpfiToken": "0x2f4E10F00bB7f8A5fEDB0b1EB171bb6dfEAF1246",
+      "vpfiTokenSource": "on-chain getVPFIToken()",
+      "provenBy": "vpfi-balance-bound",
+      "diamondVpfiBalance": "0",
+      "atBlock": "306818675",
+      "atBlockHash": "0xe5d7ed4b7e76f36fb27e2e581e08bda8f2d06024441baa86e18a720dba688fe5",
+      "blockTag": "safe (finalized state pruned by endpoint)",
+      "scanned": {
+        "loanIdsEnumerated": 37,
+        "totalLoansEverCreated": "37",
+        "loanIdRange": "1..37",
+        "enumerable": true,
+        "noCode": false,
+        "noFacets": false,
+        "loupeRouted": true,
+        "intentSource": "getter unrouted — absence rests on the DiamondCut routing history (see classes.liveIntentCommits.absenceProof)",
+        "intentSurfaceRouted": false,
+        "intentProducerRouted": false,
+        "intentCorroboration": null
+      },
+      "classes": {
+        "vpfiHeldCustody": {
+          "status": "proven",
+          "provenBy": "vpfi-balance-bound",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "rebateRows": {
+          "status": "proven",
+          "provenBy": "vpfi-balance-bound",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "fallbackSnapshotCustody": {
+          "status": "proven",
+          "provenBy": "vpfi-balance-bound",
+          "count": 0,
+          "total": "0",
+          "rows": [],
+          "nonVpfiRowsExcluded": []
+        },
+        "liveIntentCommits": {
+          "status": "proven",
+          "provenBy": "vpfi-balance-bound",
+          "absenceProof": {
+            "proven": true,
+            "reason": "the Diamond holds ZERO VPFI at the census block, so no VPFI custody of any class can exist on it — a state read, independent of log completeness",
+            "diamondVpfiBalance": "0",
+            "cutHistoryRefutation": {
+              "proven": true,
+              "reason": "the intent producer never appears in any DiamondCut in this Diamond's history, and that history carries an ADD for every selector the Diamond currently routes (so the deployment cut and every later addition are present) — no commit can ever have been created",
+              "cutsScanned": 3,
+              "routedSelectors": 407
+            }
+          },
+          "count": 0,
+          "total": "0",
+          "rows": [],
+          "nonVpfiRowsExcluded": []
+        }
+      }
+    },
+    {
+      "chainSlug": "arb-sepolia",
+      "deployment": "archived 2026-07-01T01-36-25Z",
+      "chainId": 421614,
+      "diamond": "0x55d7872cC9738994cc6b04F89d128cB4c8745431",
+      "vpfiToken": "0xDed6a45313E216ad4B74be089D2411f6E222d074",
+      "vpfiTokenSource": "deployment artifact",
+      "provenBy": "vpfi-balance-bound",
+      "diamondVpfiBalance": "0",
+      "atBlock": "306812775",
+      "atBlockHash": "0xb1c298b6e1fe4dc4fa6f3d8554d7d92a55d07344531f5d4a1414368683a76a88",
+      "blockTag": "finalized",
+      "scanned": {
+        "loanIdsEnumerated": 13,
+        "totalLoansEverCreated": "13",
+        "loanIdRange": "1..13",
+        "enumerable": true,
+        "noCode": false,
+        "noFacets": false,
+        "loupeRouted": true,
+        "intentSource": "getIntentCommit view (live state, history-independent)",
+        "intentSurfaceRouted": true,
+        "intentProducerRouted": true,
+        "intentCorroboration": null
+      },
+      "classes": {
+        "vpfiHeldCustody": {
+          "status": "proven",
+          "provenBy": "vpfi-balance-bound",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "rebateRows": {
+          "status": "proven",
+          "provenBy": "vpfi-balance-bound",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "fallbackSnapshotCustody": {
+          "status": "proven",
+          "provenBy": "vpfi-balance-bound",
+          "count": 0,
+          "total": "0",
+          "rows": [],
+          "nonVpfiRowsExcluded": []
+        },
+        "liveIntentCommits": {
+          "status": "proven",
+          "provenBy": "vpfi-balance-bound",
+          "count": 0,
+          "total": "0",
+          "rows": [],
+          "nonVpfiRowsExcluded": []
+        }
+      },
+      "duplicateOfDeployment": "live"
+    },
+    {
       "chainSlug": "base-sepolia",
+      "deployment": "live",
       "chainId": 84532,
       "diamond": "0xd89fd7F787e4415460b23891E97570a4881fb995",
-      "atBlock": "46521183",
-      "atBlockHash": "0x2be8b0b16c792647c34d7cfdf4b1840b8bf4a678b625da1cbc752a9ec07c4443",
+      "vpfiToken": "0x030dB965D504D34e36533acB97638dDF231Cc3CA",
+      "vpfiTokenSource": "on-chain getVPFIToken()",
+      "provenBy": "vpfi-balance-bound",
+      "diamondVpfiBalance": "0",
+      "atBlock": "46562955",
+      "atBlockHash": "0x4d1625b0dafca7b237ab959d866a36ba29966190b86436edd319af06f1ea03ad",
       "blockTag": "finalized",
       "scanned": {
         "loanIdsEnumerated": 21,
         "totalLoansEverCreated": "21",
         "loanIdRange": "1..21",
+        "enumerable": true,
+        "noCode": false,
+        "noFacets": false,
+        "loupeRouted": true,
         "intentSource": "getIntentCommit view (live state, history-independent)",
         "intentSurfaceRouted": true,
         "intentProducerRouted": true,
@@ -88,133 +337,56 @@
       "classes": {
         "vpfiHeldCustody": {
           "status": "proven",
+          "provenBy": "vpfi-balance-bound",
           "count": 0,
           "total": "0",
           "rows": []
         },
         "rebateRows": {
           "status": "proven",
+          "provenBy": "vpfi-balance-bound",
           "count": 0,
           "total": "0",
           "rows": []
         },
         "fallbackSnapshotCustody": {
           "status": "proven",
+          "provenBy": "vpfi-balance-bound",
           "count": 0,
           "total": "0",
-          "rows": []
+          "rows": [],
+          "nonVpfiRowsExcluded": []
         },
         "liveIntentCommits": {
           "status": "proven",
+          "provenBy": "vpfi-balance-bound",
           "count": 0,
           "total": "0",
-          "rows": []
+          "rows": [],
+          "nonVpfiRowsExcluded": []
         }
       }
     },
     {
-      "chainSlug": "bnb-testnet",
-      "chainId": 97,
-      "diamond": "0x7D4BfD2CA7908Fb088300f29276bF5A2E4FfBAd2",
-      "atBlock": "129701171",
-      "atBlockHash": "0x309a42d6c0e8c7af9f64d6f5b73049f66161b35eca474221b65260fb684d7327",
-      "blockTag": "finalized",
-      "scanned": {
-        "loanIdsEnumerated": 4,
-        "totalLoansEverCreated": "4",
-        "loanIdRange": "1..4",
-        "intentSource": "getIntentCommit view (live state, history-independent)",
-        "intentSurfaceRouted": true,
-        "intentProducerRouted": true,
-        "intentCorroboration": null
-      },
-      "classes": {
-        "vpfiHeldCustody": {
-          "status": "proven",
-          "count": 0,
-          "total": "0",
-          "rows": []
-        },
-        "rebateRows": {
-          "status": "proven",
-          "count": 0,
-          "total": "0",
-          "rows": []
-        },
-        "fallbackSnapshotCustody": {
-          "status": "proven",
-          "count": 0,
-          "total": "0",
-          "rows": []
-        },
-        "liveIntentCommits": {
-          "status": "proven",
-          "count": 0,
-          "total": "0",
-          "rows": []
-        }
-      }
-    },
-    {
-      "chainSlug": "op-sepolia",
-      "chainId": 11155420,
-      "diamond": "0x58824401F769b0A760b6CD98Af503Bd5ED648377",
-      "atBlock": "48504183",
-      "atBlockHash": "0x4c9358aba861a14d423462dd8eca6fe165d1f26ad2df895886ee471fcbdeceac",
-      "blockTag": "finalized",
-      "scanned": {
-        "loanIdsEnumerated": 33,
-        "totalLoansEverCreated": "33",
-        "loanIdRange": "1..33",
-        "intentSource": "getter unrouted — absence rests on the DiamondCut routing history (see classes.liveIntentCommits.absenceProof)",
-        "intentSurfaceRouted": false,
-        "intentProducerRouted": false,
-        "intentCorroboration": null
-      },
-      "classes": {
-        "vpfiHeldCustody": {
-          "status": "proven",
-          "count": 0,
-          "total": "0",
-          "rows": []
-        },
-        "rebateRows": {
-          "status": "proven",
-          "count": 0,
-          "total": "0",
-          "rows": []
-        },
-        "fallbackSnapshotCustody": {
-          "status": "proven",
-          "count": 0,
-          "total": "0",
-          "rows": []
-        },
-        "liveIntentCommits": {
-          "status": "indeterminate",
-          "indeterminateReason": "the cut-history scan returned ZERO DiamondCut events, but every Diamond emits at least one at deploy — the history was not actually read (pruned endpoint, or a deployBlock that does not match this address), so absence is not established. Re-run against an archive endpoint.",
-          "absenceProof": {
-            "proven": false,
-            "reason": "the cut-history scan returned ZERO DiamondCut events, but every Diamond emits at least one at deploy — the history was not actually read (pruned endpoint, or a deployBlock that does not match this address), so absence is not established. Re-run against an archive endpoint.",
-            "cutsScanned": 0
-          },
-          "count": 0,
-          "total": "0",
-          "rows": []
-        }
-      }
-    },
-    {
-      "chainSlug": "sepolia",
-      "chainId": 11155111,
-      "diamond": "0x492f83F2Ab99B7b13E1F8CAf6fbAeB7300B85302",
-      "atBlock": "11656344",
-      "atBlockHash": "0x1f02b14246662fd6d2208721f7c4173c00db589146c1c51545bde4eb34acadbc",
+      "chainSlug": "base-sepolia",
+      "deployment": "archived 2026-05-10T01-28-54Z",
+      "chainId": 84532,
+      "diamond": "0x84879F7cb87295B67916Ad257a8087b55981EbFc",
+      "vpfiToken": "0x3bA7e2C46ED97beeb4BEA8efe845b5227512DE27",
+      "vpfiTokenSource": "on-chain getVPFIToken()",
+      "provenBy": "vpfi-balance-bound",
+      "diamondVpfiBalance": "0",
+      "atBlock": "46562955",
+      "atBlockHash": "0x4d1625b0dafca7b237ab959d866a36ba29966190b86436edd319af06f1ea03ad",
       "blockTag": "finalized",
       "scanned": {
         "loanIdsEnumerated": 0,
         "totalLoansEverCreated": "0",
         "loanIdRange": "none",
+        "enumerable": true,
+        "noCode": false,
+        "noFacets": false,
+        "loupeRouted": true,
         "intentSource": "getter unrouted — absence rests on the DiamondCut routing history (see classes.liveIntentCommits.absenceProof)",
         "intentSurfaceRouted": false,
         "intentProducerRouted": false,
@@ -223,33 +395,865 @@
       "classes": {
         "vpfiHeldCustody": {
           "status": "proven",
+          "provenBy": "vpfi-balance-bound",
           "count": 0,
           "total": "0",
           "rows": []
         },
         "rebateRows": {
           "status": "proven",
+          "provenBy": "vpfi-balance-bound",
           "count": 0,
           "total": "0",
           "rows": []
         },
         "fallbackSnapshotCustody": {
           "status": "proven",
+          "provenBy": "vpfi-balance-bound",
+          "count": 0,
+          "total": "0",
+          "rows": [],
+          "nonVpfiRowsExcluded": []
+        },
+        "liveIntentCommits": {
+          "status": "proven",
+          "provenBy": "vpfi-balance-bound",
+          "absenceProof": {
+            "proven": true,
+            "reason": "the Diamond holds ZERO VPFI at the census block, so no VPFI custody of any class can exist on it — a state read, independent of log completeness",
+            "diamondVpfiBalance": "0",
+            "cutHistoryRefutation": {
+              "proven": false,
+              "reason": "the cut-history scan returned ZERO DiamondCut events, but every Diamond emits at least one at deploy — the history was not actually read (pruned endpoint, or a deployBlock that does not match this address), so absence is not established. Re-run against an archive endpoint.",
+              "cutsScanned": 0
+            }
+          },
+          "count": 0,
+          "total": "0",
+          "rows": [],
+          "nonVpfiRowsExcluded": []
+        }
+      }
+    },
+    {
+      "chainSlug": "base-sepolia",
+      "deployment": "archived 2026-05-11T02-10-48Z",
+      "chainId": 84532,
+      "diamond": "0x804Bc3E9625548e50c1B589b25111783A632D964",
+      "vpfiToken": "0x75e60702fe3dD4F107596d1da28e89B88982E82a",
+      "vpfiTokenSource": "on-chain getVPFIToken()",
+      "provenBy": "vpfi-balance-bound",
+      "diamondVpfiBalance": "0",
+      "atBlock": "46562955",
+      "atBlockHash": "0x4d1625b0dafca7b237ab959d866a36ba29966190b86436edd319af06f1ea03ad",
+      "blockTag": "finalized",
+      "scanned": {
+        "loanIdsEnumerated": 0,
+        "totalLoansEverCreated": "0",
+        "loanIdRange": "none",
+        "enumerable": true,
+        "noCode": false,
+        "noFacets": false,
+        "loupeRouted": true,
+        "intentSource": "getter unrouted — absence rests on the DiamondCut routing history (see classes.liveIntentCommits.absenceProof)",
+        "intentSurfaceRouted": false,
+        "intentProducerRouted": false,
+        "intentCorroboration": null
+      },
+      "classes": {
+        "vpfiHeldCustody": {
+          "status": "proven",
+          "provenBy": "vpfi-balance-bound",
           "count": 0,
           "total": "0",
           "rows": []
         },
-        "liveIntentCommits": {
-          "status": "indeterminate",
-          "indeterminateReason": "the cut-history scan returned ZERO DiamondCut events, but every Diamond emits at least one at deploy — the history was not actually read (pruned endpoint, or a deployBlock that does not match this address), so absence is not established. Re-run against an archive endpoint.",
-          "absenceProof": {
-            "proven": false,
-            "reason": "the cut-history scan returned ZERO DiamondCut events, but every Diamond emits at least one at deploy — the history was not actually read (pruned endpoint, or a deployBlock that does not match this address), so absence is not established. Re-run against an archive endpoint.",
-            "cutsScanned": 0
-          },
+        "rebateRows": {
+          "status": "proven",
+          "provenBy": "vpfi-balance-bound",
           "count": 0,
           "total": "0",
           "rows": []
+        },
+        "fallbackSnapshotCustody": {
+          "status": "proven",
+          "provenBy": "vpfi-balance-bound",
+          "count": 0,
+          "total": "0",
+          "rows": [],
+          "nonVpfiRowsExcluded": []
+        },
+        "liveIntentCommits": {
+          "status": "proven",
+          "provenBy": "vpfi-balance-bound",
+          "absenceProof": {
+            "proven": true,
+            "reason": "the Diamond holds ZERO VPFI at the census block, so no VPFI custody of any class can exist on it — a state read, independent of log completeness",
+            "diamondVpfiBalance": "0",
+            "cutHistoryRefutation": {
+              "proven": false,
+              "reason": "the cut-history scan returned ZERO DiamondCut events, but every Diamond emits at least one at deploy — the history was not actually read (pruned endpoint, or a deployBlock that does not match this address), so absence is not established. Re-run against an archive endpoint.",
+              "cutsScanned": 0
+            }
+          },
+          "count": 0,
+          "total": "0",
+          "rows": [],
+          "nonVpfiRowsExcluded": []
+        }
+      }
+    },
+    {
+      "chainSlug": "base-sepolia",
+      "deployment": "archived 2026-06-30T23-56-49Z",
+      "chainId": 84532,
+      "diamond": "0x725C7912956b254030A2DBF152B2F739C46C07c0",
+      "vpfiToken": "0xC27AEd85208FfF75374999ad0f20c21b91251e22",
+      "vpfiTokenSource": "on-chain getVPFIToken()",
+      "provenBy": "vpfi-balance-bound",
+      "diamondVpfiBalance": "0",
+      "atBlock": "46562955",
+      "atBlockHash": "0x4d1625b0dafca7b237ab959d866a36ba29966190b86436edd319af06f1ea03ad",
+      "blockTag": "finalized",
+      "scanned": {
+        "loanIdsEnumerated": 33,
+        "totalLoansEverCreated": "33",
+        "loanIdRange": "1..33",
+        "enumerable": true,
+        "noCode": false,
+        "noFacets": false,
+        "loupeRouted": true,
+        "intentSource": "getter unrouted — absence rests on the DiamondCut routing history (see classes.liveIntentCommits.absenceProof)",
+        "intentSurfaceRouted": false,
+        "intentProducerRouted": false,
+        "intentCorroboration": null
+      },
+      "classes": {
+        "vpfiHeldCustody": {
+          "status": "proven",
+          "provenBy": "vpfi-balance-bound",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "rebateRows": {
+          "status": "proven",
+          "provenBy": "vpfi-balance-bound",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "fallbackSnapshotCustody": {
+          "status": "proven",
+          "provenBy": "vpfi-balance-bound",
+          "count": 0,
+          "total": "0",
+          "rows": [],
+          "nonVpfiRowsExcluded": []
+        },
+        "liveIntentCommits": {
+          "status": "proven",
+          "provenBy": "vpfi-balance-bound",
+          "absenceProof": {
+            "proven": true,
+            "reason": "the Diamond holds ZERO VPFI at the census block, so no VPFI custody of any class can exist on it — a state read, independent of log completeness",
+            "diamondVpfiBalance": "0",
+            "cutHistoryRefutation": {
+              "proven": false,
+              "reason": "the cut-history scan returned ZERO DiamondCut events, but every Diamond emits at least one at deploy — the history was not actually read (pruned endpoint, or a deployBlock that does not match this address), so absence is not established. Re-run against an archive endpoint.",
+              "cutsScanned": 0
+            }
+          },
+          "count": 0,
+          "total": "0",
+          "rows": [],
+          "nonVpfiRowsExcluded": []
+        }
+      }
+    },
+    {
+      "chainSlug": "base-sepolia",
+      "deployment": "archived 2026-07-01T00-15-58Z",
+      "chainId": 84532,
+      "diamond": "0x217333C94Ccd0a2710F09Ae6596C50dCDb9e6fd5",
+      "vpfiToken": null,
+      "vpfiTokenSource": "unresolvable",
+      "provenBy": "no-facets-cut",
+      "diamondVpfiBalance": null,
+      "atBlock": "46562955",
+      "atBlockHash": "0x4d1625b0dafca7b237ab959d866a36ba29966190b86436edd319af06f1ea03ad",
+      "blockTag": "finalized",
+      "scanned": {
+        "loanIdsEnumerated": 0,
+        "totalLoansEverCreated": "n/a",
+        "loanIdRange": "none",
+        "enumerable": false,
+        "noCode": false,
+        "noFacets": true,
+        "notADiamond": false,
+        "loupeRouted": false,
+        "intentSurfaceRouted": false,
+        "intentProducerRouted": false,
+        "intentCorroboration": null
+      },
+      "classes": {
+        "vpfiHeldCustody": {
+          "status": "proven",
+          "provenBy": "no-facets-cut",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "rebateRows": {
+          "status": "proven",
+          "provenBy": "no-facets-cut",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "fallbackSnapshotCustody": {
+          "status": "proven",
+          "provenBy": "no-facets-cut",
+          "count": 0,
+          "total": "0",
+          "rows": [],
+          "nonVpfiRowsExcluded": []
+        },
+        "liveIntentCommits": {
+          "status": "proven",
+          "provenBy": "no-facets-cut",
+          "count": 0,
+          "total": "0",
+          "rows": [],
+          "nonVpfiRowsExcluded": []
+        }
+      }
+    },
+    {
+      "chainSlug": "base-sepolia",
+      "deployment": "archived 2026-07-01T00-27-51Z",
+      "chainId": 84532,
+      "diamond": "0x7944A00C3195F230454f5393B88CBf1BA2fbb0b0",
+      "vpfiToken": null,
+      "vpfiTokenSource": "unresolvable",
+      "provenBy": "no-facets-cut",
+      "diamondVpfiBalance": null,
+      "atBlock": "46562955",
+      "atBlockHash": "0x4d1625b0dafca7b237ab959d866a36ba29966190b86436edd319af06f1ea03ad",
+      "blockTag": "finalized",
+      "scanned": {
+        "loanIdsEnumerated": 0,
+        "totalLoansEverCreated": "n/a",
+        "loanIdRange": "none",
+        "enumerable": false,
+        "noCode": false,
+        "noFacets": true,
+        "notADiamond": false,
+        "loupeRouted": false,
+        "intentSurfaceRouted": false,
+        "intentProducerRouted": false,
+        "intentCorroboration": null
+      },
+      "classes": {
+        "vpfiHeldCustody": {
+          "status": "proven",
+          "provenBy": "no-facets-cut",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "rebateRows": {
+          "status": "proven",
+          "provenBy": "no-facets-cut",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "fallbackSnapshotCustody": {
+          "status": "proven",
+          "provenBy": "no-facets-cut",
+          "count": 0,
+          "total": "0",
+          "rows": [],
+          "nonVpfiRowsExcluded": []
+        },
+        "liveIntentCommits": {
+          "status": "proven",
+          "provenBy": "no-facets-cut",
+          "count": 0,
+          "total": "0",
+          "rows": [],
+          "nonVpfiRowsExcluded": []
+        }
+      }
+    },
+    {
+      "chainSlug": "base-sepolia",
+      "deployment": "archived 2026-07-01T00-39-00Z",
+      "chainId": 84532,
+      "diamond": "0x152134F790F179DC48CFAddA160E654F8bD5D9aD",
+      "vpfiToken": null,
+      "vpfiTokenSource": "unresolvable",
+      "provenBy": "no-facets-cut",
+      "diamondVpfiBalance": null,
+      "atBlock": "46562955",
+      "atBlockHash": "0x4d1625b0dafca7b237ab959d866a36ba29966190b86436edd319af06f1ea03ad",
+      "blockTag": "finalized",
+      "scanned": {
+        "loanIdsEnumerated": 0,
+        "totalLoansEverCreated": "n/a",
+        "loanIdRange": "none",
+        "enumerable": false,
+        "noCode": false,
+        "noFacets": true,
+        "notADiamond": false,
+        "loupeRouted": false,
+        "intentSurfaceRouted": false,
+        "intentProducerRouted": false,
+        "intentCorroboration": null
+      },
+      "classes": {
+        "vpfiHeldCustody": {
+          "status": "proven",
+          "provenBy": "no-facets-cut",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "rebateRows": {
+          "status": "proven",
+          "provenBy": "no-facets-cut",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "fallbackSnapshotCustody": {
+          "status": "proven",
+          "provenBy": "no-facets-cut",
+          "count": 0,
+          "total": "0",
+          "rows": [],
+          "nonVpfiRowsExcluded": []
+        },
+        "liveIntentCommits": {
+          "status": "proven",
+          "provenBy": "no-facets-cut",
+          "count": 0,
+          "total": "0",
+          "rows": [],
+          "nonVpfiRowsExcluded": []
+        }
+      }
+    },
+    {
+      "chainSlug": "base-sepolia",
+      "deployment": "archived 2026-07-01T00-54-13Z",
+      "chainId": 84532,
+      "diamond": "0x6CcCAd5056a478237f023FCa8dc6Acd23c3896FD",
+      "vpfiToken": null,
+      "vpfiTokenSource": "unresolvable",
+      "provenBy": "no-loans-ever-created",
+      "diamondVpfiBalance": null,
+      "atBlock": "46562955",
+      "atBlockHash": "0x4d1625b0dafca7b237ab959d866a36ba29966190b86436edd319af06f1ea03ad",
+      "blockTag": "finalized",
+      "scanned": {
+        "loanIdsEnumerated": 0,
+        "totalLoansEverCreated": "0",
+        "loanIdRange": "none",
+        "enumerable": true,
+        "noCode": false,
+        "noFacets": false,
+        "loupeRouted": true,
+        "intentSource": "getIntentCommit view (live state, history-independent)",
+        "intentSurfaceRouted": true,
+        "intentProducerRouted": true,
+        "intentCorroboration": null
+      },
+      "classes": {
+        "vpfiHeldCustody": {
+          "status": "proven",
+          "provenBy": "no-loans-ever-created",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "rebateRows": {
+          "status": "proven",
+          "provenBy": "no-loans-ever-created",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "fallbackSnapshotCustody": {
+          "status": "proven",
+          "provenBy": "no-loans-ever-created",
+          "count": 0,
+          "total": "0",
+          "rows": [],
+          "nonVpfiRowsExcluded": []
+        },
+        "liveIntentCommits": {
+          "status": "proven",
+          "provenBy": "no-loans-ever-created",
+          "count": 0,
+          "total": "0",
+          "rows": [],
+          "nonVpfiRowsExcluded": []
+        }
+      }
+    },
+    {
+      "chainSlug": "base-sepolia",
+      "deployment": "archived 2026-07-01T01-03-39Z",
+      "chainId": 84532,
+      "diamond": "0x760e5727a9949d38E1030a0438Ee3327fd6BCD47",
+      "vpfiToken": null,
+      "vpfiTokenSource": "unresolvable",
+      "diamondVpfiBalance": null,
+      "atBlock": "46562955",
+      "atBlockHash": "0x4d1625b0dafca7b237ab959d866a36ba29966190b86436edd319af06f1ea03ad",
+      "blockTag": "finalized",
+      "scanned": {
+        "loanIdsEnumerated": 0,
+        "totalLoansEverCreated": "n/a",
+        "loanIdRange": "none",
+        "enumerable": false,
+        "noCode": false,
+        "noFacets": false,
+        "notADiamond": true,
+        "loupeRouted": false,
+        "intentSurfaceRouted": false,
+        "intentProducerRouted": false,
+        "intentCorroboration": null
+      },
+      "classes": {
+        "vpfiHeldCustody": {
+          "status": "indeterminate",
+          "indeterminateReason": "the contract at the recorded address is NOT a Vaipakam Diamond (every custody selector reverts without the Diamond fallback's FunctionDoesNotExist signature) — it cannot be scoped, and its artifact should be checked",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "rebateRows": {
+          "status": "indeterminate",
+          "indeterminateReason": "the contract at the recorded address is NOT a Vaipakam Diamond (every custody selector reverts without the Diamond fallback's FunctionDoesNotExist signature) — it cannot be scoped, and its artifact should be checked",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "fallbackSnapshotCustody": {
+          "status": "indeterminate",
+          "indeterminateReason": "the contract at the recorded address is NOT a Vaipakam Diamond (every custody selector reverts without the Diamond fallback's FunctionDoesNotExist signature) — it cannot be scoped, and its artifact should be checked",
+          "count": 0,
+          "total": "0",
+          "rows": [],
+          "nonVpfiRowsExcluded": []
+        },
+        "liveIntentCommits": {
+          "status": "indeterminate",
+          "indeterminateReason": "the contract at the recorded address is NOT a Vaipakam Diamond (every custody selector reverts without the Diamond fallback's FunctionDoesNotExist signature) — it cannot be scoped, and its artifact should be checked",
+          "count": 0,
+          "total": "0",
+          "rows": [],
+          "nonVpfiRowsExcluded": []
+        }
+      }
+    },
+    {
+      "chainSlug": "bnb-testnet",
+      "deployment": "live",
+      "chainId": 97,
+      "diamond": "0x7D4BfD2CA7908Fb088300f29276bF5A2E4FfBAd2",
+      "vpfiToken": "0x3E50DD64e82Ab967026AB38B65aCD736d0255e1d",
+      "vpfiTokenSource": "on-chain getVPFIToken()",
+      "provenBy": "vpfi-balance-bound",
+      "diamondVpfiBalance": "0",
+      "atBlock": "129886721",
+      "atBlockHash": "0xf39655f6f6acac7ff3e3593a2718552d38346cc2ee9691c0d17a8b19500dead4",
+      "blockTag": "finalized",
+      "scanned": {
+        "loanIdsEnumerated": 4,
+        "totalLoansEverCreated": "4",
+        "loanIdRange": "1..4",
+        "enumerable": true,
+        "noCode": false,
+        "noFacets": false,
+        "loupeRouted": true,
+        "intentSource": "getIntentCommit view (live state, history-independent)",
+        "intentSurfaceRouted": true,
+        "intentProducerRouted": true,
+        "intentCorroboration": null
+      },
+      "classes": {
+        "vpfiHeldCustody": {
+          "status": "proven",
+          "provenBy": "vpfi-balance-bound",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "rebateRows": {
+          "status": "proven",
+          "provenBy": "vpfi-balance-bound",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "fallbackSnapshotCustody": {
+          "status": "proven",
+          "provenBy": "vpfi-balance-bound",
+          "count": 0,
+          "total": "0",
+          "rows": [],
+          "nonVpfiRowsExcluded": []
+        },
+        "liveIntentCommits": {
+          "status": "proven",
+          "provenBy": "vpfi-balance-bound",
+          "count": 0,
+          "total": "0",
+          "rows": [],
+          "nonVpfiRowsExcluded": []
+        }
+      }
+    },
+    {
+      "chainSlug": "bnb-testnet",
+      "deployment": "archived 2026-07-01T01-54-09Z",
+      "chainId": 97,
+      "diamond": "0xe46F8AE352bc28998083A2EC8Cf379063A73BEf7",
+      "vpfiToken": "0x771248712d35c54261C2A9441f3cAc7f9ad57839",
+      "vpfiTokenSource": "on-chain getVPFIToken()",
+      "provenBy": "vpfi-balance-bound",
+      "diamondVpfiBalance": "0",
+      "atBlock": "129886721",
+      "atBlockHash": "0xf39655f6f6acac7ff3e3593a2718552d38346cc2ee9691c0d17a8b19500dead4",
+      "blockTag": "finalized",
+      "scanned": {
+        "loanIdsEnumerated": 0,
+        "totalLoansEverCreated": "0",
+        "loanIdRange": "none",
+        "enumerable": true,
+        "noCode": false,
+        "noFacets": false,
+        "loupeRouted": true,
+        "intentSource": "getter unrouted — absence rests on the DiamondCut routing history (see classes.liveIntentCommits.absenceProof)",
+        "intentSurfaceRouted": false,
+        "intentProducerRouted": false,
+        "intentCorroboration": null
+      },
+      "classes": {
+        "vpfiHeldCustody": {
+          "status": "proven",
+          "provenBy": "vpfi-balance-bound",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "rebateRows": {
+          "status": "proven",
+          "provenBy": "vpfi-balance-bound",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "fallbackSnapshotCustody": {
+          "status": "proven",
+          "provenBy": "vpfi-balance-bound",
+          "count": 0,
+          "total": "0",
+          "rows": [],
+          "nonVpfiRowsExcluded": []
+        },
+        "liveIntentCommits": {
+          "status": "proven",
+          "provenBy": "vpfi-balance-bound",
+          "absenceProof": {
+            "proven": true,
+            "reason": "the Diamond holds ZERO VPFI at the census block, so no VPFI custody of any class can exist on it — a state read, independent of log completeness",
+            "diamondVpfiBalance": "0",
+            "cutHistoryRefutation": {
+              "proven": false,
+              "reason": "the cut history could not be read in full (pruned), so absence cannot be established"
+            }
+          },
+          "count": 0,
+          "total": "0",
+          "rows": [],
+          "nonVpfiRowsExcluded": []
+        }
+      }
+    },
+    {
+      "chainSlug": "op-sepolia",
+      "deployment": "live",
+      "chainId": 11155420,
+      "diamond": "0x58824401F769b0A760b6CD98Af503Bd5ED648377",
+      "vpfiToken": "0x08c2937486B2215aFE6d1a69F011145fE023840F",
+      "vpfiTokenSource": "on-chain getVPFIToken()",
+      "provenBy": "vpfi-balance-bound",
+      "diamondVpfiBalance": "0",
+      "atBlock": "48545906",
+      "atBlockHash": "0xebcf8c0a47795717611390cb33f5ca18427e09dcd02e872b2163f1a432c56f63",
+      "blockTag": "finalized",
+      "scanned": {
+        "loanIdsEnumerated": 33,
+        "totalLoansEverCreated": "33",
+        "loanIdRange": "1..33",
+        "enumerable": true,
+        "noCode": false,
+        "noFacets": false,
+        "loupeRouted": true,
+        "intentSource": "getter unrouted — absence rests on the DiamondCut routing history (see classes.liveIntentCommits.absenceProof)",
+        "intentSurfaceRouted": false,
+        "intentProducerRouted": false,
+        "intentCorroboration": null
+      },
+      "classes": {
+        "vpfiHeldCustody": {
+          "status": "proven",
+          "provenBy": "vpfi-balance-bound",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "rebateRows": {
+          "status": "proven",
+          "provenBy": "vpfi-balance-bound",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "fallbackSnapshotCustody": {
+          "status": "proven",
+          "provenBy": "vpfi-balance-bound",
+          "count": 0,
+          "total": "0",
+          "rows": [],
+          "nonVpfiRowsExcluded": []
+        },
+        "liveIntentCommits": {
+          "status": "proven",
+          "provenBy": "vpfi-balance-bound",
+          "absenceProof": {
+            "proven": true,
+            "reason": "the Diamond holds ZERO VPFI at the census block, so no VPFI custody of any class can exist on it — a state read, independent of log completeness",
+            "diamondVpfiBalance": "0",
+            "cutHistoryRefutation": {
+              "proven": false,
+              "reason": "the cut-history scan returned ZERO DiamondCut events, but every Diamond emits at least one at deploy — the history was not actually read (pruned endpoint, or a deployBlock that does not match this address), so absence is not established. Re-run against an archive endpoint.",
+              "cutsScanned": 0
+            }
+          },
+          "count": 0,
+          "total": "0",
+          "rows": [],
+          "nonVpfiRowsExcluded": []
+        }
+      }
+    },
+    {
+      "chainSlug": "sepolia",
+      "deployment": "live",
+      "chainId": 11155111,
+      "diamond": "0x492f83F2Ab99B7b13E1F8CAf6fbAeB7300B85302",
+      "vpfiToken": "0x669b6f785A8a9c73E8c11C4CC840eBEC23a17Dea",
+      "vpfiTokenSource": "on-chain getVPFIToken()",
+      "provenBy": "vpfi-balance-bound",
+      "diamondVpfiBalance": "0",
+      "atBlock": "11662990",
+      "atBlockHash": "0x954dcd0055aa41fb404b4cbd08cf145b2b34152c47554bc5e4f5a788cf817371",
+      "blockTag": "finalized",
+      "scanned": {
+        "loanIdsEnumerated": 0,
+        "totalLoansEverCreated": "0",
+        "loanIdRange": "none",
+        "enumerable": true,
+        "noCode": false,
+        "noFacets": false,
+        "loupeRouted": true,
+        "intentSource": "getter unrouted — absence rests on the DiamondCut routing history (see classes.liveIntentCommits.absenceProof)",
+        "intentSurfaceRouted": false,
+        "intentProducerRouted": false,
+        "intentCorroboration": null
+      },
+      "classes": {
+        "vpfiHeldCustody": {
+          "status": "proven",
+          "provenBy": "vpfi-balance-bound",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "rebateRows": {
+          "status": "proven",
+          "provenBy": "vpfi-balance-bound",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "fallbackSnapshotCustody": {
+          "status": "proven",
+          "provenBy": "vpfi-balance-bound",
+          "count": 0,
+          "total": "0",
+          "rows": [],
+          "nonVpfiRowsExcluded": []
+        },
+        "liveIntentCommits": {
+          "status": "proven",
+          "provenBy": "vpfi-balance-bound",
+          "absenceProof": {
+            "proven": true,
+            "reason": "the Diamond holds ZERO VPFI at the census block, so no VPFI custody of any class can exist on it — a state read, independent of log completeness",
+            "diamondVpfiBalance": "0",
+            "cutHistoryRefutation": {
+              "proven": false,
+              "reason": "the cut-history scan returned ZERO DiamondCut events, but every Diamond emits at least one at deploy — the history was not actually read (pruned endpoint, or a deployBlock that does not match this address), so absence is not established. Re-run against an archive endpoint.",
+              "cutsScanned": 0
+            }
+          },
+          "count": 0,
+          "total": "0",
+          "rows": [],
+          "nonVpfiRowsExcluded": []
+        }
+      }
+    },
+    {
+      "chainSlug": "sepolia",
+      "deployment": "archived 2026-05-10T13-02-26Z",
+      "chainId": 11155111,
+      "diamond": "0x3458758ec056db565CBE3FC6489480cd6f8B8eb7",
+      "vpfiToken": "0x3e45b30fb832e611dCCcCAe89eec92bc1099A7FF",
+      "vpfiTokenSource": "on-chain getVPFIToken()",
+      "provenBy": "vpfi-balance-bound",
+      "diamondVpfiBalance": "0",
+      "atBlock": "11662990",
+      "atBlockHash": "0x954dcd0055aa41fb404b4cbd08cf145b2b34152c47554bc5e4f5a788cf817371",
+      "blockTag": "finalized",
+      "scanned": {
+        "loanIdsEnumerated": 24,
+        "totalLoansEverCreated": "24",
+        "loanIdRange": "1..24",
+        "enumerable": true,
+        "noCode": false,
+        "noFacets": false,
+        "loupeRouted": true,
+        "intentSource": "getter unrouted — absence rests on the DiamondCut routing history (see classes.liveIntentCommits.absenceProof)",
+        "intentSurfaceRouted": false,
+        "intentProducerRouted": false,
+        "intentCorroboration": null
+      },
+      "classes": {
+        "vpfiHeldCustody": {
+          "status": "proven",
+          "provenBy": "vpfi-balance-bound",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "rebateRows": {
+          "status": "proven",
+          "provenBy": "vpfi-balance-bound",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "fallbackSnapshotCustody": {
+          "status": "proven",
+          "provenBy": "vpfi-balance-bound",
+          "count": 0,
+          "total": "0",
+          "rows": [],
+          "nonVpfiRowsExcluded": []
+        },
+        "liveIntentCommits": {
+          "status": "proven",
+          "provenBy": "vpfi-balance-bound",
+          "absenceProof": {
+            "proven": true,
+            "reason": "the Diamond holds ZERO VPFI at the census block, so no VPFI custody of any class can exist on it — a state read, independent of log completeness",
+            "diamondVpfiBalance": "0",
+            "cutHistoryRefutation": {
+              "proven": false,
+              "reason": "the cut-history scan returned ZERO DiamondCut events, but every Diamond emits at least one at deploy — the history was not actually read (pruned endpoint, or a deployBlock that does not match this address), so absence is not established. Re-run against an archive endpoint.",
+              "cutsScanned": 0
+            }
+          },
+          "count": 0,
+          "total": "0",
+          "rows": [],
+          "nonVpfiRowsExcluded": []
+        }
+      }
+    },
+    {
+      "chainSlug": "sepolia",
+      "deployment": "archived 2026-05-11T04-15-49Z",
+      "chainId": 11155111,
+      "diamond": "0xD2903cbb8Bb0f34fbb688a6E381Dc6c73056DB1c",
+      "vpfiToken": "0x1C837b53553D4134B00f474E04C904062CA69341",
+      "vpfiTokenSource": "on-chain getVPFIToken()",
+      "provenBy": "vpfi-balance-bound",
+      "diamondVpfiBalance": "0",
+      "atBlock": "11662990",
+      "atBlockHash": "0x954dcd0055aa41fb404b4cbd08cf145b2b34152c47554bc5e4f5a788cf817371",
+      "blockTag": "finalized",
+      "scanned": {
+        "loanIdsEnumerated": 0,
+        "totalLoansEverCreated": "0",
+        "loanIdRange": "none",
+        "enumerable": true,
+        "noCode": false,
+        "noFacets": false,
+        "loupeRouted": true,
+        "intentSource": "getter unrouted — absence rests on the DiamondCut routing history (see classes.liveIntentCommits.absenceProof)",
+        "intentSurfaceRouted": false,
+        "intentProducerRouted": false,
+        "intentCorroboration": null
+      },
+      "classes": {
+        "vpfiHeldCustody": {
+          "status": "proven",
+          "provenBy": "vpfi-balance-bound",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "rebateRows": {
+          "status": "proven",
+          "provenBy": "vpfi-balance-bound",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "fallbackSnapshotCustody": {
+          "status": "proven",
+          "provenBy": "vpfi-balance-bound",
+          "count": 0,
+          "total": "0",
+          "rows": [],
+          "nonVpfiRowsExcluded": []
+        },
+        "liveIntentCommits": {
+          "status": "proven",
+          "provenBy": "vpfi-balance-bound",
+          "absenceProof": {
+            "proven": true,
+            "reason": "the Diamond holds ZERO VPFI at the census block, so no VPFI custody of any class can exist on it — a state read, independent of log completeness",
+            "diamondVpfiBalance": "0",
+            "cutHistoryRefutation": {
+              "proven": false,
+              "reason": "the cut-history scan returned ZERO DiamondCut events, but every Diamond emits at least one at deploy — the history was not actually read (pruned endpoint, or a deployBlock that does not match this address), so absence is not established. Re-run against an archive endpoint.",
+              "cutsScanned": 0
+            }
+          },
+          "count": 0,
+          "total": "0",
+          "rows": [],
+          "nonVpfiRowsExcluded": []
         }
       }
     }

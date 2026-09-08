@@ -26,16 +26,17 @@
 >
 > **#1566 is no longer owner-gated** (ratified 2026-09-07: census first, then
 > closure 3's resolver, then closure 2, slice 4 last). The census is DONE and
-> found every grandfathered custody class empty on **three of the five**
-> deployed chains. **op-sepolia's and sepolia's class 3 (live intent commits)
-> are INDETERMINATE**, not empty: those two are exactly the chains whose intent
-> getter is unrouted, so absence rests on the Diamond's cut history — and that
-> history is not reliably readable from a pruned public endpoint (the scan
-> returns zero `DiamondCut` events, which cannot be true of a Diamond that
-> exists, and the same endpoint returned three cuts for sepolia an hour
-> earlier). They need a **re-run against an archive endpoint** to settle. On
-> that evidence the MIGRATION half of slices 0–3 is a certified no-op and
-> slice 0's shortfall question does not arise — pending those re-runs. **Their prospective producer/consumer
+> found every grandfathered custody class empty on **eighteen of the nineteen
+> retained deployments** (live plus archived, across five chains; 202 loans
+> enumerated; every Diamond whose VPFI token resolves holds 0 VPFI). The one
+> exception is an **artifact defect, not a custody question**:
+> `base-sepolia/.archive/2026-07-01T01-03-39Z` records an address holding a
+> contract that is not a Vaipakam Diamond, so it cannot be scoped and stays
+> indeterminate until the artifact is corrected. The archive-endpoint re-run
+> an earlier revision listed is RETIRED — the balance bound answers from
+> state. On that evidence the MIGRATION half of slices 0–3 is a certified
+> no-op and slice 0's shortfall question does not arise, pending that one
+> artifact correction. **Their prospective producer/consumer
 > changes still ship** — the fallback and intent producers are live and can
 > create a qualifying row after the scan, so an empty census retires the
 > moving, not the isolation. Closure 3's resolver has LANDED — four-state, not three: the

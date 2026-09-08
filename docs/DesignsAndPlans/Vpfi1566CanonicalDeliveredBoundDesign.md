@@ -1994,22 +1994,24 @@ non-canonical, **and** `rewardRoleConfigured`): no authenticated source of
 further delivery and nobody to report to. A never-configured deployment is
 `Unconfigured`, not `Detached` — see the correction above.
 
-| # | Site | Real question | Canonical | Mirror | **Detached** |
-| --- | --- | --- | --- | --- | --- |
-| 1 | `InteractionRewardsFacet.sweepForfeitedInteractionRewards:101` | which bound applies to the forfeit sweep | **matching transport → eligible ERA balance → delivered bound** (was `max`; the era term is §5c's own order — an era balance is invisible to the live bound, so transport-then-live gave a retired-era obligation zero allowance) | matching transport → eligible era balance → delivered bound | **matching transport-epoch balance FIRST, then the eligible ERA balance** (live headroom 0) — transport-first is ROLE-COMMON, per the lifecycle's debit order and row 13 |
-| 2 | `…:128` | does the sweep record a paid delta | **only the fell-through-to-live portion** (was "no", then an unqualified "yes" — a sweep funded by transport or a retired-era balance must not also suppress future live headroom) | same — fell-through only | **only the portion that FELL THROUGH to live funding** — an era-funded outflow debits its era balance and nothing else |
-| 3 | `RewardCommitmentFacet.isDayCommitmentReady:191` | is a day's commitment reportable | n/a | yes | **no** — nobody to report to |
-| 4 | `RewardCommitmentFacet._assertMirror:268` | AUTH: may this chain report | revert | allow | **revert** — fail closed |
-| 5 | `RewardHorizonSweepFacet.sweepExpiredInteractionRewards:162` | which bound applies to expiry | **matching transport → eligible ERA balance → delivered bound** (was `max`) | matching transport → eligible era balance → delivered bound | **matching transport-epoch balance FIRST, then the eligible ERA balance** (live headroom 0) |
-| 6 | `…:237` | paid-delta recording on expiry | **only the fell-through-to-live portion** (was "no", then an unqualified "yes") | same — fell-through only | **only the fell-through portion** — same rule as row 2 |
-| 7 | `RewardRemittanceFacet.sendRemitAck:1529` | AUTH: may this chain ack a remittance | revert | allow | **revert** — fail closed |
-| 8 | `RewardReporterFacet.setBaseChainId:1254` | is this a role transition needing residual retirement | n/a | yes | **yes — this is the site that CREATES and CLEARS Detached** |
-| 9 | `RewardReporterFacet._retireDeliveredResidualOnRoleChange:1286` | retire the delivered residual | n/a | on transition | **on ENTERING Detached, retire the counter AND relocate its backing; on LEAVING, start from zero** — see below |
-| 10 | `RewardReporterFacet.setIsCanonicalRewardChain:1301` | same, canonical side | yes | n/a | **yes** |
-| 11 | `LibInteractionRewards._walkSideDays:1823` | pool pricing / schedule funding | canonical schedule | mirror-delivered | **0 — must NOT fall through to canonical schedule** |
-| 12 | `LibInteractionRewards.sweepExpiredEntry:3245` | expiry accounting source | canonical | mirror | **mirror-shaped, bound 0** |
-| 13 | `LibInteractionRewards._entryExecutableNow:3776` | may this entry execute now | **if funded, measured VINTAGE-BLIND** (was "always") | **same — see note** | **if the PREPARED transport coverage plus the eligible ERA BALANCE covers it** (live headroom stays 0). The predicate is a VIEW and cannot run the bounded batch scan — coverage spread across more small batches than one scan permits would read false forever, the sweep never reaching the allocator it needs to become true. So discovery is a separate, permissionless, stateful **PREPARATION operation**: it runs the paginated scan-and-stage machinery for an obligation ahead of time, accumulating staged coverage across calls, and the predicate reads the O(1) result — staged total plus cursor-visible balance, **applied through the same per-day TWO-LEG allocation as settlement BEFORE any drought check runs**: the recycled drought test compares recycled need against the bucket first today, so a transport-backed recycled claim (the 5-fresh/5-recycled example) would read non-executable against an empty bucket even with full prepared coverage — the drought computes on the recycled residual NET of prepared transport, the fresh check likewise on its net leg. Prepare until covered, then the clock and the sweep see it — both legs.<br>**The prepared-coverage term is ROLE-COMMON, not Detached-only**: legacy packets route into the transport epoch after reattachment and after permanent promotion too, and their targeted obligations must consume it before era/live funding under every role — a retired claim backed solely by a late batch must read executable on Canonical and Mirror exactly as on Detached, or its era never terminalizes |
-| 14 | `LibInteractionRewards.deliveredFreshBound:4211` | THE bound | **delivered** (was `max`) | delivered | **0** |
+**The `Unconfigured` column is today's canonical / single-chain behaviour, FROZEN.** It is explicit per row (Codex #2070 r5 P2) because a matrix that describes a column it does not show is exactly the kind of gap that gets implemented as "same as Canonical" — and when slice 4 moves Canonical from `max` to the delivered bound, an Unconfigured chain has no `received` writer to fund that bound, so "same as Canonical" freezes every single-chain deploy. Where a cell says *today's behaviour*, it means the pre-slice-4 canonical behaviour, permanently.
+
+| # | Site | Real question | Canonical | Mirror | **Detached** | **Unconfigured** |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | `InteractionRewardsFacet.sweepForfeitedInteractionRewards:101` | which bound applies to the forfeit sweep | **matching transport → eligible ERA balance → delivered bound** (was `max`; the era term is §5c's own order — an era balance is invisible to the live bound, so transport-then-live gave a retired-era obligation zero allowance) | matching transport → eligible era balance → delivered bound | **matching transport-epoch balance FIRST, then the eligible ERA balance** (live headroom 0) — transport-first is ROLE-COMMON, per the lifecycle's debit order and row 13 | **`max`** — no delivered ledger exists to bound against; today's canonical behaviour, and it does **NOT** follow the Canonical column's slice-4 change |
+| 2 | `…:128` | does the sweep record a paid delta | **only the fell-through-to-live portion** (was "no", then an unqualified "yes" — a sweep funded by transport or a retired-era balance must not also suppress future live headroom) | same — fell-through only | **only the portion that FELL THROUGH to live funding** — an era-funded outflow debits its era balance and nothing else | **no** — nothing is delivered-funded, so there is no paid delta to record |
+| 3 | `RewardCommitmentFacet.isDayCommitmentReady:191` | is a day's commitment reportable | n/a | yes | **no** — nobody to report to | **n/a** — not a reporter; nobody to report to and no base to report to |
+| 4 | `RewardCommitmentFacet._assertMirror:268` | AUTH: may this chain report | revert | allow | **revert** — fail closed | **revert** — not a mirror (fail closed, same as Detached) |
+| 5 | `RewardHorizonSweepFacet.sweepExpiredInteractionRewards:162` | which bound applies to expiry | **matching transport → eligible ERA balance → delivered bound** (was `max`) | matching transport → eligible era balance → delivered bound | **matching transport-epoch balance FIRST, then the eligible ERA balance** (live headroom 0) | **`max`** — as row 1; frozen at today's behaviour |
+| 6 | `…:237` | paid-delta recording on expiry | **only the fell-through-to-live portion** (was "no", then an unqualified "yes") | same — fell-through only | **only the fell-through portion** — same rule as row 2 | **no** — as row 2 |
+| 7 | `RewardRemittanceFacet.sendRemitAck:1529` | AUTH: may this chain ack a remittance | revert | allow | **revert** — fail closed | **revert** — not a mirror |
+| 8 | `RewardReporterFacet.setBaseChainId:1254` | is this a role transition needing residual retirement | n/a | yes | **yes — this is the site that CREATES and CLEARS Detached** | **n/a as a transition source; the WRITE is what ends this role** — a non-zero base makes it Mirror, and an explicit zero stamps it Detached (a configuration act, deliberately) |
+| 9 | `RewardReporterFacet._retireDeliveredResidualOnRoleChange:1286` | retire the delivered residual | n/a | on transition | **on ENTERING Detached, retire the counter AND relocate its backing; on LEAVING, start from zero** — see below | **n/a** — no delivered ledger, so nothing to retire on the way out; the stamp on leaving is what matters |
+| 10 | `RewardReporterFacet.setIsCanonicalRewardChain:1301` | same, canonical side | yes | n/a | **yes** | **n/a as a source; `true` makes it Canonical** — and stamps `rewardRoleConfigured`, so demoting later lands in Detached, never back here |
+| 11 | `LibInteractionRewards._walkSideDays:1823` | pool pricing / schedule funding | canonical schedule | mirror-delivered | **0 — must NOT fall through to canonical schedule** | **canonical schedule** — a single-chain deploy funds its own armed days from the cap, exactly as today |
+| 12 | `LibInteractionRewards.sweepExpiredEntry:3245` | expiry accounting source | canonical | mirror | **mirror-shaped, bound 0** | **canonical** — as today |
+| 13 | `LibInteractionRewards._entryExecutableNow:3776` | may this entry execute now | **if funded, measured VINTAGE-BLIND** (was "always") | **same — see note** | **if the PREPARED transport coverage plus the eligible ERA BALANCE covers it** (live headroom stays 0). The predicate is a VIEW and cannot run the bounded batch scan — coverage spread across more small batches than one scan permits would read false forever, the sweep never reaching the allocator it needs to become true. So discovery is a separate, permissionless, stateful **PREPARATION operation**: it runs the paginated scan-and-stage machinery for an obligation ahead of time, accumulating staged coverage across calls, and the predicate reads the O(1) result — staged total plus cursor-visible balance, **applied through the same per-day TWO-LEG allocation as settlement BEFORE any drought check runs**: the recycled drought test compares recycled need against the bucket first today, so a transport-backed recycled claim (the 5-fresh/5-recycled example) would read non-executable against an empty bucket even with full prepared coverage — the drought computes on the recycled residual NET of prepared transport, the fresh check likewise on its net leg. Prepare until covered, then the clock and the sweep see it — both legs.<br>**The prepared-coverage term is ROLE-COMMON, not Detached-only**: legacy packets route into the transport epoch after reattachment and after permanent promotion too, and their targeted obligations must consume it before era/live funding under every role — a retired claim backed solely by a late batch must read executable on Canonical and Mirror exactly as on Detached, or its era never terminalizes | **always** (schedule-funded, no bound) — today's behaviour; the Canonical column's vintage-blind measurement is slice-4 scope and does not apply here |
+| 14 | `LibInteractionRewards.deliveredFreshBound:4211` | THE bound | **delivered** (was `max`) | delivered | **0** | **`max`** — and this is the cell the whole column exists for: when slice 4 moves Canonical to the delivered bound, Unconfigured **stays at `max`**, or every single-chain deploy freezes |
 
 **Two rows carry the whole risk and are worth reading twice.** Row 11 is where
 treating `Detached` as "not a mirror" silently funds payouts from a canonical
@@ -4776,6 +4778,21 @@ reported a comfortable answer it had not earned:
   class from the event lifecycle and was left unable to answer on a pruned
   endpoint.
 
+  **The census unit is a DEPLOYMENT, not a chain** (Codex #2070 r5 P1). A
+  `--fresh` redeploy archives the OFF-chain artifact under `.archive/` and
+  cannot wipe ON-chain storage — the redeploy guard permits orphaning prior
+  state deliberately (ReleaseNotes-2026-05-11). So every retained Diamond is
+  censused: the live one plus each archived one, nineteen in all across the
+  five chains at the time of writing. The global verdict requires every
+  deployment, and a partial run cannot claim it.
+
+  **Every row is filtered to this deployment's VPFI** (Codex #2070 r5 P2). The
+  four classes are VPFI custody specifically — the shared VPFI balance is the
+  design's whole premise — so a fallback snapshot or intent commit whose asset
+  is USDC or WETH is outside scope. Those rows are recorded as excluded, never
+  silently dropped. Classes 1 and 4 are VPFI by construction. A deployment
+  whose artifact names no VPFI token cannot be scoped and is INDETERMINATE.
+
   ⚠️ **An UNROUTED getter is a different case and is NOT a proof of absence.**
   An earlier revision of this bullet said "an unrouted surface cannot have
   produced a commit, which settles the class without touching a single loan",
@@ -4783,9 +4800,92 @@ reported a comfortable answer it had not earned:
   routing is mutable and the producer `commitSwapToRepayIntent` has its own
   selector, so a facet cut in, used, and later cut out leaves rows the missing
   getter cannot see. Where the getter is unrouted the class rests on the
-  Diamond's `DiamondCut` history — which is NOT history-independent, and is
-  exactly why op-sepolia is indeterminate below. Do not reintroduce the
-  shortcut; it is the one that made two chains read as proven when neither was.
+  Diamond's `DiamondCut` history — which is NOT history-independent. Do not
+  reintroduce the shortcut; it is the one that made two chains read as proven
+  when neither was.
+
+  **Four history-free bounds, and each on its own proves every class empty.**
+  Three are taken BEFORE any enumeration; the fourth falls out of it. Each is a state read an endpoint cannot
+  misreport by omission. (1) **No code at the recorded address** — nothing
+  on-chain to census. (2) **No custody surface routed** — the Diamond fallback
+  itself answers `FunctionDoesNotExist` on the loupe AND on every custody
+  selector, the signature of a bare shell whose `diamondCut` never ran; three
+  base-sepolia archives are exactly this, 178 bytes each. "The loupe is
+  unrouted" is deliberately NOT sufficient: a Diamond cut without a loupe still
+  answers its custody views, and those facets may have written rows. (3) **The
+  Diamond holds zero VPFI** — see below. A contract that reverts EMPTY on every
+  selector is none of these: it is not a Vaipakam Diamond at all (one
+  base-sepolia archive, 18 KB at the recorded address), and it is
+  INDETERMINATE with its artifact flagged for correction, never "empty".
+
+  (4) **No loan ever created.** All four classes are per-loan rows
+  (`borrowerLifRebate[loanId]`, `fallbackSnapshot[loanId]`,
+  `intentCommits[loanId]`), and loan ids exist only by creation — so a Diamond
+  whose loan counter is zero cannot hold a row in any of them. This bound
+  needs neither a VPFI token nor asset scoping, which is exactly what settles a
+  `--fresh` snapshot whose artifact names no token and whose Diamond never
+  minted a loan. It is taken only when the counter AND the enumeration agree
+  on zero; a non-zero counter with an empty scan is already a hard refusal.
+
+  Enumeration is then a refinement, not the proof: where it is possible the
+  per-loan counts are reported; where the metrics surface is unrouted and no
+  bound has proven emptiness, the deployment is indeterminate — a recorded
+  result inside coverage, not a thrown failure that drops it from the verdict.
+
+  **One block identity per chain, with one honest exception.** When a chain is
+  downgraded to `safe` *mid-run* — arb-sepolia: the live Diamond had already
+  been read at `finalized` before an archive hit the pruned window — that
+  chain carries two identities, both recorded per deployment in `blockTag`.
+  Re-reading the earlier deployments at `safe` would have made the artifact
+  tidier and no truer; the census records what it read.
+
+  Two further method points. **The VPFI token is resolved on-chain first**
+  (`getVPFIToken()`, when routed) and only then from the artifact, so the
+  balance bound rests on the Diamond's own answer where one exists. And **one
+  block identity is resolved per chain**, so every deployment on it reads the
+  same finalized state. Arbitrum Sepolia's public RPC keeps a MOVING state
+  window and its `finalized` tag lags far enough behind head that the
+  finalized block can fall out of that window between two calls — one
+  deployment reads fine and the next gets `metadata is not found` at the very
+  same height. The census classifies that as a pruned read and, once per
+  chain, **re-resolves the chain at `safe` and retries the deployment**:
+  `safe` is still a finality tag by the chain's own definition, so the
+  degradation stays reorg-resistant, and the artifact's `blockTag` says it
+  happened. It never falls to `latest` — that is the reorg-able head the
+  census refuses to certify against.
+
+  **Arbitrum Sepolia's `finalized` turned out to be effectively unservable
+  from public non-archive endpoints, in two different ways.** The official
+  endpoint is a load balancer over replicas that are not equally synced: it
+  answers `metadata is not found, <N>` where N is the replica's OWN head, and
+  when N is *below* the requested block the replica is simply behind — the
+  state exists and the next request may land on a replica that has it. That
+  is a transient, not pruning, and reading it as pruning failed deployments a
+  live sibling had just read at the same height. The census now retries such
+  reads with backoff (a reported height at or above the requested block is
+  the genuine pruned case and is not retried). publicnode's node fails the
+  other way — `historical state … is not available` at the finalized height
+  for every deployment — because Arbitrum's L1-anchored finality lags beyond
+  its state window entirely. Both messages are classified as pruned reads.
+
+  **An archive can name the SAME Diamond as the live artifact** (a
+  config-only snapshot). Coverage stays per artifact, which is what the
+  archive finding asked for, but the chain is not read twice: the later entry
+  reuses the earlier result under its own label and records
+  `duplicateOfDeployment`.
+
+  **And the cut history can only REFUTE, never certify** (Codex #2070 r5 P1).
+  Every continuity test over `eth_getLogs` — zero-cut refusal, an `Add` per
+  routed selector — proves the scan saw *some* of the history, never all of
+  it: an omitted `Add`/`Remove` pair for the producer nets to zero routing
+  change and is invisible to any such test, while a commit written inside that
+  interval may still be live. So where the getter is unrouted, the proof is
+  a STATE READ the endpoint cannot misreport by omission: **the Diamond's VPFI
+  balance at the census block.** All four classes are VPFI custody, and custody
+  the Diamond does not hold cannot exist — a zero balance settles class 3 with
+  no reliance on log completeness. A non-zero balance with an unrouted getter
+  stays indeterminate; the cut scan is retained and can downgrade (producer
+  seen routed), but its passing is not evidence.
   Hand-computed storage slots were never an option: they fail SILENTLY as
   zero, manufacturing the exact "empty" result the census exists to
   establish. The event reconstruction is retained behind `--corroborate` as
@@ -4808,15 +4908,30 @@ reported a comfortable answer it had not earned:
   latter as a failure on op-sepolia rather than silently counting it as an
   absent commit.
 
-**RESULT (2026-09-07): three of five chains are PROVEN EMPTY on every class;
-op-sepolia's and sepolia's class 3 are INDETERMINATE.** The empty verdict is
-therefore not yet earned outright, and this is the census working rather than
-failing.
+**RESULT (2026-09-08, all nineteen retained deployments across five chains):
+eighteen are PROVEN EMPTY on every class; one is INDETERMINATE because the
+contract at its recorded address is not a Vaipakam Diamond.** 202 loans were
+enumerated in total, and every Diamond whose VPFI token could be resolved holds
+**zero VPFI** at its census block. How each deployment was settled:
 
-⚠️ **The two indeterminate chains are exactly the two whose intent getter is
-unrouted — i.e. the two that depend on cut history rather than live state.**
-The three chains that route the getter read live state and are unaffected by
-any of this.
+| Settled by | Deployments | What it proves |
+| --- | --- | --- |
+| `vpfi-balance-bound` | 14 | the Diamond holds 0 VPFI — no VPFI custody of any class can exist |
+| `no-facets-cut` | 3 | the Diamond fallback answers `FunctionDoesNotExist` on every custody selector — no facet ever wrote a row |
+| `no-loans-ever-created` | 1 | the loan counter is zero — every class is loan-keyed, so no row can exist |
+| indeterminate | 1 | `base-sepolia/.archive/2026-07-01T01-03-39Z`: 18 KB of code that reverts EMPTY on every selector — not a Diamond fallback, so not scopable |
+
+**The empty verdict is therefore earned on every deployment that is a Vaipakam
+Diamond, and withheld on the one that is not** — which is the census working
+rather than failing: it will not certify around a recorded address it cannot
+explain.
+
+**The archive-endpoint re-run is RETIRED.** An earlier revision carried it as
+the outstanding action for op-sepolia and sepolia, whose unrouted getter had
+left class 3 resting on cut history. The balance bound answers from state:
+both hold 0 VPFI, so nothing about their history needs to be read. What
+follows below is the trail of how cut history was found wanting; it is kept
+because it is why the design moved to state reads.
 
 The unrouted-getter chains rest on the Diamond's `DiamondCut` history, because
 an unrouted getter alone is not proof of absence — routing is mutable, the
@@ -4845,11 +4960,13 @@ returned zero on both unrouted chains and reported both as proven** — an empty
 scan manufacturing the comfortable answer, which is the exact failure this
 census exists to refuse, reintroduced by the machinery meant to prevent it.
 
-**Outstanding: re-run op-sepolia AND sepolia against an ARCHIVE endpoint.**
-Until then class 3 on both is undetermined, and the artifact says so rather
-than rounding it to zero. An archive endpoint also removes the reproducibility
-problem: the flakiness above is a property of pruned public nodes serving
-partial history, not of the chains.
+**Outstanding (superseding the archive re-run, which the balance bound
+retired): identify or correct the `base-sepolia/.archive/2026-07-01T01-03-39Z`
+artifact.** Its recorded `diamond` (`0x760e5727…`) holds 18 KB of code that is
+not a Vaipakam Diamond. Either the address is wrong in the artifact, or an
+unrelated contract was recorded as the Diamond at that redeploy; the census
+cannot tell which and will not guess. Until it is resolved that one archive
+stays indeterminate and `allClassesEmpty` stays `false` — deliberately.
 
 **The refusal was then confirmed independently, and the confirmation is the
 part worth keeping.** Archive `eth_getCode` probes bound the Diamond's creation
@@ -4864,8 +4981,9 @@ even though the contract demonstrably came into existence inside it.
 `deployBlock` at which the Diamond has no code.** That is a data defect in its
 own right — every history scan keyed to it starts from a block the contract did
 not exist at, and a value wrong in the other direction would silently *truncate*
-a scan instead. It did not cause this indeterminate (the value happens to be a
-valid lower bound), but it must not be trusted as ground truth. **Operator
+a scan instead. It did not cause the (since-retired) cut-history indeterminate
+— the value happens to be a valid lower bound — but it must not be trusted as
+ground truth. **Operator
 action: correct the artifact from the true creation block**, which a bisection
 against an archive endpoint pins exactly.
 
