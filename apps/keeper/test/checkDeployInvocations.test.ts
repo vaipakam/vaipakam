@@ -9278,6 +9278,87 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(r.ok).toBe(true);
   });
 
+  it('Python floor division is not a line comment (#2066 r12)', () => {
+    // The language-blind `//` recogniser blanked everything after `10 // 2`
+    // to end of line, so a copy on THAT line went unseen — a false green.
+    // The write has to share the line with the operator or the fixture proves
+    // nothing, which is how the first version of it passed either way.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'a.py',
+      'import shutil, subprocess\n' +
+        'cfg = "configs/custom.jsonc"\n' +
+        'chunks = 10 // 2; shutil.copyfile("generated.jsonc", cfg)\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a JavaScript string describing a write is not one (#2066 r12)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'b.mjs',
+      'const example = "copy(source, destination)";\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it("a SHELL quoted payload is still executed code (#2066 r12)", () => {
+    // The mirror of the case above: excluding string content is right for
+    // JavaScript and Python, where a literal is data, and wrong for shell,
+    // where `node -e "…"` runs its payload. This guard already pins that for
+    // `-c`; the first cut of the string rule broke it immediately.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'e.sh',
+      'export CFG=configs/custom.jsonc\n' +
+        'node -e "require(\'fs\').writeFileSync(process.env.CFG,\'{}\')"\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a positional open mode must close too (#2066 r12)', () => {
+    // r11 fixed only the method form.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'c.py',
+      'import webbrowser, subprocess\n' +
+        'webbrowser.open("https://example.com", "welcome")\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a shell write word must be in command position (#2066 r12)', () => {
+    // `command -v cp` tests whether `cp` exists; it copies nothing.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'd.sh',
+      'command -v cp && echo found\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a wrapper still puts cp in command position (#2066 r12)', () => {
+    // The narrowing must not lose `sudo cp …`.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'h.sh',
+      'sudo cp generated.jsonc configs/custom.jsonc\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
   it('the PROSE path invalidates a rewritten config too', () => {
     // That path passed the rewrite context to the safety reader and not to the
     // identity reader, so the identity half trusted the stale copy and sent the

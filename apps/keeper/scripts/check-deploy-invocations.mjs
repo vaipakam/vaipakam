@@ -1333,7 +1333,7 @@ function isHelpInvocation(cmd) {
  * Worker's directory could bless an upload through a DIFFERENT file than the
  * one selected (#1995 r22).
  */
-function commandIsSafe(cmd, scopeHint = null, cmdCwd = '', fileText = '', fileAt = null, shellish = true) {
+function commandIsSafe(cmd, scopeHint = null, cmdCwd = '', fileText = '', fileAt = null, lang = 'shell') {
   if (isHelpInvocation(cmd)) return true;
   // `run deploy` gets the same option-value strip the flags do: it was a raw
   // substring test, so `--message="run deploy"` blessed a bare deploy that
@@ -1656,7 +1656,7 @@ function commandIsSafe(cmd, scopeHint = null, cmdCwd = '', fileText = '', fileAt
         // stands, which this one does not.
         if (
           cfgName !== null &&
-          configIsRewritten(fileText, cfgName, fileAt, shellish)
+          configIsRewritten(fileText, cfgName, fileAt, lang)
         ) {
           continue;
         }
@@ -3260,7 +3260,10 @@ function lineStartOffset(text, lineNo, within = null) {
  * the identity goes UNREAD — the inversion's case, which reports — so the
  * conservative direction is the cheap one.
  */
-function configIsRewritten(text, cfgPath, at = null, shellish = true) {
+function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
+  // `shellish` was a boolean until r12. What the readers below actually need
+  // is WHICH language, because `//` and `#` mean different things in each.
+  const shellish = lang === 'shell';
   const base = cfgPath.slice(cfgPath.lastIndexOf('/') + 1);
   if (!base) return false;
   const esc = base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -3358,8 +3361,13 @@ function configIsRewritten(text, cfgPath, at = null, shellish = true) {
         // Shell write commands, optionally reached through a path — and only
         // in SHELL text. `const ratio = cp / total;` is ordinary JavaScript
         // and matched the whitespace-delimited `cp` branch (r11).
+        // …and in COMMAND POSITION. Any whitespace before the word was
+        // enough, so `command -v cp && echo found` — which only tests whether
+        // `cp` exists — counted as a copy (r12). A command starts a line or
+        // follows a separator, optionally behind one of the few wrappers that
+        // take a command as their argument.
         (shellish
-          ? String.raw`|(?:^|[\s;&|(])(?:[\w./-]*/)?(?:cp|mv|install|rsync|tee)\s`
+          ? String.raw`|(?:^|[;&|(]|\bsudo\s|\benv\s|\bxargs\s|\btime\s|\bnohup\s)\s*(?:[\w./-]*/)?(?:cp|mv|install|rsync|tee)\s`
           : '') +
         // A REDIRECTION, not every `>`. The bare alternative also matched the
         // arrow in `=>` and the comparison in `2 > 1`, and since the deploy's
@@ -3379,10 +3387,13 @@ function configIsRewritten(text, cfgPath, at = null, shellish = true) {
         String.raw`|\.\s*open\s*\(\s*(?:mode\s*=\s*)?(["'\`])[rbt]*[wax+][rbt+]*\1` +
         // `mode=` may come FIRST: Python accepts `open(mode="w", file=cfg)`,
         // and requiring it after a comma missed that ordering (r9).
-        String.raw`|\bopen\s*\(\s*(?:(?:[^()]|\([^()]*\))*,\s*)?mode\s*=\s*` + Q + String.raw`[rbt]*[wax+]` +
+        // Every open-mode branch requires the literal to CLOSE. r11 fixed
+        // only the method form, so `webbrowser.open("https://x", "welcome")`
+        // still matched the prefix `"w` in the positional one (r12).
+        String.raw`|\bopen\s*\(\s*(?:(?:[^()]|\([^()]*\))*,\s*)?mode\s*=\s*(["'\`])[rbt]*[wax+][rbt+]*\2` +
         // `open(Path(cfg), "w")` wraps the path, and stopping at the first
         // `)` never reached the positional mode (r10).
-        String.raw`|\bopen\s*\((?:[^()]|\([^()]*\))*,\s*` + Q + String.raw`[rbt]*[wax+]`,
+        String.raw`|\bopen\s*\((?:[^()]|\([^()]*\))*,\s*(["'\`])[rbt]*[wax+][rbt+]*\3`,
       'gm',
     );
     // NO ORDERING BETWEEN THE NAME AND THE WRITE. Requiring the write to come
@@ -3395,37 +3406,69 @@ function configIsRewritten(text, cfgPath, at = null, shellish = true) {
     // names the config and writes before the deploy. Ordering against the
     // DEPLOY is still enforced below, which is the one that protects a
     // legitimate command.
-    // NON-EXECUTABLE TEXT IS NOT A WRITE. `# cp generated elsewhere` above a
-    // safe deploy was recorded as one, purely because the deploy itself names
-    // the config (Codex #2066 r11). Line comments only — `#` at a word
-    // boundary, `//` outside a string — which is bounded and leaves a `//`
-    // inside a path alone, the mistake r3 made with the JavaScript stripper.
-    const commented = [];
+    // NON-EXECUTABLE TEXT IS NOT A WRITE — and what counts as non-executable
+    // depends on the LANGUAGE. Three ad-hoc recognisers were tried before
+    // this: a JavaScript stripper over shell (blanked `//` in a path, r3), a
+    // line-comment scan with no language (blanked everything after Python's
+    // floor division `//`, r12 — a false GREEN), and none of them looked at
+    // string literals at all, so `const example = "copy(a, b)"` counted as a
+    // write (r12).
+    //
+    // One classifier instead, told which language it is reading, and consulted
+    // by offset. The lookup is a typed array rather than a scan over collected
+    // spans, which also answers the quadratic path r12 measured at 32k/64k/128k
+    // commented lines.
+    const kind = new Uint8Array(text.length); // 0 code, 1 string, 2 comment
     {
+      const jsLike = lang === 'js';
+      const hashComments = lang !== 'js';
       let q = null;
       for (let i = 0; i < text.length; i += 1) {
         const c = text[i];
         if (q) {
-          if (c === '\\') i += 1;
-          else if (c === q) q = null;
-          else if (c === '\n') q = null;
+          kind[i] = 1;
+          if (c === '\\') {
+            if (i + 1 < text.length) kind[i + 1] = 1;
+            i += 1;
+          } else if (c === q || (c === '\n' && lang !== 'js')) q = null;
           continue;
         }
-        if (c === '"' || c === "'" || c === '`') q = c;
-        else if (
-          (c === '#' && (i === 0 || /\s/.test(text[i - 1]))) ||
-          (c === '/' && text[i + 1] === '/' && /(?:^|[\s;({=])/.test(text[i - 1] ?? ''))
-        ) {
+        if (c === '"' || c === "'" || (jsLike && c === '`')) {
+          q = c;
+          kind[i] = 1;
+          continue;
+        }
+        // `//` is a comment in JavaScript and FLOOR DIVISION in Python; `#`
+        // is a comment in shell and Python and not in JavaScript.
+        const lineComment =
+          (hashComments && c === '#' && (i === 0 || /\s/.test(text[i - 1]))) ||
+          (jsLike && c === '/' && text[i + 1] === '/');
+        if (lineComment) {
           const nl = text.indexOf('\n', i);
-          const end = nl === -1 ? text.length : nl;
-          commented.push([i, end]);
-          i = end;
+          const stop = nl === -1 ? text.length : nl;
+          kind.fill(2, i, stop);
+          i = stop - 1;
+          continue;
+        }
+        if (jsLike && c === '/' && text[i + 1] === '*') {
+          const e = text.indexOf('*/', i + 2);
+          const stop = e === -1 ? text.length : e + 2;
+          kind.fill(2, i, stop);
+          i = stop - 1;
         }
       }
     }
-    const inComment = (at) => commented.some(([a, b]) => at >= a && at < b);
     for (const w of text.matchAll(ANY_WRITE)) {
-      if (!inComment(w.index)) writes.push(w.index);
+      // The verb itself must be CODE — where "string" means DATA. In
+      // JavaScript and Python a literal is data, so `const example =
+      // "copy(a, b)"` describes a write rather than performing one (r12). In
+      // SHELL it is not: `node -e "…writeFileSync…"` and `sh -c '…'` execute
+      // their quoted payload, which this guard already pins elsewhere ("a
+      // shell's -c payload is a command position, as eval's argument is").
+      // Excluding shell strings broke that fixture immediately.
+      const at0 = w.index + (w[0].length - w[0].replace(/^[^A-Za-z0-9_$/>%]+/, '').length);
+      const insideData = shellish ? kind[at0] === 2 : kind[at0] !== 0;
+      if (!insideData) writes.push(w.index);
     }
     writes.sort((a, b) => a - b);
   }
@@ -4134,7 +4177,7 @@ function declaredWorkerName(absPath) {
  * against every REACHABLE cwd, the same states the `cd` walk maintains, so a
  * relative selector lands where the shell would put it.
  */
-function selectorScope(seg, states, hasCwdState = true, vars = null, fileText = '', fileAt = null, srcIsShell = true) {
+function selectorScope(seg, states, hasCwdState = true, vars = null, fileText = '', fileAt = null, lang = 'shell') {
   // A value is ONE SHELL WORD, and a word can mix adjacent quoted and unquoted
   // chunks: `--name vaipakam"-"agent` is the single argument `vaipakam-agent`.
   // Capturing only the first chunk made the value `vaipakam`, which matched no
@@ -4767,7 +4810,7 @@ function selectorScope(seg, states, hasCwdState = true, vars = null, fileText = 
       // `.jsonc` is a shell script, which is always false, so the shell
       // alternatives switched off for every real `.sh` wrapper without a
       // shebang (Codex #2066 r11, a bug I introduced in r10).
-      const read = configIsRewritten(fileText ?? '', cfg, fileAt, srcIsShell)
+      const read = configIsRewritten(fileText ?? '', cfg, fileAt, lang)
         ? null
         : declaredWorkerNames(`${REPO_ROOT}/${rel}`, envSelected, envName);
       const declared = read === null ? null : read.names;
@@ -7812,6 +7855,16 @@ for (const file of walk(REPO_ROOT)) {
     // (Codex #2066 r11). `physical` marks a line that is NOT from a shell
     // block; anything from a block is shell.
     const lineIsShell = fileIsShell || !physical;
+    // WHICH language this line is, for the comment and string rules. A line
+    // lifted out of a `run:` block or a fenced fence is shell whatever the
+    // container is; otherwise the file's own extension decides.
+    const lineLang = lineIsShell
+      ? 'shell'
+      : /\.(?:m|c)?[jt]sx?$/.test(rel)
+        ? 'js'
+        : /\.py$/.test(rel)
+          ? 'py'
+          : 'other';
     // Each embedded block is a SEPARATE shell — an Actions step starts fresh,
     // and so does the next fenced example. Carrying `cwdIsKeeper` across them
     // made one block's `cd apps/keeper` reject the NEXT block's agent deploy
@@ -7948,7 +8001,7 @@ for (const file of walk(REPO_ROOT)) {
             '',
             text,
             lineStartOffset(text, lineNo, part.start),
-            lineIsShell,
+            lineLang,
           ) ||
           (aliased === null &&
             commandIsSafe(
@@ -7977,7 +8030,7 @@ for (const file of walk(REPO_ROOT)) {
           null,
           text,
           lineStartOffset(text, lineNo, part.start),
-          lineIsShell,
+          lineLang,
         );
         // A single filter can select BOTH packages, and each needs its own
         // remedy in the same report (#1995 r7).
@@ -8638,7 +8691,7 @@ for (const file of walk(REPO_ROOT)) {
           shellVars,
           text,
           lineStartOffset(text, lineNo, part.start),
-          lineIsShell,
+          lineLang,
         );
         // An explicit `cd` OUTRANKS where the wrapper file happens to live
         // (#1995 r9). `scopeOf`'s last resort is "this file is inside a scoped
@@ -8709,7 +8762,7 @@ for (const file of walk(REPO_ROOT)) {
         const atInFile = lineStartOffset(text, lineNo, part.start);
         const safeEverywhere = (text) =>
           cmdCwds.every((cwd) =>
-            commandIsSafe(text, safeHint, cwd, fileTextForSafety, atInFile, lineIsShell),
+            commandIsSafe(text, safeHint, cwd, fileTextForSafety, atInFile, lineLang),
           );
         if (
           safeEverywhere(aliased ?? seg) ||
