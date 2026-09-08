@@ -2404,7 +2404,8 @@
       "internalMatched": "Emparejadas internamente",
       "other": "Otros",
       "offersRetentionNote": "El total cuenta las ofertas registradas actualmente. Las ofertas canceladas se eliminan del índice al cabo de un mes aproximadamente, por lo que no es un total histórico: puede bajar a medida que caducan las cancelaciones antiguas.",
-      "activeUnknownExpiry": "Activa, vencimiento desconocido"
+      "activeUnknownExpiry": "Activa, vencimiento desconocido",
+      "offersScope": "Solo ofertas on-chain. Las órdenes firmadas sin gas no se cuentan aquí, aunque son ejecutables y sí aparecen en el libro de ofertas."
     },
     "protocolConsole": {
       "title": "Consola del protocolo",

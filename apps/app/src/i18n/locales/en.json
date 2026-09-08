@@ -2425,7 +2425,8 @@
       "caveat": "These counts are as current as the cursor above, not as current as the chain. If the last ingest is old, the numbers are old — that is why the age is shown here rather than left for you to guess. Settlement figures come from indexed events, so a state change that has not been ingested yet will not appear.",
       "ageSeconds": "{{n}}s ago",
       "ageMinutes": "{{n}} min ago",
-      "ageHours": "{{n}} h ago"
+      "ageHours": "{{n}} h ago",
+      "offersScope": "On-chain offers only. Gasless signed orders are not counted here, though they are fillable and do appear in the offer book."
     },
     "protocolConsole": {
       "title": "Protocol console",

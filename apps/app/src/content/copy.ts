@@ -4600,6 +4600,8 @@ const copySource = {
     notReported: 'not reported',
     loansHeading: 'Loans',
     offersHeading: 'Offers',
+    offersScope:
+      'On-chain offers only. Gasless signed orders are not counted here, though they are fillable and do appear in the offer book.',
     active: 'Active',
     repaid: 'Repaid',
     defaulted: 'Defaulted',

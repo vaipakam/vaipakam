@@ -287,6 +287,17 @@ export function Analytics() {
 
           <section className="an-section" aria-labelledby="an-offers">
             <h2 id="an-offers">{copy.analytics.offersHeading}</h2>
+            {/* Round 28 P2 — these counts read the `offers` table only.
+                A gasless maker order lives in `signed_offers` and is
+                served as executable liquidity by the offer book and the
+                Rate Desk's depth, so an unqualified "Active" here
+                undercounts what a visitor can actually see and fill.
+                Labelling rather than unioning: the two are different
+                things (one is on-chain state, the other a signed
+                intention nobody has spent gas on), and a transparency
+                page that quietly merges them is less honest than one
+                that says which it is counting. */}
+            <p className="muted an-scope">{copy.analytics.offersScope}</p>
             <div className="an-grid">
               <Stat label={copy.analytics.active} value={offers?.active} />
               <Stat label={copy.analytics.accepted} value={offers?.accepted} />

@@ -2404,7 +2404,8 @@
       "internalMatched": "Intern gematcht",
       "other": "Sonstige",
       "offersRetentionNote": "Die Gesamtzahl zählt die derzeit erfassten Angebote. Stornierte Angebote werden nach etwa einem Monat aus dem Index entfernt, daher ist dies keine Gesamtzahl über die gesamte Laufzeit — sie kann sinken, wenn alte Stornierungen herausfallen.",
-      "activeUnknownExpiry": "Aktiv, Ablauf unbekannt"
+      "activeUnknownExpiry": "Aktiv, Ablauf unbekannt",
+      "offersScope": "Nur On-Chain-Angebote. Gaslose signierte Orders werden hier nicht mitgezählt, obwohl sie ausführbar sind und im Angebotsbuch erscheinen."
     },
     "protocolConsole": {
       "title": "Protokoll-Konsole",
