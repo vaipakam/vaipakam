@@ -1787,6 +1787,19 @@ other variable here — an earlier version of this paragraph said it
 could only come from the shell, which was true of the previous prebuild
 and is not true now. Leave it unset for the production deploy; set it
 for any deployment served from another origin.
+
+There is a twenty-first, `VITE_ADMIN_DASHBOARD_PUBLIC`, and it is the
+only one that must be set the SAME WAY IN TWO APPS. Unset — or anything
+other than `false` — means the read-only protocol console is public,
+which is the retail posture and what the marketing site links to. Set it
+to `false` only for a pre-launch or fork deployment that should not
+publish live governance values, and set it for `apps/www` as well as
+`apps/app`: `apps/app` gates the page and its documentation link, while
+`apps/www` gates the marketing links and the sitemap entry. Setting it
+in one app alone produces the two worst outcomes available — a marketing
+link advertising a page the app withholds, or a live console nothing
+points at. It is read at BUILD time, so it must be in place before
+`pnpm run deploy`; changing it later needs a rebuild of both Workers.
 Be precise about what that costs, because the failure is partial:
 chain reads still work — every chain in `apps/app/src/chain/chains.ts`
 carries a public `rpcUrlDefault` and `rpcUrlFor` falls back to it

@@ -67,6 +67,48 @@ assert a heading against the state it was checking. The heading now
 depends on the state, and says "if this loan is not repaid" while the
 answer is still open.
 
+Review then found four more places where the card knew less than the
+protocol does, and they are worth recording together because they share
+a shape: each was the app modelling one of the contract's conditions and
+stopping one clause short.
+
+The card refused to appear at all for a lender whose wallet is
+sanctions-flagged. Every other lender tool on that page does hide, and
+copying the surrounding pattern is how this happened — but the close-out
+is deliberately not one of those. The protocol keeps this route open to
+a flagged caller on purpose, withholding only the incentive paid to
+whoever fires it, precisely so a close-out cannot be blocked. Hiding the
+card removed a flagged lender's only self-service recovery from a
+position that had already gone bad.
+
+A loan whose collateral is an NFT — an ordinary shape, not a rental —
+waited forever. The card asked whether the collateral was liquid, a
+question that only makes sense for a token with a market price, and
+never received an answer because none was ever requested. It now
+recognises that case directly and offers the one-click route, which is
+what the protocol does with it too.
+
+Two conditions the protocol checks were missing entirely: a
+governance-wide pause, and, for collateral with no market price, the
+risk acknowledgement both parties record when the loan opens. Without
+either, the transaction is refused, so the card now says so instead of
+offering a button. And because several of the facts behind that button
+can change while a lender is reading the confirmation, the app now asks
+the chain one last time immediately before sending — which is a better
+guarantee than any of the individual checks, since it is the chain's own
+answer to the only question that matters.
+
+Three sentences on the card were also more confident than the contract.
+It described a state as handled by automated closers, and there are
+none — nothing in the codebase submits this particular call, so a lender
+told to wait would have waited indefinitely; it now says an operator is
+needed and to ask. It named the collateral as what comes back, when the
+protocol may instead settle the position against an opposing one and
+return what was lent. And it said the loan ends straight away, which is
+usually true and not always. Each of those was a sentence about somebody
+else's money, on the card whose whole job is explaining how they get
+paid.
+
 One smaller correction came with it. The rule that decides which
 actions survive a pending change to the Terms did not list this one,
 which would have left a lender who had not re-accepted unable to reach

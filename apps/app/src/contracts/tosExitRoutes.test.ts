@@ -144,4 +144,38 @@ describe('isExitRoute', () => {
     expect(isExitRoute('/BORROW')).toBe(false);
     expect(isExitRoute('/Offers')).toBe(false);
   });
+
+  it('exempts locale-prefixed bookmarks from the retired deployment', () => {
+    // The old app mounted every route under `/:locale`, so these are
+    // real bookmarks. This app answers them with a redirect that strips
+    // the segment — but that redirect is a route element, and the gate
+    // classifies the still-prefixed path first, so without normalising
+    // here a held user met the Terms prompt on the way to repayment.
+    expect(isExitRoute('/es/positions/7')).toBe(true);
+    expect(isExitRoute('/ja/vpfi-vault')).toBe(true);
+    expect(isExitRoute('/fr/claims')).toBe(true);
+    expect(isExitRoute('/DE/Positions/7')).toBe(true);
+  });
+
+  it('does not let a locale prefix widen the gate', () => {
+    // The distinguishing half: stripping must reach only destinations
+    // that were already exempt. A locale-prefixed exposure-opening
+    // route stays gated exactly as its unprefixed form does.
+    expect(isExitRoute('/es/borrow')).toBe(false);
+    expect(isExitRoute('/ja/offers')).toBe(false);
+    // Not a supported locale — the first segment is kept, so a route
+    // that merely looks prefixed cannot borrow an exemption.
+    expect(isExitRoute('/xx/positions/7')).toBe(false);
+    // And a short REAL route must not lose its first segment.
+    expect(isExitRoute('/nft/7')).toBe(true);
+    expect(isExitRoute('/es')).toBe(false);
+  });
+
+  it('exempts the pre-rename console aliases', () => {
+    // Both redirect into `/protocol-console`, which is exempt as a
+    // read-only public surface — and an alias renders its redirect
+    // INSIDE the gate, so it needs its own entry.
+    expect(isExitRoute('/admin')).toBe(true);
+    expect(isExitRoute('/admin/docs')).toBe(true);
+  });
 });

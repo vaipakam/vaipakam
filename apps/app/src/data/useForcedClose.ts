@@ -41,6 +41,8 @@ const REFETCH_MS = 30_000;
 export interface ForcedCloseReads {
   defaultable: boolean | undefined;
   sequencerHealthy: boolean | undefined;
+  paused: boolean | undefined;
+  consentFromBoth: boolean | undefined;
   collateralIlliquid: boolean | undefined;
   ltvCollapsed: boolean | undefined;
 }
@@ -85,6 +87,46 @@ export function useForcedCloseReads(opts: {
         abi: DIAMOND_ABI_VIEM,
         functionName: 'sequencerHealthy',
       })) as boolean,
+  });
+
+  /** `AdminFacet.paused()` — `triggerDefault`'s first modifier.
+   *
+   *  Chain-scoped, not loan-scoped, and read at the same cadence as the
+   *  rest so a governance pause during the lender's visit removes the
+   *  button rather than leaving one that is guaranteed to revert. */
+  const paused = useQuery({
+    queryKey: ['forcedClose', 'paused', readChain.chainId],
+    enabled: on,
+    refetchInterval: REFETCH_MS,
+    queryFn: async () =>
+      (await publicClient!.readContract({
+        address: diamond,
+        abi: DIAMOND_ABI_VIEM,
+        functionName: 'paused',
+      })) as boolean,
+  });
+
+  /** `loan.riskAndTermsConsentFromBoth`, straight off the loan struct.
+   *
+   *  Read HERE rather than taken from the page's `loanLive`, which is
+   *  Advanced-mode only — sourcing it there would have left the flag
+   *  permanently undefined in Basic mode and stalled the card on
+   *  `unknown` for exactly the lenders least likely to know why. It is
+   *  set at init and never changes, so a long staleTime is correct;
+   *  the poll cadence is kept only for the shared invalidation key. */
+  const consent = useQuery({
+    queryKey: ['forcedClose', 'consent', readChain.chainId, String(loanId)],
+    enabled: on,
+    staleTime: 10 * 60_000,
+    queryFn: async () => {
+      const live = (await publicClient!.readContract({
+        address: diamond,
+        abi: DIAMOND_ABI_VIEM,
+        functionName: 'getLoanDetails',
+        args: [BigInt(loanId!)],
+      })) as { riskAndTermsConsentFromBoth: boolean };
+      return Boolean(live.riskAndTermsConsentFromBoth);
+    },
   });
 
   const liquidity = useQuery({
@@ -145,6 +187,8 @@ export function useForcedCloseReads(opts: {
     // submit button live against a loan whose status may have moved.
     defaultable: defaultable.isError ? undefined : defaultable.data,
     sequencerHealthy: sequencer.isError ? undefined : sequencer.data,
+    paused: paused.isError ? undefined : paused.data,
+    consentFromBoth: consent.isError ? undefined : consent.data,
     collateralIlliquid: liquidity.isError ? undefined : liquidity.data,
     ltvCollapsed: ltv.isError ? undefined : ltv.data,
   };

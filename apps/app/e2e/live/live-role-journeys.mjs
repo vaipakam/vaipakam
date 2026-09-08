@@ -371,8 +371,14 @@ const SCENARIOS = [
       // test. Same correction as `/help` in an earlier round.
       const heading = await headingOf(page);
       const txt = await bodyText(page);
+      // `.ok`, not the object (round 28 P2). `rendersPage` returns
+      // `{ ok, actual }`, and assigning the whole thing here made the
+      // verdict truthy no matter what the heading was — the correction
+      // to the old body regex silently un-checked the very thing it was
+      // written to check, and PASSed on the failure it exists to catch.
+      const { ok } = await rendersPage(page, EXPECTED.notFoundTitle);
       return {
-        ok: await rendersPage(page, EXPECTED.notFoundTitle),
+        ok,
         actual: `h1=${JSON.stringify(heading)} (want ${JSON.stringify(
           EXPECTED.notFoundTitle,
         )}), body=${txt.length} chars`,

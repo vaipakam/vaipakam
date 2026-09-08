@@ -23,6 +23,7 @@
  * only the canonical path would leave `/loans/7` gated on its way to an
  * ungated `/positions/7`.
  */
+import { SUPPORTED_LOCALES } from '@vaipakam/i18n/glossary';
 
 /** Exact paths, and prefixes for the parameterised ones. */
 const EXIT_PREFIXES = [
@@ -114,6 +115,14 @@ const EXIT_PREFIXES = [
   '/vpfi-vault',
   '/vault-assets',
   '/app/loans',
+  // The pre-rename console aliases (round 28 P2). `/protocol-console`
+  // above is exempt as a read-only public surface; these two redirect
+  // into it and into its documentation, and an alias renders its
+  // `<Navigate>` INSIDE the gate — so without their own entry a held
+  // visitor following an old bookmark sees the Terms prompt where the
+  // canonical route shows the page. `/admin/docs` inherits this by the
+  // segment rule below; it needs no separate line.
+  '/admin',
 ] as const;
 
 /**
@@ -122,6 +131,21 @@ const EXIT_PREFIXES = [
  * Prefix matching is bounded at a segment boundary so `/vaults-of-x`
  * cannot inherit `/vault`'s exemption — a gate that can be widened by
  * naming a route carefully is not a gate.
+ *
+ * A leading SUPPORTED locale segment is stripped before matching
+ * (round 28 P1). The retired deployment mounted every route under
+ * `/:locale`, so `/es/positions/7` and `/fr/claims` are real bookmarks;
+ * this app answers them with a redirect that strips the segment — but
+ * that redirect is a route element, and `LegalGate` classifies the
+ * still-prefixed pathname BEFORE rendering it. A held user following
+ * one therefore met the Terms prompt on the way to repayment or a
+ * claim: the exit trap this module exists to prevent, re-entered
+ * through a URL shape it did not recognise.
+ *
+ * Stripping widens nothing. What survives is matched against the same
+ * list under the same segment rule, so `/es/borrow` normalises to
+ * `/borrow` and stays gated exactly as `/borrow` does — only the
+ * already-exempt destinations are reached, one redirect earlier.
  */
 export function isExitRoute(pathname: string): boolean {
   // Lower-cased first: React Router matches route declarations
@@ -131,6 +155,23 @@ export function isExitRoute(pathname: string): boolean {
   // module exists to prevent, reintroduced by a string comparison
   // (review round 3 P2).
   const path = pathname.toLowerCase().replace(/\/+$/, '') || '/';
+  return matches(path) || matches(stripLocale(path));
+}
+
+/** Drop a leading `/xx` when `xx` is a locale this app actually ships.
+ *
+ *  Checked against `SUPPORTED_LOCALES` rather than a two-letter shape:
+ *  `/nft/7` must not lose its first segment, and neither must any
+ *  future short route. Returns the path unchanged when the first
+ *  segment is not a supported locale, which is also what makes calling
+ *  this on an already-unprefixed path free. */
+function stripLocale(path: string): string {
+  const [, first, ...rest] = path.split('/');
+  if (!(SUPPORTED_LOCALES as readonly string[]).includes(first)) return path;
+  return `/${rest.join('/')}`.replace(/\/+$/, '') || '/';
+}
+
+function matches(path: string): boolean {
   return EXIT_PREFIXES.some(
     (prefix) => path === prefix || path.startsWith(`${prefix}/`),
   );

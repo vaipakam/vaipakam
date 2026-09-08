@@ -39,10 +39,12 @@
  */
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
+import { usePublicClient } from 'wagmi';
 import { AlertTriangle } from 'lucide-react';
 import { copy } from '../content/copy';
 import { captureTxError } from '../lib/errors';
-import { useDiamondWrite } from '../contracts/diamond';
+import { useDiamondWrite, DIAMOND_ABI_VIEM } from '../contracts/diamond';
+import { useActiveChain } from '../chain/useActiveChain';
 import { ConfirmReceipt } from './ConfirmReceipt';
 import {
   canSubmitFromApp,
@@ -77,12 +79,26 @@ export function ForcedCloseCard({
   onClosedOut: () => void;
 }) {
   const { write, ready } = useDiamondWrite();
+  const { walletChain, address } = useActiveChain();
+  const publicClient = usePublicClient({ chainId: walletChain?.chainId });
   const queryClient = useQueryClient();
   const [error, setError] = useState<string | null>(null);
+  /** Latched the moment a close-out confirms, and never unlatched.
+   *
+   *  Round 28 P2 — the refetch after a successful close is
+   *  fire-and-forget, so TanStack keeps serving `defaultable: true` and
+   *  the old route verdict while it revalidates, and `useLoan` can hold
+   *  a still-Active indexed row for longer still. Without this the
+   *  button reappeared under the lender within the same second and
+   *  invited a second wallet prompt for a loan that is now terminal —
+   *  a guaranteed `InvalidLoanStatus`. The page's own status
+   *  reconciliation removes the card properly a moment later; this only
+   *  has to cover the gap. */
+  const [closedThisSession, setClosedThisSession] = useState(false);
 
   if (!shouldRenderForcedClose(readiness)) return null;
 
-  const submittable = canSubmitFromApp(readiness);
+  const submittable = canSubmitFromApp(readiness) && !closedThisSession;
 
   async function closeOut() {
     setError(null);
@@ -95,7 +111,33 @@ export function ForcedCloseCard({
       // disposition without consulting a swap adapter. For anything
       // else this array would revert `NoEnabledSwapRoute`, which is why
       // the button does not exist in that state.
+      // A LIVE re-check, immediately before sending (round 28 P2). The
+      // readiness above is a 30-second poll that the open confirmation
+      // can outlive by minutes, and several of the facts behind it move
+      // on their own: collateral can be re-priced from illiquid to
+      // liquid, a collapsed LTV can recover below the threshold,
+      // governance can pause. Each of those turns this exact empty
+      // try-list from correct into a guaranteed revert — the paid
+      // refusal the whole card exists to prevent. Simulating asks the
+      // chain the only question that matters ("would this call succeed
+      // right now?") instead of re-deriving the answer from a second
+      // copy of the contract's branch rules.
+      //
+      // It also, without special-casing any of them, covers the gates
+      // this decision does not model: `whenNotPaused`, the lender KYC
+      // check on an enforcement-enabled deployment, and a consent flag
+      // read a moment too early.
+      if (publicClient && address) {
+        await publicClient.simulateContract({
+          address: walletChain!.diamondAddress,
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'triggerDefault',
+          args: [BigInt(loanId), []],
+          account: address,
+        });
+      }
       await write('triggerDefault', [BigInt(loanId), []]);
+      setClosedThisSession(true);
       onClosedOut();
       onCloseConfirm();
       void queryClient.invalidateQueries({ queryKey: ['forcedClose'] });
@@ -106,30 +148,44 @@ export function ForcedCloseCard({
     }
   }
 
-  const body =
-    readiness === 'not-yet'
+  const body = closedThisSession
+    ? copy.forcedClose.submitted
+    : readiness === 'not-yet'
       ? copy.forcedClose.notYet
       : readiness === 'unknown'
         ? copy.forcedClose.unknown
         : readiness === 'blocked-sequencer'
           ? copy.forcedClose.blockedSequencer
-          : readiness === 'ready-needs-route'
-            ? copy.forcedClose.readyNeedsRoute
-            : copy.forcedClose.readyInKind;
+          : readiness === 'blocked-paused'
+            ? copy.forcedClose.blockedPaused
+            : readiness === 'blocked-no-consent'
+              ? copy.forcedClose.blockedNoConsent
+              : readiness === 'ready-needs-route'
+                ? copy.forcedClose.readyNeedsRoute
+                : copy.forcedClose.readyInKind;
+
+  /** The overdue heading ONLY where the chain has actually said so.
+   *
+   *  Round 28 P2 — `blocked-sequencer` and `blocked-paused` are
+   *  resolved BEFORE `defaultable` is consulted, deliberately, so
+   *  during an outage a loan three days into a ninety-day term reaches
+   *  them. Mapping those to "This loan is overdue" put a false
+   *  statement in the card's largest text on every position, for the
+   *  duration of every outage. Only the states downstream of an
+   *  affirmative `defaultable` may claim it. */
+  const overdueEstablished =
+    readiness === 'ready-in-kind' ||
+    readiness === 'ready-needs-route' ||
+    readiness === 'blocked-no-consent';
 
   return (
     <section className="card" data-testid="forced-close-card">
       <div className="card-title">
         <AlertTriangle aria-hidden />
         <h3 style={{ margin: 0 }}>
-          {/* The overdue heading only where the loan IS overdue. In
-              `not-yet` the borrower still has time, and in `unknown`
-              nothing has been established — asserting "overdue" above a
-              body that says otherwise makes the card's loudest text its
-              least accurate. */}
-          {readiness === 'not-yet' || readiness === 'unknown'
-            ? copy.forcedClose.titlePending
-            : copy.forcedClose.title}
+          {overdueEstablished
+            ? copy.forcedClose.title
+            : copy.forcedClose.titlePending}
         </h3>
       </div>
 
@@ -140,7 +196,8 @@ export function ForcedCloseCard({
       {/* Shown on both ready states — a lender who cannot submit here
           still needs to know a keeper may close it, so that finding the
           position already closed reads as normal rather than as loss. */}
-      {readiness === 'ready-in-kind' || readiness === 'ready-needs-route' ? (
+      {!closedThisSession &&
+      (readiness === 'ready-in-kind' || readiness === 'ready-needs-route') ? (
         <>
           <p className="field-hint">{copy.forcedClose.notExclusive}</p>
           <p className="field-hint">{copy.forcedClose.outcomeNote}</p>

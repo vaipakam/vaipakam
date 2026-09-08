@@ -68,6 +68,21 @@ export type ForcedCloseReadiness =
    *  anything, so nothing is offered — and see `decideForcedClose` for
    *  why this must be judged BEFORE liquidity. */
   | 'blocked-sequencer'
+  /** Governance has paused the protocol. `triggerDefault` carries
+   *  `whenNotPaused` as its FIRST modifier, so the call reverts before
+   *  any of the routing below is reached — no read further down can
+   *  make it submittable (round 28 P2). */
+  | 'blocked-paused'
+  /** Past grace, in-kind route, but the loan was opened without
+   *  `riskAndTermsConsentFromBoth`.
+   *
+   *  The contract's ILLIQUID in-kind branch is guarded on that flag and
+   *  falls through to `revert LiquidationFailed()` without it
+   *  (`DefaultedFacet.sol` — `liquidity == Illiquid && consent`), so
+   *  this position genuinely cannot be closed by anyone until the flag
+   *  changes. Distinct from `ready-needs-route`, where the app is the
+   *  limitation and a keeper could act; here nobody can (round 28 P2). */
+  | 'blocked-no-consent'
   /** A read this decision depends on has not answered, or failed.
    *
    *  Distinct from `not-yet` because they are opposite errors: showing
@@ -94,9 +109,29 @@ export interface ForcedCloseInput {
   defaultable: boolean | undefined;
   /** `OracleFacet.sequencerHealthy()`. `undefined` = unread. */
   sequencerHealthy: boolean | undefined;
+  /** The Diamond's `paused()`. `undefined` = unread. */
+  paused: boolean | undefined;
   /** ERC-20 loan or NFT rental. NFT rentals never take the swap path.
    *  `undefined` = unread. */
   assetType: 'erc20' | 'rental' | undefined;
+  /** The COLLATERAL leg is an ERC-721/1155, on an ERC-20 loan.
+   *
+   *  A separate axis from `assetType`, which describes the PRINCIPAL
+   *  leg — conflating them is what round 28 caught: an ERC-20 loan
+   *  secured by an NFT is a supported shape, it is not a rental, and
+   *  the liquidity read is an ERC-20 question that was simply never
+   *  issued for it. The card then waited on an answer that could never
+   *  arrive. NFT collateral has no oracle feed, so `_checkLiquidity`
+   *  resolves it Illiquid and `triggerDefault` takes the same in-kind
+   *  branch (its explicit ERC-721 / ERC-1155 vault-withdraw legs),
+   *  consent gate included. `undefined` = the loan is unread. */
+  collateralIsNft: boolean | undefined;
+  /** `loan.riskAndTermsConsentFromBoth`, as stored at init.
+   *
+   *  Read on the in-kind ILLIQUID route only — the LTV-collapse route
+   *  into the same branch is not consent-guarded, and rentals never
+   *  enter it. `undefined` = unread. */
+  consentFromBoth: boolean | undefined;
   /** Collateral is ILLIQUID per `OracleFacet.checkLiquidity`.
    *
    *  `checkLiquidityOnActiveNetwork` is what `triggerDefault` actually
@@ -141,6 +176,12 @@ export function decideForcedClose(input: ForcedCloseInput): ForcedCloseReadiness
   // Checked first because every question below is meaningless for one.
   if (!input.active) return 'not-applicable';
 
+  // `whenNotPaused` is `triggerDefault`'s first modifier, so this sits
+  // ahead of every other gate — mirroring the contract's own order
+  // rather than picking one.
+  if (input.paused === true) return 'blocked-paused';
+  if (input.paused === undefined) return 'unknown';
+
   // BEFORE liquidity — see the doc comment above.
   if (input.sequencerHealthy === false) return 'blocked-sequencer';
   if (input.sequencerHealthy === undefined) return 'unknown';
@@ -164,16 +205,33 @@ export function decideForcedClose(input: ForcedCloseInput): ForcedCloseReadiness
   if (input.assetType === undefined) return 'unknown';
   if (input.assetType === 'rental') return 'ready-in-kind';
 
+  // NFT collateral on an ERC-20 loan: no feed, so no liquidity read is
+  // issued for it and none is needed — the contract resolves it
+  // Illiquid and takes the in-kind branch, consent gate and all.
+  if (input.collateralIsNft === undefined) return 'unknown';
+  if (input.collateralIsNft) return inKindIfConsented(input.consentFromBoth);
+
   if (input.collateralIlliquid === undefined) return 'unknown';
-  if (input.collateralIlliquid) return 'ready-in-kind';
+  if (input.collateralIlliquid) return inKindIfConsented(input.consentFromBoth);
 
   // Liquid collateral: a genuine >110% LTV collapse also skips the
-  // swap and hands over the collateral in kind.
+  // swap and hands over the collateral in kind. Deliberately NOT
+  // consent-gated — that arm of the contract's condition stands on the
+  // collapse alone, and adding a gate the chain does not have would
+  // withhold a close-out that would in fact succeed.
   if (input.ltvCollapsed === undefined) return 'unknown';
   if (input.ltvCollapsed) return 'ready-in-kind';
 
   // Liquid, not collapsed → the contract demands a real try-list.
   return 'ready-needs-route';
+}
+
+/** The illiquid in-kind branch, which the contract gates on consent. */
+function inKindIfConsented(
+  consentFromBoth: boolean | undefined,
+): ForcedCloseReadiness {
+  if (consentFromBoth === undefined) return 'unknown';
+  return consentFromBoth ? 'ready-in-kind' : 'blocked-no-consent';
 }
 
 /** Whether this readiness can be submitted from the app as-is.

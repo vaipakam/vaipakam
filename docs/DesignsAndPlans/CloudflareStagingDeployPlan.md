@@ -229,7 +229,10 @@ list — it carries nineteen assignable variables, not the six shown, plus
 `VITE_APP_PUBLIC_ORIGIN`, which it documents and which may be set in
 the file like any other: the prebuild SEO step reads through Vite's
 `loadEnv`, so `.env.local` is honoured. It formerly required an export,
-which is why older instructions say so. It is the
+which is why older instructions say so. A twenty-first,
+`VITE_ADMIN_DASHBOARD_PUBLIC`, gates the read-only protocol console and
+is the one setting that must match across BOTH apps — see the
+DeploymentRunbook section on it. It is the
 TEMPLATE: copy it to `apps/app/.env.local`, which is gitignored, absent
 on a clean checkout and deployment-specific, so it can never be the file
 a count is quoted from. The deploy is `cd apps/app && pnpm run deploy`

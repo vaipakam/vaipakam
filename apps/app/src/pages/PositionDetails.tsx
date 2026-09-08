@@ -557,7 +557,17 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     // borrower never opened a review for, against a different chain's
     // listing. Only this surface's slot is cleared; other flows own
     // their own reset.
-    setConfirmingSurface((sfc) => (sfc === 'sale-teardown' ? null : sfc));
+    // Round 28 P1 — the forced-close receipt is chain-scoped for the
+    // same reason, and worse in consequence: `triggerDefault` is
+    // permissionless, so a receipt carried across a chain switch onto
+    // an equally `ready-in-kind` loan N is one click from closing out
+    // a position the lender never opened a review for. Listed
+    // explicitly rather than clearing the slot unconditionally —
+    // other surfaces own their own reset, and this block has no
+    // standing to discard theirs.
+    setConfirmingSurface((sfc) =>
+      sfc === 'sale-teardown' || sfc === 'forced-close' ? null : sfc,
+    );
   }
   // The ref advances in a LAYOUT effect, not a passive one (Codex #1683 r1).
   // I had argued the guard and the state it protects must move together, so
@@ -927,7 +937,13 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       loan.data && loan.data.collateralAssetType === AssetType.ERC20
         ? (loan.data.collateralAsset as `0x${string}`)
         : undefined,
-    enabled: isLenderHolder && loan.data?.status === 'active',
+    // Round 28 P2 — the RECONCILED active predicate, not the raw
+    // indexed row. A borrower who cures `FallbackPending` back to
+    // Active is Active on chain while the indexer still says
+    // otherwise; keying on the row left every read disabled, so a
+    // fresh visit showed a card checking forever, while a visit with
+    // warm cache could serve a frozen verdict as if it were current.
+    enabled: isLenderHolder && effectivelyActive,
   });
 
   if (loan.isLoading) {
@@ -1379,12 +1395,23 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     active: forcedCloseActive,
     defaultable: forcedCloseReads.defaultable,
     sequencerHealthy: forcedCloseReads.sequencerHealthy,
+    paused: forcedCloseReads.paused,
+    consentFromBoth: forcedCloseReads.consentFromBoth,
     assetType:
       loan.data === null || loan.data === undefined
         ? undefined
         : loanIsRental
           ? 'rental'
           : 'erc20',
+    // The PRINCIPAL leg above and the COLLATERAL leg here are separate
+    // axes (round 28 P1). An ERC-20 loan secured by an NFT is neither a
+    // rental nor a liquidity question — the liquidity read is never
+    // issued for it, so without this the decision waited on an answer
+    // that could not arrive.
+    collateralIsNft:
+      loan.data === null || loan.data === undefined
+        ? undefined
+        : collateralIsNft,
     collateralIlliquid: forcedCloseReads.collateralIlliquid,
     ltvCollapsed: forcedCloseReads.ltvCollapsed,
   });
@@ -3280,15 +3307,40 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           `isLenderHolder`, never `role` — a wallet holding BOTH
           position NFTs resolves to `borrower` and would never see
           this, which is the same bug Codex r13 caught on the sale
-          surfaces. */}
-      {isLenderHolder && !(sanctions.ready && sanctions.flagged) ? (
+          surfaces.
+
+          NO sanctions gate, and that is the deliberate part (round 28
+          P1). Every other lender surface on this page is Tier-1 and
+          hides for a flagged wallet; this one is Tier-2. `triggerDefault`
+          carries no `_assertNotSanctioned` at all — its own comment
+          says a time-based default "must not brick" on a sanctioned
+          caller and withholds only the matcher bonus
+          (`if (isSanctionedAddress(msg.sender)) bonus = 0`). Hiding the
+          card would have removed a flagged lender's ONLY self-service
+          recovery from an overdue position, for a transaction the
+          protocol deliberately keeps open to them. */}
+      {isLenderHolder &&
+      // Round 28 P1 — an ACCEPTED loan-sale awaiting its manual
+      // `completeLoanSale` recovery needs the loan to stay Active. The
+      // buyer's principal has already moved; a forced close here
+      // terminalizes the loan and strands that completion permanently.
+      // Same interlock the borrower's settlement flows already carry a
+      // few hundred lines up, applied to the one write on this page
+      // that can reach the same terminal state from the lender side.
+      !saleCompletionPending ? (
         <ForcedCloseCard
           loanId={row.loanId}
           readiness={forcedCloseReadiness}
           confirmOpen={confirmingSurface === 'forced-close'}
           onOpenConfirm={() => setConfirmingSurface('forced-close')}
           onCloseConfirm={() => setConfirmingSurface(null)}
-          busy={phase === 'pending'}
+          // The whole page mutex (round 28 P2), not just `pending`. A
+          // dual-position holder sees the borrower's approve/submit
+          // flows beside this card, and `phase === 'pending'` left the
+          // confirmation live through `approving` and `submitting` —
+          // two wallet prompts racing, which is exactly what the mutex
+          // exists to prevent.
+          busy={busy}
           setBusy={setBusy}
           onClosedOut={() => {
             void queryClient.invalidateQueries({ queryKey: ['forcedClose'] });

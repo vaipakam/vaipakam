@@ -25,7 +25,10 @@ const base: ForcedCloseInput = {
   active: true,
   defaultable: true,
   sequencerHealthy: true,
+  paused: false,
+  consentFromBoth: true,
   assetType: 'erc20',
+  collateralIsNft: false,
   collateralIlliquid: false,
   ltvCollapsed: false,
 };
@@ -51,10 +54,80 @@ describe('decideForcedClose — execution path', () => {
       decideForcedClose({
         ...base,
         assetType: 'rental',
+        collateralIsNft: undefined,
+        collateralIlliquid: undefined,
+        ltvCollapsed: undefined,
+        // A rental never enters the consent-gated illiquid branch, so
+        // an unread consent flag must not stall it either.
+        consentFromBoth: undefined,
+      }),
+    ).toBe('ready-in-kind');
+  });
+
+  it('routes NFT collateral on an ERC-20 loan to the in-kind path', () => {
+    // Round 28 P1. This is the shape that stalled forever: not a
+    // rental, so `assetType` stays `erc20`, but the liquidity read is
+    // an ERC-20 question that is never issued for an NFT — so
+    // `collateralIlliquid` is `undefined` PERMANENTLY, not briefly.
+    // Passing it undefined here is what makes the case meaningful.
+    expect(
+      decideForcedClose({
+        ...base,
+        collateralIsNft: true,
         collateralIlliquid: undefined,
         ltvCollapsed: undefined,
       }),
     ).toBe('ready-in-kind');
+  });
+});
+
+describe('decideForcedClose — gates the contract applies before routing', () => {
+  it('reports a paused protocol ahead of every other answer', () => {
+    // `whenNotPaused` is the first modifier on `triggerDefault`, so no
+    // downstream read can make the call succeed. Every other field
+    // here says "ready", which is what makes this distinguishing.
+    expect(decideForcedClose({ ...base, paused: true, collateralIlliquid: true })).toBe(
+      'blocked-paused',
+    );
+  });
+
+  it('does not guess at an unread pause flag', () => {
+    expect(decideForcedClose({ ...base, paused: undefined })).toBe('unknown');
+  });
+
+  it('blocks the illiquid in-kind route when consent was never recorded', () => {
+    // The contract's illiquid branch is guarded on
+    // `riskAndTermsConsentFromBoth` and falls through to
+    // `revert LiquidationFailed()` without it.
+    expect(
+      decideForcedClose({ ...base, collateralIlliquid: true, consentFromBoth: false }),
+    ).toBe('blocked-no-consent');
+  });
+
+  it('does NOT apply the consent gate to an LTV collapse', () => {
+    // The distinguishing case: same missing consent, different arm of
+    // the contract's condition. The collapse route stands on the
+    // collapse alone, so withholding it here would refuse a close-out
+    // that would in fact succeed.
+    expect(
+      decideForcedClose({ ...base, ltvCollapsed: true, consentFromBoth: false }),
+    ).toBe('ready-in-kind');
+  });
+
+  it('does not guess at an unread consent flag on the in-kind route', () => {
+    expect(
+      decideForcedClose({
+        ...base,
+        collateralIlliquid: true,
+        consentFromBoth: undefined,
+      }),
+    ).toBe('unknown');
+  });
+
+  it('never blocks a swap-route loan on consent it does not need', () => {
+    expect(decideForcedClose({ ...base, consentFromBoth: false })).toBe(
+      'ready-needs-route',
+    );
   });
 });
 
@@ -159,7 +232,14 @@ describe('canSubmitFromApp', () => {
   });
 
   it('refuses every non-ready state', () => {
-    for (const s of ['not-yet', 'blocked-sequencer', 'unknown', 'not-applicable'] as const) {
+    for (const s of [
+      'not-yet',
+      'blocked-sequencer',
+      'blocked-paused',
+      'blocked-no-consent',
+      'unknown',
+      'not-applicable',
+    ] as const) {
       expect(canSubmitFromApp(s)).toBe(false);
     }
   });
@@ -170,7 +250,15 @@ describe('shouldRenderForcedClose', () => {
     // Hiding the card until it happens to be actionable is how this
     // whole capability stayed invisible: a lender cannot ask for a
     // route they have never been shown.
-    for (const s of ['ready-in-kind', 'ready-needs-route', 'not-yet', 'blocked-sequencer', 'unknown'] as const) {
+    for (const s of [
+      'ready-in-kind',
+      'ready-needs-route',
+      'not-yet',
+      'blocked-sequencer',
+      'blocked-paused',
+      'blocked-no-consent',
+      'unknown',
+    ] as const) {
       expect(shouldRenderForcedClose(s)).toBe(true);
     }
   });

@@ -2293,10 +2293,29 @@ const copySource = {
     // The honest version of "we cannot do this here". It says the
     // position IS eligible, which is the part a lender needs, and it
     // does not pretend the app's limitation is the protocol's.
+    // Round 28 P2 — this used to say the state was "handled by the
+    // protocol's automated closers". There are none: the shipped keeper
+    // routes `triggerLiquidation` only, and nothing in the repo submits
+    // `triggerDefault`. Telling a lender an automated service will
+    // collect for them, when none exists, is the one sentence on this
+    // card that could leave a position open indefinitely.
     readyNeedsRoute:
-      'The grace period has passed and this loan can be closed out — but its collateral has to be sold on an exchange to do it, and that sale has to be routed by whoever submits the transaction. This app cannot build that route yet, so it is handled by the protocol’s automated closers. If this position stays open, contact support rather than waiting indefinitely.',
+      'The grace period has passed and this loan can be closed out — but its collateral has to be sold on an exchange to do it, and that sale has to be routed by whoever submits the transaction. This app cannot build that route yet, and no automated service currently submits it either, so closing this position needs an operator. Contact support rather than waiting for it to happen on its own.',
+    blockedPaused:
+      'The protocol is paused right now, so nothing can be closed out until governance lifts it. Your position and the collateral behind it are unaffected by the pause.',
+    // Not "the app cannot" — nobody can. Worth saying plainly, because
+    // it is the one state on this card where waiting is genuinely
+    // pointless and support is the only route.
+    blockedNoConsent:
+      'This loan is past its grace period, but it was opened without both sides recording the risk-and-terms acknowledgement the protocol requires before it will hand over collateral that has no market price. The close-out is refused for everyone, not just for you — contact support.',
+    submitted:
+      'Close-out submitted. The loan is ending; give the page a moment to catch up, then check the Claims page for what is now yours to claim.',
+    // Round 28 P2 — names WHO is paid, not just who may act. The
+    // proceeds follow the lender position NFT as it stands when the
+    // transaction runs, and this card is reachable by a wallet whose
+    // last ownership poll is up to a minute old.
     notExclusive:
-      'Anyone can close out an overdue loan, not just you. If someone else does it first, this position will simply show as closed — you are still paid what you are owed.',
+      'Anyone can close out an overdue loan, not just you. If someone else does it first, this position will simply show as closed. Whatever the close-out recovers goes to whoever holds the lender position for this loan at that moment — so if you have transferred or sold it, it is theirs, not yours.',
     claimNote: 'Closing out does not move funds to your wallet by itself. Once it settles, what you are owed becomes claimable.',
     intentNote:
       'If the borrower has a pending swap-to-repay order on this loan, closing out cancels it.',
@@ -2308,8 +2327,14 @@ const copySource = {
     // three settlement paths yet. Saying "the collateral" and naming
     // the claim step is the true answer; a number would be invented.
     receipt: {
+      // Round 28 P2 — it is not always the collateral. Before the
+      // in-kind branch, `triggerDefault` tries an internal match, which
+      // settles at oracle price and pays in the LENDING asset instead;
+      // a match smaller than the position can also leave the loan open.
+      // The old wording named one of three outcomes as if it were the
+      // only one.
       youReceive:
-        'The borrower’s collateral, once you claim it. The amount is not known until the transaction runs.',
+        'Either the borrower’s collateral, or — if the protocol can settle this position against an opposing one instead — the amount you lent, in the asset you lent it in. Which of the two is decided while the transaction runs, and either way you claim it afterwards. No figure is known in advance.',
       youLock: 'Nothing.',
       youMayOwe: 'Nothing beyond the network fee.',
       // Both real, and neither obvious. A lender who closes out has
@@ -2318,7 +2343,11 @@ const copySource = {
       youCanLose:
         'If the collateral is worth less than you are owed, you absorb the shortfall. Closing out is final: it ends the loan, so the borrower can no longer repay it with interest.',
       fees: 'The network fee, plus the protocol’s share of any sale proceeds.',
-      whenThisEnds: 'Straight away — the loan is closed by this transaction.',
+      // Round 28 P2 — "straight away" was not guaranteed. A partial
+      // internal match settles part of the position and leaves the loan
+      // Active, and a failed sale leaves it curable in fallback.
+      whenThisEnds:
+        'Usually straight away — this transaction normally ends the loan. If the protocol can only settle part of it, or the sale of the collateral cannot go through, the loan stays open and you can close it again later.',
     },
   },
   lenderExit: {
@@ -4584,7 +4613,12 @@ const copySource = {
     expired: 'Expired',
     consumedBySale: 'Consumed by sale',
     fullyFilled: 'Fully filled',
-    fallbackPending: 'Awaiting details',
+    // Round 28 P2 — this is a settlement state (a liquidation sale
+    // that failed and left the collateral held for retry or
+    // distribution), not a row whose metadata is still loading.
+    // "Awaiting details" invited a reader of the transparency page to
+    // dismiss exposed collateral as an indexing gap.
+    fallbackPending: 'Settlement pending',
     internalMatched: 'Internally matched',
     other: 'Other',
     // An offer the chain still calls active, whose expiry the indexer

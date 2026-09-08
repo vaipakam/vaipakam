@@ -2400,7 +2400,7 @@
       "contractLabel": "Contrato Diamond",
       "loading": "Leyendo las cifras más recientes del indexador público…",
       "fullyFilled": "Completadas",
-      "fallbackPending": "Pendientes de detalles",
+      "fallbackPending": "Liquidación pendiente",
       "internalMatched": "Emparejadas internamente",
       "other": "Otros",
       "offersRetentionNote": "El total cuenta las ofertas registradas actualmente. Las ofertas canceladas se eliminan del índice al cabo de un mes aproximadamente, por lo que no es un total histórico: puede bajar a medida que caducan las cancelaciones antiguas.",
@@ -2463,19 +2463,22 @@
       "unknown": "Todavía se está comprobando si este préstamo se puede cerrar. No se ha descartado nada: esto es lo que la aplicación aún no ha leído, no lo que el protocolo haya rechazado.",
       "blockedSequencer": "El secuenciador de la red está caído o aún se está recuperando. El cierre está en pausa hasta que se pueda volver a confiar en los precios; esto suele resolverse solo, así que vale la pena intentarlo más tarde.",
       "readyInKind": "El período de gracia ha pasado, así que ya puedes cerrar este préstamo. La garantía sale de la bóveda del prestatario tal cual, sin venderse, y la reclamas después desde la página de Reclamaciones.",
-      "readyNeedsRoute": "El período de gracia ha pasado y este préstamo se puede cerrar, pero para ello su garantía tiene que venderse en un exchange, y quien envíe la transacción debe enrutar esa venta. Esta aplicación todavía no puede construir esa ruta, así que la gestionan los cerradores automáticos del protocolo. Si esta posición sigue abierta, contacta con soporte en lugar de esperar indefinidamente.",
-      "notExclusive": "Cualquiera puede cerrar un préstamo vencido, no solo tú. Si alguien lo hace primero, esta posición simplemente aparecerá como cerrada: se te sigue pagando lo que se te debe.",
+      "readyNeedsRoute": "El período de gracia ha terminado y este préstamo puede cerrarse, pero para ello su garantía debe venderse en un mercado, y quien envíe la transacción debe indicar la ruta de esa venta. Esta aplicación aún no puede construir esa ruta, y por ahora tampoco hay ningún servicio automático que la envíe, así que cerrar esta posición requiere un operador. Contacta con soporte en lugar de esperar a que ocurra solo.",
+      "notExclusive": "Cualquiera puede cerrar un préstamo vencido, no solo tú. Si otra persona lo hace antes, esta posición simplemente aparecerá como cerrada. Lo que recupere el cierre va a quien tenga la posición de prestamista de este préstamo en ese momento, así que si la has transferido o vendido, será suya y no tuya.",
       "claimNote": "Cerrar no transfiere fondos a tu billetera por sí solo. Una vez liquidado, lo que se te debe queda disponible para reclamar.",
       "intentNote": "Si el prestatario tiene una orden de intercambio para pagar pendiente en este préstamo, el cierre la cancela.",
       "outcomeNote": "Cuánto se recupera depende de lo que valga la garantía cuando se ejecute la transacción, por lo que el importe no se conoce de antemano.",
       "receipt": {
-        "youReceive": "La garantía del prestatario, una vez que la reclames. El importe no se conoce hasta que se ejecuta la transacción.",
+        "youReceive": "O bien la garantía del prestatario, o —si el protocolo puede liquidar esta posición contra otra opuesta— el importe que prestaste, en el activo en que lo prestaste. Cuál de las dos se decide mientras se ejecuta la transacción, y en ambos casos lo reclamas después. No se conoce ninguna cifra de antemano.",
         "youLock": "Nada.",
         "youMayOwe": "Nada más allá de la comisión de red.",
         "youCanLose": "Si la garantía vale menos de lo que se te debe, asumes la diferencia. El cierre es definitivo: termina el préstamo, por lo que el prestatario ya no puede devolverlo con intereses.",
         "fees": "La comisión de red, más la parte del protocolo sobre cualquier producto de la venta.",
-        "whenThisEnds": "De inmediato: esta transacción cierra el préstamo."
-      }
+        "whenThisEnds": "Normalmente de inmediato: esta transacción suele terminar el préstamo. Si el protocolo solo puede liquidar una parte, o la venta de la garantía no puede realizarse, el préstamo sigue abierto y podrás cerrarlo de nuevo más adelante."
+      },
+      "blockedPaused": "El protocolo está en pausa en este momento, así que no se puede cerrar nada hasta que la gobernanza la levante. Tu posición y la garantía que la respalda no se ven afectadas por la pausa.",
+      "blockedNoConsent": "Este préstamo ha superado su período de gracia, pero se abrió sin que ambas partes registraran la aceptación de riesgos y condiciones que el protocolo exige antes de entregar una garantía sin precio de mercado. El cierre se rechaza para todo el mundo, no solo para ti: contacta con soporte.",
+      "submitted": "Cierre enviado. El préstamo está terminando; dale un momento a la página para actualizarse y luego consulta la página de Reclamaciones para ver qué te corresponde reclamar."
     }
   },
   "contractError": {
