@@ -848,6 +848,24 @@ Thin-market honesty rules apply.
   pages and response headers: a crawler that does not execute
   JavaScript sees the same indexable / noindex decision that a browser
   sees after the app loads.
+- **A compatibility address is never indexed.** Addresses kept working
+  for bookmarks from a retired deployment — including the forms that
+  carried a language in the address itself — answer by sending the
+  visitor to the current address, which is the one that belongs in a
+  search index. A crawler that does not run the app never follows that
+  hand-off, so the exclusion has to be stated in the response rather
+  than left to the page. Two failures are prevented by the same rule: a
+  per-user address becoming indexable merely because it was reached by
+  an older spelling, and a public page being listed twice under two
+  addresses.
+- **Every address the app asks to have indexed is a single top-level
+  page.** That is a deliberate property rather than an accident of the
+  current route set: it is what allows the compatibility exclusion above
+  to be expressed as one rule instead of one per language, which in turn
+  keeps the response-header policy inside the limit its host imposes.
+  Publishing a nested public page would break that, so it is a decision
+  to be taken knowingly and with the exclusion rule revisited alongside
+  it — not a change that should be able to pass unremarked.
 
 ## Privacy and Legal Posture
 

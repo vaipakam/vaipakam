@@ -36,9 +36,9 @@ to sell. The app cannot build such a route yet. It would have been easy
 to show one button everywhere and let the second case fail; the lender
 would have paid a network fee to be refused, with nothing explaining
 why. Instead that case says plainly that the position IS closable, that
-the sale has to be routed, that the protocol's automated closers handle
-it, and that a position sitting there unclosed is worth asking about
-rather than waiting on.
+the sale has to be routed, that nothing in the product does that
+routing automatically today, and that closing such a position needs an
+operator — so it is worth asking about rather than waiting on.
 
 Three things the card is careful never to claim. It never states an
 amount, because the settlement path is chosen while the transaction
@@ -115,3 +115,26 @@ which would have left a lender who had not re-accepted unable to reach
 a defaulted borrower's collateral at all — paperwork standing between
 somebody and money they are owed by a counterparty who has already
 broken the agreement. It is listed now.
+
+A late correction to the close-out card is worth recording because it
+contradicted something else written the same day. The card holds itself
+back for a moment after a close-out is submitted, so that a page still
+showing stale figures cannot invite a second attempt at a loan that has
+just ended. The first version of that hold never let go. But closing out
+does not always end the loan — the protocol may settle only part of the
+position and leave the rest running, which the card's own receipt had
+just started saying — so a position that genuinely still needed closing
+lost its button permanently. The hold now lasts exactly as long as it
+takes for the app to read the position again, after which whatever the
+page shows was worked out from what the transaction actually did.
+
+The same hold also had to learn which loan it belonged to. Switching
+networks while sitting on a position keeps the page open, so a
+close-out submitted on one network could leave the equivalent position
+on another looking as though it had already been dealt with.
+
+One further gap, and the least comfortable of them: the protection that
+stops a close-out from stranding a half-finished sale of the lender's
+own position was reading a value that was never fetched on the lender's
+page. It looked correct everywhere it was used and did nothing at all,
+on the single screen it existed to protect. It works now.
