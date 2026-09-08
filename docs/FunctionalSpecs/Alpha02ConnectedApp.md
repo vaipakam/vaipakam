@@ -78,6 +78,20 @@ including people who never will.
   on a page whose purpose is that its figures can be checked rather than
   taken on trust — the reader is left with a discrepancy and no account
   of it.
+- Where a figure counts one kind of thing and the product offers another
+  kind alongside it, the view says which it is counting. Offers that
+  exist only as a signed instruction — fillable, visible in the offer
+  book, but never written to the chain — are a different population from
+  offers the protocol holds, and an unqualified count of the second
+  understates what a reader can see elsewhere in the same product.
+  Naming the scope is preferred over merging the two, because the
+  populations have different lifetimes and a merged figure cannot be
+  reconciled against the chain.
+- A state's label describes the state, not the page's knowledge of it. A
+  loan whose settlement is part-way through and awaiting a further step
+  is a settlement state holding real collateral; labelling it as though
+  its details were still being fetched invites a reader to dismiss real
+  exposure as a gap in the reporting.
 - The protocol console reports each parameter against its own name, and
   never by inferring which value belongs to which name from ordering.
 - The console states that it shows a subset rather than implying it is
@@ -334,13 +348,30 @@ Thin-market honesty rules apply.
   by whoever submits it, and offers no button it cannot honour. Presenting an
   action that is certain to be refused is worse than presenting none: the user
   pays a network fee for the refusal.
+- The in-kind route also covers collateral that is itself a non-fungible asset
+  held against an ordinary loan. That is a supported shape and a distinct one
+  from a rental: the leg being lent and the leg securing it are separate
+  questions, and a surface that answers only the first will ask an
+  inapplicable question about the second and wait indefinitely for an answer
+  that cannot arrive.
 - Nothing on this surface states an amount. The settlement path is chosen while
   the transaction executes, so no figure is knowable in advance, and a predicted
   one would be invented.
+- The asset returned is not assumed to be the collateral. The protocol may
+  instead settle the position against an opposing one and return what was lent,
+  in the asset it was lent in, and the surface says so rather than naming one of
+  the possible outcomes as though it were the only one.
+- Closing out is not stated as certainly final. It ordinarily ends the loan, but
+  a settlement that covers only part of the position, or a sale that cannot be
+  carried out, leaves the loan open and closable again later.
 - Nothing on this surface implies the lender is the only party who may act. Any
   caller may close out an overdue loan, and a lender returning to find the
   position already closed is to read that as the normal course rather than as a
   loss.
+- Nor is the party who submits assumed to be the party who is paid. What a
+  close-out recovers goes to whoever holds the lender's position for that loan
+  at the moment it executes, so a holder who has since transferred or sold the
+  position is told plainly that it is no longer theirs.
 - Closing out is not presented as payment. It ends the loan; what the lender is
   owed becomes claimable afterwards through the ordinary claim route.
 - The surface appears before it can be used — while checks are still running,
@@ -353,9 +384,38 @@ Thin-market honesty rules apply.
   is unavailable the protocol reports every asset as unpriceable, so a surface
   that classified collateral first would describe the wrong settlement route and
   offer an action the protocol refuses for an unrelated reason.
+- Conditions the protocol checks before it will close a loan out are reported as
+  states of this surface, not discovered when the action is attempted. Two are
+  distinguished because they mean different things to the reader: a
+  protocol-wide pause, which is temporary and affects everyone; and a loan
+  opened without both parties recording the risk acknowledgement the protocol
+  requires before it will hand over collateral that has no market price, which
+  is permanent for that loan and refuses every caller equally. The second is
+  stated as such — not as a limitation of this app, and not as something waiting
+  will resolve.
+- The protocol is asked one final time immediately before the action is sent.
+  Several facts behind the decision can change while the user is reading the
+  confirmation, and each turns a correct action into a certain refusal. Asking
+  the protocol whether the action would succeed is preferred over the app
+  re-deriving that answer from its own copy of the rules.
+- Forced close-out is not offered while a completed sale of the lender's position
+  is awaiting its final step. The buyer's funds have already moved and that
+  completion requires the loan to remain open, so closing it out here would end
+  the loan and strand the recovery permanently.
 - Forced close-out remains available to a lender who has not accepted pending
   changes to the Terms. Withholding it would place paperwork between a lender and
   collateral owed to them by a counterparty already in breach.
+- It likewise remains available to a lender whose wallet is flagged by sanctions
+  screening. Screening withholds the ability to open new exposure; closing out a
+  loan that has already defaulted is a wind-down, which the protocol keeps open
+  to every caller so that a position cannot be made unclosable by the status of
+  the party who is owed. Surfaces that create exposure are withheld from a
+  flagged wallet; this one is not, and the distinction is deliberate rather than
+  an oversight in the gating.
+- The surface claims a loan is overdue only where the protocol has said so.
+  States reached before that question is answered — an unavailable sequencer, a
+  protocol-wide pause, checks still running — describe what is being waited on
+  instead, since those are reachable by a loan that is nowhere near its due date.
 
 ## Claims
 
@@ -1135,6 +1195,16 @@ Thin-market honesty rules apply.
   so refusing them would leave the slow route open and the instant one shut.
   Publishing a standing offer of one's own is a different thing and is not
   covered, even when the intent behind it is to leave.
+- **The protection follows the destination, not the spelling of the address
+  used to reach it.** A retired deployment's addresses remain in circulation as
+  bookmarks and links, including forms that carried a language in the address
+  itself. Such an address is answered by sending the visitor to the current one
+  — but that answer is itself something the gate can withhold, so an address
+  that leads to a protected destination is treated as protected. Otherwise a
+  user holding unaccepted terms meets the prompt on the way to repaying or
+  claiming, purely because of which link they followed. Normalising the address
+  this way never widens the protection: an old address leading to a surface that
+  creates new exposure is withheld exactly as its current form is.
 - **An acceptance is honoured in every open tab, not only the one that paid.**
   The chain permits a second acceptance and would charge for it while changing
   nothing but a timestamp — so the moment one tab's acceptance is confirmed,
