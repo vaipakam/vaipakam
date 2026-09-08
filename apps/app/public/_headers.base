@@ -236,162 +236,36 @@
 # ── Locale-prefixed aliases from the retired deployment ──────────────
 #
 # The old app mounted every route under `/:locale`, so `/es/positions/7`
-# and `/de/analytics` are real bookmarks this app answers — with a
-# React route that strips the prefix and re-enters the router. A crawler
-# that does not execute the SPA never runs that redirect, nor SeoMeta,
-# and receives the generic indexable 200 shell. The per-user rules above
-# are EXACT paths, which a locale prefix walks straight past.
+# and `/de/analytics` are real bookmarks this app answers — with a React
+# route that strips the prefix and re-enters the router. A crawler that
+# does not execute the SPA never runs that redirect, nor SeoMeta, and
+# receives the generic indexable 200 shell. The per-user rules above are
+# EXACT paths, which a locale prefix walks straight past.
 #
-# Blanket noindex on the whole prefix, not a mirror of each
-# destination's rule, because that is the stronger and simpler
-# statement: a locale-prefixed URL is never canonical in this app. For a
-# per-user route it restores the protection the unprefixed path has; for
-# a public one it prevents a duplicate of a page that already has a
-# canonical address. The destination is what should be indexed, and
-# still is.
+# ONE placeholder rule, not one pair per locale, and the reason is a
+# hard limit: `_headers` accepts at most 100 rules. Enumerating 34
+# locales took this file from 59 rules to 127, and the Cloudflare
+# Workers build failed on both commits that did so while passing on
+# every commit before them. It also never grows — adding a locale needs
+# no edit here.
 #
-# PINNED TO `SUPPORTED_LOCALES` BY TEST, not generated. An earlier
-# version had `generate-seo.mjs` parse the list out of
-# `packages/i18n/src/glossary.ts` at build time; that read reaches
-# outside `apps/app`, and the Cloudflare Workers build failed on the
-# commit that introduced it while passing on the five before it. A
-# static file plus `src/lib/localeHeaders.test.ts` — which imports the
-# real constant and fails if this list drifts — gives the same drift
-# protection with no build-time filesystem escape and no TypeScript
-# parsing from a .mjs script.
-/en
-  X-Robots-Tag: noindex
-/en/*
-  X-Robots-Tag: noindex
-/es
-  X-Robots-Tag: noindex
-/es/*
-  X-Robots-Tag: noindex
-/fr
-  X-Robots-Tag: noindex
-/fr/*
-  X-Robots-Tag: noindex
-/de
-  X-Robots-Tag: noindex
-/de/*
-  X-Robots-Tag: noindex
-/ja
-  X-Robots-Tag: noindex
-/ja/*
-  X-Robots-Tag: noindex
-/zh
-  X-Robots-Tag: noindex
-/zh/*
-  X-Robots-Tag: noindex
-/hi
-  X-Robots-Tag: noindex
-/hi/*
-  X-Robots-Tag: noindex
-/ar
-  X-Robots-Tag: noindex
-/ar/*
-  X-Robots-Tag: noindex
-/ta
-  X-Robots-Tag: noindex
-/ta/*
-  X-Robots-Tag: noindex
-/ko
-  X-Robots-Tag: noindex
-/ko/*
-  X-Robots-Tag: noindex
-/te
-  X-Robots-Tag: noindex
-/te/*
-  X-Robots-Tag: noindex
-/kn
-  X-Robots-Tag: noindex
-/kn/*
-  X-Robots-Tag: noindex
-/ml
-  X-Robots-Tag: noindex
-/ml/*
-  X-Robots-Tag: noindex
-/bn
-  X-Robots-Tag: noindex
-/bn/*
-  X-Robots-Tag: noindex
-/mr
-  X-Robots-Tag: noindex
-/mr/*
-  X-Robots-Tag: noindex
-/pa
-  X-Robots-Tag: noindex
-/pa/*
-  X-Robots-Tag: noindex
-/gu
-  X-Robots-Tag: noindex
-/gu/*
-  X-Robots-Tag: noindex
-/ur
-  X-Robots-Tag: noindex
-/ur/*
-  X-Robots-Tag: noindex
-/vi
-  X-Robots-Tag: noindex
-/vi/*
-  X-Robots-Tag: noindex
-/th
-  X-Robots-Tag: noindex
-/th/*
-  X-Robots-Tag: noindex
-/tl
-  X-Robots-Tag: noindex
-/tl/*
-  X-Robots-Tag: noindex
-/id
-  X-Robots-Tag: noindex
-/id/*
-  X-Robots-Tag: noindex
-/pt
-  X-Robots-Tag: noindex
-/pt/*
-  X-Robots-Tag: noindex
-/ru
-  X-Robots-Tag: noindex
-/ru/*
-  X-Robots-Tag: noindex
-/uk
-  X-Robots-Tag: noindex
-/uk/*
-  X-Robots-Tag: noindex
-/tr
-  X-Robots-Tag: noindex
-/tr/*
-  X-Robots-Tag: noindex
-/it
-  X-Robots-Tag: noindex
-/it/*
-  X-Robots-Tag: noindex
-/nl
-  X-Robots-Tag: noindex
-/nl/*
-  X-Robots-Tag: noindex
-/pl
-  X-Robots-Tag: noindex
-/pl/*
-  X-Robots-Tag: noindex
-/el
-  X-Robots-Tag: noindex
-/el/*
-  X-Robots-Tag: noindex
-/cs
-  X-Robots-Tag: noindex
-/cs/*
-  X-Robots-Tag: noindex
-/fa
-  X-Robots-Tag: noindex
-/fa/*
-  X-Robots-Tag: noindex
-/he
-  X-Robots-Tag: noindex
-/he/*
-  X-Robots-Tag: noindex
-/sw
-  X-Robots-Tag: noindex
-/sw/*
+# `/:locale/*` matches a first segment followed by more path, so it
+# cannot touch anything this app wants indexed: EVERY url in the
+# generated sitemap is single-segment, which `src/lib/localeHeaders.test.ts`
+# asserts precisely so this rule stays safe. What it does catch beyond
+# the locale aliases is `/nft/:tokenId` — a per-token lookup with an
+# unbounded url space that the sitemap already omits, so withholding it
+# from the index is right on its own merits; the verifier's own entry
+# point `/nft` stays indexable.
+#
+# RESIDUAL, stated rather than hidden: a BARE `/es` is not covered.
+# `/:locale` as a pattern would match every single-segment path —
+# `/borrow`, `/analytics`, the lot — so it cannot be used, and spelling
+# out 34 bare paths would put this file back at 94 of its 100 rules,
+# where the next locale or route silently breaks the build again. The
+# cost is that `/es` may be indexed as a duplicate of `/`. That is an
+# SEO nuisance, not an exposure: the bare prefix redirects to the public
+# home page, and every per-user route is a deeper path the rule above
+# already covers.
+/:locale/*
   X-Robots-Tag: noindex
