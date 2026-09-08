@@ -1,0 +1,75 @@
+## Thread — the close-out a lender could never reach
+
+When a borrower simply stops paying, the protocol has always had an
+answer: once the repayment window and the grace period after it have
+both elapsed, the loan can be forced closed and the collateral moved to
+where the lender can claim it. Anyone can trigger that, the lender very
+much included.
+
+The app never offered it. A lender could watch the due date pass, watch
+the grace period pass, and find nothing on the page to press — the one
+moment the product owed them an action was the one moment it had none.
+That is now a card on the position, and this note is mostly about the
+two things that made it more than a button.
+
+**The app must not work out for itself whether the grace period has
+expired.** The obvious implementation reads the loan's start date and
+term, adds the published grace ladder, and compares against the clock.
+That is right until the first deployment configures its own grace
+schedule, which the protocol explicitly allows — and then it is
+silently wrong in whichever direction the operator tuned, on a page
+whose entire job is telling somebody whether they may act yet. So the
+card asks the protocol the question directly and renders the answer.
+The grace figure is still read, but only to explain the wait; it never
+decides it.
+
+**The action is not one button, because the protocol has two routes and
+only one of them can be driven from a browser.** Where the collateral
+is an NFT rental, or has no reliable market price, or has fallen far
+enough in value that selling it is pointless, closing out hands it over
+as-is and the app can do that in a single transaction. Where the
+collateral is ordinary and liquid, the protocol insists it be sold on
+an exchange, and insists further that whoever submits the transaction
+supply the route for that sale — deliberately, so that nobody can
+shortcut an eligible loan into a worse settlement by simply not trying
+to sell. The app cannot build such a route yet. It would have been easy
+to show one button everywhere and let the second case fail; the lender
+would have paid a network fee to be refused, with nothing explaining
+why. Instead that case says plainly that the position IS closable, that
+the sale has to be routed, that the protocol's automated closers handle
+it, and that a position sitting there unclosed is worth asking about
+rather than waiting on.
+
+Three things the card is careful never to claim. It never states an
+amount, because the settlement path is chosen while the transaction
+runs and no figure exists beforehand. It never suggests the lender is
+the only one who can act, because they are not, and a lender who
+returns to find the position already closed by someone else should read
+that as normal rather than as loss. And it never implies the money
+arrives by itself — closing ends the loan, and what is owed becomes
+claimable after.
+
+The card also appears before it is usable, which was a deliberate
+choice rather than an oversight. It shows while the checks are still
+running, and while the borrower still has time, saying which. Hiding it
+until the moment it happened to be actionable is precisely how the
+capability stayed invisible for as long as it did: nobody asks for a
+route they have never been shown.
+
+Writing the automated test for that behaviour caught a mistake in the
+card's own wording, which is worth recording because of where it sat.
+The heading read "This loan is overdue" in every state — including the
+state whose entire message is that the borrower still has time. The
+largest text on the card contradicted the sentence directly beneath it,
+and it survived building the card, reviewing the card, and translating
+the card into nine languages; it only became obvious when a test had to
+assert a heading against the state it was checking. The heading now
+depends on the state, and says "if this loan is not repaid" while the
+answer is still open.
+
+One smaller correction came with it. The rule that decides which
+actions survive a pending change to the Terms did not list this one,
+which would have left a lender who had not re-accepted unable to reach
+a defaulted borrower's collateral at all — paperwork standing between
+somebody and money they are owed by a counterparty who has already
+broken the agreement. It is listed now.

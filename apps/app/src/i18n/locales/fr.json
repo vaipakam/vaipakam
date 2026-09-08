@@ -2453,6 +2453,29 @@
       "provenanceAge": ", prise {{age}}",
       "provenanceAgeUnknown": ", sans horodatage — l'actualité de ces valeurs est donc inconnue",
       "knownStale": "L'indexeur a vu une modification de gouvernance postérieure à cet instantané : ces valeurs sont donc connues comme obsolètes, et pas seulement d'âge incertain. Considérez-les comme historiques et consultez la référence des paramètres ou directement les contrats pour savoir ce qui s'applique actuellement."
+    },
+    "forcedClose": {
+      "title": "Ce prêt est en retard",
+      "titlePending": "Si ce prêt n’est pas remboursé",
+      "submit": "Clôturer ce prêt",
+      "submitting": "Clôture en cours…",
+      "notYet": "L’emprunteur dispose encore de temps. Une fois la période de remboursement et le délai de grâce qui la suit écoulés, vous pourrez clôturer ce prêt vous-même.",
+      "unknown": "Vérification en cours pour savoir si ce prêt peut être clôturé. Rien n’a été exclu : il s’agit de ce que l’application n’a pas encore lu, et non d’un refus du protocole.",
+      "blockedSequencer": "Le séquenceur du réseau est hors service ou en cours de rétablissement. La clôture est suspendue tant que les prix ne sont pas fiables ; cela se résout généralement tout seul, il vaut donc la peine de réessayer plus tard.",
+      "readyInKind": "Le délai de grâce est écoulé : vous pouvez clôturer ce prêt dès maintenant. La garantie quitte le coffre de l’emprunteur telle quelle, sans être vendue, et vous la réclamez ensuite depuis la page Réclamations.",
+      "readyNeedsRoute": "Le délai de grâce est écoulé et ce prêt peut être clôturé — mais sa garantie doit pour cela être vendue sur une plateforme d’échange, et cette vente doit être routée par celui qui soumet la transaction. Cette application ne sait pas encore construire cette route ; ce sont donc les clôtureurs automatiques du protocole qui s’en chargent. Si cette position reste ouverte, contactez le support plutôt que d’attendre indéfiniment.",
+      "notExclusive": "N’importe qui peut clôturer un prêt en retard, pas seulement vous. Si quelqu’un le fait avant vous, cette position s’affichera simplement comme clôturée : vous percevez toujours ce qui vous est dû.",
+      "claimNote": "La clôture ne transfère pas les fonds vers votre portefeuille d’elle-même. Une fois réglée, ce qui vous est dû devient réclamable.",
+      "intentNote": "Si l’emprunteur a un ordre d’échange-pour-rembourser en attente sur ce prêt, la clôture l’annule.",
+      "outcomeNote": "Le montant récupéré dépend de la valeur de la garantie au moment où la transaction s’exécute ; il n’est donc pas connu à l’avance.",
+      "receipt": {
+        "youReceive": "La garantie de l’emprunteur, une fois que vous l’aurez réclamée. Le montant n’est pas connu avant l’exécution de la transaction.",
+        "youLock": "Rien.",
+        "youMayOwe": "Rien au-delà des frais de réseau.",
+        "youCanLose": "Si la garantie vaut moins que ce qui vous est dû, vous supportez la différence. La clôture est définitive : elle met fin au prêt, l’emprunteur ne peut donc plus le rembourser avec intérêts.",
+        "fees": "Les frais de réseau, plus la part du protocole sur le produit d’une éventuelle vente.",
+        "whenThisEnds": "Immédiatement — cette transaction clôture le prêt."
+      }
     }
   },
   "contractError": {

@@ -2255,6 +2255,72 @@ const copySource = {
    *  the fact that doing nothing is the default that costs nothing in
    *  sale forfeitures. Wait renders FIRST and is worded conditionally —
    *  never as a promise of repayment. */
+  // The lender's forced close-out of a loan whose borrower stopped
+  // paying. Three rules govern every string here, and each exists
+  // because the contract makes the obvious wording false:
+  //
+  //  - Nothing states an AMOUNT. `triggerDefault` chooses between an
+  //    internal match, a DEX sale and a full-collateral fallback while
+  //    the transaction runs; no figure is knowable beforehand.
+  //  - Nothing claims the lender is the only one who can do this. The
+  //    call is permissionless, so a keeper may well get there first.
+  //  - Nothing implies the money arrives by itself. Closing sets the
+  //    loan terminal; the lender still claims afterwards.
+  forcedClose: {
+    title: 'This loan is overdue',
+    // The card renders in states where the loan is NOT overdue — while
+    // the borrower still has time, and while the checks are still
+    // running. Reusing the overdue heading there would assert, in the
+    // largest text on the card, the exact fact the body underneath is
+    // saying is not yet true. Found by writing the e2e spec, which had
+    // to match a heading that contradicted the state it was asserting.
+    titlePending: 'If this loan is not repaid',
+    // Deliberately not "liquidate": that word already names the
+    // separate health-factor route on RiskFacet, and using it here for
+    // the time-based one would conflate two different triggers with
+    // different conditions.
+    submit: 'Close out this loan',
+    submitting: 'Closing out…',
+    notYet:
+      'The borrower still has time. Once the repayment window and the grace period after it have both passed, you can close this loan out yourself.',
+    // Never says "not closable" — the app does not know that yet.
+    unknown:
+      'Still checking whether this loan can be closed out. Nothing has been ruled out — this is what the app has not read yet, not what the protocol has refused.',
+    blockedSequencer:
+      'The network’s sequencer is down or still recovering. Closing out is paused until prices can be trusted again — this usually clears on its own, so it is worth trying later.',
+    readyInKind:
+      'The grace period has passed, so you can close this loan out now. The collateral moves out of the borrower’s vault as-is rather than being sold, and you claim it afterwards from the Claims page.',
+    // The honest version of "we cannot do this here". It says the
+    // position IS eligible, which is the part a lender needs, and it
+    // does not pretend the app's limitation is the protocol's.
+    readyNeedsRoute:
+      'The grace period has passed and this loan can be closed out — but its collateral has to be sold on an exchange to do it, and that sale has to be routed by whoever submits the transaction. This app cannot build that route yet, so it is handled by the protocol’s automated closers. If this position stays open, contact support rather than waiting indefinitely.',
+    notExclusive:
+      'Anyone can close out an overdue loan, not just you. If someone else does it first, this position will simply show as closed — you are still paid what you are owed.',
+    claimNote: 'Closing out does not move funds to your wallet by itself. Once it settles, what you are owed becomes claimable.',
+    intentNote:
+      'If the borrower has a pending swap-to-repay order on this loan, closing out cancels it.',
+    outcomeNote:
+      'How much comes back depends on what the collateral is worth when the transaction runs, so the amount is not known in advance.',
+    // The six receipt rows. `youReceive` is the one worth reading
+    // twice: every other receipt in the app puts a figure here, and
+    // this one cannot, because the contract has not chosen between its
+    // three settlement paths yet. Saying "the collateral" and naming
+    // the claim step is the true answer; a number would be invented.
+    receipt: {
+      youReceive:
+        'The borrower’s collateral, once you claim it. The amount is not known until the transaction runs.',
+      youLock: 'Nothing.',
+      youMayOwe: 'Nothing beyond the network fee.',
+      // Both real, and neither obvious. A lender who closes out has
+      // given up the loan running to term — which, if the borrower was
+      // about to pay, was worth more than the collateral.
+      youCanLose:
+        'If the collateral is worth less than you are owed, you absorb the shortfall. Closing out is final: it ends the loan, so the borrower can no longer repay it with interest.',
+      fees: 'The network fee, plus the protocol’s share of any sale proceeds.',
+      whenThisEnds: 'Straight away — the loan is closed by this transaction.',
+    },
+  },
   lenderExit: {
     title: 'Your options as the lender',
     blurb:

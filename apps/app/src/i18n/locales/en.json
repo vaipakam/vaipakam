@@ -1089,6 +1089,29 @@
       "loanNoKeepers": "You haven’t approved any keepers yet — set them up under Settings → Keeper permissions.",
       "loanMasterOff": "Your keeper master switch is off, so nothing can run even with this loan’s switch on — turn it on under Settings → Keeper permissions."
     },
+    "forcedClose": {
+      "title": "This loan is overdue",
+      "titlePending": "If this loan is not repaid",
+      "submit": "Close out this loan",
+      "submitting": "Closing out…",
+      "notYet": "The borrower still has time. Once the repayment window and the grace period after it have both passed, you can close this loan out yourself.",
+      "unknown": "Still checking whether this loan can be closed out. Nothing has been ruled out — this is what the app has not read yet, not what the protocol has refused.",
+      "blockedSequencer": "The network’s sequencer is down or still recovering. Closing out is paused until prices can be trusted again — this usually clears on its own, so it is worth trying later.",
+      "readyInKind": "The grace period has passed, so you can close this loan out now. The collateral moves out of the borrower’s vault as-is rather than being sold, and you claim it afterwards from the Claims page.",
+      "readyNeedsRoute": "The grace period has passed and this loan can be closed out — but its collateral has to be sold on an exchange to do it, and that sale has to be routed by whoever submits the transaction. This app cannot build that route yet, so it is handled by the protocol’s automated closers. If this position stays open, contact support rather than waiting indefinitely.",
+      "notExclusive": "Anyone can close out an overdue loan, not just you. If someone else does it first, this position will simply show as closed — you are still paid what you are owed.",
+      "claimNote": "Closing out does not move funds to your wallet by itself. Once it settles, what you are owed becomes claimable.",
+      "intentNote": "If the borrower has a pending swap-to-repay order on this loan, closing out cancels it.",
+      "outcomeNote": "How much comes back depends on what the collateral is worth when the transaction runs, so the amount is not known in advance.",
+      "receipt": {
+        "youReceive": "The borrower’s collateral, once you claim it. The amount is not known until the transaction runs.",
+        "youLock": "Nothing.",
+        "youMayOwe": "Nothing beyond the network fee.",
+        "youCanLose": "If the collateral is worth less than you are owed, you absorb the shortfall. Closing out is final: it ends the loan, so the borrower can no longer repay it with interest.",
+        "fees": "The network fee, plus the protocol’s share of any sale proceeds.",
+        "whenThisEnds": "Straight away — the loan is closed by this transaction."
+      }
+    },
     "lenderExit": {
       "title": "Your options as the lender",
       "blurb": "You don’t have to do anything with this position. If you want out before the due date, here’s what that costs:",

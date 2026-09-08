@@ -69,6 +69,9 @@ import { RefinanceFlow } from '../components/RefinanceFlow';
 import { RefinancePendingCard } from '../components/RefinancePendingCard';
 import { EarlyRepayOptionsCard } from '../components/EarlyRepayOptionsCard';
 import { LenderExitOptionsCard } from '../components/LenderExitOptionsCard';
+import { ForcedCloseCard } from '../components/ForcedCloseCard';
+import { decideForcedClose } from '../data/forcedClose';
+import { useForcedCloseReads } from '../data/useForcedClose';
 import { ObligationTransferFlow } from '../components/ObligationTransferFlow';
 import { OffsetFlow } from '../components/OffsetFlow';
 import { OffsetPendingCard } from '../components/OffsetPendingCard';
@@ -105,7 +108,8 @@ type ConfirmSurface =
   | 'offset'
   | 'early-exit'
   | 'loan-sale'
-  | 'sale-teardown';
+  | 'sale-teardown'
+  | 'forced-close';
 
 export function PositionDetails() {
   const { loanId: loanIdParam } = useParams();
@@ -900,6 +904,32 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     principalBalance.data !== undefined &&
     partialInputWei > principalBalance.data;
 
+  /** Reads behind the lender's forced close-out card.
+   *
+   *  Mounted HERE, above the early returns below, because it is a hook
+   *  — the decision it feeds is resolved much further down, next to
+   *  `resolvedLoanStatus`, where the authoritative status is known.
+   *  Splitting them that way is what keeps the hook order stable; the
+   *  pure `decideForcedClose` can live anywhere, the queries cannot.
+   *
+   *  `enabled` is therefore the CHEAP gate rather than the real one:
+   *  the indexed status keeps these reads off borrower views and off
+   *  settled loans, and `decideForcedClose` still makes the binding
+   *  judgement from the reconciled status later. A loan the indexer
+   *  believes is active but the chain has since closed simply resolves
+   *  to `not-applicable` there and renders nothing. */
+  const forcedCloseReads = useForcedCloseReads({
+    loanId: Number.isFinite(loanId) ? loanId : undefined,
+    // A rental's collateral leg is an NFT and `checkLiquidity` is an
+    // ERC-20 question — but the decision never asks it for a rental,
+    // so leaving this undefined disables a read nothing consults.
+    collateralAsset:
+      loan.data && loan.data.collateralAssetType === AssetType.ERC20
+        ? (loan.data.collateralAsset as `0x${string}`)
+        : undefined,
+    enabled: isLenderHolder && loan.data?.status === 'active',
+  });
+
   if (loan.isLoading) {
     return <EmptyState icon={LoaderCircle} title={copy.positions.details.loadingLoan} />;
   }
@@ -1328,6 +1358,36 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       // reads only the sources that can still speak (Codex #1858 r6).
       // The terminal find above keeps the full list on purpose.
     ) ?? freshStatusCandidates.find((st) => st !== undefined);
+
+  /** Whether the lender can force this overdue loan closed, and by
+   *  which of the contract's two routes.
+   *
+   *  The reads are mounted only for a lender holding an ACTIVE
+   *  position — a terminal loan has nothing to force, and a borrower
+   *  viewing their own position should not be paying RPC for a card
+   *  they never see.
+   *
+   *  `active` is affirmative-only. While `resolvedLoanStatus` is
+   *  undefined this passes `false`, which resolves to
+   *  `not-applicable` and renders nothing — correct for the brief
+   *  window before the status lands, and self-correcting on the next
+   *  poll. The alternative, treating unread as active, would flash a
+   *  close-out card onto loans that turn out to be repaid. */
+  const forcedCloseActive =
+    isLenderHolder && resolvedLoanStatus === LoanStatus.Active;
+  const forcedCloseReadiness = decideForcedClose({
+    active: forcedCloseActive,
+    defaultable: forcedCloseReads.defaultable,
+    sequencerHealthy: forcedCloseReads.sequencerHealthy,
+    assetType:
+      loan.data === null || loan.data === undefined
+        ? undefined
+        : loanIsRental
+          ? 'rental'
+          : 'erc20',
+    collateralIlliquid: forcedCloseReads.collateralIlliquid,
+    ltvCollapsed: forcedCloseReads.ltvCollapsed,
+  });
 
   /** `loanLive`'s chain clock, ADVANCED by local elapsed time.
    *
@@ -3201,6 +3261,42 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           Flagged wallets still see nothing (Tier-1), and a rental is
           excluded entirely — lender early withdrawal does not cover
           rentals in Phase 1. */}
+
+      {/* The forced close-out, for a borrower who stopped paying.
+          `DefaultedFacet.triggerDefault` has been callable the whole
+          time and had no surface here, so a lender could watch the
+          grace period expire with nothing to press.
+
+          Placed ABOVE the exit chooser deliberately. Once a loan is
+          past grace the chooser's rows are the wrong conversation —
+          its lead row is "wait for the loan to run its course", which
+          on an overdue position is advice to keep waiting for
+          something that already failed to happen.
+
+          Unlike the chooser this is NOT rental-excluded: an NFT rental
+          is one of the cases the contract closes out in kind, and it
+          is the case where the one-click path works best.
+
+          `isLenderHolder`, never `role` — a wallet holding BOTH
+          position NFTs resolves to `borrower` and would never see
+          this, which is the same bug Codex r13 caught on the sale
+          surfaces. */}
+      {isLenderHolder && !(sanctions.ready && sanctions.flagged) ? (
+        <ForcedCloseCard
+          loanId={row.loanId}
+          readiness={forcedCloseReadiness}
+          confirmOpen={confirmingSurface === 'forced-close'}
+          onOpenConfirm={() => setConfirmingSurface('forced-close')}
+          onCloseConfirm={() => setConfirmingSurface(null)}
+          busy={phase === 'pending'}
+          setBusy={setBusy}
+          onClosedOut={() => {
+            void queryClient.invalidateQueries({ queryKey: ['forcedClose'] });
+            void loan.refetch?.();
+          }}
+        />
+      ) : null}
+
       {isLenderHolder &&
       // Codex r10 P2 — `fallback_pending` belongs here, not only
       // `active`. r9 added copy telling a lender that a loan settling

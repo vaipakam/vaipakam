@@ -313,6 +313,50 @@ Thin-market honesty rules apply.
 - Health and risk labels escalate when collateral health is poor.
 - Position rows should offer the next relevant action where one exists.
 
+### Forced close-out of an overdue loan
+
+- A lender holding an active position whose repayment window and grace period
+  have both elapsed is offered a way to close the loan out from the position
+  page. The capability exists in the protocol for any caller; the product's
+  obligation is to make it reachable by the party who is owed.
+- Whether the grace period has elapsed is decided by the protocol, not by the
+  app. The grace schedule is configurable, so an app that recomputed it from the
+  loan's own dates would be correct only until a deployment changed it, and
+  would then be wrong about the one fact this surface exists to state. The app
+  may show the grace window to explain a wait; it must never use its own
+  arithmetic to decide whether the action is permitted.
+- Two settlement routes are distinguished, because they are not equally
+  available. Where closing out transfers the collateral as-is — an NFT rental,
+  collateral without a reliable market price, or collateral whose value has
+  collapsed far enough that selling it is moot — the app offers the action
+  directly. Where the protocol requires the collateral be sold on an exchange,
+  the app states that the position is closable and that the sale must be routed
+  by whoever submits it, and offers no button it cannot honour. Presenting an
+  action that is certain to be refused is worse than presenting none: the user
+  pays a network fee for the refusal.
+- Nothing on this surface states an amount. The settlement path is chosen while
+  the transaction executes, so no figure is knowable in advance, and a predicted
+  one would be invented.
+- Nothing on this surface implies the lender is the only party who may act. Any
+  caller may close out an overdue loan, and a lender returning to find the
+  position already closed is to read that as the normal course rather than as a
+  loss.
+- Closing out is not presented as payment. It ends the loan; what the lender is
+  owed becomes claimable afterwards through the ordinary claim route.
+- The surface appears before it can be used — while checks are still running,
+  and while the borrower still has time — and says which of those applies. A
+  capability shown only at the moment it becomes actionable cannot be
+  anticipated, planned around, or asked about.
+- An unresolved check is never reported as "not available". The two are opposite
+  claims: one describes the app's knowledge, the other the protocol's answer.
+- Sequencer health is judged before collateral is classified. While the sequencer
+  is unavailable the protocol reports every asset as unpriceable, so a surface
+  that classified collateral first would describe the wrong settlement route and
+  offer an action the protocol refuses for an unrelated reason.
+- Forced close-out remains available to a lender who has not accepted pending
+  changes to the Terms. Withholding it would place paperwork between a lender and
+  collateral owed to them by a counterparty already in breach.
+
 ## Claims
 
 - Claims are chain-authoritative.

@@ -1,0 +1,144 @@
+/** Lender forced close-out of an overdue loan (`triggerDefault`).
+ *
+ *  The capability was on-chain from the start and had no surface, so
+ *  the regression this guards is INVISIBILITY: a lender whose borrower
+ *  stopped paying seeing nothing to press. A spec that only checked the
+ *  card exists once, on a loan already past grace, would not catch the
+ *  card silently freezing in one state — so this drives the SAME loan
+ *  across the grace boundary and asserts it changes.
+ *
+ *  Two preconditions are asserted from the chain rather than assumed,
+ *  and both fail the test loudly if the harness moves:
+ *
+ *  - the collateral really is LIQUID (`checkLiquidity`), which is what
+ *    makes `ready-needs-route` the correct expectation here. `flows.ts`
+ *    posts against `MOCKS.liquidToken`; if that ever changes to an
+ *    illiquid asset the expected UI flips to the one WITH a button, and
+ *    this test must fail rather than quietly assert the wrong arm.
+ *  - the loan really is defaultable after the warp
+ *    (`isLoanDefaultable`), so a grace bucket longer than the warp
+ *    fails here instead of downstream as a confusing UI mismatch.
+ *
+ *  What this does NOT cover, deliberately: the in-kind submit path.
+ *  That needs illiquid or NFT collateral, which this harness's offer
+ *  flow does not post. Recorded in `e2e/COVERAGE.md` rather than
+ *  implied by a green run.
+ */
+import { test, expect } from '../lib/wallet-fixture';
+import {
+  postLenderOffer,
+  acceptAsBorrower,
+  newestOfferIdFor,
+  newestLoanIdFor,
+} from '../lib/flows';
+import { increaseTime } from '../lib/anvil';
+import { pub, DIAMOND, DIAMOND_ABI_VIEM, MOCKS } from '../lib/chain';
+
+/** Past maturity by well over the 1-day bucket a 9-day loan draws, but
+ *  the assertion below is on `isLoanDefaultable`, not on this number —
+ *  grace is governance-configurable and the chain is the authority. */
+const PAST_GRACE_SECONDS = 2 * 86_400;
+
+test('the close-out card tracks the grace boundary for the lender', async ({
+  launchWallet,
+}) => {
+  const lender = await launchWallet('lender');
+  await postLenderOffer(lender.page);
+  const offerId = await newestOfferIdFor(lender.account.address);
+  await lender.ctx.close();
+
+  const borrower = await launchWallet('borrower');
+  await acceptAsBorrower(borrower.page, offerId);
+  const loanId = await newestLoanIdFor(borrower.account.address, 'borrower');
+  await borrower.ctx.close();
+
+  // Precondition 1 — the collateral is liquid, so the contract will
+  // demand a swap try-list and the app must NOT offer a submit button.
+  const liquidity = await pub.readContract({
+    address: DIAMOND,
+    abi: DIAMOND_ABI_VIEM,
+    functionName: 'checkLiquidity',
+    args: [MOCKS!.liquidToken as `0x${string}`],
+  });
+  expect(Number(liquidity)).toBe(0); // 0 = Liquid
+
+  // ---- Before the grace period expires ----
+  const beforeWarp = await launchWallet('lender', { advanced: true });
+  await beforeWarp.page.goto(`/positions/${loanId}`, {
+    waitUntil: 'domcontentloaded',
+  });
+  const cardBefore = beforeWarp.page.getByTestId('forced-close-card');
+  await expect(cardBefore).toBeVisible({ timeout: 30_000 });
+  // Visible but explicitly NOT actionable, and not claiming the loan is
+  // overdue when it is not.
+  await expect(
+    cardBefore.getByText(/borrower still has time/i),
+  ).toBeVisible({ timeout: 30_000 });
+  await expect(
+    beforeWarp.page.getByTestId('forced-close-submit'),
+  ).toHaveCount(0);
+  await beforeWarp.ctx.close();
+
+  // ---- Warp past maturity AND grace ----
+  const loan = (await pub.readContract({
+    address: DIAMOND,
+    abi: DIAMOND_ABI_VIEM,
+    functionName: 'getLoanDetails',
+    args: [loanId],
+  })) as { startTime: bigint; durationDays: bigint };
+  const endTime = loan.startTime + loan.durationDays * 86_400n;
+  const now = (await pub.getBlock()).timestamp;
+  await increaseTime(Number(endTime - now) + PAST_GRACE_SECONDS);
+
+  // Precondition 2 — the chain agrees the loan is now closable. If a
+  // configured grace bucket outran the warp, fail here.
+  const defaultable = await pub.readContract({
+    address: DIAMOND,
+    abi: DIAMOND_ABI_VIEM,
+    functionName: 'isLoanDefaultable',
+    args: [loanId],
+  });
+  expect(defaultable).toBe(true);
+
+  // ---- After grace: the same card, a different answer ----
+  const afterWarp = await launchWallet('lender', { advanced: true });
+  await afterWarp.page.goto(`/positions/${loanId}`, {
+    waitUntil: 'domcontentloaded',
+  });
+  const cardAfter = afterWarp.page.getByTestId('forced-close-card');
+  await expect(cardAfter).toBeVisible({ timeout: 30_000 });
+
+  // The state actually moved — the waiting line is gone.
+  await expect(
+    cardAfter.getByText(/borrower still has time/i),
+  ).toHaveCount(0);
+  // Liquid collateral: the card says the position is closable and that
+  // the sale needs routing, and offers NO button. A button here would
+  // spend the lender's gas reaching `NoEnabledSwapRoute`.
+  await expect(
+    cardAfter.getByText(/sold on an exchange/i),
+  ).toBeVisible({ timeout: 30_000 });
+  await expect(
+    afterWarp.page.getByTestId('forced-close-submit'),
+  ).toHaveCount(0);
+  // Never promises exclusivity — a keeper may close it first.
+  await expect(
+    cardAfter.getByText(/anyone can close out an overdue loan/i),
+  ).toBeVisible({ timeout: 30_000 });
+  await afterWarp.ctx.close();
+
+  // ---- The borrower is not offered their own default ----
+  const borrowerView = await launchWallet('borrower', { advanced: true });
+  await borrowerView.page.goto(`/positions/${loanId}`, {
+    waitUntil: 'domcontentloaded',
+  });
+  // Wait for the page to settle on something before asserting absence,
+  // so an empty shell cannot pass as "correctly hidden".
+  await expect(
+    borrowerView.page.locator('section.card').first(),
+  ).toBeVisible({ timeout: 30_000 });
+  await expect(
+    borrowerView.page.getByTestId('forced-close-card'),
+  ).toHaveCount(0);
+  await borrowerView.ctx.close();
+});
