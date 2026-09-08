@@ -19,10 +19,13 @@
  *    (`isLoanDefaultable`), so a grace bucket longer than the warp
  *    fails here instead of downstream as a confusing UI mismatch.
  *
- *  What this does NOT cover, deliberately: the in-kind submit path.
- *  That needs illiquid or NFT collateral, which this harness's offer
- *  flow does not post. Recorded in `e2e/COVERAGE.md` rather than
- *  implied by a green run.
+ *  The SECOND test covers the other arm — the one that actually sends
+ *  the transaction — by posting against the faucet's ILLIQUID token.
+ *  Unpriced collateral is the only route to the in-kind settlement
+ *  branch, and therefore the only way the app's `triggerDefault` submit
+ *  is reachable at all. `LoanFacet` skips the health-factor gate for
+ *  illiquid collateral (valued at $0, so there is no risk math) and
+ *  takes the combined consent instead, which the shared helper ticks.
  */
 import { test, expect } from '../lib/wallet-fixture';
 import {
@@ -173,4 +176,99 @@ test('the close-out card tracks the grace boundary for the lender', async ({
     borrowerView.page.getByTestId('forced-close-card'),
   ).toHaveCount(0);
   await borrowerView.ctx.close();
+});
+
+test('the lender can actually close out a loan with unpriced collateral', async ({
+  launchWallet,
+}) => {
+  // Illiquid collateral — the one shape whose settlement transfers the
+  // collateral in kind, so `triggerDefault(loanId, [])` is valid and the
+  // app is allowed to offer a button.
+  const lender = await launchWallet('lender');
+  await postLenderOffer(lender.page, MOCKS!.illiquidToken as string);
+  const offerId = await newestOfferIdFor(lender.account.address);
+  await lender.ctx.close();
+
+  const borrower = await launchWallet('borrower');
+  await acceptAsBorrower(borrower.page, offerId);
+  const loanId = await newestLoanIdFor(borrower.account.address, 'borrower');
+  await borrower.ctx.close();
+
+  // Precondition — the collateral really is unpriced. If the faucet
+  // token ever gains a feed this flips the expected arm, and the test
+  // must fail rather than assert the wrong one.
+  const liquidity = await pub.readContract({
+    address: DIAMOND,
+    abi: DIAMOND_ABI_VIEM,
+    functionName: 'checkLiquidity',
+    args: [MOCKS!.illiquidToken as `0x${string}`],
+  });
+  expect(Number(liquidity)).not.toBe(0); // anything but Liquid
+
+  const loan = (await pub.readContract({
+    address: DIAMOND,
+    abi: DIAMOND_ABI_VIEM,
+    functionName: 'getLoanDetails',
+    args: [loanId],
+  })) as { startTime: bigint; durationDays: bigint };
+  const endTime = loan.startTime + loan.durationDays * 86_400n;
+  const now = (await pub.getBlock()).timestamp;
+  await increaseTime(Number(endTime - now) + 60);
+
+  const readDefaultable = () =>
+    pub.readContract({
+      address: DIAMOND,
+      abi: DIAMOND_ABI_VIEM,
+      functionName: 'isLoanDefaultable',
+      args: [loanId],
+    }) as Promise<boolean>;
+  let defaultable = await readDefaultable();
+  for (let i = 0; i < MAX_WARP_STEPS && !defaultable; i++) {
+    await increaseTime(WARP_STEP_SECONDS);
+    defaultable = await readDefaultable();
+  }
+  expect(defaultable).toBe(true);
+
+  const lenderView = await launchWallet('lender', { advanced: true });
+  const { page } = lenderView;
+  await page.goto(`/positions/${loanId}`, { waitUntil: 'domcontentloaded' });
+
+  await expect(page.getByTestId('forced-close-card')).toBeVisible({
+    timeout: 30_000,
+  });
+  // THIS arm gets a button — the contract needs no swap route here.
+  const submit = page.getByTestId('forced-close-submit');
+  await expect(submit).toBeVisible({ timeout: 30_000 });
+  await submit.click();
+
+  // Confirm through the receipt, the same consent step every other
+  // fund-moving surface on this page uses.
+  const confirm = page.getByRole('button', {
+    name: /close out this loan/i,
+  });
+  await expect(confirm.last()).toBeEnabled({ timeout: 30_000 });
+  await confirm.last().click();
+
+  // The proof: the chain's own status leaves Active. Asserted from the
+  // contract rather than from a success banner — a banner is the app
+  // telling us what it believes, and the whole point of this test is
+  // that the transaction landed.
+  await expect
+    .poll(
+      async () =>
+        Number(
+          (
+            (await pub.readContract({
+              address: DIAMOND,
+              abi: DIAMOND_ABI_VIEM,
+              functionName: 'getLoanDetails',
+              args: [loanId],
+            })) as { status: number }
+          ).status,
+        ),
+      { timeout: 120_000, message: 'loan never left Active after close-out' },
+    )
+    .not.toBe(0); // 0 = Active
+
+  await lenderView.ctx.close();
 });
