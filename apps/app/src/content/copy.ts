@@ -2301,6 +2301,14 @@ const copySource = {
     // card that could leave a position open indefinitely.
     readyNeedsRoute:
       'The grace period has passed and this loan can be closed out — but its collateral has to be sold on an exchange to do it, and that sale has to be routed by whoever submits the transaction. This app cannot build that route yet, and no automated service currently submits it either, so closing this position needs an operator. Contact support rather than waiting for it to happen on its own.',
+    // Round 31 P2 — a liquid, non-collapsed position the protocol can
+    // settle against an opposing one. `triggerDefault` dispatches that
+    // match BEFORE the swap branch, so the app CAN close this today;
+    // treating it as `readyNeedsRoute` withheld a working action. The
+    // copy names the LENT asset, because an internal match settles at
+    // oracle price rather than handing over collateral.
+    readyInternalMatch:
+      'The grace period has passed and this loan can be closed out now. The protocol has an opposing position it can settle this one against, so instead of the collateral being sold you are repaid in the asset you lent, at the oracle price when the transaction runs. You claim it afterwards from the Claims page.',
     blockedPaused:
       'The protocol is paused right now, so nothing can be closed out until governance lifts it. Your position and the collateral behind it are unaffected by the pause.',
     // Not "the app cannot" — nobody can. Worth saying plainly, because

@@ -2479,7 +2479,8 @@
       },
       "blockedPaused": "Das Protokoll ist derzeit pausiert, daher kann nichts geschlossen werden, bis die Governance die Pause aufhebt. Ihre Position und die dahinterliegende Sicherheit sind davon nicht betroffen.",
       "blockedNoConsent": "Dieser Kredit ist über seine Nachfrist hinaus, wurde aber eröffnet, ohne dass beide Seiten die Risiko- und Bedingungsbestätigung erfasst haben, die das Protokoll verlangt, bevor es eine Sicherheit ohne Marktpreis herausgibt. Der Abschluss wird für alle verweigert, nicht nur für Sie – wenden Sie sich an den Support.",
-      "submitted": "Abschluss gesendet. Der Kredit wird beendet; geben Sie der Seite einen Moment zum Aktualisieren und sehen Sie dann auf der Ansprüche-Seite nach, was Sie nun beanspruchen können."
+      "submitted": "Abschluss gesendet. Der Kredit wird beendet; geben Sie der Seite einen Moment zum Aktualisieren und sehen Sie dann auf der Ansprüche-Seite nach, was Sie nun beanspruchen können.",
+      "readyInternalMatch": "Die Nachfrist ist abgelaufen und dieser Kredit kann jetzt geschlossen werden. Das Protokoll hat eine Gegenposition, gegen die es diese abwickeln kann — statt die Sicherheit zu verkaufen, werden Sie in dem von Ihnen verliehenen Vermögenswert zurückgezahlt, zum Orakelpreis zum Zeitpunkt der Transaktion. Sie beanspruchen ihn danach auf der Ansprüche-Seite."
     }
   },
   "contractError": {

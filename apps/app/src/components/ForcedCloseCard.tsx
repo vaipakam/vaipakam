@@ -151,13 +151,14 @@ export function ForcedCloseCard({
     setError(null);
     setBusy(true);
     try {
-      // The empty try-list is correct HERE and only here. `submittable`
-      // is true only for `ready-in-kind`, which is precisely the set of
-      // loans — NFT rentals, illiquid collateral, and >110% LTV
-      // collapses — that `triggerDefault` routes to in-kind
-      // disposition without consulting a swap adapter. For anything
-      // else this array would revert `NoEnabledSwapRoute`, which is why
-      // the button does not exist in that state.
+      // The empty try-list is correct for both submittable states, and
+      // for different reasons. `ready-in-kind` — NFT rentals, illiquid
+      // collateral, >110% LTV collapses — is routed to in-kind
+      // disposition without a swap adapter ever being consulted.
+      // `ready-internal-match` never reaches the swap branch either:
+      // `attemptInternalMatchAutoDispatch` runs first and returns.
+      // Anywhere else this array reverts `NoEnabledSwapRoute`, which is
+      // why the button does not exist there.
       // A LIVE re-check, immediately before sending (round 28 P2). The
       // readiness above is a 30-second poll that the open confirmation
       // can outlive by minutes, and several of the facts behind it move
@@ -213,7 +214,9 @@ export function ForcedCloseCard({
               ? copy.forcedClose.blockedNoConsent
               : readiness === 'ready-needs-route'
                 ? copy.forcedClose.readyNeedsRoute
-                : copy.forcedClose.readyInKind;
+                : readiness === 'ready-internal-match'
+                  ? copy.forcedClose.readyInternalMatch
+                  : copy.forcedClose.readyInKind;
 
   /** The overdue heading ONLY where the chain has actually said so.
    *
@@ -227,6 +230,7 @@ export function ForcedCloseCard({
   const overdueEstablished =
     readiness === 'ready-in-kind' ||
     readiness === 'ready-needs-route' ||
+    readiness === 'ready-internal-match' ||
     readiness === 'blocked-no-consent';
 
   return (
@@ -248,7 +252,9 @@ export function ForcedCloseCard({
           still needs to know a keeper may close it, so that finding the
           position already closed reads as normal rather than as loss. */}
       {!holdingAfterSubmit &&
-      (readiness === 'ready-in-kind' || readiness === 'ready-needs-route') ? (
+      (readiness === 'ready-in-kind' ||
+        readiness === 'ready-needs-route' ||
+        readiness === 'ready-internal-match') ? (
         <>
           <p className="field-hint">{copy.forcedClose.notExclusive}</p>
           <p className="field-hint">{copy.forcedClose.outcomeNote}</p>

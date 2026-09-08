@@ -138,3 +138,16 @@ stops a close-out from stranding a half-finished sale of the lender's
 own position was reading a value that was never fetched on the lender's
 page. It looked correct everywhere it was used and did nothing at all,
 on the single screen it existed to protect. It works now.
+
+The last correction went the other way from all the others: the card was
+being too cautious rather than too confident. Where a loan's collateral
+is ordinary and priced, the card says the sale has to be routed and
+offers no button. But before the protocol ever reaches that sale, it
+looks for an opposing position it can settle this one against — and when
+it finds one, no sale happens and the close-out the app can already
+perform succeeds. So a lender was being told to go and find an operator
+for a position they could have closed themselves in one transaction.
+That case now has its own message and its own button, and it says
+plainly that what comes back is the asset lent rather than the
+borrower's collateral, because for this route that is what the protocol
+returns.

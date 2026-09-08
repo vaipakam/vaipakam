@@ -2479,7 +2479,8 @@
       },
       "blockedPaused": "Le protocole est actuellement en pause : rien ne peut être clôturé tant que la gouvernance ne l’a pas levée. Votre position et la garantie qui la couvre ne sont pas affectées par cette pause.",
       "blockedNoConsent": "Ce prêt a dépassé son délai de grâce, mais il a été ouvert sans que les deux parties aient enregistré la reconnaissance des risques et conditions que le protocole exige avant de remettre une garantie sans prix de marché. La clôture est refusée à tout le monde, pas seulement à vous : contactez le support.",
-      "submitted": "Clôture envoyée. Le prêt se termine ; laissez à la page un instant pour se mettre à jour, puis consultez la page Réclamations pour voir ce que vous pouvez réclamer."
+      "submitted": "Clôture envoyée. Le prêt se termine ; laissez à la page un instant pour se mettre à jour, puis consultez la page Réclamations pour voir ce que vous pouvez réclamer.",
+      "readyInternalMatch": "Le délai de grâce est écoulé et ce prêt peut être clôturé maintenant. Le protocole dispose d’une position opposée contre laquelle il peut régler celle-ci : plutôt que de vendre la garantie, vous êtes remboursé dans l’actif que vous avez prêté, au prix de l’oracle au moment de la transaction. Vous le réclamez ensuite sur la page Réclamations."
     }
   },
   "contractError": {

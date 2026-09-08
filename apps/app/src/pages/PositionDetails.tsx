@@ -1414,6 +1414,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     sequencerHealthy: forcedCloseReads.sequencerHealthy,
     paused: forcedCloseReads.paused,
     consentFromBoth: forcedCloseReads.consentFromBoth,
+    internalMatchCandidate: forcedCloseReads.internalMatchCandidate,
     assetType:
       loan.data === null || loan.data === undefined
         ? undefined

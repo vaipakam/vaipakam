@@ -61,6 +61,19 @@ export type ForcedCloseReadiness =
    *  DEX attempts (`LibSwap.swapWithFailover`, #1005 S9). A one-click
    *  button here would burn gas to reach a guaranteed revert. */
   | 'ready-needs-route'
+  /** Past grace, liquid non-collapsed collateral — so the swap branch
+   *  WOULD demand a try-list — but the protocol has an opposing
+   *  position it can settle this one against instead.
+   *
+   *  `triggerDefault` attempts `attemptInternalMatchAutoDispatch`
+   *  BEFORE it reaches the DEX branch and returns on success, so an
+   *  empty `adapterCalls` never gets near `NoEnabledSwapRoute` here
+   *  (round 31 P2). Treating this as `ready-needs-route` withheld a
+   *  close-out the app can execute today. Kept as its own state rather
+   *  than folded into `ready-in-kind` because what the lender receives
+   *  differs — an internal match settles at oracle price in the LENT
+   *  asset, not in collateral — and the copy has to say so. */
+  | 'ready-internal-match'
   /** Still inside the term or its grace period. The chain said so. */
   | 'not-yet'
   /** The L2 sequencer is down or inside its 1h recovery window.
@@ -132,6 +145,15 @@ export interface ForcedCloseInput {
    *  into the same branch is not consent-guarded, and rentals never
    *  enter it. `undefined` = unread. */
   consentFromBoth: boolean | undefined;
+  /** `MetricsFacet.hasInternalMatchCandidate(loanId).found`.
+   *
+   *  The SAME view `attemptInternalMatchAutoDispatch` consults, which
+   *  is why this is a read rather than a reimplementation: it already
+   *  folds in the `internalMatchEnabled` config flag, the subject's
+   *  status, and the matchable-collateral filter. Asking the contract's
+   *  own question is the only way this stays correct when any of those
+   *  move. `undefined` = unread. */
+  internalMatchCandidate: boolean | undefined;
   /** Collateral is ILLIQUID per `OracleFacet.checkLiquidity`.
    *
    *  `checkLiquidityOnActiveNetwork` is what `triggerDefault` actually
@@ -222,7 +244,18 @@ export function decideForcedClose(input: ForcedCloseInput): ForcedCloseReadiness
   if (input.ltvCollapsed === undefined) return 'unknown';
   if (input.ltvCollapsed) return 'ready-in-kind';
 
-  // Liquid, not collapsed → the contract demands a real try-list.
+  // Liquid, not collapsed — the swap branch WOULD demand a try-list,
+  // but only if the loan gets that far. An internal match is dispatched
+  // first and returns, so the empty list is fine when one exists.
+  //
+  // An unread or failed probe falls back to `ready-needs-route`, not to
+  // `unknown`: that is the conservative answer AND the honest one. It
+  // never offers a button the chain might refuse, and it keeps the
+  // explanation this state exists to give rather than replacing it with
+  // "still checking" on a loan whose route genuinely cannot be built
+  // here. The brief flip from that message to a button on a matched
+  // loan is the cost, and it is the right way round.
+  if (input.internalMatchCandidate === true) return 'ready-internal-match';
   return 'ready-needs-route';
 }
 
@@ -236,13 +269,18 @@ function inKindIfConsented(
 
 /** Whether this readiness can be submitted from the app as-is.
  *
- *  Only `ready-in-kind` qualifies. `ready-needs-route` is genuinely
+ *  `ready-in-kind` and `ready-internal-match`. The second is NOT an
+ *  in-kind close — the protocol settles against an opposing position
+ *  and pays in the lent asset — but it shares the property that
+ *  matters here: `triggerDefault(loanId, [])` succeeds, because the
+ *  match is dispatched before the swap branch is ever reached.
+ *  `ready-needs-route` is genuinely
  *  eligible on-chain — a keeper can close it this second — but the app
  *  cannot build the `AdapterCall[]` the contract requires, so offering
  *  a submit button for it would be offering a revert. The card still
  *  SHOWS that state; it just does not pretend to act on it. */
 export function canSubmitFromApp(readiness: ForcedCloseReadiness): boolean {
-  return readiness === 'ready-in-kind';
+  return readiness === 'ready-in-kind' || readiness === 'ready-internal-match';
 }
 
 /** Whether the card should render at all.

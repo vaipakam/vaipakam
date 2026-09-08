@@ -2479,7 +2479,8 @@
       },
       "blockedPaused": "El protocolo está en pausa en este momento, así que no se puede cerrar nada hasta que la gobernanza la levante. Tu posición y la garantía que la respalda no se ven afectadas por la pausa.",
       "blockedNoConsent": "Este préstamo ha superado su período de gracia, pero se abrió sin que ambas partes registraran la aceptación de riesgos y condiciones que el protocolo exige antes de entregar una garantía sin precio de mercado. El cierre se rechaza para todo el mundo, no solo para ti: contacta con soporte.",
-      "submitted": "Cierre enviado. El préstamo está terminando; dale un momento a la página para actualizarse y luego consulta la página de Reclamaciones para ver qué te corresponde reclamar."
+      "submitted": "Cierre enviado. El préstamo está terminando; dale un momento a la página para actualizarse y luego consulta la página de Reclamaciones para ver qué te corresponde reclamar.",
+      "readyInternalMatch": "El período de gracia ha terminado y este préstamo puede cerrarse ahora. El protocolo tiene una posición opuesta contra la que puede liquidar esta, así que en lugar de venderse la garantía se te devuelve el activo que prestaste, al precio del oráculo en el momento de la transacción. Lo reclamas después en la página de Reclamaciones."
     }
   },
   "contractError": {

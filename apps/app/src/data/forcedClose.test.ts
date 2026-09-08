@@ -27,6 +27,7 @@ const base: ForcedCloseInput = {
   sequencerHealthy: true,
   paused: false,
   consentFromBoth: true,
+  internalMatchCandidate: false,
   assetType: 'erc20',
   collateralIsNft: false,
   collateralIlliquid: false,
@@ -131,6 +132,58 @@ describe('decideForcedClose — gates the contract applies before routing', () =
   });
 });
 
+describe('decideForcedClose — the internal-match dispatch', () => {
+  it('offers a liquid, non-collapsed loan with a match candidate', () => {
+    // Round 31 P2. `triggerDefault` runs
+    // `attemptInternalMatchAutoDispatch` BEFORE the DEX branch and
+    // returns on success, so the empty try-list never reaches
+    // `NoEnabledSwapRoute` — the app CAN close this. `base` is exactly
+    // the shape that otherwise resolves `ready-needs-route`, which is
+    // what makes this case distinguishing.
+    expect(decideForcedClose({ ...base, internalMatchCandidate: true })).toBe(
+      'ready-internal-match',
+    );
+  });
+
+  it('falls back to needs-route when the probe is unread or failed', () => {
+    // Deliberately NOT `unknown`. That is the conservative answer — no
+    // button is offered — and it keeps the explanation this state
+    // exists to give, rather than replacing it with "still checking" on
+    // a loan whose route genuinely cannot be built in this app.
+    expect(
+      decideForcedClose({ ...base, internalMatchCandidate: undefined }),
+    ).toBe('ready-needs-route');
+  });
+
+  it('does not let a match candidate override an earlier gate', () => {
+    // The dispatch happens inside `triggerDefault`, well after the
+    // modifiers and the sequencer check — so a candidate must not
+    // resurrect a call the chain refuses before it ever routes.
+    for (const gate of [
+      { paused: true } as const,
+      { sequencerHealthy: false } as const,
+      { defaultable: false } as const,
+    ]) {
+      expect(
+        decideForcedClose({ ...base, ...gate, internalMatchCandidate: true }),
+      ).not.toBe('ready-internal-match');
+    }
+  });
+
+  it('prefers the in-kind route when the collateral is illiquid', () => {
+    // An illiquid loan reaches the in-kind branch and the match probe
+    // is irrelevant to it — the ordering must not let a candidate
+    // relabel a position whose settlement really is the collateral.
+    expect(
+      decideForcedClose({
+        ...base,
+        collateralIlliquid: true,
+        internalMatchCandidate: true,
+      }),
+    ).toBe('ready-in-kind');
+  });
+});
+
 describe('decideForcedClose — the sequencer ordering trap', () => {
   it('reports blocked-sequencer for LIQUID collateral, not ready-in-kind', () => {
     // THE calibration case for this module.
@@ -231,6 +284,13 @@ describe('canSubmitFromApp', () => {
     expect(canSubmitFromApp('ready-needs-route')).toBe(false);
   });
 
+  it('accepts the internal-match route too', () => {
+    // Not an in-kind close — the lender is repaid in the lent asset —
+    // but it shares the property that decides this predicate: the
+    // empty try-list succeeds.
+    expect(canSubmitFromApp('ready-internal-match')).toBe(true);
+  });
+
   it('refuses every non-ready state', () => {
     for (const s of [
       'not-yet',
@@ -253,6 +313,7 @@ describe('shouldRenderForcedClose', () => {
     for (const s of [
       'ready-in-kind',
       'ready-needs-route',
+      'ready-internal-match',
       'not-yet',
       'blocked-sequencer',
       'blocked-paused',

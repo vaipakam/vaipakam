@@ -43,6 +43,7 @@ export interface ForcedCloseReads {
   sequencerHealthy: boolean | undefined;
   paused: boolean | undefined;
   consentFromBoth: boolean | undefined;
+  internalMatchCandidate: boolean | undefined;
   collateralIlliquid: boolean | undefined;
   ltvCollapsed: boolean | undefined;
   /** When the read that decides ACTIONABILITY last returned.
@@ -139,6 +140,30 @@ export function useForcedCloseReads(opts: {
     },
   });
 
+  /** `MetricsFacet.hasInternalMatchCandidate(loanId)` — the same view
+   *  `attemptInternalMatchAutoDispatch` consults before it reaches the
+   *  swap branch, so this predicts that dispatch exactly rather than
+   *  modelling it. It already folds in the `internalMatchEnabled`
+   *  config flag and the matchable-collateral filter.
+   *
+   *  Polled at the normal cadence: a candidate is another live loan and
+   *  can appear or vanish while the lender is looking. The confirm-time
+   *  simulation is what covers the gap between this read and the send. */
+  const internalMatch = useQuery({
+    queryKey: ['forcedClose', 'match', readChain.chainId, String(loanId)],
+    enabled: on,
+    refetchInterval: REFETCH_MS,
+    queryFn: async () => {
+      const [found] = (await publicClient!.readContract({
+        address: diamond,
+        abi: DIAMOND_ABI_VIEM,
+        functionName: 'hasInternalMatchCandidate',
+        args: [BigInt(loanId!)],
+      })) as readonly [boolean, bigint];
+      return found;
+    },
+  });
+
   const liquidity = useQuery({
     queryKey: [
       'forcedClose',
@@ -199,6 +224,7 @@ export function useForcedCloseReads(opts: {
     sequencerHealthy: sequencer.isError ? undefined : sequencer.data,
     paused: paused.isError ? undefined : paused.data,
     consentFromBoth: consent.isError ? undefined : consent.data,
+    internalMatchCandidate: internalMatch.isError ? undefined : internalMatch.data,
     collateralIlliquid: liquidity.isError ? undefined : liquidity.data,
     ltvCollapsed: ltv.isError ? undefined : ltv.data,
     updatedAt: defaultable.dataUpdatedAt,
