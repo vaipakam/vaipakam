@@ -87,22 +87,31 @@ Including the archived contracts also surfaced what an "archived deployment"
 can actually be. Some are complete earlier versions of the platform; some are
 bare shells where deployment was abandoned before any logic was installed; and
 one recorded address turned out to hold an unrelated contract altogether. The
-census now distinguishes these by what the contract itself says when asked: a
-shell that has never had logic installed provably holds nothing and is settled
-on that basis, while an address that answers like something other than the
-platform is reported as undetermined with a note to correct the record. Before
-counting anything it also checks the simplest facts first — whether code exists
-at the address, and how much VPFI it holds — since either can settle a
-deployment outright without reading a single loan.
+census now distinguishes these by what the contract itself says when asked —
+but it does not settle a bare shell on that basis. A shell with no reading
+function installed today may still hold records written before those functions
+were removed, and its storage cannot be read without one, so it is reported as
+unresolved pending an authoritative read of the records themselves. An address
+that answers like something other than the platform is reported as undetermined
+with a note to correct the record. Before counting anything the census also
+checks whether code exists at the address — at a block known to be after the
+deployment — and records how much VPFI the contract holds; the latter is
+reported as *backing* set against what the records claim, never as a
+settling fact.
 
 The last point concerns what a chain's routing history can and cannot prove.
 No amount of checking that a history looks complete can rule out a gap whose
 net effect was nothing — an addition and removal both omitted — and such a gap
 can hide exactly the holding being looked for. So where the relevant view is
-absent, the census no longer treats a clean-looking history as proof. It reads
-the one fact an endpoint cannot misreport by leaving something out: how much
-VPFI the contract actually holds. Zero settles the question; anything else is
-reported as undetermined.
+absent, the census treats neither a clean-looking history nor an empty balance
+as proof: the record can only be shown absent by reading the record, and until
+that read exists those cases are reported as undetermined. Two further
+operating rules landed with this: a chain is read at one block identity, and if
+an endpoint forces a fallback to a newer safe block part-way through, every
+result already taken for that chain is discarded and the chain is read again
+from the start; and when a redeploy archives a prior contract, the archive step
+itself records it in the committed inventory, so a fresh checkout can never
+find the inventory silently short.
 
 Two claims were also corrected in the surrounding design. An empty population
 retires the *migration* — there is nothing to move, and the shortfall question

@@ -4885,12 +4885,31 @@ reported a comfortable answer it had not earned:
   bound has proven emptiness, the deployment is indeterminate — a recorded
   result inside coverage, not a thrown failure that drops it from the verdict.
 
-  **One block identity per chain, with one honest exception.** When a chain is
-  downgraded to `safe` *mid-run* — arb-sepolia: the live Diamond had already
-  been read at `finalized` before an archive hit the pruned window — that
-  chain carries two identities, both recorded per deployment in `blockTag`.
-  Re-reading the earlier deployments at `safe` would have made the artifact
-  tidier and no truer; the census records what it read.
+  **One block identity per chain — with NO exception** (Codex #2070 r8 P1;
+  an earlier revision of this paragraph called a mid-run split "an honest
+  exception", and it was a hole). When a chain is downgraded to `safe`
+  part-way through, every result already collected for it was read at the old
+  `finalized` height, and a row created on one of those Diamonds between the
+  two heights would be absent from every result while present at the report's
+  effective state. The downgrade now DISCARDS that chain's results and reruns
+  the whole chain at `safe`; the artifact carries one block identity per
+  chain, and says so.
+
+  **The archive step records the archive** (r8 P1). `archive_chain_state` in
+  `deploy-testnet.sh` and `deploy-mainnet.sh` appends the archived Diamond to
+  the committed manifest as part of the same operation that moves the artifact
+  into the gitignored tree, and aborts the deploy if it cannot. Without that,
+  the next `--fresh` would leave a clean checkout with no local entry for the
+  staleness check to detect — the manifest would read complete while omitting
+  the retired Diamond. The check is the operation.
+
+  **The VPFI token read propagates every failure** (r8 P1). `setVPFIToken`
+  permits rotations, so the artifact can lag the live token; a swallowed
+  rate-limit or transport failure that fell back to the artifact would read
+  the old token's balance and file rows denominated in the live VPFI as
+  non-VPFI. The census falls back to the artifact only when the selector is
+  confirmed unrouted — by the loupe, or by the Diamond fallback's own
+  `FunctionDoesNotExist` — and lets every other failure surface.
 
   Two further method points. **The VPFI token is resolved on-chain first**
   (`getVPFIToken()`, when routed) and only then from the artifact, so the
@@ -4963,7 +4982,7 @@ reported a comfortable answer it had not earned:
   latter as a failure on op-sepolia rather than silently counting it as an
   absent commit.
 
-**RESULT (2026-09-08, run 10 — all nineteen retained deployments across five
+**RESULT (2026-09-08, run 12 — all nineteen retained deployments across five
 chains, inventory from the committed manifest, the two unsound bounds
 withdrawn): ten deployments are PROVEN EMPTY on every class; nine are
 INDETERMINATE on at least one.** 202 loans were enumerated; **zero rows were

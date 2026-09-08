@@ -796,18 +796,43 @@ async function censusDeployment(dep) {
       notADiamond = !anyAnswered && !allUnroutedOnDiamond;
     }
   }
-  // (3) VPFI held. The token is resolved ON-CHAIN first (`getVPFIToken`, when
-  //     routed) — the Diamond's own answer, not the artifact's — then from the
-  //     artifact. Codex #2070 r5 P2: all four classes are VPFI custody, so a
-  //     deployment whose token cannot be resolved cannot be scoped.
+  // (3) VPFI BACKING — recorded, never a proof (Codex #2070 r6 P1: a zero
+  //     balance proves rows UNBACKED, not absent). The token is resolved
+  //     ON-CHAIN first (`getVPFIToken`) — the Diamond's own answer — and from
+  //     the artifact ONLY when that selector is CONFIRMED unrouted. Codex r8
+  //     P1: `setVPFIToken` permits rotations, so the artifact can lag the live
+  //     token; a swallowed rate-limit / transport / decode failure that fell
+  //     back to the artifact would read the OLD token's balance and file rows
+  //     denominated in the live VPFI as non-VPFI — a false proven-zero. So
+  //     every operational failure propagates; only a confirmed absence of the
+  //     selector reaches the artifact.
   let vpfiToken = null;
   let vpfiTokenSource = 'unresolvable';
-  if (!noCode && !noFacets) {
-    try {
-      const onChain = await read('getVPFIToken');
+  // `notADiamond` is already known here (the custody-surface probes run first).
+  // A contract that is not a Vaipakam Diamond reverts EMPTY on this call too,
+  // and an empty revert is — correctly — not "unrouted", so the propagation
+  // rule would fail the deployment before its own indeterminate verdict could
+  // be recorded. It has no token to resolve; skip the read.
+  if (!noCode && !noFacets && !notADiamond) {
+    const vpfiSelector = toFunctionSelector(vpfiView.find((e) => e.name === 'getVPFIToken'));
+    let vpfiGetterRouted;
+    if (loupeRouted) {
+      vpfiGetterRouted = (await read('facetAddress', [vpfiSelector])) !== ZERO_ADDRESS;
+    } else {
+      // No loupe: the only admissible evidence of absence is the Diamond
+      // fallback's own FunctionDoesNotExist on the call itself.
+      try {
+        const onChain = await read('getVPFIToken');
+        vpfiGetterRouted = true;
+        if (onChain && onChain !== ZERO_ADDRESS) { vpfiToken = onChain; vpfiTokenSource = 'on-chain getVPFIToken()'; }
+      } catch (err) {
+        if (!isUnroutedOnDiamond(err)) throw err; // rate limit, transport, decode, pruned: never fall back
+        vpfiGetterRouted = false;
+      }
+    }
+    if (loupeRouted && vpfiGetterRouted) {
+      const onChain = await read('getVPFIToken'); // any failure here propagates
       if (onChain && onChain !== ZERO_ADDRESS) { vpfiToken = onChain; vpfiTokenSource = 'on-chain getVPFIToken()'; }
-    } catch (err) {
-      if (classifyRpcError(err) === 'pruned') throw err; // a getter that is merely unrouted falls through
     }
   }
   if (!vpfiToken && (addresses.vpfiToken || addresses.vpfiMirror)) {
@@ -1199,7 +1224,7 @@ async function censusDeployment(dep) {
       loupeRouted,
       intentSource: intentSurfaceRouted
         ? 'getIntentCommit view (live state, history-independent)'
-        : 'getter unrouted — absence rests on the DiamondCut routing history (see classes.liveIntentCommits.absenceProof)',
+        : 'getter unrouted — intentCommits storage is NOT readable here; the class is indeterminate pending a calibrated storage read (cut history can only refute)',
       intentSurfaceRouted,
       intentProducerRouted: producerRouted,
       intentCorroboration: corroboration,
@@ -1254,16 +1279,22 @@ async function censusDeployment(dep) {
                 : 'indeterminate',
         provenBy: provenByEnumerable ?? undefined,
         unknownAssetRows: unknownAssetIntentRows,
-        indeterminateReason: intentSurfaceRouted
-          ? corroboration?.contradictsPrimaryProof
-            ? 'the event-lifecycle reconstruction disagrees with the live-state view'
-            : !vpfiToken && !provenByEnumerable
-              ? 'the intent getter answered but no VPFI token resolved, so every returned intent has an UNKNOWN asset — not provably non-VPFI'
-              : undefined
-          : intentAbsenceProof?.proven
+        // Codex #2070 r8 P2 — every field below derives from ONE verdict. When
+        // the no-loans bound proves the class, no indeterminate reason and no
+        // failed absence proof may ride along, or a consumer reads "proven"
+        // beside text saying "undetermined".
+        indeterminateReason:
+          provenByEnumerable && !corroboration?.contradictsPrimaryProof
             ? undefined
-            : intentAbsenceProof?.reason,
-        absenceProof: intentSurfaceRouted ? undefined : intentAbsenceProof,
+            : intentSurfaceRouted
+              ? corroboration?.contradictsPrimaryProof
+                ? 'the event-lifecycle reconstruction disagrees with the live-state view'
+                : !vpfiToken
+                  ? 'the intent getter answered but no VPFI token resolved, so every returned intent has an UNKNOWN asset — not provably non-VPFI'
+                  : undefined
+              : intentAbsenceProof?.reason,
+        absenceProof:
+          provenByEnumerable && !corroboration?.contradictsPrimaryProof ? undefined : intentSurfaceRouted ? undefined : intentAbsenceProof,
         count: intentRows.length,
         total: sum(intentRows, 'custodialCollateral'),
         rows: intentRows,
@@ -1292,7 +1323,17 @@ async function main() {
   // asked for — but the chain is not read twice: the later entry reuses the
   // earlier result under its own label and says whose it is.
   const byAddress = new Map(); // `${slug}|${diamond.toLowerCase()}` -> result
-  for (const dep of deployments) {
+  // Codex #2070 r8 P1 — a chain reads at ONE block identity, full stop. When a
+  // later deployment forces the `safe` downgrade, every result already
+  // collected for that chain was read at the OLD finalized height, and a row
+  // created on one of those Diamonds between the two heights would be absent
+  // from every result while present at the report's effective state. An
+  // earlier revision recorded the split as "an honest exception"; it was a
+  // hole. The downgrade now DISCARDS that chain's results and reruns the
+  // whole chain at `safe` — the queue is a worklist so a slug can be re-queued.
+  const queue = [...deployments];
+  while (queue.length) {
+    const dep = queue.shift();
     const who = `${dep.slug} (${dep.label})`;
     const addrKey = `${dep.slug}|${(dep.addresses.diamond || '').toLowerCase()}`;
     if (byAddress.has(addrKey)) {
@@ -1302,23 +1343,28 @@ async function main() {
       continue;
     }
     process.stderr.write(`census: ${who} …\n`);
-    let attempt = 0;
-    for (;;) {
-      try {
-        const r = await censusDeployment(dep);
-        results.push(r);
-        byAddress.set(addrKey, r);
-        break;
-      } catch (err) {
-        if (attempt === 0 && classifyRpcError(err) === 'pruned' && downgradeChainToSafe(dep.slug)) {
-          attempt += 1;
-          process.stderr.write(`census: ${who} — finalized state pruned by the endpoint; re-resolving ${dep.slug} at 'safe' and retrying once\n`);
-          continue;
-        }
-        failures.push({ chainSlug: dep.slug, deployment: dep.label, error: err.message });
-        process.stderr.write(`census: ${who} FAILED — ${err.message}\n`);
-        break;
+    try {
+      const r = await censusDeployment(dep);
+      results.push(r);
+      byAddress.set(addrKey, r);
+    } catch (err) {
+      if (classifyRpcError(err) === 'pruned' && downgradeChainToSafe(dep.slug)) {
+        // Restart THIS CHAIN from scratch at `safe`.
+        const dropped = results.filter((r) => r.chainSlug === dep.slug).length;
+        for (let i = results.length - 1; i >= 0; i--) if (results[i].chainSlug === dep.slug) results.splice(i, 1);
+        for (const k of [...byAddress.keys()]) if (k.startsWith(`${dep.slug}|`)) byAddress.delete(k);
+        const chainDeps = deployments.filter((d) => d.slug === dep.slug);
+        // Remove any still-queued entries for this slug, then re-queue the whole chain in order.
+        for (let i = queue.length - 1; i >= 0; i--) if (queue[i].slug === dep.slug) queue.splice(i, 1);
+        queue.unshift(...chainDeps);
+        process.stderr.write(
+          `census: ${who} — finalized state pruned by the endpoint; re-resolving ${dep.slug} at 'safe' and RESTARTING the chain ` +
+            `(discarding ${dropped} result(s) read at the finalized height)\n`,
+        );
+        continue;
       }
+      failures.push({ chainSlug: dep.slug, deployment: dep.label, error: err.message });
+      process.stderr.write(`census: ${who} FAILED — ${err.message}\n`);
     }
   }
 

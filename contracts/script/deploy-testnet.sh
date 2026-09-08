@@ -602,6 +602,36 @@ phase_preflight() {
 # folder one level up): keeps related artefacts together, fits the
 # existing .markers/ + .history/ layout, and a single .gitignore
 # entry (`contracts/deployments/*/.archive/`) covers every chain.
+# ── #1566: the archived deployment must land in the COMMITTED inventory as part
+# of the archive operation (Codex #2070 r8 P1). `.archive/` is gitignored, so a
+# clean checkout has no local entry for the census's staleness check to detect
+# after the next --fresh; the manifest would read complete while omitting the
+# retired Diamond. The check must BE the operation: this append happens here,
+# in the same step that moves the artifact, and a failure to record it aborts
+# the deploy before the new live artifact can replace the old one.
+append_archive_manifest() {
+  local chain_slug="$1" stamp="$2" archive="$3"
+  local manifest="$CONTRACTS_DIR/deployments/archive-manifest.json"
+  local addr="$archive/addresses.json"
+  [ -f "$addr" ] || { echo "  (no addresses.json in the archive — nothing to record)"; return 0; }
+  command -v node >/dev/null 2>&1 || { echo "ERROR: node is required to record the archived deployment in $manifest" >&2; return 1; }
+  node - "$manifest" "$chain_slug" "$stamp" "$addr" <<'NODE' || return 1
+const fs = require('fs');
+const [manifestPath, slug, stamp, addrPath] = process.argv.slice(2);
+const a = JSON.parse(fs.readFileSync(addrPath, 'utf8'));
+if (!a.diamond) { console.log('  (archived artifact names no diamond — nothing on-chain to record)'); process.exit(0); }
+const m = fs.existsSync(manifestPath)
+  ? JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
+  : { purpose: 'Committed inventory of every ARCHIVED Diamond. .archive/ is gitignored; this file is what a clean checkout censuses.', generatedAt: null, entries: [] };
+if (m.entries.some((e) => e.slug === slug && e.stamp === stamp)) { console.log('  (already recorded)'); process.exit(0); }
+m.entries.push({ slug, stamp, chainId: a.chainId ?? null, diamond: a.diamond, deployBlock: a.deployBlock ?? null, vpfiToken: a.vpfiToken ?? a.vpfiMirror ?? null });
+m.entries.sort((x, y) => (x.slug + x.stamp).localeCompare(y.slug + y.stamp));
+m.generatedAt = new Date().toISOString();
+fs.writeFileSync(manifestPath, JSON.stringify(m, null, 2) + '\n');
+console.log(`  ✓ recorded archived Diamond ${a.diamond} in ${manifestPath.split('/deployments/')[1]} — COMMIT THIS FILE with the deploy`);
+NODE
+}
+
 archive_chain_state() {
   local chain_slug="$1"
   local deploy_dir="$CONTRACTS_DIR/deployments/$chain_slug"
@@ -630,6 +660,10 @@ archive_chain_state() {
 
   # Re-create the empty top-level scaffolding that the deploy expects.
   mkdir -p "$deploy_dir/.markers" "$deploy_dir/.history"
+
+  # Record the archived Diamond in the committed inventory — abort on failure.
+  append_archive_manifest "$chain_slug" "$stamp" "$archive" \
+    || { echo "ERROR: could not record the archived deployment in archive-manifest.json; refusing to continue" >&2; exit 1; }
 
   echo "  ✓ archived prior chain state -> $(realpath --relative-to="$CONTRACTS_DIR" "$archive")/"
 }

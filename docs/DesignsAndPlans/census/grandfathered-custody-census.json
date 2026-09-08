@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-08T21:06:34.870Z",
+  "generatedAt": "2026-09-08T22:49:40.809Z",
   "purpose": "#1566 grandfathered-custody census — decides whether slices 0-3 are live work or a certified no-op",
   "scope": "all-deployed-chains",
   "allClassesEmpty": false,
@@ -166,9 +166,9 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "306838635",
-      "atBlockHash": "0x343be2827541fb601c074788e140597259bc6b5b6796f90b6d4a4c39032e0901",
-      "blockTag": "finalized",
+      "atBlock": "306867906",
+      "atBlockHash": "0xd281c41070d95450ee859c9d4efcf3da20db573f55eaa6d1930fd4260b445171",
+      "blockTag": "safe (finalized state pruned by endpoint)",
       "scanned": {
         "loanIdsEnumerated": 13,
         "totalLoansEverCreated": "13",
@@ -223,8 +223,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "306843297",
-      "atBlockHash": "0xdcb463c432146e57e69eef439b4f2cc7ff665889c2ef21b6be48dcb09b34ff7a",
+      "atBlock": "306867906",
+      "atBlockHash": "0xd281c41070d95450ee859c9d4efcf3da20db573f55eaa6d1930fd4260b445171",
       "blockTag": "safe (finalized state pruned by endpoint)",
       "scanned": {
         "loanIdsEnumerated": 24,
@@ -234,7 +234,7 @@
         "noCode": false,
         "custodySurfaceUnrouted": false,
         "loupeRouted": true,
-        "intentSource": "getter unrouted — absence rests on the DiamondCut routing history (see classes.liveIntentCommits.absenceProof)",
+        "intentSource": "getter unrouted — intentCommits storage is NOT readable here; the class is indeterminate pending a calibrated storage read (cut history can only refute)",
         "intentSurfaceRouted": false,
         "intentProducerRouted": false,
         "intentCorroboration": null
@@ -292,8 +292,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "306843297",
-      "atBlockHash": "0xdcb463c432146e57e69eef439b4f2cc7ff665889c2ef21b6be48dcb09b34ff7a",
+      "atBlock": "306867906",
+      "atBlockHash": "0xd281c41070d95450ee859c9d4efcf3da20db573f55eaa6d1930fd4260b445171",
       "blockTag": "safe (finalized state pruned by endpoint)",
       "scanned": {
         "loanIdsEnumerated": 37,
@@ -303,7 +303,7 @@
         "noCode": false,
         "custodySurfaceUnrouted": false,
         "loupeRouted": true,
-        "intentSource": "getter unrouted — absence rests on the DiamondCut routing history (see classes.liveIntentCommits.absenceProof)",
+        "intentSource": "getter unrouted — intentCommits storage is NOT readable here; the class is indeterminate pending a calibrated storage read (cut history can only refute)",
         "intentSurfaceRouted": false,
         "intentProducerRouted": false,
         "intentCorroboration": null
@@ -361,9 +361,9 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "306838635",
-      "atBlockHash": "0x343be2827541fb601c074788e140597259bc6b5b6796f90b6d4a4c39032e0901",
-      "blockTag": "finalized",
+      "atBlock": "306867906",
+      "atBlockHash": "0xd281c41070d95450ee859c9d4efcf3da20db573f55eaa6d1930fd4260b445171",
+      "blockTag": "safe (finalized state pruned by endpoint)",
       "scanned": {
         "loanIdsEnumerated": 13,
         "totalLoansEverCreated": "13",
@@ -419,8 +419,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "46565802",
-      "atBlockHash": "0xfce514cbb3a7383cb5278c48110dcdeb6e673c61df83ccab0f06a56c767843eb",
+      "atBlock": "46568887",
+      "atBlockHash": "0x52bdeb52ffcc578030c36ce7a2f87ee92b6eb582bbbaed30a5fb83736cdd4f1a",
       "blockTag": "finalized",
       "scanned": {
         "loanIdsEnumerated": 21,
@@ -477,8 +477,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "46565802",
-      "atBlockHash": "0xfce514cbb3a7383cb5278c48110dcdeb6e673c61df83ccab0f06a56c767843eb",
+      "atBlock": "46568887",
+      "atBlockHash": "0x52bdeb52ffcc578030c36ce7a2f87ee92b6eb582bbbaed30a5fb83736cdd4f1a",
       "blockTag": "finalized",
       "scanned": {
         "loanIdsEnumerated": 0,
@@ -488,7 +488,7 @@
         "noCode": false,
         "custodySurfaceUnrouted": false,
         "loupeRouted": true,
-        "intentSource": "getter unrouted — absence rests on the DiamondCut routing history (see classes.liveIntentCommits.absenceProof)",
+        "intentSource": "getter unrouted — intentCommits storage is NOT readable here; the class is indeterminate pending a calibrated storage read (cut history can only refute)",
         "intentSurfaceRouted": false,
         "intentProducerRouted": false,
         "intentCorroboration": null
@@ -521,17 +521,6 @@
           "status": "proven",
           "provenBy": "no-loans-ever-created",
           "unknownAssetRows": [],
-          "indeterminateReason": "the intent getter is unrouted; a zero VPFI balance proves the rows would be UNBACKED, not that they are absent, and cut history can only refute — undetermined pending a calibrated storage read of intentCommits[loanId] or routing of the getter",
-          "absenceProof": {
-            "proven": false,
-            "reason": "the intent getter is unrouted; a zero VPFI balance proves the rows would be UNBACKED, not that they are absent, and cut history can only refute — undetermined pending a calibrated storage read of intentCommits[loanId] or routing of the getter",
-            "diamondVpfiBacking": "0",
-            "cutHistoryRefutation": {
-              "proven": false,
-              "reason": "the cut-history scan returned ZERO DiamondCut events, but every Diamond emits at least one at deploy — the history was not actually read (pruned endpoint, or a deployBlock that does not match this address), so absence is not established. Re-run against an archive endpoint.",
-              "cutsScanned": 0
-            }
-          },
           "count": 0,
           "total": "0",
           "rows": [],
@@ -550,8 +539,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "46565802",
-      "atBlockHash": "0xfce514cbb3a7383cb5278c48110dcdeb6e673c61df83ccab0f06a56c767843eb",
+      "atBlock": "46568887",
+      "atBlockHash": "0x52bdeb52ffcc578030c36ce7a2f87ee92b6eb582bbbaed30a5fb83736cdd4f1a",
       "blockTag": "finalized",
       "scanned": {
         "loanIdsEnumerated": 0,
@@ -561,7 +550,7 @@
         "noCode": false,
         "custodySurfaceUnrouted": false,
         "loupeRouted": true,
-        "intentSource": "getter unrouted — absence rests on the DiamondCut routing history (see classes.liveIntentCommits.absenceProof)",
+        "intentSource": "getter unrouted — intentCommits storage is NOT readable here; the class is indeterminate pending a calibrated storage read (cut history can only refute)",
         "intentSurfaceRouted": false,
         "intentProducerRouted": false,
         "intentCorroboration": null
@@ -594,17 +583,6 @@
           "status": "proven",
           "provenBy": "no-loans-ever-created",
           "unknownAssetRows": [],
-          "indeterminateReason": "the intent getter is unrouted; a zero VPFI balance proves the rows would be UNBACKED, not that they are absent, and cut history can only refute — undetermined pending a calibrated storage read of intentCommits[loanId] or routing of the getter",
-          "absenceProof": {
-            "proven": false,
-            "reason": "the intent getter is unrouted; a zero VPFI balance proves the rows would be UNBACKED, not that they are absent, and cut history can only refute — undetermined pending a calibrated storage read of intentCommits[loanId] or routing of the getter",
-            "diamondVpfiBacking": "0",
-            "cutHistoryRefutation": {
-              "proven": false,
-              "reason": "the cut-history scan returned ZERO DiamondCut events, but every Diamond emits at least one at deploy — the history was not actually read (pruned endpoint, or a deployBlock that does not match this address), so absence is not established. Re-run against an archive endpoint.",
-              "cutsScanned": 0
-            }
-          },
           "count": 0,
           "total": "0",
           "rows": [],
@@ -622,8 +600,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "46565802",
-      "atBlockHash": "0xfce514cbb3a7383cb5278c48110dcdeb6e673c61df83ccab0f06a56c767843eb",
+      "atBlock": "46568887",
+      "atBlockHash": "0x52bdeb52ffcc578030c36ce7a2f87ee92b6eb582bbbaed30a5fb83736cdd4f1a",
       "blockTag": "finalized",
       "scanned": {
         "loanIdsEnumerated": 33,
@@ -633,7 +611,7 @@
         "noCode": false,
         "custodySurfaceUnrouted": false,
         "loupeRouted": true,
-        "intentSource": "getter unrouted — absence rests on the DiamondCut routing history (see classes.liveIntentCommits.absenceProof)",
+        "intentSource": "getter unrouted — intentCommits storage is NOT readable here; the class is indeterminate pending a calibrated storage read (cut history can only refute)",
         "intentSurfaceRouted": false,
         "intentProducerRouted": false,
         "intentCorroboration": null
@@ -690,8 +668,8 @@
       "diamondVpfiBacking": null,
       "vpfiRowsTotal": null,
       "backingShortfall": null,
-      "atBlock": "46565802",
-      "atBlockHash": "0xfce514cbb3a7383cb5278c48110dcdeb6e673c61df83ccab0f06a56c767843eb",
+      "atBlock": "46568887",
+      "atBlockHash": "0x52bdeb52ffcc578030c36ce7a2f87ee92b6eb582bbbaed30a5fb83736cdd4f1a",
       "blockTag": "finalized",
       "scanned": {
         "loanIdsEnumerated": 0,
@@ -749,8 +727,8 @@
       "diamondVpfiBacking": null,
       "vpfiRowsTotal": null,
       "backingShortfall": null,
-      "atBlock": "46565802",
-      "atBlockHash": "0xfce514cbb3a7383cb5278c48110dcdeb6e673c61df83ccab0f06a56c767843eb",
+      "atBlock": "46568887",
+      "atBlockHash": "0x52bdeb52ffcc578030c36ce7a2f87ee92b6eb582bbbaed30a5fb83736cdd4f1a",
       "blockTag": "finalized",
       "scanned": {
         "loanIdsEnumerated": 0,
@@ -808,8 +786,8 @@
       "diamondVpfiBacking": null,
       "vpfiRowsTotal": null,
       "backingShortfall": null,
-      "atBlock": "46565802",
-      "atBlockHash": "0xfce514cbb3a7383cb5278c48110dcdeb6e673c61df83ccab0f06a56c767843eb",
+      "atBlock": "46568887",
+      "atBlockHash": "0x52bdeb52ffcc578030c36ce7a2f87ee92b6eb582bbbaed30a5fb83736cdd4f1a",
       "blockTag": "finalized",
       "scanned": {
         "loanIdsEnumerated": 0,
@@ -868,8 +846,8 @@
       "diamondVpfiBacking": null,
       "vpfiRowsTotal": "0",
       "backingShortfall": null,
-      "atBlock": "46565802",
-      "atBlockHash": "0xfce514cbb3a7383cb5278c48110dcdeb6e673c61df83ccab0f06a56c767843eb",
+      "atBlock": "46568887",
+      "atBlockHash": "0x52bdeb52ffcc578030c36ce7a2f87ee92b6eb582bbbaed30a5fb83736cdd4f1a",
       "blockTag": "finalized",
       "scanned": {
         "loanIdsEnumerated": 0,
@@ -929,8 +907,8 @@
       "diamondVpfiBacking": null,
       "vpfiRowsTotal": null,
       "backingShortfall": null,
-      "atBlock": "46565802",
-      "atBlockHash": "0xfce514cbb3a7383cb5278c48110dcdeb6e673c61df83ccab0f06a56c767843eb",
+      "atBlock": "46568887",
+      "atBlockHash": "0x52bdeb52ffcc578030c36ce7a2f87ee92b6eb582bbbaed30a5fb83736cdd4f1a",
       "blockTag": "finalized",
       "scanned": {
         "loanIdsEnumerated": 0,
@@ -988,8 +966,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "129899941",
-      "atBlockHash": "0xca8beffb5eab7188d828675cebd26363d60d54bc117787be4a75fd58e8e30f33",
+      "atBlock": "129913688",
+      "atBlockHash": "0xb8ea03428340ffc5d8b3d874e9f025c6a9819124dcfed29e8929836b8ae58692",
       "blockTag": "finalized",
       "scanned": {
         "loanIdsEnumerated": 4,
@@ -1046,8 +1024,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "129899941",
-      "atBlockHash": "0xca8beffb5eab7188d828675cebd26363d60d54bc117787be4a75fd58e8e30f33",
+      "atBlock": "129913688",
+      "atBlockHash": "0xb8ea03428340ffc5d8b3d874e9f025c6a9819124dcfed29e8929836b8ae58692",
       "blockTag": "finalized",
       "scanned": {
         "loanIdsEnumerated": 0,
@@ -1057,7 +1035,7 @@
         "noCode": false,
         "custodySurfaceUnrouted": false,
         "loupeRouted": true,
-        "intentSource": "getter unrouted — absence rests on the DiamondCut routing history (see classes.liveIntentCommits.absenceProof)",
+        "intentSource": "getter unrouted — intentCommits storage is NOT readable here; the class is indeterminate pending a calibrated storage read (cut history can only refute)",
         "intentSurfaceRouted": false,
         "intentProducerRouted": false,
         "intentCorroboration": null
@@ -1090,16 +1068,6 @@
           "status": "proven",
           "provenBy": "no-loans-ever-created",
           "unknownAssetRows": [],
-          "indeterminateReason": "the intent getter is unrouted; a zero VPFI balance proves the rows would be UNBACKED, not that they are absent, and cut history can only refute — undetermined pending a calibrated storage read of intentCommits[loanId] or routing of the getter",
-          "absenceProof": {
-            "proven": false,
-            "reason": "the intent getter is unrouted; a zero VPFI balance proves the rows would be UNBACKED, not that they are absent, and cut history can only refute — undetermined pending a calibrated storage read of intentCommits[loanId] or routing of the getter",
-            "diamondVpfiBacking": "0",
-            "cutHistoryRefutation": {
-              "proven": false,
-              "reason": "the cut history could not be read in full (pruned), so absence cannot be established"
-            }
-          },
           "count": 0,
           "total": "0",
           "rows": [],
@@ -1117,8 +1085,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "48548943",
-      "atBlockHash": "0xa5db6551c4f5a24e180b4eec66c458a096e47b24e04ada6e55c6e9e9a1feed77",
+      "atBlock": "48552046",
+      "atBlockHash": "0x7350e584d6357e41f61a9ea41c7bc12e3401197274006e3bacd100b1bfcfaf60",
       "blockTag": "finalized",
       "scanned": {
         "loanIdsEnumerated": 33,
@@ -1128,7 +1096,7 @@
         "noCode": false,
         "custodySurfaceUnrouted": false,
         "loupeRouted": true,
-        "intentSource": "getter unrouted — absence rests on the DiamondCut routing history (see classes.liveIntentCommits.absenceProof)",
+        "intentSource": "getter unrouted — intentCommits storage is NOT readable here; the class is indeterminate pending a calibrated storage read (cut history can only refute)",
         "intentSurfaceRouted": false,
         "intentProducerRouted": false,
         "intentCorroboration": null
@@ -1186,8 +1154,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "11663438",
-      "atBlockHash": "0x537902b67cdc240ae19ddfaefc8fd9bc31e6d93d427f77760a5ddba3d8174465",
+      "atBlock": "11663926",
+      "atBlockHash": "0xf6c227144751c157de0345521409ec38f4a766ccde8295cce7e58eb3c019eba3",
       "blockTag": "finalized",
       "scanned": {
         "loanIdsEnumerated": 0,
@@ -1197,7 +1165,7 @@
         "noCode": false,
         "custodySurfaceUnrouted": false,
         "loupeRouted": true,
-        "intentSource": "getter unrouted — absence rests on the DiamondCut routing history (see classes.liveIntentCommits.absenceProof)",
+        "intentSource": "getter unrouted — intentCommits storage is NOT readable here; the class is indeterminate pending a calibrated storage read (cut history can only refute)",
         "intentSurfaceRouted": false,
         "intentProducerRouted": false,
         "intentCorroboration": null
@@ -1230,17 +1198,6 @@
           "status": "proven",
           "provenBy": "no-loans-ever-created",
           "unknownAssetRows": [],
-          "indeterminateReason": "the intent getter is unrouted; a zero VPFI balance proves the rows would be UNBACKED, not that they are absent, and cut history can only refute — undetermined pending a calibrated storage read of intentCommits[loanId] or routing of the getter",
-          "absenceProof": {
-            "proven": false,
-            "reason": "the intent getter is unrouted; a zero VPFI balance proves the rows would be UNBACKED, not that they are absent, and cut history can only refute — undetermined pending a calibrated storage read of intentCommits[loanId] or routing of the getter",
-            "diamondVpfiBacking": "0",
-            "cutHistoryRefutation": {
-              "proven": false,
-              "reason": "the cut-history scan returned ZERO DiamondCut events, but every Diamond emits at least one at deploy — the history was not actually read (pruned endpoint, or a deployBlock that does not match this address), so absence is not established. Re-run against an archive endpoint.",
-              "cutsScanned": 0
-            }
-          },
           "count": 0,
           "total": "0",
           "rows": [],
@@ -1258,8 +1215,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "11663438",
-      "atBlockHash": "0x537902b67cdc240ae19ddfaefc8fd9bc31e6d93d427f77760a5ddba3d8174465",
+      "atBlock": "11663926",
+      "atBlockHash": "0xf6c227144751c157de0345521409ec38f4a766ccde8295cce7e58eb3c019eba3",
       "blockTag": "finalized",
       "scanned": {
         "loanIdsEnumerated": 24,
@@ -1269,7 +1226,7 @@
         "noCode": false,
         "custodySurfaceUnrouted": false,
         "loupeRouted": true,
-        "intentSource": "getter unrouted — absence rests on the DiamondCut routing history (see classes.liveIntentCommits.absenceProof)",
+        "intentSource": "getter unrouted — intentCommits storage is NOT readable here; the class is indeterminate pending a calibrated storage read (cut history can only refute)",
         "intentSurfaceRouted": false,
         "intentProducerRouted": false,
         "intentCorroboration": null
@@ -1304,9 +1261,10 @@
             "reason": "the intent getter is unrouted; a zero VPFI balance proves the rows would be UNBACKED, not that they are absent, and cut history can only refute — undetermined pending a calibrated storage read of intentCommits[loanId] or routing of the getter",
             "diamondVpfiBacking": "0",
             "cutHistoryRefutation": {
-              "proven": false,
-              "reason": "the cut-history scan returned ZERO DiamondCut events, but every Diamond emits at least one at deploy — the history was not actually read (pruned endpoint, or a deployBlock that does not match this address), so absence is not established. Re-run against an archive endpoint.",
-              "cutsScanned": 0
+              "proven": true,
+              "reason": "the intent producer never appears in any DiamondCut in this Diamond's history, and that history carries an ADD for every selector the Diamond currently routes (so the deployment cut and every later addition are present) — no commit can ever have been created",
+              "cutsScanned": 5,
+              "routedSelectors": 395
             }
           },
           "count": 0,
@@ -1327,8 +1285,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "11663438",
-      "atBlockHash": "0x537902b67cdc240ae19ddfaefc8fd9bc31e6d93d427f77760a5ddba3d8174465",
+      "atBlock": "11663926",
+      "atBlockHash": "0xf6c227144751c157de0345521409ec38f4a766ccde8295cce7e58eb3c019eba3",
       "blockTag": "finalized",
       "scanned": {
         "loanIdsEnumerated": 0,
@@ -1338,7 +1296,7 @@
         "noCode": false,
         "custodySurfaceUnrouted": false,
         "loupeRouted": true,
-        "intentSource": "getter unrouted — absence rests on the DiamondCut routing history (see classes.liveIntentCommits.absenceProof)",
+        "intentSource": "getter unrouted — intentCommits storage is NOT readable here; the class is indeterminate pending a calibrated storage read (cut history can only refute)",
         "intentSurfaceRouted": false,
         "intentProducerRouted": false,
         "intentCorroboration": null
@@ -1371,17 +1329,6 @@
           "status": "proven",
           "provenBy": "no-loans-ever-created",
           "unknownAssetRows": [],
-          "indeterminateReason": "the intent getter is unrouted; a zero VPFI balance proves the rows would be UNBACKED, not that they are absent, and cut history can only refute — undetermined pending a calibrated storage read of intentCommits[loanId] or routing of the getter",
-          "absenceProof": {
-            "proven": false,
-            "reason": "the intent getter is unrouted; a zero VPFI balance proves the rows would be UNBACKED, not that they are absent, and cut history can only refute — undetermined pending a calibrated storage read of intentCommits[loanId] or routing of the getter",
-            "diamondVpfiBacking": "0",
-            "cutHistoryRefutation": {
-              "proven": false,
-              "reason": "the cut-history scan returned ZERO DiamondCut events, but every Diamond emits at least one at deploy — the history was not actually read (pruned endpoint, or a deployBlock that does not match this address), so absence is not established. Re-run against an archive endpoint.",
-              "cutsScanned": 0
-            }
-          },
           "count": 0,
           "total": "0",
           "rows": [],
