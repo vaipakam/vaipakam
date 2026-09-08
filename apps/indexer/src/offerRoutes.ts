@@ -178,6 +178,7 @@ const KNOWN_OFFER_STATUSES = new Set([
   'expired',
   'consumed_by_sale',
   'fullyFilled',
+  'active_unknown_expiry',
 ]);
 
 export async function handleOffersStats(req: Request, env: Env): Promise<Response> {
@@ -205,8 +206,22 @@ export async function handleOffersStats(req: Request, env: Env): Promise<Respons
       // that really existed, so the lifetime `total` must not move. Only
       // which bucket it lands in changes. `expires_at = 0` is GTC — never
       // expires — and must not be swept in by a `<=` against now.
+      //
+      // A STUB'S ZERO IS NOT GTC (review round 20 P2). When the inline
+      // `getOfferDetails` read fails, the ingest inserts the row without
+      // an `expires_at` at all, so it takes the column DEFAULT — which
+      // is 0, the same value that means "never expires". If healing keeps
+      // failing past the offer's real deadline, an unfillable offer is
+      // published as active for as long as that lasts, and the ingest
+      // cursor advances regardless, so the wrong count sits beside
+      // apparently fresh provenance. `is_stub = 1` is exactly "expiry
+      // unknown" — healing flips it to 0 as it writes the real value —
+      // so those rows get their own bucket instead of borrowing the GTC
+      // meaning of a placeholder.
       `SELECT
          CASE
+           WHEN status = 'active' AND is_stub = 1
+             THEN 'active_unknown_expiry'
            WHEN status = 'active' AND expires_at != 0 AND expires_at <= ?
              THEN 'expired'
            ELSE status
@@ -245,6 +260,11 @@ export async function handleOffersStats(req: Request, env: Env): Promise<Respons
       // `total` (used by dashboard / lifetime-metrics widgets) would
       // silently undercount every sold-before-acceptance offer.
       consumed_by_sale: 0,
+      // Active on chain, but its expiry metadata never healed — so
+      // whether it is still fillable is unknown. Named rather than
+      // folded into `active`, which would assert a fillability nothing
+      // has established (review round 20 P2).
+      active_unknown_expiry: 0,
     };
     for (const row of counts.results ?? []) {
       tally[row.status] = row.n;
@@ -263,6 +283,10 @@ export async function handleOffersStats(req: Request, env: Env): Promise<Respons
       // Total and had no way to find the difference, on a page whose
       // whole claim is that its figures can be checked.
       fullyFilled: tally.fullyFilled ?? 0,
+      // Active on chain, expiry metadata never healed — so nothing has
+      // established whether it is still fillable. Published under its
+      // own name rather than counted as active (review round 20 P2).
+      activeUnknownExpiry: tally.active_unknown_expiry ?? 0,
       other: Object.entries(tally)
         .filter(([k]) => !KNOWN_OFFER_STATUSES.has(k))
         .reduce((a, [, n]) => a + n, 0),

@@ -854,6 +854,9 @@ export interface OfferStats {
   /** Terminal state for a filled (or dust-remainder) range offer, plus
    *  the catch-all — both counted in `total`, so both are rendered. */
   fullyFilled?: number;
+  /** Active on chain but with unhealed expiry metadata, so fillability
+   *  is unknown — counted apart from `active` rather than asserted. */
+  activeUnknownExpiry?: number;
   other?: number;
   total?: number;
   indexer?: { lastBlock: number; updatedAt: number } | null;

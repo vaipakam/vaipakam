@@ -285,6 +285,10 @@ export function Analytics() {
               <Stat label={copy.analytics.expired} value={offers?.expired} />
               <Stat label={copy.analytics.consumedBySale} value={offers?.consumedBySale} />
               <Stat label={copy.analytics.fullyFilled} value={offers?.fullyFilled} />
+              <Stat
+                label={copy.analytics.activeUnknownExpiry}
+                value={offers?.activeUnknownExpiry}
+              />
               <Stat label={copy.analytics.other} value={offers?.other} />
               <Stat label={copy.analytics.total} value={offers?.total} />
             </div>

@@ -2403,7 +2403,8 @@
       "fallbackPending": "Warten auf Details",
       "internalMatched": "Intern gematcht",
       "other": "Sonstige",
-      "offersRetentionNote": "Die Gesamtzahl zählt die derzeit erfassten Angebote. Stornierte Angebote werden nach etwa einem Monat aus dem Index entfernt, daher ist dies keine Gesamtzahl über die gesamte Laufzeit — sie kann sinken, wenn alte Stornierungen herausfallen."
+      "offersRetentionNote": "Die Gesamtzahl zählt die derzeit erfassten Angebote. Stornierte Angebote werden nach etwa einem Monat aus dem Index entfernt, daher ist dies keine Gesamtzahl über die gesamte Laufzeit — sie kann sinken, wenn alte Stornierungen herausfallen.",
+      "activeUnknownExpiry": "Aktiv, Ablauf unbekannt"
     },
     "protocolConsole": {
       "title": "Protokoll-Konsole",

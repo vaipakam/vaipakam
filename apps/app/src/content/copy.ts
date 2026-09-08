@@ -4521,6 +4521,10 @@ const copySource = {
     fallbackPending: 'Awaiting details',
     internalMatched: 'Internally matched',
     other: 'Other',
+    // An offer the chain still calls active, whose expiry the indexer
+    // never managed to read. Named rather than counted as active,
+    // because nothing has established it is still fillable.
+    activeUnknownExpiry: 'Active, expiry unknown',
     // Says what the offer Total actually counts. Cancelled offers are
     // dropped from the index once they are past the retention window,
     // so this figure is the records currently held — not every offer

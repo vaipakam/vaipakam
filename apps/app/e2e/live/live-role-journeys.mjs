@@ -132,29 +132,42 @@ async function rendersPage(page, expectedTitle) {
 }
 
 /**
- * Has this surface finished loading, and what did it settle into?
+ * Is this surface still loading, and what has it rendered so far?
  *
- * `.empty-state` is NOT by itself evidence of a settled page (review
- * round 19 P2): the loading posture renders the same component with a
- * spinner icon, so "rows or an empty state" also accepts a request that
- * never came back. A Claim Center stuck loading forever would have been
- * reported healthy.
+ * Round 19 caught the first half: `.empty-state` is not evidence of a
+ * settled page, because the loading posture renders the same component
+ * with a spinner, so "rows or an empty state" accepted a request that
+ * never came back.
  *
- * `EmptyState` marks its spinner with `.spin`, which is what separates
- * "still working" from "finished, and there is nothing here" — the
- * latter being a legitimate result this must keep accepting.
+ * Round 20 caught the fix's own mistake, and it is the more instructive
+ * one. That version decided SETTLED by enumerating the shapes it
+ * expected — rows, or a finished empty state — and the Claim Center has
+ * a third: with rewards pending and no loan claimables it deliberately
+ * suppresses its empty state and shows the rewards card instead
+ * (`Claims.tsx`, `hasOtherClaimable ? null :`). That is a perfectly
+ * settled page with neither marker, so the check polled for fifteen
+ * seconds and called a healthy surface stuck. Having just fixed
+ * "reports stuck as healthy", it introduced "reports healthy as stuck"
+ * — the same error, opposite sign, because a guessed list of settled
+ * shapes is never exhaustive.
+ *
+ * So this reports LOADING, which has exactly one shape and is knowable,
+ * and leaves each scenario to say what content it additionally
+ * requires. `.empty-state .spin` and not `.spin` anywhere: the latter
+ * also marks a busy button, so a page mid-transaction would read as
+ * loading.
  */
 async function settledState(page) {
   const scope = '#main-content';
   const rows = await page.locator(`${scope} .row-list`).count().catch(() => 0);
   const empties = await page.locator(`${scope} .empty-state`).count().catch(() => 0);
-  const spinning = await page.locator(`${scope} .empty-state .spin`).count().catch(() => 0);
-  return {
-    rows,
-    empties,
-    spinning,
-    settled: rows > 0 || (empties > 0 && spinning === 0),
-  };
+  // The LOADING PLACEHOLDER specifically — `.empty-state .spin`, not
+  // `.spin` anywhere. `.spin` also marks a busy BUTTON mid-action
+  // (`ClaimAllCard`, `ConfirmReceipt`, `Claims.tsx:119`), so a page
+  // where someone is confirming a transaction would otherwise read as
+  // still loading.
+  const loading = (await page.locator(`${scope} .empty-state .spin`).count().catch(() => 0)) > 0;
+  return { rows, empties, loading };
 }
 
 /**
@@ -168,7 +181,7 @@ async function settledState(page) {
 async function waitSettled(page, ms = 15_000) {
   const deadline = Date.now() + ms;
   let st = await settledState(page);
-  while (!st.settled && Date.now() < deadline) {
+  while (st.loading && Date.now() < deadline) {
     await page.waitForTimeout(500);
     st = await settledState(page);
   }
@@ -237,7 +250,11 @@ const SCENARIOS = [
       const st = await waitSettled(page);
       const rows = st.rows;
       const empty = st.empties;
-      const book = st.settled;
+      // The book's postures ARE exhaustively `.row-list` or
+      // `.empty-state` (rows / filtered-empty / empty / unavailable /
+      // loading), unlike the Claim Center's — so requiring one here is
+      // sound where requiring it there was not.
+      const book = !st.loading && (rows > 0 || empty > 0);
       return {
         ok: !gated && isBookHeading && book && !NOT_FOUND.test(txt.slice(0, 400)),
         actual: `heading=${JSON.stringify(heading.slice(0, 40))} (want ${JSON.stringify(EXPECTED.offersTitle)}), rowList=${rows}, emptyState=${empty}, legalGate=${gated}`,
@@ -499,16 +516,17 @@ const SCENARIOS = [
     goal: 'Claim Center reachable',
     route: '/claims',
     desired:
-      'The Claim Center itself renders — with claimable items or its own ' +
-      'empty state, both legitimate. The previous predicate was body ' +
-      'length alone, which a not-found page also satisfies.',
+      'The Claim Center itself renders AND is not stuck loading. It does ' +
+      'NOT require rows or an empty state: with rewards pending and no ' +
+      'loan claimables the page shows the rewards card and suppresses ' +
+      'both, which is a settled, actionable posture.',
     async check(page) {
       const r = await rendersPage(page, EXPECTED.claimsTitle);
       const st = await waitSettled(page);
       return {
-        ok: r.ok && st.settled,
-        actual: `${r.actual}, rowList=${st.rows}, emptyState=${st.empties}, spinning=${st.spinning}`,
-        note: st.settled ? '' : 'the Claim Center never left its loading state — a heading alone would have reported this healthy',
+        ok: r.ok && !st.loading,
+        actual: `${r.actual}, rowList=${st.rows}, emptyState=${st.empties}, loading=${st.loading}`,
+        note: st.loading ? 'the Claim Center never left its loading state — a heading alone would have reported this healthy' : '',
       };
     },
   },
@@ -530,8 +548,8 @@ const SCENARIOS = [
       const st = await waitSettled(page);
       const controls = await controlCount(page, 'button');
       return {
-        ok: r.ok && st.rows > 0 && controls >= 1,
-        actual: `${r.actual}, mintRows=${st.rows}, ${controls} button(s)`,
+        ok: r.ok && !st.loading && st.rows > 0 && controls >= 1,
+        actual: `${r.actual}, mintRows=${st.rows}, loading=${st.loading}, ${controls} button(s)`,
         note: st.rows > 0 ? '' : 'the faucet rendered a fallback (wrong chain, or no mocks deployed) rather than mint controls',
       };
     },

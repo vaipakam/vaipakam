@@ -2403,7 +2403,8 @@
       "fallbackPending": "En attente de détails",
       "internalMatched": "Appariées en interne",
       "other": "Autres",
-      "offersRetentionNote": "Le total compte les offres actuellement enregistrées. Les offres annulées sont retirées de l’index au bout d’un mois environ ; il ne s’agit donc pas d’un total cumulé — il peut diminuer à mesure que les anciennes annulations disparaissent."
+      "offersRetentionNote": "Le total compte les offres actuellement enregistrées. Les offres annulées sont retirées de l’index au bout d’un mois environ ; il ne s’agit donc pas d’un total cumulé — il peut diminuer à mesure que les anciennes annulations disparaissent.",
+      "activeUnknownExpiry": "Active, expiration inconnue"
     },
     "protocolConsole": {
       "title": "Console du protocole",
