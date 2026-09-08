@@ -36,7 +36,28 @@ identifies its page by the heading the app itself publishes, and the ones
 promising controls or claimable items require those specifically — a
 faucet with nothing to mint, or a page still loading, no longer counts.
 What a green run still cannot tell you is whether the surface is right,
-only that it is the right page, populated, and finished loading.
+only that it is the right page, populated, finished loading, and — for
+the connected roles — genuinely connected.
+
+That last clause was itself a late correction, and the more useful of the
+two. The check that proved a connected run really was connected worked by
+noticing that the "connect your wallet" button had gone. Anything that
+stopped it recognising that button, a reworded label being the obvious
+case, would have read as success, and the whole connected walkthrough
+would then have run against a signed-out app while reporting green: the
+pages it visits still render their headings and their controls to a
+visitor. It now looks for the address the header shows only once a wallet
+is actually connected, and checks it is the right one.
+
+One scenario also learned to say it did not find out. Asked to confirm
+that recovery presents itself as unavailable on a deployment with no
+screening service configured, it used to accept a working-looking
+recovery form as evidence that a service must be configured — which is
+the same page it was sent to judge. Where it cannot tell a configured
+deployment from the regression it watches for, it now reports the
+scenario as unverified rather than passed. A review that overstates what
+it checked is worse than one that admits a gap, because only the second
+gets fixed.
 And both false failures during the driver's own first runs were the check
 being wrong rather than the product: an assertion written from
 imagination missed the shipped copy's curly apostrophe, and a settle
