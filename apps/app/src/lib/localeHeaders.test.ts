@@ -36,12 +36,35 @@
  * later adds a public nested route and lists it, that rule would quietly
  * withhold it from search, and this test fails first.
  */
-import { readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-const publicDir = resolve(__dirname, '..', '..', 'public');
+const appDir = resolve(__dirname, '..', '..');
+const publicDir = resolve(appDir, 'public');
 const headers = readFileSync(resolve(publicDir, '_headers.base'), 'utf8');
+
+/** The sitemap, generating it first if this checkout has not built.
+ *
+ *  `public/sitemap.xml` is a BUILD ARTIFACT and gitignored, so it is
+ *  absent from a fresh clone — which is how the first version of this
+ *  file passed locally and failed in CI with an ENOENT. Generating it
+ *  here makes the prerequisite explicit and keeps the assertion whole;
+ *  skipping when the file is missing would turn the one load-bearing
+ *  check into a check that quietly does nothing on exactly the machine
+ *  that matters. The generator writes only gitignored outputs and is
+ *  the same command `prebuild` runs. */
+function sitemap(): string {
+  const path = resolve(publicDir, 'sitemap.xml');
+  if (!existsSync(path)) {
+    execFileSync('node', ['scripts/generate-seo.mjs'], {
+      cwd: appDir,
+      stdio: 'ignore',
+    });
+  }
+  return readFileSync(path, 'utf8');
+}
 
 /** Cloudflare's documented ceiling for `_headers`. */
 const MAX_RULES = 100;
@@ -93,8 +116,7 @@ describe('_headers.base', () => {
     // segment plus more path, so it is safe only while nothing this app
     // wants indexed lives at a nested URL. Read from the generated
     // sitemap, which is what actually gets submitted.
-    const sitemap = readFileSync(resolve(publicDir, 'sitemap.xml'), 'utf8');
-    const paths = [...sitemap.matchAll(/<loc>([^<]+)<\/loc>/g)].map((m) =>
+    const paths = [...sitemap().matchAll(/<loc>([^<]+)<\/loc>/g)].map((m) =>
       new URL(m[1]).pathname.replace(/\/+$/, ''),
     );
     expect(paths.length).toBeGreaterThan(0);
