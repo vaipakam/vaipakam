@@ -487,9 +487,26 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     // full-repay CURE surface still renders, and an accepted sale must
     // pause that cure with the explanation up front rather than let
     // the live pre-write gate block it as a surprise.
+    // Round 29 P1 — LENDER HOLDERS TOO, and the forced-close
+    // interlock is why. `saleCompletionPending` is derived from this
+    // probe, and round 28 used it to stop a forced close from
+    // terminalizing a loan whose accepted sale still needs its manual
+    // `completeLoanSale`. But this read was borrower-only, so on the
+    // lender's own page `saleHold.data` was permanently `undefined`
+    // and that interlock could never fire — a guard that looked right
+    // at its use site and was inert at its source, on exactly the
+    // surface it was written to protect.
+    //
+    // The lender-side `useLoanSalePending` is not a substitute: its
+    // `listed` keys on the sale LOCK, which is held for the whole
+    // lifecycle, so it cannot tell an accepted sale from a live
+    // listing — and blocking a close-out on a live listing nobody has
+    // taken would withhold an action that is genuinely due. This probe
+    // classifies the two apart, which is precisely what the interlock
+    // needs.
     Boolean(loan.data) &&
       saleEligible &&
-      role === 'borrower' &&
+      (role === 'borrower' || isLenderHolder) &&
       (effectivelyActive || loan.data?.status === 'fallback_pending'),
   );
   // Durable success flag — keeps the card (and its confirmation)
