@@ -97,6 +97,9 @@ const EXPECTED = {
   faucetTitle: EN.copy.faucet.title,
   rentTitle: EN.copy.rent.title,
   deskTitle: EN.copy.desk.title,
+  dataRightsTitle: EN.copy.dataRights.title,
+  lendTitle: EN.copy.lend.title,
+  borrowTitle: EN.copy.borrow.title,
 };
 
 /** The route's own `h1`, trimmed. Empty string when absent. */
@@ -238,10 +241,10 @@ const SCENARIOS = [
       'to the app, so no other site can stand in for them.',
     async check(page) {
       const txt = await bodyText(page);
-      const h1 = await firstHeading(page);
+      const r = await rendersPage(page, EXPECTED.dataRightsTitle);
       return {
-        ok: txt.length > 200 && !NOT_FOUND.test(txt.slice(0, 400)),
-        actual: `h1="${h1}", body=${txt.length} chars`,
+        ok: r.ok && txt.length > 200 && !NOT_FOUND.test(txt.slice(0, 400)),
+        actual: `${r.actual}, body=${txt.length} chars`,
       };
     },
   },
@@ -372,13 +375,15 @@ const SCENARIOS = [
     role: 'lender',
     goal: 'Lending entry point is usable once connected',
     route: '/lend',
-    desired: 'Lend surface renders form/controls, not an empty shell.',
+    desired:
+      'The LEND page renders, and it renders form/controls rather than an ' +
+      'empty shell. Control count alone did not say which page they were on.',
     async check(page) {
-      const txt = await bodyText(page);
+      const r = await rendersPage(page, EXPECTED.lendTitle);
       const controls = await controlCount(page);
       return {
-        ok: txt.length > 150 && controls >= 3,
-        actual: `body=${txt.length} chars, ${controls} control(s)`,
+        ok: r.ok && controls >= 3,
+        actual: `${r.actual}, ${controls} control(s)`,
       };
     },
   },
@@ -423,13 +428,15 @@ const SCENARIOS = [
     role: 'borrower',
     goal: 'Borrowing entry point is usable once connected',
     route: '/borrow',
-    desired: 'Borrow surface renders form/controls.',
+    desired:
+      'The BORROW page renders, and it renders form/controls. Same reason ' +
+      'as the lend scenario: a control count does not identify a page.',
     async check(page) {
-      const txt = await bodyText(page);
+      const r = await rendersPage(page, EXPECTED.borrowTitle);
       const controls = await controlCount(page);
       return {
-        ok: txt.length > 150 && controls >= 3,
-        actual: `body=${txt.length} chars, ${controls} control(s)`,
+        ok: r.ok && controls >= 3,
+        actual: `${r.actual}, ${controls} control(s)`,
       };
     },
   },
@@ -539,11 +546,6 @@ async function gateMasked(page) {
   // probably says rather than from what the component renders is the
   // same mistake that produced a false `/recover` failure earlier.
   return (await page.locator('.legal-gate').count().catch(() => 0)) > 0;
-}
-async function firstHeading(page) {
-  return (
-    (await page.locator('h1').first().innerText().catch(() => '')) || ''
-  ).replace(/\s+/g, ' ').slice(0, 60);
 }
 async function countMatches(page, re) {
   const txt = await bodyText(page);
