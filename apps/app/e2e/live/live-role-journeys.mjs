@@ -584,6 +584,18 @@ let probed = false;
  *  that silently stops matching cannot be distinguished from a clean
  *  run by anything except running it with the modal open.
  *
+ *  The REPORTING PATH is calibrated separately, because "the selector
+ *  matches" and "a match becomes a failure" are different claims and
+ *  the first does not imply the second. Injecting a `role="dialog"`
+ *  element after every scenario settles produces:
+ *
+ *    FAIL  MODAL-visitor  modal open after V1, V2, V3, V4, V5, V6, V7
+ *    8 scenario(s), 7 pass, 1 fail  → exit 1
+ *
+ *  Naming all seven rather than only the last is the point: that is the
+ *  per-scenario sampling working, and a single end-of-role sample —
+ *  what this replaced — could only ever have named V7.
+ *
  *  Swallows its own failure to zero deliberately: this is a supporting
  *  observation taken after every scenario, and a locator error on one
  *  must not fail a scenario that was otherwise fine. */
