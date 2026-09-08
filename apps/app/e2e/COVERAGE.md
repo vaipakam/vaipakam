@@ -560,15 +560,39 @@ tests a returning user), plus connected `lender` / `borrower`.
 assertions were body-length thresholds, and observed lengths swung between
 runs as async reads landed (`/rent` 183→507 chars, `/borrow` 224→515) — a
 threshold low enough to accept both caught a blank or not-found page and
-little else. **That increment is done** (#2069 review rounds 16-19): every
+little else. **That increment is done** (#2069 review rounds 16-21): every
 scenario that names a page now compares the route's `h1` against the app's
 own English catalog, `/borrow` and `/lend` additionally require routed
 controls, `/faucet` requires actual mint rows rather than any button, and
-`/claims` and `/offers` require a SETTLED state — a loading spinner is no
-longer accepted as an empty state. Each was calibrated by pointing it at a
-route it must reject. What a green run still does NOT prove is that these
-surfaces are *correct*: they render the right page, with content, and are
-not stuck loading.
+`/claims` and `/offers` require a page that has finished loading AND
+rendered one of its legitimate shapes. Each was calibrated by pointing it
+at a case it must reject.
+
+Three of those took more than one attempt, and the shape of the mistake is
+worth carrying: **a check that infers the fact it exists to establish.**
+The settled-state test was wrong three ways in three rounds — it accepted
+a never-returning request (the loading posture IS an empty state), then
+rejected the legitimate reward-only posture (a guessed list of settled
+shapes is never exhaustive), then accepted a subtree rendering nothing (an
+absence of markers assumed to mean the rewards card). It now reports
+LOADING, which has one shape, and each scenario names the content it
+requires; `RewardsCard` carries a `data-testid` so the third posture is
+observed rather than deduced. The connected-role gate read the ABSENCE of
+a "Connect wallet" label, so a copy change would have let a whole lender
+run execute against a disconnected app — `/lend` renders controls while
+disconnected, and `/desk` and `/vault` still render their headings — and
+it now requires the header chip the app renders only when connected,
+carrying that role's account. And an unobservable signal (a locator error)
+now fails rather than passing.
+
+`/recover`'s connected arm reports **UNVERIFIED** rather than PASS when it
+sees a form with no unavailable copy: that is either a configured oracle
+or the regression the scenario watches for, and the page cannot tell them
+apart. Reading the oracle on-chain would resolve it and is owed work.
+
+What a green run still does NOT prove is that these surfaces are
+*correct*: they render the right page, with content, finished loading, to
+a genuinely connected session.
 
 Two false FAILs from the driver's first runs are worth keeping as a
 warning, because both were the CHECK being wrong rather than the product:
