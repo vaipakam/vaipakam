@@ -3345,7 +3345,20 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       // Same interlock the borrower's settlement flows already carry a
       // few hundred lines up, applied to the one write on this page
       // that can reach the same terminal state from the lender side.
-      !saleCompletionPending ? (
+      //
+      // Round 32 P1 — `saleHoldResolving` TOO, and the omission is
+      // instructive: round 28 cited this pattern while copying only
+      // half of it. Every neighbouring settlement write pairs
+      // `saleCompletionPending || saleHoldResolving` at the gate with
+      // an `assertSaleSettlementSafe()` immediately before sending,
+      // because `saleCompletionPending` is FALSE while the probe is
+      // pending or failed — so a gate on it alone leaves the action
+      // enabled through exactly the window where the answer is
+      // unknown. `triggerDefault` never inspects the sale link, so the
+      // simulation succeeds too and nothing downstream catches it.
+      // Fail closed on an unanswered probe, as its siblings do.
+      !saleCompletionPending &&
+      !saleHoldResolving ? (
         <ForcedCloseCard
           loanId={row.loanId}
           readiness={forcedCloseReadiness}
@@ -3368,6 +3381,12 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           // EVIDENCE, not on a timer, so it needs to know when the
           // actionability read last returned.
           readsUpdatedAt={forcedCloseReads.updatedAt}
+          // The LIVE re-check every settlement write on this page runs
+          // immediately before sending. The gate above is a cached
+          // verdict up to a tip interval old; an acceptance landing
+          // inside that window must not slip a terminalizing write
+          // through (round 32 P1).
+          preSubmitBlock={assertSaleSettlementSafe}
         />
       ) : null}
 

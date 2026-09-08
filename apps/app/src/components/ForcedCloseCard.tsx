@@ -62,6 +62,7 @@ export function ForcedCloseCard({
   setBusy,
   onClosedOut,
   readsUpdatedAt,
+  preSubmitBlock,
 }: {
   loanId: string | number;
   /** Resolved by `decideForcedClose` from live reads — never derived
@@ -85,6 +86,16 @@ export function ForcedCloseCard({
    *  themselves rather than a timer, so the hold is released by
    *  evidence rather than by a guess about how long a refetch takes. */
   readsUpdatedAt: number;
+  /** The page's live sale-settlement re-check, run immediately before
+   *  sending. Returns a message to show and abort on, or `null` to
+   *  proceed.
+   *
+   *  Separate from the `triggerDefault` simulation below and NOT
+   *  replaceable by it: the contract does not inspect the sale link at
+   *  all, so a close-out that would strand an accepted sale's manual
+   *  completion simulates and executes perfectly (round 32 P1). This is
+   *  a product-level interlock, and it has to be asked as one. */
+  preSubmitBlock: () => Promise<string | null>;
 }) {
   const { write, ready } = useDiamondWrite();
   const { walletChain, address } = useActiveChain();
@@ -159,6 +170,16 @@ export function ForcedCloseCard({
       // `attemptInternalMatchAutoDispatch` runs first and returns.
       // Anywhere else this array reverts `NoEnabledSwapRoute`, which is
       // why the button does not exist there.
+      // The sale interlock FIRST, because it is the one the chain will
+      // not enforce for us: `triggerDefault` terminalizes the loan
+      // regardless of an accepted sale awaiting completion, so the
+      // simulation below would happily approve the very transaction
+      // that strands the buyer's principal.
+      const saleBlock = await preSubmitBlock();
+      if (saleBlock) {
+        setError(saleBlock);
+        return;
+      }
       // A LIVE re-check, immediately before sending (round 28 P2). The
       // readiness above is a 30-second poll that the open confirmation
       // can outlive by minutes, and several of the facts behind it move
