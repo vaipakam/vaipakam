@@ -559,19 +559,37 @@ let probed = false;
 
 /** Connection dialogs currently on screen.
  *
- *  ConnectKit renders its picker into a portal carrying `aria-modal`.
- *  No visitor scenario clicks anything, so a modal present once a
+ *  No visitor scenario clicks anything, so a dialog present once a
  *  scenario has settled was opened by the page itself.
+ *
+ *  THE SELECTOR IS CALIBRATED, NOT INFERRED (review round 17 P2). The
+ *  first version of this check looked for
+ *  `[aria-modal="true"], [data-testid="connectkit-modal"]`, and the
+ *  installed ConnectKit (1.9.2) renders NEITHER: its build contains no
+ *  `aria-modal` at all and no `data-testid` anywhere, and its
+ *  `ModalContainer` carries `role="dialog"`. So the check matched
+ *  nothing and reported "no modal" with the picker wide open — an
+ *  inert assertion, which is worse than the absent one it replaced,
+ *  because the report then reads as proof.
+ *
+ *  Measured against the deployed app rather than reasoned about:
+ *
+ *    clean load          [aria-modal|data-testid] -> 0   [role=dialog] -> 0
+ *    after clicking connect                       -> 0                 -> 1
+ *
+ *  `aria-modal` is kept alongside it so a dialog from any other source
+ *  still counts; `role="dialog"` is the one that actually fires.
+ *
+ *  Re-calibrate this if ConnectKit is upgraded. A wallet-modal locator
+ *  that silently stops matching cannot be distinguished from a clean
+ *  run by anything except running it with the modal open.
  *
  *  Swallows its own failure to zero deliberately: this is a supporting
  *  observation taken after every scenario, and a locator error on one
- *  of them must not fail a scenario that was otherwise fine. The cost
- *  is that a broken locator reads as "no modal" — acceptable only
- *  because the selector is asserted against a real ConnectKit portal in
- *  the connected roles, where the dialog genuinely appears. */
+ *  must not fail a scenario that was otherwise fine. */
 async function modalCount(page) {
   return page
-    .locator('[aria-modal="true"], [data-testid="connectkit-modal"]')
+    .locator('[role="dialog"], [aria-modal="true"]')
     .count()
     .catch(() => 0);
 }

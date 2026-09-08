@@ -751,6 +751,38 @@ export async function launch({
           'credential',
         );
       }
+      // THE ADDRESS IS A CREDENTIAL HERE TOO (review round 17 P2).
+      // `walletFor` — the branch below — checks the declared address and
+      // that the key actually derives it; this branch read only
+      // `privateKey`, so a wallet file with a missing or mismatched
+      // address injected the key-derived account and LABELLED it as the
+      // requested funded role. The connected scenarios would then run
+      // against a different wallet than the one named, and report their
+      // findings as product results: a false pass if that wallet happens
+      // to satisfy them, a product FAIL if it does not. Either way the
+      // honest verdict is a credential BLOCKED, which is precisely the
+      // classification this whole branch exists to get right — so it
+      // must not be reintroduced one field over.
+      const declared = wallets?.[role]?.address;
+      if (typeof declared !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(declared)) {
+        throw new LiveSetupError(
+          `the dev wallet file has no valid address for role "${role}".` +
+            `\n  path:  ${WALLETS_PATH}` +
+            '\n  → each role needs { address, privateKey }, and the address' +
+            ' must be the one that key derives.',
+          undefined,
+          'credential',
+        );
+      }
+      if (account.address.toLowerCase() !== declared.toLowerCase()) {
+        throw new LiveSetupError(
+          `the dev wallet file's address for role "${role}" is not the one` +
+            ` its privateKey derives — declared ${declared}, derived` +
+            ` ${account.address}.\n  path:  ${WALLETS_PATH}`,
+          undefined,
+          'credential',
+        );
+      }
     } else {
       account = privateKeyToAccount(walletFor(role).privateKey);
     }
