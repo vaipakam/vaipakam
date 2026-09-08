@@ -46,7 +46,7 @@ import {
 import { useActiveChain } from '../chain/useActiveChain';
 import { useNowSec } from '../hooks/useNowSec';
 import { idleAware } from '../lib/idle';
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 
 /** Renders a counter, keeping "not reported" distinct from zero. */
 function Stat({ label, value }: { label: string; value: number | undefined }) {
@@ -172,9 +172,23 @@ export function Analytics() {
   // contract address it promises — the same defect the `/vpfi#deposit`
   // anchor had, one route over.
   //
-  // Depends on the posture flags because the section is inside a
-  // conditional: it exists only once the page has settled into a state
-  // that renders it.
+  // AT MOST ONE SCROLL PER FRAGMENT (review round 16 P2).
+  //
+  // The posture flags stay in the dependency list because some targets
+  // mount late — `#an-loans` / `#an-offers` live inside the data-loaded
+  // branch, so an effect that ran only on mount could never reach them.
+  // But `#transparency`, the fragment the marketing site actually links,
+  // is a sibling of those guards and exists on the FIRST render. It was
+  // therefore scrolled to immediately and then again when the request
+  // settled up to four seconds later — long enough for a reader to have
+  // started reading, or to have followed the explorer link, before being
+  // yanked back to where they had already been put once.
+  //
+  // Recording the fragment once it has been scrolled keeps the late
+  // mount working and makes the second scroll impossible. A ref, not
+  // state: nothing renders from it, and a re-render here is what caused
+  // the bug.
+  const scrolledTo = useRef<string | null>(null);
   useEffect(() => {
     const hash = window.location.hash;
     if (!hash) return;
@@ -184,8 +198,12 @@ export function Analytics() {
     } catch {
       /* malformed escape — fall back to the raw fragment */
     }
+    if (scrolledTo.current === id) return;
     const raf = requestAnimationFrame(() => {
-      document.getElementById(id)?.scrollIntoView();
+      const el = document.getElementById(id);
+      if (!el) return; // target not mounted yet — a later posture retries
+      scrolledTo.current = id;
+      el.scrollIntoView();
     });
     return () => cancelAnimationFrame(raf);
   }, [loading, unreachable, uninitialized]);
@@ -270,6 +288,13 @@ export function Analytics() {
               <Stat label={copy.analytics.other} value={offers?.other} />
               <Stat label={copy.analytics.total} value={offers?.total} />
             </div>
+            {/* The offer Total is NOT a lifetime figure and must not be
+                read as one (review round 16 P2): cancelled offers are
+                pruned from the index past the retention window, so both
+                Cancelled and Total fall as old cancellations age out.
+                Stated here rather than left for a reader to discover by
+                watching a "Total" go backwards. */}
+            <p className="an-note">{copy.analytics.offersRetentionNote}</p>
           </section>
         </>
       )}

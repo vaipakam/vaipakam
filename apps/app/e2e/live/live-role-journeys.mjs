@@ -60,7 +60,7 @@
  * posture is keyless and needs no credential at all. No key is ever used
  * to sign here — `readOnly` denies write RPCs outright.
  */
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import {
   launch,
@@ -75,6 +75,24 @@ requireSiteUrl();
 
 /** Text that means the app rendered its own not-found, not a blank shell. */
 const NOT_FOUND = /doesn.t exist|not found|404/i;
+
+/**
+ * Strings a scenario expects the page to render, read from the app's own
+ * English catalog rather than restated here.
+ *
+ * A copy of an expected string in a test is a second source that drifts:
+ * rename the heading and the assertion keeps passing against the old
+ * text until someone notices. `live-recover-locales.mjs` established
+ * this rule and it applies for the same reason. English because this
+ * drive runs in the default locale — the locale sweep is that drive's
+ * job, not this one's.
+ */
+const EN = JSON.parse(
+  readFileSync(new URL('../../src/i18n/locales/en.json', import.meta.url), 'utf8'),
+);
+const EXPECTED = {
+  offersTitle: EN.copy.offers.title,
+};
 
 /**
  * A scenario's `check` returns { ok, actual }. `actual` is recorded
@@ -109,10 +127,42 @@ const SCENARIOS = [
       'Offer book renders its own content (not NotFound, not a connect wall ' +
       'that hides everything). Browsing before committing is the point.',
     async check(page) {
+      // ASSERT THE OFFER BOOK, NOT ITS SIZE (review round 16 P2). This
+      // used to pass on `length > 150 && !NotFound`, which a connect
+      // wall clears comfortably — so the one scenario whose whole point
+      // is "no wallet needed to browse" could not detect the book being
+      // put behind a wallet. The `desired` text already said that; the
+      // predicate did not implement it.
+      //
+      // The heading is read from the repo's OWN catalog, not hardcoded
+      // here — the same no-second-copy-to-drift rule
+      // `live-recover-locales.mjs` follows. It is what makes this
+      // book-specific: a first attempt asserted `h1` + one of
+      // `.row-list` / `.empty-state`, and calibration against
+      // `/positions` showed that predicate passing there too, because
+      // `EmptyState` is a shared component every gated route renders.
+      // A structural marker only discriminates if it is not shared.
+      //
+      // Then one of `.row-list` (rows) or `.empty-state` (the book's
+      // empty, loading and unavailable postures — all legitimate), so
+      // an empty market still passes while a stripped page does not.
       const txt = await bodyText(page);
+      const heading = (await page.locator('#main-content h1').first().textContent().catch(() => ''))?.trim() ?? '';
+      const rows = await page.locator('#main-content .row-list').count().catch(() => 0);
+      const empty = await page.locator('#main-content .empty-state').count().catch(() => 0);
+      const gated = await gateMasked(page);
+      const isBookHeading = heading === EXPECTED.offersTitle;
+      const book = rows > 0 || empty > 0;
       return {
-        ok: txt.length > 150 && !NOT_FOUND.test(txt.slice(0, 400)),
-        actual: `body=${txt.length} chars, notFound=${NOT_FOUND.test(txt.slice(0, 400))}`,
+        ok: !gated && isBookHeading && book && !NOT_FOUND.test(txt.slice(0, 400)),
+        actual: `heading=${JSON.stringify(heading.slice(0, 40))} (want ${JSON.stringify(EXPECTED.offersTitle)}), rowList=${rows}, emptyState=${empty}, legalGate=${gated}`,
+        note: gated
+          ? 'the book was replaced by the Terms gate — a visitor with no wallet must not need to accept anything to browse'
+          : !isBookHeading
+            ? 'this is not the offer book — the route rendered some other surface'
+            : book
+              ? ''
+              : 'neither offer rows nor an empty/unavailable state rendered — the book is behind something',
       };
     },
   },
@@ -507,6 +557,25 @@ for (const r of wanted) {
 // BLOCKED and every navigation after it is a guarded goto.
 let probed = false;
 
+/** Connection dialogs currently on screen.
+ *
+ *  ConnectKit renders its picker into a portal carrying `aria-modal`.
+ *  No visitor scenario clicks anything, so a modal present once a
+ *  scenario has settled was opened by the page itself.
+ *
+ *  Swallows its own failure to zero deliberately: this is a supporting
+ *  observation taken after every scenario, and a locator error on one
+ *  of them must not fail a scenario that was otherwise fine. The cost
+ *  is that a broken locator reads as "no modal" — acceptable only
+ *  because the selector is asserted against a real ConnectKit portal in
+ *  the connected roles, where the dialog genuinely appears. */
+async function modalCount(page) {
+  return page
+    .locator('[aria-modal="true"], [data-testid="connectkit-modal"]')
+    .count()
+    .catch(() => 0);
+}
+
 /** Navigates, as a precondition on the very first page and as an
  *  ordinary product assertion from then on. Throws on HTTP >= 400 so
  *  the caller records it against the route it happened on. */
@@ -591,6 +660,9 @@ for (const roleKey of wanted) {
   if (!scenarios.length) continue;
 
   const posture = ROLE_POSTURE[roleKey];
+  // Per ROLE, not per run: each role gets its own browser, and the
+  // session record below is emitted per role.
+  const modalSightings = [];
   // `onSetupFailure: 'throw'` because this driver ACCUMULATES findings
   // across three launches. The default exits 2 immediately, which after a
   // visitor regression has already been recorded would discard it and
@@ -704,6 +776,17 @@ for (const roleKey of wanted) {
       // A scenario may replace it with a bounded poll (see R1).
       if (s.settle) await s.settle(page);
       else await page.waitForTimeout(s.settleMs ?? 1800);
+      // SAMPLED PER SCENARIO, because a modal does not survive to the
+      // end of the role (review round 16 P2). Every scenario navigates
+      // with `page.goto`, a full document navigation that tears down any
+      // ConnectKit portal the previous route opened — so a single sample
+      // after the last scenario can only ever see a modal opened by the
+      // last route, and the six before it were never examined. The
+      // session record below asserts a property of the WHOLE journey;
+      // this is what actually collects the evidence for it.
+      if (!posture.preAuthorized && (await modalCount(page)) > 0) {
+        modalSightings.push(s.id);
+      }
       // Checked HERE rather than in `navigate`: a client-side guard
       // redirects on mount, so before the settle the app may not have
       // moved yet.
@@ -836,11 +919,7 @@ for (const roleKey of wanted) {
   // scenario clicks anything, so any modal present after a scenario
   // settles was opened by the page.
   if (!posture.preAuthorized) {
-    const modals = await page
-      .locator('[aria-modal="true"], [data-testid="connectkit-modal"]')
-      .count()
-      .catch(() => 0);
-    if (modals > 0) {
+    if (modalSightings.length > 0) {
       hardFail += 1;
       results.push({
         id: `MODAL-${roleKey}`,
@@ -850,12 +929,12 @@ for (const roleKey of wanted) {
         goal: 'A first-time visitor is not shown a wallet dialog they did not ask for',
         desired: 'No connection modal is open at any point during the visitor journeys.',
         ok: false,
-        actual: `${modals} modal(s) open without any scenario having clicked connect`,
+        actual: `a connection modal was open after ${modalSightings.length} scenario(s) — ${modalSightings.join(', ')} — without any of them having clicked connect`,
       });
       console.log(
         `FAIL  MODAL-${roleKey}  [${roleKey}] (session)\n` +
           "      goal    : no unsolicited wallet dialog for a first arrival\n" +
-          `      actual  : ${modals} modal(s) open`,
+          `      actual  : modal open after ${modalSightings.join(', ')}`,
       );
     }
   }

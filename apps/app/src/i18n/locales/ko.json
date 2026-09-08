@@ -2402,7 +2402,8 @@
       "fullyFilled": "전량 체결",
       "fallbackPending": "세부 정보 대기",
       "internalMatched": "내부 매칭",
-      "other": "기타"
+      "other": "기타",
+      "offersRetentionNote": "합계는 현재 기록에 남아 있는 제안의 수입니다. 취소된 제안은 약 한 달 뒤 색인에서 삭제되므로 이는 누적 합계가 아니며, 오래된 취소 건이 사라지면서 줄어들 수 있습니다."
     },
     "protocolConsole": {
       "title": "프로토콜 콘솔",

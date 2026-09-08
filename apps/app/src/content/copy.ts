@@ -4521,6 +4521,13 @@ const copySource = {
     fallbackPending: 'Awaiting details',
     internalMatched: 'Internally matched',
     other: 'Other',
+    // Says what the offer Total actually counts. Cancelled offers are
+    // dropped from the index once they are past the retention window,
+    // so this figure is the records currently held — not every offer
+    // ever made. A page whose claim is that its numbers can be checked
+    // must not let "Total" be read as a lifetime count it is not.
+    offersRetentionNote:
+      'Total counts the offers currently on record. Cancelled offers are dropped from the index after about a month, so this is not a lifetime count — it can go down as old cancellations age out.',
     transparencyHeading: 'Transparency',
     transparencyBody:
       'Every figure above is read from the public indexer API, which is keyless and open-CORS. You do not have to trust this page — query the same endpoints yourself and compare.',

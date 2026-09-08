@@ -270,10 +270,21 @@ export async function handleOffersStats(req: Request, env: Env): Promise<Respons
       // sums every tally: a range offer that closes as fully filled (or
       // as dust) is persisted with status `fullyFilled`, and adding only
       // the five named statuses undercounted the book whenever any range
-      // offer had completed. The public transparency dashboard now
-      // renders this as the deployment's offer total, so a category
-      // silently missing from a figure labelled "Total" is exactly what
-      // that page exists to prevent.
+      // offer had completed. A category silently missing from a figure
+      // labelled "Total" is exactly what the public dashboard exists to
+      // prevent.
+      //
+      // NOT A LIFETIME TOTAL, and nothing here should be written as if
+      // it were (review round 16 P2). `pruneOldCancelledOffers` deletes
+      // cancelled rows past `CANCELLED_OFFER_RETENTION_DAYS` (30 by
+      // default), so this figure and `cancelled` beside it both FALL as
+      // old cancellations age out. That is deliberate — cancelled rows
+      // exist so the dashboard's filter can render without a per-row RPC,
+      // and they stop earning their storage once nobody is looking them
+      // up — but it makes this a count of the records currently held,
+      // not of every offer ever made. The dashboard states that next to
+      // the figure; a durable lifetime counter would need its own
+      // event-sourced aggregate and is not what this row set is.
       total: Object.values(tally).reduce((a, b) => a + b, 0),
       // Deploy provenance (version-metadata binding): every deploy —
       // Workers Builds auto-deploys and manual wrangler alike — mints a

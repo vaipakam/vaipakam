@@ -2488,6 +2488,17 @@ a.item-row:hover {
   margin-top: 2px;
 }
 
+/* A caveat about what a figure above it counts. Muted rather than
+   faint: it qualifies a headline number, so it has to be readable —
+   this page's whole claim is that its figures can be checked, and a
+   caveat nobody reads is one that was not really made. */
+.an-note {
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+  margin: 10px 0 0;
+  max-width: 68ch;
+}
+
 .an-facts {
   display: grid;
   grid-template-columns: max-content 1fr;

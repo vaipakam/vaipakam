@@ -2402,7 +2402,8 @@
       "fullyFilled": "Completadas",
       "fallbackPending": "Pendientes de detalles",
       "internalMatched": "Emparejadas internamente",
-      "other": "Otros"
+      "other": "Otros",
+      "offersRetentionNote": "El total cuenta las ofertas registradas actualmente. Las ofertas canceladas se eliminan del índice al cabo de un mes aproximadamente, por lo que no es un total histórico: puede bajar a medida que caducan las cancelaciones antiguas."
     },
     "protocolConsole": {
       "title": "Consola del protocolo",
