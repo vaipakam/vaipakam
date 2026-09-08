@@ -4895,13 +4895,33 @@ reported a comfortable answer it had not earned:
   the whole chain at `safe`; the artifact carries one block identity per
   chain, and says so.
 
-  **The archive step records the archive** (r8 P1). `archive_chain_state` in
-  `deploy-testnet.sh` and `deploy-mainnet.sh` appends the archived Diamond to
-  the committed manifest as part of the same operation that moves the artifact
-  into the gitignored tree, and aborts the deploy if it cannot. Without that,
-  the next `--fresh` would leave a clean checkout with no local entry for the
-  staleness check to detect — the manifest would read complete while omitting
-  the retired Diamond. The check is the operation.
+  **The archive step records the archive — BEFORE it moves anything** (r8
+  P1, corrected r9 P1). `archive_chain_state` in `deploy-testnet.sh` and
+  `deploy-mainnet.sh` first reconciles every local archive the committed
+  manifest does not yet list (a half-failed earlier run must not leave a
+  retired Diamond unrecorded forever), then records the artifact it is about
+  to archive while it is still in place, and only then performs the move;
+  either step failing aborts with nothing moved. The r8 revision appended
+  AFTER the move, so a failed append stranded the archive unrecorded and the
+  next `--fresh` had no top-level artifact left to revisit. Without any of
+  this, a clean checkout would have no local entry for the staleness check
+  to detect — the manifest would read complete while omitting the retired
+  Diamond. The check is the operation, and it runs first.
+
+  **The mainnet dirty-tree gate excludes its own output** (r9 P1). That gate
+  runs after the archive step and would count the manifest it had just
+  written, stopping every mainnet `--fresh` after a destructive archive. It
+  now excludes exactly `contracts/deployments/archive-manifest.json` from its
+  diff — deployment output, not source; the bytecode the gate protects does
+  not depend on it — and refuses every source change as before.
+
+  **The inventory is a UNION** (r9 P1). A chain retired on purpose, or whose
+  `--fresh` aborted between archiving and writing its new artifact, has no
+  live `addresses.json`; iterating only live chains silently dropped its
+  committed archives from both the staleness check and the expansion, and the
+  coverage check then agreed with an incomplete population. The census
+  enumerates live slugs ∪ manifest slugs, and checks staleness over every
+  local `.archive/` regardless of a live artifact.
 
   **The VPFI token read propagates every failure** (r8 P1). `setVPFIToken`
   permits rotations, so the artifact can lag the live token; a swallowed
@@ -4982,7 +5002,7 @@ reported a comfortable answer it had not earned:
   latter as a failure on op-sepolia rather than silently counting it as an
   absent commit.
 
-**RESULT (2026-09-08, run 12 — all nineteen retained deployments across five
+**RESULT (2026-09-08, run 13 — all nineteen retained deployments across five
 chains, inventory from the committed manifest, the two unsound bounds
 withdrawn): ten deployments are PROVEN EMPTY on every class; nine are
 INDETERMINATE on at least one.** 202 loans were enumerated; **zero rows were

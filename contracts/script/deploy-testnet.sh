@@ -610,10 +610,9 @@ phase_preflight() {
 # in the same step that moves the artifact, and a failure to record it aborts
 # the deploy before the new live artifact can replace the old one.
 append_archive_manifest() {
-  local chain_slug="$1" stamp="$2" archive="$3"
+  local chain_slug="$1" stamp="$2" addr="$3"
   local manifest="$CONTRACTS_DIR/deployments/archive-manifest.json"
-  local addr="$archive/addresses.json"
-  [ -f "$addr" ] || { echo "  (no addresses.json in the archive — nothing to record)"; return 0; }
+  [ -f "$addr" ] || { echo "  (no addresses.json to record)"; return 0; }
   command -v node >/dev/null 2>&1 || { echo "ERROR: node is required to record the archived deployment in $manifest" >&2; return 1; }
   node - "$manifest" "$chain_slug" "$stamp" "$addr" <<'NODE' || return 1
 const fs = require('fs');
@@ -632,12 +631,38 @@ console.log(`  ✓ recorded archived Diamond ${a.diamond} in ${manifestPath.spli
 NODE
 }
 
+# Every local archive that the committed inventory does not yet list is
+# recorded before anything else moves — a half-failed earlier run (append
+# failed after the move, or the script died between the two) must not leave a
+# retired Diamond unrecorded forever (Codex #2070 r9 P1). Idempotent.
+reconcile_unrecorded_archives() {
+  local chain_slug="$1"
+  local deploy_dir="$CONTRACTS_DIR/deployments/$chain_slug"
+  [ -d "$deploy_dir/.archive" ] || return 0
+  local d
+  for d in "$deploy_dir"/.archive/*/; do
+    [ -f "$d/addresses.json" ] || continue
+    append_archive_manifest "$chain_slug" "$(basename "$d")" "$d/addresses.json" \
+      || { echo "ERROR: could not reconcile archived deployment $(basename "$d") into archive-manifest.json" >&2; return 1; }
+  done
+}
+
 archive_chain_state() {
   local chain_slug="$1"
   local deploy_dir="$CONTRACTS_DIR/deployments/$chain_slug"
   local stamp
   stamp=$(date -u +%Y-%m-%dT%H-%M-%SZ)
   local archive="$deploy_dir/.archive/$stamp"
+
+  # Reconcile first, then RECORD the artifact we are about to archive while it
+  # is still in place — the committed inventory must never lag the move
+  # (Codex #2070 r9 P1: an append that failed AFTER the mv left the archive
+  # unrecorded, and the next --fresh saw no top-level artifact to revisit).
+  # Nothing is moved unless both succeed.
+  reconcile_unrecorded_archives "$chain_slug" \
+    || { echo "ERROR: unrecorded local archives could not be reconciled; refusing to archive" >&2; exit 1; }
+  append_archive_manifest "$chain_slug" "$stamp" "$deploy_dir/addresses.json" \
+    || { echo "ERROR: could not record the deployment being archived in archive-manifest.json; refusing to archive" >&2; exit 1; }
 
   mkdir -p "$archive"
 
@@ -660,10 +685,6 @@ archive_chain_state() {
 
   # Re-create the empty top-level scaffolding that the deploy expects.
   mkdir -p "$deploy_dir/.markers" "$deploy_dir/.history"
-
-  # Record the archived Diamond in the committed inventory — abort on failure.
-  append_archive_manifest "$chain_slug" "$stamp" "$archive" \
-    || { echo "ERROR: could not record the archived deployment in archive-manifest.json; refusing to continue" >&2; exit 1; }
 
   echo "  ✓ archived prior chain state -> $(realpath --relative-to="$CONTRACTS_DIR" "$archive")/"
 }

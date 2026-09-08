@@ -110,8 +110,13 @@ operating rules landed with this: a chain is read at one block identity, and if
 an endpoint forces a fallback to a newer safe block part-way through, every
 result already taken for that chain is discarded and the chain is read again
 from the start; and when a redeploy archives a prior contract, the archive step
-itself records it in the committed inventory, so a fresh checkout can never
-find the inventory silently short.
+itself records it in the committed inventory — before anything is moved, after
+first recording any archive an earlier interrupted run left unrecorded — so a
+fresh checkout can never find the inventory silently short. The census reads
+that inventory as the union of chains still deployed and chains it lists, so a
+retired chain's earlier contracts are counted rather than dropped, and the
+mainnet deploy's clean-tree check no longer trips on the inventory the deploy
+itself just updated.
 
 Two claims were also corrected in the surrounding design. An empty population
 retires the *migration* — there is nothing to move, and the shortfall question

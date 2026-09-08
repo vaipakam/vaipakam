@@ -255,9 +255,23 @@ function deployedChains() {
  */
 const ARCHIVE_MANIFEST = join(DEPLOYMENTS, 'archive-manifest.json');
 
+/** Every chain directory that has a local `.archive/`, live artifact or not. */
+function chainsWithLocalArchives() {
+  return readdirSync(DEPLOYMENTS, { withFileTypes: true })
+    .filter((d) => d.isDirectory() && !NOT_A_DEPLOYMENT.has(d.name))
+    .map((d) => d.name)
+    .filter((slug) => existsSync(join(DEPLOYMENTS, slug, '.archive')))
+    .sort();
+}
+
 function localArchivedDiamonds() {
   const out = [];
-  for (const slug of deployedChains()) {
+  // Codex #2070 r9 P1 — NOT `deployedChains()`: a chain whose `--fresh` aborted
+  // after archiving (no new top-level artifact yet), or one retired on purpose,
+  // has no live artifact — and its local archives must still be reconciled
+  // against the manifest, or the staleness check is blind exactly where the
+  // inventory is most likely to be short.
+  for (const slug of chainsWithLocalArchives()) {
     const archiveDir = join(DEPLOYMENTS, slug, '.archive');
     if (!existsSync(archiveDir)) continue;
     for (const stamp of readdirSync(archiveDir).sort()) {
@@ -343,9 +357,20 @@ function deployedDiamonds() {
         `Regenerate with --write-archive-manifest and commit.`,
     );
   }
-  for (const slug of deployedChains()) {
-    const live = JSON.parse(readFileSync(join(DEPLOYMENTS, slug, 'addresses.json'), 'utf8'));
-    out.push({ slug, label: 'live', addresses: live });
+  // The inventory is the UNION of chains with a live artifact and chains the
+  // manifest knows (Codex #2070 r9 P1). A manifest-only chain — its `--fresh`
+  // aborted between archiving and writing the new artifact, or it was retired
+  // — contributes its archived Diamonds with no live entry; their custody is
+  // as real as anyone's. Making archived coverage conditional on a live
+  // artifact let the coverage check agree with an incomplete population.
+  const liveSlugs = deployedChains();
+  const manifestSlugs = [...new Set(manifest.entries.map((e) => e.slug))];
+  const allSlugs = [...new Set([...liveSlugs, ...manifestSlugs])].sort();
+  for (const slug of allSlugs) {
+    if (liveSlugs.includes(slug)) {
+      const live = JSON.parse(readFileSync(join(DEPLOYMENTS, slug, 'addresses.json'), 'utf8'));
+      out.push({ slug, label: 'live', addresses: live });
+    }
     for (const e of manifest.entries.filter((x) => x.slug === slug)) {
       out.push({
         slug,
