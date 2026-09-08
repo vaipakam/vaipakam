@@ -6,7 +6,7 @@
  *     blank screen.
  */
 import { lazy } from 'react';
-import { Navigate, Route, Routes, useParams } from 'react-router-dom';
+import { Navigate, Route, Routes, useLocation, useParams } from 'react-router-dom';
 import { AppShell } from './components/AppShell';
 // The landing route (Home) stays in the boot chunk so the first paint
 // after mount is instant; everything else is a lazy chunk (UX-005) —
@@ -118,6 +118,23 @@ const NotFound = lazy(() =>
   import('./pages/NotFound').then((m) => ({ default: m.NotFound })),
 );
 
+/** `/vpfi-vault` → `/vpfi`, carrying the fragment across.
+ *
+ *  A bare `<Navigate to="/vpfi">` drops the hash, so the legacy deep
+ *  link `/vpfi-vault#step-2` landed at the top of the page — silently
+ *  losing the very anchor the bookmark existed for. And the old
+ *  fragment name does not survive the rename: the deposit section is
+ *  `#deposit` here, so `#step-2` has to be TRANSLATED, not merely
+ *  preserved. Unknown fragments pass through unchanged rather than
+ *  being dropped; a hash this map has not heard of is more likely a
+ *  section that still exists than one that does not.
+ */
+function LegacyVpfiVaultRedirect() {
+  const { hash } = useLocation();
+  const mapped = hash === '#step-2' ? '#deposit' : hash;
+  return <Navigate to={`/vpfi${mapped}`} replace />;
+}
+
 export function App() {
   return (
     <Routes>
@@ -179,8 +196,14 @@ export function App() {
         <Route path="/offer-book" element={<Navigate to="/offers" replace />} />
         <Route path="/trade" element={<Navigate to="/desk" replace />} />
         <Route path="/terminal" element={<Navigate to="/desk" replace />} />
-        <Route path="/vpfi-vault" element={<Navigate to="/vpfi" replace />} />
+        <Route path="/vpfi-vault" element={<LegacyVpfiVaultRedirect />} />
         <Route path="/nft-rental" element={<Navigate to="/rent" replace />} />
+        {/* The verifier's legacy path. Its absence would have sent every
+            existing `/nft-verifier` bookmark to NotFound the moment the
+            old host started redirecting here — which is the one thing
+            the deployment runbook promises retiring the host will not
+            do. */}
+        <Route path="/nft-verifier" element={<Navigate to="/nft" replace />} />
         <Route path="/vault-assets" element={<Navigate to="/vault" replace />} />
         <Route path="/history" element={<Navigate to="/activity" replace />} />
 

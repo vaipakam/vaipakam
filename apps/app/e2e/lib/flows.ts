@@ -85,18 +85,6 @@ export async function consentAndWaitEnabled(page: Page, button: Locator): Promis
 export async function lenderOfferFormToReview(
   page: Page,
   base = '',
-  /** Collateral asset to paste. Defaults to the faucet's LIQUID token,
-   *  which is what every pre-existing caller wants.
-   *
-   *  Overridden to `MOCKS.illiquidToken` by the forced-close spec: an
-   *  unpriced collateral is the only way to reach the settlement branch
-   *  that transfers collateral in kind, and therefore the only way to
-   *  exercise the app's `triggerDefault` submit at all. `LoanFacet`
-   *  skips the health-factor gate for illiquid collateral (it is valued
-   *  at $0, so there is no risk math to run) and requires the combined
-   *  consent from both parties instead — which `consentAndWaitEnabled`
-   *  already ticks on both sides. */
-  collateral?: string,
 ): Promise<Locator> {
   await page.goto(`${base}/lend`, { waitUntil: 'domcontentloaded' });
   await connectWallet(page);
@@ -108,11 +96,7 @@ export async function lenderOfferFormToReview(
   await page.getByRole('button', { name: /post my own lending offer/i }).click();
   await page.locator('input[placeholder="5"]').fill('9');
   // Collateral: paste the faucet address (not in the curated list).
-  await pasteAsset(
-    page,
-    'collateral-asset',
-    collateral ?? (MOCKS!.liquidToken as string),
-  );
+  await pasteAsset(page, 'collateral-asset', MOCKS!.liquidToken as string);
   await page.locator('input[placeholder="0.0"]:visible').last().fill('100');
   const cont = page.getByRole('button', { name: /continue to review/i });
   await expect(cont).toBeEnabled({ timeout: 15_000 });
@@ -122,12 +106,8 @@ export async function lenderOfferFormToReview(
 
 /** Lender posts an OFFER_AMOUNT_WETH lending offer against 100 tLIQ
  *  collateral. */
-export async function postLenderOffer(
-  page: Page,
-  /** See `lenderOfferFormToReview` — omit for the liquid default. */
-  collateral?: string,
-): Promise<void> {
-  const post = await lenderOfferFormToReview(page, '', collateral);
+export async function postLenderOffer(page: Page): Promise<void> {
+  const post = await lenderOfferFormToReview(page);
   await consentAndWaitEnabled(page, post);
   await post.click();
   await expect(page.getByText(/lending offer posted/i)).toBeVisible({

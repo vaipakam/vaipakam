@@ -101,6 +101,7 @@ const EXPECTED = {
   lendTitle: EN.copy.lend.title,
   borrowTitle: EN.copy.borrow.title,
   helpTitle: EN.copy.help.title,
+  notFoundTitle: EN.copy.notFound.title,
 };
 
 /** The route's own `h1`, trimmed. Empty string when absent. */
@@ -356,12 +357,25 @@ const SCENARIOS = [
     role: 'visitor',
     goal: 'An unknown URL fails honestly',
     route: '/definitely-not-a-real-route',
-    desired: 'The app renders its own not-found copy, not a blank page.',
+    desired:
+      "The app's OWN not-found page renders — identified by its heading, " +
+      'not by the words "not found" appearing somewhere on whatever ' +
+      'surface answered.',
     async check(page) {
+      // Was a body regex for /not found|404/. Any OTHER error surface —
+      // a crash boundary, a gateway page — can carry those words while
+      // the app's NotFound never rendered, so the check passed on the
+      // one outcome it exists to distinguish. `NotFound.tsx` renders a
+      // catalog-backed h1 (`titleAs="h1"`, `copy.notFound.title`), so
+      // page identity is available and is what the scenario claims to
+      // test. Same correction as `/help` in an earlier round.
+      const heading = await headingOf(page);
       const txt = await bodyText(page);
       return {
-        ok: NOT_FOUND.test(txt),
-        actual: `notFound=${NOT_FOUND.test(txt)}, body=${txt.length} chars`,
+        ok: await rendersPage(page, EXPECTED.notFoundTitle),
+        actual: `h1=${JSON.stringify(heading)} (want ${JSON.stringify(
+          EXPECTED.notFoundTitle,
+        )}), body=${txt.length} chars`,
       };
     },
   },
