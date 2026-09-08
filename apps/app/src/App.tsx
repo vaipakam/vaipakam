@@ -7,6 +7,7 @@
  */
 import { lazy } from 'react';
 import { Navigate, Route, Routes, useLocation, useParams } from 'react-router-dom';
+import { SUPPORTED_LOCALES } from '@vaipakam/i18n/glossary';
 import { AppShell } from './components/AppShell';
 // The landing route (Home) stays in the boot chunk so the first paint
 // after mount is instant; everything else is a lazy chunk (UX-005) —
@@ -135,6 +136,37 @@ function LegacyVpfiVaultRedirect() {
   return <Navigate to={`/vpfi${mapped}`} replace />;
 }
 
+/** Legacy `/<locale>/...` bookmarks from the retired deployment.
+ *
+ *  The old app mounted its whole `pageRoutes()` tree TWICE — once
+ *  unprefixed and once under `:locale` — so `/es/analytics`,
+ *  `/de/protocol-console` and `/ja/vpfi-vault#step-2` are all real
+ *  bookmarks somebody holds. This app has no locale segment (language
+ *  is a user setting, not a URL), so a path-preserving redirect from
+ *  the old host would land every one of them on NotFound.
+ *
+ *  It strips the locale and RE-ENTERS the router at the unprefixed
+ *  path, deliberately rather than mapping the renames itself. The
+ *  alias routes above already know that `/nft-verifier` is `/nft` and
+ *  that `#step-2` is `#deposit`; duplicating that table here would
+ *  give the two copies somewhere to drift apart, and the localized
+ *  half would be the copy nobody notices is wrong. Two client-side
+ *  `replace` hops, no history entry either time.
+ *
+ *  An unknown first segment falls through to NotFound — the same
+ *  answer the catch-all would have given, so this cannot swallow a
+ *  genuine 404 and report it as a redirect.
+ */
+function LegacyLocaleRedirect() {
+  const params = useParams();
+  const { search, hash } = useLocation();
+  const locale = (params.locale ?? '').toLowerCase();
+  const known = (SUPPORTED_LOCALES as readonly string[]).includes(locale);
+  if (!known) return <NotFound />;
+  const rest = params['*'] ?? '';
+  return <Navigate to={`/${rest}${search}${hash}`} replace />;
+}
+
 export function App() {
   return (
     <Routes>
@@ -206,6 +238,12 @@ export function App() {
         <Route path="/nft-verifier" element={<Navigate to="/nft" replace />} />
         <Route path="/vault-assets" element={<Navigate to="/vault" replace />} />
         <Route path="/history" element={<Navigate to="/activity" replace />} />
+
+        {/* Locale-prefixed bookmarks from the retired deployment. Must
+            sit immediately before the catch-all: a first segment that
+            is not a known locale is a genuine 404 and falls through to
+            it. */}
+        <Route path=":locale/*" element={<LegacyLocaleRedirect />} />
 
         <Route path="*" element={<NotFound />} />
       </Route>

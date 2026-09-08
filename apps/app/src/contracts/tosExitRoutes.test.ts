@@ -98,6 +98,12 @@ describe('isExitRoute', () => {
       '/history',
       '/nft',
       '/nft/7',
+      // The legacy alias needs its OWN entry — `isExitRoute` is
+      // segment-aware (`=== prefix || startsWith(prefix + '/')`), so
+      // this does NOT inherit `/nft`'s exemption by sharing a stem. A
+      // held user following an old bookmark would otherwise never
+      // reach the redirect that leads to the exempt canonical route.
+      '/nft-verifier',
       '/data-rights',
     ]) {
       expect(isExitRoute(path), path).toBe(true);

@@ -71,6 +71,13 @@ const EXIT_PREFIXES = [
   '/help',
   '/activity',
   '/nft',
+  // The verifier's legacy alias needs its OWN entry: `isExitRoute`
+  // matches `path === prefix || path.startsWith(prefix + '/')`, which
+  // is segment-aware on purpose, so `/nft-verifier` does NOT inherit
+  // `/nft`'s exemption. Without this the redirect never runs for a
+  // user holding unaccepted Terms — the alias would behave differently
+  // from the canonical route it exists to reach.
+  '/nft-verifier',
   // #1960 — the data-rights page. Read-only in the Diamond sense (it
   // touches browser storage, never the chain), and gating it would be
   // the sharpest version of the trap this list exists to prevent: a
