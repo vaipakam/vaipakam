@@ -557,13 +557,18 @@ tests a returning user), plus connected `lender` / `borrower`.
 | Public transparency surfaces — `/analytics` and `/protocol-console` render for a visitor with NO wallet, carry their own page title rather than the not-found one, and stay reachable once a wallet is connected (they are exempt from the Terms gate) | Gap | — | Not yet a committed driver. Both are new in #1959 and were driven by hand against the deployed app and the live indexer — that run is what caught the missing stylesheet, the not-found page title and the absent contract link, all of which reproduced on the live host. Promoting those scenarios into `live-role-journeys.mjs` is the owed follow-up. **Expect five "not reported" cells on `/analytics` immediately after this merges, and do NOT read them as a regression.** The app and the indexer deploy separately, and #2069 r15 added `fallbackPending` / `internalMatched` / `other` (loans) and `fullyFilled` / `other` (offers) to BOTH sides. Until the indexer Worker is redeployed those keys are absent from its response, and `Stat` renders an absent counter as `—` plus "not reported" — which is the page behaving correctly, since the alternative is printing an invented zero for a figure it has not been told. Verified against the live indexer on 2026-09-07: its `/loans/stats` and `/offers/stats` answer without those keys, and both totals reconcile over the buckets it does send (loans `11+4+0+0+6 = 21`; offers `6+21+0+0+0 = 27`), so the interim state is honest rather than merely tolerable. The cells fill in on the next indexer deploy; if they still read "not reported" after one, THAT is the regression. **Check whether the indexer actually redeployed rather than assuming it did** — no workflow in `.github/workflows/` deploys any Worker, so a deploy is either Cloudflare Workers Builds (configured in the dashboard, not in this repo) or a manual `pnpm --filter @vaipakam/indexer deploy`. Evidence suggests the indexer IS auto-built: its `/offers/stats` reported `deploy.versionCreatedAt` of `2026-09-07T13:03:40Z`, two minutes after `85d1f2838` — the last indexer-touching merge — landed on main at 13:01 UTC. That is a correlation, not a confirmed pipeline, and it differs from `apps/app`, where a push's Workers Build was found to produce no deployment at all. So read `deploy.versionCreatedAt` off the live endpoint after merging and compare it against the merge time; if it has not moved, deploy the Worker by hand. |
 
 **Known weakness of this driver, stated rather than hidden.** Several
-assertions are body-length thresholds, and observed lengths swing between
-runs as async reads land (`/rent` 183→507 chars, `/borrow` 224→515). A
-threshold low enough to pass both is a weak assertion: it catches a blank
-or not-found page and little else. Tightening these needs per-route
-semantic anchors (a known heading, a named control) rather than size, and
-that is the next increment — do not read a green run as proof these
-surfaces are *correct*, only that they are not empty or missing.
+assertions were body-length thresholds, and observed lengths swung between
+runs as async reads landed (`/rent` 183→507 chars, `/borrow` 224→515) — a
+threshold low enough to accept both caught a blank or not-found page and
+little else. **That increment is done** (#2069 review rounds 16-19): every
+scenario that names a page now compares the route's `h1` against the app's
+own English catalog, `/borrow` and `/lend` additionally require routed
+controls, `/faucet` requires actual mint rows rather than any button, and
+`/claims` and `/offers` require a SETTLED state — a loading spinner is no
+longer accepted as an empty state. Each was calibrated by pointing it at a
+route it must reject. What a green run still does NOT prove is that these
+surfaces are *correct*: they render the right page, with content, and are
+not stuck loading.
 
 Two false FAILs from the driver's first runs are worth keeping as a
 warning, because both were the CHECK being wrong rather than the product:

@@ -28,10 +28,15 @@ where they are. That is the arm the fork suite cannot check honestly,
 because its spec installs a mock oracle.
 
 Two limitations are recorded in the matrix rather than left implied.
-Several assertions are body-length thresholds, and observed lengths swing
-between runs as asynchronous reads land, so a threshold loose enough to
-accept both ends is weak — it catches a blank or missing page and little
-else, and tightening it needs per-route semantic anchors instead of size.
+Several assertions began as body-length thresholds, and observed lengths
+swung between runs as asynchronous reads landed, so a threshold loose
+enough to accept both ends caught a blank or missing page and little else.
+Review closed that gap before this shipped: each of those scenarios now
+identifies its page by the heading the app itself publishes, and the ones
+promising controls or claimable items require those specifically — a
+faucet with nothing to mint, or a page still loading, no longer counts.
+What a green run still cannot tell you is whether the surface is right,
+only that it is the right page, populated, and finished loading.
 And both false failures during the driver's own first runs were the check
 being wrong rather than the product: an assertion written from
 imagination missed the shipped copy's curly apostrophe, and a settle

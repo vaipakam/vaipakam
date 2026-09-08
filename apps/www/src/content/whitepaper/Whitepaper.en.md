@@ -1515,11 +1515,10 @@ the transparency surfaces. It loads no wallet context, no active-chain state, an
 lookups; any "verify on chain" affordance hands off to the connected app's public transparency
 route. The **connected app** hosts wallet-connected actions — dashboard, offer
 book, offer creation, loan details, claim center, activity, VPFI vault, rewards, allowances, and
-alerts — plus public-read shells that work without connecting a wallet. Those read-only shells are
-currently split across two deployments while the connected app completes a move to its final
-hostname: the NFT verifier ships with the app, while analytics and the protocol console are still
-served from the surface the app is replacing. Every link the marketing site emits resolves to
-whichever deployment actually serves the destination, so the split is invisible in use. The app ships in ten locales with a Basic / Advanced mode toggle that controls
+alerts — plus public-read shells that work without connecting a wallet. Those read-only shells —
+the NFT verifier, the analytics dashboard and the protocol console — all now ship with the
+connected app on its final hostname; the split across two deployments that this section previously
+described is finished, and every link the marketing site emits resolves there. The app ships in ten locales with a Basic / Advanced mode toggle that controls
 visibility and density, never policy. The technical whitepaper itself is maintained in English only;
 long-form legal and guide content shows a clear English-only notice in other locales until locale-matched source text exists.
 

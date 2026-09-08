@@ -132,6 +132,50 @@ async function rendersPage(page, expectedTitle) {
 }
 
 /**
+ * Has this surface finished loading, and what did it settle into?
+ *
+ * `.empty-state` is NOT by itself evidence of a settled page (review
+ * round 19 P2): the loading posture renders the same component with a
+ * spinner icon, so "rows or an empty state" also accepts a request that
+ * never came back. A Claim Center stuck loading forever would have been
+ * reported healthy.
+ *
+ * `EmptyState` marks its spinner with `.spin`, which is what separates
+ * "still working" from "finished, and there is nothing here" — the
+ * latter being a legitimate result this must keep accepting.
+ */
+async function settledState(page) {
+  const scope = '#main-content';
+  const rows = await page.locator(`${scope} .row-list`).count().catch(() => 0);
+  const empties = await page.locator(`${scope} .empty-state`).count().catch(() => 0);
+  const spinning = await page.locator(`${scope} .empty-state .spin`).count().catch(() => 0);
+  return {
+    rows,
+    empties,
+    spinning,
+    settled: rows > 0 || (empties > 0 && spinning === 0),
+  };
+}
+
+/**
+ * Bounded poll for the above, rather than trusting the fixed settle.
+ *
+ * The per-scenario settle is sized for a surface that renders from
+ * props; one whose state arrives over the network can legitimately take
+ * longer, and failing it for being slow would be as wrong as passing it
+ * for being stuck. Bounded so a genuinely stuck page still fails.
+ */
+async function waitSettled(page, ms = 15_000) {
+  const deadline = Date.now() + ms;
+  let st = await settledState(page);
+  while (!st.settled && Date.now() < deadline) {
+    await page.waitForTimeout(500);
+    st = await settledState(page);
+  }
+  return st;
+}
+
+/**
  * A scenario's `check` returns { ok, actual }. `actual` is recorded
  * verbatim in the report whether or not it passed — a report that only
  * describes failures cannot be diffed against the next run.
@@ -185,11 +229,15 @@ const SCENARIOS = [
       // an empty market still passes while a stripped page does not.
       const txt = await bodyText(page);
       const heading = await headingOf(page);
-      const rows = await page.locator('#main-content .row-list').count().catch(() => 0);
-      const empty = await page.locator('#main-content .empty-state').count().catch(() => 0);
       const gated = await gateMasked(page);
       const isBookHeading = heading === EXPECTED.offersTitle;
-      const book = rows > 0 || empty > 0;
+      // SAME LOADING HOLE AS THE CLAIM CENTER (review round 19 P2): the
+      // book's loading posture is an `.empty-state` too, so "rows or an
+      // empty state" accepted a request that never returned.
+      const st = await waitSettled(page);
+      const rows = st.rows;
+      const empty = st.empties;
+      const book = st.settled;
       return {
         ok: !gated && isBookHeading && book && !NOT_FOUND.test(txt.slice(0, 400)),
         actual: `heading=${JSON.stringify(heading.slice(0, 40))} (want ${JSON.stringify(EXPECTED.offersTitle)}), rowList=${rows}, emptyState=${empty}, legalGate=${gated}`,
@@ -405,7 +453,12 @@ const SCENARIOS = [
   {
     id: 'L3',
     role: 'lender',
-    goal: 'Vault shows the connected identity, not a stranger',
+    // The goal says what is OBSERVED, not what one might wish to
+    // observe (review round 19 P2). It read "Vault shows the connected
+    // identity, not a stranger" while the page displays no address at
+    // all — so every PASS printed and serialized a claim the check had
+    // just been corrected to stop making.
+    goal: 'Vault surface renders for an already-connected session',
     route: '/vault',
     desired:
       'The vault surface itself renders for a session that is already ' +
@@ -451,8 +504,12 @@ const SCENARIOS = [
       'length alone, which a not-found page also satisfies.',
     async check(page) {
       const r = await rendersPage(page, EXPECTED.claimsTitle);
-      const txt = await bodyText(page);
-      return { ...r, actual: `${r.actual}, body=${txt.length} chars` };
+      const st = await waitSettled(page);
+      return {
+        ok: r.ok && st.settled,
+        actual: `${r.actual}, rowList=${st.rows}, emptyState=${st.empties}, spinning=${st.spinning}`,
+        note: st.settled ? '' : 'the Claim Center never left its loading state — a heading alone would have reported this healthy',
+      };
     },
   },
   {
@@ -464,11 +521,18 @@ const SCENARIOS = [
       'The faucet page itself renders AND offers mint controls. One ' +
       'button on some other page satisfied the old predicate.',
     async check(page) {
+      // MINT ROWS, NOT ANY BUTTON (review round 19 P2). On a chain with
+      // no mocks the faucet renders this very heading plus a
+      // switch-network button and a "back home" link, so `h1` + at least
+      // one control passed while offering nothing to mint. The mint UI is
+      // a `.row-list`; its three no-mocks / empty postures are not.
       const r = await rendersPage(page, EXPECTED.faucetTitle);
+      const st = await waitSettled(page);
       const controls = await controlCount(page, 'button');
       return {
-        ok: r.ok && controls >= 1,
-        actual: `${r.actual}, ${controls} button(s)`,
+        ok: r.ok && st.rows > 0 && controls >= 1,
+        actual: `${r.actual}, mintRows=${st.rows}, ${controls} button(s)`,
+        note: st.rows > 0 ? '' : 'the faucet rendered a fallback (wrong chain, or no mocks deployed) rather than mint controls',
       };
     },
   },
