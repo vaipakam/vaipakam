@@ -108,6 +108,22 @@ it does not publish yet. Widening that is an indexer change, tracked
 separately; the full reference remains public and the values remain
 readable directly from the contracts in the meantime.
 
+One bug found late is worth recording because of how it was found. Both
+pages tell a reader how old the figures are, and both treated a
+timestamp from the FUTURE as the freshest possible reading — showing
+"0s ago" for a stamp that cannot be right, while the freshness guard
+behind the parameter page actively confirmed it as current and kept its
+own out-of-date warning hidden. A source whose clock is wrong, or whose
+timestamp is corrupt, was therefore presented as maximally up to date.
+
+The written specification for these pages already said the opposite —
+that an unknown age must never be presented as a fresh one. It did not
+need changing; the code did. That is the specification doing the job it
+is kept for: it describes what the product is meant to do rather than
+what the code happens to do, so it can disagree with the code and be
+right. Both pages now share one tolerance for ordinary clock
+differences and report anything beyond it as unknown.
+
 A second gap is recorded the same way, and it is about trust in the
 labels rather than in the numbers. The console reads governance values
 by name, but the naming is applied when the page is served rather than
