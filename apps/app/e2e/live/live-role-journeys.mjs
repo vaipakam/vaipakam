@@ -92,7 +92,41 @@ const EN = JSON.parse(
 );
 const EXPECTED = {
   offersTitle: EN.copy.offers.title,
+  vaultTitle: EN.copy.vault.title,
+  claimsTitle: EN.copy.claims.title,
+  faucetTitle: EN.copy.faucet.title,
+  rentTitle: EN.copy.rent.title,
+  deskTitle: EN.copy.desk.title,
 };
+
+/** The route's own `h1`, trimmed. Empty string when absent. */
+async function headingOf(page) {
+  return (
+    (await page.locator('#main-content h1').first().textContent().catch(() => ''))?.trim() ?? ''
+  );
+}
+
+/**
+ * "This route rendered ITS OWN surface", the reusable form of what the
+ * offer-book scenario needed (review round 16 P2, extended round 18).
+ *
+ * A `body.length > N` predicate cannot tell the intended page from a
+ * connect wall, a redirect, or a not-found — all of which clear any
+ * plausible threshold. Several scenarios stated a page by name in their
+ * `desired` and then tested only length, so they could not have failed
+ * if the route had started rendering something else entirely.
+ *
+ * The expected heading comes from the app's own catalog, never restated
+ * here, so renaming a page fails the assertion instead of leaving it
+ * passing against text the product no longer uses.
+ */
+async function rendersPage(page, expectedTitle) {
+  const heading = await headingOf(page);
+  return {
+    ok: heading === expectedTitle,
+    actual: `h1=${JSON.stringify(heading.slice(0, 40))} (want ${JSON.stringify(expectedTitle)})`,
+  };
+}
 
 /**
  * A scenario's `check` returns { ok, actual }. `actual` is recorded
@@ -147,7 +181,7 @@ const SCENARIOS = [
       // empty, loading and unavailable postures — all legitimate), so
       // an empty market still passes while a stripped page does not.
       const txt = await bodyText(page);
-      const heading = (await page.locator('#main-content h1').first().textContent().catch(() => ''))?.trim() ?? '';
+      const heading = await headingOf(page);
       const rows = await page.locator('#main-content .row-list').count().catch(() => 0);
       const empty = await page.locator('#main-content .empty-state').count().catch(() => 0);
       const gated = await gateMasked(page);
@@ -353,13 +387,14 @@ const SCENARIOS = [
     role: 'lender',
     goal: 'Rate Desk reachable by URL even though nav hides it in Basic mode',
     route: '/desk',
-    desired: 'Renders (URL-reachable is the documented contract for #1129).',
+    desired:
+      'The Rate Desk itself renders (URL-reachable is the documented ' +
+      'contract for #1129) — not a redirect to whatever Basic mode shows ' +
+      'instead, which a length check cannot tell apart from the real page.',
     async check(page) {
+      const r = await rendersPage(page, EXPECTED.deskTitle);
       const txt = await bodyText(page);
-      return {
-        ok: txt.length > 150 && !NOT_FOUND.test(txt.slice(0, 400)),
-        actual: `body=${txt.length} chars`,
-      };
+      return { ...r, actual: `${r.actual}, body=${txt.length} chars` };
     },
   },
   {
@@ -367,10 +402,18 @@ const SCENARIOS = [
     role: 'lender',
     goal: 'Vault shows the connected identity, not a stranger',
     route: '/vault',
-    desired: 'Renders vault surface for the connected wallet.',
+    desired:
+      'The vault surface itself renders for a session that is already ' +
+      'connected. NOTE what this does NOT assert: the page displays no ' +
+      'address, so there is nothing on it to check a wallet against. The ' +
+      'connection is established at session level instead — the role fails ' +
+      'before any scenario runs if `ensureConnected` leaves a connect ' +
+      'prompt on screen. Said plainly because the earlier wording claimed ' +
+      'to verify the connected wallet while testing only body length.',
     async check(page) {
+      const r = await rendersPage(page, EXPECTED.vaultTitle);
       const txt = await bodyText(page);
-      return { ok: txt.length > 100, actual: `body=${txt.length} chars` };
+      return { ...r, actual: `${r.actual}, body=${txt.length} chars` };
     },
   },
 
@@ -395,10 +438,14 @@ const SCENARIOS = [
     role: 'borrower',
     goal: 'Claim Center reachable',
     route: '/claims',
-    desired: 'Renders claims surface or an explanatory empty state.',
+    desired:
+      'The Claim Center itself renders — with claimable items or its own ' +
+      'empty state, both legitimate. The previous predicate was body ' +
+      'length alone, which a not-found page also satisfies.',
     async check(page) {
+      const r = await rendersPage(page, EXPECTED.claimsTitle);
       const txt = await bodyText(page);
-      return { ok: txt.length > 100, actual: `body=${txt.length} chars` };
+      return { ...r, actual: `${r.actual}, body=${txt.length} chars` };
     },
   },
   {
@@ -406,13 +453,15 @@ const SCENARIOS = [
     role: 'borrower',
     goal: 'Faucet is discoverable so a new testnet user can self-serve',
     route: '/faucet',
-    desired: 'Renders mint controls.',
+    desired:
+      'The faucet page itself renders AND offers mint controls. One ' +
+      'button on some other page satisfied the old predicate.',
     async check(page) {
-      const txt = await bodyText(page);
+      const r = await rendersPage(page, EXPECTED.faucetTitle);
       const controls = await controlCount(page, 'button');
       return {
-        ok: txt.length > 150 && controls >= 1,
-        actual: `body=${txt.length} chars, ${controls} button(s)`,
+        ok: r.ok && controls >= 1,
+        actual: `${r.actual}, ${controls} button(s)`,
       };
     },
   },
@@ -421,13 +470,13 @@ const SCENARIOS = [
     role: 'borrower',
     goal: 'NFT rental surface reachable',
     route: '/rent',
-    desired: 'Renders rental surface, not NotFound.',
+    desired:
+      'The rental surface itself renders. Rejecting NotFound is weaker ' +
+      'than naming the page: any OTHER route would also have passed.',
     async check(page) {
+      const r = await rendersPage(page, EXPECTED.rentTitle);
       const txt = await bodyText(page);
-      return {
-        ok: txt.length > 100 && !NOT_FOUND.test(txt.slice(0, 400)),
-        actual: `body=${txt.length} chars`,
-      };
+      return { ...r, actual: `${r.actual}, body=${txt.length} chars` };
     },
   },
 ];
