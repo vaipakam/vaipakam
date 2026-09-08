@@ -1878,8 +1878,17 @@ the current state.
 
 For a host that is genuinely superseded — which, per the above,
 `defi.vaipakam.com` is NOT yet — converting its Worker into a
-redirect beats deleting it: bookmarks and external links keep working,
-and per-origin browser storage is lost on an origin change regardless,
+redirect beats deleting it: bookmarks and external links keep working
+**for the paths the new app still answers** — which is not all of them,
+and the difference has to be checked rather than assumed. A
+path-preserving redirect only lands people somewhere useful where the
+destination host has a route for that path; where it does not, the
+visitor reaches the catch-all not-found page, which is a worse outcome
+than a dead host only in that it looks like the app is broken rather
+than gone. The retired connected app served several paths that have no
+counterpart or alias today — see the enumeration in #2076 — so treat "bookmarks keep working" as a claim to verify per host,
+not a property of redirecting. Per-origin browser storage is lost on an
+origin change regardless,
 so a redirect at least lands people on a working app instead of a dead
 host. `alpha02.vaipakam.com` qualifies today — it was the live
 testnet-review target for months and is cited throughout
