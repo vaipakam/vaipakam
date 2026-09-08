@@ -136,8 +136,25 @@ export function ProtocolConsole() {
   // here, and the effect form trips `react-hooks/set-state-in-effect`,
   // whose point is that a synchronous setState in an effect body
   // cascades renders.
+  //
+  // NOT FETCHED IN THE HIDDEN POSTURE (review round 23 P2). The hidden
+  // return sits a few lines below, but the query above it ran anyway —
+  // so a deployment that had decided not to show these values still
+  // pulled them into the page and the React Query cache, where anyone
+  // with developer tools could read them. A page that withholds
+  // something should not first go and fetch it.
+  //
+  // Being exact about what this flag is, because the fix should not be
+  // mistaken for more than it is: `/config` is a PUBLIC, keyless,
+  // open-CORS endpoint — the same one the transparency dashboard reads
+  // and any third party may call. The flag decides whether THIS
+  // DEPLOYMENT PRESENTS the values, not whether they can be obtained.
+  // Anyone who wants them can still query the indexer directly. So this
+  // is the page keeping its own word, not an access-control boundary,
+  // and it must not be described as one.
   const knobs = useQuery({
     queryKey: ['protocol-knobs', chainId],
+    enabled: isProtocolConsolePublic(),
     queryFn: () => fetchProtocolKnobs(chainId),
   });
 
