@@ -166,7 +166,17 @@ async function settledState(page) {
   // (`ClaimAllCard`, `ConfirmReceipt`, `Claims.tsx:119`), so a page
   // where someone is confirming a transaction would otherwise read as
   // still loading.
-  const loading = (await page.locator(`${scope} .empty-state .spin`).count().catch(() => 0)) > 0;
+  // AN ERROR MUST NOT READ AS "NOT LOADING". `.catch(() => 0)` here
+  // would send an unobservable page down the PASSING branch, which is
+  // the inert-check shape this file has now been caught in twice. `null`
+  // means "could not observe", and the caller treats that as not
+  // settled — the failing direction, which is the safe one for a signal
+  // whose whole job is to catch a page that never finished.
+  const spins = await page
+    .locator(`${scope} .empty-state .spin`)
+    .count()
+    .catch(() => null);
+  const loading = spins === null || spins > 0;
   // The Claim Center's THIRD settled shape, now marked rather than
   // inferred (review round 21 P2). Round 20 accepted
   // `{rows: 0, empties: 0, loading: false}` on the theory that it meant
@@ -656,7 +666,11 @@ async function gateMasked(page) {
   // word is a coincidence, and writing the check from what the copy
   // probably says rather than from what the component renders is the
   // same mistake that produced a false `/recover` failure earlier.
-  return (await page.locator('.legal-gate').count().catch(() => 0)) > 0;
+  // Same rule as `settledState`: a locator error must not answer "no
+  // gate", which is the direction that lets a gated page pass. Treat
+  // unobservable as gated, so the scenario reports rather than assumes.
+  const n = await page.locator('.legal-gate').count().catch(() => null);
+  return n === null || n > 0;
 }
 async function countMatches(page, re) {
   const txt = await bodyText(page);
