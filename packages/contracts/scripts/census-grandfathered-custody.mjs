@@ -251,23 +251,43 @@ async function getLogsChunked(client, { address, events, fromBlock, toBlock }) {
  * comfortable answer this census must not give.
  */
 async function resolveCensusBlock(client, slug) {
-  const forced = arg('--block');
-  if (forced) {
-    const b = await client.getBlock({ blockNumber: BigInt(forced) });
-    return { number: b.number, hash: b.hash, tag: 'explicit' };
-  }
+  // Resolve finality FIRST, unconditionally. Codex #2070 r4 P1 — `--block`
+  // used to bypass this entirely, so an operator could pass the current head,
+  // receive a globally empty verdict, and lose the named state to a reorg
+  // after the end-of-run hash check had already passed. An explicit block is
+  // accepted only at or below the chain's own finality mark; there is no way
+  // to name a reorg-able height and still get a certification out.
+  let finality = null;
   for (const blockTag of ['finalized', 'safe']) {
     try {
       const b = await client.getBlock({ blockTag });
-      if (b?.number != null && b?.hash) return { number: b.number, hash: b.hash, tag: blockTag };
+      if (b?.number != null && b?.hash) {
+        finality = { number: b.number, hash: b.hash, tag: blockTag };
+        break;
+      }
     } catch {
       // Not every chain/RPC implements both tags; try the next one.
     }
   }
-  throw new Error(
-    `${slug}: the endpoint exposes neither a 'finalized' nor a 'safe' block. Pass --block <height at or below finality> ` +
-      `rather than certifying custody away against a head that can still be reorganized`,
-  );
+  if (!finality) {
+    throw new Error(
+      `${slug}: the endpoint exposes neither a 'finalized' nor a 'safe' block, so no height can be shown to be ` +
+        `reorg-proof here — not even one passed with --block. Use an endpoint that reports finality.`,
+    );
+  }
+
+  const forced = arg('--block');
+  if (!forced) return finality;
+
+  const requested = BigInt(forced);
+  if (requested > finality.number) {
+    throw new Error(
+      `${slug}: --block ${requested} is ABOVE the endpoint's ${finality.tag} block ${finality.number}. ` +
+        `A height that can still be reorganized cannot certify custody away; pass ${finality.number} or lower.`,
+    );
+  }
+  const b = await client.getBlock({ blockNumber: requested });
+  return { number: b.number, hash: b.hash, tag: `explicit (<= ${finality.tag} ${finality.number})` };
 }
 
 /**
@@ -351,23 +371,36 @@ async function proveProducerNeverRouted({
     // later one, leaving a live commit this census would certify absent.
     //
     // Continuity test that needs no extra trust: if the history is complete,
-    // every selector the Diamond CURRENTLY routes must have been introduced by
-    // some cut in it. Any routed selector the history cannot account for proves
-    // the scan is missing cuts, and the answer is `indeterminate`.
-    const seenSelectors = new Set();
+    // every selector the Diamond CURRENTLY routes must have been ADDED by some
+    // cut in it. Any routed selector the history cannot account for proves the
+    // scan is missing cuts, and the answer is `indeterminate`.
+    //
+    // Codex #2070 r4 P1 — ONLY an `Add` introduces a selector. A `Replace`
+    // requires an existing route, so it can never be the cut that brought a
+    // selector in; and `RefreshAllFacetsInPlace` emits a `Replace` for EVERY
+    // routed selector, so a single later full-facet refresh would "explain" the
+    // whole surface while the deployment cut — and an early add/remove of the
+    // producer — stayed omitted. Counting `Replace` made the test pass on
+    // exactly the partial history it exists to reject. Requiring an `Add` per
+    // routed selector is the deployment-cut requirement made precise: the deploy
+    // is where the routed surface was added, and no later cut can substitute.
+    const FACET_CUT_ACTION_ADD = 0; // EIP-2535 FacetCutAction { Add, Replace, Remove }
+    const addedSelectors = new Set();
     for (const log of logs) {
       for (const cut of log.args?._diamondCut ?? []) {
-        for (const sel of cut.functionSelectors ?? []) seenSelectors.add(sel.toLowerCase());
+        if (Number(cut.action) !== FACET_CUT_ACTION_ADD) continue;
+        for (const sel of cut.functionSelectors ?? []) addedSelectors.add(sel.toLowerCase());
       }
     }
-    const unexplained = routedSelectors.filter((sel) => !seenSelectors.has(sel.toLowerCase()));
+    const unexplained = routedSelectors.filter((sel) => !addedSelectors.has(sel.toLowerCase()));
     if (unexplained.length !== 0) {
       return {
         proven: false,
         reason:
-          `the cut history does not account for ${unexplained.length} of the ${routedSelectors.length} selectors the ` +
-          'Diamond currently routes, so it is INCOMPLETE — the endpoint served some cuts and omitted others. The ' +
-          'producer could have been added in an omitted cut and removed in a returned one. Re-run against an archive endpoint.',
+          `the cut history carries no ADD for ${unexplained.length} of the ${routedSelectors.length} selectors the ` +
+          'Diamond currently routes, so it is INCOMPLETE — the endpoint omitted the cut(s) that introduced them ' +
+          '(a later Replace-only refresh cannot substitute for the deployment cut). The producer could have been ' +
+          'added in an omitted cut and removed in a returned one. Re-run against an archive endpoint.',
         cutsScanned: logs.length,
         routedSelectors: routedSelectors.length,
         unexplainedSelectors: unexplained.length,
@@ -376,8 +409,9 @@ async function proveProducerNeverRouted({
     return {
       proven: true,
       reason:
-        'the intent producer never appears in any DiamondCut in this Diamond\'s history, and that history accounts for ' +
-        'every selector the Diamond currently routes (so it is complete) — no commit can ever have been created',
+        'the intent producer never appears in any DiamondCut in this Diamond\'s history, and that history carries an ' +
+        'ADD for every selector the Diamond currently routes (so the deployment cut and every later addition are ' +
+        'present) — no commit can ever have been created',
       cutsScanned: logs.length,
       routedSelectors: routedSelectors.length,
     };
