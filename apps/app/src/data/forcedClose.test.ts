@@ -145,14 +145,33 @@ describe('decideForcedClose — the internal-match dispatch', () => {
     );
   });
 
-  it('falls back to needs-route when the probe is unread or failed', () => {
-    // Deliberately NOT `unknown`. That is the conservative answer — no
-    // button is offered — and it keeps the explanation this state
-    // exists to give, rather than replacing it with "still checking" on
-    // a loan whose route genuinely cannot be built in this app.
-    expect(
-      decideForcedClose({ ...base, internalMatchCandidate: undefined }),
-    ).toBe('ready-needs-route');
+  it('reports unknown for an unread probe, on EVERY collateral shape', () => {
+    // THIS CASE USED TO ASSERT `ready-needs-route` AND ONLY EXERCISED
+    // THE BASE SHAPE (round 35 P2) — which is liquid and non-collapsed,
+    // the single arm where falling through happens to be harmless
+    // because nothing is submittable there. The submittable arms were
+    // never covered, and on those the fallthrough returned
+    // `ready-in-kind`: a button, over copy promising the borrower's
+    // collateral, on a loan the contract might settle in the lent asset
+    // instead.
+    //
+    // The shapes are enumerated for that reason. A single base-case
+    // assertion is what let the defect through the first time.
+    for (const shape of [
+      {} as const,
+      { collateralIlliquid: true } as const,
+      { ltvCollapsed: true } as const,
+      { collateralIsNft: true, collateralIlliquid: undefined } as const,
+      { assetType: 'rental' } as const,
+    ]) {
+      expect(
+        decideForcedClose({
+          ...base,
+          ...shape,
+          internalMatchCandidate: undefined,
+        }),
+      ).toBe('unknown');
+    }
   });
 
   it('does not let a match candidate override an earlier gate', () => {

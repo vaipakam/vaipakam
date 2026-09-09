@@ -249,10 +249,31 @@ export function decideForcedClose(input: ForcedCloseInput): ForcedCloseReadiness
   // corrected; the case is now written as the ordering assertion it
   // should always have been.
   //
-  // An unread or failed probe falls through to the classification
-  // below, not to `unknown`: that keeps every route's own explanation
-  // available and never offers a button on an unproven match.
-  if (input.internalMatchCandidate === true) return 'ready-internal-match';
+  // An unread or failed probe is UNKNOWN, exactly like every other
+  // unread input here — and round 35 P2 is why that uniformity matters
+  // rather than being tidiness.
+  //
+  // I first let an unresolved probe fall through to the classification
+  // below, reasoning that it "keeps every route's own explanation
+  // available and never offers a button on an unproven match". The
+  // second half was false the moment the reorder above landed: with the
+  // probe unresolved and the collateral illiquid or collapsed, the
+  // fallthrough reached `ready-in-kind` — SUBMITTABLE, with copy
+  // promising the borrower's collateral — while the contract may find a
+  // candidate its own lookup can still see and settle in the lent
+  // asset, possibly only partly. My test for the unread probe missed it
+  // because its base case is liquid and non-collapsed, so it landed on
+  // the one non-submittable arm.
+  //
+  // Going further than the minimal fix on purpose. Blocking only the
+  // submittable routes would leave `ready-needs-route` and
+  // `blocked-no-consent` reachable, and both make definite claims that
+  // an existing candidate falsifies — that the collateral must be sold,
+  // and that the close-out is refused for everyone. This module's own
+  // rule is that an unread fact yields a state which asserts nothing;
+  // a carve-out would be a second rule for one input.
+  if (input.internalMatchCandidate === undefined) return 'unknown';
+  if (input.internalMatchCandidate) return 'ready-internal-match';
 
   // Which execution path the contract will take. NFT rentals never
   // swap, so they need no liquidity read at all.

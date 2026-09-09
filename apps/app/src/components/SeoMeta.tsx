@@ -79,7 +79,14 @@ function metaForPath(rawPathname: string): RouteMeta {
   // matchRoutes behaviour) — normalize trailing slashes so a slashed
   // URL of a public page doesn't fall through to the noindex NotFound
   // row while rendering valid content (Codex #1309 r6).
-  const pathname = rawPathname.replace(/\/+$/, '') || '/';
+  // LOWER-CASED, like `tosExitRoutes.isExitRoute` does for the same
+  // reason (round 35 P3): React Router matches route declarations
+  // case-insensitively, so `/Analytics` renders the real page — while
+  // these exact comparisons fell through to the NotFound row, making a
+  // working public page announce "Page not found", emit `noindex` and
+  // drop its canonical. Two modules classifying the same pathname must
+  // not disagree about what the router will do with it.
+  const pathname = rawPathname.toLowerCase().replace(/\/+$/, '') || '/';
   const seo = copy.seo;
   // Route table mirroring App.tsx EXACTLY: exact-only routes match
   // exactly (in the router, `/borrow/anything` is NotFound — emitting
@@ -98,8 +105,24 @@ function metaForPath(rawPathname: string): RouteMeta {
   // (`/^[1-9]\d*$/` in the page) — a malformed id (`/nft/foo`,
   // `/nft/0`) renders just the empty form, a thin duplicate that must
   // not be indexable (Codex #1309 r5).
-  if (pathname === '/nft' || /^\/nft\/[1-9]\d*$/.test(pathname)) {
-    return { ...seo.nftVerifier, index: true };
+  if (pathname === '/nft') return { ...seo.nftVerifier, index: true };
+  // A TOKEN DETAIL IS NOT INDEXABLE, and this must agree with
+  // `_headers.base` (round 35 P3). The `/:locale/*` response rule added
+  // for locale-prefixed bookmarks also matches `/nft/123`, so the header
+  // says noindex while this row said indexable and emitted a canonical —
+  // a direct contradiction of the functional spec's requirement that a
+  // crawler which does not run the app sees the same decision a browser
+  // sees after it loads.
+  //
+  // Resolved toward noindex rather than by narrowing the header rule,
+  // because it is right on its own merits: token details are an
+  // unbounded url space of thin lookups, the sitemap has never listed
+  // them, and the verifier's own entry point stays indexable. Malformed
+  // ids (`/nft/foo`, `/nft/0`) render just the empty form and were
+  // already excluded (Codex #1309 r5); this widens that to every token
+  // id rather than only the malformed ones.
+  if (/^\/nft\/.+/.test(pathname)) {
+    return { ...seo.nftVerifier, index: false };
   }
   if (pathname === '/help') return { ...seo.help, index: true };
   // #1959 review round 2 P2 — both are public marketing deep-link
