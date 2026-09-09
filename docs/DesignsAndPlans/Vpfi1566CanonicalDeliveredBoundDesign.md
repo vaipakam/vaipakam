@@ -5916,3 +5916,60 @@ calibration test; census integration with the two proof kinds; the
 guidance-file correction and the release-note fragment; partial runs per
 chain; then a full run that writes run 27 as the new canonical artifact.
 
+### 7a. What the provenance walk found, and how the design changes (2026-09-09)
+
+The walk in question 2 was built first, and it answered before a single slot
+was read: `LibVaipakam.Storage` has NOT been append-only since the earliest
+deployment. Since 2026-05-01 the struct saw eight insertions in the first
+week of May (the last on 2026-05-08, before the first deployment on
+2026-05-10), one more on 2026-05-11 and a same-size swap on 2026-05-17, then
+**three removals on 2026-06-23** — the #687-A excision of the fixed-rate VPFI
+sale (PR #711) took fourteen fields out ahead of the intent rows — and **one
+removal on 2026-08-16** (`baseAuthorizedMessenger`, at index 209), which shifts
+every field after it. A mid-July retype of a mapping's value type shifts
+nothing and is not counted. The walker distinguishes a field that MOVED from
+one that was merely renamed by asking whether either name exists elsewhere in
+the other sequence; a same-typed insertion looks exactly like a rename to a
+type-only comparison, which the first cut of the rule missed.
+
+Two consequences, one for the census and one beyond it.
+
+**For the census: read every era, and no provenance gate is needed.** The
+intent mapping did not exist before 2026-06-08 and has sat at three different
+indices since (205, then 198, then 191 after the June removals); the rebate
+mapping and the two counters moved with it; the fallback snapshot has held
+index 45 since 2026-05-08 and the loan counter index 1 throughout. A slot
+derived from today's layout is therefore right for any facet compiled after
+2026-06-23 and wrong for anything earlier — and a Diamond that lived across a
+change may hold rows written under either layout, because in-place refreshes
+cut newer facets over older state. Rather than identify each deployment's
+source and gate the read on it, the census reads **every layout era since the
+walk began**: the walker's change events bound the eras, the compiler at one
+commit per era gives that era's slots (a throwaway contract holding the
+struct, inspected with `forge inspect … storage-layout` at that commit), and
+the committed slot table lists, per field, every distinct slot any era used.
+A row is proven absent only when it reads zero at EVERY era's slot for every
+enumerated loan id; the loan-id range itself comes from `nextLoanId`, whose
+slot never moved, so the range is complete whatever era wrote the loans. This
+is history-free — every read is state at the census block — and it needs no
+identification of any deployment's source. Its one stated assumption is that
+every facet ever cut was compiled from a commit in the walked history (main
+and everything merged into it); a facet built from an unmerged branch could
+carry a layout the walk never saw, which is recorded as the residual and is
+why the era table is regenerated from history rather than typed once.
+
+**Beyond the census: an in-place facet refresh across either removal
+mis-maps the live state.** The live testnets were deployed on 2026-05-06
+(op-sepolia, as its artifact records — that record is known to be wrong, and
+the true date is one of the artifact corrections), 2026-05-11 (sepolia) and
+2026-07-01 (base-sepolia, arb-sepolia, bnb-testnet). Any of them refreshed in
+place after 2026-08-16 now runs facets that read every field after index
+209 — the buyback, reward-emission, recycle and perk ledgers, and the reward
+role's configured flag — one slot away from where earlier facets wrote them;
+sepolia and op-sepolia additionally straddle the June removals, which shift
+everything from index 56 on, loans included. The refresh scripts carry no
+layout guard, and nothing in the repository checks the property an in-place
+upgrade depends on. That is outside this document's scope and is raised as
+its own issue with the walker's evidence; the census's own reads are
+unaffected, because they are era-complete by construction.
+
