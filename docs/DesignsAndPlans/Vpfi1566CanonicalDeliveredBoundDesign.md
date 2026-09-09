@@ -5814,3 +5814,105 @@ What should NOT happen is a sixth subtraction. That is the one path with
 evidence against it in this repository's own history — and the near-miss above
 is a reminder that "cheap and strictly better" is exactly how that path gets
 taken.
+
+## 7. The calibrated storage read — design (decided 2026-09-09)
+
+Item 1 of the outstanding list above. The owner delegated the remaining
+census decisions on 2026-09-07 ("architecturally clean even if it takes more
+time"), so this section records a decision, not a proposal; the alternatives
+it rejects are listed at the end so the reasoning survives.
+
+**What it must settle.** Twelve deployments are indeterminate in run 26, and
+the storage read reaches nine of their cells. Six are indeterminate on the
+live-intent class only, because their intent getter is unrouted while every
+loan can be enumerated: arb-sepolia archived 2026-05-10 and 2026-07-01T01-28,
+base-sepolia archived 2026-06-30, op-sepolia live and its rehearsal sidecar,
+sepolia archived 2026-05-10. Three are bare shells whose cut never ran and
+route nothing at all. The arb-sepolia archive of 2026-07-01T01-36 and the
+arb-sepolia live Diamond are indeterminate on that class too, and the read
+settles it for them as well, since a row that does not exist needs no token to
+scope it. The base-sepolia record naming a non-Diamond is untouched: that is
+an artifact correction, operator-gated.
+
+**Four questions, and the read is sound only when all four are answered.**
+
+1. *Where.* The state lives at the ERC-7201 position the library calls
+   `VANGKI_STORAGE_POSITION`, which is `keccak256(abi.encode(uint256(keccak256("vaipakam.storage")) - 1)) & ~0xff`
+   — not the plain hash the top-level guidance file states, which is corrected
+   with this slice. The absolute slot of every field the read needs (the loan
+   counter `nextLoanId`, `totalLoansEverCreated`, `intentLiveCommitCount`,
+   and the three loan-keyed mappings `intentCommits`, `borrowerLifRebate`,
+   `fallbackSnapshot`) is obtained from the COMPILER, through a forge probe
+   that reads each field's `.slot` in assembly, never by counting the
+   struct's fields by hand. A mapping's row for a loan id sits at
+   `keccak256(abi.encode(loanId, mappingSlot))`; inside a row the member
+   offsets follow the struct: the intent commit's `orderHash` at +0, the
+   rebate row's `vpfiHeld` at +0 and `rebateAmount` at +1, the fallback
+   snapshot's five amounts at +0..+4 with its two booleans packed at +5. The
+   probe pins every one of these into one committed JSON that the census
+   reads, and a forge test asserts the JSON against the probe on every run —
+   the pin is the check, so a reordered struct fails CI before it can fail
+   the census.
+
+2. *Whether the slot means the same thing on an older Diamond.* No artifact
+   records the source it was compiled from, and 172 commits have touched the
+   library since the earliest deployment in the inventory. A slot derived
+   from today's layout is sound for an older Diamond only if the struct has
+   been append-only up to that field since the field appeared — the same
+   discipline an in-place facet refresh of a live Diamond already depends on,
+   but never checked. A provenance script walks every commit of the library
+   since 2026-05-01, extracts the struct's declaration sequence (names and
+   types), and requires each historical sequence to be a prefix of today's;
+   it also reports the commit that introduced each target field
+   (`intentCommits` arrived on 2026-06-08). Under that property a deployment
+   older than a field has never run code able to write the field's slot, and
+   the slot was unused, so a zero read there is honest rather than
+   manufactured. The script runs in CI; if the property ever fails, the
+   census refuses the read and names the commit, and the cells stay
+   indeterminate.
+
+3. *Whether the read agrees with the code's own view.* The plan called for a
+   live intent commit on anvil, because no deployed chain has one. The
+   calibration is a forge test instead, which is the same evidence run in
+   CI rather than as a ceremony: it drives the production write paths — an
+   intent commit through the intent facet on a live loan, a rebate row and a
+   fallback snapshot through theirs or through the compiler-equivalent test
+   mutator — and requires the raw storage at the derived slots to equal what
+   the routed getters return, on rows that are non-zero. The census's own
+   row-slot arithmetic is pinned against a forge-computed example, so the
+   script computes the slot the compiler computes.
+
+4. *Which block.* The read is `eth_getStorageAt` under EIP-1898, pinned by the
+   census block's hash with the canonical requirement, exactly like every
+   other state read since round 28.
+
+**What the read certifies, and what it does not.** The intent class is proven
+for a deployment only when the `orderHash` slot is zero for EVERY loan id the
+routed enumeration returns; `intentLiveCommitCount` reading zero is recorded
+as corroboration and is never sufficient alone. A bare shell is proven on every
+class only when `nextLoanId` is zero (ids are assigned as `++nextLoanId`, so
+zero means no loan was ever created), `totalLoansEverCreated` is zero and
+`intentLiveCommitCount` is zero — the storage twin of the routed
+zero-loans-ever proof, and sound for the same reason: every custody class is
+loan-keyed. The result records the slots used, the provenance verdict, the
+calibration test's name and the block hash, under new proof kinds
+(`storage-read-calibrated`, `no-loans-ever-created-by-storage`). A storage read
+is a proof of absence or nothing; it is never a bound, and it never replaces
+a routed getter where one exists.
+
+**Alternatives considered and rejected.** An archive endpoint re-run:
+history can only refute, and this document already spent a chapter learning
+that. Routing the getter onto the archived Diamonds by a facet cut:
+operator-gated, and impossible where the deployer keys of a rehearsal are
+retired. An anvil ceremony: subsumed by the calibration test, which is the
+same act with a permanent record. Identifying each deployment's exact source
+commit from its bytecode metadata and compiling that layout: correct but
+heavy, and unnecessary once append-only is proven from history. Hand-counted
+offsets: a slot that is merely computed fails silently as zero, which is the
+one answer this census must never manufacture.
+
+**Sequence.** Probe and pinned JSON; provenance script with its CI wiring;
+calibration test; census integration with the two proof kinds; the
+guidance-file correction and the release-note fragment; partial runs per
+chain; then a full run that writes run 27 as the new canonical artifact.
+
