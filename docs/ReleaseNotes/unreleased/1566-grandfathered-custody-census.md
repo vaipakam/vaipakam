@@ -199,4 +199,15 @@ records naming the same contract now share a result only when they carry the
 same scoping metadata, and recovery of an abandoned lock whose owner never got
 written now works.
 
+The round after that tightened the same places once more. An address with no
+code is now treated as empty only when the chain shows it held code at the
+recorded deployment block — otherwise the record may simply name the wrong
+address, and the real retired contract would go uncounted. Changing which token
+a record is scoped by is now an acknowledged, recorded change like changing its
+address, and those records survive every later report rather than one. The
+inventory is re-checked at the moment the report is written, so a redeploy that
+began and finished during a census cannot leave a verdict about a population
+that has since changed. And a writer that stalled long enough to be mistaken
+for dead can no longer wake up and write alongside the writer that took over.
+
 Refs #1566, #1349, #1956

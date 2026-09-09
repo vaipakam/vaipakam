@@ -140,12 +140,44 @@ export function withManifestLock(manifestPath, fn, opts = {}) {
 
   const started = Date.now();
   let waited = 0;
+  const claimFile = join(lockDir, 'claim');
   for (;;) {
+    let acquiredDir = false;
     try {
       mkdirSync(lockDir); // atomic: exactly one process succeeds
-      break;
+      acquiredDir = true;
     } catch (err) {
       if (err.code !== 'EEXIST') throw err;
+    }
+    if (acquiredDir) {
+      if (typeof opts._testAfterMkdir === 'function') opts._testAfterMkdir(lockDir); // test hook: interleave a breaker here
+      // Codex #2070 r17 P1 — publishing ownership is itself guarded. A process
+      // suspended for longer than `staleMs` between this mkdir and its owner
+      // write looks, to a breaker, like an ownerless stale lock; the breaker
+      // claims it and re-validates, and if the suspended process then wrote its
+      // owner and entered the critical section, two writers would be inside.
+      // So the owner is written with an EXCLUSIVE create — a breaker or a
+      // resumed rival that published first wins, and we go back to waiting —
+      // and it is published only if no `claim` exists: a claim means a breaker
+      // is about to remove this directory, so we withdraw our owner file (only
+      // ever our own file, never the directory) and wait. A claimant, for its
+      // part, removes the directory only if the owner it re-reads is still the
+      // one it observed, so the withdrawn owner can never be mistaken for it.
+      try {
+        writeFileSync(ownerFile, JSON.stringify({ pid: process.pid, at: new Date().toISOString() }), { flag: 'wx' });
+      } catch (err) {
+        if (err.code === 'EEXIST' || err.code === 'ENOENT') {
+          sleepSync(pollMs);
+          continue; // someone else published first, or the directory was claimed away
+        }
+        throw err;
+      }
+      if (existsSync(claimFile)) {
+        rmSync(ownerFile, { force: true });
+        sleepSync(pollMs);
+        continue;
+      }
+      break;
     }
     // Held. Every path below either breaks the lock or waits, and a wait must
     // be bounded — the timeout is checked HERE, before any of them, so no
@@ -245,7 +277,6 @@ export function withManifestLock(manifestPath, fn, opts = {}) {
   }
 
   try {
-    writeFileSync(ownerFile, JSON.stringify({ pid: process.pid, at: new Date().toISOString() }));
     return fn();
   } finally {
     rmSync(lockDir, { recursive: true, force: true });

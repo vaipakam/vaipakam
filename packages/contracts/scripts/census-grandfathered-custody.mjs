@@ -897,10 +897,36 @@ async function censusDeployment(dep) {
   }
   const code = await withReplicaRetry(atBlock, () => client.getCode({ address: diamond, blockNumber: atBlock }));
   const codeAbsent = !code || code === '0x';
-  // Only a KNOWN-post-deployment empty read is "no code"; otherwise it is an
-  // unexplained empty read and the deployment is indeterminate.
-  const noCode = codeAbsent && deployBlockKnown;
-  const codeAbsentUnexplained = codeAbsent && !deployBlockKnown;
+  // Codex #2070 r17 P1 — a known deploy height only orders the read after the
+  // deployment; it does not show that code was EVER at this address. An
+  // archived artifact recording a wrong address (the inventory already holds
+  // one naming a non-Diamond) would read empty and be certified proven, while
+  // the real retired Diamond went uncensused inside a coverage check that
+  // agreed. So an empty read is a proof only with CREATION EVIDENCE: code
+  // present at the recorded deployBlock. Unreadable there (a pruned endpoint)
+  // or absent there ⇒ indeterminate, with the reason recorded.
+  let codeAtDeployBlock = null; // true | false | 'unreadable' | null (not needed)
+  if (codeAbsent && deployBlockKnown) {
+    try {
+      const then = await withReplicaRetry(BigInt(addresses.deployBlock), () =>
+        client.getCode({ address: diamond, blockNumber: BigInt(addresses.deployBlock) }),
+      );
+      codeAtDeployBlock = Boolean(then && then !== '0x');
+    } catch (err) {
+      codeAtDeployBlock = 'unreadable';
+      process.stderr.write(`census: ${who} — code at deployBlock ${addresses.deployBlock} unreadable (${classifyRpcError(err)}); the empty read cannot be certified\n`);
+    }
+  }
+  // Only a KNOWN-post-deployment empty read WITH creation evidence is "no
+  // code"; every other empty read is unexplained and the deployment is
+  // indeterminate.
+  const noCode = codeAbsent && deployBlockKnown && codeAtDeployBlock === true;
+  const codeAbsentUnexplained = codeAbsent && !noCode;
+  const codeAbsentReason = !deployBlockKnown
+    ? 'the address has no code at the census block but the artifact records no deployBlock, so this cannot be distinguished from a read that predates the deployment — undetermined'
+    : codeAtDeployBlock === false
+      ? `the address has no code at the census block AND none at the recorded deployBlock ${addresses.deployBlock} — nothing shows a contract was ever deployed here, so the artifact may name a wrong address and the real deployment would be uncensused; undetermined until the artifact is verified`
+      : `the address has no code at the census block, and whether it held code at the recorded deployBlock ${addresses.deployBlock} could not be read from this endpoint — an empty read without creation evidence is not a proof; undetermined`;
   // (2) No CUSTODY SURFACE routed ⇒ no facet can have written a custody row.
   //     "The loupe is unrouted" is NOT sufficient on its own: a Diamond whose
   //     facets were cut without a loupe still answers its custody views, and
@@ -1053,10 +1079,10 @@ async function censusDeployment(dep) {
       atBlockHash: censusBlock.hash,
       blockTag: censusBlock.tag,
       rpcHost: rpcHostOf(rpc),
-      scanned: { loanIdsEnumerated: 0, totalLoansEverCreated: 'n/a', loanIdRange: 'none', enumerable: false, noCode: false, codeAbsentUnexplained: true, custodySurfaceUnrouted: false, notADiamond: false, loupeRouted: false, intentSurfaceRouted: false, intentProducerRouted: false, intentCorroboration: null, producersMayBeLive: true },
+      scanned: { loanIdsEnumerated: 0, totalLoansEverCreated: 'n/a', loanIdRange: 'none', enumerable: false, noCode: false, codeAbsentUnexplained: true, codeAtDeployBlock, custodySurfaceUnrouted: false, notADiamond: false, loupeRouted: false, intentSurfaceRouted: false, intentProducerRouted: false, intentCorroboration: null, producersMayBeLive: true },
       classes: Object.fromEntries(['vpfiHeldCustody', 'rebateRows', 'fallbackSnapshotCustody', 'liveIntentCommits'].map((k) => [k, {
         status: 'indeterminate',
-        indeterminateReason: 'the address has no code at the census block but the artifact records no deployBlock, so this cannot be distinguished from a read that predates the deployment — undetermined',
+        indeterminateReason: codeAbsentReason,
         count: 0, total: '0', rows: [],
       }])),
     };
@@ -1099,7 +1125,7 @@ async function censusDeployment(dep) {
       atBlockHash: censusBlock.hash,
       blockTag: censusBlock.tag,
       rpcHost: rpcHostOf(rpc),
-      scanned: { loanIdsEnumerated: 0, totalLoansEverCreated: 'n/a', loanIdRange: 'none', enumerable: false, noCode, custodySurfaceUnrouted, notADiamond, loupeRouted, intentSurfaceRouted: false, intentProducerRouted: false, intentCorroboration: null, producersMayBeLive: !noCode && !notADiamond && !custodySurfaceUnrouted },
+      scanned: { loanIdsEnumerated: 0, totalLoansEverCreated: 'n/a', loanIdRange: 'none', enumerable: false, noCode, codeAtDeployBlock, custodySurfaceUnrouted, notADiamond, loupeRouted, intentSurfaceRouted: false, intentProducerRouted: false, intentCorroboration: null, producersMayBeLive: !noCode && !notADiamond && !custodySurfaceUnrouted },
       classes: { vpfiHeldCustody: cls(), rebateRows: cls(), fallbackSnapshotCustody: cls({ nonVpfiRowsExcluded: [] }), liveIntentCommits: cls({ nonVpfiRowsExcluded: [] }) },
     };
   }
@@ -1671,38 +1697,69 @@ async function main() {
       // committed evidence. So a snapshot may never DROP a deployment the
       // committed one covers.
       //
-      // Codex #2070 r16 P1 — and the identity INCLUDES the Diamond address:
-      // `slug|label|diamond`. An in-place correction of an archived artifact
-      // from X to Y under the same stamp must not silently retire X — and any
-      // custody X holds — from the evidence. Displacing an address is an
-      // audited act: `--acknowledge-displaced-diamond <addr>[,<addr>]` names
-      // the address being displaced, and the report records it under
-      // `displacedDiamonds` so the displaced address stays on record.
-      const identity = (slug, label, diamond) => `${slug}|${label}|${String(diamond ?? '').toLowerCase()}`;
-      const mineIds = new Set(deployments.map((d) => identity(d.slug, d.label, d.addresses.diamond)));
+      // Codex #2070 r16/r17 P1 — the identity is `slug|label|diamond|scope`,
+      // where scope is the EFFECTIVE VPFI token the result was scoped by
+      // (on-chain where the getter is routed, the artifact's otherwise): an
+      // in-place correction of an archived artifact from X to Y under the same
+      // stamp, or a change of the artifact token that re-scopes which rows
+      // count, must not silently retire the earlier identity — and any custody
+      // it holds — from the evidence. Changing an identity is an audited act:
+      // `--acknowledge-identity-change <slug|label>[,...]` names the deployment,
+      // and the report records the previous and new identity under
+      // `identityChanges`, CARRIED FORWARD from the committed artifact on every
+      // replacement so an acknowledged change stays on record for good (r17).
+      const scopeOf = (v) => (v ? String(v).toLowerCase() : 'none');
+      const identity = (r) => `${r.chainSlug}|${r.deployment}|${String(r.diamond ?? '').toLowerCase()}|${scopeOf(r.vpfiToken)}`;
+      const mineIds = new Set(results.map(identity));
       const acknowledged = new Set(
-        (arg('--acknowledge-displaced-diamond', '') || '').split(',').map((a) => a.trim().toLowerCase()).filter(Boolean),
+        (arg('--acknowledge-identity-change', '') || '').split(',').map((a) => a.trim()).filter(Boolean),
       );
-      const missing = (current.results ?? [])
-        .filter((r) => r?.chainSlug && r?.deployment && !mineIds.has(identity(r.chainSlug, r.deployment, r.diamond)))
-        .map((r) => ({ chainSlug: r.chainSlug, deployment: r.deployment, previousDiamond: r.diamond }));
-      const unacknowledged = missing.filter((m) => !acknowledged.has(String(m.previousDiamond ?? '').toLowerCase()));
+      const changed = (current.results ?? [])
+        .filter((r) => r?.chainSlug && r?.deployment && !mineIds.has(identity(r)))
+        .map((r) => ({ chainSlug: r.chainSlug, deployment: r.deployment, previous: { diamond: r.diamond ?? null, vpfiToken: r.vpfiToken ?? null } }));
+      const unacknowledged = changed.filter((m) => !acknowledged.has(`${m.chainSlug}|${m.deployment}`));
       if (unacknowledged.length) {
         return (
           `the committed census covers ${unacknowledged.length} deployment identit(y/ies) this run does not ` +
-          `(${unacknowledged.map((m) => `${m.chainSlug}|${m.deployment}|${m.previousDiamond}`).join(', ')}); a snapshot may never drop a ` +
-          `deployment the committed one covers, and a changed Diamond under the same label is a displacement — re-run against the ` +
-          `current inventory, or acknowledge a deliberate displacement with --acknowledge-displaced-diamond <address>`
+          `(${unacknowledged.map((m) => `${m.chainSlug}|${m.deployment}|${m.previous.diamond}|${scopeOf(m.previous.vpfiToken)}`).join(', ')}); a snapshot may never ` +
+          `drop a deployment the committed one covers, and a changed Diamond or scoping token under the same label is an identity change — ` +
+          `re-run against the current inventory, or acknowledge a deliberate change with --acknowledge-identity-change <slug|label>`
         );
       }
-      if (missing.length) {
-        report.displacedDiamonds = missing.map((m) => ({
-          ...m,
-          replacedBy: deployments.find((d) => d.slug === m.chainSlug && d.label === m.deployment)?.addresses.diamond ?? null,
-          acknowledgedBy: '--acknowledge-displaced-diamond',
-        }));
-        process.stderr.write(`census: DISPLACING ${missing.length} diamond(s) on explicit acknowledgement — recorded under displacedDiamonds\n`);
+      // Codex #2070 r17 P1 — the inventory this run scanned was a snapshot
+      // taken at its START. A --fresh that began after that snapshot and
+      // finished before this write leaves the manifest and live artifacts
+      // describing a population this run never scanned (a new Diamond with
+      // live producers, a retired one now archived). Re-take the inventory
+      // under the manifest lock NOW and refuse the write if it differs at all.
+      const inventoryKey = (d) => `${d.slug}|${d.label}|${String(d.addresses.diamond ?? '').toLowerCase()}|${scopeOf(d.addresses.vpfiToken ?? d.addresses.vpfiMirror)}`;
+      const scannedInv = new Set(everything.map(inventoryKey)); // the FULL snapshot taken at start — a --chain run scans a subset of it
+      const nowInv = new Set(withManifestLock(ARCHIVE_MANIFEST, deployedDiamondsUnderLock).map(inventoryKey));
+      const added = [...nowInv].filter((k) => !scannedInv.has(k));
+      const removed = [...scannedInv].filter((k) => !nowInv.has(k));
+      if (added.length || removed.length) {
+        return (
+          `the deployment inventory changed while this run was scanning (added: ${added.join(', ') || 'none'}; removed: ${removed.join(', ') || 'none'}); ` +
+          `this run's population is stale and its verdict would not describe the inventory as it stands — re-run`
+        );
       }
+      const carried = [...(current.identityChanges ?? []), ...((current.displacedDiamonds ?? []).map((d) => ({
+        chainSlug: d.chainSlug, deployment: d.deployment, previous: { diamond: d.previousDiamond ?? null, vpfiToken: null },
+        replacedBy: { diamond: d.replacedBy ?? null, vpfiToken: null }, acknowledgedBy: d.acknowledgedBy ?? 'legacy displacedDiamonds',
+      })))];
+      const fresh = changed.map((m) => {
+        const now = results.find((r) => r.chainSlug === m.chainSlug && r.deployment === m.deployment);
+        return { ...m, replacedBy: { diamond: now?.diamond ?? null, vpfiToken: now?.vpfiToken ?? null }, acknowledgedBy: '--acknowledge-identity-change', acknowledgedAt: new Date().toISOString() };
+      });
+      const seen = new Set();
+      const all = [...carried, ...fresh].filter((c) => {
+        const k = `${c.chainSlug}|${c.deployment}|${c.previous?.diamond ?? ''}|${scopeOf(c.previous?.vpfiToken)}`;
+        if (seen.has(k)) return false;
+        seen.add(k);
+        return true;
+      });
+      if (all.length) report.identityChanges = all;
+      if (fresh.length) process.stderr.write(`census: ${fresh.length} identity change(s) on explicit acknowledgement — recorded under identityChanges (${all.length} on record)\n`);
       return null;
     },
   });

@@ -5141,6 +5141,33 @@ reported a comfortable answer it had not earned:
   recovered, because creating the claim file bumped the directory's age; the
   revalidation is anchored on the directory's inode captured before the claim
   instead of a re-measured age.
+
+  **Round 17 closed five more, all in the same two guards and the lock.** The
+  no-code bound needed CREATION EVIDENCE: a known deploy height only orders the
+  read after the deployment, it does not show code was ever at the address, so
+  an archived artifact recording a wrong address would read empty and be
+  certified while the real retired Diamond went uncensused — an empty read now
+  proves emptiness only with code present at the recorded deploy block, and is
+  indeterminate when that is absent or unreadable, with the reason recorded.
+  The replacement identity now includes the EFFECTIVE scoping token
+  (`slug|label|diamond|scope`), because with the token getter unrouted a
+  changed artifact token re-scopes which rows count; the acknowledgement names
+  the deployment (`--acknowledge-identity-change <slug|label>`), the report
+  records the previous and new identity under `identityChanges`, and those
+  records are CARRIED FORWARD from the committed artifact on every replacement
+  so an acknowledged change stays on record for good (the previous form,
+  `displacedDiamonds`, dropped after one subsequent run and is migrated into
+  the new list). The inventory this run scanned was a snapshot at its start; it
+  is now re-taken under the manifest lock at publication and the write refused
+  if the population differs at all, so a `--fresh` that began and finished
+  during the run cannot leave a verdict describing a population that no longer
+  exists. And the lock's owner is now published with an exclusive create, and
+  only when no breaker's claim exists — a process suspended past the stale
+  window between creating the directory and writing its owner used to be able
+  to resume and enter alongside the breaker that had just claimed and
+  revalidated the directory; now the first to publish wins and the other goes
+  back to waiting, and a claim seen after publishing makes the acquirer
+  withdraw its own owner file (never the directory) and wait. Seventeen tests.
   Hand-computed storage slots were never an option: they fail SILENTLY as
   zero, manufacturing the exact "empty" result the census exists to
   establish. The event reconstruction is retained behind `--corroborate` as

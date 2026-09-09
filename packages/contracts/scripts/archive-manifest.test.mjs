@@ -237,3 +237,37 @@ test('a producer form of the text is evaluated AFTER the comparison, so what it 
   writeSnapshotGuarded(p, () => JSON.stringify({ v: 2, learned }), { regressedBy: (cur) => { learned = `saw v${cur.v}`; return null; } });
   assert.deepEqual(JSON.parse(readFileSync(p, 'utf8')), { v: 2, learned: 'saw v1' });
 });
+
+test('an acquirer that finds a breaker CLAIM after its mkdir withdraws its owner and never enters (r17)', () => {
+  const { manifest } = fixture();
+  const lockDir = `${manifest}.lock`;
+  let entered = 0;
+  assert.throws(
+    () =>
+      withManifestLock(manifest, () => { entered += 1; }, {
+        timeoutMs: 400, pollMs: 20, staleMs: 60_000,
+        _testAfterMkdir: (dir) => { writeFileSync(join(dir, 'claim'), ''); }, // a breaker claimed it while we were suspended
+      }),
+    /could not lock/,
+  );
+  assert.equal(entered, 0, 'the critical section was never entered');
+  assert.equal(existsSync(join(lockDir, 'owner.json')), false, 'the withdrawn owner file is gone');
+  assert.equal(existsSync(join(lockDir, 'claim')), true, 'the claim is left to its claimant');
+});
+
+test('an acquirer whose owner was published first by a rival yields to it (r17)', () => {
+  const { manifest } = fixture();
+  const lockDir = `${manifest}.lock`;
+  let entered = 0;
+  const rival = { pid: process.pid, at: 'rival' };
+  assert.throws(
+    () =>
+      withManifestLock(manifest, () => { entered += 1; }, {
+        timeoutMs: 400, pollMs: 20, staleMs: 60_000,
+        _testAfterMkdir: (dir) => { writeFileSync(join(dir, 'owner.json'), JSON.stringify(rival)); }, // a resumed rival published into our directory first
+      }),
+    /could not lock/,
+  );
+  assert.equal(entered, 0);
+  assert.deepEqual(JSON.parse(readFileSync(join(lockDir, 'owner.json'), 'utf8')), rival, "the rival's owner file is untouched");
+});
