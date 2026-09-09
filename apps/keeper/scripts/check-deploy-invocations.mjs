@@ -3604,9 +3604,27 @@ function inDelimitedExpression(idx, text, kind, L, R) {
 // Python's builtin is bare; a member is admitted only after a filesystem
 // module or a constructed path, which are syntax rather than the receiver
 // TYPE this reader declines to infer.
-const FS_OPEN =
+// A CALL OPENS WITH `(`, OR WITH `?.(`. Optional-call syntax executes when
+// the member exists, and this reader has now been told so three times in three
+// places — the owner walk (r26), the constructed-function invocation (r35), and
+// the write calls themselves (r39). Spelled once here so the fourth place
+// cannot be missed the same way.
+const CALL = String.raw`\s*(?:\?\.)?\s*\(`;
+
+// …and the BARE spelling needs a QUALIFIER IN JAVASCRIPT, where `open(url,
+// "w")` is the browser's window opener or an ordinary local function — a
+// helper doing exactly that was reported as a file write (r39).
+//
+// Excluded THERE rather than admitted only for Python, which is the narrower
+// correction and the one the evidence supports: `open` is a builtin in Python,
+// and in shell text it is neither a builtin nor valid, so a bare one there is
+// already only reachable through a payload. Gating on Python alone also broke
+// two fixtures older than this loop, which is what surfaced the distinction.
+const fsOpen = (lang) =>
   String.raw`(?<![A-Za-z0-9_$.])(?:(?:io|codecs|pathlib|gzip|bz2|lzma)\s*\.\s*` +
-  String.raw`|Path\s*\([^()]*\)\s*\.\s*)?open`;
+  String.raw`|Path\s*\([^()]*\)\s*\.\s*)` +
+  (lang === 'js' ? '' : '?') +
+  String.raw`open`;
 
 // The direct alternatives that are SHELL SPELLINGS: a redirection, and a copy
 // command in command position. Used to drop them when a match in code position
@@ -3719,7 +3737,7 @@ function spawnCallOwner(start, text, kind) {
   // than `Function(…)()` — bound to a name and called on the next line — is
   // deliberately NOT followed: that is the binding resolution this reader
   // declines everywhere, and the miss is the same nameable one.
-  if (!/^(?:eval|Function|execSync|execFileSync|execFile|spawnSync|spawn|system|popen|check_output|check_call)$/.test(owner)) {
+  if (!/^(?:eval|Function|execSync|execFileSync|execFile|spawnSync|spawn|system|popen|Popen|check_output|check_call)$/.test(owner)) {
     // The DISTINCTIVE names above are admitted on the name alone. `exec`,
     // `run` and `call` are not distinctive — `RegExp.prototype.exec` is one
     // of them — and matching on the final identifier read
@@ -4051,7 +4069,7 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
     // Distinctive enough to admit on the name, and absent from this list
     // until r38.
     String.raw`|truncate(?:Sync)?` +
-    String.raw`|outputFile(?:Sync)?|write_text|write_bytes)\s*\([^)]*` + esc;
+    String.raw`|outputFile(?:Sync)?|write_text|write_bytes)` + CALL + String.raw`[^)]*` + esc;
   // …and it must be a FILESYSTEM open. `webbrowser.open("configs/custom.jsonc",
   // "w")` opens a browser, and this alternative admitted any receiver — the
   // same gap r30 closed on the other scan, left open on this one (r32). The
@@ -4059,7 +4077,7 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
   // receiver needs the receiver to be a constructed path, which is syntax
   // rather than the type this reader declines to infer.
   const OPEN_WRITE =
-    FS_OPEN + String.raw`\s*\([^)]*` +
+    fsOpen(lang) + String.raw`\s*\([^)]*` +
     esc + String.raw`[^)]*` + Q + String.raw`[rbt]*[wax+]`;
   const RECEIVER_WRITE =
     Q + String.raw`[^"'\`]*` + esc + Q + String.raw`\s*\)?\s*\.\s*(?:write_text|write_bytes)\s*\(`;
@@ -4102,9 +4120,9 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
     // the third pattern in this file to make the same mistake after r26 and
     // r31).
     String.raw`(?:^|[\s;&|(])(?:cp|mv|install|rsync)[^\S\n][^\n]*?` + esc +
-    String.raw`|(?:copyFile|rename|cpSync|copyFileSync|renameSync)\s*\([^)]*` + esc +
+    String.raw`|(?:copyFile|rename|cpSync|copyFileSync|renameSync)` + CALL + String.raw`[^)]*` + esc +
     String.raw`|(?<![A-Za-z0-9_$.])(?:shutil|fs|fse|fsExtra|fsp)` +
-    String.raw`(?:\s*\.\s*promises)?\s*\.\s*(?:copy|move)\s*\([^)]*` + esc;
+    String.raw`(?:\s*\.\s*promises)?\s*\.\s*(?:copy|move)` + CALL + String.raw`[^)]*` + esc;
   // …AND THE WHOLE SCAN IS CACHED PER (file, config, language). Everything from
   // here to the sort reads only those three, and a file with many explicitly
   // selected deploys ran it once per deploy: caching the classifier alone took
@@ -4225,7 +4243,7 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
         // same ambiguity (`function cp(source, destination)`), and leaving it
         // in the distinctive branch was the r20 refactor left half-done (r21).
         // `cpSync` stays — it is an API name, not a plausible declaration.
-        String.raw`|copyFile(?:Sync)?|cpSync|rename(?:Sync)?)\s*\(` +
+        String.raw`|copyFile(?:Sync)?|cpSync|rename(?:Sync)?)` + CALL +
         // A GENERIC COPY NAME NEEDS A FILESYSTEM QUALIFIER, or none at all.
         // The lookbehind above admits member access on purpose — it is what
         // lets `require("fs").writeFileSync(…)` and `fs.promises.cp(…)` match
@@ -4258,19 +4276,19 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
         // own member — which is how `fs.promises.cp` is spelled.
         String.raw`|(?<![A-Za-z0-9_$.])(?:shutil|fs|fse|fsExtra|fsp)` +
         String.raw`(?:\s*\.\s*promises)?\s*\.\s*` +
-        String.raw`(?:copy|move|copyfile|copy2|copytree|cp)\s*\(` +
+        String.raw`(?:copy|move|copyfile|copy2|copytree|cp)` + CALL +
         // `os.replace` renames ONTO an existing path — an overwrite by
         // definition — and no spelling of it was in the set (r13). Written
         // QUALIFIED, unlike its neighbours: the lookbehind above admits member
         // access, so a bare `replace` would take `text.replace('a', 'b')` in
         // any file that names a config. Same reasoning that bounded `copy`
         // and `move` in r10, applied to a far commoner method name.
-        String.raw`|(?<![A-Za-z0-9_$.])os\s*\.\s*replace\s*\(` +
+        String.raw`|(?<![A-Za-z0-9_$.])os\s*\.\s*replace` + CALL +
         // `Path("gen.jsonc").replace(cfg)` renames onto its target. Admitted
         // because the RECEIVER is a literal constructor call, which is syntax
         // rather than the type resolution this reader declines: a bare
         // `.replace(` on an unknown value stays out (r25).
-        String.raw`|(?<![A-Za-z0-9_$.])Path\s*\((?:[^()]|\([^()]*\))*\)\s*\.\s*replace\s*\(` +
+        String.raw`|(?<![A-Za-z0-9_$.])Path\s*\((?:[^()]|\([^()]*\))*\)\s*\.\s*replace` + CALL +
         // Shell write commands, optionally reached through a path — and only
         // in SHELL text. `const ratio = cp / total;` is ordinary JavaScript
         // and matched the whitespace-delimited `cp` branch (r11).
@@ -4453,7 +4471,7 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
         // reads a file named `w` and the mode defaults to reading, and
         // accepting an optional keyword there reported it as a write (r34).
         // A mode in first position is therefore admitted only as a KEYWORD.
-        String.raw`|` + FS_OPEN + String.raw`\s*\(\s*mode\s*=\s*(?<mk>["'\`])[rbt]*[wax+][rbt+]*\k<mk>` +
+        String.raw`|` + fsOpen(lang) + String.raw`\s*\(\s*mode\s*=\s*(?<mk>["'\`])[rbt]*[wax+][rbt+]*\k<mk>` +
         // …and on a CONSTRUCTED PATH the first argument IS the mode, so both
         // spellings are read there. Splitting these apart is what lets the
         // builtin tighten without losing `Path("…").open("w")`.
@@ -4477,7 +4495,7 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
         // the process-execution names do — the rule this file already applies
         // three times, which I did not apply when adding it.
         String.raw`|(?<![A-Za-z0-9_$.])(?:fs|fsp|fse|fsExtra|os)` +
-        String.raw`(?:\s*\.\s*promises)?\s*\.\s*truncate(?:Sync)?\s*\(` +
+        String.raw`(?:\s*\.\s*promises)?\s*\.\s*truncate(?:Sync)?` + CALL +
         String.raw`|(?<![A-Za-z0-9_$.])os\s*\.\s*open\s*\(` +
         String.raw`(?:[^(),]|\([^()]*\))*,\s*(?:flags\s*=\s*)?` +
         String.raw`(?:[^(),]|\([^()]*\))*O_(?:WRONLY|RDWR|TRUNC|CREAT|APPEND)` +
@@ -4486,13 +4504,13 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
         // Every open-mode branch requires the literal to CLOSE. r11 fixed
         // only the method form, so `webbrowser.open("https://x", "welcome")`
         // still matched the prefix `"w` in the positional one (r12).
-        String.raw`|` + FS_OPEN + String.raw`\s*\(\s*(?:(?:[^()]|\([^()]*\))*,\s*)?mode\s*=\s*(?<ma>["'\`])[rbt]*[wax+][rbt+]*\k<ma>` +
+        String.raw`|` + fsOpen(lang) + String.raw`\s*\(\s*(?:(?:[^()]|\([^()]*\))*,\s*)?mode\s*=\s*(?<ma>["'\`])[rbt]*[wax+][rbt+]*\k<ma>` +
         // `open(Path(cfg), "w")` wraps the path, and stopping at the first
         // `)` never reached the positional mode (r10).
         // …and the POSITIONAL form needs an `open` that is Python's builtin or a
         // filesystem one. Any member method whose second argument looks like a
         // mode matched — `browser.open(url, "w")` opens a window named `w` (r23).
-        String.raw`|` + FS_OPEN + String.raw`\s*\((?:[^()]|\([^()]*\))*,\s*(?<mo>["'\`])[rbt]*[wax+][rbt+]*\k<mo>`,
+        String.raw`|` + fsOpen(lang) + String.raw`\s*\((?:[^()]|\([^()]*\))*,\s*(?<mo>["'\`])[rbt]*[wax+][rbt+]*\k<mo>`,
       'gm',
     );
     // NO ORDERING BETWEEN THE NAME AND THE WRITE. Requiring the write to come

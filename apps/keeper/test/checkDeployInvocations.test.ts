@@ -11657,4 +11657,57 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     );
     expect(r.ok).toBe(false);
   });
+
+  // ---- Codex #2066 r39 ----
+
+  it('an optional call still writes (#2066 r39)', () => {
+    // Third place this reader has been told that `?.(` executes — the owner
+    // walk in r26, the constructed-function invocation in r35, the write
+    // calls themselves here. Spelled once now, so a fourth cannot be missed.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'ua.mjs',
+      'const cfg="configs/custom.jsonc";\nfs.writeFileSync?.(cfg, "{}");\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a bare open in JavaScript is not a file open (#2066 r39)', () => {
+    // `open(url, "w")` is the browser's window opener. Excluded in JavaScript
+    // specifically rather than admitted only for Python — the narrower
+    // correction, and the one two fixtures older than this loop required.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'uc.mjs',
+      'const cfg="configs/custom.jsonc";\nopen("https://example.com", "w");\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a qualified open in JavaScript is still a write (#2066 r39 bounds)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'ue.mjs',
+      'const cfg="configs/custom.jsonc";\nio.open(cfg, "w");\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a Popen payload is executable (#2066 r39)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'uf.py',
+      'import subprocess\n' +
+        'subprocess.Popen(["python3","-c","open(\'configs/custom.jsonc\',\'w\').write(\'{}\')"]).wait()\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(false);
+  });
 });

@@ -175,6 +175,19 @@ withdrawn in the same sitting: a list of plausible variable names is precisely
 the open-ended predicate this work keeps removing. Where the path is
 constructed in place the shape is syntax rather than type, and is still read.
 
+A call may be written with the optional-call operator, and that executes when
+the member exists. The checker had been told so three times in three different
+places before the rule was written down once and shared: the walk that finds an
+owning call, the test for whether a constructed function is invoked, and the
+write calls themselves. It is one fragment now, so a fourth place cannot repeat
+it.
+
+The bare spelling of the call that opens a file is a builtin in one language
+and the browser's window opener in another, where a helper doing exactly that
+was reported as a file write. It is excluded there specifically rather than
+admitted only for the language that has the builtin — the narrower correction,
+and the one two fixtures older than this work turned out to require.
+
 The set of writes gained four more spellings, each a real one the checker had
 been walking past: a descriptor opened for reading AND writing, which does not
 begin with the redirection character the pattern looked for; a command reached
