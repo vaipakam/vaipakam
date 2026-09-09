@@ -3836,6 +3836,13 @@ function isInertAssignment(idx, text, kind) {
   // through the classifier, so a paren inside a quoted element does not close
   // it. A pattern that simply forbade parentheses in between reported
   // `EXAMPLES=("f(x)" "…")`, which stores both words (r31 self-review).
+  //
+  // NO FIXTURE REACHES THE CLOSED CASE, and that is stated rather than
+  // implied: every spelling tried puts a newline or a `;` after the closing
+  // paren, which ends the backward walk before it gets here. The balance is
+  // kept because its answer when it does fire is "not inert", which reports —
+  // the direction this reader prefers — but it is NOT covered, and a mutation
+  // that disables it fails nothing.
   if (inArrayInitializer) {
     let depth = 0;
     for (let i = openParen; i < s; i += 1) {
