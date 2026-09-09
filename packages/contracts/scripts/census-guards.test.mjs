@@ -98,6 +98,15 @@ test('revertErrorLikeViem: a revert the ABI cannot decode still carries its sign
   const revertedBlock = { code: -32602, message: 'cannot serve a reverted block', details: 'cannot serve a reverted block', data: '0xa9ad62f8' };
   assert.equal(isExecutionRevert(revertedBlock), false);
   assert.equal(revertErrorLikeViem(revertedBlock, abi, 'x'), null);
+  // viem's other revert form (#2088 r4 P2): -32603 "Internal error" WITH revert data is a revert — the fallback signature comes through
+  const internalWithData = { code: -32603, message: 'Internal error', details: 'Internal error', data: '0xa9ad62f8' };
+  assert.equal(isExecutionRevert(internalWithData), true);
+  const shaped = revertErrorLikeViem(internalWithData, abi, 'facetAddresses');
+  assert.equal(shaped?.signature, '0xa9ad62f8');
+  assert.equal(shaped?.data, '0xa9ad62f8');
+  // … but an internal error WITHOUT data is a provider failure
+  assert.equal(isExecutionRevert({ code: -32603, message: 'Internal error', details: 'Internal error' }), false);
+  assert.equal(isExecutionRevert({ cause: { code: -32603, data: '0xa9ad62f8' } }), true, 'the code and data may sit on the cause');
 });
 
 test('isFunctionDoesNotExistRevert: only the EXACT four-byte fallback payload proves a selector unrouted on a Diamond (#2088 r2)', () => {

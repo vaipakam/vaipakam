@@ -233,24 +233,32 @@ export function isFunctionDoesNotExistRevert(err) {
 }
 /**
  * viem's own gate, and no wider: JSON-RPC code 3 (`ExecutionRevertedError.code`,
- * EIP-1474 "execution error") or its node message
- * `/execution reverted|gas required exceeds allowance/`. A bare "revert" in a
- * provider's text — a -32602 that cannot serve a "reverted" block, say — is
- * NOT an execution revert and must surface as the provider failure it is,
- * whatever hex `data` rides along (#2088 r1/r3 P2).
+ * EIP-1474 "execution error"), its node message
+ * `/execution reverted|gas required exceeds allowance/`, or — the form
+ * viem's getContractError also accepts (#2088 r4 P2) — an INTERNAL error
+ * (-32603, `InternalRpcError.code`) that carries revert DATA: some nodes
+ * report an eth_call revert that way with only "Internal error" as text. A
+ * bare "revert" in a provider's text — a -32602 that cannot serve a
+ * "reverted" block, say — is NOT an execution revert and must surface as the
+ * provider failure it is, whatever hex `data` rides along (r1/r3 P2); and an
+ * internal error WITHOUT data is a provider failure too.
  */
 const EXECUTION_REVERT_NODE_MESSAGE = /execution reverted|gas required exceeds allowance/i;
+const INTERNAL_RPC_ERROR_CODE = -32603;
+export function revertDataOf(err) {
+  const pick = (v) => (typeof v === 'string' && /^0x[0-9a-f]{8,}$/i.test(v) ? v.toLowerCase() : null);
+  return pick(err?.data) ?? pick(err?.cause?.data) ?? pick(err?.data?.data);
+}
 export function isExecutionRevert(err) {
   const codes = [err?.code, err?.cause?.code, err?.cause?.cause?.code];
   if (codes.some((c) => c === 3)) return true;
+  if (codes.some((c) => c === INTERNAL_RPC_ERROR_CODE) && revertDataOf(err) !== null) return true;
   return EXECUTION_REVERT_NODE_MESSAGE.test(`${err?.details ?? ''} ${err?.shortMessage ?? ''} ${err?.message ?? ''} ${err?.cause?.message ?? ''}`);
 }
 export function revertErrorLikeViem(err, abi, functionName) {
   if (!isExecutionRevert(err)) return null;
-  const pick = (v) => (typeof v === 'string' && /^0x[0-9a-f]{8,}$/i.test(v) ? v : null);
-  const data = pick(err?.data) ?? pick(err?.cause?.data) ?? pick(err?.data?.data);
-  if (!data) return null;
-  const lower = data.toLowerCase();
+  const lower = revertDataOf(err);
+  if (!lower) return null;
   let e;
   try {
     const d = decodeErrorResult({ abi, data: lower });
