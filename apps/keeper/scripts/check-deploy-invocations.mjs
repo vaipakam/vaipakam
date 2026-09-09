@@ -979,10 +979,17 @@ function logicalLines(text) {
   let line = 1;
   let pendingStart = true;
   let prev = '';
+  // Where a continuation was FOLDED, as offsets into `buf`. A backslash and
+  // its newline are two raw characters and become one space here, so an
+  // offset into the folded line runs short of the file by one per fold, and
+  // the two are compared against each other downstream (r27). Recorded rather
+  // than recomputed: the fold happens here and nowhere else knows it did.
+  let folds = [];
 
   const flush = () => {
-    if (buf.trim() !== '') out.push({ text: buf, line: startLine });
+    if (buf.trim() !== '') out.push({ text: buf, line: startLine, folds });
     buf = '';
+    folds = [];
     pendingStart = true;
   };
 
@@ -1006,6 +1013,7 @@ function logicalLines(text) {
       }
       if (buf.endsWith('\\')) {
         buf = `${buf.slice(0, -1)} `; // a real continuation
+        folds.push(buf.length - 1);
         prev = ' ';
         continue;
       }
@@ -3544,6 +3552,23 @@ function inTestExpression(idx, text, kind) {
   return !/\$\(|`/.test(text.slice(open, idx));
 }
 
+// The evaluate-option tests, by which letter the interpreter runs source with.
+// Built once: `isCommandPayload` is called per write match, and compiling a
+// pattern per call to interpolate one character is the sort of cost this file
+// has already paid for twice.
+const EVAL_C = {
+  grouped: /(['"`])(?:-{1,2}(?:eval|command)|-[a-zA-Z]*c[a-zA-Z]*)\1\s*,\s*$/,
+  attached: /-{1,2}(?:eval|command|c)=/,
+};
+const EVAL_E = {
+  grouped: /(['"`])(?:-{1,2}(?:eval|command)|-[a-zA-Z]*e[a-zA-Z]*)\1\s*,\s*$/,
+  attached: /-{1,2}(?:eval|command|e)=/,
+};
+const EVAL_CE = {
+  grouped: /(['"`])(?:-{1,2}(?:eval|command)|-[a-zA-Z]*[ce][a-zA-Z]*)\1\s*,\s*$/,
+  attached: /-{1,2}(?:eval|command|e|c)=/,
+};
+
 /**
  * Is the string literal containing `idx` handed to something that RUNS it?
  *
@@ -3592,12 +3617,26 @@ function isCommandPayload(idx, text, kind) {
   }
   let e = q;
   while (e >= 0 && /[A-Za-z0-9_$]/.test(text[e])) e -= 1;
-  if (
-    !/^(?:eval|execSync|exec|execFileSync|execFile|spawnSync|spawn|system|popen|run|call|check_output|check_call)$/.test(
-      text.slice(e + 1, q + 1),
-    )
-  )
-    return false;
+  const owner = text.slice(e + 1, q + 1);
+  if (!/^(?:eval|execSync|execFileSync|execFile|spawnSync|spawn|system|popen|check_output|check_call)$/.test(owner)) {
+    // The DISTINCTIVE names above are admitted on the name alone. `exec`,
+    // `run` and `call` are not distinctive — `RegExp.prototype.exec` is one
+    // of them — and matching on the final identifier read
+    // `/fs\.copy/.exec("fs.copy(a, b)")` as a child process, reporting a
+    // rewrite that cannot happen (r27).
+    //
+    // Same rule the generic COPY verbs take (r22): a generic name is admitted
+    // UNQUALIFIED — `const { exec } = require('child_process')` is ordinary —
+    // or qualified by a process module, and by nothing else. A receiver that
+    // is not a rooted module identifier (a regex literal, a string, a call
+    // result) is not one.
+    if (!/^(?:exec|run|call)$/.test(owner)) return false;
+    if (text[e] === '.') {
+      const recv = text.slice(Math.max(0, e - 40), e + 1);
+      if (!/(?:^|[^\w$.])(?:child_process|childProcess|subprocess|cp|proc)\s*\.$/.test(recv))
+        return false;
+    }
+  }
   // …and for the ARGV forms, only the argument an interpreter EVALUATES.
   // `spawnSync("echo", ["fs.copy(a, b)"])` prints its argument; marking every
   // array element as code reported a copy that never happens (r22). The
@@ -3626,10 +3665,24 @@ function isCommandPayload(idx, text, kind) {
   // A GROUPED short option counts when it contains the evaluate letter:
   // `bash -ec '…'` runs the payload, and requiring the group to END in `e`
   // missed it (r26).
-  if (/(['"`])(?:-{1,2}(?:eval|command)|-[a-zA-Z]*[ce][a-zA-Z]*)\1\s*,\s*$/.test(args)) return true;
+  //
+  // …and WHICH letter evaluates depends on the interpreter. `bash -c` runs
+  // its argument; `node -c` is `--check`, which parses and does NOT run, so
+  // accepting both letters everywhere reported a write that cannot happen
+  // (r27). This is a mapping over the closed list just above, not a new
+  // open-ended one: an unrecognised program — `env`, which wraps something
+  // this reader cannot see — keeps both letters, the reporting direction.
+  const letters = !prog
+    ? EVAL_CE
+    : /(?:^|\/)(?:sh|bash|zsh|dash|ksh|python[\d.]*)$/.test(prog[2])
+      ? EVAL_C
+      : /(?:^|\/)(?:node|deno|bun|perl|ruby)$/.test(prog[2])
+        ? EVAL_E
+        : EVAL_CE;
+  if (letters.grouped.test(args)) return true;
   // …or the flag and its source share ONE literal: `["--eval=…"]` (r24). The
   // payload is then the literal this offset already sits in.
-  return /-{1,2}(?:eval|command|e|c)=/.test(text.slice(start, idx));
+  return letters.attached.test(text.slice(start, idx));
 }
 
 function isInertAssignment(idx, text, kind) {
@@ -3730,9 +3783,17 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
   // write CALLS saw none (#2036 r28). Matched as "a copy/move command
   // mentioning this basename", not by parsing the destination: the conservative
   // direction here is to treat the config as unreadable, which reports.
+  // The GENERIC call names carry the same filesystem qualifier the named scan
+  // requires of them (r22). They did not, so this matcher reported a local
+  // Python `copy("configs/custom.jsonc")` that returns an in-memory value and
+  // touches no file — and the release note's guarantee that declaring `copy`
+  // or `move` is not a write was, on this path, untrue (r27). A shell `cp` in
+  // command position keeps its own qualifier, which is the command position.
   const COPY =
     String.raw`(?:^|[\s;&|(])(?:cp|mv|install|rsync)\s[^\n]*?` + esc +
-    String.raw`|(?:copyFile|rename|cpSync|copyFileSync|renameSync|copy|move)\s*\([^)]*` + esc;
+    String.raw`|(?:copyFile|rename|cpSync|copyFileSync|renameSync)\s*\([^)]*` + esc +
+    String.raw`|(?<![A-Za-z0-9_$.])(?:shutil|fs|fse|fsExtra|fsp)` +
+    String.raw`(?:\s*\.\s*promises)?\s*\.\s*(?:copy|move)\s*\([^)]*` + esc;
   // …AND THE WHOLE SCAN IS CACHED PER (file, config, language). Everything from
   // here to the sort reads only those three, and a file with many explicitly
   // selected deploys ran it once per deploy: caching the classifier alone took
@@ -8431,7 +8492,22 @@ for (const file of walk(REPO_ROOT)) {
   // `shopt -s expand_aliases` has run, and expansion happens when the CALL is
   // parsed — so the gate is read at the call site, not at the definition.
   let aliasesOn = false;
-  folded.forEach(({ text: line, line: lineNo, block, physical, lang: entryLang, cwd: blockCwd, env: blockEnv }) => {
+  folded.forEach(({ text: line, line: lineNo, block, physical, lang: entryLang, cwd: blockCwd, env: blockEnv, folds }) => {
+    // A LOGICAL OFFSET IS NOT A RAW ONE. `logicalLines` collapses each
+    // backslash-newline into one space, so an offset into the folded line
+    // runs short of the file by one character per fold before it — while the
+    // write scan indexes the raw file. Compared directly, a write physically
+    // BEFORE a continued deploy read as after it and the rewrite was blessed
+    // (r27). Entries from the readers that do not fold carry no `folds` and
+    // are unaffected.
+    const rawAt = (within) =>
+      lineStartOffset(
+        text,
+        lineNo,
+        typeof within === 'number' && folds?.length
+          ? within + folds.filter((f) => f < within).length
+          : within,
+      );
     // SHELL-NESS IS PER LINE, not per file. A fenced `bash` block in Markdown
     // and a workflow `run:` body are extracted and processed as shell although
     // the containing file is `.md` or `.yml`, so a file-wide flag switched the
@@ -8546,7 +8622,7 @@ for (const file of walk(REPO_ROOT)) {
       const rewriteCtx = (start) =>
         valueScoped
           ? { text: line, at: start }
-          : { text, at: lineStartOffset(text, lineNo, start) };
+          : { text, at: rawAt(start) };
       // A markdown CODE SPAN is a command boundary, and prose has no shell
       // separator between two of them. `Use `wrangler deploy --keep-vars` for
       // the keeper and `wrangler deploy` for the agent.` is ONE segment to
@@ -9330,7 +9406,7 @@ for (const file of walk(REPO_ROOT)) {
           true,
           shellVars,
           text,
-          lineStartOffset(text, lineNo, part.start),
+          rawAt(part.start),
           lineLang,
         );
         // An explicit `cd` OUTRANKS where the wrapper file happens to live
@@ -9399,7 +9475,7 @@ for (const file of walk(REPO_ROOT)) {
         const fileTextForSafety = text;
         // The LINE this command is on, so a rewrite is compared against THIS
         // deploy rather than against any later selection of the same config.
-        const atInFile = lineStartOffset(text, lineNo, part.start);
+        const atInFile = rawAt(part.start);
         const safeEverywhere = (text) =>
           cmdCwds.every((cwd) =>
             commandIsSafe(text, safeHint, cwd, fileTextForSafety, atInFile, lineLang),

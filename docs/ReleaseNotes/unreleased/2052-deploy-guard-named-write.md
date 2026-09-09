@@ -65,6 +65,36 @@ declaring a function named for one of the distinctive APIs still reads as one.
 That is a deliberate, nameable gap rather than an open-ended list of shapes to
 keep recognising.
 
+The same rule now covers every generic name the checker reads, because it was
+being applied in one place and not the others. The names for running a command
+include some that are distinctive and some that are not — one of the latter is
+also the name of the method that matches a regular expression against a string,
+so a pattern being matched was read as a command being run, and the checker
+reported a rewrite that could not happen. A generic name is now admitted on its
+own or after a module that runs processes, and after nothing else. The reader
+that scans for the configuration by name had already required this of the copy
+verbs and the one that scans directly had not, which is how the guarantee above
+came to be written down while being untrue on one of the two paths.
+
+Which option makes an interpreter run its argument also depends on the
+interpreter: a shell runs what follows its `-c`, while the same letter asks
+Node only to check that the source parses. Both letters were being accepted
+everywhere, so a syntax check read as an executed write. The set of
+interpreters this reader recognises was already written down, so this is a
+mapping over a closed list; an interpreter it does not recognise keeps both
+letters, which is the reporting direction.
+
+One fix in this change is about neither writes nor languages. A shell command
+may be continued across several lines with a trailing backslash, and the
+reader that splits a file into commands folds each of those into a single
+space — so a position within a folded command runs short of the same position
+in the file, by one character for every continuation before it. The scan for
+writes indexes the file. Comparing the two directly, a write that physically
+preceded a deployment could measure as following it, and the rewrite was
+blessed; enough continuations and the ordering simply inverted. The folds are
+now recorded where they happen and the comparison is made in the file's own
+coordinates.
+
 A here-document body was treated as inert input for the same reason, and was
 withdrawn on stronger evidence. Recognising where one ends means reading a
 delimiter word that a shell accepts in more spellings than this reader could

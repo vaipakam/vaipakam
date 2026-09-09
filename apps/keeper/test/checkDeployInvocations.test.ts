@@ -10371,4 +10371,138 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     );
     expect(r.ok).toBe(false);
   });
+
+  // ---- Codex #2066 r27 ----
+
+  it('node -c checks rather than evaluates (#2066 r27)', () => {
+    // The letter is per-interpreter: `bash -c` runs its argument, `node -c`
+    // is `--check` and parses without executing. Accepting both everywhere
+    // reported a write that cannot happen.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'cw.mjs',
+      'spawnSync("node", ["-c", "writeFileSync(\'configs/custom.jsonc\', \'{}\')"]);\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('bash -c still evaluates (#2066 r27 bounds)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'cx.mjs',
+      'spawnSync("bash", ["-c", "printf new > configs/custom.jsonc"]);\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('node -e still evaluates (#2066 r27 bounds)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'cy.mjs',
+      'spawnSync("node", ["-e", "writeFileSync(\'configs/custom.jsonc\', \'{}\')"]);\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a regex exec is not a child process (#2066 r27)', () => {
+    // `RegExp.prototype.exec` shares a name with the spawn API, and matching
+    // on the final identifier alone reclassified its inert argument as
+    // executed source.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'cz.mjs',
+      'const m = /writeFileSync/.exec("writeFileSync(\'configs/custom.jsonc\', \'{}\')");\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a qualified exec is still a child process (#2066 r27 bounds)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'da.mjs',
+      'child_process.exec("printf new > configs/custom.jsonc");\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('an unqualified exec is still a child process (#2066 r27 bounds)', () => {
+    // A destructured `const { exec } = require("child_process")` is ordinary,
+    // so a bare generic name stays admitted; only a receiver that is not a
+    // process module disqualifies it.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'db.mjs',
+      'exec("printf new > configs/custom.jsonc");\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a local copy function is not a filesystem copy (#2066 r27)', () => {
+    // The direct matcher accepted the generic call names unqualified, while
+    // the named scan required a module and the release note promised as much.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'dc.py',
+      'import subprocess\n' +
+        'def copy(p):\n    return dict(path=p)\n' +
+        'value = copy("configs/custom.jsonc")\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a qualified copy is still a write (#2066 r27 bounds)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'dd.py',
+      'import subprocess, shutil\n' +
+        'shutil.copy("generated.jsonc", "configs/custom.jsonc")\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a continued line compares in file coordinates (#2066 r27)', () => {
+    // `logicalLines` folds each backslash-newline into ONE space, so an
+    // offset into the folded line runs short of the file by one per fold —
+    // while the write scan indexes the raw file. Enough continuations and a
+    // write physically BEFORE the deploy compared as after it, which blessed
+    // the rewrite. A false green produced purely by two coordinate spaces.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'de.sh',
+      'C=configs/custom.jsonc\n' +
+        'true \\\n \\\n \\\n \\\n \\\n \\\n \\\n' +
+        ';>"$C";wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a write after the deploy is still after it (#2066 r27 bounds)', () => {
+    // The correction must not push every write in front of the deploy.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'df.sh',
+      'C=configs/custom.jsonc\n' +
+        'true \\\n \\\n \\\n \\\n \\\n \\\n \\\n' +
+        ';wrangler deploy --config configs/custom.jsonc;>"$C"\n',
+    );
+    expect(r.ok).toBe(true);
+  });
 });
