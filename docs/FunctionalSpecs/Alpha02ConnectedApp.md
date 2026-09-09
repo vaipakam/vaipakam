@@ -629,6 +629,14 @@ Thin-market honesty rules apply.
   indefinitely.
 - Where the browser refuses to keep that record, the surface says so and names
   the consequence: this page still withholds the action, a reload will not.
+- When the protocol establishes that a close-out did NOT execute, the surface
+  says which of the three things happened — the call was rejected, the wallet
+  cancelled it, or another transaction from that wallet took its place — rather
+  than returning silently to its ordinary state. All three leave the position
+  untouched and the action available again, so the surface offers it; what
+  differs is the cause, and the cause is what tells the lender whether to expect
+  the same result next time. A screen that looks untouched after a funds-moving
+  attempt makes the reader reconstruct the outcome for themselves.
 - Learning from another browser tab that a close-out has been disposed of does
   not, by itself, release this tab's withholding. The other tab knows about its
   own transaction and nothing about whether this tab's figures have caught up;

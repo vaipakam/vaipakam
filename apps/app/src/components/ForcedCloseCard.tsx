@@ -377,11 +377,21 @@ export function ForcedCloseCard({
    *  identity between renders. */
   const submittedHash = submitted?.hash ?? null;
 
-  /** The transaction whose post-success refresh has come back.
+  /** Every submission whose post-success refresh has come back.
    *
    *  ROUND 59 P2 — keyed by hash rather than a bare boolean so a flag set
-   *  for a previous close-out cannot release the hold on the next one. */
-  const [refreshedFor, setRefreshedFor] = useState<string | null>(null);
+   *  for a previous close-out cannot release the hold on the next one.
+   *
+   *  ROUND 63 P2 — and a SET rather than one slot. A single slot is not
+   *  merely imprecise across a chain switch, it is order-dependent: with
+   *  refreshes in flight for two submissions, a slower completion for the
+   *  superseded one overwrites the current one's and puts the hold back
+   *  on. The success effect will not retry, because `invalidatedFor`
+   *  already holds that hash and none of its dependencies changed, so a
+   *  live residual stays locked until a remount. Completions are facts
+   *  about their own transaction and never expire; keeping them all is
+   *  both cheaper to reason about and correct. */
+  const [refreshedFor, setRefreshedFor] = useState<Record<string, true>>({});
 
   /** Ticks, so the "we have lost track of this" posture below arrives on
    *  its own rather than waiting for something unrelated to re-render the
@@ -411,8 +421,8 @@ export function ForcedCloseCard({
     // ROUND 59 P2 — the COMPLETION of the refresh, not an ordering of
     // wall-clock stamps. Keyed by hash so a stale flag from a previous
     // submission cannot release the hold on this one.
-    readsRefreshedSinceDisposition: refreshedFor !== null &&
-      refreshedFor === submittedHash,
+    readsRefreshedSinceDisposition:
+      submittedHash !== null && refreshedFor[submittedHash] === true,
   });
 
   /** `holdingAfterSubmit`, readable from a long-lived event handler.
@@ -517,6 +527,9 @@ export function ForcedCloseCard({
   //  `react-hooks/set-state-in-effect` (rightly) rejects the state
   //  version — a setState here would schedule a second render for a
   //  bookkeeping flag nothing displays.
+  /** Submissions whose post-success refresh has been requested but not
+   *  yet observed to complete: hash -> per-query generation snapshot. */
+  const refreshTargets = useRef<Map<string, Map<string, number>>>(new Map());
   const invalidatedFor = useRef<string | null>(null);
   /** ROUND 60 P1 — the parent's callback held through a ref so its
    *  IDENTITY is not a dependency of the effect below.
@@ -551,27 +564,82 @@ export function ForcedCloseCard({
     // the hold on the current one, since the consumer compares the two.
     // Correctness here comes from what is written, not from whether the
     // writer is still current.
-    // ORDER IS LOAD-BEARING (round 62 P1). `onClosedOut` invalidates the
-    // SAME queries from the page, and TanStack's `refetchQueries`
-    // defaults to `cancelRefetch: true` — a second invalidation cancels
-    // the first refetch and RESOLVES its promise against the cached
-    // data. So with ours started first, our `.then` fired on a
-    // cancellation rather than on a completion: the hold released while
-    // the reads were still pre-close, restoring stale
-    // `ready-internal-match` copy that describes the next close-out as
-    // repayment in the lent asset when it will take the in-kind branch.
+    // ROUND 63 P1 — completion is OBSERVED, not awaited.
     //
-    // Calling the page's callback FIRST makes ours the last invalidation
-    // for this event, so the refetch ours awaits is the one that
-    // actually runs to completion. Do not "tidy" these two lines back
-    // into their old order: a promise that resolves on being cancelled
-    // is indistinguishable from one that resolves on success, which is
-    // why this needed a review round to find rather than a test.
+    // Round 62 fixed one competing invalidation by ordering these two
+    // calls; round 63 found a third invalidation site — the `write`
+    // continuation in `closeOut` — that no ordering here can cover.
+    // That is the honest end of the promise approach: `refetchQueries`
+    // defaults to `cancelRefetch: true`, a cancelled fetch RESOLVES
+    // against the reverted cache, and a promise that resolves on being
+    // cancelled cannot be told apart from one that resolves on success.
+    // Any future caller invalidating these queries would defeat it
+    // again, which makes correctness depend on code in other files not
+    // changing.
+    //
+    // So the completion signal is now a GENERATION check, which is what
+    // round 59 actually asked for and what I should have built then.
+    // Snapshot each readiness query's `dataUpdateCount +
+    // errorUpdateCount` before invalidating; the refresh is complete
+    // when every one of them has ADVANCED. Those counters increment
+    // only on a real settle — `query.js` reverts to `#revertState` on a
+    // cancellation without touching them — so a cancelled-and-restarted
+    // refetch counts once, when it finally lands, and no number of
+    // competing invalidations can fake it. It is also clock-free, which
+    // is what round 59 was about.
+    const cache = queryClient.getQueryCache();
+    refreshTargets.current.set(
+      submittedHash,
+      new Map(
+        cache
+          .findAll(READINESS_READS)
+          .map((q) => [
+            q.queryHash,
+            q.state.dataUpdateCount + q.state.errorUpdateCount,
+          ]),
+      ),
+    );
     onClosedOutRef.current();
-    void queryClient
-      .invalidateQueries(READINESS_READS)
-      .then(() => setRefreshedFor(submittedHash));
+    void queryClient.invalidateQueries(READINESS_READS);
   }, [disposition, submittedHash, queryClient]);
+
+  /** Watches the readiness queries for the generation advance the effect
+   *  above is waiting on (round 63 P1).
+   *
+   *  A cache subscription rather than a promise, for the reason written
+   *  there: only a refetch that actually SETTLES advances these
+   *  counters, so this cannot be satisfied by a cancellation, by a
+   *  competing invalidation, or by a clock. It is also inherently
+   *  per-submission — several targets can be outstanding at once and
+   *  each completes on its own evidence.
+   *
+   *  No synchronous check on mount: this effect is declared after the
+   *  one that registers a target, so within a commit the subscription is
+   *  in place before any refetch it must observe can settle. */
+  useEffect(() => {
+    const cache = queryClient.getQueryCache();
+    return cache.subscribe(() => {
+      if (refreshTargets.current.size === 0) return;
+      const done: string[] = [];
+      for (const [hash, snapshot] of refreshTargets.current) {
+        const advanced = [...snapshot].every(([queryHash, before]) => {
+          const q = cache.get(queryHash);
+          // A query that no longer exists cannot serve stale readiness,
+          // so it does not hold the completion open.
+          if (q === undefined) return true;
+          return q.state.dataUpdateCount + q.state.errorUpdateCount > before;
+        });
+        if (advanced) done.push(hash);
+      }
+      if (done.length === 0) return;
+      for (const hash of done) refreshTargets.current.delete(hash);
+      setRefreshedFor((prev) => {
+        const next = { ...prev };
+        for (const hash of done) next[hash] = true;
+        return next;
+      });
+    });
+  }, [queryClient]);
 
   /** Another tab's submission, adopted here.
    *
@@ -1086,6 +1154,19 @@ export function ForcedCloseCard({
    *  stopped being able to account for the transaction. Leaving the
    *  optimistic wording there would present an indefinite disabled
    *  button as an ordinary pause, which is the shape of a hang. */
+  /** What happened to the last close-out this card sent, when the chain
+   *  has said it did NOT execute. Null while holding, and null for a
+   *  success — a success changes the position, and the position speaks
+   *  for itself. */
+  const lastOutcome =
+    disposition === 'reverted'
+      ? copy.forcedClose.outcomeReverted
+      : disposition === 'cancelled'
+        ? copy.forcedClose.outcomeCancelled
+        : disposition === 'replaced'
+          ? copy.forcedClose.outcomeReplaced
+          : null;
+
   const body = !holdingAfterSubmit
     ? view.body
     : unaccounted
@@ -1138,6 +1219,29 @@ export function ForcedCloseCard({
           wallet rather than as a reset control, and it carries the cost
           of being wrong, because that is the honest shape of a question
           the app is not able to answer. */}
+      {/* ROUND 63 P2 — say WHICH ending happened.
+       
+          The three non-success dispositions release the hold, and the
+          card used to go straight back to its ordinary copy and button
+          as though nothing had been submitted. It knows more than that:
+          the chain told it whether the call reverted, whether the wallet
+          cancelled it, or whether another transaction took its nonce.
+          Discarding that leaves the lender to infer a funds-path outcome
+          from a screen that looks untouched.
+       
+          Rendered beside the ordinary copy rather than in place of it,
+          because the position IS actionable again — the note explains
+          what happened to the last attempt, it does not describe the
+          current state of the loan. Keyed on the disposition alone; the
+          submission record has already been cleared by then, but the
+          in-memory entry survives the session, which is exactly as long
+          as this sentence is useful. */}
+      {!holdingAfterSubmit && submitted !== null && lastOutcome !== null ? (
+        <p className="field-hint" data-testid="forced-close-last-outcome">
+          {lastOutcome}
+        </p>
+      ) : null}
+
       {/* This browser could not record the submission, so a reload will
           lose it. The hold on this mount is unaffected; what is lost is
           everything after a reload, which is exactly the protection

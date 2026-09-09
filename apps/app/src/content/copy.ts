@@ -2395,6 +2395,25 @@ const copySource = {
     forgetSubmission: 'My wallet says this transaction is gone',
     forgetSubmissionNote:
       'We cannot check your wallet ourselves, so if your wallet no longer shows this transaction — not pending, not confirmed, simply gone — tell us and we will stop waiting for it and let you try again. Only do this if you have actually looked. If the transaction is still out there and later goes through, a second close-out could cost you a fee for nothing.',
+    /* Round 63 P2 — the card KNOWS which of the three non-success
+       endings happened, and used to drop that on the floor: the hold
+       released, the ordinary copy and the button came back, and the
+       lender was left to work out for themselves whether their close-out
+       had reverted, been cancelled, or been displaced. Three sentences
+       are cheap; making somebody reconstruct a funds-path outcome from
+       an unchanged screen is not.
+
+       Each says the same two things in its own terms — nothing changed,
+       and you may try again — because that is what all three have in
+       common and what a lender most needs first. What differs is the
+       cause, and the cause is what tells them whether to expect it to
+       happen again. */
+    outcomeReverted:
+      'Your close-out reached the blockchain and was rejected, so nothing moved and the loan is exactly as it was. You can try again. If it keeps being rejected, something about this loan has changed since you started — reloading will show its current state.',
+    outcomeCancelled:
+      'You cancelled this close-out from your wallet before it went through, so nothing moved and the loan is exactly as it was. You can start again whenever you like.',
+    outcomeReplaced:
+      'Another transaction from your wallet took this one’s place before it went through, so the close-out never ran and nothing moved. You can start again whenever you like.',
     /* Round 54 P2 — shown when this browser REFUSED to store the record
        of a close-out (private mode, storage disabled, quota). The hold
        still works on this page; what does not survive is a reload, which

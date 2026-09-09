@@ -689,3 +689,20 @@ carries. One older placeholder was slipping through and being published
 as an ERC-20 loan, which is worse than the gap it hid — the subtotals
 then added up, so the page's own "we could not classify these" line read
 zero and the disagreement it exists to expose was invisible.
+
+The card now says which way a close-out failed. When the blockchain
+rejects the call, or the wallet cancels it, or another transaction from
+the same wallet takes its place, the position is untouched and the
+action becomes available again — and until now that is all a lender saw:
+an unchanged screen with the button back. Three short sentences say which
+of the three happened, because all three leave the loan alone but only
+one of them is likely to repeat.
+
+Behind that, the way the card decides its figures have caught up after a
+successful close-out has been rebuilt. It used to wait on a refresh
+request and treat that request finishing as proof; a second refresh of
+the same data cancels the first, and a cancelled request finishes in a
+way indistinguishable from a successful one. The card now watches for
+the readings themselves to change, which nothing else can fake, and it
+tracks each close-out separately so a late answer about an earlier one
+cannot lock the action on a position that is live now.
