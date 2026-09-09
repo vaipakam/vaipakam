@@ -244,8 +244,23 @@ export function ForcedCloseCard({
    *  the same shape `useLoanSalePending` uses (#1520): React re-runs the
    *  render before painting, so the previous identity's record is never
    *  displayed, where the effect version committed one frame carrying
-   *  it. The lazy initializer alone would freeze the first identity. */
-  const [seededFor, setSeededFor] = useState(submissionKey);
+   *  it. The lazy initializer alone would freeze the first identity.
+   *
+   *  ROUND 58 P2 — seeded to `null`, so the FIRST mount seeds too.
+   *  Initialising this to `submissionKey` meant the adjustment fired only
+   *  on a later key CHANGE, and a card mounted straight onto a persisted
+   *  record never put it in the map at all: `submitted` then came from
+   *  the storage read below, which builds a NEW OBJECT on every render.
+   *
+   *  That churn is invisible until something depends on the identity,
+   *  and then it is severe. The unaccounted timer's effect took
+   *  `[submitted]`, so its own `setOutstanding` re-rendered the card,
+   *  handed the effect a different object, and tore down the interval it
+   *  had just started — pinning the monotonic measure at roughly one
+   *  period and never letting it reach the threshold. The round-57 fix
+   *  was therefore inert in precisely the case it was written for: a
+   *  persisted record whose wall stamp is in the future. */
+  const [seededFor, setSeededFor] = useState<string | null>(null);
   if (seededFor !== submissionKey) {
     setSeededFor(submissionKey);
     const persisted = readForcedCloseSubmission(walletChain?.chainId, loanId);
@@ -404,16 +419,29 @@ export function ForcedCloseCard({
     hash: string;
     ms: number;
   } | null>(null);
+  /** The one value that identifies this transaction and cannot change
+   *  identity between renders. */
+  const submittedHash = submitted?.hash ?? null;
+  //  Depends on the HASH, not on the submission object (round 58 P2).
+  //  The seeding above now keeps that object stable, and this effect must
+  //  not rely on it having done so: a timer that restarts whenever its
+  //  own tick re-renders the card measures nothing, and it fails silently
+  //  — the value simply never crosses the threshold. Two independent
+  //  reasons to get this wrong, so it is pinned to the one value that
+  //  cannot change without the transaction changing.
   useEffect(() => {
-    if (submitted === null) return;
+    if (submittedHash === null) return;
     const startedAt = performance.now();
-    const hash = submitted.hash;
     const id = setInterval(
-      () => setOutstanding({ hash, ms: performance.now() - startedAt }),
+      () =>
+        setOutstanding({
+          hash: submittedHash,
+          ms: performance.now() - startedAt,
+        }),
       DEFAULT_NOW_PERIOD_MS,
     );
     return () => clearInterval(id);
-  }, [submitted]);
+  }, [submittedHash]);
 
   const unaccounted =
     submitted !== null &&
