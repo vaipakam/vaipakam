@@ -576,3 +576,21 @@ transaction was still going, it never refreshed the position afterwards
 even once it worked out the close-out had succeeded; on a part-settled
 loan that left the remaining part locked with the answer already known.
 Working out the outcome now refreshes the position by itself.
+
+Keeping the record across a reload closed one hole and opened a smaller
+one, which is worth describing because the fix is a choice about honesty
+rather than about mechanism. The old wording told a lender whose
+transaction could not be accounted for to check their wallet and reload
+the page — and that used to work, by accident, because reloading threw
+the record away. Now that the record survives, reloading changes nothing,
+and somebody whose transaction had genuinely vanished would have found
+the app refusing to let them close that position, permanently, over
+something it has no way of checking.
+
+The app cannot see anyone's wallet, so it now asks the person who can. It
+says plainly that it keeps watching across a reload, and offers the
+lender a way to state that their wallet no longer shows the transaction —
+which stops the wait and returns the action. It is worded as their
+statement rather than as a reset button, and it says what it costs if
+they are wrong, because pretending the button performs a check would be
+the same false confidence in a new place.

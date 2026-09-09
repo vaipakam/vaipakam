@@ -783,6 +783,40 @@ export function ForcedCloseCard({
         {body}
       </p>
 
+      {/* The way out of an unaccounted transaction.
+       
+          Round 53's persistence closed a hole and opened a smaller one:
+          the record used to die with the page, so a reload cleared a
+          stuck hold by accident. Now it survives, and a lender whose
+          transaction genuinely vanished had no route back to the action
+          at all — the app refusing forever, on a funds path, over
+          something it cannot itself verify.
+       
+          It cannot verify it, so it asks the one party who can. This is
+          deliberately worded as the lender's statement about their own
+          wallet rather than as a reset control, and it carries the cost
+          of being wrong, because that is the honest shape of a question
+          the app is not able to answer. */}
+      {holdingAfterSubmit && disposition === 'undetermined' ? (
+        <div data-testid="forced-close-forget">
+          <p className="field-hint">{copy.forcedClose.forgetSubmissionNote}</p>
+          <button
+            type="button"
+            className="btn-ghost"
+            onClick={() => {
+              writeForcedCloseSubmission(walletChain?.chainId, loanId, null);
+              setSubmissions((prev) => {
+                const next = { ...prev };
+                delete next[submissionKey];
+                return next;
+              });
+            }}
+          >
+            {copy.forcedClose.forgetSubmission}
+          </button>
+        </div>
+      ) : null}
+
       {/* The match-race warning is its OWN paragraph, not appended to
           the body with a space.
        

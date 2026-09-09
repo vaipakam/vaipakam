@@ -2362,7 +2362,22 @@ const copySource = {
     // ordinary pause. It names the wallet as the place to look because
     // the wallet is where the answer actually is.
     submittedUnaccounted:
-      'Your close-out was sent, but we have not been able to confirm what happened to it. That does not mean it failed — a transaction can sit unconfirmed for a while and still go through, and if it does, this position will update on its own. We are still watching for it. Until we know, the button stays off, because sending a second close-out while the first may still be live could cost you a fee for nothing. Check this transaction in your wallet: if your wallet shows it confirmed or dropped, reload this page and it will pick up from there.',
+      'Your close-out was sent, but we have not been able to confirm what happened to it. That does not mean it failed — a transaction can sit unconfirmed for a while and still go through, and if it does, this position will update on its own. We are still watching for it, and we keep watching if you leave this page and come back. Until we know, the button stays off, because sending a second close-out while the first may still be live could cost you a fee for nothing. Check this transaction in your wallet — that is where the answer is.',
+    // Round 53 self-review. The persistence added in that round created a
+    // dead end the copy above used to cover by accident: the record used
+    // to die with the page, so reloading cleared a stuck hold. Now it
+    // survives, and a lender whose transaction genuinely vanished has no
+    // way back to the action at all — the app refuses forever, on a funds
+    // path, over something it cannot verify.
+    //
+    // So it asks the person who CAN verify it. The app does not know the
+    // transaction is gone and does not claim to; the lender reads their
+    // wallet and tells us. That is the honest division of labour, and it
+    // is why this is worded as their statement rather than as a reset
+    // button.
+    forgetSubmission: 'My wallet says this transaction is gone',
+    forgetSubmissionNote:
+      'We cannot check your wallet ourselves, so if your wallet no longer shows this transaction — not pending, not confirmed, simply gone — tell us and we will stop waiting for it and let you try again. Only do this if you have actually looked. If the transaction is still out there and later goes through, a second close-out could cost you a fee for nothing.',
     // Round 28 P2 — names WHO is paid, not just who may act. The
     // proceeds follow the lender position NFT as it stands when the
     // transaction runs, and this card is reachable by a wallet whose
