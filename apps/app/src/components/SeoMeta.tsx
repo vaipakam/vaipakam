@@ -121,7 +121,13 @@ function metaForPath(rawPathname: string): RouteMeta {
   // ids (`/nft/foo`, `/nft/0`) render just the empty form and were
   // already excluded (Codex #1309 r5); this widens that to every token
   // id rather than only the malformed ones.
-  if (/^\/nft\/.+/.test(pathname)) {
+  // ONE child segment, via the same helper every other parameterised
+  // section uses (round 36 P3). My widened regex matched
+  // `/nft/123/extra` too — a URL the router renders as NotFound, which
+  // would then have carried the verifier's title and description. The
+  // helper's docstring already stated this rule; I wrote a second
+  // matcher beside it instead of using it.
+  if (inSection(pathname, '/nft')) {
     return { ...seo.nftVerifier, index: false };
   }
   if (pathname === '/help') return { ...seo.help, index: true };
@@ -209,7 +215,15 @@ export function SeoMeta() {
 
     // Canonical — absolute, production-origin, query dropped
     // (no route uses canonical query parameters today).
-    const path = pathname.replace(/\/+$/, '') || '/';
+    //
+    // LOWER-CASED with the same rule `metaForPath` classifies by (round
+    // 36 P3). Normalising only the classification was half a fix: a
+    // crawler on `/Analytics` then got the correct indexable metadata
+    // and a canonical pointing at `/Analytics`, so the duplicate
+    // self-canonicalised instead of consolidating onto the `/analytics`
+    // the sitemap publishes. One normalisation, used by both, or the
+    // two disagree again the next time one of them moves.
+    const path = pathname.toLowerCase().replace(/\/+$/, '') || '/';
     let canonical = document.querySelector(
       'link[rel="canonical"]',
     ) as HTMLLinkElement | null;

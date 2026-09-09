@@ -58,7 +58,13 @@ including people who never will.
   prompt withholds, it does not withhold these: withholding a page
   anyone could read without a wallet, because a wallet is present, is a
   contradiction rather than a restriction.
-- Both are indexable and carry their own page titles and descriptions.
+- Each carries its own page title and description. The analytics view is
+  indexable; the console is indexable **only while it is public**. A
+  deployment may withhold the console, in which case the page renders
+  only its withheld-state message, and it is then excluded from the
+  index and from the sitemap alike — indexing a surface a deployment has
+  decided not to publish would advertise it anyway, and the description
+  would promise current values the page is not showing.
 - Figures are reported with their age. A reader is told how current the
   data is beside the data itself, and an unknown age is never presented
   as a fresh one.
@@ -340,10 +346,14 @@ Thin-market honesty rules apply.
   may show the grace window to explain a wait; it must never use its own
   arithmetic to decide whether the action is permitted.
 - Two settlement routes are distinguished, because they are not equally
-  available. Where closing out transfers the collateral as-is — an NFT rental,
-  collateral without a reliable market price, or collateral whose value has
-  collapsed far enough that selling it is moot — the app offers the action
-  directly. Where the protocol requires the collateral be sold on an exchange,
+  available. Where closing out transfers the collateral as-is — collateral
+  without a reliable market price, or collateral whose value has collapsed far
+  enough that selling it is moot — the app offers the action directly. An
+  overdue NFT rental is offered directly too, but it is NOT that route and must
+  not be described as one: ending a rental removes the renter's access, leaves
+  the lender's own asset exactly where it is, and makes the rent paid up front
+  claimable less fees. Nothing belonging to the borrower moves, and no
+  valuation of collateral decides what comes back. Where the protocol requires the collateral be sold on an exchange,
   the app states that the position is closable and that the sale must be routed
   by whoever submits it, and offers no button it cannot honour. Presenting an
   action that is certain to be refused is worse than presenting none: the user
@@ -354,8 +364,13 @@ Thin-market honesty rules apply.
   from the in-kind route in what the lender receives, since this one
   repays the asset that was lent rather than handing over collateral.
   Whether such an opposing position exists is asked of the protocol, not
-  inferred, and an unanswered question resolves to the more cautious of
-  the two descriptions rather than to a claim either way.
+  inferred. An unanswered question resolves to the surface's
+  outcome-neutral state — the one that says a check is still running —
+  and NOT to whichever description seems more cautious. There is no
+  cautious description here: every other route names what the lender
+  receives, so choosing one of them on an unread answer is a claim, and
+  the wrong one whenever the protocol settles the position against an
+  opposing one instead.
 - The in-kind route also covers collateral that is itself a non-fungible asset
   held against an ordinary loan. That is a supported shape and a distinct one
   from a rental: the leg being lent and the leg securing it are separate
