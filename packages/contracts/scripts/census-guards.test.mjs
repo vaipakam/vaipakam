@@ -2,7 +2,7 @@
 // are PURE functions (Codex #2070 r23); every rule they carry is pinned here.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { pickFinalitySample, snapshotRegression, blockRef, assertSampledHashesAgree, revertErrorLikeViem, isExecutionRevert } from './census-grandfathered-custody.mjs';
+import { pickFinalitySample, snapshotRegression, blockRef, assertSampledHashesAgree, revertErrorLikeViem, isExecutionRevert, isFunctionDoesNotExistRevert } from './census-grandfathered-custody.mjs';
 import { toFunctionSelector } from 'viem';
 
 const H = (n) => `0x${String(n).padStart(64, 'a')}`;
@@ -73,12 +73,12 @@ test('assertSampledHashesAgree: every sampled replica must serve the pinned hash
 test('revertErrorLikeViem: a revert the ABI cannot decode still carries its signature and raw data, a known one its name (post-#2070 regression)', () => {
   const abi = [{ type: 'error', name: 'IntentNoCommit', inputs: [] }, { type: 'function', name: 'getIntentCommit', inputs: [{ type: 'uint256', name: 'loanId' }], outputs: [], stateMutability: 'view' }];
   // the Diamond fallback's FunctionDoesNotExist(bytes4) — selector 0xa9ad62f8 — is in no facet ABI
-  const raw = { code: 3, details: 'execution reverted', data: '0xA9AD62F8' + '00'.repeat(28) + 'deadbeef' };
+  const raw = { code: 3, details: 'execution reverted', data: '0xA9AD62F8' };
   const e = revertErrorLikeViem(raw, abi, 'getIntentCommit');
   assert.ok(e instanceof Error);
   assert.match(e.message, /reverted with the following signature:\n0xa9ad62f8/);
   assert.equal(e.signature, '0xa9ad62f8');
-  assert.equal(e.data.startsWith('0xa9ad62f8'), true, 'raw data is lower-cased and kept');
+  assert.equal(e.data, '0xa9ad62f8', 'raw data is lower-cased and kept');
   assert.equal(e.shortMessage, 'The contract function "getIntentCommit" reverted.');
   // what the census's detector reads
   assert.equal(`${e.shortMessage} ${e.details} ${e.message}`.toLowerCase().includes('0xa9ad62f8'), true);
@@ -94,4 +94,19 @@ test('revertErrorLikeViem: a revert the ABI cannot decode still carries its sign
   assert.equal(revertErrorLikeViem(provider, abi, 'x'), null);
   assert.equal(isExecutionRevert({ code: -32000, details: 'execution reverted: custom' }), true, 'the text still counts where a client uses another code');
   assert.equal(isExecutionRevert({ cause: { code: 3 } }), true);
+});
+
+test('isFunctionDoesNotExistRevert: only the EXACT four-byte fallback payload proves a selector unrouted on a Diamond (#2088 r2)', () => {
+  const abi = [{ type: 'function', name: 'facetAddresses', inputs: [], outputs: [], stateMutability: 'view' }];
+  // the real Diamond fallback: FunctionDoesNotExist() has no arguments → exactly 0xa9ad62f8
+  const shell = revertErrorLikeViem({ code: 3, details: 'execution reverted', data: '0xA9AD62F8' }, abi, 'facetAddresses');
+  assert.equal(isFunctionDoesNotExistRevert(shell), true);
+  // the selector followed by ANY payload is some other contract talking
+  const impostor = revertErrorLikeViem({ code: 3, details: 'execution reverted', data: '0xa9ad62f8' + '00'.repeat(31) + '01' }, abi, 'facetAddresses');
+  assert.equal(isFunctionDoesNotExistRevert(impostor), false);
+  // mentioning the selector in a message proves nothing
+  assert.equal(isFunctionDoesNotExistRevert({ message: 'reverted with the following signature: 0xa9ad62f8', details: 'execution reverted' }), false);
+  // an empty revert is not the fallback either
+  assert.equal(isFunctionDoesNotExistRevert({ data: '0x' }), false);
+  assert.equal(isFunctionDoesNotExistRevert(null), false);
 });

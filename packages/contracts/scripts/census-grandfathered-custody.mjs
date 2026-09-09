@@ -214,6 +214,23 @@ export function blockRef(block) {
  * classified as "not a Vaipakam Diamond" (caught comparing a post-merge
  * partial run with run 26; never published). Exported for the test.
  */
+/**
+ * The Diamond FALLBACK's own "no facet for this selector" error,
+ * `VaipakamDiamond.FunctionDoesNotExist()` — no arguments, so the revert data
+ * is EXACTLY the four-byte selector 0xa9ad62f8. Only that exact payload proves
+ * a selector unrouted on a Vaipakam Diamond (#2088 r2 P2): a contract that
+ * answers the selector followed by anything else is some other contract
+ * talking and stays `notADiamond`. Reads the raw `data` that
+ * {revertErrorLikeViem} attaches, never the message text, so nothing that
+ * merely MENTIONS the selector counts. Exported for the test.
+ */
+export const FUNCTION_DOES_NOT_EXIST_SELECTOR = '0xa9ad62f8';
+export function isFunctionDoesNotExistRevert(err) {
+  const data = typeof err?.data === 'string' ? err.data.toLowerCase() : null;
+  if (data === FUNCTION_DOES_NOT_EXIST_SELECTOR) return true;
+  // decoded by name (only if some ABI carried the error): still requires the exact four-byte payload
+  return /^FunctionDoesNotExist$/.test(`${err?.errorName ?? ''}`) && data === FUNCTION_DOES_NOT_EXIST_SELECTOR;
+}
 export function isExecutionRevert(err) {
   // JSON-RPC code 3 is "execution error" (EIP-1474), what every client uses for
   // a revert; the message check covers providers that keep the text but use
@@ -1512,11 +1529,7 @@ async function censusDeployment(dep) {
   // is a different contract talking — a bare shell answers 0xa9ad62f8 on every
   // selector, whereas one base-sepolia archive (18 KB of code at the recorded
   // address) reverts empty on everything and is simply not a Diamond.
-  const FUNCTION_DOES_NOT_EXIST = '0xa9ad62f8';
-  const isUnroutedOnDiamond = (err) =>
-    `${err?.shortMessage ?? ''} ${err?.details ?? ''} ${err?.message ?? ''}`.toLowerCase().includes(FUNCTION_DOES_NOT_EXIST)
-    || (typeof err?.data === 'string' && err.data.toLowerCase().startsWith(FUNCTION_DOES_NOT_EXIST))
-    || /FunctionDoesNotExist/.test(`${err?.errorName ?? err?.cause?.data?.errorName ?? err?.data?.errorName ?? ''}`);
+  const isUnroutedOnDiamond = isFunctionDoesNotExistRevert;
   const rethrowUnlessRevert = (err) => {
     const kind = classifyRpcError(err);
     if (kind === 'pruned' || kind === 'rate' || !isRevert(err)) throw err;
