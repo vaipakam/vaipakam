@@ -9300,7 +9300,7 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
     const r = runWith(
       'b.mjs',
-      'const example = "copy(source, destination)";\n' +
+      'const example = "shutil.copy(source, destination)";\n' +
         'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
     );
     expect(r.ok).toBe(true);
@@ -9520,7 +9520,7 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     const r = runWith(
       'k.py',
       'import subprocess\n' +
-        'x = 1# copy(source, destination)\n' +
+        'x = 1# shutil.copy(source, destination)\n' +
         'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
     );
     expect(r.ok).toBe(true);
@@ -9532,7 +9532,7 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     const r = runWith(
       'l.py',
       'import subprocess\n' +
-        '"""\ncopy(source, destination)\n"""\n' +
+        '"""\nshutil.copy(source, destination)\n"""\n' +
         'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
     );
     expect(r.ok).toBe(true);
@@ -9543,7 +9543,7 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
     const r = runWith(
       'm.mjs',
-      'const example = /copy(source, destination)/;\n' +
+      'const example = /fs.copy(source, destination)/;\n' +
         'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
     );
     expect(r.ok).toBe(true);
@@ -9560,56 +9560,6 @@ describe('check-deploy-invocations — #1996 config identity', () => {
       'n.mjs',
       'const cfg = "configs/custom.jsonc";\n' +
         'const ratio = total / (copyFileSync("generated.jsonc", cfg), 2) / 3;\n' +
-        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
-    );
-    expect(r.ok).toBe(false);
-  });
-
-  it('a Python def is not a call (#2066 r13)', () => {
-    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
-    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
-    const r = runWith(
-      'o.py',
-      'import subprocess\n' +
-        'def copy(source, destination):\n    return source\n' +
-        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
-    );
-    expect(r.ok).toBe(true);
-  });
-
-  it('a JavaScript function declaration is not a call (#2066 r13)', () => {
-    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
-    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
-    const r = runWith(
-      'p.mjs',
-      'function copy(source, destination) {\n  return source;\n}\n' +
-        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
-    );
-    expect(r.ok).toBe(true);
-  });
-
-  it('a class-method declaration is not a call (#2066 r13)', () => {
-    // No keyword to key on — this one is told apart by what follows the
-    // argument list.
-    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
-    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
-    const r = runWith(
-      'q.mjs',
-      'class Mover {\n  copy(source, destination) {\n    return source;\n  }\n}\n' +
-        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
-    );
-    expect(r.ok).toBe(true);
-  });
-
-  it('a call is still a call when a block follows it (#2066 r13 bounds)', () => {
-    // The brace test must not take a real write whose statement happens to be
-    // followed by a block.
-    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
-    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
-    const r = runWith(
-      'r.mjs',
-      'copyFileSync("generated.jsonc", "configs/custom.jsonc");\n' +
-        'if (ready) {\n  notify();\n}\n' +
         'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
     );
     expect(r.ok).toBe(false);
@@ -9662,20 +9612,6 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(r.ok).toBe(false);
   });
 
-  it('a parameter default containing a paren still reads as a declaration (#2066 r14)', () => {
-    // The paren walk counted delimiters inside a string as syntax, so the
-    // parameter list appeared to end early and a method that is never invoked
-    // failed the declaration test. It consults the classifier now.
-    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
-    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
-    const r = runWith(
-      'v.mjs',
-      'class Mover {\n  copy(source = ")", destination) {\n    return source;\n  }\n}\n' +
-        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
-    );
-    expect(r.ok).toBe(true);
-  });
-
   it('an f-string format spec is data, not code (#2066 r14)', () => {
     // Only the replacement expression is Python; what follows the top-level
     // `:` is handed to `__format__`.
@@ -9684,7 +9620,7 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     const r = runWith(
       'w.py',
       'import subprocess\n' +
-        "msg = f'{X():copy(source, destination)}'\n" +
+        "msg = f'{X():shutil.copy(source, destination)}'\n" +
         'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
     );
     expect(r.ok).toBe(true);
@@ -9727,38 +9663,12 @@ describe('check-deploy-invocations — #1996 config identity', () => {
 
   // ---- Codex #2066 r15 ----
 
-  it('a TypeScript return type still reads as a declaration (#2066 r15)', () => {
-    // The token after the parameter list is `:`, not `{`.
-    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
-    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
-    const r = runWith(
-      'z.ts',
-      'class Mover {\n  copy(source: string, destination: string): void {\n    return;\n  }\n}\n' +
-        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
-    );
-    expect(r.ok).toBe(true);
-  });
-
-  it('a ternary is not a declaration (#2066 r15 bounds)', () => {
-    // The colon rule must not take a ternary's colon: that would drop a real
-    // write. Reaching `;` rather than `{` is what separates them.
-    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
-    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
-    const r = runWith(
-      'aa.ts',
-      'const cfg = "configs/custom.jsonc";\n' +
-        'const out = ready ? copyFileSync("generated.jsonc", cfg) : null;\n' +
-        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
-    );
-    expect(r.ok).toBe(false);
-  });
-
   it('a regex literal in an arrow body is data (#2066 r15)', () => {
     seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
     seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
     const r = runWith(
       'ab.mjs',
-      'const factory = () => /copy(source, destination)/;\n' +
+      'const factory = () => /fs.copy(source, destination)/;\n' +
         'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
     );
     expect(r.ok).toBe(true);
@@ -9772,7 +9682,7 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     const r = runWith(
       'ac.py',
       'import subprocess\n' +
-        "msg = f'{X:{width:copy(source, destination)}}'\n" +
+        "msg = f'{X:{width:shutil.copy(source, destination)}}'\n" +
         'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
     );
     expect(r.ok).toBe(true);
@@ -9784,7 +9694,7 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
     const r = runWith(
       'ad.sh',
-      "EXAMPLE='copy(source, destination)'\n" +
+      "EXAMPLE='shutil.copy(source, destination)'\n" +
         'wrangler deploy --config configs/custom.jsonc\n',
     );
     expect(r.ok).toBe(true);
@@ -9848,24 +9758,12 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(r.ok).toBe(false);
   });
 
-  it('a structured TypeScript return type still reads as a declaration (#2066 r16)', () => {
-    // The type has braces of its own, so the body is the LAST balanced group.
-    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
-    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
-    const r = runWith(
-      'ai.ts',
-      'class Mover {\n  copy(source: string): { ok: boolean } {\n    return { ok: true };\n  }\n}\n' +
-        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
-    );
-    expect(r.ok).toBe(true);
-  });
-
   it('a regex literal after throw is data (#2066 r16)', () => {
     seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
     seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
     const r = runWith(
       'aj.mjs',
-      'function boom() {\n  throw /copy(source, destination)/;\n}\n' +
+      'function boom() {\n  throw /fs.copy(source, destination)/;\n}\n' +
         'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
     );
     expect(r.ok).toBe(true);
@@ -9914,7 +9812,7 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
     const r = runWith(
       'an.mjs',
-      'if (enabled) /copy(source, destination)/.test(value);\n' +
+      'if (enabled) /fs.copy(source, destination)/.test(value);\n' +
         'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
     );
     expect(r.ok).toBe(true);
@@ -9932,20 +9830,6 @@ describe('check-deploy-invocations — #1996 config identity', () => {
         'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
     );
     expect(r.ok).toBe(false);
-  });
-
-  it('a class member after a typed method does not undo it (#2066 r17)', () => {
-    // The scan stopped at the body; a following field used to reset it.
-    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
-    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
-    const r = runWith(
-      'ap.ts',
-      'class Mover {\n' +
-        '  copy(source: string): { ok: boolean } {\n    return { ok: true };\n  }\n' +
-        '  enabled = true;\n}\n' +
-        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
-    );
-    expect(r.ok).toBe(true);
   });
 
   it('a python shebang types an extensionless helper (#2066 r17)', () => {
@@ -10007,41 +9891,6 @@ describe('check-deploy-invocations — #1996 config identity', () => {
       'ar.mjs',
       'const cfg = "configs/custom.jsonc";\n' +
         'const out = enabled ? copyFileSync("generated.jsonc", cfg) : { value: "}" };\n' +
-        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
-    );
-    expect(r.ok).toBe(false);
-  });
-
-  it('a comment may sit before a method body (#2066 r18)', () => {
-    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
-    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
-    const r = runWith(
-      'as.mjs',
-      'class Mover {\n  copy(source, destination) /* note */ {\n    return source;\n  }\n}\n' +
-        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
-    );
-    expect(r.ok).toBe(true);
-  });
-
-  it('a type-only signature has no body (#2066 r18)', () => {
-    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
-    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
-    const r = runWith(
-      'at.ts',
-      'interface Mover {\n  copy(source: string, destination: string): void;\n}\n' +
-        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
-    );
-    expect(r.ok).toBe(true);
-  });
-
-  it('a ternary arm ending in a semicolon is still a call (#2066 r18 bounds)', () => {
-    // What separates the signature rule from a ternary: the `?` behind it.
-    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
-    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
-    const r = runWith(
-      'au.ts',
-      'const cfg = "configs/custom.jsonc";\n' +
-        'const out = enabled ? copyFileSync("generated.jsonc", cfg) : undefined;\n' +
         'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
     );
     expect(r.ok).toBe(false);
@@ -10119,7 +9968,7 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
     const r = runWith(
       'ax.sh',
-      "OUT='$(copy(source, destination))'\n" +
+      "OUT='$(shutil.copy(source, destination))'\n" +
         'wrangler deploy --config configs/custom.jsonc\n',
     );
     expect(r.ok).toBe(true);
@@ -10156,6 +10005,112 @@ describe('check-deploy-invocations — #1996 config identity', () => {
         'spawnSync("wrangler", ["deploy", "--config", `${CFG}`]);\n',
     );
     expect(r.ok).toBe(true);
+  });
+
+  // ---- Codex #2066 r20 ----
+
+  it('a method named after a keyword is not a control condition (#2066 r20)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'az.mjs',
+      'const cfg = "configs/custom.jsonc";\n' +
+        'const ratio = obj.if(enabled) / (copyFileSync("generated.jsonc", cfg), 2) / 3;\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a comment may sit between keyword and condition (#2066 r20)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'ba.mjs',
+      'if /* note */ (enabled) /fs.copy(source, destination)/.test(value);\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a comment may follow a shell separator (#2066 r20)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'bb.sh',
+      ':;# shutil.copy(source, destination)\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a [[ ]] comparison is not a redirection (#2066 r20)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'bc.sh',
+      'CFG=configs/custom.jsonc\n' +
+        'if [[ "$left" > "$right" ]]; then echo bigger; fi\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a real redirection outside [[ ]] still counts (#2066 r20 bounds)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'bd.sh',
+      'CFG=configs/custom.jsonc\n' +
+        'printf new > "$CFG"\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('an execSync command string is executable (#2066 r20)', () => {
+    // A JavaScript literal is data — except when it is the command.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'be.mjs',
+      'const cfg = "configs/custom.jsonc";\n' +
+        'execSync("node -e \'require(\\"fs\\").writeFileSync(process.env.CFG, \\"{}\\")\'");\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('an unquoted alias name must be in command position (#2066 r20)', () => {
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'apps/agent/package.json',
+      '{\n' +
+        '  "name": "@vaipakam/agent",\n' +
+        '  "scripts": {\n' +
+        '    "generate": "cp generated.jsonc configs/custom.jsonc",\n' +
+        '    "release": "echo pnpm run generate && wrangler deploy --config configs/custom.jsonc"\n' +
+        '  }\n' +
+        '}\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a four-hop alias chain still reaches the writer (#2066 r20)', () => {
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'apps/agent/package.json',
+      '{\n' +
+        '  "name": "@vaipakam/agent",\n' +
+        '  "scripts": {\n' +
+        '    "a": "pnpm run b",\n' +
+        '    "b": "pnpm run c",\n' +
+        '    "c": "pnpm run d",\n' +
+        '    "d": "cp generated.jsonc configs/custom.jsonc",\n' +
+        '    "release": "pnpm run a && wrangler deploy --config configs/custom.jsonc"\n' +
+        '  }\n' +
+        '}\n',
+    );
+    expect(r.ok).toBe(false);
   });
 
   it('the PROSE path invalidates a rewritten config too', () => {

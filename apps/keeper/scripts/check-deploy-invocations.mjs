@@ -3312,10 +3312,18 @@ function classifyText(text, lang) {
         }
         if (u < 0 || d !== 0) return false;
         let w = u - 1;
-        while (w >= 0 && /\s/.test(text[w])) w -= 1;
+        // Trivia, not only whitespace: `if /* note */ (enabled)` is still an
+        // `if`, and stopping at the comment lost it (r20).
+        while (w >= 0 && (/\s/.test(text[w]) || kind[w] === 2)) w -= 1;
         let e = w;
         while (e >= 0 && /[A-Za-z0-9_$]/.test(text[e])) e -= 1;
-        return /^(?:if|while|for|switch|catch|with)$/.test(text.slice(e + 1, w + 1));
+        if (!/^(?:if|while|for|switch|catch|with)$/.test(text.slice(e + 1, w + 1))) return false;
+        // …and a METHOD named after a keyword is not one. `obj.if(enabled)`
+        // is a call whose result divides (r20) — the same qualified-property
+        // rule the keyword branch below applies.
+        let qd = e;
+        while (qd >= 0 && (/\s/.test(text[qd]) || kind[qd] === 2)) qd -= 1;
+        return !(text[qd] === '.' && text[qd - 1] !== '.');
       }
       if (!/[A-Za-z0-9_$]/.test(ch)) return false;
       let s = p;
@@ -3488,7 +3496,12 @@ function classifyText(text, lang) {
       // `x = 1# copy(source, destination)` left the comment classified as
       // code (r13).
       const lineComment =
-        (hashComments && c === '#' && (pyLike || i === 0 || /\s/.test(text[i - 1]))) ||
+        (hashComments &&
+          c === '#' &&
+          // `#` starts a comment at the start of a WORD, and a control
+          // operator ends a word just as whitespace does — `:;# note` is a
+          // comment (r20).
+          (pyLike || i === 0 || /[\s;&|(]/.test(text[i - 1]))) ||
         (jsLike && c === '/' && text[i + 1] === '/');
       if (lineComment) {
         const nl = text.indexOf('\n', i);
@@ -3552,6 +3565,52 @@ function classifyText(text, lang) {
  * token with no spaces, so `msg = f'…'` — a command called `msg` in shell
  * grammar — is not one, and keeps its existing reading.
  */
+/**
+ * Is `idx` inside a `[[ … ]]` conditional?
+ *
+ * `[[ "$left" > "$right" ]]` compares lexicographically; it does not redirect,
+ * and reading the `>` as a write reported a script that only compares (r20).
+ */
+function inTestExpression(idx, text, kind) {
+  let open = -1;
+  for (let i = idx; i >= 0 && idx - i < 400; i -= 1) {
+    if (kind[i] !== 0) continue;
+    if (text[i] === '\n') break;
+    if (text[i] === '[' && text[i - 1] === '[') {
+      open = i - 1;
+      break;
+    }
+    if (text[i] === ']' && text[i + 1] === ']') return false;
+  }
+  if (open === -1) return false;
+  const close = text.indexOf(']]', idx);
+  const nl = text.indexOf('\n', idx);
+  return close !== -1 && (nl === -1 || close < nl);
+}
+
+/**
+ * Is the string literal containing `idx` handed to something that RUNS it?
+ *
+ * In JavaScript a literal is data — except when it is the command given to
+ * `execSync` and friends, which is a shell script by another route (r20). The
+ * shell reader has had this rule since r12; this is the same rule on the other
+ * side of the language split.
+ */
+function isCommandPayload(idx, text, kind) {
+  let s = idx;
+  while (s > 0 && kind[s - 1] !== 0) s -= 1;
+  let p = s - 1;
+  while (p >= 0 && (/\s/.test(text[p]) || kind[p] === 2)) p -= 1;
+  if (text[p] !== '(' && text[p] !== ',' && text[p] !== '`') return false;
+  let q = p - 1;
+  while (q >= 0 && (/\s/.test(text[q]) || kind[q] === 2)) q -= 1;
+  let e = q;
+  while (e >= 0 && /[A-Za-z0-9_$]/.test(text[e])) e -= 1;
+  return /^(?:execSync|exec|execFileSync|execFile|spawnSync|spawn|system|popen|run|call|check_output|check_call)$/.test(
+    text.slice(e + 1, q + 1),
+  );
+}
+
 function isInertAssignment(idx, text, kind) {
   let s = idx;
   while (s > 0 && kind[s - 1] === 1) s -= 1;
@@ -3719,9 +3778,24 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
         // `.copy()` match an in-memory copy that writes no file (r15).
         // `shutil.copy`, `shutil.move` and `fs.copy` stay; `copy.copy` and
         // `arr.copy()` do not.
-        String.raw`|(?<![A-Za-z0-9_$.])(?:copy|move|copyfile|copy2|copytree)\s*\(` +
+        // A GENERIC COPY NAME MUST BE QUALIFIED BY A FILESYSTEM MODULE.
+        // Dropping the unqualified spellings is what lets the declaration
+        // heuristic go: `copy(` and `move(` were the only verbs a DECLARATION
+        // could plausibly share a name with, and telling `def copy(a, b):`
+        // from `copy(a, b)` needed a reader of parameter lists, bodies, return
+        // types and ternaries that produced findings in SIX consecutive rounds
+        // (r14-r19) and, by r20, false GREENS of its own — "a following brace
+        // alone is not sufficient evidence of a declaration". Nobody declares
+        // a method called `writeFileSync`, so the distinctive verbs never
+        // needed it.
+        //
+        // The cost is ONE nameable miss: `from shutil import copy` and then a
+        // bare `copy(a, b)`. That is incompleteness, which this reader is
+        // allowed; the edge list it replaces was not bounded at all. Same
+        // trade, and the same reasoning, as `keep_vars` against per-call-site
+        // `--keep-vars` in #1995.
         String.raw`|(?<![A-Za-z0-9_$.])(?:shutil|fs|fse|fsExtra|fsp|promises)\s*\.\s*` +
-        String.raw`(?:copy|move|copyfile|copy2|copytree)\s*\(` +
+        String.raw`(?:copy|move|copyfile|copy2|copytree|cp)\s*\(` +
         // `os.replace` renames ONTO an existing path — an overwrite by
         // definition — and no spelling of it was in the set (r13). Written
         // QUALIFIED, unlike its neighbours: the lookbehind above admits member
@@ -3826,178 +3900,6 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
     // spans, which also answers the quadratic path r12 measured at 32k/64k/128k
     // commented lines.
     const kind = classifyText(text, lang);
-    // A DECLARATION IS NOT A CALL. `def copy(source, destination):`,
-    // `function copy(source, destination) {` and a class-method shorthand all
-    // match the generic `name(` alternative although nothing is invoked, and
-    // each reported a config the file never touched (r13).
-    //
-    // Two tests, both narrow. The keyword form is exact. The brace form is
-    // JavaScript-only and asks what follows the ARGUMENT LIST: a body opens
-    // with `{`, a call does not. Python is left to the keyword alone —
-    // matching on a following `:` would take the true arm of a ternary and a
-    // slice bound with it, which would be a false green.
-    // Does an unmatched ternary `?` sit between the start of this statement
-    // and `idx`? `?.` and `??` are not it.
-    const ternaryBefore = (idx) => {
-      let depth = 0;
-      for (let i = idx - 1; i >= 0 && idx - i < 400; i -= 1) {
-        if (kind[i] !== 0) continue;
-        const c = text[i];
-        if (c === ')' || c === ']' || c === '}') depth += 1;
-        else if (c === '(' || c === '[' || c === '{') {
-          if (depth === 0) return false;
-          depth -= 1;
-        } else if (c === ';' || c === '\n') {
-          if (depth === 0) return false;
-        } else if (c === '?' && depth === 0 && text[i + 1] !== '.' && text[i + 1] !== '?' && text[i - 1] !== '?') {
-          return true;
-        }
-      }
-      return false;
-    };
-    const isDeclaration = (idx) => {
-      if (/\b(?:def|function|class)\s+$/.test(text.slice(Math.max(0, idx - 24), idx))) return true;
-      if (lang !== 'js') return false;
-      const op = text.indexOf('(', idx);
-      if (op === -1 || op - idx > 40) return false;
-      let depth = 0;
-      let p = op;
-      for (; p < text.length && p - op < 2000; p += 1) {
-        // Delimiters inside a STRING are not syntax. Counting them ended the
-        // parameter list at the `)` inside `copy(source = ")", destination)`,
-        // so a method that is never invoked failed the declaration test and
-        // reported a config nothing had touched (r14). The classifier built
-        // above already knows which offsets are code — asking it is what this
-        // reader does everywhere else, rather than adding a fourth ad-hoc
-        // recogniser.
-        if (kind[p] !== 0) continue;
-        if (text[p] === '(') depth += 1;
-        else if (text[p] === ')') {
-          depth -= 1;
-          if (depth === 0) break;
-        }
-      }
-      if (depth !== 0) return false;
-      let n = p + 1;
-      // Comments too, not only whitespace — a comment is legal between the
-      // parameter list and the body (r18).
-      while (n < text.length && (/\s/.test(text[n]) || kind[n] === 2)) n += 1;
-      // A TYPESCRIPT RETURN TYPE sits between the parameter list and the body,
-      // so `copy(source: string, destination: string): void {}` shows a colon
-      // where a body brace was expected and read as an executed write (r15).
-      //
-      // Skipped only when what follows the colon actually LOOKS like a type —
-      // identifier characters and type punctuation, no call, no quote, no
-      // assignment — and only when a brace follows it. A ternary's colon fails
-      // both tests: `cond ? copy(a, b) : x;` reaches `;` rather than `{`, and
-      // `: { x: 1 }` has no type text before its brace, so neither is mistaken
-      // for a declaration. That direction matters: reading a ternary as a
-      // declaration would drop a real write.
-      // A structured return type has braces of its own — `copy(): { ok:
-      // boolean } { … }` and `copy(): () => void { … }` — so a character class
-      // that stops at the first `{` never reaches the body (r16). The type is
-      // consumed by BALANCING instead, and the declaration is recognised by
-      // what is left: a body is the last balanced `{…}` with nothing after it.
-      // A ternary's `: { x: 1 };` has a `;` after its group and stays a call,
-      // which is the direction that matters — reading one as a declaration
-      // would drop a real write.
-      if (text[n] === ':') {
-        let t = n + 1;
-        let lastEnd = -1;
-        const stop = Math.min(text.length, n + 400);
-        // Whitespace AND COMMENTS are skipped: a comment is legal between the
-        // parameter list and the body, and stopping at the `/` of
-        // `copy(a, b) /* note */ {}` recorded an uncalled declaration as a
-        // copy (r18).
-        const skip = (i) => {
-          while (i < text.length && (/\s/.test(text[i]) || kind[i] === 2)) i += 1;
-          return i;
-        };
-        t = skip(t);
-        while (t < stop) {
-          const ch = text[t];
-          if (/\s/.test(ch) || kind[t] === 2) {
-            t = skip(t);
-            continue;
-          }
-          if (ch === '{' || ch === '(' || ch === '[') {
-            const close = { '{': '}', '(': ')', '[': ']' }[ch];
-            let d = 0;
-            let u = t;
-            for (; u < stop; u += 1) {
-              // BALANCED THROUGH THE CLASSIFIER, as the parameter-list scan
-              // already is. Counting a `}` inside a string literal made
-              // `enabled ? copyFileSync(…) : { value: "}" }` look like a
-              // declaration and dropped a real copy — a false green (r18).
-              if (kind[u] !== 0) continue;
-              if (text[u] === ch) d += 1;
-              else if (text[u] === close) {
-                d -= 1;
-                if (d === 0) break;
-              }
-            }
-            if (d !== 0) break;
-            t = u + 1;
-            // A BRACE GROUP ENDS THE SCAN. It is either the body, or a
-            // structured return type immediately followed by the body — and
-            // in both cases nothing after the body is part of this
-            // declaration. Scanning on let the NEXT class member (`enabled =
-            // true;`) reset the state and turn an uncalled method back into a
-            // recorded write (r17).
-            if (ch === '{') {
-              let k = t;
-              while (k < stop && /\s/.test(text[k])) k += 1;
-              if (text[k] === '{') {
-                // That group was the type; the body is the next one.
-                let d2 = 0;
-                let v = k;
-                for (; v < stop; v += 1) {
-                  if (text[v] === '{') d2 += 1;
-                  else if (text[v] === '}') {
-                    d2 -= 1;
-                    if (d2 === 0) break;
-                  }
-                }
-                if (d2 !== 0) break;
-                k = v + 1;
-              }
-              lastEnd = k;
-              t = k;
-              while (t < text.length && /\s/.test(text[t])) t += 1;
-              break;
-            }
-            lastEnd = -1;
-            continue;
-          }
-          if (!/[A-Za-z0-9_$<>|&,.=?!'"]/.test(ch)) break;
-          lastEnd = -1;
-          t += 1;
-        }
-        // The last thing consumed must be a brace group, and what STOPPED the
-        // scan decides whether that group was a body or a value: a `;` or a
-        // `,` means the braces were an object in an expression (a ternary
-        // arm), while running out of window or reaching the end of the file
-        // means they were the body.
-        if (
-          lastEnd !== -1 &&
-          /^\s*$/.test(text.slice(lastEnd, t)) &&
-          !';,)]'.includes(text[t] ?? '')
-        )
-          return true;
-        // A TYPE-ONLY SIGNATURE HAS NO BODY. An interface member or an
-        // abstract method — `copy(source: string, destination: string): void;`
-        // — ends at a semicolon by design, and requiring a brace recorded it
-        // as an executed copy (r18).
-        //
-        // Told from a ternary arm by looking BACKWARD for the `?` that would
-        // own the colon, rather than by guessing from the type text: `enabled
-        // ? copy(a, b) : x;` has one and stays a call, which is the direction
-        // that matters.
-        if (lastEnd === -1 && text[t] === ';' && /[A-Za-z0-9_$]/.test(text.slice(n + 1, t)))
-          return !ternaryBefore(idx);
-      }
-      return text[n] === '{';
-    };
     for (const w of text.matchAll(ANY_WRITE)) {
       // The verb itself must be CODE — where "string" means DATA. In
       // JavaScript and Python a literal is data, so `const example =
@@ -4008,9 +3910,11 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
       // Excluding shell strings broke that fixture immediately.
       const at0 = w.index + (w[0].length - w[0].replace(/^[^A-Za-z0-9_$/>%]+/, '').length);
       const insideData = shellish
-        ? kind[at0] === 2 || (kind[at0] === 1 && isInertAssignment(at0, text, kind))
-        : kind[at0] !== 0;
-      if (!insideData && !isDeclaration(at0)) anyWrites.push(w.index);
+        ? kind[at0] === 2 ||
+          (kind[at0] === 1 && isInertAssignment(at0, text, kind)) ||
+          inTestExpression(at0, text, kind)
+        : kind[at0] !== 0 && !isCommandPayload(at0, text, kind);
+      if (!insideData) anyWrites.push(w.index);
     }
     anyWriteCache = { text, lang, writes: anyWrites };
     writes.push(...anyWrites);
@@ -8535,7 +8439,11 @@ for (const file of walk(REPO_ROOT)) {
         const out = [];
         const seen = new Set();
         const follow = (body, depth, bound) => {
-          if (depth > 2) return;
+          // Bounded by the `seen` set, which already terminates cycles; the
+          // depth is only a runaway guard. At 2 a four-hop chain
+          // (release -> a -> b -> c -> d) never reached the helper that
+          // writes (r20).
+          if (depth > 16) return;
           // QUOTED TEXT IS NOT AN INVOCATION. `echo 'pnpm run generate'` names
           // a script without running it, and expanding on every textual match
           // prepended that helper's body and rejected an unchanged config
@@ -8545,6 +8453,10 @@ for (const file of walk(REPO_ROOT)) {
           for (const mm of body.matchAll(new RegExp(INVOKE))) {
             if (bound !== null && mm.index >= bound) continue;
             if (bodyKind[mm.index] !== 0) continue;
+            // …and in COMMAND POSITION. `echo pnpm run generate` prints the
+            // words; excluding only quoted text still accepted it (r20).
+            const before = body.slice(0, mm.index);
+            if (!/(?:^|[;&|(]|&&|\|\|)\s*$/.test(before)) continue;
             const name = mm[2];
             // THE SELECTOR DECIDES WHOSE SCRIPT THIS IS. `pnpm --filter
             // @vaipakam/agent run generate` runs the agent's, not the
