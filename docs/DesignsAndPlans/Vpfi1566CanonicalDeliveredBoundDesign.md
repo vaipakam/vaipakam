@@ -4908,17 +4908,27 @@ reported a comfortable answer it had not earned:
   to detect — the manifest would read complete while omitting the retired
   Diamond. The check is the operation, and it runs first.
 
-  **The mainnet dirty-tree gate judges the tree as it was at START** (r9
-  P1, corrected r10 P1). That gate runs after the archive step, which by then
-  has written the manifest AND moved the tracked `addresses.json` and
-  `deployment_source.json` into the gitignored tree — so a live diff reports
-  the deploy's own deliberate output as uncommitted changes and aborts every
-  `--fresh` after a destructive archive. The r9 revision excluded only the
-  manifest, which left the moved artifacts tripping it. Enumerating the
-  archive's outputs is a list that drifts; the gate now reads the provenance
-  snapshot the script takes before writing anything, which has no output to
-  discount and answers the only question the gate asks: was the SOURCE tree
-  clean when the deploy began? Every source change is refused as before.
+  **The mainnet dirty-tree gate takes two readings, and both must be clean**
+  (r9 P1, corrected r10 P1, completed r11 P1). The gate runs after the
+  archive step, which by then has written the manifest AND moved the tracked
+  `addresses.json` and `deployment_source.json` into the gitignored tree — so
+  a whole-tree diff reports the deploy's own deliberate output as uncommitted
+  changes and aborts every `--fresh` after a destructive archive. The r9
+  revision excluded only the manifest, which left the moved artifacts
+  tripping it; the r10 revision judged only the start-of-run snapshot, which
+  let a source file edited *during* the preflight or archive work be built
+  and broadcast while the stamp said clean. The landed shape is the one
+  #1502 asks for: the start snapshot (whole tree, taken before anything is
+  written) AND one helper, `source_tree_dirty_now`, that re-reads the tree
+  live with the deploy's own output root — `contracts/deployments`, the only
+  place the run writes — excluded. One directory boundary, never an allowlist
+  of inputs and never an enumeration of outputs. The same helper refuses
+  again immediately before the first broadcast, and at the end of the run,
+  after the last source-consuming step, it can only RECORD: the contracts are
+  already on chain, so the stamp carries the "(dirty)" marker rather than the
+  script exiting between an irreversible effect and its record. Testnet
+  carries the identical helper for the late stamp only, since a rehearsal
+  records rather than refuses.
 
   **The inventory is a UNION** (r9 P1). A chain retired on purpose, or whose
   `--fresh` aborted between archiving and writing its new artifact, has no

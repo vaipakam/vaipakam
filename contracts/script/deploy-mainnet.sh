@@ -223,6 +223,31 @@ TREE_DIRTY_AT_START=""
 if ! git -C "$REPO_ROOT" diff --quiet HEAD 2>/dev/null; then
   TREE_DIRTY_AT_START=" (dirty)"
 fi
+# ── Live re-reading of the SOURCE tree (#1502; Codex #2070 r11 P1) ──────────
+# The opening snapshot is not an immutable description of this run's inputs:
+# the deploy consumes source for many minutes after it (forge build, forge
+# script), and a tracked file edited in between would be built and broadcast
+# while the stamp said clean. This helper re-reads the tree NOW, and it is
+# the ONE comparison every later site uses — the gate before the build, the
+# refusal before the first broadcast, and the stamp at the end — so the
+# readings cannot compare different things (#1502's first failed attempt was
+# three sites with three pathspecs, one of them a silent no-op).
+#
+# Anchored at the repo root with an EXCLUSION of this script's own output
+# root, never an allowlist of inputs (an allowlist missed foundry.toml and
+# the lib submodule pointers, both of which change bytecode). Everything
+# this run writes lands under `contracts/deployments` — addresses.json,
+# deployment_source.json, .history, the .archive tree and its manifest — so
+# that one directory is judged ONCE, at start, when it holds no output of
+# this run, and every other tracked path is source and is re-judged live.
+# One directory boundary, not an enumeration of outputs (r10). A mid-run
+# edit to a recorded artifact of ANOTHER chain is therefore outside this
+# reading on purpose: it cannot change the bytecode this run deploys, which
+# is the property the stamp certifies. A git failure reads as dirty, the
+# same way the opening snapshot treats it.
+source_tree_dirty_now() {
+  ! git -C "$REPO_ROOT" diff --quiet HEAD -- . ':(exclude)contracts/deployments' 2>/dev/null
+}
 # Stage 3 / Stage 4 source-tree split — see CLAUDE.md "Worker ABI
 # consumption (Stage 3 split)" + "Frontend ABI sync". apps/app and
 # apps/www are the two SPAs; apps/{keeper,indexer,agent} are the
@@ -828,19 +853,22 @@ EOF
   # For testnet rehearsal the (dirty) flag is acceptable because the
   # whole rehearsal can be re-run; for mainnet it's a hard NO since
   # post-incident forensics depend on commit→bytecode equivalence.
-  # Judge the tree AS IT WAS AT START — the provenance snapshot taken at the
-  # top of this script, before it wrote anything — not the tree as it stands
-  # now. By this point a --fresh has ALREADY run archive_chain_state: it wrote
-  # archive-manifest.json and MOVED the tracked addresses.json and
-  # deployment_source.json into the gitignored .archive tree, so a live diff
-  # here reports the deploy's own deliberate output as "uncommitted changes"
-  # and aborts every --fresh after the destructive archive (Codex #2070 r9 P1,
-  # then r10 P1 for the moved artifacts once only the manifest was excluded).
-  # Enumerating the archive's outputs to exclude is a list that drifts; the
-  # start-of-run reading has no output of its own to discount and answers the
-  # only question this gate asks: was the SOURCE tree clean when the deploy
-  # began? The operator still commits the archive's outputs with the deploy.
-  if [ -n "$TREE_DIRTY_AT_START" ]; then
+  # Two readings, and BOTH must be clean (Codex #2070 r9 → r10 → r11):
+  #  1. the tree AS IT WAS AT START — the provenance snapshot taken at the top
+  #     of this script, before it wrote anything. By this point a --fresh has
+  #     ALREADY run archive_chain_state: it wrote archive-manifest.json and
+  #     MOVED the tracked addresses.json and deployment_source.json into the
+  #     gitignored .archive tree, so a whole-tree diff here reports the
+  #     deploy's own deliberate output as "uncommitted changes" and aborts
+  #     every --fresh after the destructive archive (r9 P1; r10 P1 for the
+  #     moved artifacts once only the manifest was excluded);
+  #  2. the SOURCE tree as it stands NOW, via `source_tree_dirty_now` — a
+  #     tracked file edited during the preflight / archive work is invisible
+  #     to the snapshot and would be built and broadcast by the steps below
+  #     (r11 P1). The helper excludes the one directory this run writes to,
+  #     so the archive's outputs cannot trip it and nothing is enumerated.
+  # The operator still commits the archive's outputs with the deploy.
+  if [ -n "$TREE_DIRTY_AT_START" ] || source_tree_dirty_now; then
     cat >&2 <<EOF
 Refusing --phase contracts: working tree is dirty (uncommitted changes).
 Mainnet deploys must be reproducible from a commit hash; a dirty deploy
@@ -906,6 +934,24 @@ first deploy transaction.
 Mainnet requires commit-to-bytecode equivalence for incident forensics, and
 the artifacts built earlier in this run came from the starting commit.
 Nothing has been broadcast — re-run from a stable checkout.
+EOF
+    exit 1
+  fi
+
+  # Same point, same reason, for the WORKTREE (Codex #2070 r11 P1; #1502):
+  # an unchanged HEAD does not mean unchanged source. A tracked file edited
+  # after the gate above is in the artifacts [1] just built, or would be in
+  # the next script's compile, and the commit recorded at the end would not
+  # reproduce them. This is still the last free stop, so refuse; after [2]
+  # the same reading can only be recorded.
+  if source_tree_dirty_now; then
+    cat >&2 <<EOF
+Refusing to broadcast: a tracked source file changed in the working tree
+between this script starting and the first deploy transaction.
+  git -C "$REPO_ROOT" status --short -- . ':(exclude)contracts/deployments'
+Mainnet requires commit-to-bytecode equivalence for incident forensics, and
+the recorded commit would not reproduce artifacts built from that edit.
+Nothing has been broadcast — commit or revert the change, then re-run.
 EOF
     exit 1
   fi
@@ -1006,6 +1052,24 @@ The contracts are already on chain and are recorded below against the
 STARTING commit, marked "(dirty)" because that commit no longer matches
 the tree. Treat this deploy as not reproducible from the recorded hash and
 reconcile before handover.
+EOF
+  fi
+  # The source re-check the #1495 r1 P2 comment above promises — until Codex
+  # #2070 r11 P1 this site compared HEAD only, so a worktree edit made after
+  # the opening snapshot stamped clean. Placed AFTER the last source-consuming
+  # step ([2]-[4] are done), per #1502, and RECORDED rather than refused for
+  # the same reason as the HEAD check: the contracts are already on chain.
+  # `source_tree_dirty_now` is the reading the gate and the pre-broadcast
+  # refusal used, so the three sites cannot disagree about what "source" is.
+  if source_tree_dirty_now; then
+    TREE_DIRTY_AT_START=" (dirty)"
+    cat >&2 <<EOF
+
+WARNING: a tracked source file is modified (uncommitted) at the end of this
+mainnet deploy. The contracts are on chain and are recorded below against the
+STARTING commit, marked "(dirty)": that commit may not reproduce the source
+they were built from. Reconcile before handover:
+  git -C "$REPO_ROOT" status --short -- . ':(exclude)contracts/deployments'
 EOF
   fi
   COMMIT_DIRTY="$TREE_DIRTY_AT_START"

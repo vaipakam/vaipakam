@@ -543,12 +543,26 @@ reward reporter, all setter-accepts-and-emits with no numeric range:
   answer "am I the canonical chain?" could be turned off by a governance
   write. The canonical MARKER is `isCanonicalRewardChain`, set
   explicitly — but do not read that as this field being irrelevant:
-  `isMirrorRewardChain` is `!isCanonicalRewardChain && baseChainId != 0`,
-  so a non-canonical deployment that leaves `baseChainId` at zero is not
-  classified as a mirror and receives canonical / single-chain semantics,
-  which reaches mirror claim pricing and the commitment / remittance
-  paths. Zero here is a configuration state with consequences, not an
-  absence.) Note this
+  the reward role is resolved by `LibVaipakam.rewardRole` over FOUR
+  states — `Canonical`, `Mirror`, `Unconfigured`, `Detached` (#1566
+  closure 3) — and **zero here means two different things depending on
+  whether it was ever WRITTEN**:
+  - a zero that was **never written** (a deployment nobody configured)
+    resolves `Unconfigured` and keeps canonical / single-chain semantics —
+    the reward paths run unbounded from the schedule, exactly as before;
+  - an **explicit `setBaseChainId(0)`** stamps `rewardRoleConfigured` and
+    resolves `Detached`: the delivered-fresh bound is ZERO and reward
+    payouts stop. **That is the detach procedure**, and it is the only one;
+    it also retires the delivered residual on the way out. Do not call it
+    "to reset" a chain — a chain you mean to leave unconfigured needs no
+    call at all.
+  `ConfigureRewardReporter` refuses a zero base on a mirror for this
+  reason, and the in-place refresh requires `REWARD_ROLE_EXPECTED_<PREFIX>`
+  per chain so a Diamond detached under the old setters (field
+  zero-initialised) is backfilled to `Detached` rather than read as the
+  permissive `Unconfigured`. Read the resolved role back with
+  `getRewardRole()` — the two raw fields cannot tell these cases apart.)
+  Note this
   is a chain id, NOT a CCIP chain
   selector: since T-068 the reward flow identifies chains by
   `block.chainid` and leaves selector translation to the messenger. The

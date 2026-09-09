@@ -236,6 +236,20 @@ TREE_DIRTY_AT_START=""
 if ! git -C "$REPO_ROOT" diff --quiet HEAD 2>/dev/null; then
   TREE_DIRTY_AT_START=" (dirty)"
 fi
+# ── Live re-reading of the SOURCE tree (#1502; Codex #2070 r11 P1) ──────────
+# The opening snapshot is not an immutable description of this run's inputs:
+# the deploy consumes source for many minutes after it, and a tracked file
+# edited in between would be built while the stamp said clean. This is the
+# ONE comparison the late stamp uses (deploy-mainnet.sh uses the identical
+# helper to REFUSE before its first broadcast; a testnet rehearsal only
+# records). Anchored at the repo root, excluding this script's own output
+# root — `contracts/deployments` holds every artifact this run writes, so it
+# is judged once, at start, and every other tracked path is source and is
+# re-judged live. One directory boundary, never an allowlist of inputs and
+# never an enumeration of outputs. A git failure reads as dirty.
+source_tree_dirty_now() {
+  ! git -C "$REPO_ROOT" diff --quiet HEAD -- . ':(exclude)contracts/deployments' 2>/dev/null
+}
 # Stage 3 / Stage 4 source-tree split — see CLAUDE.md "Worker ABI
 # consumption (Stage 3 split)" + "Frontend ABI sync". apps/app and
 # apps/www are the two SPAs; apps/{keeper,indexer,agent} are the
@@ -1143,13 +1157,19 @@ EOF
 
   # HEAD can MOVE during a long deploy: an operator committing mid-run
   # would otherwise leave the late stamp naming a NEW commit while the
-  # bytecode came from the old one. Only HEAD movement is checked here —
-  # mid-run INPUT drift is deliberately NOT detected (deferred to #1502),
-  # and an earlier version of this comment claimed a recheck that this
-  # revision removed.
+  # bytecode came from the old one.
   if [ "$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo '?')" \
        != "$TREE_COMMIT_AT_START" ]; then
     TREE_DIRTY_AT_START=" (dirty)"
+  fi
+  # And the SOURCE re-check the comment above promises (Codex #2070 r11 P1;
+  # the source-tree half of #1502). Until then only HEAD movement was
+  # checked here, so a worktree edit made after the opening snapshot stamped
+  # clean. Placed after the last source-consuming step; a rehearsal only
+  # RECORDS — the (dirty) marker is acceptable on testnet, a lie is not.
+  if source_tree_dirty_now; then
+    TREE_DIRTY_AT_START=" (dirty)"
+    echo "WARNING: tracked source modified (uncommitted) during this deploy — stamping (dirty)." >&2
   fi
   COMMIT_DIRTY="$TREE_DIRTY_AT_START"
   DIAMOND_NOW=$(jq -r '.diamond // empty' "$DEPLOY_DIR/addresses.json" 2>/dev/null || echo "")
