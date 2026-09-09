@@ -272,7 +272,22 @@ export function ForcedCloseCard({
    *
    *  `not-applicable` is listed even though `shouldRenderForcedClose`
    *  returns false for it — exhaustiveness is the point, and an entry
-   *  that says "never rendered" is information. */
+   *  that says "never rendered" is information.
+   *
+   *  DO NOT HOIST THIS OUT OF THE COMPONENT. Rebuilding an object of
+   *  string lookups on every render looks like an obvious thing to
+   *  memoize or lift to module scope, and lifting it would be a bug:
+   *  `copy` is a Proxy whose `get` calls `i18n.t(...)` at ACCESS time
+   *  (`i18n/reactiveCopy.ts`), and `LanguageRemount` re-keys the tree on
+   *  language change so components re-read it. A module-scope table
+   *  resolves every string once, at import, in whatever language i18n
+   *  had loaded then — which is English before the real bundle
+   *  arrives. Every non-English reader would get English on this card
+   *  and nowhere else, with nothing failing.
+   *
+   *  The cost being avoided is ten property reads per render on a card
+   *  that renders once per position view. That is not worth a silent
+   *  localization regression. */
   const PRESENTATION: Record<
     ForcedCloseReadiness,
     {
