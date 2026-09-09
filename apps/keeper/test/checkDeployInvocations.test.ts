@@ -11038,15 +11038,20 @@ describe('check-deploy-invocations — #1996 config identity', () => {
   });
 
   it('a module open in positional mode is a write (#2066 r33 consolidation)', () => {
-    // One qualified `open` now serves four alternatives. These pin the sites
-    // the consolidation touched that had no fixture of their own, so a later
-    // refactor cannot quietly drop one of them.
+    // One qualified `open` now serves several alternatives. These pin the
+    // sites the consolidation touched that had no fixture of their own, so a
+    // later refactor cannot quietly drop one of them.
+    //
+    // Written against `os.open` at r33, which does NOT take a mode string —
+    // its second argument is an integer flag set, so that fixture pinned code
+    // Python refuses to run. `io.open` is the module form that takes one
+    // (r34).
     seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
     seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
     const r = runWith(
       'ha.py',
-      'import subprocess, os\n' +
-        'os.open("configs/custom.jsonc", "w")\n' +
+      'import subprocess, io\n' +
+        'io.open("configs/custom.jsonc", "w")\n' +
         'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
     );
     expect(r.ok).toBe(false);
@@ -11085,6 +11090,117 @@ describe('check-deploy-invocations — #1996 config identity', () => {
       'hg.mjs',
       'spawnSync("node", ["--prof", "writeFileSync(\'configs/custom.jsonc\',\'{}\')"]);\n' +
         'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  // ---- Codex #2066 r34 ----
+
+  it('os.open truncates through integer flags (#2066 r34)', () => {
+    // The real `os.open` API. Every mode-string pattern walks past it.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'ia.py',
+      'import subprocess, os\n' +
+        'cfg = "configs/custom.jsonc"\n' +
+        'os.open(cfg, os.O_WRONLY | os.O_TRUNC)\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('os.open for reading is not a write (#2066 r34 bounds)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'ib.py',
+      'import subprocess, os\n' +
+        'cfg = "configs/custom.jsonc"\n' +
+        'os.open(cfg, os.O_RDONLY)\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a lone open argument is a filename, not a mode (#2066 r34)', () => {
+    // `open("w")` reads a file named `w`; the mode defaults to reading. For
+    // the builtin and for a module, the FIRST argument is the file.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'ic.py',
+      'import subprocess\n' +
+        'data = open("w").read()\n' +
+        'cfg = "configs/custom.jsonc"\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a keyword mode in first position is still a write (#2066 r34 bounds)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'id.py',
+      'import subprocess\n' +
+        'open(mode="w", file="configs/custom.jsonc").write("{}")\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a constructed path open keeps its positional mode (#2066 r34 bounds)', () => {
+    // Tightening the builtin must not lose the receiver whose first argument
+    // really is the mode.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'ie.py',
+      'import subprocess\n' +
+        'from pathlib import Path\n' +
+        'Path("configs/custom.jsonc").open("w")\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('an in-place edit is a write (#2066 r34)', () => {
+    // `sed -i` rewrites the file with no redirection and no copy verb, so
+    // nothing else in the write set saw it.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'ja.sh',
+      'CFG=configs/custom.jsonc\n' +
+        "sed -i 's/old/new/' \"$CFG\"\n" +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a filtering sed is not a write (#2066 r34 bounds)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'ka.sh',
+      'CFG=configs/custom.jsonc\n' +
+        "sed 's/old/new/' \"$CFG\"\n" +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('the letter alone is not in-place (#2066 r34 bounds)', () => {
+    // `-i` means case-insensitive to grep and interactive to cp, which is why
+    // this is asked of two named commands rather than of the option.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'jc.sh',
+      'CFG=configs/custom.jsonc\n' +
+        'grep -i name "$CFG"\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
     );
     expect(r.ok).toBe(true);
   });

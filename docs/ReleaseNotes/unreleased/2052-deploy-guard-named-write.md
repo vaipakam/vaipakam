@@ -168,6 +168,27 @@ withdrawn in the same sitting: a list of plausible variable names is precisely
 the open-ended predicate this work keeps removing. Where the path is
 constructed in place the shape is syntax rather than type, and is still read.
 
+Where a file-open mode may sit depends on what the call is opening, and that
+is the language's rule rather than a preference. For the builtin and for a
+module's open, the first argument is the file — so a call with a single string
+argument is opening a file with that name and reading it, and reading it as a
+mode reported a write that does not happen. On a path constructed in place the
+first argument really is the mode, so both spellings are read there. One
+function does not take a mode at all: its second argument is an integer flag
+set, and the only way to see that it truncates is to read those flags, which
+are a fixed set of standard names. A fixture written for it earlier in this
+work had used the mode-string spelling, which that function refuses at
+runtime — so it pinned code that cannot execute, and has been rewritten against
+a module that does take one.
+
+Editing a file in place is a write, and until now nothing recognised it: there
+is no redirection and no copying verb in it. Two commands are admitted with
+their in-place option, not a category, because the same option letter means
+case-insensitive to one common tool and interactive to another — so it cannot
+be asked of the option alone. A third such editor is the signal to withdraw
+this rather than extend it, which is the condition the argument-list reader was
+given and met.
+
 Three separate alternatives read a file-open mode, and each qualified its
 receiver differently — or not at all. That single inconsistency produced a
 report in three consecutive review rounds, every time on the same shape: a

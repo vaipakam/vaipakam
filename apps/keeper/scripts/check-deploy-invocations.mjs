@@ -3598,7 +3598,7 @@ function inDelimitedExpression(idx, text, kind, L, R) {
 // module or a constructed path, which are syntax rather than the receiver
 // TYPE this reader declines to infer.
 const FS_OPEN =
-  String.raw`(?<![A-Za-z0-9_$.])(?:(?:os|io|codecs|pathlib|gzip|bz2|lzma)\s*\.\s*` +
+  String.raw`(?<![A-Za-z0-9_$.])(?:(?:io|codecs|pathlib|gzip|bz2|lzma)\s*\.\s*` +
   String.raw`|Path\s*\([^()]*\)\s*\.\s*)?open`;
 
 // The evaluate-option tests, by which letter the interpreter runs source with.
@@ -4262,6 +4262,20 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
             String.raw`(?![^\n;&|]*[^\S\n]--dry-run\b)` +
             String.raw`[^\S\n]+(?:-\S+[^\S\n]+)*[^\s<>|&;-]`
           : '') +
+        // AN IN-PLACE EDIT IS A WRITE. `sed -i 's/old/new/' "$CFG"` rewrites
+        // the file with no redirection and no copy verb, so nothing above saw
+        // it (r34). Two commands, not a category: `sed` and `perl` are the
+        // in-place editors that appear in deploy scripts, and `-i` means
+        // something else entirely on `cp`, `mv` and `grep`, so this cannot be
+        // asked of the option alone.
+        //
+        // If a third editor arrives, that is the signal to withdraw this
+        // rather than extend it — the same condition the argv-copy reader was
+        // given, and met.
+        (shellish
+          ? String.raw`|(?:^|[\s;&|(])(?:[\w./-]*/)?(?:sed|perl)[^\S\n]+` +
+            String.raw`(?:-[a-zA-Z]*i[a-zA-Z]*(?=[^\S\n]|$)|--in-place\b)`
+          : '') +
         // A REDIRECTION, not every `>`. The bare alternative also matched the
         // arrow in `=>` and the comparison in `2 > 1`, and since the deploy's
         // own `--config` already satisfies the name test, any such operator
@@ -4304,7 +4318,25 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
         // on a bound path and for a process module under an alias: the
         // receiver's type is not in the text. The constructor form
         // `Path("…").open("w")` is syntax, and is still read.
-        String.raw`|` + FS_OPEN + String.raw`\s*\(\s*(?:mode\s*=\s*)?(["'\`])[rbt]*[wax+][rbt+]*\1` +
+        // WHERE THE MODE CAN SIT DEPENDS ON THE RECEIVER, which is Python's
+        // rule and not a preference. For the builtin and for a module's
+        // `open`, the FIRST argument is the FILE — so a lone `open("w")`
+        // reads a file named `w` and the mode defaults to reading, and
+        // accepting an optional keyword there reported it as a write (r34).
+        // A mode in first position is therefore admitted only as a KEYWORD.
+        String.raw`|` + FS_OPEN + String.raw`\s*\(\s*mode\s*=\s*(["'\`])[rbt]*[wax+][rbt+]*\1` +
+        // …and on a CONSTRUCTED PATH the first argument IS the mode, so both
+        // spellings are read there. Splitting these apart is what lets the
+        // builtin tighten without losing `Path("…").open("w")`.
+        String.raw`|Path\s*\([^()]*\)\s*\.\s*open\s*\(\s*(?:mode\s*=\s*)?(["'\`])[rbt]*[wax+][rbt+]*\2` +
+        // `os.open` DOES NOT TAKE A MODE STRING AT ALL. Its second argument is
+        // an integer flag set, so the only way to see its intent is to read
+        // the flags — and `os.open(cfg, os.O_WRONLY | os.O_TRUNC)` truncates
+        // the file while every mode-string pattern above walks past it (r34).
+        // The POSIX names are a closed set, which is why this is admissible
+        // where a list of tool options would not be.
+        String.raw`|(?<![A-Za-z0-9_$.])os\s*\.\s*open\s*\((?:[^()]|\([^()]*\))*` +
+        String.raw`O_(?:WRONLY|RDWR|TRUNC|CREAT|APPEND)` +
         // `mode=` may come FIRST: Python accepts `open(mode="w", file=cfg)`,
         // and requiring it after a comma missed that ordering (r9).
         // Every open-mode branch requires the literal to CLOSE. r11 fixed
