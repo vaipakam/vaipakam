@@ -1015,11 +1015,16 @@ export function ForcedCloseCard({
           in-kind, or as needing a routed sale, can settle as a match and
           repay the lent asset instead of moving collateral.
 
-          Shown on EVERY state whose copy names an outcome, which is all
-          four non-terminal ones — and getting there took a second pass.
-          The first version covered `ready-in-kind` and
-          `ready-needs-route` only, which is the same half-a-symmetric-
-          disclosure mistake the finding was about, one cycle later.
+          Shown on every state whose copy names an outcome the contract
+          could reach a different way — three of them, since round 55.
+          Getting there took two corrections in opposite directions. The
+          first version covered `ready-in-kind` and `ready-needs-route`
+          only, which is the same half-a-symmetric-disclosure mistake the
+          finding was about, one cycle later; widening it to all four
+          then swept in `ready-rental`, where the contract has no such
+          path at all (see below). The set is the `matchRace` column of
+          the table above, and it is a column precisely so that neither
+          correction has to be made by hand again.
 
           `blocked-no-consent` is the sharpest of the four: it says the
           close-out is refused FOR EVERYONE. The dispatch at
@@ -1030,10 +1035,22 @@ export function ForcedCloseCard({
           claim false. Its copy now says "as things stand" and this
           sentence supplies the exception.
 
-          `ready-rental` qualifies for the same reason: `LibMetricsHooks`
-          indexes every loan into `assetPairActiveLoanIds` with no
-          asset-type filter, so a rental can be matched too, and the
-          match settles instead of ending the rental. */}
+          `ready-rental` DOES NOT qualify, and this paragraph said the
+          opposite until round 55 caught it — the row's own entry had
+          already been corrected and this maintenance note beside the
+          render condition still argued for restoring the warning, which
+          is precisely how a hand-picked set grows back.
+
+          The argument it used to make ends one step early. Rentals ARE
+          indexed with no asset-type filter, and being indexed is not
+          being matchable: the candidate scan reads the REVERSED pair, so
+          every candidate holds the rented NFT as collateral; each is then
+          required to price both of its own assets, which that leg cannot
+          do; and `_settleLeg` moves both matched legs as ERC-20 anyway.
+          The full three steps are on the `ready-rental` row. So a rental
+          ends as a rental, and this warning belongs only to the states
+          whose `matchRace` is true: `ready-in-kind`, `ready-needs-route`
+          and `blocked-no-consent`. */}
       {view.matchRace && !holdingAfterSubmit ? (
         <p className="muted" data-testid="forced-close-match-may-appear">
           {copy.forcedClose.matchMayAppear}
