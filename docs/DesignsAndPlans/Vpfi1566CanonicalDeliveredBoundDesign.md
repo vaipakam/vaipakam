@@ -5104,6 +5104,20 @@ reported a comfortable answer it had not earned:
   height exceeds this run's — the start-of-run floor and this end-of-run check
   together close the window. Both are unit-tested with the lock observed held
   during the comparison.
+
+  **Round 15 tightened both of those.** The replacement guard compared heights
+  only, so two runs at equal finalized heights straddling a `--fresh` — the
+  later one carrying the newly retired Diamond — could finish out of order and
+  the earlier one overwrite the more complete artifact; the guard now also
+  refuses any snapshot that drops a deployment the committed artifact covers
+  (a corrected address under the same archived label may replace, since the
+  run's inventory came from the committed manifest under its lock). And the
+  stale-lock break was itself a race: two waiters could both observe one dead
+  lock, and the second could delete the first's freshly acquired lock. Breaking
+  is now claimed — one exclusive claim file inside the observed directory,
+  `wx`-created so exactly one claimant wins — and revalidated by re-reading the
+  owner immediately before deletion, withdrawing if a live owner has taken
+  over. Eight processes breaking one dead lock at once all land their appends.
   Hand-computed storage slots were never an option: they fail SILENTLY as
   zero, manufacturing the exact "empty" result the census exists to
   establish. The event reconstruction is retained behind `--corroborate` as

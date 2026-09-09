@@ -182,6 +182,10 @@ scripts take, so a redeploy recording and retiring a contract at that moment
 cannot fall between the two lists and go uncounted. And the committed report is
 replaced under a lock that re-reads the existing file first and refuses to
 overwrite a report that was read at a later block on any chain — two censuses
-finishing out of order can no longer have the older, emptier one win.
+finishing out of order can no longer have the older, emptier one win — and
+that check now also refuses a report that would drop a contract the committed
+report already covers, not only one read at an older block. Recovery from a
+crashed writer's abandoned lock was also made single-winner, so two writers
+recovering at once can no longer end up writing at the same time.
 
 Refs #1566, #1349, #1956

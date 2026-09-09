@@ -166,3 +166,48 @@ test('a guarded snapshot write compares under the lock and refuses a regression 
   assert.equal(existsSync(`${p}.lock`), false);
   assert.deepEqual(readdirSync(dir).filter((f) => f.startsWith('census.json')), ['census.json'], 'no temp file survives');
 });
+
+test('a stale lock another waiter has already CLAIMED is not deleted by us (the r15 double-break)', () => {
+  const { dir, manifest } = fixture();
+  const lockDir = `${manifest}.lock`;
+  mkdirSync(lockDir);
+  writeFileSync(join(lockDir, 'owner.json'), JSON.stringify({ pid: 2 ** 22 - 1, at: new Date(0).toISOString() }));
+  writeFileSync(join(lockDir, 'claim'), ''); // someone else is mid-break
+  const old = new Date(Date.now() - 3_600_000);
+  utimesSync(lockDir, old, old);
+  const e = entryFromArtifact({ slug: 'a', stamp: 'b', addrPath: artifact(dir, 4) });
+  assert.throws(() => appendEntry(manifest, e, { timeoutMs: 400, pollMs: 20, staleMs: 1 }), /could not lock/);
+  assert.equal(existsSync(lockDir), true, 'a claimed lock is left to its claimant');
+  assert.equal(existsSync(manifest), false, 'nothing was written');
+});
+
+test('a stale lock whose owner changed to a LIVE one after we observed it is not deleted', () => {
+  const { dir, manifest } = fixture();
+  const lockDir = `${manifest}.lock`;
+  mkdirSync(lockDir);
+  // Observed as dead+old, but by the time we would delete it the owner file names a live holder
+  // (simulated by writing the live owner up front: the identity re-read must see it and withdraw).
+  writeFileSync(join(lockDir, 'owner.json'), JSON.stringify({ pid: process.pid, at: new Date().toISOString() }));
+  const old = new Date(Date.now() - 3_600_000);
+  utimesSync(lockDir, old, old);
+  const e = entryFromArtifact({ slug: 'a', stamp: 'b', addrPath: artifact(dir, 5) });
+  assert.throws(() => appendEntry(manifest, e, { timeoutMs: 400, pollMs: 20, staleMs: 1 }), /could not lock/);
+  assert.equal(existsSync(lockDir), true);
+  assert.equal(existsSync(join(lockDir, 'claim')), false, 'a withdrawn claim leaves no claim file behind');
+});
+
+test('N concurrent processes all get through a DEAD stale lock, and every append lands', async () => {
+  const { dir, manifest } = fixture();
+  const lockDir = `${manifest}.lock`;
+  mkdirSync(lockDir);
+  writeFileSync(join(lockDir, 'owner.json'), JSON.stringify({ pid: 2 ** 22 - 1, at: new Date(0).toISOString() }));
+  const old = new Date(Date.now() - 3_600_000);
+  utimesSync(lockDir, old, old);
+  const N = 8;
+  const runs = await Promise.all(
+    Array.from({ length: N }, (_, i) => run(['append', manifest, `chain-${i % 2}`, `2026-02-02T00-00-${String(i).padStart(2, '0')}Z`, artifact(dir, 10 + i)])),
+  );
+  for (const r of runs) assert.equal(r.code, 0, r.err);
+  assert.equal(readManifest(manifest).entries.length, N);
+  assert.deepEqual(readdirSync(dirname(manifest)), ['archive-manifest.json']);
+});

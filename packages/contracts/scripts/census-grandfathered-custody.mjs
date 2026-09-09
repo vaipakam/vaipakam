@@ -1648,9 +1648,27 @@ async function main() {
         if (!theirs.has(r.chainSlug) || h > theirs.get(r.chainSlug)) theirs.set(r.chainSlug, h);
       }
       const regressed = [...mine].filter(([slug, h]) => theirs.has(slug) && theirs.get(slug) > h);
-      return regressed.length
-        ? `a newer census is already committed there (${regressed.map(([slug, h]) => `${slug}: committed ${theirs.get(slug)} > this run ${h}`).join('; ')}); ` +
-            `this run resolved an older finality height and would un-see state the committed one saw`
+      if (regressed.length) {
+        return (
+          `a newer census is already committed there (${regressed.map(([slug, h]) => `${slug}: committed ${theirs.get(slug)} > this run ${h}`).join('; ')}); ` +
+          `this run resolved an older finality height and would un-see state the committed one saw`
+        );
+      }
+      // Codex #2070 r15 P1 — heights alone cannot see a POPULATION change. A
+      // --fresh between two census starts adds a retired Diamond to the
+      // inventory; both runs can resolve the same finalized heights, and the
+      // slower pre-deploy run would overwrite the newer, more complete
+      // artifact, dropping that Diamond (and possibly its custody) from the
+      // committed evidence. So a snapshot may never DROP a deployment the
+      // committed one covers. Keys are `slug|label`; the same key with a
+      // corrected diamond address is allowed to replace — this run's inventory
+      // came from the committed manifest under its lock, which is the source
+      // of truth for what an archived label names.
+      const covered = new Set(allDeployed);
+      const dropped = (current.deploymentsDeployed ?? []).filter((k) => !covered.has(k));
+      return dropped.length
+        ? `the committed census covers ${dropped.length} deployment(s) this run does not (${dropped.join(', ')}); ` +
+            `a snapshot may never drop a deployment the committed one covers — re-run against the current inventory`
         : null;
     },
   });

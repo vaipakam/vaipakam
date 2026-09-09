@@ -46,7 +46,9 @@
  */
 
 import {
+  closeSync,
   existsSync,
+  openSync,
   mkdirSync,
   readFileSync,
   renameSync,
@@ -145,7 +147,24 @@ export function withManifestLock(manifestPath, fn, opts = {}) {
     } catch (err) {
       if (err.code !== 'EEXIST') throw err;
     }
-    // Held. Break it only when its owner is provably gone AND it is old.
+    // Held. Every path below either breaks the lock or waits, and a wait must
+    // be bounded — the timeout is checked HERE, before any of them, so no
+    // branch can `continue` past it (a persistent claim file did exactly that
+    // and spun forever).
+    if (Date.now() - started >= timeoutMs) {
+      let held = null;
+      try {
+        held = JSON.parse(readFileSync(ownerFile, 'utf8'));
+      } catch {
+        held = null;
+      }
+      throw new Error(
+        `archive-manifest: could not lock ${manifestPath} within ${timeoutMs} ms — held by pid ${held?.pid ?? '?'} ` +
+          `(${held && pidAlive(held.pid) ? 'alive' : 'unknown'}). Another --fresh or census writer may be running; if not, ` +
+          `inspect and remove ${lockDir} yourself (a leftover 'claim' file inside it means a breaker died mid-recovery). Nothing was written.`,
+      );
+    }
+    // Break it only when its owner is provably gone AND it is old.
     let owner = null;
     try {
       owner = JSON.parse(readFileSync(ownerFile, 'utf8'));
@@ -160,18 +179,54 @@ export function withManifestLock(manifestPath, fn, opts = {}) {
     }
     const ownerAlive = owner ? pidAlive(owner.pid) : false;
     if (!ownerAlive && ageMs > staleMs) {
-      process.stderr.write(
-        `archive-manifest: breaking a stale lock on ${manifestPath} (owner pid ${owner?.pid ?? '?'} is gone, ${Math.round(ageMs / 1000)}s old)\n`,
-      );
-      rmSync(lockDir, { recursive: true, force: true });
+      // Codex #2070 r15 P1 — an unconditional removal here was itself a race:
+      // two waiters could both observe the same dead lock, the first remove
+      // and re-create it with a LIVE owner, and the second — acting on its
+      // earlier observation — delete that fresh lock and enter concurrently,
+      // re-opening the lost-update race during crash recovery. So the break
+      // is CLAIMED and REVALIDATED: exactly one claimant wins an exclusive
+      // `claim` file inside the observed directory (`wx` create is atomic, so
+      // a second claimant gets EEXIST and waits, or ENOENT when the dir is
+      // already gone); the winner then re-reads the owner IMMEDIATELY before
+      // deleting and removes the directory only if it is still the same dead
+      // owner it observed — a fresh live owner means someone re-acquired in
+      // between, and the claimant withdraws its claim and waits instead.
+      const claim = join(lockDir, 'claim');
+      try {
+        closeSync(openSync(claim, 'wx'));
+      } catch (err) {
+        if (err.code === 'EEXIST' || err.code === 'ENOENT') {
+          sleepSync(pollMs);
+          continue;
+        }
+        throw err;
+      }
+      let ownerNow = null;
+      try {
+        ownerNow = JSON.parse(readFileSync(ownerFile, 'utf8'));
+      } catch {
+        ownerNow = null;
+      }
+      let ageNow = 0;
+      try {
+        ageNow = Date.now() - statSync(lockDir).mtimeMs;
+      } catch {
+        continue; // gone underneath us — retry the acquire
+      }
+      const sameIdentity =
+        owner === null && ownerNow === null
+          ? ageNow > staleMs
+          : Boolean(owner && ownerNow && owner.pid === ownerNow.pid && owner.at === ownerNow.at && !pidAlive(ownerNow.pid));
+      if (sameIdentity) {
+        process.stderr.write(
+          `archive-manifest: breaking a stale lock on ${manifestPath} (owner pid ${owner?.pid ?? '?'} is gone, ${Math.round(ageMs / 1000)}s old)\n`,
+        );
+        rmSync(lockDir, { recursive: true, force: true });
+        continue;
+      }
+      rmSync(claim, { force: true }); // not the lock we observed — withdraw and wait
+      sleepSync(pollMs);
       continue;
-    }
-    if (Date.now() - started >= timeoutMs) {
-      throw new Error(
-        `archive-manifest: could not lock ${manifestPath} within ${timeoutMs} ms — held by pid ${owner?.pid ?? '?'} ` +
-          `(${ownerAlive ? 'alive' : 'unknown'}, lock ${Math.round(ageMs / 1000)}s old). Another --fresh or census writer may be ` +
-          `running; if not, inspect and remove ${lockDir} yourself. Nothing was written.`,
-      );
     }
     waited += pollMs;
     sleepSync(Math.min(pollMs * (1 + Math.floor(waited / 1000)), 500));
