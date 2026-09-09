@@ -11036,4 +11036,56 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     );
     expect(r.ok).toBe(false);
   });
+
+  it('a module open in positional mode is a write (#2066 r33 consolidation)', () => {
+    // One qualified `open` now serves four alternatives. These pin the sites
+    // the consolidation touched that had no fixture of their own, so a later
+    // refactor cannot quietly drop one of them.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'ha.py',
+      'import subprocess, os\n' +
+        'os.open("configs/custom.jsonc", "w")\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a compression module open is a write (#2066 r33 consolidation)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'hc.py',
+      'import subprocess, gzip\n' +
+        'gzip.open("configs/custom.jsonc", mode="w")\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a constructed path open is a write (#2066 r33 consolidation)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'hd.py',
+      'import subprocess\n' +
+        'from pathlib import Path\n' +
+        'Path("configs/custom.jsonc").open("w")\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('an unknown option is not an evaluate flag (#2066 r33 bounds)', () => {
+    // Adding `p` for Node must not admit every option containing one.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'hg.mjs',
+      'spawnSync("node", ["--prof", "writeFileSync(\'configs/custom.jsonc\',\'{}\')"]);\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(true);
+  });
 });
