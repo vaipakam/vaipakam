@@ -2308,7 +2308,7 @@ const copySource = {
     // copy names the LENT asset, because an internal match settles at
     // oracle price rather than handing over collateral.
     readyInternalMatch:
-      'The grace period has passed, so this loan can be acted on now. The protocol has an opposing position it can settle this one against, so instead of the collateral being sold you are repaid in the asset you lent, at the oracle price when the transaction runs. That opposing position may not be large enough to cover the whole loan — if it is not, only part settles and the rest stays open for you to close again later. You claim whatever settles from the Claims page.',
+      'The grace period has passed, so this loan can be acted on now. The protocol has an opposing position it can settle this one against, so instead of the collateral being sold you are repaid in the asset you lent, at the oracle price when the transaction runs. That opposing position may not be large enough to cover the whole loan — if it is not, only part settles and the rest stays open for you to close again later.',
     // Round 34 P2 — a rental default recovers something else entirely.
     // `DefaultedFacet` clears the renter, leaves the lender's NFT where
     // it already is, and records a claim for the PREPAID rental asset
@@ -2359,7 +2359,7 @@ const copySource = {
     // last ownership poll is up to a minute old.
     notExclusive:
       'Anyone can close out an overdue loan, not just you. If someone else does it first, this position will show as closed, or — if only part of it settled — as smaller than it was. Whatever the close-out recovers goes to whoever holds the lender position for this loan at that moment — so if you have transferred or sold it, it is theirs, not yours.',
-    claimNote: 'Closing out does not move funds to your wallet by itself. Once it settles, what you are owed becomes claimable.',
+    claimNote: 'Closing out does not move funds to your wallet by itself. What you are owed becomes claimable once the loan has fully closed. If the protocol settles only part of it, that part is held for you until the rest closes later.',
     // Round 40 P2 — true of every route EXCEPT the internal match.
     // `DefaultedFacet` passes `msg.sender` as the matcher, and
     // `_settleLeg` sends the per-leg incentive straight to that address

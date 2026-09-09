@@ -404,3 +404,18 @@ for it.
 
 Both are the same lesson as the rest of this note, one step removed: a
 correction changes what is true around it, not only where it lands.
+
+Rather than wait to be told the same thing a third time, the rest of the
+card's wording was read against that one fact — that a settlement may
+cover only part of a loan, and that the part it covers is held rather
+than paid out until the remainder closes. Two more sentences failed.
+
+The general note about collecting, shown on every route except the one
+just corrected, still said what was owed became claimable once the
+close-out settled. It has the same exception as its sibling and now says
+so. And the description of the settle-against-an-opposing-position route
+ended by telling the lender to claim whatever settled — the one case
+where the settled portion is specifically not claimable yet. That
+sentence is gone rather than qualified: the note directly beneath it
+already explains the timing, and saying it twice at two different levels
+of precision is how they came to disagree in the first place.
