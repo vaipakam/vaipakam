@@ -10966,4 +10966,74 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     );
     expect(r.ok).toBe(true);
   });
+
+  // ---- Codex #2066 r33 ----
+
+  it('node -p evaluates its source (#2066 r33)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'ga.mjs',
+      'const cfg = "configs/custom.jsonc";\n' +
+        'spawnSync("node", ["-p", "require(\'fs\').writeFileSync(cfg, \'{}\')"]);\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('an overridden no-clobber still overwrites (#2066 r33)', () => {
+    // GNU: of `-i`, `-f` and `-n`, only the LAST takes effect. Excluding the
+    // command on sight of an earlier `--no-clobber` was a false green, and
+    // reading the ordering means a per-command option table — so the two
+    // order-dependent spellings are dropped rather than ordered.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'gb.sh',
+      'CFG=configs/custom.jsonc\n' +
+        'mv --no-clobber -f generated.jsonc "$CFG"\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a dry run still makes no changes (#2066 r33 bounds)', () => {
+    // `--dry-run` is the one spelling nothing reverses, so it is the one kept.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'gc.sh',
+      'CFG=configs/custom.jsonc\n' +
+        'rsync --dry-run generated.jsonc "$CFG"\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a keyword-mode open needs a filesystem receiver (#2066 r33)', () => {
+    // The third alternative reading an open mode, and the third round to
+    // report the same thing. All of them now share one qualified `open`.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'gd.py',
+      'import subprocess, browser\n' +
+        'browser.open(mode="w")\n' +
+        'note = "configs/custom.jsonc"\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a module keyword-mode open is still a write (#2066 r33 bounds)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'ge.py',
+      'import subprocess, io\n' +
+        'io.open("configs/custom.jsonc", mode="w").write("{}")\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(false);
+  });
 });

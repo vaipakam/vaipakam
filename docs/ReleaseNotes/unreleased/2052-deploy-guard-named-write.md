@@ -168,6 +168,25 @@ withdrawn in the same sitting: a list of plausible variable names is precisely
 the open-ended predicate this work keeps removing. Where the path is
 constructed in place the shape is syntax rather than type, and is still read.
 
+Three separate alternatives read a file-open mode, and each qualified its
+receiver differently — or not at all. That single inconsistency produced a
+report in three consecutive review rounds, every time on the same shape: a
+call that opens a browser window read as a file being opened for writing. The
+mode was never the problem. They now share one spelling of "a filesystem
+open", which is a bare builtin or a member of a module that opens files, and
+the question has one answer instead of three.
+
+The exclusion for commands running in a mode that makes no changes has been
+narrowed to the single spelling that means it unconditionally. The short and
+long forms of "do not overwrite" do not: the tools themselves document that
+when several such options are combined only the last takes effect, so a
+command carrying one early and a forcing option later does overwrite, and
+excluding it on sight hid a real write. Reading that ordering means modelling
+how each command's options override one another, which is the per-command
+table this work refuses, so those spellings were dropped rather than ordered.
+A command told not to overwrite is now reported, which may be a write that
+does not happen — the direction this checker prefers.
+
 Two of the checker's own limits proved to reach further than the case that
 exposed them, and both were found the same way — by running the checker rather
 than reading it. The walk that finds which call owns a piece of code stopped at

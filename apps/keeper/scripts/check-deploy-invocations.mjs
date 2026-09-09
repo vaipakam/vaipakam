@@ -3587,6 +3587,20 @@ function inDelimitedExpression(idx, text, kind, L, R) {
   return /\$\(|`/.test(text.slice(open, idx)) ? -1 : open;
 }
 
+// A FILESYSTEM `open`, spelled once. Three alternatives read an open-mode
+// argument and each qualified its receiver differently — or not at all — and
+// that difference produced a finding in THREE consecutive rounds: the method
+// form in r30, the directly-named form in r32, the keyword-mode form in r33,
+// each time `browser.open(…, "w")` reported as a file write. The shape of the
+// bug was never the mode; it was that the same question had three answers.
+//
+// Python's builtin is bare; a member is admitted only after a filesystem
+// module or a constructed path, which are syntax rather than the receiver
+// TYPE this reader declines to infer.
+const FS_OPEN =
+  String.raw`(?<![A-Za-z0-9_$.])(?:(?:os|io|codecs|pathlib|gzip|bz2|lzma)\s*\.\s*` +
+  String.raw`|Path\s*\([^()]*\)\s*\.\s*)?open`;
+
 // The evaluate-option tests, by which letter the interpreter runs source with.
 // Built once: `isCommandPayload` is called per write match, and compiling a
 // pattern per call to interpolate one character is the sort of cost this file
@@ -3595,9 +3609,12 @@ const EVAL_C = {
   grouped: /(['"`])(?:-{1,2}(?:eval|command)|-[a-zA-Z]*c[a-zA-Z]*)\1\s*,\s*$/,
   attached: /-{1,2}(?:eval|command|c)=/,
 };
+// `-p` / `--print` EVALUATES AND PRINTS, so it runs the source just as `-e`
+// does (r33). Node's letter set, not everyone's: `perl -p` wraps a loop and
+// still needs its own `-e`, which the `e` already matches.
 const EVAL_E = {
-  grouped: /(['"`])(?:-{1,2}(?:eval|command)|-[a-zA-Z]*e[a-zA-Z]*)\1\s*,\s*$/,
-  attached: /-{1,2}(?:eval|command|e)=/,
+  grouped: /(['"`])(?:-{1,2}(?:eval|command|print)|-[a-zA-Z]*[ep][a-zA-Z]*)\1\s*,\s*$/,
+  attached: /-{1,2}(?:eval|command|print|e|p)=/,
 };
 const EVAL_CE = {
   grouped: /(['"`])(?:-{1,2}(?:eval|command)|-[a-zA-Z]*[ce][a-zA-Z]*)\1\s*,\s*$/,
@@ -3951,7 +3968,7 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
   // receiver needs the receiver to be a constructed path, which is syntax
   // rather than the type this reader declines to infer.
   const OPEN_WRITE =
-    String.raw`(?<![.\w$])(?:Path\s*\([^()]*\)\s*\.\s*)?open\s*\([^)]*` +
+    FS_OPEN + String.raw`\s*\([^)]*` +
     esc + String.raw`[^)]*` + Q + String.raw`[rbt]*[wax+]`;
   const RECEIVER_WRITE =
     Q + String.raw`[^"'\`]*` + esc + Q + String.raw`\s*\)?\s*\.\s*(?:write_text|write_bytes)\s*\(`;
@@ -4206,21 +4223,25 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
             // `cp --help` swallowed the line break and took the next line's
             // first word as its operand — the same mistake the command
             // boundary made in r26, in a pattern written after it.
-            // …AND NOT IN A MODE THAT MAKES NO CHANGES. `--dry-run`,
-            // `--no-clobber` and the short `-n` they share all mean the same
-            // thing across these commands — perform no write — and requiring
-            // an operand did not exclude them, because they take one (r32).
-            // ONE meaning in three spellings, applied uniformly, rather than a
-            // per-command table of flags: if a fourth spelling arrives, the
-            // command comes out of this list instead.
+            // …AND NOT IN A MODE THAT MAKES NO CHANGES — which is now ONE
+            // spelling, not three. `--dry-run` means the same thing wherever
+            // it appears and nothing reverses it. `-n` and `--no-clobber` do
+            // NOT: GNU says that of `-i`, `-f` and `-n` only the LAST takes
+            // effect, so `mv --no-clobber -f a b` overwrites, and excluding it
+            // on sight was a false green (r33).
+            //
+            // Reading that ordering means modelling how each command's options
+            // override each other, which is the per-command flag table this
+            // file refuses. So the two order-dependent spellings are dropped
+            // rather than ordered, and `cp -n a b` is reported — a write that
+            // may not happen, which is the direction this reader prefers.
             String.raw`)\s+)*(?:[\w./-]*/)?(?:cp|mv|install|rsync|tee)` +
             // …AND THE LOOK-AHEAD STOPS AT THE COMMAND. Scanning the rest of
             // the LINE let an unrelated option disable the copy beside it:
             // `cp generated.jsonc "$CFG" && echo -n done` went unreported
             // because `echo`'s `-n` was in range (r32 self-review). A false
             // green introduced by the fix for a false red, in the same round.
-            String.raw`(?![^\n;&|]*(?:[^\S\n]--(?:dry-run|no-clobber)\b` +
-            String.raw`|[^\S\n]-[a-zA-Z]*n[a-zA-Z]*(?=[^\S\n]|$)))` +
+            String.raw`(?![^\n;&|]*[^\S\n]--dry-run\b)` +
             String.raw`[^\S\n]+(?:-\S+[^\S\n]+)*[^\s<>|&;-]`
           : '') +
         // A REDIRECTION, not every `>`. The bare alternative also matched the
@@ -4265,20 +4286,19 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
         // on a bound path and for a process module under an alias: the
         // receiver's type is not in the text. The constructor form
         // `Path("…").open("w")` is syntax, and is still read.
-        String.raw`|Path\s*\([^()]*\)\s*\.\s*open\s*\(\s*(?:mode\s*=\s*)?(["'\`])[rbt]*[wax+][rbt+]*\1` +
+        String.raw`|` + FS_OPEN + String.raw`\s*\(\s*(?:mode\s*=\s*)?(["'\`])[rbt]*[wax+][rbt+]*\1` +
         // `mode=` may come FIRST: Python accepts `open(mode="w", file=cfg)`,
         // and requiring it after a comma missed that ordering (r9).
         // Every open-mode branch requires the literal to CLOSE. r11 fixed
         // only the method form, so `webbrowser.open("https://x", "welcome")`
         // still matched the prefix `"w` in the positional one (r12).
-        String.raw`|\bopen\s*\(\s*(?:(?:[^()]|\([^()]*\))*,\s*)?mode\s*=\s*(["'\`])[rbt]*[wax+][rbt+]*\2` +
+        String.raw`|` + FS_OPEN + String.raw`\s*\(\s*(?:(?:[^()]|\([^()]*\))*,\s*)?mode\s*=\s*(["'\`])[rbt]*[wax+][rbt+]*\2` +
         // `open(Path(cfg), "w")` wraps the path, and stopping at the first
         // `)` never reached the positional mode (r10).
         // …and the POSITIONAL form needs an `open` that is Python's builtin or a
         // filesystem one. Any member method whose second argument looks like a
         // mode matched — `browser.open(url, "w")` opens a window named `w` (r23).
-        String.raw`|(?<![A-Za-z0-9_$.])(?:(?:os|io|codecs|pathlib|gzip|bz2|lzma)\s*\.\s*)?` +
-        String.raw`open\s*\((?:[^()]|\([^()]*\))*,\s*(["'\`])[rbt]*[wax+][rbt+]*\3`,
+        String.raw`|` + FS_OPEN + String.raw`\s*\((?:[^()]|\([^()]*\))*,\s*(["'\`])[rbt]*[wax+][rbt+]*\3`,
       'gm',
     );
     // NO ORDERING BETWEEN THE NAME AND THE WRITE. Requiring the write to come
