@@ -2498,7 +2498,8 @@
       },
       "claimNoteInternalMatch": "El importe que se te debe no llega solo a tu monedero: pasa a ser reclamable cuando esto se liquide. Una parte es distinta: el protocolo paga a quien envía esta transacción un pequeño incentivo de emparejamiento, enviado directamente al monedero remitente, y sale del mismo importe liquidado, no se suma a él. Si la envías tú, esa parte es tuya de inmediato.",
       "outcomeNoteRental": "Lo que pasa a ser reclamable es el alquiler ya pagado, menos la parte del protocolo. No depende de cuánto valga nada cuando se ejecute la transacción.",
-      "outcomeNoteInternalMatch": "Lo que vuelve es el activo que prestaste, valorado al precio del oráculo en el momento en que se ejecuta la transacción, así que el importe no se conoce de antemano y no es una cuestión de cuánto valga la garantía."
+      "outcomeNoteInternalMatch": "Lo que vuelve es el activo que prestaste, valorado al precio del oráculo en el momento en que se ejecuta la transacción, así que el importe no se conoce de antemano y no es una cuestión de cuánto valga la garantía.",
+      "matchMayAppear": "Una cosa puede cambiar esto. El protocolo busca una posición opuesta contra la que liquidar en el momento en que se ejecuta la transacción, no cuando se cargó esta página: así que si ha aparecido alguna desde entonces, se te devuelve el activo que prestaste en lugar de recibir la garantía, y puede que solo una parte del préstamo se liquide así."
     }
   },
   "contractError": {

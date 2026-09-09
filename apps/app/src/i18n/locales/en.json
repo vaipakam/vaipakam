@@ -1130,7 +1130,8 @@
       },
       "claimNoteInternalMatch": "The amount you are owed does not arrive in your wallet by itself — it becomes claimable once this settles. One part is different: the protocol pays whoever submits this transaction a small matcher incentive, sent straight to the submitting wallet, and it comes out of the same settled amount rather than on top of it. Submit it yourself and that part is yours immediately.",
       "outcomeNoteRental": "What becomes claimable is the rent that was already paid, less the protocol’s share. It does not depend on what anything is worth when the transaction runs.",
-      "outcomeNoteInternalMatch": "What comes back is the asset you lent, valued at the oracle price at the moment the transaction runs — so the amount is not known in advance, and it is not a question of what the collateral is worth."
+      "outcomeNoteInternalMatch": "What comes back is the asset you lent, valued at the oracle price at the moment the transaction runs — so the amount is not known in advance, and it is not a question of what the collateral is worth.",
+      "matchMayAppear": "One thing can change this. The protocol looks for an opposing position to settle against at the moment the transaction runs, not when this page was loaded — so if one has appeared since, you are repaid in the asset you lent instead of receiving the collateral, and only part of the loan may settle that way."
     },
     "lenderExit": {
       "title": "Your options as the lender",

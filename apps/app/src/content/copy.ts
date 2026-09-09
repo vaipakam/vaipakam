@@ -2326,6 +2326,16 @@ const copySource = {
     // and the close-out SUCCEEDS with a different asset. So the outcome
     // is named per fallback, chosen by `forcedCloseWithoutMatch` — which
     // derives it from the resolver rather than restating the ordering.
+    // Round 44 P2 — the race runs BOTH ways and only one direction was
+    // disclosed. `triggerDefault` re-checks for an opposing position
+    // on-chain at DefaultedFacet.sol:287, after this card's read and
+    // after the pre-submit simulation. So a loan that read as in-kind,
+    // or as needing a routed sale, can gain a candidate in between and
+    // settle as a match instead — repaying the LENT asset rather than
+    // moving collateral. The receipt already admitted both outcomes; the
+    // card body and its valuation note still promised one.
+    matchMayAppear:
+      'One thing can change this. The protocol looks for an opposing position to settle against at the moment the transaction runs, not when this page was loaded — so if one has appeared since, you are repaid in the asset you lent instead of receiving the collateral, and only part of the loan may settle that way.',
     raceFallbackFails:
       'Someone else may settle against that opposing position first. If that happens this close-out does not simply stop — it carries on down whatever route the protocol finds next. Here that route cannot complete, so the attempt would fail and cost you only the network fee. The loan stays open and you can try again.',
     raceFallbackInKind:

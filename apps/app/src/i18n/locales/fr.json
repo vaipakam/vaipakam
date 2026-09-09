@@ -2498,7 +2498,8 @@
       },
       "claimNoteInternalMatch": "Le montant qui vous est dû n’arrive pas seul dans votre portefeuille : il devient réclamable une fois le règlement effectué. Une part fait exception : le protocole verse à celui qui soumet cette transaction une petite incitation d’appariement, envoyée directement au portefeuille émetteur, et elle est prélevée sur ce même montant réglé plutôt que de s’y ajouter. Si vous la soumettez vous-même, cette part vous revient immédiatement.",
       "outcomeNoteRental": "Ce qui devient réclamable est le loyer déjà payé, moins la part du protocole. Cela ne dépend pas de ce que vaut quoi que ce soit au moment de l’exécution.",
-      "outcomeNoteInternalMatch": "Ce qui revient est l’actif que vous avez prêté, valorisé au prix de l’oracle au moment de l’exécution : le montant n’est donc pas connu d’avance, et il ne s’agit pas de ce que vaut la garantie."
+      "outcomeNoteInternalMatch": "Ce qui revient est l’actif que vous avez prêté, valorisé au prix de l’oracle au moment de l’exécution : le montant n’est donc pas connu d’avance, et il ne s’agit pas de ce que vaut la garantie.",
+      "matchMayAppear": "Une chose peut changer cela. Le protocole cherche une position opposée au moment où la transaction s’exécute, non au chargement de cette page : si une est apparue depuis, on vous rembourse l’actif que vous avez prêté au lieu de vous remettre la garantie, et une partie seulement du prêt peut être réglée ainsi."
     }
   },
   "contractError": {

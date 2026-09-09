@@ -323,3 +323,25 @@ fixed when the loan opened, not now — so a loan that could still hold one
 was having the warning hidden because the collateral had since become
 harder to sell. The prediction now rests only on facts that cannot change
 for the life of the position.
+
+The last of these is the mirror of a warning added earlier, and it is
+slightly embarrassing that it took a separate round to notice. The card
+warns, on the route that settles against an opposing position, that
+somebody else may settle against it first and what happens then. The same
+race runs the other way and was not mentioned at all: the protocol looks
+for an opposing position at the moment the transaction executes, not when
+the page was loaded, so a loan that read as handing over collateral can
+settle as a match instead and repay what was lent. The confirmation
+screen had admitted both outcomes for some time; the card body and its
+note about collateral value still promised one. Both routes that describe
+a collateral outcome now say what can change it — including the one that
+offers no button, because its whole message is that an operator must
+arrange a sale, and that advice is wrong too if a match has appeared.
+
+A smaller correction alongside it, in the operator notes rather than the
+product. The instruction for pointing a self-hosted deployment at its own
+public address told the operator to set the value in the example file.
+Nothing reads the example file — it is a template. An operator following
+it exactly would have got a sitemap and robots file pointing at the
+default hosted address while believing they had changed it. The note now
+says to copy it to a file that is actually loaded, and lists them.

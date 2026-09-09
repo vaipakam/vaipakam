@@ -366,6 +366,27 @@ export function ForcedCloseCard({
         </p>
       ) : null}
 
+      {/* The SAME race, seen from the other side (round 44 P2). This card
+          disclosed only match -> something-else. `triggerDefault`
+          re-checks for an opposing position at DefaultedFacet.sol:287,
+          after this card's read AND after the pre-submit simulation, so
+          something-else -> match is equally live: a loan that read as
+          in-kind, or as needing a routed sale, can settle as a match and
+          repay the lent asset instead of moving collateral.
+
+          Shown on `ready-needs-route` as well as `ready-in-kind`, even
+          though that state offers no button: its whole message is that
+          an operator must route a sale, and a match appearing makes that
+          advice wrong too. Disclosing one direction of a symmetric race
+          and not the other is how the first version of this warning got
+          written. */}
+      {(readiness === 'ready-in-kind' || readiness === 'ready-needs-route') &&
+      !holdingAfterSubmit ? (
+        <p className="muted" data-testid="forced-close-match-may-appear">
+          {copy.forcedClose.matchMayAppear}
+        </p>
+      ) : null}
+
       {/* Shown on both ready states — a lender who cannot submit here
           still needs to know a keeper may close it, so that finding the
           position already closed reads as normal rather than as loss. */}

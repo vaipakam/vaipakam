@@ -2498,7 +2498,8 @@
       },
       "claimNoteInternalMatch": "Der dir zustehende Betrag landet nicht von selbst in deiner Wallet — er wird beanspruchbar, sobald dies abgerechnet ist. Ein Teil ist anders: Das Protokoll zahlt demjenigen, der diese Transaktion einreicht, einen kleinen Matcher-Anreiz, direkt an die einreichende Wallet, und er stammt aus demselben abgerechneten Betrag statt zusätzlich dazu. Reichst du sie selbst ein, gehört dieser Teil sofort dir.",
       "outcomeNoteRental": "Beanspruchbar wird die bereits gezahlte Miete abzüglich des Protokollanteils. Sie hängt nicht davon ab, was irgendetwas zum Ausführungszeitpunkt wert ist.",
-      "outcomeNoteInternalMatch": "Zurück kommt der von dir verliehene Vermögenswert, bewertet zum Orakelpreis im Moment der Ausführung — der Betrag steht also nicht im Voraus fest, und es geht nicht darum, was die Sicherheit wert ist."
+      "outcomeNoteInternalMatch": "Zurück kommt der von dir verliehene Vermögenswert, bewertet zum Orakelpreis im Moment der Ausführung — der Betrag steht also nicht im Voraus fest, und es geht nicht darum, was die Sicherheit wert ist.",
+      "matchMayAppear": "Eines kann das ändern. Das Protokoll sucht in dem Moment, in dem die Transaktion ausgeführt wird, nach einer Gegenposition — nicht als diese Seite geladen wurde. Ist seither eine aufgetaucht, bekommst du den von dir verliehenen Vermögenswert zurück statt der Sicherheit, und möglicherweise wird nur ein Teil des Darlehens so abgerechnet."
     }
   },
   "contractError": {

@@ -479,6 +479,17 @@ Thin-market honesty rules apply.
   suppressed only on facts that cannot change for the life of the position.
   Predicting it from a live measurement that may have moved since the position
   opened withholds a warning that is still true.
+- Where the protocol re-decides a route at execution time, every surface that
+  names an outcome discloses that it may be re-decided — in BOTH directions.
+  The opposing-position check runs when the transaction executes, not when the
+  page was read, so a position described as returning collateral may instead
+  repay what was lent, exactly as one described as settling against an opposing
+  position may lose it. Disclosing one direction of a symmetric race and not
+  the other leaves the undisclosed half reading as a promise.
+- Operator instructions name a file the tooling actually reads. Telling an
+  operator to configure a value in a template that nothing loads produces a
+  deployment that is misconfigured while its operator believes otherwise, which
+  is worse than no instruction at all.
 - Withholding an action for safety must not withhold the explanation with it.
   Where a check that guards the close-out is unanswered — pending, failed, or
   undecodable — the surface stays visible in its unresolved state and says a
