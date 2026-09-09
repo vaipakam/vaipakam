@@ -2479,7 +2479,7 @@
       },
       "blockedPaused": "El protocolo está en pausa en este momento, así que no se puede cerrar nada hasta que la gobernanza la levante. Tu posición y la garantía que la respalda no se ven afectadas por la pausa.",
       "blockedNoConsent": "Este préstamo ha superado su período de gracia, pero se abrió sin que ambas partes registraran la aceptación de riesgos y condiciones que el protocolo exige antes de entregar una garantía sin precio de mercado. El cierre se rechaza para todo el mundo, no solo para ti: contacta con soporte.",
-      "submitted": "Cierre enviado. El préstamo está terminando; dale un momento a la página para actualizarse y luego consulta la página de Reclamaciones para ver qué te corresponde reclamar.",
+      "submitted": "Cierre enviado. Dale un momento a la página para actualizarse: lo que realmente ocurrió se decide mientras se ejecuta la transacción, y la posición actualizada mostrará si el préstamo terminó o si parte sigue abierto. Lo que haya pasado a ser tuyo aparecerá en la página de Reclamaciones.",
       "readyInternalMatch": "El período de gracia ha terminado y este préstamo puede cerrarse ahora. El protocolo tiene una posición opuesta contra la que puede liquidar esta, así que en lugar de venderse la garantía se te devuelve el activo que prestaste, al precio del oráculo en el momento de la transacción. Lo reclamas después en la página de Reclamaciones.",
       "readyRental": "El período de gracia ha terminado, así que ya puedes finalizar este alquiler. Tu NFT permanece donde está y se retira el acceso del arrendatario. Lo que queda reclamable es el alquiler pagado por adelantado, menos las comisiones — lo reclamas en la página de Reclamaciones.",
       "raceIntro": "Puede que otra persona liquide antes contra esa posición opuesta. Si ocurre, este cierre no se detiene sin más: continúa por la ruta que el protocolo encuentre a continuación.",
@@ -2491,10 +2491,13 @@
         "youReceive": "El alquiler pagado por adelantado, menos comisiones, en el activo en que se pagó. Tu NFT no forma parte de esto: permanece donde ya está. Reclamas el alquiler después desde la página de Reclamaciones.",
         "youLock": "Nada.",
         "youMayOwe": "Nada más allá de la comisión de red.",
-        "youCanLose": "El resto del plazo de alquiler. Terminarlo ahora retira el acceso del arrendatario, así que el alquiler que se habría devengado después de este momento no lo hará. Nada del arrendatario se te transfiere, y no hay déficit que debas asumir.",
+        "youCanLose": "Nada. El plazo del alquiler y el periodo de gracia posterior ya han pasado, así que no queda plazo al que renunciar ni alquiler por devengar: todo el plazo se pagó por adelantado. Tu NFT nunca sale de tu bóveda y no hay déficit que debas asumir. Hasta que esto se ejecute, el arrendatario conserva un acceso al que ya no tiene derecho.",
         "fees": "La comisión de red, más la parte del protocolo sobre el alquiler prepagado.",
         "whenThisEnds": "El alquiler termina cuando se liquide esta transacción. Tu NFT no se mueve, y lo prepagado queda reclamable."
-      }
+      },
+      "claimNoteInternalMatch": "El importe que se te debe no llega solo a tu monedero: pasa a ser reclamable cuando esto se liquide. Una parte es distinta: el protocolo paga a quien envía esta transacción un pequeño incentivo de emparejamiento, enviado directamente al monedero remitente, y sale del mismo importe liquidado, no se suma a él. Si la envías tú, esa parte es tuya de inmediato.",
+      "outcomeNoteRental": "Lo que pasa a ser reclamable es el alquiler ya pagado, menos la parte del protocolo. No depende de cuánto valga nada cuando se ejecute la transacción.",
+      "outcomeNoteInternalMatch": "Lo que vuelve es el activo que prestaste, valorado al precio del oráculo en el momento en que se ejecuta la transacción, así que el importe no se conoce de antemano y no es una cuestión de cuánto valga la garantía."
     }
   },
   "contractError": {

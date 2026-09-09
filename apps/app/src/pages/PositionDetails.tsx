@@ -3368,11 +3368,26 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       // unknown. `triggerDefault` never inspects the sale link, so the
       // simulation succeeds too and nothing downstream catches it.
       // Fail closed on an unanswered probe, as its siblings do.
-      !saleCompletionPending &&
-      !saleHoldResolving ? (
+      //
+      // ROUND 40 P2 — failing closed means NOT SUBMITTABLE, not
+      // INVISIBLE, and this gate conflated the two. `saleHoldResolving`
+      // is true while the probe is pending, has errored, or returned
+      // something undecodable, so an RPC failure removed the whole card
+      // and the lender saw neither the action nor any explanation —
+      // potentially for as long as the failure lasted. That is the
+      // opposite of what this card is for: it renders every unresolved
+      // check as visible state, saying which check is running, and the
+      // functional spec requires exactly that. So only a COMPLETED sale
+      // unmounts it now; an unresolved probe maps the readiness to
+      // `unknown`, which is already the state meaning "a check has not
+      // answered yet" and is already non-submittable. The submit path
+      // stays guarded by `assertSaleSettlementSafe()` regardless.
+      !saleCompletionPending ? (
         <ForcedCloseCard
           loanId={row.loanId}
-          readiness={forcedCloseReadiness}
+          readiness={
+            saleHoldResolving ? 'unknown' : forcedCloseReadiness
+          }
           matchFallback={forcedCloseMatchFallback}
           confirmOpen={confirmingSurface === 'forced-close'}
           onOpenConfirm={() => setConfirmingSurface('forced-close')}

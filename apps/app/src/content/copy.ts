@@ -2344,7 +2344,7 @@ const copySource = {
     blockedNoConsent:
       'This loan is past its grace period, but it was opened without both sides recording the risk-and-terms acknowledgement the protocol requires before it will hand over collateral that has no market price. The close-out is refused for everyone, not just for you — contact support.',
     submitted:
-      'Close-out submitted. The loan is ending; give the page a moment to catch up, then check the Claims page for what is now yours to claim.',
+      'Close-out submitted. Give the page a moment to catch up — what actually happened is decided while the transaction runs, and the refreshed position will show whether the loan ended or part of it is still running. Anything that became yours appears on the Claims page.',
     // Round 28 P2 — names WHO is paid, not just who may act. The
     // proceeds follow the lender position NFT as it stands when the
     // transaction runs, and this card is reachable by a wallet whose
@@ -2352,6 +2352,26 @@ const copySource = {
     notExclusive:
       'Anyone can close out an overdue loan, not just you. If someone else does it first, this position will simply show as closed. Whatever the close-out recovers goes to whoever holds the lender position for this loan at that moment — so if you have transferred or sold it, it is theirs, not yours.',
     claimNote: 'Closing out does not move funds to your wallet by itself. Once it settles, what you are owed becomes claimable.',
+    // Round 40 P2 — true of every route EXCEPT the internal match.
+    // `DefaultedFacet` passes `msg.sender` as the matcher, and
+    // `_settleLeg` sends the per-leg incentive straight to that address
+    // with `safeTransfer` while only `moved - incentive` reaches the
+    // lender's vault. So on that route something DOES arrive in the
+    // submitting wallet immediately, and it is taken out of the amount
+    // the lender later claims. Saying "nothing moves to your wallet"
+    // was wrong in both directions at once.
+    claimNoteInternalMatch:
+      'The amount you are owed does not arrive in your wallet by itself — it becomes claimable once this settles. One part is different: the protocol pays whoever submits this transaction a small matcher incentive, sent straight to the submitting wallet, and it comes out of the same settled amount rather than on top of it. Submit it yourself and that part is yours immediately.',
+    // Round 40 P2 — the shared note names a collateral valuation, and
+    // neither of these two routes has one. A rental makes the FIXED
+    // prepaid rent claimable after the treasury split; an internal match
+    // repays the lent asset at the oracle price when the transaction
+    // runs, which is a different unknown from "what the collateral is
+    // worth".
+    outcomeNoteRental:
+      'What becomes claimable is the rent that was already paid, less the protocol’s share. It does not depend on what anything is worth when the transaction runs.',
+    outcomeNoteInternalMatch:
+      'What comes back is the asset you lent, valued at the oracle price at the moment the transaction runs — so the amount is not known in advance, and it is not a question of what the collateral is worth.',
     intentNote:
       'If the borrower has a pending swap-to-repay order on this loan, closing out cancels it.',
     outcomeNote:
@@ -2407,7 +2427,7 @@ const copySource = {
       youLock: 'Nothing.',
       youMayOwe: 'Nothing beyond the network fee.',
       youCanLose:
-        'The rest of the rental term. Ending it now removes the renter’s access, so any rent that would have accrued after this point does not. Nothing belonging to the renter transfers to you, and there is no shortfall for you to absorb.',
+        'Nothing. The rental term and the grace period after it have both already passed, so there is no remaining term to give up and no rent still to accrue — the whole term was paid for up front. Your NFT never leaves your vault, and there is no shortfall for you to absorb. Until this runs, the renter keeps access they are no longer entitled to.',
       fees: 'The network fee, plus the protocol’s share of the prepaid rent.',
       whenThisEnds:
         'The rental ends when this transaction settles. Your NFT does not move, and what was prepaid becomes claimable.',

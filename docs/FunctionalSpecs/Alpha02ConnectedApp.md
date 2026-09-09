@@ -418,7 +418,37 @@ Thin-market honesty rules apply.
   at the moment it executes, so a holder who has since transferred or sold the
   position is told plainly that it is no longer theirs.
 - Closing out is not presented as payment. It ends the loan; what the lender is
-  owed becomes claimable afterwards through the ordinary claim route.
+  owed becomes claimable afterwards through the ordinary claim route — with one
+  stated exception. Where the protocol settles the position against an opposing
+  one, it pays whoever submitted the transaction an incentive directly to that
+  wallet, deducted from the settled amount rather than added to it. A surface
+  that says nothing reaches the wallet by itself is wrong twice over on that
+  route: about the payment, and about the amount left to claim. Both are
+  disclosed.
+- A surface must not describe an amount as depending on a valuation the route
+  does not perform. An overdue rental makes an already-paid, fixed sum
+  claimable; a settlement against an opposing position returns the lent asset
+  priced when the transaction runs. Neither is a question of what collateral is
+  worth, and neither may borrow that sentence.
+- A close-out confirmation must not state a loss that cannot occur. A rental
+  becomes closable only once its term and the grace period after it have both
+  expired, and the full term was paid at origination — so there is no remaining
+  term to forgo. Where a route genuinely risks nothing, the surface says so
+  rather than filling the space, and states what is actually at stake instead:
+  until the close-out runs, the renter retains access they are no longer
+  entitled to.
+- What a surface says immediately after a close-out is submitted must not
+  assert an outcome the transaction has not yet reported. A settlement covering
+  only part of the position leaves the remainder running with nothing claimable
+  yet, so the post-submit message describes the result as still being decided
+  and directs the lender to the refreshed position, never to a claim that may
+  not exist.
+- Withholding an action for safety must not withhold the explanation with it.
+  Where a check that guards the close-out is unanswered — pending, failed, or
+  undecodable — the surface stays visible in its unresolved state and says a
+  check is running. Removing it entirely leaves the lender with neither the
+  action nor a reason, for as long as the underlying failure lasts, which is
+  indistinguishable from the capability not existing.
 - The surface appears before it can be used — while checks are still running,
   and while the borrower still has time — and says which of those applies. A
   capability shown only at the moment it becomes actionable cannot be

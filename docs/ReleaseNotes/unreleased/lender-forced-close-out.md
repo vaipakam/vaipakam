@@ -204,3 +204,55 @@ and now the confirmation. The confirmation outlasted the other three
 because it does not vary by route: it reads correctly for the majority
 case, so each earlier correction went past it. The lesson is that a
 screen which does not change is not thereby a screen that is right.
+
+A further review round found five more places where the card spoke for
+one route while showing itself on all of them, and one where failing
+safe had quietly turned into failing silent. They are worth recording
+together because four of the five are the same shape as everything
+above: a true sentence, shown where it is not true.
+
+The card said plainly that closing out never moves anything to the
+lender's wallet by itself — that what they are owed becomes claimable
+afterwards. That is right for every route but one. Where the protocol
+settles the position against an opposing one, it pays whoever submitted
+the transaction a small incentive, sent directly to that wallet, and
+taken out of the same settlement rather than added on top. So a lender
+closing out their own position is paid something immediately, and it
+comes out of what they would otherwise claim. Both halves of that were
+missing, and the card asserted the opposite of the first.
+
+It also said the amount depends on what the collateral is worth. Two
+routes have no collateral valuation at all. An overdue rental makes a
+fixed, already-paid sum claimable; a settlement against an opposing
+position returns the asset that was lent, priced at the moment the
+transaction runs. Both are now described as what they are, rather than
+sharing a sentence about a valuation neither performs.
+
+The rental confirmation added earlier in this note claimed the lender
+gives up the rest of the rental term. There is no rest of the term. A
+rental only becomes closable after its term AND the grace period after
+it have both expired, and the whole term was paid for up front — so
+nothing further could have accrued. That row invented a loss to fill a
+space, which on a screen about somebody's money is worse than leaving
+the space empty. It now says there is nothing to lose, and says why,
+and adds the thing that is actually true: until the close-out runs, the
+renter keeps access they are no longer entitled to.
+
+The message shown immediately after submitting said the loan is ending
+and pointed at the claims page. Neither is guaranteed. A settlement that
+covers only part of the position leaves the rest of the loan running and
+nothing claimable yet, which the card had already learned to say
+elsewhere and had not learned to say here. It now describes the
+transaction as decided while it runs, and sends the lender to the
+refreshed position to see which happened.
+
+The last one is different, and is a correction to a fix made earlier in
+this same work. The card is deliberately withheld while a sale of the
+lender's own position might be half-finished — otherwise a close-out
+could strand it. That guard treated an unanswered question as a reason
+to remove the card entirely, so a network problem reading that one fact
+took away both the action and any explanation of why, for as long as the
+problem lasted. Failing safe should mean the button does not work, not
+that the page pretends the position has nothing to offer. The card now
+stays where it is and says a check is still running — which is what it
+does for every other unresolved check, and what it was built to do.

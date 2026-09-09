@@ -2479,7 +2479,7 @@
       },
       "blockedPaused": "Le protocole est actuellement en pause : rien ne peut être clôturé tant que la gouvernance ne l’a pas levée. Votre position et la garantie qui la couvre ne sont pas affectées par cette pause.",
       "blockedNoConsent": "Ce prêt a dépassé son délai de grâce, mais il a été ouvert sans que les deux parties aient enregistré la reconnaissance des risques et conditions que le protocole exige avant de remettre une garantie sans prix de marché. La clôture est refusée à tout le monde, pas seulement à vous : contactez le support.",
-      "submitted": "Clôture envoyée. Le prêt se termine ; laissez à la page un instant pour se mettre à jour, puis consultez la page Réclamations pour voir ce que vous pouvez réclamer.",
+      "submitted": "Clôture soumise. Laissez un instant à la page pour se mettre à jour : ce qui s’est réellement passé se décide pendant l’exécution, et la position actualisée indiquera si le prêt s’est terminé ou si une partie court encore. Ce qui vous revient apparaîtra sur la page Réclamations.",
       "readyInternalMatch": "Le délai de grâce est écoulé et ce prêt peut être clôturé maintenant. Le protocole dispose d’une position opposée contre laquelle il peut régler celle-ci : plutôt que de vendre la garantie, vous êtes remboursé dans l’actif que vous avez prêté, au prix de l’oracle au moment de la transaction. Vous le réclamez ensuite sur la page Réclamations.",
       "readyRental": "Le délai de grâce est écoulé : vous pouvez mettre fin à cette location. Votre NFT reste où il est et l’accès du locataire est retiré. Ce qui devient réclamable est le loyer payé d’avance, moins les frais — vous le réclamez sur la page Réclamations.",
       "raceIntro": "Quelqu’un d’autre peut régler en premier contre cette position opposée. Dans ce cas, cette clôture ne s’arrête pas : elle se poursuit par la voie que le protocole trouve ensuite.",
@@ -2491,10 +2491,13 @@
         "youReceive": "Le loyer payé d’avance, frais déduits, dans l’actif dans lequel il a été payé. Votre NFT n’est pas concerné : il reste où il est déjà. Vous réclamez le loyer ensuite depuis la page Réclamations.",
         "youLock": "Rien.",
         "youMayOwe": "Rien au-delà des frais de réseau.",
-        "youCanLose": "Le reste de la durée de location. Y mettre fin maintenant retire l’accès du locataire, si bien que le loyer qui aurait couru ensuite ne courra pas. Rien appartenant au locataire ne vous est transféré, et il n’y a aucun déficit à absorber.",
+        "youCanLose": "Rien. La durée de location et le délai de grâce qui la suit sont déjà écoulés : il n’y a donc plus de durée à abandonner ni de loyer à courir — la totalité de la durée a été payée d’avance. Votre NFT ne quitte jamais votre coffre et il n’y a aucun déficit à absorber. Tant que ceci n’est pas exécuté, le locataire conserve un accès auquel il n’a plus droit.",
         "fees": "Les frais de réseau, plus la part du protocole sur le loyer payé d’avance.",
         "whenThisEnds": "La location prend fin au règlement de cette transaction. Votre NFT ne bouge pas, et ce qui a été payé d’avance devient réclamable."
-      }
+      },
+      "claimNoteInternalMatch": "Le montant qui vous est dû n’arrive pas seul dans votre portefeuille : il devient réclamable une fois le règlement effectué. Une part fait exception : le protocole verse à celui qui soumet cette transaction une petite incitation d’appariement, envoyée directement au portefeuille émetteur, et elle est prélevée sur ce même montant réglé plutôt que de s’y ajouter. Si vous la soumettez vous-même, cette part vous revient immédiatement.",
+      "outcomeNoteRental": "Ce qui devient réclamable est le loyer déjà payé, moins la part du protocole. Cela ne dépend pas de ce que vaut quoi que ce soit au moment de l’exécution.",
+      "outcomeNoteInternalMatch": "Ce qui revient est l’actif que vous avez prêté, valorisé au prix de l’oracle au moment de l’exécution : le montant n’est donc pas connu d’avance, et il ne s’agit pas de ce que vaut la garantie."
     }
   },
   "contractError": {

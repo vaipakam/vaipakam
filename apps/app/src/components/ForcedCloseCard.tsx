@@ -255,6 +255,34 @@ export function ForcedCloseCard({
       ? copy.forcedClose.rentalReceipt
       : copy.forcedClose.receipt;
 
+  /** Round 40 P2 — two notes were unconditional and neither is true of
+   *  every route.
+   *
+   *  `outcomeNote` named a COLLATERAL VALUATION. A rental has none: the
+   *  rent was prepaid at origination and what becomes claimable is that
+   *  fixed amount less the treasury split. An internal match has none
+   *  either — it repays the LENT asset at the oracle price when the
+   *  transaction runs, which is a different unknown wearing the same
+   *  words.
+   *
+   *  `claimNote` said nothing reaches the wallet by itself. On the
+   *  internal-match route something does: `DefaultedFacet` passes
+   *  `msg.sender` to `attemptInternalMatchAutoDispatch` as the matcher,
+   *  and `_settleLeg` sends the per-leg incentive to that address with a
+   *  direct `safeTransfer`, crediting only `moved - incentive` to the
+   *  lender's vault. A lender submitting their own close-out is paid
+   *  immediately, out of what they would otherwise claim. */
+  const outcomeNote =
+    readiness === 'ready-rental'
+      ? copy.forcedClose.outcomeNoteRental
+      : readiness === 'ready-internal-match'
+        ? copy.forcedClose.outcomeNoteInternalMatch
+        : copy.forcedClose.outcomeNote;
+  const claimNote =
+    readiness === 'ready-internal-match'
+      ? copy.forcedClose.claimNoteInternalMatch
+      : copy.forcedClose.claimNote;
+
   const body = holdingAfterSubmit
     ? copy.forcedClose.submitted
     : readiness === 'not-yet'
@@ -316,8 +344,8 @@ export function ForcedCloseCard({
         readiness === 'ready-rental') ? (
         <>
           <p className="field-hint">{copy.forcedClose.notExclusive}</p>
-          <p className="field-hint">{copy.forcedClose.outcomeNote}</p>
-          <p className="field-hint">{copy.forcedClose.claimNote}</p>
+          <p className="field-hint">{outcomeNote}</p>
+          <p className="field-hint">{claimNote}</p>
         </>
       ) : null}
 

@@ -2479,7 +2479,7 @@
       },
       "blockedPaused": "Das Protokoll ist derzeit pausiert, daher kann nichts geschlossen werden, bis die Governance die Pause aufhebt. Ihre Position und die dahinterliegende Sicherheit sind davon nicht betroffen.",
       "blockedNoConsent": "Dieser Kredit ist über seine Nachfrist hinaus, wurde aber eröffnet, ohne dass beide Seiten die Risiko- und Bedingungsbestätigung erfasst haben, die das Protokoll verlangt, bevor es eine Sicherheit ohne Marktpreis herausgibt. Der Abschluss wird für alle verweigert, nicht nur für Sie – wenden Sie sich an den Support.",
-      "submitted": "Abschluss gesendet. Der Kredit wird beendet; geben Sie der Seite einen Moment zum Aktualisieren und sehen Sie dann auf der Ansprüche-Seite nach, was Sie nun beanspruchen können.",
+      "submitted": "Abschluss eingereicht. Gib der Seite einen Moment — was tatsächlich passiert ist, entscheidet sich während der Transaktion, und die aktualisierte Position zeigt, ob das Darlehen beendet wurde oder ein Teil weiterläuft. Was dir zugefallen ist, erscheint auf der Ansprüche-Seite.",
       "readyInternalMatch": "Die Nachfrist ist abgelaufen und dieser Kredit kann jetzt geschlossen werden. Das Protokoll hat eine Gegenposition, gegen die es diese abwickeln kann — statt die Sicherheit zu verkaufen, werden Sie in dem von Ihnen verliehenen Vermögenswert zurückgezahlt, zum Orakelpreis zum Zeitpunkt der Transaktion. Sie beanspruchen ihn danach auf der Ansprüche-Seite.",
       "readyRental": "Die Nachfrist ist abgelaufen, Sie können diese Vermietung jetzt beenden. Ihr NFT bleibt, wo es ist, und der Zugang des Mieters wird entfernt. Beanspruchbar wird die im Voraus gezahlte Miete abzüglich Gebühren — Sie beanspruchen sie auf der Ansprüche-Seite.",
       "raceIntro": "Jemand anderes könnte zuerst gegen diese Gegenposition abrechnen. Dann bricht dieser Abschluss nicht einfach ab — er läuft über den Weg weiter, den das Protokoll als Nächstes findet.",
@@ -2491,10 +2491,13 @@
         "youReceive": "Die im Voraus gezahlte Miete, abzüglich Gebühren, in dem Vermögenswert, in dem sie gezahlt wurde. Dein NFT ist davon nicht betroffen — es bleibt, wo es bereits ist. Die Miete beanspruchst du anschließend auf der Ansprüche-Seite.",
         "youLock": "Nichts.",
         "youMayOwe": "Nichts über die Netzwerkgebühr hinaus.",
-        "youCanLose": "Den Rest der Mietlaufzeit. Wenn du sie jetzt beendest, wird der Zugriff des Mieters entfernt, sodass danach keine Miete mehr anfällt. Nichts, was dem Mieter gehört, geht an dich über, und es gibt keine Unterdeckung, die du tragen müsstest.",
+        "youCanLose": "Nichts. Die Mietlaufzeit und die anschließende Nachfrist sind bereits verstrichen, es gibt also keine Restlaufzeit aufzugeben und keine Miete mehr, die anfallen könnte — die gesamte Laufzeit wurde im Voraus bezahlt. Dein NFT verlässt deinen Tresor nie, und es gibt keine Unterdeckung, die du tragen müsstest. Bis dies ausgeführt wird, behält der Mieter einen Zugriff, auf den er keinen Anspruch mehr hat.",
         "fees": "Die Netzwerkgebühr sowie der Anteil des Protokolls an der im Voraus gezahlten Miete.",
         "whenThisEnds": "Die Vermietung endet, sobald diese Transaktion abgerechnet ist. Dein NFT bewegt sich nicht, und das im Voraus Gezahlte wird beanspruchbar."
-      }
+      },
+      "claimNoteInternalMatch": "Der dir zustehende Betrag landet nicht von selbst in deiner Wallet — er wird beanspruchbar, sobald dies abgerechnet ist. Ein Teil ist anders: Das Protokoll zahlt demjenigen, der diese Transaktion einreicht, einen kleinen Matcher-Anreiz, direkt an die einreichende Wallet, und er stammt aus demselben abgerechneten Betrag statt zusätzlich dazu. Reichst du sie selbst ein, gehört dieser Teil sofort dir.",
+      "outcomeNoteRental": "Beanspruchbar wird die bereits gezahlte Miete abzüglich des Protokollanteils. Sie hängt nicht davon ab, was irgendetwas zum Ausführungszeitpunkt wert ist.",
+      "outcomeNoteInternalMatch": "Zurück kommt der von dir verliehene Vermögenswert, bewertet zum Orakelpreis im Moment der Ausführung — der Betrag steht also nicht im Voraus fest, und es geht nicht darum, was die Sicherheit wert ist."
     }
   },
   "contractError": {
