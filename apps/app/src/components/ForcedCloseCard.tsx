@@ -415,6 +415,17 @@ export function ForcedCloseCard({
       refreshedFor === submittedHash,
   });
 
+  /** `holdingAfterSubmit`, readable from a long-lived event handler.
+   *
+   *  ROUND 61 P1 — the cross-tab `storage` listener is installed once and
+   *  closes over the render that installed it, so it cannot see the live
+   *  value. It needs to, because whether another tab's clear may be acted
+   *  on depends entirely on whether THIS tab has finished reconciling. */
+  const holdingRef = useRef(holdingAfterSubmit);
+  useEffect(() => {
+    holdingRef.current = holdingAfterSubmit;
+  });
+
   /** The transaction has been outstanding long enough that "give the page
    *  a moment" would be a misdescription.
    *
@@ -571,11 +582,32 @@ export function ForcedCloseCard({
       if (event.key !== null && event.key !== ownKey) return;
       const persisted = readForcedCloseSubmission(chainId, loanId);
       setSubmissions((prev) => {
-        // Another tab CLEARED it — it disposed of the transaction, or the
-        // lender told it the transaction is gone. Drop ours too rather
-        // than holding on a record no longer backed by storage.
+        // ROUND 61 P1 — a remote clear is a SIGNAL, not an instruction.
+        //
+        // Dropping our own record on it was wrong, and my earlier
+        // reasoning for keeping it was wrong in an instructive way: I
+        // argued the pre-send simulation was the backstop, having checked
+        // whether the re-offered action would FAIL. On a partial internal
+        // match it does not fail — the loan is deliberately still Active,
+        // so `triggerDefault` simulates and executes fine. What is stale
+        // is the DESCRIPTION: this tab still holds cached
+        // `ready-internal-match` copy promising settlement in the lent
+        // asset, while the same empty-route call now takes the in-kind
+        // fallback. The lender confirms one outcome and gets another.
+        //
+        // A simulation cannot catch that, because the transaction is
+        // legitimate. Only this tab's own post-success refresh can, which
+        // is exactly what the hold already waits for. So the clear is
+        // ignored while we are still holding: the other tab knows its
+        // transaction is disposed of, and knows nothing about whether OUR
+        // reads have caught up.
+        //
+        // Once this tab is no longer holding, dropping the record is
+        // right and keeps the round-53 property — a settled transaction
+        // is not re-watched on the next visit.
         if (persisted === null) {
           if (prev[key] === undefined) return prev;
+          if (holdingRef.current) return prev;
           const next = { ...prev };
           delete next[key];
           return next;

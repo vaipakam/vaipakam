@@ -918,13 +918,26 @@ export async function handleLoansStats(req: Request, env: Env): Promise<Response
       // what this loan is? — rather than a flag that answers a
       // different one.
       //
+      // TWO SENTINELS, not one (round 61 P2). `'0x'` is what fallback B
+      // writes today; rows predating it carry the COLUMN DEFAULT,
+      // `0x0000…0000` (migrations/0005:52), and migration 0009 marks
+      // those as stubs without normalising the value. Excluding only
+      // `'0x'` let such a row through with its default `asset_type = 0`
+      // and published it as an ERC-20 loan — a false classification, not
+      // a gap. Worse, it was a SILENT one: the subtotals then reconcile
+      // against `active`, so the unclassified remainder reads zero and
+      // the transparency page's contradiction notice never fires. A
+      // misfiled row that makes the arithmetic look right is exactly what
+      // that notice exists to expose.
+      //
       // The `active` count above still includes both kinds, so the
       // subtotals may sum to less than `active` while metadata-less rows
       // await healing. That direction is the honest one: undercounting a
       // type is an admitted gap, misfiling it is a false statement.
       `SELECT asset_type, COUNT(*) as n
        FROM loans
-       WHERE chain_id = ? AND is_sale_vehicle = 0 AND lending_asset != '0x'
+       WHERE chain_id = ? AND is_sale_vehicle = 0
+         AND lending_asset NOT IN ('0x', '0x0000000000000000000000000000000000000000')
          AND status = 'active'
        GROUP BY asset_type`,
     )
@@ -1294,7 +1307,10 @@ export async function handleLoansTimeseries(
  *   - `asset_type = 0 AND collateral_asset_type = 0`: ERC-20 both legs. The
  *     desk's markets are ERC-20/ERC-20 pairs; NFT-legged loans are a
  *     different product surface (rentals) and their rate isn't comparable.
- *   - Metadata-less stub rows (fallback-B inserts, lending_asset = '0x')
+ *   - Metadata-less stub rows — fallback-B inserts carry `'0x'`;
+ *     rows predating that carry the column default `0x0000…0000`. Both
+ *     are "we do not know what this loan is" and both are excluded from
+ *     the typed subtotals (round 61 P2).
  *     can never match the market equality filter, so no explicit `is_stub`
  *     predicate is needed — and MUST NOT be added: a companion-path row with
  *     is_stub = 1 only lacks its position token ids (see the LoanInitiated

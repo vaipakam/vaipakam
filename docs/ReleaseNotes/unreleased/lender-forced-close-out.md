@@ -670,3 +670,22 @@ followed, so the card would have gone on withholding the action on a
 position that was still part-open, until the lender happened to reload.
 It now waits for the refresh it asked for to finish, which is the thing
 it actually wanted to know and which no clock can misreport.
+
+Two tabs again, and the correction is to something this note claimed
+earlier. When one tab finishes with a close-out it forgets its local
+note of it, and the other tab was taking that as permission to forget
+too — which put the action back in front of a lender whose own page had
+not yet caught up. The earlier reasoning was that a last-moment check
+with the protocol would catch anything wrong here. It would not: after a
+close-out settles only part of a position the rest stays genuinely open,
+so that check passes, and what is stale is not the action but the
+description of what it will pay out. A tab now waits for its own figures
+to refresh before it stops holding, regardless of what another tab has
+decided about its own transaction.
+
+On the analytics page: a loan whose lending asset was never recorded is
+now left out of the by-type subtotals whichever placeholder the record
+carries. One older placeholder was slipping through and being published
+as an ERC-20 loan, which is worse than the gap it hid — the subtotals
+then added up, so the page's own "we could not classify these" line read
+zero and the disagreement it exists to expose was invisible.

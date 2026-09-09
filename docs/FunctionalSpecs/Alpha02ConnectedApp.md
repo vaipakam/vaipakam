@@ -73,6 +73,12 @@ including people who never will.
   nothing has been indexed at all, that is stated instead of reporting
   zero for everything — an unread source is a fact about the source, not
   about the protocol.
+- A loan whose lending asset the indexer has not recorded is counted in the
+  active total and excluded from every typed subtotal, whichever placeholder
+  the row carries. Publishing such a row under a type it was merely defaulted
+  to would be worse than the gap it hides, because the subtotals would then
+  reconcile and the unclassified remainder — the surface's own signal that
+  something is unknown — would read zero.
 - A counter that arrives but cannot be a count of anything — negative,
   fractional, or not a finite number — is withheld rather than published,
   and is distinguished from one that was never reported. Both withhold
@@ -623,6 +629,13 @@ Thin-market honesty rules apply.
   indefinitely.
 - Where the browser refuses to keep that record, the surface says so and names
   the consequence: this page still withholds the action, a reload will not.
+- Learning from another browser tab that a close-out has been disposed of does
+  not, by itself, release this tab's withholding. The other tab knows about its
+  own transaction and nothing about whether this tab's figures have caught up;
+  after a partial settlement the position remains open and legitimately
+  actionable, so the protocol would accept a second close-out while this tab
+  still described the first one's expected outcome. Only this tab's own refresh
+  can end its withholding.
 - Before a close-out is sent, the surface re-reads that record so a confirmation
   open in a second tab does not send a duplicate. It does not claim this is a
   lock — two tabs acting in the same instant is a race the browser offers no way
