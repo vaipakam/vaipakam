@@ -3246,6 +3246,290 @@ function lineStartOffset(text, lineNo, within = null) {
 }
 
 /**
+ * Classify every offset of `text` as code (0), string (1) or comment (2), for
+ * the language named by `lang`.
+ *
+ * CACHED, single entry. One scanned file asks this once per deploy it
+ * contains, and the array is source-sized — a file with many explicitly
+ * selected deploys rebuilt it for each one, which Codex measured at 1.4 s /
+ * 3.4 s / 9.8 s for 500 / 1,000 / 2,000 deploy lines against 0.9 / 2.0 / 5.6 s
+ * before the classifier existed (r15). The calls for one file are consecutive,
+ * so a single entry keyed on the text and the language catches all of them
+ * without holding a map of every file the walk has seen.
+ */
+let classifyCache = { text: null, lang: null, kind: null };
+function classifyText(text, lang) {
+  if (classifyCache.text === text && classifyCache.lang === lang) return classifyCache.kind;
+  const kind = new Uint8Array(text.length); // 0 code, 1 string, 2 comment
+    const jsLike = lang === 'js';
+    const pyLike = lang === 'py';
+    const hashComments = !jsLike;
+    // A JavaScript REGEX LITERAL is data, and telling one from division
+    // needs the preceding token: `/` after an operand divides, `/` after an
+    // operator or a keyword opens a pattern. `const example =
+    // /copy(source, destination)/` was read as code and reported a config
+    // nothing had touched (r13).
+    //
+    // Deliberately one-sided. `)`, `]` and `}` are NOT accepted as openers,
+    // so `(a + b) / c` and `x[i] / y` stay division — the direction that
+    // errs is the one that leaves a regex classified as code, which is the
+    // false red this fixes rather than a false green it could create.
+    const regexOpens = (idx) => {
+      let p = idx - 1;
+      while (p >= 0 && /\s/.test(text[p])) p -= 1;
+      if (p < 0) return true;
+      const ch = text[p];
+      // …but a POSTFIX `++`/`--` produces a VALUE, so the slash after it
+      // divides. Reading the second `+` as an operator made
+      // `x++ / (copyFileSync("generated.jsonc", cfg), 2) / 3` a pattern and
+      // classified the copy between the slashes as data — the false GREEN
+      // the one-sidedness above exists to prevent, arriving through the one
+      // operator that can also end an operand (r14).
+      if ((ch === '+' || ch === '-') && text[p - 1] === ch) return false;
+      // `>` and `<` are operators expecting an operand, so a slash straight
+      // after one opens a pattern — `() => /copy(source, destination)/` is
+      // the ordinary case, and an arrow body is where a regex most often
+      // sits (r15). A comparison is unaffected: in `a > b / c` the slash
+      // follows `b`, not the operator.
+      if ('=(,[{;:!&|?+-*%~^><'.includes(ch)) return true;
+      if (!/[A-Za-z0-9_$]/.test(ch)) return false;
+      let s = p;
+      while (s >= 0 && /[A-Za-z0-9_$]/.test(text[s])) s -= 1;
+      return /^(?:return|typeof|case|in|of|new|delete|void|instanceof|do|else|yield|await)$/.test(
+        text.slice(s + 1, p + 1),
+      );
+    };
+    // A Python string PREFIX, and whether it makes the literal an f-string.
+    const pyPrefix = (idx) => {
+      let p = idx;
+      while (p > 0 && idx - p < 2 && /[A-Za-z]/.test(text[p - 1])) p -= 1;
+      const pre = text.slice(p, idx);
+      if (!/^[rbuf]{1,2}$/i.test(pre)) return false;
+      if (p > 0 && /[A-Za-z0-9_$]/.test(text[p - 1])) return false;
+      return /f/i.test(pre);
+    };
+    // String frames suspended by an interpolation, innermost last.
+    const stack = [];
+    let q = null;
+    let triple = false;
+    let fstr = false;
+    let braces = 0;
+    // Parenthesis depth inside the current replacement field, and whether we
+    // have passed its top-level `:` into the FORMAT SPECIFICATION. Only the
+    // expression before that colon is Python; what follows is text handed to
+    // `__format__`, so `f'{X():copy(source, destination)}'` invokes nothing
+    // (r14). Depth is what makes the colon "top-level": a lambda's colon and
+    // a dict literal's sit inside `(`/`{`, and those keep the field code.
+    let parens = 0;
+    let spec = false;
+    for (let i = 0; i < text.length; i += 1) {
+      const c = text[i];
+      if (q) {
+        kind[i] = 1;
+        if (c === '\\') {
+          if (i + 1 < text.length) kind[i + 1] = 1;
+          i += 1;
+          continue;
+        }
+        // INTERPOLATION IS CODE. `` `${writeFileSync(cfg, "{}")}` `` and
+        // `f'{Path(cfg).write_text("{}")}'` perform the write they name, and
+        // marking the whole literal as data dropped both (r13). The braces
+        // themselves stay with the literal; what they enclose is scanned as
+        // ordinary code, so a write inside one counts.
+        const opensInterp =
+          (jsLike && q === '`' && c === '$' && text[i + 1] === '{') || (pyLike && fstr && c === '{');
+        if (opensInterp) {
+          // `{{` is an escaped brace in an f-string, not an expression.
+          if (pyLike && text[i + 1] === '{') {
+            kind[i + 1] = 1;
+            i += 1;
+            continue;
+          }
+          if (jsLike) kind[i + 1] = 1;
+          stack.push({ q, triple, fstr, braces, parens, spec });
+          q = null;
+          triple = false;
+          fstr = false;
+          braces = 1;
+          parens = 0;
+          spec = false;
+          if (jsLike) i += 1;
+          continue;
+        }
+        // A Python TRIPLE-quoted literal spans lines. Closing string state
+        // at the first newline classified a docstring's later lines as code,
+        // so `"""\ncopy(source, destination)\n"""` reported a config nothing
+        // had touched (r13).
+        if (triple) {
+          if (c === q && text[i + 1] === q && text[i + 2] === q) {
+            kind[i + 1] = 1;
+            kind[i + 2] = 1;
+            i += 2;
+            q = null;
+            triple = false;
+            fstr = false;
+          }
+          continue;
+        }
+        if (c === q || (c === '\n' && !jsLike)) {
+          q = null;
+          fstr = false;
+        }
+        continue;
+      }
+      // A format specification is DATA — except for the nested replacement
+      // fields it may contain, which are code again (`f'{x:{width}}'`).
+      if (spec) {
+        kind[i] = 1;
+        if (c === '{') {
+          // `fstr: true` on the frame, not the current (false) value: a
+          // nested replacement field is still inside an f-string, so its own
+          // top-level colon opens a spec of its own — `f'{X:{width:copy(a,
+          // b)}}'` is format text throughout (r15). The frame's flag is what
+          // the colon rule consults.
+          stack.push({ q, triple, fstr: true, braces, parens, spec });
+          q = null;
+          triple = false;
+          fstr = false;
+          braces = 1;
+          parens = 0;
+          spec = false;
+        } else if (c === '}') {
+          const f = stack.pop();
+          q = f.q;
+          triple = f.triple;
+          fstr = f.fstr;
+          braces = f.braces;
+          parens = f.parens;
+          spec = f.spec;
+        }
+        continue;
+      }
+      // Inside an interpolation, the brace that balances it ends the code
+      // region and returns to the literal.
+      if (stack.length > 0) {
+        if (c === '(' || c === '[') parens += 1;
+        else if (c === ')' || c === ']') parens -= 1;
+        else if (c === '{') braces += 1;
+        else if (
+          c === ':' &&
+          pyLike &&
+          braces === 1 &&
+          parens === 0 &&
+          stack[stack.length - 1].fstr
+        ) {
+          kind[i] = 1;
+          spec = true;
+          continue;
+        } else if (c === '}') {
+          braces -= 1;
+          if (braces === 0) {
+            const f = stack.pop();
+            kind[i] = 1;
+            q = f.q;
+            triple = f.triple;
+            fstr = f.fstr;
+            braces = f.braces;
+            parens = f.parens;
+            spec = f.spec;
+            continue;
+          }
+        }
+      }
+      if (c === '"' || c === "'" || (jsLike && c === '`')) {
+        q = c;
+        triple = pyLike && text[i + 1] === c && text[i + 2] === c;
+        fstr = pyLike && pyPrefix(i);
+        kind[i] = 1;
+        if (triple) {
+          kind[i + 1] = 1;
+          kind[i + 2] = 1;
+          i += 2;
+        }
+        continue;
+      }
+      // `//` is a comment in JavaScript and FLOOR DIVISION in Python; `#`
+      // is a comment in shell and Python and not in JavaScript.
+      // …and `#` needs a token boundary only in SHELL, where `${VAR#pre}`
+      // and `foo#bar` are ordinary text. Python has no such rule, so
+      // `x = 1# copy(source, destination)` left the comment classified as
+      // code (r13).
+      const lineComment =
+        (hashComments && c === '#' && (pyLike || i === 0 || /\s/.test(text[i - 1]))) ||
+        (jsLike && c === '/' && text[i + 1] === '/');
+      if (lineComment) {
+        const nl = text.indexOf('\n', i);
+        const stop = nl === -1 ? text.length : nl;
+        kind.fill(2, i, stop);
+        i = stop - 1;
+        continue;
+      }
+      if (jsLike && c === '/' && text[i + 1] === '*') {
+        const e = text.indexOf('*/', i + 2);
+        const stop = e === -1 ? text.length : e + 2;
+        kind.fill(2, i, stop);
+        i = stop - 1;
+        continue;
+      }
+      if (jsLike && c === '/' && regexOpens(i)) {
+        let p = i + 1;
+        let cls = false;
+        let closed = false;
+        for (; p < text.length && text[p] !== '\n'; p += 1) {
+          const d = text[p];
+          if (d === '\\') p += 1;
+          else if (cls) {
+            if (d === ']') cls = false;
+          } else if (d === '[') cls = true;
+          else if (d === '/') {
+            closed = true;
+            break;
+          }
+        }
+        // Only a literal that CLOSES on its own line. An unterminated `/`
+        // is division after all, and blanking to end of file on it would be
+        // a false green.
+        if (closed) {
+          kind.fill(1, i, p + 1);
+          i = p;
+        }
+      }
+    }
+  classifyCache = { text, lang, kind };
+  return kind;
+}
+
+/**
+ * Is the quoted run containing `idx` the value of a shell ASSIGNMENT?
+ *
+ * `EXAMPLE='copy(source, destination)'` stores text and copies nothing, and
+ * treating it as executable reported a config the file never touched (r15).
+ *
+ * NARROWER THAN THE FINDING ASKED FOR, deliberately. The finding proposed the
+ * inverse rule — a shell string is inert UNLESS it is handed to `eval`,
+ * `sh -c` or another interpreter — which is the cleaner statement and is what
+ * I implemented first. It loses real detections: a file is scanned under more
+ * than one language, and a `.py` wrapper's lines also reach this reader with
+ * `lang: 'shell'`, where a write inside an f-string is a quoted run introduced
+ * by nothing an interpreter list would recognise. That cut broke three pinned
+ * f-string fixtures, which is a false GREEN on a real write.
+ *
+ * An assignment is the shape actually reported and the shape that is provably
+ * inert: the shell binds the word and runs nothing. `NAME=value` is a single
+ * token with no spaces, so `msg = f'…'` — a command called `msg` in shell
+ * grammar — is not one, and keeps its existing reading.
+ */
+function isInertAssignment(idx, text, kind) {
+  let s = idx;
+  while (s > 0 && kind[s - 1] === 1) s -= 1;
+  let b = s;
+  while (b > 0 && !'\n;&|('.includes(text[b - 1])) b -= 1;
+  return /(?:^|\s)(?:export\s+|local\s+|declare\s+(?:-\S+\s+)*|readonly\s+|typeset\s+)?[A-Za-z_]\w*=$/.test(
+    text.slice(b, s),
+  );
+}
+
+/**
  * Is this config REWRITTEN by the same file before the deploy runs? (#2036 r13)
  *
  * The identity read trusts the checkout's copy, which is right for a config
@@ -3302,6 +3586,16 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
   const COPY =
     String.raw`(?:^|[\s;&|(])(?:cp|mv|install|rsync)\s[^\n]*?` + esc +
     String.raw`|(?:copyFile|rename|cpSync|copyFileSync|renameSync|copy|move)\s*\([^)]*` + esc;
+  // …AND THE WHOLE SCAN IS CACHED PER (file, config, language). Everything from
+  // here to the sort reads only those three, and a file with many explicitly
+  // selected deploys ran it once per deploy: caching the classifier alone took
+  // 2,000 deploy lines from 7.6 s to 5.3 s, which is better and still
+  // superlinear, because the write scan itself was the rest of it. The calls
+  // for one file are consecutive, so one entry serves them all (r15).
+  const wkey = `${lang}\u0000${cfgPath}`;
+  if (writesCache.text === text && writesCache.key === wkey) {
+    return finishRewrite(writesCache.writes, text, cfgPath, at, esc);
+  }
   const writes = [
     ...text.matchAll(
       new RegExp(
@@ -3453,233 +3747,7 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
     // by offset. The lookup is a typed array rather than a scan over collected
     // spans, which also answers the quadratic path r12 measured at 32k/64k/128k
     // commented lines.
-    const kind = new Uint8Array(text.length); // 0 code, 1 string, 2 comment
-    {
-      const jsLike = lang === 'js';
-      const pyLike = lang === 'py';
-      const hashComments = !jsLike;
-      // A JavaScript REGEX LITERAL is data, and telling one from division
-      // needs the preceding token: `/` after an operand divides, `/` after an
-      // operator or a keyword opens a pattern. `const example =
-      // /copy(source, destination)/` was read as code and reported a config
-      // nothing had touched (r13).
-      //
-      // Deliberately one-sided. `)`, `]` and `}` are NOT accepted as openers,
-      // so `(a + b) / c` and `x[i] / y` stay division — the direction that
-      // errs is the one that leaves a regex classified as code, which is the
-      // false red this fixes rather than a false green it could create.
-      const regexOpens = (idx) => {
-        let p = idx - 1;
-        while (p >= 0 && /\s/.test(text[p])) p -= 1;
-        if (p < 0) return true;
-        const ch = text[p];
-        // …but a POSTFIX `++`/`--` produces a VALUE, so the slash after it
-        // divides. Reading the second `+` as an operator made
-        // `x++ / (copyFileSync("generated.jsonc", cfg), 2) / 3` a pattern and
-        // classified the copy between the slashes as data — the false GREEN
-        // the one-sidedness above exists to prevent, arriving through the one
-        // operator that can also end an operand (r14).
-        if ((ch === '+' || ch === '-') && text[p - 1] === ch) return false;
-        if ('=(,[{;:!&|?+-*%~^'.includes(ch)) return true;
-        if (!/[A-Za-z0-9_$]/.test(ch)) return false;
-        let s = p;
-        while (s >= 0 && /[A-Za-z0-9_$]/.test(text[s])) s -= 1;
-        return /^(?:return|typeof|case|in|of|new|delete|void|instanceof|do|else|yield|await)$/.test(
-          text.slice(s + 1, p + 1),
-        );
-      };
-      // A Python string PREFIX, and whether it makes the literal an f-string.
-      const pyPrefix = (idx) => {
-        let p = idx;
-        while (p > 0 && idx - p < 2 && /[A-Za-z]/.test(text[p - 1])) p -= 1;
-        const pre = text.slice(p, idx);
-        if (!/^[rbuf]{1,2}$/i.test(pre)) return false;
-        if (p > 0 && /[A-Za-z0-9_$]/.test(text[p - 1])) return false;
-        return /f/i.test(pre);
-      };
-      // String frames suspended by an interpolation, innermost last.
-      const stack = [];
-      let q = null;
-      let triple = false;
-      let fstr = false;
-      let braces = 0;
-      // Parenthesis depth inside the current replacement field, and whether we
-      // have passed its top-level `:` into the FORMAT SPECIFICATION. Only the
-      // expression before that colon is Python; what follows is text handed to
-      // `__format__`, so `f'{X():copy(source, destination)}'` invokes nothing
-      // (r14). Depth is what makes the colon "top-level": a lambda's colon and
-      // a dict literal's sit inside `(`/`{`, and those keep the field code.
-      let parens = 0;
-      let spec = false;
-      for (let i = 0; i < text.length; i += 1) {
-        const c = text[i];
-        if (q) {
-          kind[i] = 1;
-          if (c === '\\') {
-            if (i + 1 < text.length) kind[i + 1] = 1;
-            i += 1;
-            continue;
-          }
-          // INTERPOLATION IS CODE. `` `${writeFileSync(cfg, "{}")}` `` and
-          // `f'{Path(cfg).write_text("{}")}'` perform the write they name, and
-          // marking the whole literal as data dropped both (r13). The braces
-          // themselves stay with the literal; what they enclose is scanned as
-          // ordinary code, so a write inside one counts.
-          const opensInterp =
-            (jsLike && q === '`' && c === '$' && text[i + 1] === '{') || (pyLike && fstr && c === '{');
-          if (opensInterp) {
-            // `{{` is an escaped brace in an f-string, not an expression.
-            if (pyLike && text[i + 1] === '{') {
-              kind[i + 1] = 1;
-              i += 1;
-              continue;
-            }
-            if (jsLike) kind[i + 1] = 1;
-            stack.push({ q, triple, fstr, braces, parens, spec });
-            q = null;
-            triple = false;
-            fstr = false;
-            braces = 1;
-            parens = 0;
-            spec = false;
-            if (jsLike) i += 1;
-            continue;
-          }
-          // A Python TRIPLE-quoted literal spans lines. Closing string state
-          // at the first newline classified a docstring's later lines as code,
-          // so `"""\ncopy(source, destination)\n"""` reported a config nothing
-          // had touched (r13).
-          if (triple) {
-            if (c === q && text[i + 1] === q && text[i + 2] === q) {
-              kind[i + 1] = 1;
-              kind[i + 2] = 1;
-              i += 2;
-              q = null;
-              triple = false;
-              fstr = false;
-            }
-            continue;
-          }
-          if (c === q || (c === '\n' && !jsLike)) {
-            q = null;
-            fstr = false;
-          }
-          continue;
-        }
-        // A format specification is DATA — except for the nested replacement
-        // fields it may contain, which are code again (`f'{x:{width}}'`).
-        if (spec) {
-          kind[i] = 1;
-          if (c === '{') {
-            stack.push({ q, triple, fstr, braces, parens, spec });
-            q = null;
-            triple = false;
-            fstr = false;
-            braces = 1;
-            parens = 0;
-            spec = false;
-          } else if (c === '}') {
-            const f = stack.pop();
-            q = f.q;
-            triple = f.triple;
-            fstr = f.fstr;
-            braces = f.braces;
-            parens = f.parens;
-            spec = f.spec;
-          }
-          continue;
-        }
-        // Inside an interpolation, the brace that balances it ends the code
-        // region and returns to the literal.
-        if (stack.length > 0) {
-          if (c === '(' || c === '[') parens += 1;
-          else if (c === ')' || c === ']') parens -= 1;
-          else if (c === '{') braces += 1;
-          else if (
-            c === ':' &&
-            pyLike &&
-            braces === 1 &&
-            parens === 0 &&
-            stack[stack.length - 1].fstr
-          ) {
-            kind[i] = 1;
-            spec = true;
-            continue;
-          } else if (c === '}') {
-            braces -= 1;
-            if (braces === 0) {
-              const f = stack.pop();
-              kind[i] = 1;
-              q = f.q;
-              triple = f.triple;
-              fstr = f.fstr;
-              braces = f.braces;
-              parens = f.parens;
-              spec = f.spec;
-              continue;
-            }
-          }
-        }
-        if (c === '"' || c === "'" || (jsLike && c === '`')) {
-          q = c;
-          triple = pyLike && text[i + 1] === c && text[i + 2] === c;
-          fstr = pyLike && pyPrefix(i);
-          kind[i] = 1;
-          if (triple) {
-            kind[i + 1] = 1;
-            kind[i + 2] = 1;
-            i += 2;
-          }
-          continue;
-        }
-        // `//` is a comment in JavaScript and FLOOR DIVISION in Python; `#`
-        // is a comment in shell and Python and not in JavaScript.
-        // …and `#` needs a token boundary only in SHELL, where `${VAR#pre}`
-        // and `foo#bar` are ordinary text. Python has no such rule, so
-        // `x = 1# copy(source, destination)` left the comment classified as
-        // code (r13).
-        const lineComment =
-          (hashComments && c === '#' && (pyLike || i === 0 || /\s/.test(text[i - 1]))) ||
-          (jsLike && c === '/' && text[i + 1] === '/');
-        if (lineComment) {
-          const nl = text.indexOf('\n', i);
-          const stop = nl === -1 ? text.length : nl;
-          kind.fill(2, i, stop);
-          i = stop - 1;
-          continue;
-        }
-        if (jsLike && c === '/' && text[i + 1] === '*') {
-          const e = text.indexOf('*/', i + 2);
-          const stop = e === -1 ? text.length : e + 2;
-          kind.fill(2, i, stop);
-          i = stop - 1;
-          continue;
-        }
-        if (jsLike && c === '/' && regexOpens(i)) {
-          let p = i + 1;
-          let cls = false;
-          let closed = false;
-          for (; p < text.length && text[p] !== '\n'; p += 1) {
-            const d = text[p];
-            if (d === '\\') p += 1;
-            else if (cls) {
-              if (d === ']') cls = false;
-            } else if (d === '[') cls = true;
-            else if (d === '/') {
-              closed = true;
-              break;
-            }
-          }
-          // Only a literal that CLOSES on its own line. An unterminated `/`
-          // is division after all, and blanking to end of file on it would be
-          // a false green.
-          if (closed) {
-            kind.fill(1, i, p + 1);
-            i = p;
-          }
-        }
-      }
-    }
+    const kind = classifyText(text, lang);
     // A DECLARATION IS NOT A CALL. `def copy(source, destination):`,
     // `function copy(source, destination) {` and a class-method shorthand all
     // match the generic `name(` alternative although nothing is invoked, and
@@ -3715,6 +3783,22 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
       if (depth !== 0) return false;
       let n = p + 1;
       while (n < text.length && /\s/.test(text[n])) n += 1;
+      // A TYPESCRIPT RETURN TYPE sits between the parameter list and the body,
+      // so `copy(source: string, destination: string): void {}` shows a colon
+      // where a body brace was expected and read as an executed write (r15).
+      //
+      // Skipped only when what follows the colon actually LOOKS like a type —
+      // identifier characters and type punctuation, no call, no quote, no
+      // assignment — and only when a brace follows it. A ternary's colon fails
+      // both tests: `cond ? copy(a, b) : x;` reaches `;` rather than `{`, and
+      // `: { x: 1 }` has no type text before its brace, so neither is mistaken
+      // for a declaration. That direction matters: reading a ternary as a
+      // declaration would drop a real write.
+      if (text[n] === ':') {
+        let t = n + 1;
+        while (t < text.length && /[A-Za-z0-9_$<>[\]|&,.\s]/.test(text[t]) && t - n < 200) t += 1;
+        if (text[t] === '{' && /[A-Za-z0-9_$]/.test(text.slice(n + 1, t))) return true;
+      }
       return text[n] === '{';
     };
     for (const w of text.matchAll(ANY_WRITE)) {
@@ -3726,11 +3810,27 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
       // shell's -c payload is a command position, as eval's argument is").
       // Excluding shell strings broke that fixture immediately.
       const at0 = w.index + (w[0].length - w[0].replace(/^[^A-Za-z0-9_$/>%]+/, '').length);
-      const insideData = shellish ? kind[at0] === 2 : kind[at0] !== 0;
+      const insideData = shellish
+        ? kind[at0] === 2 || (kind[at0] === 1 && isInertAssignment(at0, text, kind))
+        : kind[at0] !== 0;
       if (!insideData && !isDeclaration(at0)) writes.push(w.index);
     }
     writes.sort((a, b) => a - b);
   }
+  writesCache = { text, key: wkey, writes };
+  return finishRewrite(writes, text, cfgPath, at, esc);
+}
+
+let writesCache = { text: null, key: null, writes: null };
+
+/**
+ * Decide the rewrite question from an already-collected list of write offsets.
+ *
+ * Split out so the collection above can be cached: this half depends on `at`,
+ * which differs per deploy, while the collection depends only on the file, the
+ * config and the language.
+ */
+function finishRewrite(writes, text, cfgPath, at, esc) {
   if (writes.length === 0) return false;
   // ...AND THE WRITE HAS TO COME FIRST. Scanning the whole file without
   // comparing positions let maintenance code BELOW a deploy invalidate the

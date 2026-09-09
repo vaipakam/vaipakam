@@ -9725,6 +9725,85 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(r.ok).toBe(false);
   });
 
+  // ---- Codex #2066 r15 ----
+
+  it('a TypeScript return type still reads as a declaration (#2066 r15)', () => {
+    // The token after the parameter list is `:`, not `{`.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'z.ts',
+      'class Mover {\n  copy(source: string, destination: string): void {\n    return;\n  }\n}\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a ternary is not a declaration (#2066 r15 bounds)', () => {
+    // The colon rule must not take a ternary's colon: that would drop a real
+    // write. Reaching `;` rather than `{` is what separates them.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'aa.ts',
+      'const cfg = "configs/custom.jsonc";\n' +
+        'const out = ready ? copyFileSync("generated.jsonc", cfg) : null;\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a regex literal in an arrow body is data (#2066 r15)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'ab.mjs',
+      'const factory = () => /copy(source, destination)/;\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a nested f-string format spec is data too (#2066 r15)', () => {
+    // A nested replacement field is still inside an f-string, so its own
+    // top-level colon opens a spec of its own.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'ac.py',
+      'import subprocess\n' +
+        "msg = f'{X:{width:copy(source, destination)}}'\n" +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a shell assignment stores inert text (#2066 r15)', () => {
+    // `EXAMPLE='copy(a, b)'` binds a word and runs nothing.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'ad.sh',
+      "EXAMPLE='copy(source, destination)'\n" +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it("a shell -c payload is still executed code (#2066 r15 bounds)", () => {
+    // The reason the assignment rule is written as an assignment rule and not
+    // as "shell strings are inert": an interpreter payload runs.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'ae.sh',
+      'export CFG=configs/custom.jsonc\n' +
+        'sh -c \'printf "{}" > "$CFG"\'\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
   it('the PROSE path invalidates a rewritten config too', () => {
     // That path passed the rewrite context to the safety reader and not to the
     // identity reader, so the identity half trusted the stale copy and sent the
