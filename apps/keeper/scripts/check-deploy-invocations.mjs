@@ -3522,13 +3522,26 @@ function classifyText(text, lang) {
  * more delimiter pair, not a second one.
  */
 function inTestExpression(idx, text, kind) {
-  for (const [L, R] of [
-    ['[', ']'],
-    ['(', ')'],
-  ]) {
-    if (inDelimitedExpression(idx, text, kind, L, R)) return true;
-  }
-  return false;
+  if (inDelimitedExpression(idx, text, kind, '[', ']') !== -1) return true;
+  const open = inDelimitedExpression(idx, text, kind, '(', ')');
+  if (open === -1) return false;
+  // `((` IS NOT ALWAYS ARITHMETIC. It also opens a subshell inside a subshell,
+  // and `((cd /tmp); printf new > "$CFG"))` is then a real redirection this
+  // exemption hid — a false green I introduced with the exemption itself and
+  // found by probing it rather than by review (r31 self-review).
+  //
+  // Told apart by the one thing bash does not allow in arithmetic: a COMMAND
+  // SEPARATOR. `(( a, b ))` sequences with commas, and the single construct
+  // that puts a `;` inside the parentheses is the C-style `for`. So a `;`
+  // before the operator disqualifies the exemption unless `for` opened it.
+  // Closed, because that list of one is the whole of bash's grammar here.
+  //
+  // A nested subshell joined by `&&` instead of `;` is still exempted, and
+  // stays a miss: `&&` is legal arithmetic, so excluding it would report
+  // `(( a && b > c ))`, which is noise — the direction this reader refuses.
+  if (/;/.test(text.slice(open, idx)) && !/\bfor\s*$/.test(text.slice(Math.max(0, open - 12), open)))
+    return false;
+  return true;
 }
 
 function inDelimitedExpression(idx, text, kind, L, R) {
@@ -3540,12 +3553,12 @@ function inDelimitedExpression(idx, text, kind, L, R) {
       open = i - 1;
       break;
     }
-    if (text[i] === R && text[i + 1] === R) return false;
+    if (text[i] === R && text[i + 1] === R) return -1;
   }
-  if (open === -1) return false;
+  if (open === -1) return -1;
   const close = text.indexOf(R + R, idx);
   const nl = text.indexOf('\n', idx);
-  if (close === -1 || (nl !== -1 && close < nl) === false) return false;
+  if (close === -1 || (nl !== -1 && close < nl) === false) return -1;
   // …and only the COMPARISON is exempt. `[[ "$(printf new > "$CFG")" == new ]]`
   // runs a command inside the test, and blanket containment suppressed the
   // write it performs — a false green this exemption introduced (r21).
@@ -3562,7 +3575,7 @@ function inDelimitedExpression(idx, text, kind, L, R) {
   // closed substitution before a genuine comparison — is now reported. That
   // is a false red on a contrived line, which this reader is allowed; the
   // accounting it replaces was not bounded at all.
-  return !/\$\(|`/.test(text.slice(open, idx));
+  return /\$\(|`/.test(text.slice(open, idx)) ? -1 : open;
 }
 
 // The evaluate-option tests, by which letter the interpreter runs source with.
@@ -3785,8 +3798,13 @@ function isInertAssignment(idx, text, kind) {
   // …in a form that EXPANDS. Inside single quotes a `$(` or a backtick is
   // ordinary text, so `OUT='$(copy(a, b))'` performs nothing (r19).
   if (text[s] !== "'" && /\$\(|`/.test(text.slice(s, e))) return false;
+  // THROUGH THE CLASSIFIER, like every other reader here. This walk looked at
+  // characters and not at their kind, so a parenthesis inside a quoted
+  // element — `EXAMPLES=("f(x)" "…")` — ended it, and the assignment it was
+  // standing in was never found (r31 self-review). A separator only separates
+  // when it is code.
   let b = s;
-  while (b > 0 && !'\n;&|('.includes(text[b - 1])) b -= 1;
+  while (b > 0 && !(kind[b - 1] === 0 && '\n;&|('.includes(text[b - 1]))) b -= 1;
   // An ARRAY INITIALIZER stores just as an ordinary assignment does, and the
   // scan above stops at its `(` — so `EXAMPLES=("…writeFileSync…")` lost the
   // assignment it was standing in and the stored text read as executable
@@ -3800,6 +3818,7 @@ function isInertAssignment(idx, text, kind) {
   // question is whether the literal is anywhere INSIDE the initializer, which
   // is what `inArrayInitializer` records.
   let inArrayInitializer = false;
+  const openParen = b - 1;
   if (text[b - 1] === '(') {
     let a2 = b - 1;
     while (a2 > 0 && !'\n;&|('.includes(text[a2 - 1])) a2 -= 1;
@@ -3812,11 +3831,20 @@ function isInertAssignment(idx, text, kind) {
   }
   // Inside an initializer, everything from the opener to here is stored: the
   // elements before this one are words, not commands, so they do not have to
-  // look like the tail of an assignment.
-  if (inArrayInitializer)
-    return /(?:^|\s)(?:export\s+|local\s+|declare\s+(?:-\S+\s+)*|readonly\s+|typeset\s+)?[A-Za-z_]\w*(?:\[[^\]]*\])?\+?=\([^()]*$/.test(
-      text.slice(b, s),
-    );
+  // look like the tail of an assignment. What has to be true is that the
+  // initializer is still OPEN here — asked by balancing its parentheses
+  // through the classifier, so a paren inside a quoted element does not close
+  // it. A pattern that simply forbade parentheses in between reported
+  // `EXAMPLES=("f(x)" "…")`, which stores both words (r31 self-review).
+  if (inArrayInitializer) {
+    let depth = 0;
+    for (let i = openParen; i < s; i += 1) {
+      if (kind[i] !== 0) continue;
+      if (text[i] === '(') depth += 1;
+      else if (text[i] === ')' && --depth === 0) return false;
+    }
+    return true;
+  }
   // The whole assignment WORD, not only a value that starts at the quote:
   // `EXAMPLE=prefix"fs.copy(a, b)"` concatenates chunks and still just stores
   // text (r23).

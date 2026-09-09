@@ -10786,4 +10786,45 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     );
     expect(r.ok).toBe(false);
   });
+
+  it('nested subshells opening with (( are not arithmetic (#2066 r31 self-review)', () => {
+    // `((` also opens a subshell inside a subshell, and the arithmetic
+    // exemption hid a real redirection there. Told apart by the one thing
+    // bash does not allow in arithmetic — a command separator — with the
+    // C-style `for` as the single exception.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'eh.sh',
+      'CFG=configs/custom.jsonc\n' +
+        '((cd /tmp); printf new > "$CFG"))\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a C-style for loop is still arithmetic (#2066 r31 self-review bounds)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'ei.sh',
+      'CFG=configs/custom.jsonc\n' +
+        'for ((i=3; i>0; i--)); do echo $i; done\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a paren inside a quoted element does not end the assignment (#2066 r31 self-review)', () => {
+    // The backward walk read characters without their kind, so a parenthesis
+    // inside an earlier element ended it and the assignment was never found.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'ej.sh',
+      'EXAMPLES=("f(x)" "writeFileSync(\'configs/custom.jsonc\', \'{}\')")\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(true);
+  });
 });
