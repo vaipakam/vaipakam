@@ -483,3 +483,61 @@ describe('forcedCloseWithoutMatch', () => {
     ).toBe('unknown');
   });
 });
+
+/**
+ * Round 42 P2 — the repayment window outranks sequencer health.
+ *
+ * `triggerDefault` rejects a pre-grace loan at `NotDefaultedYet`
+ * (DefaultedFacet.sol:249) BEFORE it reaches its sequencer check
+ * (:260). The resolver had those two inverted, so a loan three days into
+ * a ninety-day term was reported as merely paused until the sequencer
+ * recovered — "available, temporarily unavailable" about a position the
+ * borrower has most of the term left to save.
+ */
+describe('decideForcedClose — repayment window before sequencer', () => {
+  const preGrace = { ...base, defaultable: false } as const;
+
+  it('says not-yet even while the sequencer is down', () => {
+    expect(decideForcedClose({ ...preGrace, sequencerHealthy: false })).toBe(
+      'not-yet',
+    );
+  });
+
+  it('says not-yet even while sequencer health is unread', () => {
+    expect(
+      decideForcedClose({ ...preGrace, sequencerHealthy: undefined }),
+    ).toBe('not-yet');
+  });
+
+  // Pause still outranks everything: it is `triggerDefault`'s first
+  // modifier, so the call cannot even enter the body.
+  it('still reports the pause ahead of the window', () => {
+    expect(
+      decideForcedClose({ ...preGrace, paused: true, sequencerHealthy: false }),
+    ).toBe('blocked-paused');
+  });
+
+  // And the sequencer must still outrank every COLLATERAL question, or a
+  // liquid position misroutes into the in-kind arm during an outage.
+  it('keeps the sequencer ahead of collateral classification', () => {
+    expect(
+      decideForcedClose({
+        ...base,
+        defaultable: true,
+        sequencerHealthy: false,
+        collateralIlliquid: true,
+      }),
+    ).toBe('blocked-sequencer');
+  });
+
+  // An unread window must not be answered by a sequencer verdict either.
+  it('stays unknown when the window itself was never read', () => {
+    expect(
+      decideForcedClose({
+        ...base,
+        defaultable: undefined,
+        sequencerHealthy: false,
+      }),
+    ).toBe('unknown');
+  });
+});

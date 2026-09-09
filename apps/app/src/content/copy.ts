@@ -2308,7 +2308,7 @@ const copySource = {
     // copy names the LENT asset, because an internal match settles at
     // oracle price rather than handing over collateral.
     readyInternalMatch:
-      'The grace period has passed and this loan can be closed out now. The protocol has an opposing position it can settle this one against, so instead of the collateral being sold you are repaid in the asset you lent, at the oracle price when the transaction runs. You claim it afterwards from the Claims page.',
+      'The grace period has passed, so this loan can be acted on now. The protocol has an opposing position it can settle this one against, so instead of the collateral being sold you are repaid in the asset you lent, at the oracle price when the transaction runs. That opposing position may not be large enough to cover the whole loan — if it is not, only part settles and the rest stays open for you to close again later. You claim whatever settles from the Claims page.',
     // Round 34 P2 — a rental default recovers something else entirely.
     // `DefaultedFacet` clears the renter, leaves the lender's NFT where
     // it already is, and records a claim for the PREPAID rental asset

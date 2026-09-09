@@ -52,9 +52,12 @@ amount, because the settlement path is chosen while the transaction
 runs and no figure exists beforehand. It never suggests the lender is
 the only one who can act, because they are not, and a lender who
 returns to find the position already closed by someone else should read
-that as normal rather than as loss. And it never implies the money
-arrives by itself — what is owed becomes claimable afterwards rather
-than landing in a wallet. It does not promise the loan is finished
+that as normal rather than as loss. And it is careful about how the money
+arrives: what is owed becomes claimable afterwards rather than landing
+in a wallet, with one exception it now states — where the position is
+settled against an opposing one, whoever submits the transaction is paid
+a small incentive directly, out of that same settlement. The correction
+further down this note describes it in full. It does not promise the loan is finished
 either: closing out usually ends it, but where the protocol settles only
 part of the position, or the sale of the collateral cannot go through,
 the loan stays open and the borrower can still repay or add to their
@@ -279,3 +282,44 @@ the word "and" and a full stop are themselves translated, rather than
 written into the layout. The warning now reads as one sentence per
 outcome, written that way in each language, so nothing is joined when it
 is shown and there is no join character to get wrong.
+
+A later round found four more, and the first is the most consequential
+thing in this whole note. The card was asking the wrong question first.
+It checked whether the network's sequencer was healthy before it checked
+whether the borrower's time was actually up — so a lender looking at a
+loan three days into a ninety-day term, during an outage, was told the
+close-out was merely paused until the sequencer recovered. That reads as
+"this is available, just not right now" about a position the borrower has
+most of the term left to save. The protocol asks in the opposite order:
+it refuses an early close-out for being early, whatever the network is
+doing. The card now asks in the protocol's order.
+
+The order it had was a deliberate choice, aimed at a real problem — the
+heading claiming a loan was overdue during an outage. That problem had
+already been fixed properly elsewhere, by only letting states that
+follow a confirmed answer claim it. Solving it a second time by asking
+the questions in the wrong order bought nothing and cost the truthful
+answer.
+
+Second, the description of the route that settles against an opposing
+position said the loan can be closed out now and left it there. That
+position may be smaller than this loan, in which case only part settles
+and the rest stays open — which the card had already learned to say
+after the fact and not before it. A lender should know that before they
+sign, not from a receipt.
+
+Third, the transparency page's freshness line. It draws counters from two
+requests and states one age for all of them; the previous fix made it
+quote the older of the two. But a response can arrive with no position
+marker at all, and the page was then quoting its sibling's — presenting
+one set of counters as current through a point the other had reached. A
+missing marker is not a weaker claim to be outvoted; it is the absence
+of one, and it now disqualifies the combined statement instead.
+
+Fourth, the warning that closing out cancels a borrower's pending
+swap-to-repay order was being suppressed using a live measurement of how
+tradeable the collateral is. Whether such an order can exist at all was
+fixed when the loan opened, not now — so a loan that could still hold one
+was having the warning hidden because the collateral had since become
+harder to sell. The prediction now rests only on facts that cannot change
+for the life of the position.

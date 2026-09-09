@@ -214,13 +214,34 @@ export function decideForcedClose(input: ForcedCloseInput): ForcedCloseReadiness
   if (input.paused === true) return 'blocked-paused';
   if (input.paused === undefined) return 'unknown';
 
-  // BEFORE liquidity — see the doc comment above.
-  if (input.sequencerHealthy === false) return 'blocked-sequencer';
-  if (input.sequencerHealthy === undefined) return 'unknown';
-
+  // THE REPAYMENT WINDOW COMES FIRST, and this order was inverted until
+  // round 42 P2. `triggerDefault` rejects a pre-grace loan at line 249
+  // with `NotDefaultedYet`, BEFORE it reaches the sequencer check at
+  // line 260 — so a loan three days into a ninety-day term is refused
+  // for being early, whatever the sequencer is doing. Asking the
+  // sequencer first told that lender their close-out was merely paused
+  // until the sequencer recovered, which reads as "this is available and
+  // temporarily unavailable" about a position the borrower has most of
+  // the term left to save.
+  //
+  // The earlier ordering was a deliberate choice too, and it was wrong
+  // for a reason worth keeping: it was aimed at the heading claiming
+  // "This loan is overdue" during an outage. That is a real problem and
+  // it already has its own fix — `overdueEstablished` in the card admits
+  // only states downstream of an affirmative `defaultable`. Solving it
+  // twice, once by mis-ordering the resolver, bought nothing and cost
+  // the truthful answer.
+  //
   // The chain's answer, never a local recomputation.
   if (input.defaultable === undefined) return 'unknown';
   if (!input.defaultable) return 'not-yet';
+
+  // BEFORE liquidity — see the doc comment above. Still ahead of every
+  // collateral question, because `_checkLiquidity` reads Illiquid for
+  // EVERY asset while the sequencer is down, so classifying collateral
+  // during an outage misroutes a liquid position into the in-kind arm.
+  if (input.sequencerHealthy === false) return 'blocked-sequencer';
+  if (input.sequencerHealthy === undefined) return 'unknown';
 
   // A live swap-to-repay intent commit is deliberately NOT a blocker
   // here. `triggerDefault` opens by calling

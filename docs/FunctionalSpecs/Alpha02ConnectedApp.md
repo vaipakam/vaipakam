@@ -458,6 +458,27 @@ Thin-market honesty rules apply.
 - Where one freshness figure is stated over data drawn from more than one
   request, it is the figure of the LAGGING request. Quoting the more advanced
   of two reads presents one dataset's coverage as though it covered both.
+- The order in which a surface reports obstacles follows the order the protocol
+  applies them. A loan still inside its repayment window is refused for being
+  early before any infrastructure condition is consulted, so a surface that
+  reports an infrastructure pause first tells a lender their close-out is
+  merely delayed about a position the borrower may have most of the term left
+  to save. Where two gates would each block, the one the protocol reaches first
+  is the one the reader is told about.
+- A route the protocol may only partly complete is not described as completing.
+  Settling against an opposing position moves the smaller of the two, so where
+  that position is smaller than this loan only part settles and the remainder
+  stays open — which the surface says before the lender acts, not only
+  afterwards.
+- Where a single freshness figure covers more than one request, EVERY request
+  it covers must carry its own position marker. A response that arrives without
+  one is not a weaker claim to be outvoted by its sibling; it is the absence of
+  a claim, and it disqualifies the combined statement rather than borrowing the
+  other's.
+- A disclosure about cancelling something belonging to the counterparty is
+  suppressed only on facts that cannot change for the life of the position.
+  Predicting it from a live measurement that may have moved since the position
+  opened withholds a warning that is still true.
 - Withholding an action for safety must not withhold the explanation with it.
   Where a check that guards the close-out is unanswered — pending, failed, or
   undecodable — the surface stays visible in its unresolved state and says a

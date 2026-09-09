@@ -175,7 +175,20 @@ export function Analytics() {
   // — tracked separately. Taking the oldest cannot repair a cursor that
   // is already ahead of its own counters; it only stops the page
   // borrowing the fresher of two.
-  const cursor = olderCursor(offers?.indexer ?? null, loans?.indexer ?? null);
+  //
+  // EVERY RENDERED RESPONSE MUST BRING ITS OWN (round 42 P2). A non-null
+  // stats response can still carry `indexer: null` — before the first
+  // cursor exists, or from an older cached read. Combining them without
+  // checking meant the surviving cursor substantiated counters it had
+  // never covered: loan figures rendered under the offers read's block.
+  // A missing cursor is not a weaker claim to be outvoted, it is the
+  // absence of one, so it disqualifies the whole combined statement.
+  const cursorsComplete =
+    (loans === null || loans === undefined || loans.indexer != null) &&
+    (offers === null || offers === undefined || offers.indexer != null);
+  const cursor = cursorsComplete
+    ? olderCursor(offers?.indexer ?? null, loans?.indexer ?? null)
+    : null;
   const uninitialized =
     !unreachable && stats.isSuccess && typeof cursor?.lastBlock !== 'number';
 

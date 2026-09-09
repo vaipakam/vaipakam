@@ -1444,22 +1444,38 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
    *  the same resolver rather than restated, so it cannot drift from the
    *  contract's branch order. */
   const forcedCloseMatchFallback = forcedCloseWithoutMatch(forcedCloseInput);
-  /** Can this loan carry a swap-to-repay intent at all (round 41 P3)?
+  /** Can this loan carry a swap-to-repay intent at all?
    *
-   *  `SwapToRepayIntentFacet` reverts `UnsupportedLoanShape` unless the
-   *  principal AND collateral legs are both ERC-20 and both Liquid. The
-   *  three facts the app already reads answer it: a rental fails the
-   *  first leg, NFT collateral the second, and illiquid collateral the
-   *  liquidity test. `undefined` while any of them is unread — the card
-   *  keeps showing the note in that case on purpose. */
+   *  Round 41 built this from the LIVE collateral-liquidity probe, and
+   *  round 42 P2 showed that is the wrong input. `SwapToRepayIntentFacet`
+   *  gates on the loan's STORED `principalLiquidity` /
+   *  `collateralLiquidity`, fixed when the loan opened — so a loan
+   *  created Liquid/Liquid can still hold a pending commit after the
+   *  live probe has since turned illiquid, and `triggerDefault`
+   *  force-cancels that commit regardless. Predicting from live
+   *  liquidity therefore SUPPRESSED a disclosure that was still true.
+   *
+   *  Neither remedy Codex proposed is taken verbatim, and the reason is
+   *  worth stating: the stored liquidity fields are NOT on the loan row
+   *  (`IndexedLoanRow` carries `assetType` and `collateralAssetType` and
+   *  no liquidity), and reading the commit state directly is a second
+   *  new chain read — both are a per-position read added for a P3
+   *  wording nuance.
+   *
+   *  So the wrong input is removed rather than replaced. What remains
+   *  are the two exclusions that are certain, immutable for the life of
+   *  the loan, and already in hand: a rental fails the principal-leg
+   *  ERC-20 test, and NFT collateral fails the collateral-leg one. An
+   *  illiquid ERC-20 loan now keeps the note — over-showing, which is
+   *  the direction this note is deliberately biased toward, because
+   *  hiding a live one means a lender cancels the borrower's pending
+   *  order without being told. */
   const forcedCloseSwapToRepayPossible: boolean | undefined =
     forcedCloseInput.assetType === undefined ||
-    forcedCloseInput.collateralIsNft === undefined ||
-    forcedCloseInput.collateralIlliquid === undefined
+    forcedCloseInput.collateralIsNft === undefined
       ? undefined
       : forcedCloseInput.assetType === 'erc20' &&
-        !forcedCloseInput.collateralIsNft &&
-        !forcedCloseInput.collateralIlliquid;
+        !forcedCloseInput.collateralIsNft;
 
   /** `loanLive`'s chain clock, ADVANCED by local elapsed time.
    *
