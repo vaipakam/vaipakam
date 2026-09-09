@@ -4758,6 +4758,21 @@ const copySource = {
     unclassifiedActive: 'Active, type not yet read',
     unclassifiedActiveNote:
       'Some active loans arrived before the indexer had read what asset they are in, so they are counted in the total but not yet in either type below it. They move into the right one as the details are filled in.',
+    // Self-review, 2026-09-09. The residual used to be clamped with
+    // `Math.max(0, …)`, which is right that a negative count must not be
+    // rendered and wrong about what to do instead: it folds "the
+    // endpoint contradicted itself" into "there is no residual", so
+    // three counters that do not add up were shown side by side with
+    // nothing saying so. A reader can do the subtraction themselves.
+    //
+    // The standing principle is that an unstated unknown is a defect, so
+    // the page states it. Deliberately about the FIGURES rather than
+    // about the reader's position: nothing here is at risk, the split is
+    // simply not trustworthy, and saying more than that would be its own
+    // invention.
+    activeSplitContradiction: 'These counts do not add up',
+    activeSplitContradictionNote:
+      'The totals below disagree: the loans broken down by type add up to more than the number of active loans they are meant to be part of. That is a fault in how these figures were counted, not in any loan — nothing here is at risk, and this page cannot tell you the correct split until the counts agree. The total and the breakdown are both shown as reported so you can see the discrepancy rather than take our word for it.',
     nftRentalsActive: 'NFT rentals active',
     accepted: 'Accepted',
     cancelled: 'Cancelled',

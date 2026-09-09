@@ -2432,6 +2432,8 @@
       "erc20Active": "ERC-20 loans active",
       "unclassifiedActive": "Active, type not yet read",
       "unclassifiedActiveNote": "Some active loans arrived before the indexer had read what asset they are in, so they are counted in the total but not yet in either type below it. They move into the right one as the details are filled in.",
+      "activeSplitContradiction": "These counts do not add up",
+      "activeSplitContradictionNote": "The totals below disagree: the loans broken down by type add up to more than the number of active loans they are meant to be part of. That is a fault in how these figures were counted, not in any loan — nothing here is at risk, and this page cannot tell you the correct split until the counts agree. The total and the breakdown are both shown as reported so you can see the discrepancy rather than take our word for it.",
       "nftRentalsActive": "NFT rentals active",
       "accepted": "Accepted",
       "cancelled": "Cancelled",

@@ -185,3 +185,19 @@ separately, so a write landing between them can still return older
 counters with a newer marker. Closing that needs the two bound together
 inside the indexer, which is a change to a different service and is
 tracked on its own.
+
+The public analytics page shows how many loans are active and, beneath
+that, how many of them are of each type. Subtracting one from the other
+gives the loans whose type has not been read yet, and the page was
+quietly treating a negative answer as zero. A negative answer means the
+smaller numbers add up to more than the larger one — the counts
+contradict each other — and rounding that away left three figures on
+screen that do not reconcile, with nothing saying so. Anyone can do the
+subtraction themselves.
+
+The page now says it. When the counts disagree it says they disagree,
+says the fault is in the counting rather than in anyone's loan, says
+plainly that nothing is at risk, and leaves both the total and the
+breakdown exactly as reported so the discrepancy can be seen rather than
+taken on trust. It also stops short of claiming to know the right split,
+because it does not.

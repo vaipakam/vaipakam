@@ -29,6 +29,7 @@
  */
 import { useQuery } from '@tanstack/react-query';
 import { copy } from '../content/copy';
+import { resolveActiveSplit } from '../data/activeSplit';
 import { olderCursor } from '../data/olderCursor';
 import {
   BarChart3,
@@ -192,22 +193,19 @@ export function Analytics() {
   const uninitialized =
     !unreachable && stats.isSuccess && typeof cursor?.lastBlock !== 'number';
 
-  /** Active loans the indexer counted but could not type, because the
-   *  row still carries the `'0x'` lending-asset placeholder. Derived
-   *  from one response so the arithmetic is internally consistent, and
-   *  `undefined` unless every input is present — a residual computed
-   *  against a missing counter would be a figure this page invented.
-   *  Clamped at zero: a negative difference would mean the endpoint
-   *  contradicted itself, which is not something to render as a count. */
-  const unclassifiedActive =
-    typeof loans?.active === 'number' &&
-    typeof loans?.erc20ActiveLoans === 'number' &&
-    typeof loans?.nftRentalsActive === 'number'
-      ? Math.max(
-          0,
-          loans.active - loans.erc20ActiveLoans - loans.nftRentalsActive,
-        )
-      : undefined;
+  /** How the active total relates to its typed subtotals — three
+   *  answers, not a number.
+   *
+   *  Owned by `data/activeSplit` with a case table, because the third
+   *  answer is the one that used to be swallowed: the subtotals can
+   *  EXCEED the total, and clamping that to zero left three mutually
+   *  inconsistent counters on screen with nothing acknowledging it. See
+   *  that module for why the page says so instead. */
+  const activeSplit = resolveActiveSplit({
+    active: loans?.active,
+    erc20ActiveLoans: loans?.erc20ActiveLoans,
+    nftRentalsActive: loans?.nftRentalsActive,
+  });
 
   // PENDING IS NOT AN ANSWER. Before the first response settles, both
   // `isSuccess` and `isError` are false, so every counter fell through to
@@ -345,15 +343,26 @@ export function Analytics() {
             <div className="an-grid an-grid-sub">
               <Stat label={copy.analytics.erc20Active} value={loans?.erc20ActiveLoans} />
               <Stat label={copy.analytics.nftRentalsActive} value={loans?.nftRentalsActive} />
-              {unclassifiedActive !== undefined && unclassifiedActive > 0 ? (
+              {activeSplit.kind === 'reconciled' &&
+              activeSplit.unclassified > 0 ? (
                 <Stat
                   label={copy.analytics.unclassifiedActive}
-                  value={unclassifiedActive}
+                  value={activeSplit.unclassified}
                 />
               ) : null}
             </div>
-            {unclassifiedActive !== undefined && unclassifiedActive > 0 ? (
+            {activeSplit.kind === 'reconciled' &&
+            activeSplit.unclassified > 0 ? (
               <p className="an-note">{copy.analytics.unclassifiedActiveNote}</p>
+            ) : null}
+            {/* The counters disagree. Shown rather than clamped away —
+                the figures above are left exactly as reported so the
+                reader can see the discrepancy for themselves. */}
+            {activeSplit.kind === 'contradiction' ? (
+              <p className="an-note" data-testid="an-active-contradiction">
+                <strong>{copy.analytics.activeSplitContradiction}</strong>{' '}
+                {copy.analytics.activeSplitContradictionNote}
+              </p>
             ) : null}
           </section>
 
