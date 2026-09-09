@@ -50,6 +50,7 @@ import { ConfirmReceipt } from './ConfirmReceipt';
 import { settled } from '../contracts/ownReceipt';
 import { withTimeout } from '../lib/withTimeout';
 import {
+  forcedCloseSubmissionKey,
   isHoldingAfterSubmit,
   readForcedCloseSubmission,
   writeForcedCloseSubmission,
@@ -346,6 +347,48 @@ export function ForcedCloseCard({
     void queryClient.invalidateQueries({ queryKey: ['forcedClose'] });
     onClosedOut();
   }, [disposition, submitted, queryClient, onClosedOut]);
+
+  /** Another tab's submission, adopted here.
+   *
+   *  Self-review after round 53. Persisting the record fixed losing it
+   *  across a reload, and left a second way to not have it: a lender
+   *  with this position open in TWO tabs. The tab that submits writes the
+   *  record; the other tab's key has not changed, so it never re-seeds,
+   *  keeps `submitted` null, and offers the button over a live close-out.
+   *  Same duplicate submit as the round-52 and round-53 findings, reached
+   *  by a third route — and the one route the two fixes for those cannot
+   *  cover, because neither the key nor the mount changes.
+   *
+   *  `storage` fires only in OTHER tabs of the same origin, which is
+   *  exactly the gap. Matching on our own key rather than parsing every
+   *  event is what `PendingMarkerStore.key()` exists for, and a null key
+   *  (a whole-storage clear) concerns us too — the same shape `Recover`
+   *  follows. */
+  useEffect(() => {
+    const chainId = walletChain?.chainId;
+    if (chainId === undefined) return;
+    const ownKey = forcedCloseSubmissionKey(chainId, loanId);
+    const key = `${chainId}:${String(loanId)}`;
+    const onStorage = (event: StorageEvent) => {
+      if (event.key !== null && event.key !== ownKey) return;
+      const persisted = readForcedCloseSubmission(chainId, loanId);
+      setSubmissions((prev) => {
+        // Another tab CLEARED it — it disposed of the transaction, or the
+        // lender told it the transaction is gone. Drop ours too rather
+        // than holding on a record no longer backed by storage.
+        if (persisted === null) {
+          if (prev[key] === undefined) return prev;
+          const next = { ...prev };
+          delete next[key];
+          return next;
+        }
+        if (prev[key]?.hash === persisted.hash) return prev;
+        return { ...prev, [key]: persisted };
+      });
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, [walletChain?.chainId, loanId]);
 
   /** ROUND 53 P1 — the device-local record is cleared once the
    *  transaction is DISPOSED of, not when the card unmounts. Leaving it

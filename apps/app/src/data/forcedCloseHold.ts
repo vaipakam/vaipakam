@@ -168,6 +168,19 @@ export interface ForcedCloseSubmission {
   at: number;
 }
 
+/** The literal storage key a record lives under.
+ *
+ *  Exposed so a caller can recognise its OWN key in a cross-tab
+ *  `storage` event without duplicating the naming scheme — the reason
+ *  `PendingMarkerStore` exposes `key()` at all (#1547 r8), and the shape
+ *  `Recover` already follows. */
+export function forcedCloseSubmissionKey(
+  chainId: number,
+  loanId: string | number,
+): string {
+  return submitMarker.key(chainId, String(loanId));
+}
+
 export function readForcedCloseSubmission(
   chainId: number | undefined,
   loanId: string | number,

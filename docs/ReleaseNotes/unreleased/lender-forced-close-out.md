@@ -594,3 +594,11 @@ which stops the wait and returns the action. It is worded as their
 statement rather than as a reset button, and it says what it costs if
 they are wrong, because pretending the button performs a check would be
 the same false confidence in a new place.
+
+One more way of not knowing about a close-out, found by looking for it
+rather than by hitting it: the same position open in two browser tabs.
+The tab that sends remembers it; the other tab had nothing to notice, so
+it would have gone on offering the button over a transaction already on
+its way. Tabs now tell each other, in both directions — one that learns
+of a close-out stops offering the action, and one that learns the record
+has been cleared stops waiting.
