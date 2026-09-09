@@ -969,6 +969,13 @@ EOF
   if ! command -v node >/dev/null 2>&1 || [ ! -f "$REPO_ROOT/packages/contracts/scripts/archive-manifest.mjs" ]; then
     echo "ERROR: node and packages/contracts/scripts/archive-manifest.mjs are required to mark the live publication before broadcasting" >&2; exit 1
   fi
+  # Codex #2070 r27 P1 — a stale DEPLOY_SKIP_ARTIFACTS inherited from the
+  # environment would deploy a Diamond the census inventory never sees.
+  # DeployDiamond refuses it on a live broadcast before any transaction; fail
+  # earlier still, before the marker is taken.
+  if [ -n "${DEPLOY_SKIP_ARTIFACTS:-}" ]; then
+    echo "ERROR: DEPLOY_SKIP_ARTIFACTS=${DEPLOY_SKIP_ARTIFACTS} is set — a live deploy MUST publish its artifact (the census inventory is built from it); unset it" >&2; exit 1
+  fi
   LIVE_PUB_TOKEN="$$-$(date +%s)-$RANDOM"   # durable per-deploy token: only THIS deploy can end what it began (Codex #2070 r25 P1)
   node "$REPO_ROOT/packages/contracts/scripts/archive-manifest.mjs" live-begin "$CONTRACTS_DIR/deployments/archive-manifest.json" "$CHAIN_SLUG" "$LIVE_PUB_TOKEN" "$$" \
     || { echo "ERROR: could not mark the live publication in archive-manifest.json (another deploy on $CHAIN_SLUG may be in progress — check for a live forge child before live-begin --force)" >&2; exit 1; }

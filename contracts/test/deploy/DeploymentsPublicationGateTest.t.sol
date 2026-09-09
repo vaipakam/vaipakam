@@ -108,6 +108,40 @@ contract DeploymentsPublicationGateTest is Test {
         vm.setEnv("VAIPAKAM_LIVE_PUBLICATION_TOKEN", "");
     }
 
+    // ── the artifact-write rule (#2070 r27) ──────────────────────────────
+
+    function _mode(uint256 chainId, bool dryRun, bool underTest, bool skip) internal pure returns (uint8) {
+        return uint8(Deployments.artifactWriteMode(chainId, dryRun, underTest, skip));
+    }
+
+    function test_ArtifactWriteMode_IsOneRule() public pure {
+        uint8 W = uint8(Deployments.ArtifactWrites.Write);
+        uint8 S = uint8(Deployments.ArtifactWrites.Skip);
+        uint8 R = uint8(Deployments.ArtifactWrites.RefuseSkipOnLiveBroadcast);
+        // a dry-run never writes, whatever else is set: its addresses are simulated
+        assertEq(_mode(84532, true, false, false), S);
+        assertEq(_mode(84532, true, false, true), S);
+        assertEq(_mode(1, true, true, false), S);
+        // a live broadcast writes
+        assertEq(_mode(84532, false, false, false), W);
+        assertEq(_mode(1, false, false, false), W);
+        // the skip is honoured on Anvil and under forge test only …
+        assertEq(_mode(31337, false, false, true), S);
+        assertEq(_mode(84532, false, true, true), S);
+        // … and REFUSED on a live broadcast, testnet or mainnet alike
+        assertEq(_mode(84532, false, false, true), R);
+        assertEq(_mode(1, false, false, true), R);
+        assertEq(_mode(8453, false, false, true), R);
+    }
+
+    /// @dev Under `forge test` the live call can only ever land on Write or
+    ///      Skip (never the refusal), so it must not revert here whatever
+    ///      DEPLOY_SKIP_ARTIFACTS a sibling test has exported; the refusal
+    ///      itself is pinned above through the pure rule.
+    function test_ArtifactWritesEnabled_NeverRefusesUnderForgeTest() public view {
+        Deployments.artifactWritesEnabled();
+    }
+
     /// @dev External hop so `expectRevert` observes a library-internal revert.
     function gate(string memory jsonKey) external view {
         Deployments.requireMarkedPublication(jsonKey);
@@ -117,7 +151,7 @@ contract DeploymentsPublicationGateTest is Test {
         return string.concat(
             "Deployments: writing ",
             jsonKey,
-            " changes the census inventory and needs a MARKED live publication - run through deploy-chain.sh / deploy-testnet.sh / deploy-mainnet.sh (they run archive-manifest.mjs live-begin and export VAIPAKAM_LIVE_PUBLICATION_TOKEN), or set DEPLOY_SKIP_ARTIFACTS=true to broadcast without writing the artifact"
+            " changes the census inventory and needs a MARKED live publication - run through deploy-chain.sh / deploy-testnet.sh / deploy-mainnet.sh (they run archive-manifest.mjs live-begin and export VAIPAKAM_LIVE_PUBLICATION_TOKEN)"
         );
     }
 }

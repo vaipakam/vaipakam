@@ -878,7 +878,9 @@ function downgradeChainToSafe(slug) {
  * finalized block, so a block at that height is itself finalized and
  * reorg-proof; reading there is sound, and it is servable by the replicas
  * that were failing. So on a lagging failure that survived the retry budget,
- * the chain is re-resolved AT that head (hash fetched by number), still
+ * the chain is re-resolved AT that head (hash fetched by number) — but only
+ * once a parent-hash walk from the resolved block proves that head is its
+ * ANCESTOR (r27: a lower height on a competing fork is not finalized) — still
  * subject to the committed-height floor, and RESTARTED — the same discard-
  * and-requeue the `safe` downgrade uses, so one block identity per chain
  * holds. Bounded to `MAX_HEAD_CAPS_PER_CHAIN` so the run cannot chase ever-
@@ -898,8 +900,26 @@ async function capChainAtLaggingHead(client, slug, who, head) {
   }
   const b = await withReplicaRetry(head, () => client.getBlock({ blockNumber: head }));
   if (!b?.hash) return null;
+  // Codex #2070 r27 P1 — a lower height is finalized only when it is an
+  // ANCESTOR of the finalized block this run resolved: a lagging replica can
+  // sit numerically below it on a competing fork. The committed-floor walk
+  // that follows proves descent from the LAST census, not membership in THIS
+  // run's finalized chain, so first walk the parent hashes from the resolved
+  // block down to the head just fetched; the cap stands only if the link
+  // closes on that exact block.
+  const capped = { height: b.number, hash: String(b.hash).toLowerCase() };
+  let descent;
+  try {
+    descent = await verifyAncestryByWalk(rpcFor(slug), capped, { number: current.number, hash: current.hash }, `${who} (cap descent)`);
+  } catch (err) {
+    descent = { verified: false, reason: `the descent walk failed: ${classifyRpcError(err)} — ${err.message?.split('\n')[0]}` };
+  }
+  if (!descent.verified) {
+    process.stderr.write(`census: ${who} — lagging replica head ${head} (${capped.hash}) is NOT a proven ancestor of the resolved block ${current.number} (${current.hash}): ${descent.reason}; cannot cap there\n`);
+    return null;
+  }
   CHAIN_HEAD_CAPS.set(slug, caps + 1);
-  CENSUS_BLOCK_BY_CHAIN.set(slug, { number: b.number, hash: b.hash, tag: `${current.tag} → capped at lagging replica head ${head} (finalized by construction; cap ${caps + 1}/${MAX_HEAD_CAPS_PER_CHAIN})` });
+  CENSUS_BLOCK_BY_CHAIN.set(slug, { number: b.number, hash: b.hash, tag: `${current.tag} → capped at lagging replica head ${head} (proven ancestor of ${current.number} by a ${descent.span}-block parent-hash walk; cap ${caps + 1}/${MAX_HEAD_CAPS_PER_CHAIN})` });
   // Codex #2070 r25 P1 — the census block moved; evidence gathered for the
   // original block proves nothing about this one. Walk to the capped block.
   await gatherAncestry(slug, who, CENSUS_BLOCK_BY_CHAIN.get(slug));

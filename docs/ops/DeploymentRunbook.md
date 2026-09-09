@@ -1208,11 +1208,13 @@ If any check fails → **do not broadcast**.
    export RPC_URL=https://...
    ```
    Phase-1 2-EOA topology: the deployer EOA owns the Diamond during the cut, then the script hands over ERC-173 ownership + all 7 access-control roles to `ADMIN_ADDRESS` and renounces the deployer's roles. Verify post-deploy that the deployer holds zero roles.
-2. Dry-run (simulation only — `forge script` still executes the artifact
-   writes during simulation, so skip them explicitly; without the skip the
-   publication gate below stops the simulation, which is the point):
+2. Dry-run (simulation only). A dry-run never writes the artifact: without
+   `--broadcast` the deploy script skips the writes itself, since the
+   addresses are simulated. `DEPLOY_SKIP_ARTIFACTS` is honoured only on the
+   local Anvil chain or under `forge test`; a live broadcast that carries it
+   is refused before any transaction, so never set it for a real deploy.
    ```bash
-   DEPLOY_SKIP_ARTIFACTS=true forge script script/DeployDiamond.s.sol:DeployDiamond \
+   forge script script/DeployDiamond.s.sol:DeployDiamond \
      --rpc-url $RPC_URL --sender $(cast wallet address $PRIVATE_KEY)
    ```
 3. Broadcast — through a wrapper, never directly. The identity-bearing

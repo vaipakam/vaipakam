@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
-import {Vm} from "forge-std/Vm.sol";
+import {Vm, VmSafe} from "forge-std/Vm.sol";
 
 /**
  * @title Deployments
@@ -572,6 +572,53 @@ library Deployments {
         return keccak256(bytes(CHEATS.parseJsonString(manifestJson, key))) == keccak256(bytes(token));
     }
 
+    /// @notice What a run may do with the artifact. Decided by ONE pure rule so
+    ///         the gate's test can exercise every combination the live call
+    ///         cannot reach from inside `forge test`.
+    enum ArtifactWrites {
+        Write,
+        Skip,
+        RefuseSkipOnLiveBroadcast
+    }
+
+    /// @notice #2070 r27 P1 — `DEPLOY_SKIP_ARTIFACTS` used to be honoured
+    ///         anywhere, so a live `forge script … --broadcast` carrying it
+    ///         (stale in the environment, say) deployed a Diamond the
+    ///         inventory never saw: no artifact, no marker, no generation bump,
+    ///         and a later census could certify every class empty while
+    ///         omitting it. The skip is now LOCAL-ONLY — the Anvil chain or a
+    ///         `forge test` run — and a live broadcast that carries it is
+    ///         REFUSED. A dry-run (no `--broadcast`) never writes: its addresses
+    ///         are simulated.
+    function artifactWriteMode(uint256 chainId, bool dryRun, bool underTest, bool skipRequested)
+        internal
+        pure
+        returns (ArtifactWrites)
+    {
+        if (dryRun) return ArtifactWrites.Skip;
+        if (!skipRequested) return ArtifactWrites.Write;
+        if (chainId == 31337 || underTest) return ArtifactWrites.Skip;
+        return ArtifactWrites.RefuseSkipOnLiveBroadcast;
+    }
+
+    /// @notice TRUE when this run writes the artifact. Reverts when
+    ///         `DEPLOY_SKIP_ARTIFACTS` is set on a live broadcast — call it at
+    ///         the top of a deploy script so the simulation fails BEFORE any
+    ///         transaction is sent.
+    function artifactWritesEnabled() internal view returns (bool) {
+        ArtifactWrites mode = artifactWriteMode(
+            block.chainid,
+            CHEATS.isContext(VmSafe.ForgeContext.ScriptDryRun),
+            CHEATS.isContext(VmSafe.ForgeContext.TestGroup),
+            CHEATS.envOr("DEPLOY_SKIP_ARTIFACTS", false)
+        );
+        require(
+            mode != ArtifactWrites.RefuseSkipOnLiveBroadcast,
+            "Deployments: DEPLOY_SKIP_ARTIFACTS is honoured only on Anvil (31337) or under forge test - a live broadcast MUST publish its artifact so the census inventory sees the deployment; unset it and run through deploy-chain.sh / deploy-testnet.sh / deploy-mainnet.sh"
+        );
+        return mode == ArtifactWrites.Write;
+    }
+
     /// @dev #1566 (Codex #2070 r26 P1) — an identity key may only be written by
     ///      a deploy that has MARKED its live publication in the committed
     ///      archive manifest: the three deploy wrappers run
@@ -583,9 +630,11 @@ library Deployments {
     ///      holding the manifest lock through its own publication always sees
     ///      the write coming. Facet-address keys and the rest stay ungated: the
     ///      in-place refresh scripts rewrite them and they change no inventory
-    ///      identity. `DEPLOY_SKIP_ARTIFACTS=true` never reaches a write. The
-    ///      local Anvil chain (31337) is exempt on the same ground the census
-    ///      excludes it: its artifact is gitignored and outside the inventory.
+    ///      identity. A run that writes nothing (a dry-run, or the LOCAL-ONLY
+    ///      `DEPLOY_SKIP_ARTIFACTS` — see {artifactWriteMode}) never reaches
+    ///      this. The local Anvil chain (31337) is exempt on the same ground
+    ///      the census excludes it: its artifact is gitignored and outside the
+    ///      inventory.
     function requireMarkedPublication(string memory jsonKey) internal view {
         if (!isIdentityKey(jsonKey) || block.chainid == 31337) return;
         string memory token = CHEATS.envOr("VAIPAKAM_LIVE_PUBLICATION_TOKEN", string(""));
@@ -594,7 +643,7 @@ library Deployments {
             string.concat(
                 "Deployments: writing ",
                 jsonKey,
-                " changes the census inventory and needs a MARKED live publication - run through deploy-chain.sh / deploy-testnet.sh / deploy-mainnet.sh (they run archive-manifest.mjs live-begin and export VAIPAKAM_LIVE_PUBLICATION_TOKEN), or set DEPLOY_SKIP_ARTIFACTS=true to broadcast without writing the artifact"
+                " changes the census inventory and needs a MARKED live publication - run through deploy-chain.sh / deploy-testnet.sh / deploy-mainnet.sh (they run archive-manifest.mjs live-begin and export VAIPAKAM_LIVE_PUBLICATION_TOKEN)"
             )
         );
         require(

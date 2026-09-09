@@ -12,7 +12,7 @@ import { mkdtempSync, writeFileSync, readFileSync, mkdirSync, readdirSync, exist
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { appendEntry, readManifest, withManifestLock, entryFromArtifact, regenerateEntries, writeSnapshotGuarded, bumpLiveGeneration, beginLivePublication, endLivePublication, livePublicationsInProgress } from './archive-manifest.mjs';
+import { pgidOf, liveGroupMembers, appendEntry, readManifest, withManifestLock, entryFromArtifact, regenerateEntries, writeSnapshotGuarded, bumpLiveGeneration, beginLivePublication, endLivePublication, livePublicationsInProgress } from './archive-manifest.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const WRITER = join(HERE, 'archive-manifest.mjs');
@@ -349,4 +349,39 @@ test('two-phase live publication: begin marks, end clears and bumps; a second be
   assert.throws(() => beginLivePublication(manifest, { slug: 'b', token: 'new', pid: process.pid }), /shell gone.*--force/s);
   assert.equal(beginLivePublication(manifest, { slug: 'b', token: 'new', pid: process.pid, force: true }).token, 'new');
   assert.equal(endLivePublication(manifest, { slug: 'b', token: 'wrong', force: true }), 2);
+});
+
+test('--force is verified against the recorded PROCESS GROUP — an orphaned child keeps it (r27)', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'am-pgid-'));
+  const manifest = join(dir, 'archive-manifest.json');
+  // begin records the deploy shell's group (here: this process's)
+  const mark = beginLivePublication(manifest, { slug: 'g', token: 'tok-1', pid: process.pid });
+  assert.equal(mark.pgid, pgidOf(process.pid));
+  assert.ok(Number.isInteger(mark.pgid) && mark.pgid > 0, 'the group id is recorded');
+  // an orphan in its own group, recorded under a marker whose shell died long ago
+  const orphan = spawn('sleep', ['60'], { detached: true, stdio: 'ignore' });
+  orphan.unref();
+  const exited = new Promise((resolve) => orphan.once('exit', resolve));
+  await new Promise((r) => setTimeout(r, 150));
+  writeFileSync(manifest, JSON.stringify({ ...readManifest(manifest), livePublicationsInProgress: { g: { token: 'old', pid: 2 ** 22 - 1, pgid: orphan.pid, startedAt: 'x' } } }));
+  assert.throws(() => beginLivePublication(manifest, { slug: 'g', token: 'new', pid: process.pid }), /shell gone.*process group.*--force/s);
+  assert.throws(() => beginLivePublication(manifest, { slug: 'g', token: 'new', pid: process.pid, force: true }), /still has live member.*sleep/s);
+  process.kill(-orphan.pid, 'SIGKILL');
+  await exited;
+  assert.equal(beginLivePublication(manifest, { slug: 'g', token: 'new', pid: process.pid, force: true }).token, 'new');
+});
+
+test('liveGroupMembers excludes the caller lineage and nothing else (r27)', () => {
+  const table = [
+    { pid: 1, ppid: 0, pgid: 1, comm: 'init' },
+    { pid: 100, ppid: 1, pgid: 100, comm: 'runner' },
+    { pid: 200, ppid: 100, pgid: 100, comm: 'bash' },
+    { pid: 300, ppid: 1, pgid: 100, comm: 'forge' },
+    { pid: 400, ppid: 1, pgid: 400, comm: 'other' },
+  ];
+  // the new deploy shell (200) and its ancestor runner (100) never count; the orphaned forge does
+  assert.deepEqual(liveGroupMembers(100, { exclude: [200], table }).map((r) => r.pid), [300]);
+  assert.deepEqual(liveGroupMembers(100, { exclude: [200, 300], table }), []);
+  assert.deepEqual(liveGroupMembers(400, { exclude: [200], table }).map((r) => r.pid), [400]);
+  assert.equal(liveGroupMembers(100, { exclude: [200], table: null }), null, 'an unreadable table is unknown, not empty');
 });

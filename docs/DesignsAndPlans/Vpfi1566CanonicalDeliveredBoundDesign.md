@@ -5392,7 +5392,7 @@ reported a comfortable answer it had not earned:
   wrappers export the token right after `live-begin`, so a direct broadcast
   (no token) and an exported token with no marker both revert before the
   artifact changes; facet-address keys stay ungated so the in-place refresh
-  scripts are unaffected, `DEPLOY_SKIP_ARTIFACTS=true` never reaches a write,
+  scripts are unaffected, a run that writes nothing never reaches the gate,
   and the local Anvil chain is exempt on the same ground the census excludes
   it (its artifact is gitignored and outside the inventory). `deploy-chain.sh` marks before its first identity write and
   clears after its last, so a resumed run that skips the Diamond step is
@@ -5401,6 +5401,28 @@ reported a comfortable answer it had not earned:
   automatically — the forge child can outlive the shell and still write the
   artifact — so `live-begin` refuses any existing marker and the operator
   passes `--force` only after checking for a live child.
+
+  **Round 27 closed three doors the previous two rounds had left ajar.**
+  First, `DEPLOY_SKIP_ARTIFACTS` was honoured anywhere, so a live broadcast
+  carrying it — stale in the environment, say — deployed a Diamond with no
+  artifact, no marker and no generation bump, exactly the deployment the
+  inventory cannot see; and the round-26 gate message advertised it. The
+  skip is now one pure rule (`Deployments.artifactWriteMode`): honoured only
+  on Anvil or under `forge test`, refused on a live broadcast at the top of
+  `DeployDiamond.runWith` before any transaction, and a dry-run never writes
+  because its addresses are simulated; the wrappers refuse a stale flag
+  before taking the marker. Second, the child check the round-26 message
+  prescribed could not find an orphan: `pgrep -P` keys on the dead parent
+  and an orphan is reparented. The durable identity is the PROCESS GROUP,
+  which the orphan keeps, so `live-begin` records it and `--force` is
+  verified against it — refused while the group has a live member outside
+  the caller's own lineage, or while the process table cannot be read at
+  all. Third, the lagging-head cap called a lower block "finalized by
+  construction", which holds only if that block is an ancestor of the
+  finalized block this run resolved; a lagging replica on a competing fork
+  is not. The cap now stands only after a parent-hash walk from the resolved
+  block down to the head proves the descent, and the committed-floor walk
+  runs after it as before.
   Hand-computed storage slots were never an option: they fail SILENTLY as
   zero, manufacturing the exact "empty" result the census exists to
   establish. The event reconstruction is retained behind `--corroborate` as

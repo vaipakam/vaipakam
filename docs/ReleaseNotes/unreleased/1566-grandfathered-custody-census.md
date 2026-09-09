@@ -289,4 +289,13 @@ documents route every deploy through the wrappers. A deploy that appears to
 have died is no longer overwritten automatically either, since its broadcast
 may still be running; taking over is an explicit operator act.
 
+Three more doors closed afterwards. The switch that lets a local experiment
+deploy without recording anything is now honoured only on the local chain or
+under the test runner, and a real deploy that carries it stops before sending
+anything, so no deployment can reach a chain unrecorded. Taking over a
+seemingly dead deploy is verified against the durable identity its processes
+keep even after the shell that started them is gone. And when the census must
+step back to a block a lagging replica can serve, it first proves that block is
+an ancestor of the finalized one, rather than assuming a lower number is safe.
+
 Refs #1566, #1349, #1956

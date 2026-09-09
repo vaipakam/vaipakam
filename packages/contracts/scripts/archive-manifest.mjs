@@ -58,6 +58,7 @@ import {
 } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { execFileSync } from 'node:child_process';
 
 export const MANIFEST_PURPOSE =
   'Committed inventory of every ARCHIVED Diamond (a --fresh redeploy archives the off-chain artifact but cannot wipe on-chain custody). ' +
@@ -110,6 +111,49 @@ function sleepSync(ms) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
+/**
+ * Codex #2070 r27 P1 — the durable identity of a deploy is its PROCESS GROUP,
+ * not its shell pid: an orphaned forge child is reparented (so `pgrep -P` on
+ * the dead shell finds nothing) but keeps the group id it inherited. One `ps`
+ * read of the whole table gives pid/ppid/pgid/comm portably (procps and BSD
+ * both take these options). Returns null when the table cannot be read — an
+ * UNKNOWN table never certifies a deploy dead.
+ */
+export function processTable() {
+  try {
+    const out = execFileSync('ps', ['-A', '-o', 'pid=,ppid=,pgid=,comm='], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+    const rows = [];
+    for (const line of out.split('\n')) {
+      const m = line.trim().match(/^(\d+)\s+(\d+)\s+(\d+)\s*(.*)$/);
+      if (m) rows.push({ pid: Number(m[1]), ppid: Number(m[2]), pgid: Number(m[3]), comm: m[4] });
+    }
+    return rows.length ? rows : null;
+  } catch {
+    return null;
+  }
+}
+export function pgidOf(pid, table = processTable()) {
+  if (!table) return null;
+  return table.find((r) => r.pid === pid)?.pgid ?? null;
+}
+/**
+ * Live members of a recorded deploy's process group, EXCLUDING the caller's
+ * own lineage (the pids in `exclude` and every ancestor of theirs): a re-run
+ * under the same CI runner shares the runner's group, and the runner is not
+ * the dead deploy's broadcast. Null when the table is unreadable.
+ */
+export function liveGroupMembers(pgid, { exclude = [], table = processTable() } = {}) {
+  if (!table || !Number.isInteger(pgid)) return null;
+  const byPid = new Map(table.map((r) => [r.pid, r]));
+  const excluded = new Set();
+  for (let p of exclude) {
+    for (let hops = 0; Number.isInteger(p) && p > 0 && !excluded.has(p) && hops < 64; hops++) {
+      excluded.add(p);
+      p = byPid.get(p)?.ppid;
+    }
+  }
+  return table.filter((r) => r.pgid === pgid && !excluded.has(r.pid));
+}
 function pidAlive(pid) {
   if (!Number.isInteger(pid) || pid <= 0) return false;
   try {
@@ -469,10 +513,12 @@ export function bumpLiveGeneration(manifestPath, { slug, diamond } = {}, lockOpt
  * (`live-end`, under the lock). Any census that takes the lock in between —
  * at its start snapshot or at its publication — sees the marker and refuses:
  * the write it cannot see coming is now observable as an in-progress state.
- * A marker whose recording process is dead can be taken over by a new
- * `live-begin` for the same slug; otherwise a second begin on a slug already
- * publishing is refused. `live-end` with no matching marker still bumps (a
- * crashed deploy is cleared by running it).
+ * A marker is never taken over automatically (r26): a dead deploy shell does
+ * not prove its forge child stopped. `live-begin --force` succeeds only when
+ * the recorded PROCESS GROUP has no live member outside the caller's own
+ * lineage (r27) — an orphaned forge is reparented but keeps its group.
+ * `live-end` with no matching marker still bumps (a crashed deploy is cleared
+ * by running it).
  */
 export function beginLivePublication(manifestPath, { slug, token, pid, force = false } = {}, lockOpts) {
   if (!slug) throw new Error('archive-manifest: live-begin needs a slug');
@@ -482,8 +528,10 @@ export function beginLivePublication(manifestPath, { slug, token, pid, force = f
   // anyone checks it, and a concurrent deploy on the same slug could take the
   // marker over and then have its own marker cleared by the first deploy's
   // `live-end`. With a token, only the deploy that began can end (or an
-  // operator with --force); the shell pid is recorded so the operator can
-  // check for a surviving forge child before forcing (r26: never automatic).
+  // operator with --force). The shell pid AND its process group are recorded:
+  // an orphaned forge child is reparented, so a check keyed on the dead shell
+  // (`pgrep -P`) finds nothing, but it keeps the group it inherited — that is
+  // the durable identity --force is verified against (r27).
   if (!token) throw new Error('archive-manifest: live-begin needs a per-deploy token (e.g. "$$-$(date +%s)-$RANDOM")');
   const ownerPid = Number.isInteger(Number(pid)) && Number(pid) > 0 ? Number(pid) : process.pid;
   return withManifestLock(
@@ -494,17 +542,39 @@ export function beginLivePublication(manifestPath, { slug, token, pid, force = f
       const existing = inProgress[slug];
       // Codex #2070 r26 P1 — a dead deploy SHELL does not prove the broadcast
       // stopped: its forge child can outlive it and still write addresses.json.
-      // So an existing marker is NEVER taken over automatically; the operator
-      // checks for a live child (pgrep -P <pid>; ps -o pgid) and passes
-      // --force deliberately.
-      if (existing && existing.token !== token && !force) {
-        throw new Error(
-          `archive-manifest: ${slug} is already publishing a live artifact (deploy pid ${existing.pid}${pidAlive(existing.pid) ? ', alive' : ', shell gone'}, token ${existing.token}, since ${existing.startedAt}); ` +
-            `a second deploy on the same chain cannot begin until it ends. If that deploy is dead, confirm no forge child of pid ${existing.pid} is still running ` +
-            `(pgrep -P ${existing.pid}; ps -o pid,pgid,cmd -g $(ps -o pgid= -p ${existing.pid} 2>/dev/null)) and re-run with --force`,
-        );
+      // So an existing marker is NEVER taken over automatically. r27 P1 — and
+      // --force is VERIFIED against the recorded process group: the orphaned
+      // child keeps it, so a group with a live member outside the caller's own
+      // lineage is a broadcast that may still be running.
+      if (existing && existing.token !== token) {
+        const table = processTable();
+        const groupCheck = Number.isInteger(existing.pgid)
+          ? `ps -A -o pid=,pgid=,comm= | awk '$2==${existing.pgid}'`
+          : `ps -p ${existing.pid}`;
+        if (!force) {
+          throw new Error(
+            `archive-manifest: ${slug} is already publishing a live artifact (deploy pid ${existing.pid}${pidAlive(existing.pid) ? ', alive' : ', shell gone'}; process group ${existing.pgid ?? 'unrecorded'}; token ${existing.token}; since ${existing.startedAt}); ` +
+              `a second deploy on the same chain cannot begin until it ends. If that deploy is dead, confirm its process group has no live member (${groupCheck}) — an orphaned forge keeps the group — and re-run with --force`,
+          );
+        }
+        const survivors = Number.isInteger(existing.pgid)
+          ? liveGroupMembers(existing.pgid, { exclude: [process.pid, ownerPid], table })
+          : pidAlive(existing.pid)
+            ? [{ pid: existing.pid, comm: 'recorded deploy shell' }]
+            : [];
+        if (survivors === null) {
+          throw new Error(
+            `archive-manifest: --force refused — the process table cannot be read, so deploy ${existing.pid} (process group ${existing.pgid}) cannot be proven dead`,
+          );
+        }
+        if (survivors.length) {
+          throw new Error(
+            `archive-manifest: --force refused — process group ${existing.pgid ?? existing.pid} of the recorded deploy still has live member(s) ${survivors.map((r) => `${r.pid} (${r.comm})`).join(', ')}; ` +
+              `its broadcast may still be running and would write addresses.json under a replaced marker. Wait for it or kill it, then re-run`,
+          );
+        }
       }
-      inProgress[slug] = { token, pid: ownerPid, startedAt: new Date().toISOString() };
+      inProgress[slug] = { token, pid: ownerPid, pgid: pgidOf(ownerPid), startedAt: new Date().toISOString() };
       const next = { ...m, livePublicationsInProgress: inProgress };
       writeManifestAtomic(manifestPath, next);
       return inProgress[slug];
