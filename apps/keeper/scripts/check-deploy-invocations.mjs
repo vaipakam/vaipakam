@@ -3886,7 +3886,14 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
       // rather than a second reader of the same shape: the question here is
       // only whether a process call owns the list, not whether an interpreter
       // evaluates it, which is why the two share the walk and not the verdict.
-      if (ARGV_COMMAND.test(m[0]) && spawnCallOwner(m.index, text, directKind) === -1)
+      //
+      // From INSIDE the matched punctuation, not from it. The walk begins one
+      // character back, so handing it the anchor skipped the anchor itself —
+      // and when that anchor IS the call's parenthesis, as in `execFile("cp",
+      // ["generated.jsonc", "configs/custom.jsonc"])`, the walk went looking
+      // for an enclosing call, found none, and dropped a real copy. Found by
+      // self-review after r29, not by a round.
+      if (ARGV_COMMAND.test(m[0]) && spawnCallOwner(m.index + 1, text, directKind) === -1)
         return false;
       // A `[[ … ]]` comparison is not a redirection on this path either. The
       // named scan exempted it and this one did not, so

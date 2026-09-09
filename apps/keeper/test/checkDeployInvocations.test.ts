@@ -10670,4 +10670,31 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     );
     expect(r.ok).toBe(false);
   });
+
+  it('a program-and-args copy is a copy (#2066 r29 self-review)', () => {
+    // `execFile("cp", [src, dst])` is the ordinary Node spelling, and its
+    // match anchors on the call's OWN parenthesis. The owner walk starts one
+    // character back, so it skipped that parenthesis, looked for an enclosing
+    // call, found none, and dropped a real copy.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'ds.mjs',
+      'execFile("cp", ["generated.jsonc", "configs/custom.jsonc"]);\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a non-process caller is still not a copy (#2066 r29 self-review bounds)', () => {
+    // Reaching the right parenthesis must not admit whatever owns it.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'dt.mjs',
+      'describe("cp", ["generated.jsonc", "configs/custom.jsonc"]);\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(true);
+  });
 });
