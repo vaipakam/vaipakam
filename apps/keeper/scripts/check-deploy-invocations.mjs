@@ -6843,15 +6843,15 @@ function closesQuote(s, q) {
 
 /** Shift a block's logical lines back to real file line numbers. */
 function offset(block, start, blockId, cwd = '', env = null) {
+  // SPREAD, so this cannot lose a field again. Listing them re-numbered the
+  // line and silently dropped `folds` — how a position inside a continued
+  // command translates back to the file's coordinates (r27) — for every block
+  // this function wraps: the workflow `run:` bodies, the fenced blocks and the
+  // Makefile recipes, which is where most of the shell this guard reads lives.
+  // The only field this function has an opinion about is the line number.
   return block.map((l) => ({
-    text: l.text,
+    ...l,
     line: l.line + start,
-    // Carried, not dropped. `folds` is how a position inside a continued
-    // command is translated back to the file's coordinates (r27), and
-    // rebuilding the entry field by field silently lost it for every block
-    // this function wraps — the YAML `run:` bodies, the fenced blocks and the
-    // Makefile recipes, which is most of the shell this guard reads.
-    folds: l.folds,
     block: blockId,
     cwd,
     env,
