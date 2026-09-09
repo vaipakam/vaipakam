@@ -201,23 +201,43 @@ export function blockRef(block) {
   if (!/^0x[0-9a-f]{64}$/.test(hash)) throw new Error(`blockRef: a state read must be pinned to the census block's HASH, got ${JSON.stringify(block?.hash)}`);
   return { blockHash: hash, requireCanonical: true };
 }
-function decodeRevertLikeViem(err, abi, functionName) {
+/**
+ * Shape a raw-transport revert the way viem's readContract shapes one, so the
+ * census's detectors keep matching on the same fields. Two cases, and BOTH
+ * must carry the revert data: an error the ABI knows is decoded to its name
+ * (`IntentNoCommit()`), and one it does not — the Diamond fallback's own
+ * `FunctionDoesNotExist(bytes4)` is not in any facet ABI — is reported by its
+ * SIGNATURE, exactly as viem does ("reverted with the following signature:
+ * 0xa9ad62f8…"). The first cut of this helper returned null for the unknown
+ * case and let the raw error through, whose `details` is just "execution
+ * reverted": the selector detector then missed, and three bare Diamond shells
+ * classified as "not a Vaipakam Diamond" (caught comparing a post-merge
+ * partial run with run 26; never published). Exported for the test.
+ */
+export function revertErrorLikeViem(err, abi, functionName) {
   const pick = (v) => (typeof v === 'string' && /^0x[0-9a-f]{8,}$/i.test(v) ? v : null);
   const data = pick(err?.data) ?? pick(err?.cause?.data) ?? pick(err?.data?.data);
   if (!data) return null;
+  const lower = data.toLowerCase();
+  let e;
   try {
-    const d = decodeErrorResult({ abi, data });
+    const d = decodeErrorResult({ abi, data: lower });
     const sig = `${d.errorName}(${(d.args ?? []).map(String).join(', ')})`;
-    const e = new Error(`The contract function "${functionName}" reverted with the following reason:\n${sig}`);
-    e.shortMessage = `The contract function "${functionName}" reverted.`;
+    e = new Error(`The contract function "${functionName}" reverted with the following reason:\n${sig}`);
     e.metaMessages = [`Error: ${sig}`];
-    e.details = err?.details ?? err?.message;
     e.errorName = d.errorName;
-    e.cause = err;
-    return e;
   } catch {
-    return null;
+    e = new Error(
+      `The contract function "${functionName}" reverted with the following signature:\n${lower.slice(0, 10)}\nUnable to decode signature "${lower.slice(0, 10)}" as it was not found on the provided ABI.\nRaw revert data: ${lower}`,
+    );
+    e.metaMessages = [`Signature: ${lower.slice(0, 10)}`];
+    e.signature = lower.slice(0, 10);
   }
+  e.shortMessage = `The contract function "${functionName}" reverted.`;
+  e.details = err?.details ?? err?.message;
+  e.data = lower;
+  e.cause = err;
+  return e;
 }
 async function callAtHash(client, block, { address, abi, functionName, args = [] }) {
   const data = encodeFunctionData({ abi, functionName, args });
@@ -225,7 +245,7 @@ async function callAtHash(client, block, { address, abi, functionName, args = []
   try {
     raw = await client.request({ method: 'eth_call', params: [{ to: address, data }, blockRef(block)] });
   } catch (err) {
-    throw decodeRevertLikeViem(err, abi, functionName) ?? err;
+    throw revertErrorLikeViem(err, abi, functionName) ?? err;
   }
   if (!raw || raw === '0x') {
     const e = new Error(`The contract function "${functionName}" returned no data ("0x").`);
@@ -1485,7 +1505,8 @@ async function censusDeployment(dep) {
   const FUNCTION_DOES_NOT_EXIST = '0xa9ad62f8';
   const isUnroutedOnDiamond = (err) =>
     `${err?.shortMessage ?? ''} ${err?.details ?? ''} ${err?.message ?? ''}`.toLowerCase().includes(FUNCTION_DOES_NOT_EXIST)
-    || /FunctionDoesNotExist/.test(`${err?.cause?.data?.errorName ?? err?.data?.errorName ?? ''}`);
+    || (typeof err?.data === 'string' && err.data.toLowerCase().startsWith(FUNCTION_DOES_NOT_EXIST))
+    || /FunctionDoesNotExist/.test(`${err?.errorName ?? err?.cause?.data?.errorName ?? err?.data?.errorName ?? ''}`);
   const rethrowUnlessRevert = (err) => {
     const kind = classifyRpcError(err);
     if (kind === 'pruned' || kind === 'rate' || !isRevert(err)) throw err;

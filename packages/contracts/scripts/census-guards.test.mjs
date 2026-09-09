@@ -2,7 +2,8 @@
 // are PURE functions (Codex #2070 r23); every rule they carry is pinned here.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { pickFinalitySample, snapshotRegression, blockRef, assertSampledHashesAgree } from './census-grandfathered-custody.mjs';
+import { pickFinalitySample, snapshotRegression, blockRef, assertSampledHashesAgree, revertErrorLikeViem } from './census-grandfathered-custody.mjs';
+import { toFunctionSelector } from 'viem';
 
 const H = (n) => `0x${String(n).padStart(64, 'a')}`;
 const res = (chainSlug, deployment, atBlock, atBlockHash, diamond = '0xd1', vpfiToken = '0xt1') => ({ chainSlug, deployment, atBlock: String(atBlock), atBlockHash, diamond, vpfiToken });
@@ -67,4 +68,24 @@ test('assertSampledHashesAgree: every sampled replica must serve the pinned hash
   // unanimous but not the pinned hash: the chain moved under the census
   assert.throws(() => assertSampledHashesAgree([H(2), H(2)], H(1), 100n, 't'), /pinned .* sampled/);
   assert.throws(() => assertSampledHashesAgree([], H(1), 100n, 't'), /disagree/);
+});
+
+test('revertErrorLikeViem: a revert the ABI cannot decode still carries its signature and raw data, a known one its name (post-#2070 regression)', () => {
+  const abi = [{ type: 'error', name: 'IntentNoCommit', inputs: [] }, { type: 'function', name: 'getIntentCommit', inputs: [{ type: 'uint256', name: 'loanId' }], outputs: [], stateMutability: 'view' }];
+  // the Diamond fallback's FunctionDoesNotExist(bytes4) — selector 0xa9ad62f8 — is in no facet ABI
+  const raw = { details: 'execution reverted', data: '0xA9AD62F8' + '00'.repeat(28) + 'deadbeef' };
+  const e = revertErrorLikeViem(raw, abi, 'getIntentCommit');
+  assert.ok(e instanceof Error);
+  assert.match(e.message, /reverted with the following signature:\n0xa9ad62f8/);
+  assert.equal(e.signature, '0xa9ad62f8');
+  assert.equal(e.data.startsWith('0xa9ad62f8'), true, 'raw data is lower-cased and kept');
+  assert.equal(e.shortMessage, 'The contract function "getIntentCommit" reverted.');
+  // what the census's detector reads
+  assert.equal(`${e.shortMessage} ${e.details} ${e.message}`.toLowerCase().includes('0xa9ad62f8'), true);
+  // a known error decodes to its name, in the fields readContract populates
+  const known = revertErrorLikeViem({ details: 'execution reverted', data: toFunctionSelector('IntentNoCommit()') }, abi, 'getIntentCommit');
+  assert.equal(known.errorName, 'IntentNoCommit');
+  assert.match(known.metaMessages.join(' '), /IntentNoCommit\(\)/);
+  // no revert data at all: not a revert the helper can shape
+  assert.equal(revertErrorLikeViem({ details: 'header not found' }, abi, 'x'), null);
 });
