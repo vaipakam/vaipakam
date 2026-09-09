@@ -3292,6 +3292,26 @@ function classifyText(text, lang) {
       // sits (r15). A comparison is unaffected: in `a > b / c` the slash
       // follows `b`, not the operator.
       if ('=(,[{;:!&|?+-*%~^><'.includes(ch)) return true;
+      // A CONTROL CONDITION's closing paren is not a value. `if (enabled)
+      // /copy(a, b)/.test(v)` opens a pattern where `(a + b) / c` divides —
+      // the same character, told apart by what its paren belongs to (r17).
+      if (ch === ')') {
+        let d = 0;
+        let u = p;
+        for (; u >= 0 && p - u < 2000; u -= 1) {
+          if (text[u] === ')') d += 1;
+          else if (text[u] === '(') {
+            d -= 1;
+            if (d === 0) break;
+          }
+        }
+        if (u < 0 || d !== 0) return false;
+        let w = u - 1;
+        while (w >= 0 && /\s/.test(text[w])) w -= 1;
+        let e = w;
+        while (e >= 0 && /[A-Za-z0-9_$]/.test(text[e])) e -= 1;
+        return /^(?:if|while|for|switch|catch|with)$/.test(text.slice(e + 1, w + 1));
+      }
       if (!/[A-Za-z0-9_$]/.test(ch)) return false;
       let s = p;
       while (s >= 0 && /[A-Za-z0-9_$]/.test(text[s])) s -= 1;
@@ -3713,12 +3733,20 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
         // `command` is deliberately NOT a wrapper here: `command -v cp` only
         // TESTS for cp, and admitting it would restore the r12 false red.
         (shellish
-          ? String.raw`|(?:^|[;&|(])\s*(?:(?:[A-Za-z_]\w*=\S*` +
+          ? // An assignment VALUE may be quoted, and quoted whitespace is still
+            // one word — `LABEL="two words" cp gen.jsonc "$CFG"` copies (r17).
+            // Matched as a shell word rather than as "contains no space".
+            String.raw`|(?:^|[;&|(])\s*(?:(?:[A-Za-z_]\w*=(?:"[^"]*"|'[^']*'|\S)*` +
             // A long option can take its argument SEPARATED — `sudo --user
             // root cp …` — and the generic branch consumed `--user` while
             // leaving `root` to be read as the command (r14). The long forms
             // that take an argument are named, the same way the short ones
             // are, rather than approximated by "a following word".
+            // `command` RUNS its argument — `command cp gen.jsonc "$CFG"`
+            // copies — and r12 excluded it wholesale to stop `command -v cp`
+            // counting as one. Admitted here with the QUERY MODES excluded
+            // instead, which is the distinction bash's own help draws (r17).
+            String.raw`|command(?!\s+-[vV]\b)` +
             String.raw`|(?:sudo|env|xargs|time|nohup)(?:` +
             String.raw`\s+--(?:user|group|prompt|close-from|host|role|type|chdir|other-user)\s+\S+` +
             String.raw`|\s+-[-\w]+(?:=\S+)?|\s+-[ugUpChrtDR]\s+\S+)*` +
@@ -3860,7 +3888,35 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
             }
             if (d !== 0) break;
             t = u + 1;
-            lastEnd = ch === '{' ? t : -1;
+            // A BRACE GROUP ENDS THE SCAN. It is either the body, or a
+            // structured return type immediately followed by the body — and
+            // in both cases nothing after the body is part of this
+            // declaration. Scanning on let the NEXT class member (`enabled =
+            // true;`) reset the state and turn an uncalled method back into a
+            // recorded write (r17).
+            if (ch === '{') {
+              let k = t;
+              while (k < stop && /\s/.test(text[k])) k += 1;
+              if (text[k] === '{') {
+                // That group was the type; the body is the next one.
+                let d2 = 0;
+                let v = k;
+                for (; v < stop; v += 1) {
+                  if (text[v] === '{') d2 += 1;
+                  else if (text[v] === '}') {
+                    d2 -= 1;
+                    if (d2 === 0) break;
+                  }
+                }
+                if (d2 !== 0) break;
+                k = v + 1;
+              }
+              lastEnd = k;
+              t = k;
+              while (t < text.length && /\s/.test(text[t])) t += 1;
+              break;
+            }
+            lastEnd = -1;
             continue;
           }
           if (!/[A-Za-z0-9_$<>|&,.=?!'"]/.test(ch)) break;
@@ -8138,6 +8194,14 @@ for (const file of walk(REPO_ROOT)) {
   // Shell semantics apply to SHELL files. A redirection is a redirection in
   // shell text; in JavaScript the same character is a comparison (#2066 r10).
   const fileIsShell = Boolean(winInterp) || isShellFile(rel, text);
+  // AN EXTENSIONLESS HELPER HAS A SHEBANG, NOT A SUFFIX. `walk` yields
+  // extensionless executables deliberately, and keying the language on `.py`
+  // alone classified `#!/usr/bin/env python3` as `other` — where an f-string
+  // is inert data and the write interpolated into it was dropped (r17). The
+  // same question `isShellFile` already answers from a shebang, asked for the
+  // other interpreter this reader knows.
+  const fileIsPython =
+    /\.py$/.test(rel) || /^#![^\n]*\bpython[\d.]*\b/.test(text.slice(0, 200));
   const foldedText = foldStringConcat(text);
   const folded = winInterp || isShellFile(rel, text)
     ? logicalLines(text)
@@ -8318,7 +8382,7 @@ for (const file of walk(REPO_ROOT)) {
       ? 'shell'
       : /\.(?:m|c)?[jt]sx?$/.test(rel)
         ? 'js'
-        : /\.py$/.test(rel)
+        : fileIsPython
           ? 'py'
           : 'other';
     // Each embedded block is a SEPARATE shell — an Actions step starts fresh,
@@ -8383,8 +8447,50 @@ for (const file of walk(REPO_ROOT)) {
       // `jsonValueLines` already takes — values are NOT joined, because a
       // sequence spanning two of them is one no script performs.
       const valueScoped = entryLang === 'shell';
-      const rewriteText = valueScoped ? line : text;
-      const rewriteAt = (start) => (valueScoped ? start : lineStartOffset(text, lineNo, start));
+      // …AND A MANIFEST VALUE INCLUDES THE SCRIPTS IT RUNS. `"release": "pnpm
+      // run generate && wrangler deploy --config configs/custom.jsonc"` with
+      // `"generate": "cp generated.jsonc configs/custom.jsonc"` rewrites the
+      // selected config before deploying, and scanning only the release value
+      // never saw it (r17). Not a contradiction of "values are NOT joined":
+      // that rule refuses to CONCATENATE unrelated values into a sequence no
+      // script performs, while this follows an invocation the script actually
+      // makes — through `resolveRunAlias`, the resolver this reader already
+      // uses for the same question on the safety side.
+      // Read with `packageScripts`, NOT `resolveRunAlias`: that resolver
+      // answers "does this alias reach a deploy" and returns nothing for one
+      // that merely rewrites, which is exactly the case here. The bodies are
+      // wanted whatever they do.
+      const aliasBodies = [];
+      if (valueScoped) {
+        const ctx = packageContextOf(rel);
+        const scripts = ctx ? packageScripts(ctx) : null;
+        if (scripts) {
+          const seen = new Set();
+          const follow = (body, depth) => {
+            if (depth > 2) return;
+            for (const mm of body.matchAll(
+              new RegExp(String.raw`\b(?:pnpm|npm|yarn)\b[^&|;]*?\b(?:${RUN_ALIASES})\s+([A-Za-z_][\w:.-]*)`, 'g'),
+            )) {
+              const name = mm[1];
+              if (seen.has(name) || typeof scripts[name] !== 'string') continue;
+              seen.add(name);
+              aliasBodies.push(scripts[name]);
+              follow(scripts[name], depth + 1);
+            }
+          };
+          follow(line, 0);
+        }
+      }
+      // PREPENDED, and the offsets moved with it: the bodies run BEFORE the
+      // value, so they must sit before it in the scanned text, and
+      // `part.start` indexes the value — adding the prefix without shifting
+      // would compare a write offset against a deploy offset measured in a
+      // different string, which is the coordinate mix-up r13 already cost a
+      // round.
+      const rewritePrefix = aliasBodies.length > 0 ? `${aliasBodies.join('\n')}\n` : '';
+      const rewriteText = valueScoped ? rewritePrefix + line : text;
+      const rewriteAt = (start) =>
+        valueScoped ? rewritePrefix.length + start : lineStartOffset(text, lineNo, start);
       // A markdown CODE SPAN is a command boundary, and prose has no shell
       // separator between two of them. `Use `wrangler deploy --keep-vars` for
       // the keeper and `wrangler deploy` for the agent.` is ONE segment to
