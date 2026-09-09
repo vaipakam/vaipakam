@@ -107,7 +107,6 @@ export function ForcedCloseCard({
   busy,
   setBusy,
   onClosedOut,
-  readsUpdatedAt,
   preSubmitBlock,
 }: {
   loanId: string | number;
@@ -138,18 +137,6 @@ export function ForcedCloseCard({
   setBusy: (b: boolean) => void;
   /** Lets the page refetch status after the loan goes terminal. */
   onClosedOut: () => void;
-  /** When the readiness reads behind this card were last refreshed —
-   *  the MINIMUM across them, so one stale read still counts as stale.
-   *
-   *  On the SUCCESS path the card holds until this passes the moment the
-   *  transaction's disposition was established (round 52 P2 — not the
-   *  submit stamp; those differ by the whole life of the transaction,
-   *  and reads that refresh in between still describe the pre-close
-   *  loan). Sourced from the queries themselves rather than a timer, so
-   *  the hold is released by evidence rather than by a guess about how
-   *  long a refetch takes. See `data/forcedCloseHold`, which owns the
-   *  rule and its case table. */
-  readsUpdatedAt: number;
   /** The page's live sale-settlement re-check, run immediately before
    *  sending. Returns a message to show and abort on, or `null` to
    *  proceed.
@@ -215,13 +202,20 @@ export function ForcedCloseCard({
     Record<string, ForcedCloseSubmission>
   >({});
 
-  /** Whether the device-local record of this browser's submission
-   *  actually landed (round 54 P2).
+  /** The submission whose device-local record this browser REFUSED to
+   *  store (round 54 P2), or `null` when no write is known to have
+   *  failed.
    *
-   *  False only after a write this card KNOWS was refused — private
-   *  mode, quota, storage disabled. It starts true because no write has
-   *  been attempted, and an unattempted write is not a failure. */
-  const [submitRecordStored, setSubmitRecordStored] = useState(true);
+   *  ROUND 59 P3 — a hash, not a component-wide boolean. As a boolean it
+   *  never reset: a refused write for one chain-and-loan left the card
+   *  claiming, for every later identity it displayed, that reloading
+   *  would lose a record which was in fact sitting in storage. Naming the
+   *  transaction it applies to makes the warning true by construction and
+   *  needs no reset path — a different submission simply does not
+   *  match. */
+  const [storageRefusedFor, setStorageRefusedFor] = useState<string | null>(
+    null,
+  );
 
   /** Identity of the position this card is currently showing.
    *
@@ -354,6 +348,16 @@ export function ForcedCloseCard({
 
   const disposition = watch.data ?? null;
 
+  /** The one value that identifies this transaction and cannot change
+   *  identity between renders. */
+  const submittedHash = submitted?.hash ?? null;
+
+  /** The transaction whose post-success refresh has come back.
+   *
+   *  ROUND 59 P2 — keyed by hash rather than a bare boolean so a flag set
+   *  for a previous close-out cannot release the hold on the next one. */
+  const [refreshedFor, setRefreshedFor] = useState<string | null>(null);
+
   /** Ticks, so the "we have lost track of this" posture below arrives on
    *  its own rather than waiting for something unrelated to re-render the
    *  card. Coarse (30s) against a three-minute threshold. */
@@ -370,8 +374,8 @@ export function ForcedCloseCard({
    *
    *  The one thing worth repeating here is why the arms differ, because
    *  it is the part four consecutive rounds got wrong: SUCCESS holds
-   *  until a read postdates the disposition (round 28 — otherwise the
-   *  button is re-offered against pre-close figures), an unknown or
+   *  until the refresh it triggered has come back (round 28 — otherwise
+   *  the button is re-offered against pre-close figures), an unknown or
    *  failed wait holds because nothing has been established (round 50),
    *  and `reverted` / `cancelled` / `replaced` release at once because
    *  the chain has said the close-out did not execute and a retry is
@@ -379,11 +383,11 @@ export function ForcedCloseCard({
   const holdingAfterSubmit = isHoldingAfterSubmit({
     submittedAt: submitted?.at ?? null,
     disposition,
-    // ROUND 52 P2 — when the disposition was ESTABLISHED, which is what
-    // the reads must postdate. `dataUpdatedAt` freezes once the wait
-    // resolves, because a final disposition stops the refetch interval.
-    disposedAt: disposition === null ? null : watch.dataUpdatedAt,
-    readsUpdatedAt,
+    // ROUND 59 P2 — the COMPLETION of the refresh, not an ordering of
+    // wall-clock stamps. Keyed by hash so a stale flag from a previous
+    // submission cannot release the hold on this one.
+    readsRefreshedSinceDisposition: refreshedFor !== null &&
+      refreshedFor === submittedHash,
   });
 
   /** The transaction has been outstanding long enough that "give the page
@@ -419,9 +423,6 @@ export function ForcedCloseCard({
     hash: string;
     ms: number;
   } | null>(null);
-  /** The one value that identifies this transaction and cannot change
-   *  identity between renders. */
-  const submittedHash = submitted?.hash ?? null;
   //  Depends on the HASH, not on the submission object (round 58 P2).
   //  The seeding above now keeps that object stable, and this effect must
   //  not rely on it having done so: a timer that restarts whenever its
@@ -482,12 +483,24 @@ export function ForcedCloseCard({
   //  bookkeeping flag nothing displays.
   const invalidatedFor = useRef<string | null>(null);
   useEffect(() => {
-    if (disposition !== 'success' || submitted === null) return;
-    if (invalidatedFor.current === submitted.hash) return;
-    invalidatedFor.current = submitted.hash;
-    void queryClient.invalidateQueries({ queryKey: ['forcedClose'] });
+    if (disposition !== 'success' || submittedHash === null) return;
+    if (invalidatedFor.current === submittedHash) return;
+    invalidatedFor.current = submittedHash;
+    let live = true;
+    // ROUND 59 P2 — AWAITED, and its completion is what releases the
+    // hold. `invalidateQueries` settles once the refetches it triggered
+    // have settled, errors included, so this cannot latch on a failing
+    // read the way a timestamp comparison could latch on a clock.
+    void queryClient
+      .invalidateQueries({ queryKey: ['forcedClose'] })
+      .then(() => {
+        if (live) setRefreshedFor(submittedHash);
+      });
     onClosedOut();
-  }, [disposition, submitted, queryClient, onClosedOut]);
+    return () => {
+      live = false;
+    };
+  }, [disposition, submittedHash, queryClient, onClosedOut]);
 
   /** Another tab's submission, adopted here.
    *
@@ -707,7 +720,7 @@ export function ForcedCloseCard({
           // "reloading loses track of this" is true again in this
           // browser, so it is stated rather than assumed away.
           if (!writeForcedCloseSubmission(chainAtSend, loanId, record)) {
-            setSubmitRecordStored(false);
+            setStorageRefusedFor(hash);
           }
         },
       });
@@ -1038,7 +1051,8 @@ export function ForcedCloseCard({
           everything after a reload, which is exactly the protection
           round 53 added — so the lender is told rather than left to find
           out by being offered the button again. */}
-      {holdingAfterSubmit && !submitRecordStored ? (
+      {holdingAfterSubmit && storageRefusedFor !== null &&
+      storageRefusedFor === submittedHash ? (
         <p className="field-hint" data-testid="forced-close-not-stored">
           {copy.forcedClose.submitRecordNotStored}
         </p>

@@ -660,3 +660,13 @@ corrected backwards after sending, or a record written while the clock
 was wrong, made that wait never finish: the position would have stayed
 unclosable from the app for as long as the error lasted, with no route
 out. The wait is now measured so that no clock change can stall it.
+
+The same lesson applied a second time, in the other direction. After a
+close-out succeeds, the card keeps the action back until the position on
+screen has caught up — and it decided "caught up" by comparing
+timestamps. A device clock corrected backwards in that window makes a
+reading that has just been refreshed look older than the event it
+followed, so the card would have gone on withholding the action on a
+position that was still part-open, until the lender happened to reload.
+It now waits for the refresh it asked for to finish, which is the thing
+it actually wanted to know and which no clock can misreport.

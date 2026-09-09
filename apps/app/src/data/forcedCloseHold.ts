@@ -43,23 +43,35 @@
  *   chain switch (see the store at the bottom of this file); keying it
  *   in component state answered one of those and not the other.
  *
+ * - **Round 59** took the CLOCK out of the release path. Rounds 52 and
+ *   57 had both been about which wall-clock stamp to compare against
+ *   which, and a device clock corrected backwards falsified the
+ *   comparison however it was written. The question was never "which
+ *   stamp is larger" but "has the refresh I asked for come back" — so
+ *   the card now asks that directly.
+ *
  * ## The rule
  *
- * Hold while the disposition is unknown. Hold after a success until
- * EVERY read postdates the DISPOSITION — not the submit; that
- * distinction is round 52 and it is the easiest sentence in this file to
- * get wrong. Release on anything the chain has actually settled against
- * the close-out having happened.
+ * Hold while the disposition is unknown. Hold after a success until the
+ * refresh triggered by that success has COMPLETED. Release on anything
+ * the chain has actually settled against the close-out having happened.
  *
- * ROUND 57 P3 — "every", not "one", and the difference is the whole
- * reason `readsUpdatedAt` is a MINIMUM. The release condition is
- * `readsUpdatedAt > disposedAt`; when that value is the smallest
- * `dataUpdatedAt` across the card's reads, it exceeding the disposition
- * means every one of them does. This file declares itself the
- * specification, so "one read" was an invitation to swap the minimum for
- * a maximum — which would re-enable the action against a mixture of pre-
- * and post-close state, the exact thing round 28 asked for the hold to
- * prevent.
+ * The success arm used to order two `Date.now()` stamps: the minimum
+ * across the readiness reads against the moment the disposition was
+ * established. Three separate defects came out of that (rounds 52, 57
+ * and 59), the last being that a backward clock correction stamps a
+ * completed read EARLIER than the disposition it followed, latching the
+ * action shut on a live residual. A completion signal has no ordering to
+ * get wrong, and it cannot express the round-52 mistake at all: the
+ * refresh is fired when the disposition is established, so waiting for
+ * it is waiting for something strictly after the mine.
+ *
+ * What the completion signal must keep from the timestamp version is the
+ * property round 57 named — the hold ends only when EVERY readiness read
+ * reflects post-close state. `invalidateQueries` on the shared
+ * `['forcedClose']` prefix refetches all of them and settles when they
+ * all have, so the property is preserved by covering the same set rather
+ * than by taking a minimum over it.
  */
 
 import { makePendingMarkerStore } from '../lib/pendingMarker';
@@ -96,27 +108,32 @@ export interface ForcedCloseHoldInput {
    *  running, which is as unknown as `undetermined` and holds for the
    *  same reason. */
   disposition: ForcedCloseDisposition | null;
-  /** When the disposition was ESTABLISHED, or `null` while there is
-   *  none.
+  /** Has the refresh this card triggered on establishing SUCCESS
+   *  finished?
    *
-   *  ROUND 52 P2 — the success arm used to compare against
-   *  `submittedAt`, and that is the wrong anchor. Anything can refresh
-   *  the readiness queries between the send and the mine: another card
-   *  on the page, a window refocus, an ordinary poll. Those reads
-   *  postdate the SEND while still describing the pre-close loan, so on
-   *  a slow transaction `readsUpdatedAt > submittedAt` was already true
-   *  when success arrived, and the hold released instantly onto the
-   *  stale route it exists to suppress.
+   *  ROUND 59 P2 — this replaces an ordering of two wall-clock stamps
+   *  (`readsUpdatedAt <= disposedAt`), and the replacement is structural
+   *  rather than another clock fix. TanStack stamps `dataUpdatedAt` from
+   *  `Date.now()`, so a clock corrected BACKWARD between the disposition
+   *  and the reads completing gave those completed reads smaller values
+   *  than the disposition — and the hold then never released even though
+   *  the reads had run. `consent` has no polling interval, so on the
+   *  watcher-only success path (a write that rejected while the
+   *  transaction still mined) that stranded a live partial-match
+   *  residual until the lender happened to reload.
    *
-   *  The mine is what the reads have to postdate, and this is the
-   *  earliest moment the app can know of it. It is never earlier than
-   *  the mine, so the test is conservative in the safe direction. */
-  disposedAt: number | null;
-  /** The MINIMUM `dataUpdatedAt` across the reads the card's readiness
-   *  is computed from. A minimum rather than a maximum on purpose: the
-   *  question is whether EVERY input postdates the close-out, and one
-   *  stale read is enough to make the verdict pre-close. */
-  readsUpdatedAt: number;
+   *  That was the THIRD clock-ordering defect in this card. The
+   *  underlying question was never "which stamp is larger" but "has the
+   *  refresh I asked for come back", and that is answerable directly:
+   *  `invalidateQueries` returns a promise that settles when the
+   *  refetches do. Asking it removes the clock from the release path
+   *  entirely.
+   *
+   *  It also preserves round 52's anchor BY CONSTRUCTION rather than by
+   *  comparison: the refresh is fired when the disposition is
+   *  established, so its completion cannot predate the mine. There is no
+   *  longer a way to express the wrong anchor here. */
+  readsRefreshedSinceDisposition: boolean;
 }
 
 export function isHoldingAfterSubmit(input: ForcedCloseHoldInput): boolean {
@@ -135,17 +152,13 @@ export function isHoldingAfterSubmit(input: ForcedCloseHoldInput): boolean {
   // round 28's reason, and the only arm this condition belongs to
   // (round 49).
   if (input.disposition === 'success') {
-    // Falls back to the submit stamp only if a success somehow arrives
-    // without a timestamp. That is a strictly weaker test, so it is a
-    // fallback and not the rule — see `disposedAt`.
-    return input.readsUpdatedAt <= (input.disposedAt ?? input.submittedAt);
+    return !input.readsRefreshedSinceDisposition;
   }
 
   // `reverted`, `cancelled` and `replaced`: the chain says the close-out
-  // did not execute. Nothing changed, a retry is legitimate, and applying the
-  // freshness arm here latches the action shut for good, because
-  // neither path reaches the invalidation that would advance
-  // `readsUpdatedAt`.
+  // did not execute. Nothing changed, a retry is legitimate, and applying
+  // the refresh arm here would latch the action shut for good, because
+  // none of these paths triggers the refresh that would satisfy it.
   return false;
 }
 

@@ -609,7 +609,11 @@ Thin-market honesty rules apply.
 - The action stays withheld for as long as the surface has not reconciled the
   transaction, and the device-local record backing that is kept for exactly as
   long as the withholding lasts — including after a success, whose figures the
-  surface has not yet caught up with.
+  surface has not yet caught up with. After a successful close-out the surface
+  waits for the refresh it asked for to COMPLETE, rather than judging by
+  timestamps whether the figures look new enough; a device whose clock moves is
+  then unable to make a refreshed reading look stale, or a stale one look
+  refreshed.
 - Where a transaction is never resolved, the lender's own statement that their
   wallet no longer shows it is the only route back to the action. Because it is
   the only one, when the surface offers it must not depend on the device's clock

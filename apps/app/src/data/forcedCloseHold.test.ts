@@ -29,23 +29,16 @@ import {
 } from './forcedCloseHold';
 
 const SUBMITTED_AT = 1_800_000_000_000;
-/** A read that settled AFTER the submit — the card's evidence that the
- *  verdict on screen is post-close. */
-const FRESH = SUBMITTED_AT + 1;
-/** A read that settled BEFORE it, i.e. still describes the loan as it
- *  was when the close-out was sent. */
-const STALE = SUBMITTED_AT - 1;
-/** When a disposition was established — always AFTER the send, which is
- *  the whole point of round 52 P2: reads may legitimately refresh in
- *  between while still describing the pre-close loan. */
-const DISPOSED_AT = SUBMITTED_AT + 30_000;
-/** A read that settled after the DISPOSITION, i.e. the only reads that
- *  can describe the loan post-close. */
-const AFTER_DISPOSAL = DISPOSED_AT + 1;
-/** The case this file exists to pin twice over: newer than the send,
- *  older than the mine. Everything the app can see refreshed, and all of
- *  it still describes the loan before the close-out. */
-const BETWEEN = SUBMITTED_AT + 15_000;
+
+/** The post-success refresh has come back — every readiness read now
+ *  reflects the closed position, so the verdict on screen is safe to act
+ *  on. ROUND 59 P2 replaced a comparison of two wall-clock stamps with
+ *  this, because a device clock corrected backwards falsified that
+ *  comparison however it was written. */
+const REFRESHED = true;
+/** It has not. Either it is still in flight, or nothing triggered it —
+ *  and both mean the figures on screen may still be the pre-close ones. */
+const NOT_REFRESHED = false;
 
 describe('isHoldingAfterSubmit — nothing outstanding', () => {
   it('does not hold when no close-out has been submitted', () => {
@@ -53,8 +46,7 @@ describe('isHoldingAfterSubmit — nothing outstanding', () => {
       isHoldingAfterSubmit({
         submittedAt: null,
         disposition: null,
-        disposedAt: null,
-        readsUpdatedAt: STALE,
+        readsRefreshedSinceDisposition: NOT_REFRESHED,
       }),
     ).toBe(false);
   });
@@ -67,8 +59,7 @@ describe('isHoldingAfterSubmit — nothing outstanding', () => {
       isHoldingAfterSubmit({
         submittedAt: null,
         disposition: 'undetermined',
-        disposedAt: null,
-        readsUpdatedAt: 0,
+        readsRefreshedSinceDisposition: NOT_REFRESHED,
       }),
     ).toBe(false);
   });
@@ -83,8 +74,7 @@ describe('isHoldingAfterSubmit — disposition not yet established', () => {
       isHoldingAfterSubmit({
         submittedAt: SUBMITTED_AT,
         disposition: null,
-        disposedAt: null,
-        readsUpdatedAt: FRESH,
+        readsRefreshedSinceDisposition: REFRESHED,
       }),
     ).toBe(true);
   });
@@ -94,8 +84,7 @@ describe('isHoldingAfterSubmit — disposition not yet established', () => {
       isHoldingAfterSubmit({
         submittedAt: SUBMITTED_AT,
         disposition: 'undetermined',
-        disposedAt: null,
-        readsUpdatedAt: FRESH,
+        readsRefreshedSinceDisposition: REFRESHED,
       }),
     ).toBe(true);
   });
@@ -109,8 +98,7 @@ describe('isHoldingAfterSubmit — disposition not yet established', () => {
       isHoldingAfterSubmit({
         submittedAt: SUBMITTED_AT,
         disposition: 'undetermined',
-        disposedAt: null,
-        readsUpdatedAt: SUBMITTED_AT + 10 * 60_000,
+        readsRefreshedSinceDisposition: NOT_REFRESHED,
       }),
     ).toBe(true);
   });
@@ -123,95 +111,66 @@ describe('isHoldingAfterSubmit — the close-out landed', () => {
       isHoldingAfterSubmit({
         submittedAt: SUBMITTED_AT,
         disposition: 'success',
-        disposedAt: DISPOSED_AT,
-        readsUpdatedAt: STALE,
+        readsRefreshedSinceDisposition: NOT_REFRESHED,
       }),
     ).toBe(true);
   });
 
-  // ROUND 29 — a partial internal match leaves the loan Active, so the
-  // hold MUST end once the reads have caught up. The first version of
-  // this hold never released and stranded exactly that residual.
-  //
-  // Asserted against a read that postdates the DISPOSITION, not the
-  // send. Round 52 P2 moved that anchor, and this case moved with it —
-  // the round-29 guarantee is "it eventually releases", not "it releases
-  // against this particular timestamp", so tightening the anchor must
-  // not be allowed to quietly weaken it into never releasing.
-  it('releases after a success once a read postdates the disposition', () => {
+  // The round-29 guarantee — it MUST eventually release — and the
+  // boundary case that used to sit beside it are now both expressed
+  // against the completion signal below, because neither survives as a
+  // timestamp question. There is no "same millisecond as the
+  // disposition" any more: the refresh has either come back or it has
+  // not.
+
+  // ROUND 52 P2 was about WHICH wall-clock stamp the reads had to
+  // postdate — the send or the mine — and round 59 removed the question
+  // by removing the stamps. The property it protected is now structural:
+  // the refresh is fired when the disposition is established, so waiting
+  // for its completion is waiting for something strictly after the mine.
+  // There is no longer an anchor to set wrongly, which is why this reads
+  // as two cases instead of five.
+  it('holds after a success until the refresh it triggered comes back', () => {
     expect(
       isHoldingAfterSubmit({
         submittedAt: SUBMITTED_AT,
         disposition: 'success',
-        disposedAt: DISPOSED_AT,
-        readsUpdatedAt: AFTER_DISPOSAL,
+        readsRefreshedSinceDisposition: NOT_REFRESHED,
+      }),
+    ).toBe(true);
+  });
+
+  // ROUND 29 — it MUST eventually release. A partial internal match
+  // settles part of the position and leaves the loan Active, so a hold
+  // that never ends replaces an actionable card with "the loan is
+  // ending" on a residual that still needs closing.
+  it('releases once that refresh has completed', () => {
+    expect(
+      isHoldingAfterSubmit({
+        submittedAt: SUBMITTED_AT,
+        disposition: 'success',
+        readsRefreshedSinceDisposition: REFRESHED,
       }),
     ).toBe(false);
   });
 
-  // The boundary is deliberately EXCLUSIVE: a read bearing the same
-  // millisecond as the disposition is not evidence that it postdates it.
-  it('still holds when a read carries exactly the disposition timestamp', () => {
-    expect(
+  // ROUND 59 P2, stated as the invariant rather than as a scenario: the
+  // release depends on NOTHING but the completion signal. The old arm
+  // ordered two `Date.now()` stamps, so a device clock corrected
+  // backwards between the disposition and the reads completing made a
+  // completed read look older than the disposition it followed, and the
+  // hold latched on a live residual. A boolean has no ordering to
+  // falsify — this case exists so that reintroducing any clock input to
+  // this arm has to break a test.
+  it('depends only on the refresh signal, on both sides', () => {
+    const holds = (readsRefreshedSinceDisposition: boolean) =>
       isHoldingAfterSubmit({
         submittedAt: SUBMITTED_AT,
         disposition: 'success',
-        disposedAt: DISPOSED_AT,
-        readsUpdatedAt: DISPOSED_AT,
-      }),
-    ).toBe(true);
-  });
-
-  // ROUND 52 P2 — THE case, and the one the previous anchor got wrong.
-  // Anything can refresh the readiness queries between the send and the
-  // mine: another card on the page, a window refocus, an ordinary poll.
-  // Those reads postdate the SEND and still describe the pre-close loan,
-  // so anchoring to `submittedAt` released the hold the instant success
-  // arrived — straight onto the stale actionable route the hold exists
-  // to suppress. Anchored to the disposition, it holds.
-  it('holds after a success when the reads predate the mine but postdate the send', () => {
-    expect(
-      isHoldingAfterSubmit({
-        submittedAt: SUBMITTED_AT,
-        disposition: 'success',
-        disposedAt: DISPOSED_AT,
-        readsUpdatedAt: BETWEEN,
-      }),
-    ).toBe(true);
-  });
-
-  it('releases once a read postdates the DISPOSITION', () => {
-    expect(
-      isHoldingAfterSubmit({
-        submittedAt: SUBMITTED_AT,
-        disposition: 'success',
-        disposedAt: DISPOSED_AT,
-        readsUpdatedAt: AFTER_DISPOSAL,
-      }),
-    ).toBe(false);
-  });
-
-  // The fallback, exercised so it is a decision rather than an accident:
-  // a success with no timestamp falls back to the submit stamp, which is
-  // strictly weaker but never wrong in the unsafe direction relative to
-  // having no test at all.
-  it('falls back to the submit stamp when no disposition time is known', () => {
-    expect(
-      isHoldingAfterSubmit({
-        submittedAt: SUBMITTED_AT,
-        disposition: 'success',
-        disposedAt: null,
-        readsUpdatedAt: STALE,
-      }),
-    ).toBe(true);
-    expect(
-      isHoldingAfterSubmit({
-        submittedAt: SUBMITTED_AT,
-        disposition: 'success',
-        disposedAt: null,
-        readsUpdatedAt: FRESH,
-      }),
-    ).toBe(false);
+        readsRefreshedSinceDisposition,
+      });
+    expect(holds(NOT_REFRESHED)).toBe(true);
+    expect(holds(REFRESHED)).toBe(false);
   });
 });
 
@@ -225,8 +184,7 @@ describe('isHoldingAfterSubmit — the close-out did not execute', () => {
       isHoldingAfterSubmit({
         submittedAt: SUBMITTED_AT,
         disposition: 'reverted',
-        disposedAt: DISPOSED_AT,
-        readsUpdatedAt: STALE,
+        readsRefreshedSinceDisposition: NOT_REFRESHED,
       }),
     ).toBe(false);
   });
@@ -241,8 +199,7 @@ describe('isHoldingAfterSubmit — the close-out did not execute', () => {
       isHoldingAfterSubmit({
         submittedAt: SUBMITTED_AT,
         disposition: 'cancelled',
-        disposedAt: DISPOSED_AT,
-        readsUpdatedAt: STALE,
+        readsRefreshedSinceDisposition: NOT_REFRESHED,
       }),
     ).toBe(false);
   });
@@ -260,24 +217,23 @@ describe('isHoldingAfterSubmit — the close-out did not execute', () => {
       isHoldingAfterSubmit({
         submittedAt: SUBMITTED_AT,
         disposition: 'replaced',
-        disposedAt: DISPOSED_AT,
-        readsUpdatedAt: STALE,
+        readsRefreshedSinceDisposition: NOT_REFRESHED,
       }),
     ).toBe(false);
   });
 
-  // The freshness arm must not leak onto these three. Same inputs as the
+  // The refresh arm must not leak onto these three. Same inputs as the
   // success cases above, opposite answer — which is the whole content
-  // of round 49, now over the widened set.
-  it('ignores read freshness entirely on the non-executing endings', () => {
+  // of round 49, now over the widened set. None of these paths triggers
+  // a refresh, so if the arm applied here it would latch forever.
+  it('ignores the refresh signal entirely on the non-executing endings', () => {
     for (const disposition of ['reverted', 'cancelled', 'replaced'] as const) {
-      for (const readsUpdatedAt of [0, STALE, SUBMITTED_AT, FRESH, AFTER_DISPOSAL]) {
+      for (const refreshed of [REFRESHED, NOT_REFRESHED]) {
         expect(
           isHoldingAfterSubmit({
             submittedAt: SUBMITTED_AT,
             disposition,
-            disposedAt: DISPOSED_AT,
-            readsUpdatedAt,
+            readsRefreshedSinceDisposition: refreshed,
           }),
         ).toBe(false);
       }
@@ -291,8 +247,8 @@ describe('isHoldingAfterSubmit — exhaustive over the disposition space', () =>
   // compile, so the new case gets a decision here instead of falling
   // into whichever branch it lands in.
   const ALL: Record<ForcedCloseDisposition, boolean> = {
-    // Against a read that postdates the DISPOSITION, so every
-    // established ending releases and only the unknown holds. Adding a
+    // With the post-success refresh COMPLETED, so every established
+    // ending releases and only the unknown holds. Adding a
     // member to the union breaks this literal, which is the point: the
     // new case gets a decision here rather than falling into whichever
     // branch it happens to land in. That is not hypothetical — round
@@ -305,7 +261,7 @@ describe('isHoldingAfterSubmit — exhaustive over the disposition space', () =>
     undetermined: true,
   };
 
-  it('holds only for an unestablished disposition once reads postdate the disposition', () => {
+  it('holds only for an unestablished disposition once the refresh is back', () => {
     for (const [disposition, expected] of Object.entries(ALL) as [
       ForcedCloseDisposition,
       boolean,
@@ -314,8 +270,7 @@ describe('isHoldingAfterSubmit — exhaustive over the disposition space', () =>
         isHoldingAfterSubmit({
           submittedAt: SUBMITTED_AT,
           disposition,
-          disposedAt: DISPOSED_AT,
-          readsUpdatedAt: AFTER_DISPOSAL,
+          readsRefreshedSinceDisposition: REFRESHED,
         }),
       ).toBe(expected);
     }
@@ -337,8 +292,7 @@ describe('isHoldingAfterSubmit — exhaustive over the disposition space', () =>
         isHoldingAfterSubmit({
           submittedAt: SUBMITTED_AT,
           disposition,
-          disposedAt: DISPOSED_AT,
-        readsUpdatedAt: STALE,
+        readsRefreshedSinceDisposition: NOT_REFRESHED,
         }),
       ).toBe(expected);
     }

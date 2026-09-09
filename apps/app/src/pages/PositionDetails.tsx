@@ -3440,7 +3440,6 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           // Round 29 P2 — the card's post-submit hold releases on
           // EVIDENCE, not on a timer, so it needs to know when the
           // actionability read last returned.
-          readsUpdatedAt={forcedCloseReads.updatedAt}
           // The LIVE re-check every settlement write on this page runs
           // immediately before sending. The gate above is a cached
           // verdict up to a tip interval old; an acceptance landing
