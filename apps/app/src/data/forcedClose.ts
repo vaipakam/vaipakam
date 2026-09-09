@@ -38,6 +38,27 @@
  * beneficiary, not the gatekeeper, and the copy has to say so — a card
  * promising an exclusive right would be describing a different
  * contract.
+ *
+ * ## One contract gate this module deliberately does not model
+ *
+ * Between `whenNotPaused` and the grace check, `triggerDefault` carries a
+ * tiered KYC gate on the LENDER — `meetsKYCRequirement(loan.lender,
+ * valueNumeraire)`, reverting `KYCRequired`. It is absent here on
+ * purpose, not by oversight: the retail deploy leaves
+ * `kycEnforcementEnabled` false, and while it is false
+ * `ProfileFacet.meetsKYCRequirement` short-circuits to true, so the gate
+ * cannot fire. Modelling it would mean issuing a read whose answer is
+ * fixed, to describe a state no retail lender can reach.
+ *
+ * It is recorded rather than silently omitted because the ordering
+ * comments below claim this resolver mirrors the contract's sequence,
+ * and a reader checking that claim would otherwise find a gate missing
+ * and not know whether it was deliberate. **On the industrial fork,
+ * where KYC enforcement is enabled, this module is incomplete** — a
+ * lender failing the tier would be told the position is ready and get a
+ * revert. Anyone porting it there has to add that gate between the pause
+ * check and the repayment window.
+ *
  */
 
 /** What the lender can do about this position right now.
