@@ -96,6 +96,31 @@ import {
  *  the hold, the evidence, or the action depends on it. */
 const RECEIPT_WAIT_TIMEOUT_MS = 3 * 60_000;
 
+/** The readiness reads this card's verdict is computed from — every
+ *  `['forcedClose', …]` query EXCEPT the disposition watcher.
+ *
+ *  ROUND 61 (self-review) — the exclusion is load-bearing, not tidiness.
+ *  The watcher lives under the same prefix (`['forcedClose',
+ *  'disposition', …]`), so a bare prefix invalidation matches it too —
+ *  and its query function is an UNBOUNDED wait (`timeout: 0`, round 54).
+ *
+ *  Awaiting that is a hang waiting to happen. The success effect below
+ *  awaits its invalidation to learn that the reads have caught up; if the
+ *  active watcher key has meanwhile moved to a still-PENDING transaction
+ *  — a second close-out, or a chain switch back to a loan carrying a live
+ *  submission — the refetch it would be waiting on never resolves, so the
+ *  completion never fires and the hold never releases. That is the
+ *  round-29 latch by a third route, after the `[submitted]` dependency
+ *  (round 58) and the mounted-flag cleanup (round 60).
+ *
+ *  All three were the same shape: an effect awaiting or depending on
+ *  something it had itself disturbed. Here the effect would have been
+ *  waiting on the very query whose result triggered it. */
+const READINESS_READS = {
+  predicate: (query: { queryKey: readonly unknown[] }) =>
+    query.queryKey[0] === 'forcedClose' && query.queryKey[1] !== 'disposition',
+} as const;
+
 export function ForcedCloseCard({
   loanId,
   readiness,
@@ -516,7 +541,7 @@ export function ForcedCloseCard({
     // Correctness here comes from what is written, not from whether the
     // writer is still current.
     void queryClient
-      .invalidateQueries({ queryKey: ['forcedClose'] })
+      .invalidateQueries(READINESS_READS)
       .then(() => setRefreshedFor(submittedHash));
     onClosedOutRef.current();
   }, [disposition, submittedHash, queryClient]);
@@ -745,7 +770,7 @@ export function ForcedCloseCard({
       });
       onClosedOut();
       onCloseConfirm();
-      void queryClient.invalidateQueries({ queryKey: ['forcedClose'] });
+      void queryClient.invalidateQueries(READINESS_READS);
     } catch (err) {
       setError(captureTxError(err));
     } finally {
