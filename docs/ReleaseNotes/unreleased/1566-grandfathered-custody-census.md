@@ -302,6 +302,8 @@ Every state the census reads is now tied to one specific block by its
 fingerprint rather than by its height, so two servers that disagree about
 what happened at a height can no longer contribute pieces of one snapshot;
 the fingerprint is also checked across several fresh connections before any
-verdict is written.
+verdict is written. The evidence that a recorded address was once a contract
+is now read together with the census state by a single server in a single
+request, so it cannot come from a different history than the census itself.
 
 Refs #1566, #1349, #1956

@@ -5444,6 +5444,22 @@ reported a comfortable answer it had not earned:
   same connection pool for it: below the pinned height it feeds the cap, at or
   above it the replica is on a competing fork and is rotated away, never
   capped at.
+
+  **Round 29 bound the creation evidence to the census chain.** The
+  no-code proof needs evidence that the recorded address was ever a contract,
+  read at the artifact's deploy block; round 28 pinned that read to the
+  deploy block's hash but nothing tied that block to the census block, so a
+  replica on a competing fork could supply its own deploy-height block with
+  code on it and the census chain's empty address would be certified with
+  evidence from another history. A parent-hash walk over the months between
+  the two blocks is out of reach, so the binding is made by one replica in
+  one request: a JSON-RPC batch reads the code at the deploy block and at the
+  census block, both hash-pinned with the canonical requirement, and a
+  replica can answer both only if both are on its canonical chain — on one
+  chain the lower block is an ancestor of the higher. The deploy-block hash
+  is sampled across fresh connections first, and the census half of the pair
+  must agree with the census read or the pair is refused. The hash the
+  evidence was read at is recorded with the verdict.
   Hand-computed storage slots were never an option: they fail SILENTLY as
   zero, manufacturing the exact "empty" result the census exists to
   establish. The event reconstruction is retained behind `--corroborate` as

@@ -238,6 +238,45 @@ async function codeAtHash(client, block, address) {
   return client.request({ method: 'eth_getCode', params: [address, blockRef(block)] });
 }
 /**
+ * Codex #2070 r29 P1 — creation evidence must be bound to the CENSUS CHAIN,
+ * not merely to a block at the deploy height: a load-balanced replica on a
+ * competing fork can serve its own block there, hold code at the address on
+ * that fork, and hand back "code was here" for a history the census block is
+ * not on. A parent-hash walk from the census block to a months-old deploy
+ * block is out of reach, so the binding is made by ONE replica in ONE
+ * request: a JSON-RPC batch that reads the code at the deploy block AND at the
+ * census block, both pinned by hash with `requireCanonical`, answered by
+ * whichever replica takes the batch. A replica answers both only if both
+ * blocks are on ITS canonical chain, and on one chain the lower block is an
+ * ancestor of the higher. The deploy-block hash is first sampled across fresh
+ * connections like the census hash, and the census-block half of the batch
+ * must agree with the census read (no code) or the pair is rejected.
+ */
+export function boundCreationVerdict({ thenCode, nowCode }, who = 'creation evidence') {
+  if (nowCode && nowCode !== '0x') {
+    throw new Error(`${who}: the replica that answered the bound creation read holds code at the census block, where the census read none — the pair is not one view of one chain`);
+  }
+  return Boolean(thenCode && thenCode !== '0x');
+}
+async function creationEvidenceBoundToChain(rpc, client, censusBlock, deployHeight, address, who) {
+  const deployBlock = await withReplicaRetry(deployHeight, () => client.getBlock({ blockNumber: deployHeight }), { client });
+  if (!deployBlock?.hash) throw new Error(`${who}: block ${deployHeight} unavailable`);
+  assertSampledHashesAgree(await sampleHashesAt(client, deployHeight, `${who} deployBlock`), deployBlock.hash, deployHeight, `${who} deployBlock`);
+  // One batch → one HTTP request → one replica (this is exactly the per-connection
+  // pinning the census otherwise fights, used here on purpose).
+  const batcher = createPublicClient({ transport: http(rpc, { fetchFn: fetchViaNodeAgents, batch: { batchSize: 2, wait: 0 } }) });
+  const [thenCode, nowCode] = await withReplicaRetry(
+    censusBlock.number,
+    () =>
+      Promise.all([
+        batcher.request({ method: 'eth_getCode', params: [address, blockRef(deployBlock)] }),
+        batcher.request({ method: 'eth_getCode', params: [address, blockRef(censusBlock)] }),
+      ]),
+    { client },
+  );
+  return { codeAtDeployBlock: boundCreationVerdict({ thenCode, nowCode }, who), deployBlockHash: String(deployBlock.hash).toLowerCase() };
+}
+/**
  * r28 P1 — the hash the census pins must be what EVERY replica serves at that
  * height: the sampler refused conflicting hashes only among samples that
  * shared a height, so with A at 100/A100 and B at 101/B101 it chose A100
@@ -307,7 +346,7 @@ function laggingReplicaHeight(err) {
 }
 /** A hash-pinned read on a replica that does not hold that block (r28). */
 function replicaLacksBlock(err) {
-  return /block not found|header not found|unknown block|hash not found|could not find block|not found: hash/i.test(`${err?.details ?? ''} ${err?.shortMessage ?? ''} ${err?.message ?? ''}`);
+  return /block not found|header not found|unknown block|hash not found|could not find block|not found: hash|not currently canonical|not canonical/i.test(`${err?.details ?? ''} ${err?.shortMessage ?? ''} ${err?.message ?? ''}`);
 }
 async function withReplicaRetry(requestedBlock, fn, { client } = {}) {
   for (let i = 0; ; i++) {
@@ -1451,16 +1490,15 @@ async function censusDeployment(dep) {
   // present at the recorded deployBlock. Unreadable there (a pruned endpoint)
   // or absent there ⇒ indeterminate, with the reason recorded.
   let codeAtDeployBlock = null; // true | false | 'unreadable' | null (not needed)
+  let creationEvidenceBlockHash = null;
   if (codeAbsent && deployBlockKnown) {
     try {
-      // Pinned to the deploy block's HASH too: the height is resolved to one
-      // block first, so the creation evidence names the block it was read at.
-      const then = await withReplicaRetry(
-        BigInt(addresses.deployBlock),
-        async () => codeAtHash(client, await client.getBlock({ blockNumber: BigInt(addresses.deployBlock) }), diamond),
-        { client },
-      );
-      codeAtDeployBlock = Boolean(then && then !== '0x');
+      // r28: pinned to the deploy block's HASH; r29: and BOUND to the census
+      // chain — read by one replica in one batch together with the census
+      // block, so the evidence and the census come from one canonical view.
+      const bound = await creationEvidenceBoundToChain(rpc, client, censusBlock, BigInt(addresses.deployBlock), diamond, who);
+      codeAtDeployBlock = bound.codeAtDeployBlock;
+      creationEvidenceBlockHash = bound.deployBlockHash;
     } catch (err) {
       codeAtDeployBlock = 'unreadable';
       process.stderr.write(`census: ${who} — code at deployBlock ${addresses.deployBlock} unreadable (${classifyRpcError(err)}); the empty read cannot be certified\n`);
@@ -1688,7 +1726,7 @@ async function censusDeployment(dep) {
       atBlockHash: censusBlock.hash,
       blockTag: censusBlock.tag,
       rpcHost: rpcHostOf(rpc),
-      scanned: { loanIdsEnumerated: 0, totalLoansEverCreated: 'n/a', loanIdRange: 'none', enumerable: false, noCode, codeAtDeployBlock, custodySurfaceUnrouted, notADiamond, loupeRouted, intentSurfaceRouted: false, intentProducerRouted: false, intentCorroboration: null, producersMayBeLive: !noCode && !notADiamond && !custodySurfaceUnrouted },
+      scanned: { loanIdsEnumerated: 0, totalLoansEverCreated: 'n/a', loanIdRange: 'none', enumerable: false, noCode, codeAtDeployBlock, creationEvidenceBlockHash, custodySurfaceUnrouted, notADiamond, loupeRouted, intentSurfaceRouted: false, intentProducerRouted: false, intentCorroboration: null, producersMayBeLive: !noCode && !notADiamond && !custodySurfaceUnrouted },
       classes: { vpfiHeldCustody: cls(), rebateRows: cls(), fallbackSnapshotCustody: cls({ nonVpfiRowsExcluded: [] }), liveIntentCommits: cls({ nonVpfiRowsExcluded: [] }) },
     };
   }
