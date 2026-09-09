@@ -176,12 +176,37 @@
 # about how the matcher treats an empty segment, which is the assumption
 # that produced this bug.
 #
-# RESIDUAL, stated rather than assumed away: whether `/:locale/*` itself
-# matches a bare `/analytics/` depends on that same empty-remainder
-# question, which I cannot settle from here. If it does, the
-# trailing-slash form stays noindexed and only its canonical — which
-# `SeoMeta` emits pointing at the slashless URL — consolidates it. That
-# is strictly better than before, where BOTH rules withheld it.
+# RESIDUAL — NOW MEASURED, AND IT RESOLVED AGAINST THE DELETION.
+# This block used to say the empty-remainder question could not be
+# settled from here. It can be, against the deployed app, and it was
+# (2026-09-09, `app.vaipakam.com`):
+#
+#     /vpfi      200, no X-Robots-Tag
+#     /vpfi/     200, x-robots-tag: noindex     <- `/vpfi/*` matched
+#     /vpfi/foo  200, x-robots-tag: noindex
+#
+# So a splat DOES match an empty remainder, and `/:locale/*` therefore
+# matches `/analytics/` too, with first segment `analytics` and an empty
+# rest. Deleting the two child splats removed a redundant rule; it did
+# NOT change what a crawler receives for the trailing-slash form, which
+# is still `noindex`. The earlier claim that this was "strictly better"
+# was wrong — the outcome is identical, and only the rule count moved.
+#
+# The same is true of EVERY single-segment public route: `/borrow/`,
+# `/lend/`, `/rent/`, `/offers/`, `/desk/`, `/vpfi/`, `/help/`,
+# `/analytics/`, `/protocol-console/` are all noindexed in their
+# trailing-slash form by `/:locale/*`, whatever the child splats above
+# do. Deleting five more rules would not fix it either, for the same
+# reason.
+#
+# The actual fix is a REDIRECT, not a header — strip the trailing slash
+# at the edge so only one form is ever served. That is a global routing
+# change to the deployed Worker (a `_redirects` rule, or
+# `html_handling: drop-trailing-slash`, which issues a 307 rather than
+# the 301 canonicalization wants), and it cannot be verified before it
+# ships. It is tracked as its own change rather than folded in here.
+# Until then the consolidation signal is the canonical `SeoMeta` emits,
+# which points at the slashless URL and is what a crawler follows.
 
 # SPA aliases (App.tsx Navigate routes). The redirect only happens
 # after JS runs, so a non-executing crawler fetching an alias gets
