@@ -38,10 +38,18 @@ in this area now asks it rather than adding another recogniser of its own.
 That classifier carries the distinctions the review rounds surfaced: an
 expression interpolated into a template literal or an f-string is code and its
 writes count, while the format specification after a top-level colon in an
-f-string is not; a triple-quoted Python literal spans lines; a JavaScript
-regular expression is data, told apart from division by the token in front of
-it and deliberately biased so that an ambiguous slash stays division, because
-the other reading turns real code into data.
+f-string is not; and a triple-quoted Python literal spans lines.
+
+A JavaScript regular expression is deliberately **not** classified. Telling one
+from a division needs the token in front of it, and that judgement was wrong
+often enough — after arrow bodies, increments, keywords used as property names,
+comments in unusual places and TypeScript's own punctuation — that it became
+the main source of missed writes: whenever it guessed wrong it treated
+everything between two divisions as pattern text, including any real write
+there. Since the copy verbs now require a module qualifier, the case it
+protected against is a pattern that literally spells out a qualified filesystem
+call inside a file that also deploys. The checker accepts a report there rather
+than keep a rule that hides writes elsewhere.
 
 The checker briefly tried to tell a declaration from a call, so that declaring
 a function named like a copy would not be reported. That reader had to

@@ -3420,19 +3420,36 @@ function classifyText(text, lang) {
         // actual `EOF` (r24). Quoted anywhere in the word means the body is
         // literal.
         const hw = /^<<(-?)\s*((?:'[^']*'|"[^"]*"|\\.|[A-Za-z0-9_])+)/.exec(text.slice(i, i + 200));
+        // QUOTE REMOVAL PER SEGMENT, the way the shell does it: `<<'E\\OF'` is
+        // the delimiter `E\\OF`, and stripping every quote and backslash byte
+        // derived `EOF` instead (r25).
+        const delim = hw
+          ? hw[2].replace(/'([^']*)'|"([^"]*)"|\\(.)/g, (_m, a, b, c) => a ?? b ?? c)
+          : null;
         const quoted = hw ? /['"\\]/.test(hw[2]) : false;
-        const h = hw && quoted ? [hw[0], hw[1], null, hw[2].replace(/['"\\]/g, '')] : null;
-        const nl = h ? text.indexOf('\n', i) : -1;
-        if (h && nl !== -1) {
+        const nl = hw && quoted ? text.indexOf('\n', i) : -1;
+        if (delim !== null && quoted && nl !== -1) {
           // `<<` wants the delimiter at column zero; only `<<-` strips leading
           // TABS (not spaces). Accepting either for both let an indented
           // `  EOF` terminate the document early, so the text after it read as
           // code (r22).
-          const lead = h[1] === '-' ? '\\t*' : '';
-          const end = new RegExp(`\\n${lead}${h[3]}[ \\t]*(?:\\n|$)`).exec(text.slice(nl));
-          const stop = end ? nl + end.index + end[0].length : text.length;
-          kind.fill(2, nl, stop);
-          i = stop - 1;
+          const lead = hw[1] === '-' ? '\\t*' : '';
+          // ESCAPED. A delimiter may contain regex metacharacters — `<<'$'` is
+          // terminated by a line containing `$`, and interpolating it made an
+          // anchor that never matched (r25).
+          const esc = delim.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          const end = new RegExp(`\\n${lead}${esc}[ \\t]*(?:\\n|$)`).exec(text.slice(nl));
+          // NO TERMINATOR MEANS NO CLAIM. Marking to end-of-file was the
+          // catastrophic direction: any delimiter this reader got wrong turned
+          // the whole remainder of the file into data and swallowed every real
+          // write in it (r24, r25). An unterminated document is left as it was
+          // — at worst a false red inside the body, never a silent miss after
+          // it.
+          if (end) {
+            const stop = nl + end.index + end[0].length;
+            kind.fill(2, nl, stop);
+            i = stop - 1;
+          }
           continue;
         }
       }
@@ -3545,6 +3562,8 @@ function inTestExpression(idx, text, kind) {
   let sub = 0;
   let tick = false;
   let sq = false;
+  let dq = false;
+  const depth = [];
   for (let i = open; i < idx; i += 1) {
     // SINGLE quotes are what make a substitution literal: inside DOUBLE quotes
     // `$(…)` and backticks still expand. So this tracks the quote CHARACTER
@@ -3556,12 +3575,26 @@ function inTestExpression(idx, text, kind) {
       if (ch === "'") sq = false;
       continue;
     }
-    if (ch === "'") sq = true;
+    // A `'` inside DOUBLE quotes is an apostrophe, not a quote — leaving it to
+    // open single-quote state made a real substitution invisible (r25).
+    if (ch === '"') dq = !dq;
+    else if (ch === "'" && !dq) sq = true;
     else if (ch === '`') tick = !tick;
     else if (ch === '$' && text[i + 1] === '(') {
       sub += 1;
+      depth.push(0);
       i += 1;
-    } else if (ch === ')' && sub > 0) sub -= 1;
+    } else if (ch === '(' && sub > 0) depth[depth.length - 1] += 1;
+    else if (ch === ')' && sub > 0) {
+      // A NESTED subshell's paren must not close the substitution: in
+      // `$( (true); printf new > "$CFG")` the inner `)` dropped the counter to
+      // zero and exempted the redirection after it (r25).
+      if (depth[depth.length - 1] > 0) depth[depth.length - 1] -= 1;
+      else {
+        depth.pop();
+        sub -= 1;
+      }
+    }
   }
   return sub === 0 && !tick;
 }
@@ -3609,7 +3642,7 @@ function isCommandPayload(idx, text, kind) {
   let e = q;
   while (e >= 0 && /[A-Za-z0-9_$]/.test(text[e])) e -= 1;
   if (
-    !/^(?:execSync|exec|execFileSync|execFile|spawnSync|spawn|system|popen|run|call|check_output|check_call)$/.test(
+    !/^(?:eval|execSync|exec|execFileSync|execFile|spawnSync|spawn|system|popen|run|call|check_output|check_call)$/.test(
       text.slice(e + 1, q + 1),
     )
   )
@@ -3626,6 +3659,13 @@ function isCommandPayload(idx, text, kind) {
   // The EVALUATE flags by name, long and short. `--eval` does not end in
   // `e`-after-dashes the way a grouped short option does, so a suffix test
   // missed it (r23); matching any option ending in c/e would take `--trace`.
+  // …and the EXECUTABLE has to be an interpreter. `echo -e "…"` prints its
+  // argument — `-e` there enables backslash escapes — so gating on the option
+  // alone reported a write that never happens (r25). The first argument of a
+  // spawn-style call is the program.
+  const prog = /\(\s*(['"`])([^'"`]*)\1/.exec(args);
+  const INTERP = /(?:^|\/)(?:node|deno|bun|python[\d.]*|perl|ruby|sh|bash|zsh|dash|ksh|env)$/;
+  if (prog && !INTERP.test(prog[2])) return false;
   if (/(['"`])(?:-{1,2}(?:eval|command|c)|-[a-zA-Z]*e)\1\s*,\s*$/.test(args)) return true;
   // …or the flag and its source share ONE literal: `["--eval=…"]` (r24). The
   // payload is then the literal this offset already sits in.
@@ -3863,6 +3903,11 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
         // any file that names a config. Same reasoning that bounded `copy`
         // and `move` in r10, applied to a far commoner method name.
         String.raw`|(?<![A-Za-z0-9_$.])os\s*\.\s*replace\s*\(` +
+        // `Path("gen.jsonc").replace(cfg)` renames onto its target. Admitted
+        // because the RECEIVER is a literal constructor call, which is syntax
+        // rather than the type resolution this reader declines: a bare
+        // `.replace(` on an unknown value stays out (r25).
+        String.raw`|(?<![A-Za-z0-9_$.])Path\s*\((?:[^()]|\([^()]*\))*\)\s*\.\s*replace\s*\(` +
         // Shell write commands, optionally reached through a path — and only
         // in SHELL text. `const ratio = cp / total;` is ordinary JavaScript
         // and matched the whitespace-delimited `cp` branch (r11).
@@ -3888,7 +3933,7 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
             // …and after a RESERVED WORD. `if true; then cp gen.jsonc "$CFG"; fi`
             // starts a command at `then`, which is neither a line start nor a
             // separator, so the copy was invisible (r24).
-            String.raw`|(?:^|[;&|(]|\b(?:then|else|do)\b)\s*(?:(?:[A-Za-z_]\w*=(?:"[^"]*"|'[^']*'|\S)*` +
+            String.raw`|(?:^|[;&|(]|\b(?:if|elif|then|else|while|until|do)\b|[!{])\s*(?:(?:[A-Za-z_]\w*=(?:"[^"]*"|'[^']*'|\S)*` +
             // A long option can take its argument SEPARATED — `sudo --user
             // root cp …` — and the generic branch consumed `--user` while
             // leaving `root` to be read as the command (r14). The long forms

@@ -10144,6 +10144,111 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(r.ok).toBe(false);
   });
 
+  // ---- Codex #2066 r25 ----
+
+  it('an unterminated heredoc claims nothing (#2066 r25)', () => {
+    // The catastrophic direction: a delimiter this reader gets wrong used to
+    // turn the whole rest of the file into data. `<<'$'` is terminated by a
+    // line containing `$`; interpolating it made an anchor that never matched.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'cd.sh',
+      'CFG=configs/custom.jsonc\n' +
+        "cat <<'$'\nbody\n$\n" +
+        'printf new > "$CFG"\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('an apostrophe in double quotes is not a quote (#2066 r25)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'ce.sh',
+      'CFG=configs/custom.jsonc\n' +
+        'if [[ "\'" == x && "$(printf new > "$CFG")" == new ]]; then echo done; fi\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a nested subshell does not close the substitution (#2066 r25)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'cf.sh',
+      'CFG=configs/custom.jsonc\n' +
+        'if [[ "$( (true); printf new > "$CFG")" == new ]]; then echo done; fi\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a command after if is in command position (#2066 r25)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'cg.sh',
+      'CFG=configs/custom.jsonc\n' +
+        'if cp generated.jsonc "$CFG"; then :; fi\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('echo -e prints its argument (#2066 r25)', () => {
+    // The payload rule gates on the EXECUTABLE, not only the flag.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'ch.mjs',
+      'spawnSync("echo", ["-e", "require(\'fs\').writeFileSync(\'configs/custom.jsonc\', \'{}\')"]);\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a JavaScript eval runs its argument (#2066 r25)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'ci.mjs',
+      'eval("fs.writeFileSync(\'configs/custom.jsonc\', \'{}\')");\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a Path constructor replace overwrites (#2066 r25)', () => {
+    // Admitted because the RECEIVER is a literal constructor call — syntax,
+    // not the type resolution this reader declines.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'cj.py',
+      'import subprocess\n' +
+        'from pathlib import Path\n' +
+        'cfg = Path("configs/custom.jsonc")\n' +
+        'Path("generated.jsonc").replace(cfg)\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a bare replace is still not a write (#2066 r25 bounds)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'ck.py',
+      'import subprocess\n' +
+        'name = "configs/custom.jsonc".replace("custom", "custom")\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
   it('the PROSE path invalidates a rewritten config too', () => {
     // That path passed the rewrite context to the safety reader and not to the
     // identity reader, so the identity half trusted the stale copy and sent the
