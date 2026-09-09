@@ -298,7 +298,7 @@ export function ForcedCloseCard({
               : readiness === 'ready-needs-route'
                 ? copy.forcedClose.readyNeedsRoute
                 : readiness === 'ready-internal-match'
-                  ? `${copy.forcedClose.readyInternalMatch} ${copy.forcedClose.raceIntro} ${raceOutcome}`
+                  ? copy.forcedClose.readyInternalMatch
                   : readiness === 'ready-rental'
                     ? copy.forcedClose.readyRental
                     : copy.forcedClose.readyInKind;
@@ -333,6 +333,29 @@ export function ForcedCloseCard({
       <p className="muted" data-testid="forced-close-body">
         {body}
       </p>
+
+      {/* The match-race warning is its OWN paragraph, not appended to
+          the body with a space.
+       
+          Round 39 built it as `${body} ${raceIntro} ${raceOutcome}`,
+          which joins three complete sentences with an ASCII space in
+          every language. Japanese and Chinese end a sentence with `。`
+          and do not follow it with one, so that produced a stray gap
+          mid-paragraph in two of the ten locales — the same class of
+          bug `provenanceAge` in copy.ts already carries a warning about,
+          where a wrapper added punctuation the translation had supplied.
+          The lead-in is now folded into each fallback string at
+          authoring time — with a space for the locales that use one
+          between sentences and none for Japanese and Chinese — so
+          nothing is composed at runtime and there is no join
+          character to get wrong. That matches `consentParts`, where
+          even the ' and ' and the final '.' are localized strings
+          rather than literals in the JSX. */}
+      {readiness === 'ready-internal-match' && !holdingAfterSubmit ? (
+        <p className="muted" data-testid="forced-close-race">
+          {raceOutcome}
+        </p>
+      ) : null}
 
       {/* Shown on both ready states — a lender who cannot submit here
           still needs to know a keeper may close it, so that finding the

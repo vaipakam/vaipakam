@@ -267,3 +267,15 @@ false, since it is conditional and the condition simply never holds; but
 it puts a borrower repaying a loan on a screen whose position has a
 renter paying rent, which is the same confusion in a quieter voice. It
 is no longer shown there.
+
+A smaller repair, on something introduced two rounds earlier rather than
+reported by anyone. The warning about another party settling first was
+being assembled at display time by gluing three sentences together with
+a space. That is correct in most languages and wrong in Japanese and
+Chinese, which end a sentence with their own punctuation and put no
+space after it — so two of the ten translations carried a stray gap
+mid-paragraph. The product already had a rule for this: elsewhere even
+the word "and" and a full stop are themselves translated, rather than
+written into the layout. The warning now reads as one sentence per
+outcome, written that way in each language, so nothing is joined when it
+is shown and there is no join character to get wrong.

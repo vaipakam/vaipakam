@@ -2326,16 +2326,14 @@ const copySource = {
     // and the close-out SUCCEEDS with a different asset. So the outcome
     // is named per fallback, chosen by `forcedCloseWithoutMatch` — which
     // derives it from the resolver rather than restating the ordering.
-    raceIntro:
-      'Someone else may settle against that opposing position first. If that happens this close-out does not simply stop — it carries on down whatever route the protocol finds next.',
     raceFallbackFails:
-      'Here that route cannot complete, so the attempt would fail and cost you only the network fee. The loan stays open and you can try again.',
+      'Someone else may settle against that opposing position first. If that happens this close-out does not simply stop — it carries on down whatever route the protocol finds next. Here that route cannot complete, so the attempt would fail and cost you only the network fee. The loan stays open and you can try again.',
     raceFallbackInKind:
-      'Here that route hands you the borrower’s collateral as it stands instead of the asset you lent. The close-out still succeeds — you would simply be recovering something different from what this card describes above.',
+      'Someone else may settle against that opposing position first. If that happens this close-out does not simply stop — it carries on down whatever route the protocol finds next. Here that route hands you the borrower’s collateral as it stands instead of the asset you lent. The close-out still succeeds — you would simply be recovering something different from what this card describes above.',
     raceFallbackRental:
-      'Here that route ends the rental instead: the renter’s access is removed, your NFT stays where it is, and the rent paid up front becomes claimable less fees.',
+      'Someone else may settle against that opposing position first. If that happens this close-out does not simply stop — it carries on down whatever route the protocol finds next. Here that route ends the rental instead: the renter’s access is removed, your NFT stays where it is, and the rent paid up front becomes claimable less fees.',
     raceFallbackUnknown:
-      'Which route that is cannot be worked out in advance from what the app has read, so this attempt may either complete with a different recovery or fail costing only the network fee.',
+      'Someone else may settle against that opposing position first. If that happens this close-out does not simply stop — it carries on down whatever route the protocol finds next. Which route that is cannot be worked out in advance from what the app has read, so this attempt may either complete with a different recovery or fail costing only the network fee.',
     blockedPaused:
       'The protocol is paused right now, so nothing can be closed out until governance lifts it. Your position and the collateral behind it are unaffected by the pause.',
     // Not "the app cannot" — nobody can. Worth saying plainly, because
