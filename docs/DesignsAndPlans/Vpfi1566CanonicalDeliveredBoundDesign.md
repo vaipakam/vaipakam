@@ -5193,6 +5193,13 @@ reported a comfortable answer it had not earned:
   `--acknowledge-manifest-displacement <slug|stamp>` — rather than through the
   blanket force flag, which had never forwarded it at all; the scheduled
   correction of the non-Diamond archive is exactly this flow. Nineteen tests.
+
+  **Round 19: one finding.** The publication-time inventory re-check lived
+  inside the regression callback, which the guarded write invokes only when a
+  prior file exists — so the very first artifact written into a directory
+  skipped it. It now runs unconditionally under the manifest lock before the
+  guarded write, and prints that it ran; a first write into an empty directory
+  shows the line.
   Hand-computed storage slots were never an option: they fail SILENTLY as
   zero, manufacturing the exact "empty" result the census exists to
   establish. The event reconstruction is retained behind `--corroborate` as

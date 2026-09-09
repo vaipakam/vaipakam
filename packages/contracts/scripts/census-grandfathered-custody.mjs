@@ -1683,7 +1683,36 @@ async function main() {
   // re-check THROUGH the rename (manifest lock outside, artifact lock inside;
   // every path takes them in that order), so no --fresh can commit between
   // the comparison and the publication.
-  withManifestLock(ARCHIVE_MANIFEST, () => writeSnapshotGuarded(outFile, () => `${JSON.stringify(report, null, 2)}\n`, {
+  withManifestLock(ARCHIVE_MANIFEST, () => {
+    // Codex #2070 r17 P1, placed where it always runs in r19 P1 — the
+    // inventory this run scanned was a snapshot taken at its START; a --fresh
+    // that began after that snapshot and finished before this write leaves
+    // the manifest and live artifacts describing a population this run never
+    // scanned. Re-take the inventory under the manifest lock NOW and refuse
+    // the write if it differs at all. This runs UNCONDITIONALLY, before the
+    // guarded write — an earlier revision had it inside the regression
+    // callback, which the guarded write only invokes when a prior file
+    // exists, so the very first artifact in a directory skipped it. The
+    // COMPLETE record is compared (r18 P1), not only the protected identity:
+    // a concurrent regeneration may correct `deployBlock` — a permitted
+    // correction — and this run's no-code creation evidence was read at the
+    // OLD block.
+    const scopeOfInv = (v) => (v ? String(v).toLowerCase() : 'none');
+    const inventoryKey = (d) =>
+      `${d.slug}|${d.label}|${String(d.addresses.diamond ?? '').toLowerCase()}|${scopeOfInv(d.addresses.vpfiToken ?? d.addresses.vpfiMirror)}|` +
+      `${d.addresses.chainId ?? 'null'}|${d.addresses.deployBlock ?? 'null'}`;
+    const scannedInv = new Set(everything.map(inventoryKey)); // the FULL snapshot taken at start — a --chain run scans a subset of it
+    const nowInv = new Set(deployedDiamondsUnderLock().map(inventoryKey));
+    const added = [...nowInv].filter((k) => !scannedInv.has(k));
+    const removed = [...scannedInv].filter((k) => !nowInv.has(k));
+    if (added.length || removed.length) {
+      throw new Error(
+        `refusing to publish ${outFile}: the deployment inventory changed while this run was scanning (added: ${added.join(', ') || 'none'}; ` +
+          `removed: ${removed.join(', ') || 'none'}); this run's population is stale and its verdict would not describe the inventory as it stands — re-run`,
+      );
+    }
+    process.stderr.write(`census: inventory re-validated at publication under the manifest lock — ${nowInv.size} deployment record(s) unchanged since the start snapshot\n`);
+    return writeSnapshotGuarded(outFile, () => `${JSON.stringify(report, null, 2)}\n`, {
     regressedBy: (current) => {
       const theirs = new Map();
       for (const r of current.results ?? []) {
@@ -1735,29 +1764,6 @@ async function main() {
           `re-run against the current inventory, or acknowledge a deliberate change with --acknowledge-identity-change <slug|label>`
         );
       }
-      // Codex #2070 r17 P1 — the inventory this run scanned was a snapshot
-      // taken at its START. A --fresh that began after that snapshot and
-      // finished before this write leaves the manifest and live artifacts
-      // describing a population this run never scanned (a new Diamond with
-      // live producers, a retired one now archived). Re-take the inventory
-      // under the manifest lock NOW and refuse the write if it differs at all.
-      // The COMPLETE record is compared (r18 P1), not only the protected
-      // identity: a concurrent regeneration may correct `deployBlock` — a
-      // permitted correction — and this run's no-code creation evidence was
-      // read at the OLD block.
-      const inventoryKey = (d) =>
-        `${d.slug}|${d.label}|${String(d.addresses.diamond ?? '').toLowerCase()}|${scopeOf(d.addresses.vpfiToken ?? d.addresses.vpfiMirror)}|` +
-        `${d.addresses.chainId ?? 'null'}|${d.addresses.deployBlock ?? 'null'}`;
-      const scannedInv = new Set(everything.map(inventoryKey)); // the FULL snapshot taken at start — a --chain run scans a subset of it
-      const nowInv = new Set(deployedDiamondsUnderLock().map(inventoryKey)); // already under the manifest lock (held through the rename)
-      const added = [...nowInv].filter((k) => !scannedInv.has(k));
-      const removed = [...scannedInv].filter((k) => !nowInv.has(k));
-      if (added.length || removed.length) {
-        return (
-          `the deployment inventory changed while this run was scanning (added: ${added.join(', ') || 'none'}; removed: ${removed.join(', ') || 'none'}); ` +
-          `this run's population is stale and its verdict would not describe the inventory as it stands — re-run`
-        );
-      }
       const carried = [...(current.identityChanges ?? []), ...((current.displacedDiamonds ?? []).map((d) => ({
         chainSlug: d.chainSlug, deployment: d.deployment, previous: { diamond: d.previousDiamond ?? null, vpfiToken: null },
         replacedBy: { diamond: d.replacedBy ?? null, vpfiToken: null }, acknowledgedBy: d.acknowledgedBy ?? 'legacy displacedDiamonds',
@@ -1777,7 +1783,8 @@ async function main() {
       if (fresh.length) process.stderr.write(`census: ${fresh.length} identity change(s) on explicit acknowledgement — recorded under identityChanges (${all.length} on record)\n`);
       return null;
     },
-  }));
+    });
+  });
 
   for (const r of results) {
     const c = r.classes;
