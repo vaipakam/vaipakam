@@ -466,17 +466,34 @@ in the way. So the notice appearing there is a fault, and the check was
 both failing to report it and recommending the exact step that makes it
 disappear from the next run. It now fails, and says not to do that.
 
-Following the transaction brought its own correction. Waiting for one
-fresh reading of the loan before offering the button again is right when
-the transaction succeeded — the position has changed, and a button
-offered against the figures from before the close-out would be offering
-something that no longer exists. It is wrong for the other two endings. A
-transaction the network rejected changed nothing, and one that never
-arrived changed nothing either; in both cases a lender should be able to
-try again immediately, and the readings that gate the card have their own
-say regardless. Worse, neither of those endings triggers the refresh, so
-the wait had nothing to end it and the button could stay away for good.
-The three endings are now treated as the three different things they are.
+Following the transaction brought its own correction, and then a
+correction to the correction. Waiting for one fresh reading of the loan
+before offering the button again is right when the transaction succeeded
+— the position has changed, and a button offered against the figures from
+before the close-out would be offering something that no longer exists.
+It is wrong when the transaction was rejected, or when the wallet
+replaced it with a cancellation: nothing happened on the chain, a retry
+is reasonable, and neither of those endings triggers the refresh that
+would end the wait, so the button could have stayed away for good.
+
+But "we have been waiting a while" is not one of those endings, and
+treating it as one was a mistake worth naming. A transaction that has not
+confirmed yet has not failed — it can still go through — so re-offering
+the button after a few minutes invited a second close-out to queue up
+behind a first that was still live, which is exactly the outcome the wait
+exists to prevent and the more expensive one. The app now keeps waiting,
+and says so: it tells the lender plainly that it has not been able to
+account for the transaction, that this does not mean it failed, why the
+button is staying off, and to look in their wallet, which is where the
+answer actually is. An honest "we don't know yet" is better product than
+a button that implies it is safe to try again.
+
+It also follows the transaction properly now. A wallet that speeds up or
+cancels a pending send produces a different transaction for the same
+slot, and the app was watching only the original — so a sped-up close-out
+that went through perfectly looked identical to one that vanished, and a
+confirmed cancellation looked the same again. All three now resolve to
+what actually happened.
 
 A separate correction to the live checks: when the address of the site to
 review was not supplied, every one of them stopped with an unhandled
@@ -485,3 +502,25 @@ product". Nothing had been reviewed at all. They now report that the
 review could not be started, which is a different verdict with a
 different remedy — supply the address and run it again, rather than go
 hunting for a bug that was never found.
+
+
+Two more from the same review pass. The confirmation for the matched
+close-out told every lender that the matcher incentive would arrive in
+their wallet immediately. That is not true for a wallet the sanctions
+oracle has flagged — the protocol runs the close-out for them but does
+not pay them that incentive — and such a lender can reach this button by
+design, because close-out paths stay open to flagged wallets so the other
+side can still be made whole. The card now checks, and says which of the
+three cases applies: paid, not paid, or not yet known. The not-paid
+wording is careful about where the money goes instead, because "you do
+not get it" would overstate the loss: the part that would have come out
+of this position simply stays in what the lender claims later, and only
+the part from the opposing position goes elsewhere.
+
+And the heading on a loan blocked by a sequencer outage said "if this
+loan is not repaid", conditionally, about a loan the chain has already
+confirmed is past its repayment window and its grace period. That
+hedging was correct once, when the app checked sequencer health before
+the repayment window; it stopped being correct when the order was
+changed to match the contract, and the sentence explaining it outlived
+the ordering it described.

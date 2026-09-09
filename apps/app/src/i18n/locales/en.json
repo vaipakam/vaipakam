@@ -1099,8 +1099,25 @@
       "blockedSequencer": "The network’s sequencer is down or still recovering. Closing out is paused until prices can be trusted again — this usually clears on its own, so it is worth trying later.",
       "readyInKind": "The grace period has passed, so you can close this loan out now. The collateral moves out of the borrower’s vault as-is rather than being sold, and you claim it afterwards from the Claims page.",
       "readyNeedsRoute": "The grace period has passed and this loan can be closed out — but its collateral has to be sold on an exchange to do it, and that sale has to be routed by whoever submits the transaction. This app cannot build that route yet, and no automated service currently submits it either, so closing this position needs an operator. Contact support rather than waiting for it to happen on its own.",
+      "readyInternalMatch": "The grace period has passed, so this loan can be acted on now. The protocol has an opposing position it can settle this one against, so instead of the collateral being sold you are repaid in the asset you lent, at the oracle price when the transaction runs. That opposing position may not be large enough to cover the whole loan — if it is not, only part settles and the rest stays open for you to close again later.",
+      "readyRental": "The grace period has passed, so you can end this rental now. Your NFT stays where it is and the renter’s access is removed. What becomes claimable is the rent that was paid up front, less fees — you claim it from the Claims page.",
+      "matchMayAppear": "One thing can change this. The protocol looks for an opposing position to settle against at the moment the transaction runs, not when this page was loaded — so if one has appeared since, the loan is settled that way instead: you are repaid in the asset you lent, and possibly only in part.",
+      "raceFallbackFails": "Someone else may settle against that opposing position first. If that happens this close-out does not simply stop — it carries on down whatever route the protocol finds next. Here that route cannot complete, so the attempt would fail and cost you only the network fee. The loan stays open and you can try again.",
+      "raceFallbackInKind": "Someone else may settle against that opposing position first. If that happens this close-out does not simply stop — it carries on down whatever route the protocol finds next. Here that route hands you the borrower’s collateral as it stands instead of the asset you lent. The close-out still succeeds — you would simply be recovering something different from what this card describes above.",
+      "raceFallbackRental": "Someone else may settle against that opposing position first. If that happens this close-out does not simply stop — it carries on down whatever route the protocol finds next. Here that route ends the rental instead: the renter’s access is removed, your NFT stays where it is, and the rent paid up front becomes claimable less fees.",
+      "raceFallbackUnknown": "Someone else may settle against that opposing position first. If that happens this close-out does not simply stop — it carries on down whatever route the protocol finds next. Which route that is cannot be worked out in advance from what the app has read, so this attempt may either complete with a different recovery or fail costing only the network fee.",
+      "blockedPaused": "The protocol is paused right now, so nothing can be closed out until governance lifts it. Your position and the collateral behind it are unaffected by the pause.",
+      "blockedNoConsent": "This loan is past its grace period, but it was opened without both sides recording the risk-and-terms acknowledgement the protocol requires before it will hand over collateral that has no market price. As things stand the close-out is refused for everyone, not just for you — contact support.",
+      "submitted": "Close-out submitted. Give the page a moment to catch up — what actually happened is decided while the transaction runs, and the refreshed position will show whether the loan ended or part of it is still running. Anything that became yours appears on the Claims page.",
+      "submittedUnaccounted": "Your close-out was sent, but we have not been able to confirm what happened to it. That does not mean it failed — a transaction can sit unconfirmed for a while and still go through, and if it does, this position will update on its own. We are still watching for it. Until we know, the button stays off, because sending a second close-out while the first may still be live could cost you a fee for nothing. Check this transaction in your wallet: if your wallet shows it confirmed or dropped, reload this page and it will pick up from there.",
       "notExclusive": "Anyone can close out an overdue loan, not just you. If someone else does it first, this position will show as closed, or — if only part of it settled — as smaller than it was. Whatever the close-out recovers goes to whoever holds the lender position for this loan at that moment — so if you have transferred or sold it, it is theirs, not yours.",
       "claimNote": "Closing out does not move funds to your wallet by itself. What you are owed becomes claimable once the loan has fully closed. If the protocol settles only part of it, that part is held for you until the rest closes later.",
+      "claimNoteInternalMatch": "The amount you are owed does not arrive in your wallet by itself — it becomes claimable once the loan reaches a terminal state. If the opposing position covers only part of this loan, the settled part is held for you and becomes claimable when the rest is closed later, not straight away.",
+      "matcherIncentiveYours": "One part is different: the protocol pays whoever submits this transaction a small matcher incentive, sent straight to the submitting wallet. It comes out of the same settled amount rather than on top of it, so submitting this yourself moves that part to you immediately and reduces what you claim later by the same amount.",
+      "matcherIncentiveNotPaid": "One part works differently for your wallet. The protocol normally pays whoever submits this transaction a small matcher incentive, straight to the submitting wallet — but it is not paid to a wallet the sanctions oracle has flagged, and yours is flagged. The close-out itself still runs. The part of that incentive which would have been taken from this position stays in what you claim; the part that would have come from the opposing position goes to that position’s lender instead.",
+      "matcherIncentiveUnknown": "One part is not settled yet. The protocol pays whoever submits this transaction a small matcher incentive, straight to the submitting wallet, unless the sanctions oracle has flagged that wallet — and the check on yours has not come back. Until it does, we cannot tell you which of those applies to you.",
+      "outcomeNoteRental": "What becomes claimable is the rent that was already paid, less the protocol’s share. It does not depend on what anything is worth when the transaction runs.",
+      "outcomeNoteInternalMatch": "What comes back is the asset you lent, valued at the oracle price at the moment the transaction runs — so the amount is not known in advance, and it is not a question of what the collateral is worth.",
       "intentNote": "If the borrower has a pending swap-to-repay order on this loan, closing out cancels it.",
       "outcomeNote": "How much comes back depends on what the collateral is worth when the transaction runs, so the amount is not known in advance.",
       "receipt": {
@@ -1111,15 +1128,6 @@
         "fees": "The network fee, plus the protocol’s share of any sale proceeds.",
         "whenThisEnds": "Usually straight away — this transaction normally ends the loan. If the protocol can only settle part of it, or the sale of the collateral cannot go through, the loan stays open and you can close it again later."
       },
-      "blockedPaused": "The protocol is paused right now, so nothing can be closed out until governance lifts it. Your position and the collateral behind it are unaffected by the pause.",
-      "blockedNoConsent": "This loan is past its grace period, but it was opened without both sides recording the risk-and-terms acknowledgement the protocol requires before it will hand over collateral that has no market price. As things stand the close-out is refused for everyone, not just for you — contact support.",
-      "submitted": "Close-out submitted. Give the page a moment to catch up — what actually happened is decided while the transaction runs, and the refreshed position will show whether the loan ended or part of it is still running. Anything that became yours appears on the Claims page.",
-      "readyInternalMatch": "The grace period has passed, so this loan can be acted on now. The protocol has an opposing position it can settle this one against, so instead of the collateral being sold you are repaid in the asset you lent, at the oracle price when the transaction runs. That opposing position may not be large enough to cover the whole loan — if it is not, only part settles and the rest stays open for you to close again later.",
-      "readyRental": "The grace period has passed, so you can end this rental now. Your NFT stays where it is and the renter’s access is removed. What becomes claimable is the rent that was paid up front, less fees — you claim it from the Claims page.",
-      "raceFallbackFails": "Someone else may settle against that opposing position first. If that happens this close-out does not simply stop — it carries on down whatever route the protocol finds next. Here that route cannot complete, so the attempt would fail and cost you only the network fee. The loan stays open and you can try again.",
-      "raceFallbackInKind": "Someone else may settle against that opposing position first. If that happens this close-out does not simply stop — it carries on down whatever route the protocol finds next. Here that route hands you the borrower’s collateral as it stands instead of the asset you lent. The close-out still succeeds — you would simply be recovering something different from what this card describes above.",
-      "raceFallbackRental": "Someone else may settle against that opposing position first. If that happens this close-out does not simply stop — it carries on down whatever route the protocol finds next. Here that route ends the rental instead: the renter’s access is removed, your NFT stays where it is, and the rent paid up front becomes claimable less fees.",
-      "raceFallbackUnknown": "Someone else may settle against that opposing position first. If that happens this close-out does not simply stop — it carries on down whatever route the protocol finds next. Which route that is cannot be worked out in advance from what the app has read, so this attempt may either complete with a different recovery or fail costing only the network fee.",
       "rentalReceipt": {
         "youReceive": "The rent that was paid up front, less fees, in the asset it was paid in. Your NFT is not part of this — it stays where it already is. You claim the rent afterwards from the Claims page.",
         "youLock": "Nothing.",
@@ -1127,11 +1135,7 @@
         "youCanLose": "Nothing. The rental term and the grace period after it have both already passed, so there is no remaining term to give up and no rent still to accrue — the whole term was paid for up front. Your NFT never leaves your vault, and there is no shortfall for you to absorb. Until this runs, the renter keeps access they are no longer entitled to.",
         "fees": "The network fee, plus the protocol’s share of the prepaid rent.",
         "whenThisEnds": "The rental ends when this transaction settles. Your NFT does not move, and what was prepaid becomes claimable."
-      },
-      "claimNoteInternalMatch": "The amount you are owed does not arrive in your wallet by itself — it becomes claimable once the loan reaches a terminal state. If the opposing position covers only part of this loan, the settled part is held for you and becomes claimable when the rest is closed later, not straight away. One part is different: the protocol pays whoever submits this transaction a small matcher incentive, sent straight to the submitting wallet, and it comes out of the same settled amount rather than on top of it. Submit it yourself and that part is yours immediately.",
-      "outcomeNoteRental": "What becomes claimable is the rent that was already paid, less the protocol’s share. It does not depend on what anything is worth when the transaction runs.",
-      "outcomeNoteInternalMatch": "What comes back is the asset you lent, valued at the oracle price at the moment the transaction runs — so the amount is not known in advance, and it is not a question of what the collateral is worth.",
-      "matchMayAppear": "One thing can change this. The protocol looks for an opposing position to settle against at the moment the transaction runs, not when this page was loaded — so if one has appeared since, the loan is settled that way instead: you are repaid in the asset you lent, and possibly only in part."
+      }
     },
     "lenderExit": {
       "title": "Your options as the lender",
@@ -2416,6 +2420,7 @@
       "notReported": "not reported",
       "loansHeading": "Loans",
       "offersHeading": "Offers",
+      "offersScope": "On-chain offers only. Gasless signed orders are not counted here, though they are fillable and do appear in the offer book.",
       "active": "Active",
       "repaid": "Repaid",
       "defaulted": "Defaulted",
@@ -2423,6 +2428,8 @@
       "settled": "Settled",
       "total": "Total",
       "erc20Active": "ERC-20 loans active",
+      "unclassifiedActive": "Active, type not yet read",
+      "unclassifiedActiveNote": "Some active loans arrived before the indexer had read what asset they are in, so they are counted in the total but not yet in either type below it. They move into the right one as the details are filled in.",
       "nftRentalsActive": "NFT rentals active",
       "accepted": "Accepted",
       "cancelled": "Cancelled",
@@ -2443,10 +2450,7 @@
       "caveat": "These counts are as current as the cursor above, not as current as the chain. If the last ingest is old, the numbers are old — that is why the age is shown here rather than left for you to guess. Settlement figures come from indexed events, so a state change that has not been ingested yet will not appear.",
       "ageSeconds": "{{n}}s ago",
       "ageMinutes": "{{n}} min ago",
-      "ageHours": "{{n}} h ago",
-      "offersScope": "On-chain offers only. Gasless signed orders are not counted here, though they are fillable and do appear in the offer book.",
-      "unclassifiedActive": "Active, type not yet read",
-      "unclassifiedActiveNote": "Some active loans arrived before the indexer had read what asset they are in, so they are counted in the total but not yet in either type below it. They move into the right one as the details are filled in."
+      "ageHours": "{{n}} h ago"
     },
     "protocolConsole": {
       "title": "Protocol console",

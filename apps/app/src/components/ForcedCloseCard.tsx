@@ -37,7 +37,7 @@
  * does not support, on the one card whose whole job is telling somebody
  * how they get paid.
  */
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { usePublicClient } from 'wagmi';
 import { AlertTriangle } from 'lucide-react';
@@ -45,6 +45,7 @@ import { copy } from '../content/copy';
 import { captureTxError } from '../lib/errors';
 import { useDiamondWrite, DIAMOND_ABI_VIEM } from '../contracts/diamond';
 import { useActiveChain } from '../chain/useActiveChain';
+import { useSanctionsCheck } from '../data/sanctions';
 import { ConfirmReceipt } from './ConfirmReceipt';
 import {
   canSubmitFromApp,
@@ -52,13 +53,26 @@ import {
   type ForcedCloseReadiness,
 } from '../data/forcedClose';
 
-/** How long to watch for a receipt before concluding the transaction
- *  never made it. Generous enough to cover a slow L2 inclusion, short
- *  enough that a lender whose transaction was dropped is not locked out
- *  of retrying. Releasing here is safe: the readiness reads are still
- *  the binding judgement, and a close-out that DID land leaves the loan
- *  terminal, which unmounts this card entirely. */
-const RECEIPT_GIVE_UP_MS = 3 * 60_000;
+/** How long one wait for a disposition runs before it is restarted.
+ *
+ *  ROUND 50 P1 — this is a RETRY interval, not a deadline, and the
+ *  difference is the finding. It used to be a give-up: three minutes
+ *  elapsed and the card released the hold and re-offered the button.
+ *  Elapsed time is not evidence about a transaction. A transaction
+ *  pending past this bound has not been dropped — it is pending, and it
+ *  can still mine — so releasing on the clock re-opened the
+ *  duplicate-submit window the hold exists to close, and did it in the
+ *  worst case: a second close-out queued behind a first that then lands,
+ *  spending a fee on a terminal loan or acting on a partially settled
+ *  residual.
+ *
+ *  So nothing is concluded here. The wait restarts, and only a receipt
+ *  — the original's, or a replacement's, which `waitForTransactionReceipt`
+ *  follows — ends the hold. The one thing the bound still buys is the
+ *  chance to TELL the lender the transaction is unaccounted for, which
+ *  is a better answer than either a silent latch or a button that
+ *  implies a retry is safe. */
+const RECEIPT_WAIT_TIMEOUT_MS = 3 * 60_000;
 
 export function ForcedCloseCard({
   loanId,
@@ -123,6 +137,7 @@ export function ForcedCloseCard({
   const { write, ready } = useDiamondWrite();
   const { walletChain, address } = useActiveChain();
   const publicClient = usePublicClient({ chainId: walletChain?.chainId });
+  const sanctions = useSanctionsCheck();
   const queryClient = useQueryClient();
   const [error, setError] = useState<string | null>(null);
   /** Stamped when a close-out confirms, and released as soon as the
@@ -167,43 +182,54 @@ export function ForcedCloseCard({
     hash: `0x${string}`;
   } | null>(null);
 
-  /** The give-up deadline as a TIMER, not a `Date.now()` read in render.
+  /** What the chain has established about the submitted transaction.
    *
-   *  Computing it during render is impure — eslint's react-hooks rule
-   *  catches it — and it is also wrong on its own terms: the comparison
-   *  would only take effect on whatever unrelated re-render happened to
-   *  come next, so the hold could outlive the deadline indefinitely on a
-   *  quiet card. A timer fires on its own. */
-  const [gaveUpOn, setGaveUpOn] = useState<string | null>(null);
-  useEffect(() => {
-    if (submitted === null) return;
-    // Keyed by HASH rather than reset to false on entry: a synchronous
-    // setState in an effect body is the cascading-render pattern eslint
-    // rejects, and it is unnecessary here — a new submission carries a
-    // different hash, so a stale give-up simply stops matching.
-    const h = submitted.hash;
-    const t = setTimeout(() => setGaveUpOn(h), RECEIPT_GIVE_UP_MS);
-    return () => clearTimeout(t);
-  }, [submitted]);
-
-  /** Watches the submitted transaction until its disposition is known.
-   *  Any receipt — success or revert — ends the hold; the card's own
-   *  readiness reads then say what the chain now looks like. Bounded by
-   *  `RECEIPT_GIVE_UP_MS` so a dropped transaction cannot latch the
-   *  action shut, which is what the previous timestamp rule did. */
-  const receiptWatch = useQuery({
-    queryKey: ['forcedClose', 'receipt', submitted?.chainId, submitted?.hash],
+   *  ROUND 50 P2 — `getTransactionReceipt` on the submitted hash was the
+   *  wrong instrument, because that hash is not necessarily the
+   *  transaction that runs. A wallet that speeds up, cancels or
+   *  otherwise replaces a pending send produces a DIFFERENT hash for the
+   *  same nonce, and the original then never receives a receipt at all.
+   *  Polling it alone meant a repriced close-out that mined perfectly
+   *  well looked identical to one that vanished, and a confirmed
+   *  cancellation — positive evidence the call did NOT execute — looked
+   *  identical too.
+   *
+   *  `waitForTransactionReceipt` is the instrument that already knows
+   *  about this: it follows the nonce, so a replacement's receipt comes
+   *  back here, and `onReplaced` names which kind of replacement it was.
+   *  That distinction is load-bearing rather than cosmetic — a
+   *  cancellation's receipt has `status: 'success'`, because the
+   *  cancelling self-send succeeded. Reading the receipt alone would
+   *  report a cancelled close-out as a completed one. */
+  type Disposition = 'success' | 'reverted' | 'cancelled' | 'undetermined';
+  const watch = useQuery<Disposition>({
+    queryKey: ['forcedClose', 'disposition', submitted?.chainId, submitted?.hash],
     enabled: submitted !== null && Boolean(publicClient),
-    refetchInterval: 4_000,
     retry: false,
-    queryFn: async () => {
+    // Only an UNDETERMINED wait is worth restarting. The other three are
+    // final facts about a transaction, and nothing later changes them.
+    refetchInterval: (query) =>
+      query.state.data === undefined || query.state.data === 'undetermined'
+        ? RECEIPT_WAIT_TIMEOUT_MS
+        : false,
+    queryFn: async (): Promise<Disposition> => {
+      let replacement: 'replaced' | 'repriced' | 'cancelled' | null = null;
       try {
-        return await publicClient!.getTransactionReceipt({
+        const receipt = await publicClient!.waitForTransactionReceipt({
           hash: submitted!.hash,
+          timeout: RECEIPT_WAIT_TIMEOUT_MS,
+          onReplaced: (r) => {
+            replacement = r.reason;
+          },
         });
+        // Checked BEFORE the status: see the note above on why a
+        // cancellation reads as a success if you only look at the receipt.
+        if (replacement === 'cancelled') return 'cancelled';
+        return receipt.status === 'success' ? 'success' : 'reverted';
       } catch {
-        // Not mined yet is the normal answer here, not an error.
-        return null;
+        // A timeout, or a read that failed. Neither says anything about
+        // the transaction, so neither is allowed to say anything here.
+        return 'undetermined';
       }
     },
   });
@@ -239,43 +265,42 @@ export function ForcedCloseCard({
    *    the hold releases with the transaction unresolved — which is the
    *    duplicate submit the round-47 fix existed to prevent.
    *
-   *  So the hold now reconciles against the TRANSACTION. `submitted.hash`
-   *  is watched with `getTransactionReceipt`; the moment a receipt exists
-   *  the disposition is known and the hold ends, whatever the reads are
-   *  doing. A dropped transaction is bounded rather than latched: after
-   *  `RECEIPT_GIVE_UP_MS` with no receipt the hold releases and the
-   *  lender may try again, which is the correct outcome for a
-   *  transaction the network never accepted.
+   *  So the hold now reconciles against the TRANSACTION rather than
+   *  against how recently unrelated reads settled.
    *
    *  The read-freshness condition is kept as an ADDITIONAL hold on the
    *  success path only — once a receipt exists we still wait for one
    *  post-stamp read before re-offering a button, which is the round-28
    *  reason the hold was introduced. It can no longer hold on its own. */
   //
-  // ROUND 49 P1 — the three dispositions are NOT the same, and the
-  // previous predicate treated them alike while its own comment claimed
-  // otherwise. Applying the freshness arm to a revert or a give-up
-  // reinstated the latch exactly where it hurts: neither path reaches
-  // `invalidateQueries` (success-only, after the await), and `consent`
-  // does not poll, so the minimum timestamp can sit below the stamp
-  // indefinitely and the action never comes back.
+  // ROUND 49 P1 + ROUND 50 P1 — the dispositions are NOT interchangeable,
+  // and the two findings pull in opposite directions on one of them. Both
+  // are right, about different arms:
   //
   // - SUCCESS: the loan has changed. Hold until one post-stamp read, so
   //   a button is not re-offered against figures from before the close
   //   (the round-28 reason this hold exists at all).
-  // - REVERTED: nothing changed on-chain. A retry is legitimate and the
-  //   hold must end at once.
-  // - GAVE UP with no receipt: the network never accepted it, as far as
-  //   anything here can tell. Same answer — release, and let the
-  //   readiness reads be the binding judgement they always were.
-  const txReceipt = receiptWatch.data ?? null;
-  const succeeded = txReceipt !== null && txReceipt.status === 'success';
-  const disposed =
-    submitted !== null &&
-    (txReceipt !== null || gaveUpOn === submitted.hash);
+  // - REVERTED: nothing changed on-chain. A retry is legitimate, and the
+  //   hold must end at once — round 49's finding, because neither this
+  //   path nor the next reaches `invalidateQueries` (success-only, after
+  //   the await) and `consent` does not poll, so a freshness arm here
+  //   latches the action shut indefinitely.
+  // - CANCELLED: the wallet replaced the send with a no-op. That is
+  //   positive evidence the close-out did not execute, so it releases for
+  //   the same reason a revert does.
+  // - UNDETERMINED: round 50's finding, and the correction to round 49.
+  //   Nothing has been established, so nothing may be concluded — least
+  //   of all "it was dropped, go ahead and retry". A transaction still
+  //   pending past the wait can mine, and re-offering the button here
+  //   queues a second close-out behind a live first one. The hold STAYS,
+  //   the wait restarts, and the card says plainly that it has lost track
+  //   rather than presenting a dead button with no explanation.
+  const disposition = watch.data ?? null;
+  const undetermined = disposition === null || disposition === 'undetermined';
   const holdingAfterSubmit =
     submitted !== null &&
-    (!disposed || (succeeded && readsUpdatedAt <= submitted.at));
+    (undetermined ||
+      (disposition === 'success' && readsUpdatedAt <= submitted.at));
   const submittable = canSubmitFromApp(readiness) && !holdingAfterSubmit;
 
   async function closeOut() {
@@ -510,7 +535,17 @@ export function ForcedCloseCard({
     },
     'blocked-sequencer': {
       body: copy.forcedClose.blockedSequencer,
-      overdue: false,
+      // ROUND 50 P3 — true, and it was the round-42 reordering that made
+      // it true. `decideForcedClose` now resolves the repayment window
+      // BEFORE sequencer health, mirroring the contract (the grace check
+      // at DefaultedFacet:249 precedes the sequencer check at :260), so
+      // this state is only reachable with `defaultable === true`. The
+      // chain HAS said the term and grace elapsed; withholding the
+      // overdue heading here discards a fact it established and renders
+      // the conditional "If this loan is not repaid" over a loan that
+      // demonstrably was not. The sequencer explanation in `body` is a
+      // separate statement and is unaffected.
+      overdue: true,
       matchRace: false,
       actionBlock: false,
       outcomeNote: null,
@@ -553,15 +588,51 @@ export function ForcedCloseCard({
   const outcomeNote = view.outcomeNote ?? copy.forcedClose.outcomeNote;
   const claimNote = view.claimNote ?? copy.forcedClose.claimNote;
 
-  const body = holdingAfterSubmit ? copy.forcedClose.submitted : view.body;
+  /** Which of the three matcher-incentive statements is true for THIS
+   *  wallet. Read rather than assumed: `_executeTwoWayMatch` zeroes the
+   *  incentive for a sanctioned matcher, and `triggerDefault` is a
+   *  Tier-2 path that stays open to one, so the flagged case is a
+   *  supported posture rather than an edge.
+   *
+   *  `ready === false` gets its own sentence instead of defaulting to
+   *  either answer. Defaulting to "yours" would promise a transfer that
+   *  may not happen; defaulting to "not paid" would tell an unflagged
+   *  lender they are flagged. Neither is true yet, so the card says
+   *  that. */
+  const matcherIncentiveNote = !sanctions.ready
+    ? copy.forcedClose.matcherIncentiveUnknown
+    : sanctions.flagged
+      ? copy.forcedClose.matcherIncentiveNotPaid
+      : copy.forcedClose.matcherIncentiveYours;
+
+  /** ROUND 50 P1 — the hold now outlives the wait, so the card has to
+   *  say why. "Close-out submitted, give the page a moment" is true for
+   *  the first three minutes and becomes a misdescription after them: at
+   *  that point the app is not waiting for the page to catch up, it has
+   *  stopped being able to account for the transaction. Leaving the
+   *  optimistic wording there would present an indefinite disabled
+   *  button as an ordinary pause, which is the shape of a hang. */
+  const body = !holdingAfterSubmit
+    ? view.body
+    : disposition === 'undetermined'
+      ? copy.forcedClose.submittedUnaccounted
+      : copy.forcedClose.submitted;
 
   /** The overdue heading ONLY where the chain has actually said so
-   *  (round 28 P2): `blocked-sequencer` and `blocked-paused` are
-   *  resolved BEFORE `defaultable`, so during an outage a loan three
-   *  days into a ninety-day term reaches them, and mapping those to
-   *  "This loan is overdue" put a false statement in the card's largest
-   *  text. Now a column of the table above rather than a hand-listed
-   *  set. */
+   *  (round 28 P2): `blocked-paused` is resolved BEFORE `defaultable`,
+   *  so during a pause a loan three days into a ninety-day term reaches
+   *  it, and mapping that to "This loan is overdue" put a false
+   *  statement in the card's largest text. Now a column of the table
+   *  above rather than a hand-listed set.
+   *
+   *  This note used to name `blocked-sequencer` alongside it. That
+   *  stopped being true at round 42, when the resolver was reordered to
+   *  mirror the contract and the repayment window moved AHEAD of the
+   *  sequencer check — see that row for why it is overdue now. The
+   *  reasoning here outlived the ordering it was reasoning about, which
+   *  is the failure mode a hand-listed set had and a table column was
+   *  meant to end; the table was right and the prose beside it was not
+   *  (round 50 P3). */
   const overdueEstablished = view.overdue;
 
   return (
@@ -649,6 +720,17 @@ export function ForcedCloseCard({
           <p className="field-hint">{copy.forcedClose.notExclusive}</p>
           <p className="field-hint">{outcomeNote}</p>
           <p className="field-hint">{claimNote}</p>
+          {/* ROUND 50 P2 — its own paragraph, and its own eligibility.
+              Only the internal-match route pays a matcher incentive at
+              all, and only to a wallet the sanctions oracle has not
+              flagged. Rendering it beside the claim note rather than
+              inside it is what lets the two vary independently without
+              composing a sentence at runtime. */}
+          {readiness === 'ready-internal-match' ? (
+            <p className="field-hint" data-testid="forced-close-incentive">
+              {matcherIncentiveNote}
+            </p>
+          ) : null}
         </>
       ) : null}
 

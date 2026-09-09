@@ -2353,6 +2353,16 @@ const copySource = {
       'This loan is past its grace period, but it was opened without both sides recording the risk-and-terms acknowledgement the protocol requires before it will hand over collateral that has no market price. As things stand the close-out is refused for everyone, not just for you — contact support.',
     submitted:
       'Close-out submitted. Give the page a moment to catch up — what actually happened is decided while the transaction runs, and the refreshed position will show whether the loan ended or part of it is still running. Anything that became yours appears on the Claims page.',
+    // Round 50 P1 — shown once the app has waited past its own bound
+    // without a receipt for the submitted transaction OR for anything
+    // that replaced it. It says the true thing, which is that we do not
+    // know: offering the button again here would invite a second
+    // close-out behind a first that may still be live, and saying
+    // nothing would present an indefinitely disabled button as an
+    // ordinary pause. It names the wallet as the place to look because
+    // the wallet is where the answer actually is.
+    submittedUnaccounted:
+      'Your close-out was sent, but we have not been able to confirm what happened to it. That does not mean it failed — a transaction can sit unconfirmed for a while and still go through, and if it does, this position will update on its own. We are still watching for it. Until we know, the button stays off, because sending a second close-out while the first may still be live could cost you a fee for nothing. Check this transaction in your wallet: if your wallet shows it confirmed or dropped, reload this page and it will pick up from there.',
     // Round 28 P2 — names WHO is paid, not just who may act. The
     // proceeds follow the lender position NFT as it stands when the
     // transaction runs, and this card is reachable by a wallet whose
@@ -2368,8 +2378,34 @@ const copySource = {
     // submitting wallet immediately, and it is taken out of the amount
     // the lender later claims. Saying "nothing moves to your wallet"
     // was wrong in both directions at once.
+    // Round 50 P2 — the incentive sentences moved OUT of this string,
+    // into the three `matcherIncentive*` strings below, because whether
+    // the incentive is paid at all depends on the submitting wallet and
+    // this note does not. They are separate ELEMENTS rather than a
+    // composed sentence: `_executeTwoWayMatch` zeroes `incentiveBps` for
+    // a sanctioned matcher, so a flagged lender reading the old ending
+    // ("Submit it yourself and that part is yours immediately") was
+    // being promised a transfer the contract does not make for them.
+    // That posture is reachable, not hypothetical — `triggerDefault` is
+    // a Tier-2 close-out path that stays open to a flagged caller by
+    // design, and the auto-dispatch passes `msg.sender` as the matcher.
     claimNoteInternalMatch:
-      'The amount you are owed does not arrive in your wallet by itself — it becomes claimable once the loan reaches a terminal state. If the opposing position covers only part of this loan, the settled part is held for you and becomes claimable when the rest is closed later, not straight away. One part is different: the protocol pays whoever submits this transaction a small matcher incentive, sent straight to the submitting wallet, and it comes out of the same settled amount rather than on top of it. Submit it yourself and that part is yours immediately.',
+      'The amount you are owed does not arrive in your wallet by itself — it becomes claimable once the loan reaches a terminal state. If the opposing position covers only part of this loan, the settled part is held for you and becomes claimable when the rest is closed later, not straight away.',
+    // The three eligibility cases for the matcher incentive. Full
+    // sentences, one per case, never assembled at runtime — the same
+    // rule the match-race paragraph follows, and for the same reason
+    // (a join character that is wrong in Japanese and Chinese).
+    matcherIncentiveYours:
+      'One part is different: the protocol pays whoever submits this transaction a small matcher incentive, sent straight to the submitting wallet. It comes out of the same settled amount rather than on top of it, so submitting this yourself moves that part to you immediately and reduces what you claim later by the same amount.',
+    // Deliberately precise about WHERE the money goes instead, because
+    // "you do not get the incentive" would overstate the loss. Zeroing
+    // it folds each leg's share back into that leg's lender: the part
+    // taken from this position returns to what this lender claims, and
+    // only the part from the opposing position goes elsewhere.
+    matcherIncentiveNotPaid:
+      'One part works differently for your wallet. The protocol normally pays whoever submits this transaction a small matcher incentive, straight to the submitting wallet — but it is not paid to a wallet the sanctions oracle has flagged, and yours is flagged. The close-out itself still runs. The part of that incentive which would have been taken from this position stays in what you claim; the part that would have come from the opposing position goes to that position’s lender instead.',
+    matcherIncentiveUnknown:
+      'One part is not settled yet. The protocol pays whoever submits this transaction a small matcher incentive, straight to the submitting wallet, unless the sanctions oracle has flagged that wallet — and the check on yours has not come back. Until it does, we cannot tell you which of those applies to you.',
     // Round 40 P2 — the shared note names a collateral valuation, and
     // neither of these two routes has one. A rental makes the FIXED
     // prepaid rent claimable after the treasury split; an internal match
