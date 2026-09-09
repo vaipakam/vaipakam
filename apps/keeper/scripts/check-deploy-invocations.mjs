@@ -3666,7 +3666,13 @@ function isCommandPayload(idx, text, kind) {
   // argument — `-e` there enables backslash escapes — so gating on the option
   // alone reported a write that never happens (r25). The first argument of a
   // spawn-style call is the program.
-  const prog = /\(\s*(['"`])([^'"`]*)\1/.exec(args);
+  // …and the program may be the first element of an ARGV LIST rather than a
+  // separate first argument. Python spells it `subprocess.run(["echo", …])`,
+  // so anchoring on the parenthesis alone found no program at all, and with
+  // none the reader fell back to accepting both evaluate letters — which made
+  // `echo -e "…"` an evaluation again, the very thing the gate was added in
+  // r25 to stop (r28).
+  const prog = /\(\s*\[?\s*(['"`])([^'"`]*)\1/.exec(args);
   const INTERP = /(?:^|\/)(?:node|deno|bun|python[\d.]*|perl|ruby|sh|bash|zsh|dash|ksh|env)$/;
   if (prog && !INTERP.test(prog[2])) return false;
   // A GROUPED short option counts when it contains the evaluate letter:
@@ -3796,8 +3802,20 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
   // touches no file — and the release note's guarantee that declaring `copy`
   // or `move` is not a write was, on this path, untrue (r27). A shell `cp` in
   // command position keeps its own qualifier, which is the command position.
+  // A COPY COMMAND MAY BE SPELLED AS ARGV. `subprocess.run(["cp", "generated
+  // .jsonc", "configs/custom.jsonc"])` runs the same `cp`, and the shell form
+  // below requires whitespace after the verb, which an argv list writes as a
+  // quote and a comma (r28). The same four verbs, in the other spelling —
+  // not a new list.
+  //
+  // Anchored on the bracket BEFORE the quote, deliberately: the verb itself
+  // sits inside a string literal, which the classifier calls data — rightly,
+  // since `cp` is not an interpreter and the payload rule refuses it — so a
+  // match starting at the quote was discarded by the very filter that keeps
+  // quoted examples out. The bracket is code.
   const COPY =
     String.raw`(?:^|[\s;&|(])(?:cp|mv|install|rsync)\s[^\n]*?` + esc +
+    String.raw`|[([,]\s*(['"\`])(?:cp|mv|install|rsync)\1\s*,[^)\n]*?` + esc +
     String.raw`|(?:copyFile|rename|cpSync|copyFileSync|renameSync)\s*\([^)]*` + esc +
     String.raw`|(?<![A-Za-z0-9_$.])(?:shutil|fs|fse|fsExtra|fsp)` +
     String.raw`(?:\s*\.\s*promises)?\s*\.\s*(?:copy|move)\s*\([^)]*` + esc;

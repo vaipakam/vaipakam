@@ -140,6 +140,18 @@ written with quotes in the middle of it — and the name is now recognised
 through that spelling, as the reader that selects the configuration already
 did.
 
+Two shapes are deliberately NOT recognised, and both are misses rather than
+noise. A command run through a module imported under an arbitrary alias is one:
+resolving that name means following a binding, which this reader declines
+everywhere and which is the subject of the open question above — the alternative
+of admitting any named receiver was measured against the common case of matching
+a pattern held in a variable, and would report that. The other is a script that
+quotes an example of a write to its own configuration: in a shell a quoted
+string handed to a command may be executed by it, so quoted shell text is read
+as executable unless it is plainly being stored. Narrowing that was tried when
+the classifier was written and immediately lost real payloads. Both are named
+here so they are limits rather than surprises.
+
 The boundary this reader works to is stated in it: it is defence in depth
 behind the configuration declaration that actually preserves operator-managed
 values, it is allowed to be incomplete, and it is not allowed to be noisy. A

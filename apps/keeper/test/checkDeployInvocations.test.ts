@@ -10558,4 +10558,60 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     );
     expect(r.ok).toBe(false);
   });
+
+  // ---- Codex #2066 r28 ----
+
+  it('an argv program gates the evaluate letter (#2066 r28)', () => {
+    // Python puts the program inside the list, so anchoring on the
+    // parenthesis found none — and with no program the reader accepted both
+    // letters, making `echo -e` an evaluation again.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'dk.py',
+      'import subprocess\n' +
+        'subprocess.run(["echo", "-e", "shutil.copy(src, \'configs/custom.jsonc\')"])\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('an argv interpreter still evaluates (#2066 r28 bounds)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'dl.py',
+      'import subprocess\n' +
+        'subprocess.run(["bash", "-c", "printf new > configs/custom.jsonc"])\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('an argv copy command is a copy (#2066 r28)', () => {
+    // `subprocess.run(["cp", …])` runs the same cp; the shell form requires
+    // whitespace after the verb, which argv writes as a quote and a comma.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'dm.py',
+      'import subprocess\n' +
+        'subprocess.run(["cp", "generated.jsonc", "configs/custom.jsonc"])\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('an argv element merely naming the config is not a copy (#2066 r28 bounds)', () => {
+    // The argv alternative must not match any list that contains the name.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'dn.py',
+      'import subprocess\n' +
+        'subprocess.run(["cat", "configs/custom.jsonc"])\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(true);
+  });
 });
