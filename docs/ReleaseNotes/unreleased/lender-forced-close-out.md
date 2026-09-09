@@ -650,3 +650,13 @@ is owed the difference. The protocol console also refreshes while it is
 open; it used to keep whatever it loaded with, so a fee or a switch
 changed by governance could sit there superseded, with the page's own age
 line saying nothing was wrong.
+
+One more way the app could have trapped a lender, found in review rather
+than in the wild. When a close-out is sent and then never resolves, the
+only way back to the action is the lender telling the app their wallet no
+longer shows the transaction — and the app offered that only after a few
+minutes had passed, measured against the device's own clock. A clock
+corrected backwards after sending, or a record written while the clock
+was wrong, made that wait never finish: the position would have stayed
+unclosable from the app for as long as the error lasted, with no route
+out. The wait is now measured so that no clock change can stall it.

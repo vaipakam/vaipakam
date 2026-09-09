@@ -610,6 +610,13 @@ Thin-market honesty rules apply.
   transaction, and the device-local record backing that is kept for exactly as
   long as the withholding lasts — including after a success, whose figures the
   surface has not yet caught up with.
+- Where a transaction is never resolved, the lender's own statement that their
+  wallet no longer shows it is the only route back to the action. Because it is
+  the only one, when the surface offers it must not depend on the device's clock
+  being correct: a clock corrected backwards after the transaction was sent, or a
+  record written while the clock was wrong, cannot be allowed to withhold that
+  route. Elapsed time is measured so that no clock fault can delay it
+  indefinitely.
 - Where the browser refuses to keep that record, the surface says so and names
   the consequence: this page still withholds the action, a reload will not.
 - Before a close-out is sent, the surface re-reads that record so a confirmation

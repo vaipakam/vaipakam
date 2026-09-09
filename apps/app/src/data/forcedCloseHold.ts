@@ -45,11 +45,21 @@
  *
  * ## The rule
  *
- * Hold while the disposition is unknown. Hold after a success until one
- * read postdates the DISPOSITION — not the submit; that distinction is
- * round 52 and it is the easiest sentence in this file to get wrong.
- * Release on anything the chain has actually settled against the
- * close-out having happened.
+ * Hold while the disposition is unknown. Hold after a success until
+ * EVERY read postdates the DISPOSITION — not the submit; that
+ * distinction is round 52 and it is the easiest sentence in this file to
+ * get wrong. Release on anything the chain has actually settled against
+ * the close-out having happened.
+ *
+ * ROUND 57 P3 — "every", not "one", and the difference is the whole
+ * reason `readsUpdatedAt` is a MINIMUM. The release condition is
+ * `readsUpdatedAt > disposedAt`; when that value is the smallest
+ * `dataUpdatedAt` across the card's reads, it exceeding the disposition
+ * means every one of them does. This file declares itself the
+ * specification, so "one read" was an invitation to swap the minimum for
+ * a maximum — which would re-enable the action against a mixture of pre-
+ * and post-close state, the exact thing round 28 asked for the hold to
+ * prevent.
  */
 
 import { makePendingMarkerStore } from '../lib/pendingMarker';
@@ -137,6 +147,72 @@ export function isHoldingAfterSubmit(input: ForcedCloseHoldInput): boolean {
   // neither path reaches the invalidation that would advance
   // `readsUpdatedAt`.
   return false;
+}
+
+/**
+ * Has the close-out been outstanding long enough that the card should
+ * stop calling it an ordinary pause?
+ *
+ * ## Why this is not `Date.now() - submittedAt`
+ *
+ * ROUND 57 P2. It was, and a device clock that moves BACKWARD after the
+ * submit — an NTP correction, a manual change, a marker written while
+ * the clock was wrong and read after it was fixed — made that
+ * subtraction negative and kept it negative until wall time caught up.
+ *
+ * That is not a cosmetic bug, because of what this value gates. A
+ * transaction that was genuinely dropped never produces a disposition,
+ * so the hold never releases on evidence; the ONLY way back to the
+ * action is the lender saying their wallet no longer shows the
+ * transaction, and that control appears only when this is true. A
+ * backward clock jump therefore leaves a real position permanently
+ * unclosable from the app, with no route out — for as long as the offset
+ * lasts, which for a mis-set clock can be months.
+ *
+ * ## The rule
+ *
+ * Take the LARGER of two elapsed measures, so neither can block:
+ *
+ * - **Monotonic**, ticked by the card from when this mount first saw
+ *   the submission. `performance.now()` is immune to clock changes, and
+ *   it is the measure that guarantees the escape hatch eventually
+ *   appears. It restarts on remount, which is conservative in the safe
+ *   direction: a reload costs at most one more threshold's wait.
+ * - **Wall clock**, from the record's own stamp. This is what makes a
+ *   returning lender see the true state immediately rather than waiting
+ *   out the threshold again. A negative or non-finite value contributes
+ *   NOTHING rather than dominating — that is the clock-correction case,
+ *   and a measurement that cannot be right must not be allowed to speak.
+ *
+ * The trade this accepts, stated because it is real: a clock that jumps
+ * FORWARD makes the wall measure large, so the card may say it has lost
+ * track of a transaction sent moments ago. On a fresh mount that case is
+ * indistinguishable from the ordinary "submitted an hour ago, then
+ * reloaded", which is common and legitimate — so it is not filtered out.
+ * The cost is bounded: it changes wording and offers the lender a
+ * control whose copy states plainly what it costs to use wrongly. The
+ * cost in the other direction was an unclosable position.
+ */
+export function isUnaccounted(input: {
+  /** Milliseconds this mount has held the submission, measured on a
+   *  monotonic clock. Zero before the first tick, and zero when no
+   *  measurement for this transaction exists yet — both of which are
+   *  "no monotonic evidence", which is what a zero contributes. */
+  monotonicMs: number;
+  /** The record's wall-clock submit stamp. */
+  submittedAt: number;
+  /** The current wall-clock time. */
+  nowWall: number;
+  thresholdMs: number;
+}): boolean {
+  const wall = input.nowWall - input.submittedAt;
+  const elapsed = Math.max(
+    Number.isFinite(input.monotonicMs) && input.monotonicMs > 0
+      ? input.monotonicMs
+      : 0,
+    Number.isFinite(wall) && wall > 0 ? wall : 0,
+  );
+  return elapsed > input.thresholdMs;
 }
 
 /** Device-local record of a close-out this browser broadcast.

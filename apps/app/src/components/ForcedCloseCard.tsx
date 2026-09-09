@@ -48,10 +48,11 @@ import { useActiveChain } from '../chain/useActiveChain';
 import { useSanctionsCheck } from '../data/sanctions';
 import { ConfirmReceipt } from './ConfirmReceipt';
 import { settled } from '../contracts/ownReceipt';
-import { useNowSec } from '../hooks/useNowSec';
+import { DEFAULT_NOW_PERIOD_MS, useNowSec } from '../hooks/useNowSec';
 import {
   forcedCloseSubmissionKey,
   isHoldingAfterSubmit,
+  isUnaccounted,
   readForcedCloseSubmission,
   writeForcedCloseSubmission,
   type ForcedCloseDisposition,
@@ -381,10 +382,53 @@ export function ForcedCloseCard({
    *  same thing from the reader's side — the app cannot account for the
    *  transaction — even though its cause is ours rather than the
    *  chain's. */
+  /** How long THIS mount has held the submission, on a monotonic clock.
+   *
+   *  ROUND 57 P2 — the wall clock alone could not be trusted with this,
+   *  because it gates the only route out of a hold that evidence will
+   *  never release; `isUnaccounted` carries that reasoning.
+   *
+   *  Ticked into state rather than read during render, and the lint rule
+   *  that forces this is right on both counts it raises:
+   *  `performance.now()` is an impure call, and a ref holding the answer
+   *  would not re-render the card when the answer changed. A ticking
+   *  value is what "elapsed time" actually is here — the same shape
+   *  `useNowSec` has for the wall clock, at the same 30s period against a
+   *  three-minute threshold.
+   *
+   *  Carries the hash it was measured for, so a second close-out on this
+   *  position starts its own clock instead of inheriting the first one's,
+   *  and a value left over from a previous submission is ignored rather
+   *  than counted. */
+  const [outstanding, setOutstanding] = useState<{
+    hash: string;
+    ms: number;
+  } | null>(null);
+  useEffect(() => {
+    if (submitted === null) return;
+    const startedAt = performance.now();
+    const hash = submitted.hash;
+    const id = setInterval(
+      () => setOutstanding({ hash, ms: performance.now() - startedAt }),
+      DEFAULT_NOW_PERIOD_MS,
+    );
+    return () => clearInterval(id);
+  }, [submitted]);
+
   const unaccounted =
     submitted !== null &&
     (disposition === null || disposition === 'undetermined') &&
-    nowSec * 1000 - submitted.at > RECEIPT_WAIT_TIMEOUT_MS;
+    isUnaccounted({
+      monotonicMs:
+        outstanding !== null && outstanding.hash === submitted.hash
+          ? outstanding.ms
+          : 0,
+      submittedAt: submitted.at,
+      // Read from `nowSec` rather than `Date.now()` so the value is
+      // stable within a render pass — the reason `useNowSec` exists.
+      nowWall: nowSec * 1000,
+      thresholdMs: RECEIPT_WAIT_TIMEOUT_MS,
+    });
 
   /** ROUND 53 P2 — the invalidation must follow the WATCHER, not only
    *  the write.
@@ -1057,10 +1101,9 @@ export function ForcedCloseCard({
           every candidate holds the rented NFT as collateral; each is then
           required to price both of its own assets, which that leg cannot
           do; and `_settleLeg` moves both matched legs as ERC-20 anyway.
-          The full three steps are on the `ready-rental` row. So a rental
-          ends as a rental, and this warning belongs only to the states
-          whose `matchRace` is true: `ready-in-kind`, `ready-needs-route`
-          and `blocked-no-consent`. */}
+          Those steps are on the `ready-rental` row. So a rental ends as a
+          rental, and its row says `matchRace: false` — which is the
+          entire statement, and the sentence stops there. */}
       {view.matchRace && !holdingAfterSubmit ? (
         <p className="muted" data-testid="forced-close-match-may-appear">
           {copy.forcedClose.matchMayAppear}

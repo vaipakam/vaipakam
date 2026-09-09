@@ -24,6 +24,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   isHoldingAfterSubmit,
+  isUnaccounted,
   type ForcedCloseDisposition,
 } from './forcedCloseHold';
 
@@ -341,5 +342,123 @@ describe('isHoldingAfterSubmit — exhaustive over the disposition space', () =>
         }),
       ).toBe(expected);
     }
+  });
+});
+
+/**
+ * `isUnaccounted` — round 57 P2.
+ *
+ * The bug: the card computed this as `Date.now() - submittedAt`, so a
+ * device clock corrected BACKWARD after the submit kept the value
+ * negative until wall time caught up. That is not cosmetic. A dropped
+ * transaction never produces a disposition, so the hold never releases
+ * on evidence, and the only way back to the action is the lender saying
+ * their wallet no longer shows it — a control that appears only when
+ * this is true. A backward jump therefore left a real position
+ * permanently unclosable from the app.
+ */
+describe('isUnaccounted', () => {
+  const THRESHOLD = 3 * 60_000;
+  const SUBMITTED_AT = 1_000_000;
+
+  it('is false before the threshold on either measure', () => {
+    expect(
+      isUnaccounted({
+        monotonicMs: 60_000,
+        submittedAt: SUBMITTED_AT,
+        nowWall: SUBMITTED_AT + 60_000,
+        thresholdMs: THRESHOLD,
+      }),
+    ).toBe(false);
+  });
+
+  it('is true once the wall clock passes the threshold', () => {
+    expect(
+      isUnaccounted({
+        monotonicMs: 0,
+        submittedAt: SUBMITTED_AT,
+        nowWall: SUBMITTED_AT + THRESHOLD + 1,
+        thresholdMs: THRESHOLD,
+      }),
+    ).toBe(true);
+  });
+
+  // THE REGRESSION. The clock moved back an hour after the submit, so
+  // the wall measure is deeply negative; the monotonic one is what has
+  // to carry it.
+  it('is true on monotonic elapsed alone when the clock moved BACKWARD', () => {
+    expect(
+      isUnaccounted({
+        monotonicMs: THRESHOLD + 1,
+        submittedAt: SUBMITTED_AT,
+        nowWall: SUBMITTED_AT - 3_600_000,
+        thresholdMs: THRESHOLD,
+      }),
+    ).toBe(true);
+  });
+
+  // The same shape reached the other way: the marker was written while
+  // the clock was wrongly in the future, then the clock was corrected.
+  it('is true despite a persisted stamp from the future', () => {
+    expect(
+      isUnaccounted({
+        monotonicMs: THRESHOLD + 1,
+        submittedAt: SUBMITTED_AT + 86_400_000,
+        nowWall: SUBMITTED_AT,
+        thresholdMs: THRESHOLD,
+      }),
+    ).toBe(true);
+  });
+
+  // A negative wall measure contributes NOTHING rather than dominating.
+  // If it were allowed to win, the max would be negative and the escape
+  // hatch would stay hidden — the defect itself.
+  it('does not let a negative wall measure suppress a monotonic one', () => {
+    expect(
+      isUnaccounted({
+        monotonicMs: 0,
+        submittedAt: SUBMITTED_AT,
+        nowWall: SUBMITTED_AT - 3_600_000,
+        thresholdMs: THRESHOLD,
+      }),
+    ).toBe(false);
+  });
+
+  // A returning lender sees the true state at once rather than waiting
+  // out the threshold again: the mount is new, so monotonic is 0, and
+  // the wall measure carries it.
+  it('is true immediately after a reload of a long-outstanding submit', () => {
+    expect(
+      isUnaccounted({
+        monotonicMs: 0,
+        submittedAt: SUBMITTED_AT,
+        nowWall: SUBMITTED_AT + 86_400_000,
+        thresholdMs: THRESHOLD,
+      }),
+    ).toBe(true);
+  });
+
+  it('treats a non-finite measure as no evidence rather than as elapsed', () => {
+    expect(
+      isUnaccounted({
+        monotonicMs: Number.NaN,
+        submittedAt: Number.NaN,
+        nowWall: SUBMITTED_AT,
+        thresholdMs: THRESHOLD,
+      }),
+    ).toBe(false);
+  });
+
+  // Exactly at the threshold is not past it — the boundary is stated so
+  // a later `>=` cannot drift in unnoticed.
+  it('is false exactly at the threshold', () => {
+    expect(
+      isUnaccounted({
+        monotonicMs: THRESHOLD,
+        submittedAt: SUBMITTED_AT,
+        nowWall: SUBMITTED_AT + THRESHOLD,
+        thresholdMs: THRESHOLD,
+      }),
+    ).toBe(false);
   });
 });
