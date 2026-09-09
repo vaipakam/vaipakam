@@ -11611,4 +11611,19 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     );
     expect(r.ok).toBe(false);
   });
+
+  it('a named truncate needs no module (#2066 r38 self-review bounds)', () => {
+    // The other half of qualifying `truncate`: the NAMED scan keeps the
+    // unqualified spelling, because the config's literal path in the call is
+    // the evidence a module would otherwise supply. Claimed in the commit
+    // that made the change, and pinned here afterwards.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'sa.mjs',
+      'truncateSync("configs/custom.jsonc", 0);\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
 });
