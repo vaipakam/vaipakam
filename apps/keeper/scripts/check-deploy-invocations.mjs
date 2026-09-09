@@ -3264,84 +3264,6 @@ function classifyText(text, lang) {
     const jsLike = lang === 'js';
     const pyLike = lang === 'py';
     const hashComments = !jsLike;
-    // A JavaScript REGEX LITERAL is data, and telling one from division
-    // needs the preceding token: `/` after an operand divides, `/` after an
-    // operator or a keyword opens a pattern. `const example =
-    // /copy(source, destination)/` was read as code and reported a config
-    // nothing had touched (r13).
-    //
-    // Deliberately one-sided. `)`, `]` and `}` are NOT accepted as openers,
-    // so `(a + b) / c` and `x[i] / y` stay division — the direction that
-    // errs is the one that leaves a regex classified as code, which is the
-    // false red this fixes rather than a false green it could create.
-    const regexOpens = (idx) => {
-      let p = idx - 1;
-      // Trivia, not only whitespace: `= /* note */ /re/` still follows an
-      // assignment, and stopping on the comment's own slash lost it (r21).
-      while (p >= 0 && (/\s/.test(text[p]) || kind[p] === 2)) p -= 1;
-      if (p < 0) return true;
-      const ch = text[p];
-      // …but a POSTFIX `++`/`--` produces a VALUE, so the slash after it
-      // divides. Reading the second `+` as an operator made
-      // `x++ / (copyFileSync("generated.jsonc", cfg), 2) / 3` a pattern and
-      // classified the copy between the slashes as data — the false GREEN
-      // the one-sidedness above exists to prevent, arriving through the one
-      // operator that can also end an operand (r14).
-      if ((ch === '+' || ch === '-') && text[p - 1] === ch) return false;
-      // `>` and `<` are operators expecting an operand, so a slash straight
-      // after one opens a pattern — `() => /copy(source, destination)/` is
-      // the ordinary case, and an arrow body is where a regex most often
-      // sits (r15). A comparison is unaffected: in `a > b / c` the slash
-      // follows `b`, not the operator.
-      if ('=(,[{;:!&|?+-*%~^><'.includes(ch)) return true;
-      // A CONTROL CONDITION's closing paren is not a value. `if (enabled)
-      // /copy(a, b)/.test(v)` opens a pattern where `(a + b) / c` divides —
-      // the same character, told apart by what its paren belongs to (r17).
-      if (ch === ')') {
-        let d = 0;
-        let u = p;
-        for (; u >= 0 && p - u < 2000; u -= 1) {
-          // Parens inside a LITERAL are not syntax. Counting them stopped at
-          // the `(` in `foo("if(")`, read the `if` in front as a control
-          // keyword, and classified a division as a pattern — hiding the copy
-          // between the slashes (r19).
-          if (kind[u] !== 0) continue;
-          if (text[u] === ')') d += 1;
-          else if (text[u] === '(') {
-            d -= 1;
-            if (d === 0) break;
-          }
-        }
-        if (u < 0 || d !== 0) return false;
-        let w = u - 1;
-        // Trivia, not only whitespace: `if /* note */ (enabled)` is still an
-        // `if`, and stopping at the comment lost it (r20).
-        while (w >= 0 && (/\s/.test(text[w]) || kind[w] === 2)) w -= 1;
-        let e = w;
-        while (e >= 0 && /[A-Za-z0-9_$]/.test(text[e])) e -= 1;
-        if (!/^(?:if|while|for|switch|catch|with)$/.test(text.slice(e + 1, w + 1))) return false;
-        // …and a METHOD named after a keyword is not one. `obj.if(enabled)`
-        // is a call whose result divides (r20) — the same qualified-property
-        // rule the keyword branch below applies.
-        let qd = e;
-        while (qd >= 0 && (/\s/.test(text[qd]) || kind[qd] === 2)) qd -= 1;
-        return !(text[qd] === '.' && text[qd - 1] !== '.');
-      }
-      if (!/[A-Za-z0-9_$]/.test(ch)) return false;
-      let s = p;
-      while (s >= 0 && /[A-Za-z0-9_$]/.test(text[s])) s -= 1;
-      // A PROPERTY NAMED LIKE A KEYWORD IS AN OPERAND. `obj.return / x / y` is
-      // division; reading the bare word made the slash open a pattern and
-      // swallowed the copy between the two — a false green (r18).
-      // …and JavaScript allows trivia around member access, so `obj . return`
-      // is the same property and the raw preceding character is not (r19).
-      let dot = s;
-      while (dot >= 0 && (/\s/.test(text[dot]) || kind[dot] === 2)) dot -= 1;
-      if (text[dot] === '.' && text[dot - 1] !== '.') return false;
-      return /^(?:return|throw|typeof|case|in|of|new|delete|void|instanceof|do|else|yield|await)$/.test(
-        text.slice(s + 1, p + 1),
-      );
-    };
     // A Python string PREFIX, and whether it makes the literal an f-string.
     const pyPrefix = (idx) => {
       let p = idx;
@@ -3369,7 +3291,11 @@ function classifyText(text, lang) {
       const c = text[i];
       if (q) {
         kind[i] = 1;
-        if (c === '\\') {
+        // In SHELL single quotes a backslash is literal and escapes nothing,
+        // so `X='x\\'` closes there. Skipping the next character kept the rest
+        // of the line inside the string, and a redirection after it was
+        // suppressed as part of an inert assignment (r24).
+        if (c === '\\' && !(lang === 'shell' && q === "'")) {
           if (i + 1 < text.length) kind[i + 1] = 1;
           i += 1;
           continue;
@@ -3487,10 +3413,15 @@ function classifyText(text, lang) {
       if (lang === 'shell' && c === '<' && text[i + 1] === '<') {
         // Bash quote-removes the delimiter word, so `<<\\EOF` is as quoted as
         // `<<'EOF'` and its body is literal input too (r23).
-        const h =
-          /^<<(-?)\s*(?:(['"])([A-Za-z_][A-Za-z0-9_]*)\2|\\([A-Za-z_][A-Za-z0-9_]*))/.exec(
-            text.slice(i, i + 80),
-          );
+        // The WHOLE delimiter word, quote-removed the way Bash does it:
+        // `<<'E'OF` is the delimiter `EOF`, and reading only the first quoted
+        // chunk searched for `E`, found no terminator, and marked the rest of
+        // the FILE as heredoc data — suppressing every real write after the
+        // actual `EOF` (r24). Quoted anywhere in the word means the body is
+        // literal.
+        const hw = /^<<(-?)\s*((?:'[^']*'|"[^"]*"|\\.|[A-Za-z0-9_])+)/.exec(text.slice(i, i + 200));
+        const quoted = hw ? /['"\\]/.test(hw[2]) : false;
+        const h = hw && quoted ? [hw[0], hw[1], null, hw[2].replace(/['"\\]/g, '')] : null;
         const nl = h ? text.indexOf('\n', i) : -1;
         if (h && nl !== -1) {
           // `<<` wants the delimiter at column zero; only `<<-` strips leading
@@ -3498,7 +3429,7 @@ function classifyText(text, lang) {
           // `  EOF` terminate the document early, so the text after it read as
           // code (r22).
           const lead = h[1] === '-' ? '\\t*' : '';
-          const end = new RegExp(`\\n${lead}${h[3] ?? h[4]}[ \\t]*(?:\\n|$)`).exec(text.slice(nl));
+          const end = new RegExp(`\\n${lead}${h[3]}[ \\t]*(?:\\n|$)`).exec(text.slice(nl));
           const stop = end ? nl + end.index + end[0].length : text.length;
           kind.fill(2, nl, stop);
           i = stop - 1;
@@ -3545,29 +3476,20 @@ function classifyText(text, lang) {
         i = stop - 1;
         continue;
       }
-      if (jsLike && c === '/' && regexOpens(i)) {
-        let p = i + 1;
-        let cls = false;
-        let closed = false;
-        for (; p < text.length && text[p] !== '\n'; p += 1) {
-          const d = text[p];
-          if (d === '\\') p += 1;
-          else if (cls) {
-            if (d === ']') cls = false;
-          } else if (d === '[') cls = true;
-          else if (d === '/') {
-            closed = true;
-            break;
-          }
-        }
-        // Only a literal that CLOSES on its own line. An unterminated `/`
-        // is division after all, and blanking to end of file on it would be
-        // a false green.
-        if (closed) {
-          kind.fill(1, i, p + 1);
-          i = p;
-        }
-      }
+      // A JAVASCRIPT REGEX LITERAL IS NOT CLASSIFIED, deliberately. Telling one
+      // from division needs the preceding token, and that predicate produced
+      // findings in SEVEN rounds (r15-r19, r21, r24) — arrow bodies, postfix
+      // `++`, control-condition parens, keyword-named properties, trivia,
+      // parens inside literals, TypeScript's postfix `!` — of which FIVE were
+      // false GREENS: a mis-read opener swallows the code between two slashes,
+      // including any real write in it.
+      //
+      // It existed only to stop a regex CONTAINING a write verb reading as a
+      // write. Since r20 the generic verbs need a filesystem qualifier, so
+      // that means a literal like `/fs.copy(a, b)/` in a file that also
+      // deploys — contrived, and a false RED if it ever appears, which is the
+      // cheap direction. A heuristic that trades five misses for one
+      // hypothetical report is not worth keeping.
     }
   classifyCache = { text, lang, kind };
   return kind;
@@ -3622,14 +3544,24 @@ function inTestExpression(idx, text, kind) {
   // has already closed and the `>` is still a comparison (r22).
   let sub = 0;
   let tick = false;
+  let sq = false;
   for (let i = open; i < idx; i += 1) {
-    // Backticks are the legacy spelling of the same thing, and leaving them
-    // untracked exempted a live redirection inside one (r23).
-    if (text[i] === '`') tick = !tick;
-    else if (text[i] === '$' && text[i + 1] === '(') {
+    // SINGLE quotes are what make a substitution literal: inside DOUBLE quotes
+    // `$(…)` and backticks still expand. So this tracks the quote CHARACTER
+    // rather than asking whether the offset is quoted at all — r23 added
+    // backticks, and r24 showed a literal one flipping the state so that a
+    // real substitution read as already closed.
+    const ch = text[i];
+    if (sq) {
+      if (ch === "'") sq = false;
+      continue;
+    }
+    if (ch === "'") sq = true;
+    else if (ch === '`') tick = !tick;
+    else if (ch === '$' && text[i + 1] === '(') {
       sub += 1;
       i += 1;
-    } else if (text[i] === ')' && sub > 0) sub -= 1;
+    } else if (ch === ')' && sub > 0) sub -= 1;
   }
   return sub === 0 && !tick;
 }
@@ -3694,7 +3626,10 @@ function isCommandPayload(idx, text, kind) {
   // The EVALUATE flags by name, long and short. `--eval` does not end in
   // `e`-after-dashes the way a grouped short option does, so a suffix test
   // missed it (r23); matching any option ending in c/e would take `--trace`.
-  return /(['"`])(?:-{1,2}(?:eval|command|c)|-[a-zA-Z]*e)\1\s*,\s*$/.test(args);
+  if (/(['"`])(?:-{1,2}(?:eval|command|c)|-[a-zA-Z]*e)\1\s*,\s*$/.test(args)) return true;
+  // …or the flag and its source share ONE literal: `["--eval=…"]` (r24). The
+  // payload is then the literal this offset already sits in.
+  return /-{1,2}(?:eval|command|e|c)=/.test(text.slice(start, idx));
 }
 
 function isInertAssignment(idx, text, kind) {
@@ -3816,6 +3751,10 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
         return shellishDirect
           ? !isInertAssignment(m.index, text, directKind)
           : isCommandPayload(m.index, text, directKind);
+      // A `[[ … ]]` comparison is not a redirection on this path either. The
+      // named scan exempted it and this one did not, so
+      // `[[ "$left" > "configs/custom.jsonc" ]]` reported a rewrite (r24).
+      if (shellishDirect && inTestExpression(m.index, text, directKind)) return false;
       return true;
     })
     .map((m) => m.index);
@@ -3946,7 +3885,10 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
           ? // An assignment VALUE may be quoted, and quoted whitespace is still
             // one word — `LABEL="two words" cp gen.jsonc "$CFG"` copies (r17).
             // Matched as a shell word rather than as "contains no space".
-            String.raw`|(?:^|[;&|(])\s*(?:(?:[A-Za-z_]\w*=(?:"[^"]*"|'[^']*'|\S)*` +
+            // …and after a RESERVED WORD. `if true; then cp gen.jsonc "$CFG"; fi`
+            // starts a command at `then`, which is neither a line start nor a
+            // separator, so the copy was invisible (r24).
+            String.raw`|(?:^|[;&|(]|\b(?:then|else|do)\b)\s*(?:(?:[A-Za-z_]\w*=(?:"[^"]*"|'[^']*'|\S)*` +
             // A long option can take its argument SEPARATED — `sudo --user
             // root cp …` — and the generic branch consumed `--user` while
             // leaving `root` to be read as the command (r14). The long forms

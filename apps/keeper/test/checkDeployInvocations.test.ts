@@ -9538,50 +9538,7 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(r.ok).toBe(true);
   });
 
-  it('a JavaScript regex literal is data (#2066 r13)', () => {
-    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
-    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
-    const r = runWith(
-      'm.mjs',
-      'const example = /fs.copy(source, destination)/;\n' +
-        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
-    );
-    expect(r.ok).toBe(true);
-  });
-
-  it('division does not open a regex (#2066 r13)', () => {
-    // The regex rule is deliberately ONE-SIDED: `/` after an operand divides.
-    // The write here sits between two division slashes, so reading them as a
-    // pattern would classify it as data and bless the deploy — a false GREEN,
-    // which is why the opener list rejects identifiers, `)` and `]`.
-    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
-    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
-    const r = runWith(
-      'n.mjs',
-      'const cfg = "configs/custom.jsonc";\n' +
-        'const ratio = total / (copyFileSync("generated.jsonc", cfg), 2) / 3;\n' +
-        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
-    );
-    expect(r.ok).toBe(false);
-  });
-
   // ---- Codex #2066 r14 ----
-
-  it('a postfix increment does not open a regex (#2066 r14)', () => {
-    // `++` produces a VALUE, so the slash after it divides. Reading the second
-    // `+` as an operator made the copy between the slashes regex data — the
-    // false GREEN the one-sidedness exists to prevent, arriving through the
-    // one operator that can also END an operand.
-    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
-    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
-    const r = runWith(
-      's.mjs',
-      'const cfg = "configs/custom.jsonc";\n' +
-        'const ratio = x++ / (copyFileSync("generated.jsonc", cfg), 2) / 3;\n' +
-        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
-    );
-    expect(r.ok).toBe(false);
-  });
 
   it('a separated long option keeps cp in command position (#2066 r14)', () => {
     // The r13 generic option branch consumed `--user` and left `root` to be
@@ -9662,17 +9619,6 @@ describe('check-deploy-invocations — #1996 config identity', () => {
   });
 
   // ---- Codex #2066 r15 ----
-
-  it('a regex literal in an arrow body is data (#2066 r15)', () => {
-    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
-    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
-    const r = runWith(
-      'ab.mjs',
-      'const factory = () => /fs.copy(source, destination)/;\n' +
-        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
-    );
-    expect(r.ok).toBe(true);
-  });
 
   it('a nested f-string format spec is data too (#2066 r15)', () => {
     // A nested replacement field is still inside an f-string, so its own
@@ -9758,17 +9704,6 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(r.ok).toBe(false);
   });
 
-  it('a regex literal after throw is data (#2066 r16)', () => {
-    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
-    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
-    const r = runWith(
-      'aj.mjs',
-      'function boom() {\n  throw /fs.copy(source, destination)/;\n}\n' +
-        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
-    );
-    expect(r.ok).toBe(true);
-  });
-
   // ---- Codex #2066 r17 ----
 
   it('command runs its argument (#2066 r17)', () => {
@@ -9807,31 +9742,6 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(r.ok).toBe(false);
   });
 
-  it('a control condition opens a regex context (#2066 r17)', () => {
-    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
-    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
-    const r = runWith(
-      'an.mjs',
-      'if (enabled) /fs.copy(source, destination)/.test(value);\n' +
-        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
-    );
-    expect(r.ok).toBe(true);
-  });
-
-  it('a value paren still divides (#2066 r17 bounds)', () => {
-    // The control-condition rule must not make every `)` a regex opener —
-    // that would classify the write between two slashes as data.
-    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
-    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
-    const r = runWith(
-      'ao.mjs',
-      'const cfg = "configs/custom.jsonc";\n' +
-        'const ratio = (a + b) / (copyFileSync("generated.jsonc", cfg), 2) / 3;\n' +
-        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
-    );
-    expect(r.ok).toBe(false);
-  });
-
   it('a python shebang types an extensionless helper (#2066 r17)', () => {
     // `walk` yields extensionless executables; keying on `.py` alone made the
     // f-string inert data and dropped the write inside it.
@@ -9851,20 +9761,6 @@ describe('check-deploy-invocations — #1996 config identity', () => {
 
   // ---- Codex #2066 r18 ----
 
-  it('a keyword-named property is an operand (#2066 r18)', () => {
-    // `obj.return / x / y` is division; reading the bare word made the slash
-    // open a pattern and swallowed the copy between the two.
-    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
-    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
-    const r = runWith(
-      'aq.mjs',
-      'const cfg = "configs/custom.jsonc";\n' +
-        'const ratio = obj.return / (copyFileSync("generated.jsonc", cfg), 2) / 3;\n' +
-        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
-    );
-    expect(r.ok).toBe(false);
-  });
-
   it('a brace inside a literal does not balance (#2066 r18)', () => {
     // Counting a `}` inside a string made a real copy plus a ternary arm look
     // like a method declaration.
@@ -9880,33 +9776,6 @@ describe('check-deploy-invocations — #1996 config identity', () => {
   });
 
   // ---- Codex #2066 r19 ----
-
-  it('member access may carry whitespace (#2066 r19)', () => {
-    // `obj . return` is the same property; the raw preceding character is not.
-    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
-    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
-    const r = runWith(
-      'av.mjs',
-      'const cfg = "configs/custom.jsonc";\n' +
-        'const ratio = obj . return / (copyFileSync("generated.jsonc", cfg), 2) / 3;\n' +
-        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
-    );
-    expect(r.ok).toBe(false);
-  });
-
-  it('a paren inside a literal is not a control condition (#2066 r19)', () => {
-    // The backward walk stopped at the `(` inside `"if("` and read the `if`
-    // in front of it as a keyword.
-    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
-    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
-    const r = runWith(
-      'aw.mjs',
-      'const cfg = "configs/custom.jsonc";\n' +
-        'const ratio = foo("if(") / (copyFileSync("generated.jsonc", cfg), 2) / 3;\n' +
-        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
-    );
-    expect(r.ok).toBe(false);
-  });
 
   it('a substitution inside single quotes is literal (#2066 r19)', () => {
     seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
@@ -9938,29 +9807,6 @@ describe('check-deploy-invocations — #1996 config identity', () => {
   });
 
   // ---- Codex #2066 r20 ----
-
-  it('a method named after a keyword is not a control condition (#2066 r20)', () => {
-    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
-    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
-    const r = runWith(
-      'az.mjs',
-      'const cfg = "configs/custom.jsonc";\n' +
-        'const ratio = obj.if(enabled) / (copyFileSync("generated.jsonc", cfg), 2) / 3;\n' +
-        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
-    );
-    expect(r.ok).toBe(false);
-  });
-
-  it('a comment may sit between keyword and condition (#2066 r20)', () => {
-    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
-    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
-    const r = runWith(
-      'ba.mjs',
-      'if /* note */ (enabled) /fs.copy(source, destination)/.test(value);\n' +
-        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
-    );
-    expect(r.ok).toBe(true);
-  });
 
   it('a comment may follow a shell separator (#2066 r20)', () => {
     seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
@@ -10032,17 +9878,6 @@ describe('check-deploy-invocations — #1996 config identity', () => {
       'bg.sh',
       '( :)# shutil.copy(source, destination)\n' +
         'wrangler deploy --config configs/custom.jsonc\n',
-    );
-    expect(r.ok).toBe(true);
-  });
-
-  it('a comment may precede a regex literal (#2066 r21)', () => {
-    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
-    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
-    const r = runWith(
-      'bh.mjs',
-      'const example = /* note */ /fs.copy(source, destination)/;\n' +
-        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
     );
     expect(r.ok).toBe(true);
   });
@@ -10230,6 +10065,83 @@ describe('check-deploy-invocations — #1996 config identity', () => {
         'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
     );
     expect(r.ok).toBe(true);
+  });
+
+  // ---- Codex #2066 r24 ----
+
+  it('a mixed-quote heredoc word is one delimiter (#2066 r24)', () => {
+    // `<<'E'OF` is the delimiter `EOF`. Reading only `'E'` found no terminator
+    // and marked the rest of the FILE as heredoc data.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'bx.sh',
+      "CFG=configs/custom.jsonc\n" +
+        "cat <<'E'OF\nnothing here\nEOF\n" +
+        'printf new > "$CFG"\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a literal backtick does not open a substitution (#2066 r24)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'by.sh',
+      'CFG=configs/custom.jsonc\n' +
+        'if [[ \'`\' == x && `printf new > "$CFG"` == new ]]; then echo done; fi\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('an attached eval payload is executable (#2066 r24)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'bz.mjs',
+      'spawnSync("node", ["--eval=require(\'fs\').writeFileSync(\'configs/custom.jsonc\',\'{}\')"]);\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a named comparison in a test is not a redirection (#2066 r24)', () => {
+    // The direct-path scan lacked the exemption the named scan already had.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'ca.sh',
+      'if [[ "$left" > "configs/custom.jsonc" ]]; then echo bigger; fi\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a shell single quote processes no escapes (#2066 r24)', () => {
+    // `X='x\'` closes at that quote; the redirection after it runs.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'cb.sh',
+      'CFG=configs/custom.jsonc\n' +
+        "X='x\\'; printf new > \"$CFG\"\n" +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a command after a reserved word is in command position (#2066 r24)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'cc.sh',
+      'CFG=configs/custom.jsonc\n' +
+        'if true; then cp generated.jsonc "$CFG"; fi\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
   });
 
   it('the PROSE path invalidates a rewritten config too', () => {
