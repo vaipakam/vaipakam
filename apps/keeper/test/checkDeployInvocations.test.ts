@@ -11204,4 +11204,104 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     );
     expect(r.ok).toBe(true);
   });
+
+  // ---- Codex #2066 r35 ----
+
+  it('an arrow function is not a redirection (#2066 r35)', () => {
+    // `>` is a redirection in a shell and an arrow, or a comparison, in
+    // JavaScript. The direct scan applied the shell reading everywhere.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'la.mjs',
+      'const pick = x => "configs/custom.jsonc";\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a copy verb as an identifier is not a command (#2066 r35)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'lc.py',
+      'import subprocess\n' +
+        'if cp and target == "configs/custom.jsonc":\n    pass\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a shell payload inside a JS wrapper is still shell (#2066 r35 bounds)', () => {
+    // The correction that matters: gating those alternatives on the FILE's
+    // language is the obvious reading of the finding and it is wrong. A
+    // payload handed to `sh -c` inside a `.mjs` wrapper is shell, and eight
+    // pinned payload fixtures went red on that reading.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'le.mjs',
+      'spawnSync("sh", ["-c", "printf new > configs/custom.jsonc"]);\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('an optional call of a constructed function invokes (#2066 r35)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'lf.mjs',
+      'Function("writeFileSync(\'configs/custom.jsonc\',\'{}\')")?.();\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('an attached short option carries its source (#2066 r35)', () => {
+    // `bun -esource` runs it exactly as `--eval=source` does.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'lg.mjs',
+      'spawnSync("bun", ["-erequire(\'fs\').writeFileSync(\'configs/custom.jsonc\',\'{}\')"]);\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a suffixed interpreter is the same interpreter (#2066 r35)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'lh.mjs',
+      'spawnSync("node.exe", ["-e", "require(\'fs\').writeFileSync(\'configs/custom.jsonc\',\'{}\')"]);\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('perl -p prints rather than evaluates (#2066 r35)', () => {
+    // r33 said `-p` was "Node's letter set, not everyone's" and then put it
+    // in the table perl and ruby read from. The claim and the code disagreed.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'li.mjs',
+      'spawnSync("perl", ["-p", "require(\'fs\').writeFileSync(\'configs/custom.jsonc\',\'{}\')"]);\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('node -p still evaluates (#2066 r35 bounds)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'lj.mjs',
+      'spawnSync("node", ["-p", "require(\'fs\').writeFileSync(\'configs/custom.jsonc\',\'{}\')"]);\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
 });

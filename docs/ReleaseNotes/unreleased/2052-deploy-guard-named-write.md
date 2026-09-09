@@ -168,6 +168,20 @@ withdrawn in the same sitting: a list of plausible variable names is precisely
 the open-ended predicate this work keeps removing. Where the path is
 constructed in place the shape is syntax rather than type, and is still read.
 
+Shell syntax only reads as shell where a shell is running. A greater-than is a
+redirection in a script and an arrow, or a comparison, in JavaScript; a copying
+verb is a command in a script and an ordinary name in Python. One of the two
+scans had always drawn that line and the other had not, so both spellings
+reported configurations nothing touched.
+
+Correcting it needed more care than the report suggested, and the obvious
+reading was wrong: the line is not drawn by the FILE's language. A shell
+command handed to an interpreter from inside a JavaScript wrapper really is
+shell, and deciding by the file lost eight pinned cases of exactly that. It is
+drawn by POSITION — text quoted and handed to something that runs it is judged
+on whether something runs it, and only text claiming to be the file's own
+syntax is read in the file's own language.
+
 Where a file-open mode may sit depends on what the call is opening, and that
 is the language's rule rather than a preference. For the builtin and for a
 module's open, the first argument is the file — so a call with a single string

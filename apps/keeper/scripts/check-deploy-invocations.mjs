@@ -3601,24 +3601,41 @@ const FS_OPEN =
   String.raw`(?<![A-Za-z0-9_$.])(?:(?:io|codecs|pathlib|gzip|bz2|lzma)\s*\.\s*` +
   String.raw`|Path\s*\([^()]*\)\s*\.\s*)?open`;
 
+// The direct alternatives that are SHELL SPELLINGS: a redirection, and a copy
+// command in command position. Used to drop them when a match in code position
+// comes from a file that is not a shell.
+const SHELL_SYNTAX_WRITE = /^[\s;&|(]*(?:>|(?:cp|mv|install|rsync)\s)/;
+
 // The evaluate-option tests, by which letter the interpreter runs source with.
 // Built once: `isCommandPayload` is called per write match, and compiling a
 // pattern per call to interpolate one character is the sort of cost this file
 // has already paid for twice.
+// The ATTACHED forms take the source with or without an `=`: `bun -esource`
+// runs it exactly as `bun --eval=source` does, and requiring the equals left
+// the executed literal read as inert (r35).
 const EVAL_C = {
   grouped: /(['"`])(?:-{1,2}(?:eval|command)|-[a-zA-Z]*c[a-zA-Z]*)\1\s*,\s*$/,
-  attached: /-{1,2}(?:eval|command|c)=/,
+  attached: /-{1,2}(?:eval|command)=|-c(?:=|(?=\S))/,
 };
-// `-p` / `--print` EVALUATES AND PRINTS, so it runs the source just as `-e`
-// does (r33). Node's letter set, not everyone's: `perl -p` wraps a loop and
-// still needs its own `-e`, which the `e` already matches.
+// `-e` alone, for the runtimes where `-p` means something else. r33 said in
+// as many words that `-p` was "Node's letter set, not everyone's" and then
+// put it in the table PERL and RUBY read from, where `-p` is a printing loop
+// and not an evaluator — so the claim and the code disagreed and a harmless
+// `perl -p` reported (r35). Two tables now, which is what the sentence
+// described.
 const EVAL_E = {
+  grouped: /(['"`])(?:-{1,2}(?:eval|command)|-[a-zA-Z]*e[a-zA-Z]*)\1\s*,\s*$/,
+  attached: /-{1,2}(?:eval|command)=|-e(?:=|(?=\S))/,
+};
+
+// …and `-e` or `-p` for the runtimes where BOTH evaluate.
+const EVAL_EP = {
   grouped: /(['"`])(?:-{1,2}(?:eval|command|print)|-[a-zA-Z]*[ep][a-zA-Z]*)\1\s*,\s*$/,
-  attached: /-{1,2}(?:eval|command|print|e|p)=/,
+  attached: /-{1,2}(?:eval|command|print)=|-[ep](?:=|(?=\S))/,
 };
 const EVAL_CE = {
   grouped: /(['"`])(?:-{1,2}(?:eval|command)|-[a-zA-Z]*[ce][a-zA-Z]*)\1\s*,\s*$/,
-  attached: /-{1,2}(?:eval|command|e|c)=/,
+  attached: /-{1,2}(?:eval|command)=|-[ce](?:=|(?=\S))/,
 };
 
 /**
@@ -3742,6 +3759,10 @@ function immediatelyInvoked(open, text, kind) {
       if (depth === 0) {
         let j = i + 1;
         while (j < text.length && (/\s/.test(text[j]) || kind[j] === 2)) j += 1;
+        // `Function(…)?.()` invokes too, which the owner walk already reads
+        // one level up and this did not (r35).
+        if (text[j] === '?' && text[j + 1] === '.') j += 2;
+        while (j < text.length && (/\s/.test(text[j]) || kind[j] === 2)) j += 1;
         return text[j] === '(';
       }
     }
@@ -3817,8 +3838,12 @@ function isCommandPayload(idx, text, kind) {
   // call with a keyword, and the anchor could not cross `args=` — so `prog`
   // was null again and the fallback accepted both letters (r29).
   const prog = /\(\s*(?:[A-Za-z_]\w*\s*=\s*)?\[?\s*(['"`])([^'"`]*)\1/.exec(args);
+  // A Windows wrapper spawns `node.exe`, which is the same interpreter with a
+  // suffix — and an exact-name test rejected it before the flag was read
+  // (r35). Stripped once, so every test below sees the same name.
+  const progName = prog ? prog[2].replace(/\.(?:exe|cmd|bat)$/i, '') : null;
   const INTERP = /(?:^|\/)(?:node|deno|bun|python[\d.]*|perl|ruby|sh|bash|zsh|dash|ksh|env)$/;
-  if (prog && !INTERP.test(prog[2])) return false;
+  if (prog && !INTERP.test(progName)) return false;
   // A GROUPED short option counts when it contains the evaluate letter:
   // `bash -ec '…'` runs the payload, and requiring the group to END in `e`
   // missed it (r26).
@@ -3831,11 +3856,13 @@ function isCommandPayload(idx, text, kind) {
   // this reader cannot see — keeps both letters, the reporting direction.
   const letters = !prog
     ? EVAL_CE
-    : /(?:^|\/)(?:sh|bash|zsh|dash|ksh|python[\d.]*)$/.test(prog[2])
+    : /(?:^|\/)(?:sh|bash|zsh|dash|ksh|python[\d.]*)$/.test(progName)
       ? EVAL_C
-      : /(?:^|\/)(?:node|deno|bun|perl|ruby)$/.test(prog[2])
-        ? EVAL_E
-        : EVAL_CE;
+      : /(?:^|\/)(?:node|deno|bun)$/.test(progName)
+        ? EVAL_EP
+        : /(?:^|\/)(?:perl|ruby)$/.test(progName)
+          ? EVAL_E
+          : EVAL_CE;
   if (letters.grouped.test(args)) return true;
   // …or the flag and its source share ONE literal: `["--eval=…"]` (r24). The
   // payload is then the literal this offset already sits in.
@@ -4061,6 +4088,20 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
         return shellishDirect
           ? !isInertAssignment(m.index, text, directKind)
           : isCommandPayload(m.index, text, directKind);
+      // SHELL SYNTAX IN CODE POSITION IS ONLY SHELL IN A SHELL. A redirection
+      // and a bare copy command are shell spellings, and in JavaScript the
+      // same characters are an arrow function, a comparison, or an ordinary
+      // identifier — `const pick = x => "configs/custom.jsonc"` and `if cp and
+      // target == "…"` both reported a config nothing touched (r35).
+      //
+      // Asked of the POSITION and not of the FILE, which is the correction
+      // that matters here. Gating these alternatives on the file's language
+      // was the obvious reading of the finding and it is wrong: a payload
+      // handed to `sh -c` inside a `.mjs` wrapper IS shell, and eight pinned
+      // payload fixtures went red on it. A quoted run reaches this branch as
+      // a string and is judged by whether something runs it; only a match in
+      // CODE position is claiming to be the file's own syntax.
+      if (!shellishDirect && SHELL_SYNTAX_WRITE.test(m[0])) return false;
       // A `[[ … ]]` comparison is not a redirection on this path either. The
       // named scan exempted it and this one did not, so
       // `[[ "$left" > "configs/custom.jsonc" ]]` reported a rewrite (r24).
