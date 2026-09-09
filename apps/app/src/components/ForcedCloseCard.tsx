@@ -689,9 +689,17 @@ export function ForcedCloseCard({
    *  Six findings on this PR were the same shape: a string true of one
    *  route, rendered on a set of routes picked by hand — the rental
    *  described as a collateral transfer, the race promising failure, the
-   *  race disclosed in one direction, then disclosed on two of the four
+   *  race disclosed in one direction, then disclosed on only some of the
    *  states it applies to. Every one of those was a `readiness === 'a'
    *  || readiness === 'b'` written while looking at a and b.
+   *
+   *  A LATER RUN OF FINDINGS (rounds 50, 53-56) was the same shape one
+   *  layer out: the table stayed right and the PROSE beside it drifted,
+   *  five times, each a sentence that restated a column instead of
+   *  naming it. Two of those were introduced by fixing the previous one.
+   *  So the rule for editing any comment in this file is the rule the
+   *  table already enforces for the code — point at the column, never
+   *  re-enumerate what is in it, and never state its size.
    *
    *  A `Record<ForcedCloseReadiness, …>` cannot be written that way: the
    *  compiler refuses it until every state has an entry, so adding a
@@ -1016,17 +1024,19 @@ export function ForcedCloseCard({
           repay the lent asset instead of moving collateral.
 
           Shown on every state whose copy names an outcome the contract
-          could reach a different way — three of them, since round 55.
-          Getting there took two corrections in opposite directions. The
-          first version covered `ready-in-kind` and `ready-needs-route`
-          only, which is the same half-a-symmetric-disclosure mistake the
-          finding was about, one cycle later; widening it to all four
-          then swept in `ready-rental`, where the contract has no such
-          path at all (see below). The set is the `matchRace` column of
-          the table above, and it is a column precisely so that neither
-          correction has to be made by hand again.
+          could reach a different way — which is the `matchRace` column of
+          the table above, and deliberately not a set restated here.
 
-          Of those three, `blocked-no-consent` is the sharpest: it says the
+          It has been wrong in both directions, which is why it is a
+          column. The first version covered `ready-in-kind` and
+          `ready-needs-route` only — the same half-a-symmetric-disclosure
+          mistake the finding was about, one cycle later. Widening it to
+          every non-terminal state then swept in `ready-rental`, where the
+          contract has no such path at all (see below). Both corrections
+          were made by hand, and a third sentence restating the result is
+          how the second one survived a round.
+
+          `blocked-no-consent` is the sharpest of them: it says the
           close-out is refused FOR EVERYONE. The dispatch at
           DefaultedFacet.sol:287 returns before the consent-gated in-kind
           branch is ever reached, and `hasInternalMatchCandidate` filters
