@@ -10085,6 +10085,79 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(r.ok).toBe(true);
   });
 
+  // ---- Codex #2066 r19 ----
+
+  it('member access may carry whitespace (#2066 r19)', () => {
+    // `obj . return` is the same property; the raw preceding character is not.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'av.mjs',
+      'const cfg = "configs/custom.jsonc";\n' +
+        'const ratio = obj . return / (copyFileSync("generated.jsonc", cfg), 2) / 3;\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a paren inside a literal is not a control condition (#2066 r19)', () => {
+    // The backward walk stopped at the `(` inside `"if("` and read the `if`
+    // in front of it as a keyword.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'aw.mjs',
+      'const cfg = "configs/custom.jsonc";\n' +
+        'const ratio = foo("if(") / (copyFileSync("generated.jsonc", cfg), 2) / 3;\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a substitution inside single quotes is literal (#2066 r19)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'ax.sh',
+      "OUT='$(copy(source, destination))'\n" +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a quoted script name is not an invocation (#2066 r19)', () => {
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'apps/agent/package.json',
+      '{\n' +
+        '  "name": "@vaipakam/agent",\n' +
+        '  "scripts": {\n' +
+        '    "generate": "cp generated.jsonc configs/custom.jsonc",\n' +
+        '    "release": "echo \'pnpm run generate\' && wrangler deploy --config configs/custom.jsonc"\n' +
+        '  }\n' +
+        '}\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('the expanded safety read keeps the source language (#2066 r19 bounds)', () => {
+    // A bounds guard, and stated as one: the reported false red did NOT
+    // reproduce for me on the parent, with this shape or the reporter's. The
+    // fix stands on consistency — the safety call directly above this one has
+    // always passed the language, and omitting it here defaults the reader to
+    // shell, where a JavaScript comparison looks like a redirection. This
+    // pins that a comparison beside a variable-resolved deploy stays safe.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'ay.mjs',
+      'const CFG = "configs/custom.jsonc";\n' +
+        'if (value > "/tmp/x") report();\n' +
+        'spawnSync("wrangler", ["deploy", "--config", `${CFG}`]);\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
   it('the PROSE path invalidates a rewritten config too', () => {
     // That path passed the rewrite context to the safety reader and not to the
     // identity reader, so the identity half trusted the stale copy and sent the

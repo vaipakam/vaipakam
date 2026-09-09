@@ -3299,6 +3299,11 @@ function classifyText(text, lang) {
         let d = 0;
         let u = p;
         for (; u >= 0 && p - u < 2000; u -= 1) {
+          // Parens inside a LITERAL are not syntax. Counting them stopped at
+          // the `(` in `foo("if(")`, read the `if` in front as a control
+          // keyword, and classified a division as a pattern — hiding the copy
+          // between the slashes (r19).
+          if (kind[u] !== 0) continue;
           if (text[u] === ')') d += 1;
           else if (text[u] === '(') {
             d -= 1;
@@ -3318,7 +3323,11 @@ function classifyText(text, lang) {
       // A PROPERTY NAMED LIKE A KEYWORD IS AN OPERAND. `obj.return / x / y` is
       // division; reading the bare word made the slash open a pattern and
       // swallowed the copy between the two — a false green (r18).
-      if (text[s] === '.') return false;
+      // …and JavaScript allows trivia around member access, so `obj . return`
+      // is the same property and the raw preceding character is not (r19).
+      let dot = s;
+      while (dot >= 0 && (/\s/.test(text[dot]) || kind[dot] === 2)) dot -= 1;
+      if (text[dot] === '.' && text[dot - 1] !== '.') return false;
       return /^(?:return|throw|typeof|case|in|of|new|delete|void|instanceof|do|else|yield|await)$/.test(
         text.slice(s + 1, p + 1),
       );
@@ -3557,7 +3566,9 @@ function isInertAssignment(idx, text, kind) {
   // and the conservative answer — treat the value as live — costs a report on
   // a config that names itself, which is the direction this reader already
   // prefers everywhere else.
-  if (/\$\(|`/.test(text.slice(s, e))) return false;
+  // …in a form that EXPANDS. Inside single quotes a `$(` or a backtick is
+  // ordinary text, so `OUT='$(copy(a, b))'` performs nothing (r19).
+  if (text[s] !== "'" && /\$\(|`/.test(text.slice(s, e))) return false;
   let b = s;
   while (b > 0 && !'\n;&|('.includes(text[b - 1])) b -= 1;
   return /(?:^|\s)(?:export\s+|local\s+|declare\s+(?:-\S+\s+)*|readonly\s+|typeset\s+)?[A-Za-z_]\w*=$/.test(
@@ -8525,8 +8536,15 @@ for (const file of walk(REPO_ROOT)) {
         const seen = new Set();
         const follow = (body, depth, bound) => {
           if (depth > 2) return;
+          // QUOTED TEXT IS NOT AN INVOCATION. `echo 'pnpm run generate'` names
+          // a script without running it, and expanding on every textual match
+          // prepended that helper's body and rejected an unchanged config
+          // (r19). A payload genuinely handed to an interpreter is missed by
+          // this, which is incompleteness rather than noise.
+          const bodyKind = classifyText(body, 'shell');
           for (const mm of body.matchAll(new RegExp(INVOKE))) {
             if (bound !== null && mm.index >= bound) continue;
+            if (bodyKind[mm.index] !== 0) continue;
             const name = mm[2];
             // THE SELECTOR DECIDES WHOSE SCRIPT THIS IS. `pnpm --filter
             // @vaipakam/agent run generate` runs the agent's, not the
@@ -8658,6 +8676,11 @@ for (const file of walk(REPO_ROOT)) {
               '',
               rewriteCtx(part.start).text,
               rewriteCtx(part.start).at,
+              // The LANGUAGE too. Omitting it defaulted this reader to shell,
+              // so a JavaScript comparison such as `value > "/tmp/x"` was read
+              // as a redirection and rejected an unchanged config (r19). The
+              // call above it always passed the language; this one did not.
+              lineLang,
             ))
         ) {
           continue;
