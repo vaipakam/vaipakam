@@ -159,9 +159,11 @@ contract RewardHorizonSweepFacet is
         // 0.5 remaining both passed and 0.8 was credited from unrelated
         // custody. Same defect the walk had one round earlier — one fix, two
         // sites, and I shipped only the first.
-        uint256 allowance = LibVaipakam.isMirrorRewardChain(s)
-            ? LibInteractionRewards.deliveredFreshBound(s)
-            : type(uint256).max;
+        // #1566 closure 3 — the twin of the forfeit sweep's allowance in
+        // {InteractionRewardsFacet}. Same collapse for the same reason: the
+        // bound already answers for every role, and the negation's "not a
+        // mirror" arm handed `Detached` an unbounded expiry allowance.
+        uint256 allowance = LibInteractionRewards.deliveredFreshBound(s);
         for (uint256 i = 0; i < entryIds.length; ) {
             (
                 LibInteractionRewards.EntrySplit memory ex,

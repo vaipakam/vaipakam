@@ -543,12 +543,43 @@ reward reporter, all setter-accepts-and-emits with no numeric range:
   answer "am I the canonical chain?" could be turned off by a governance
   write. The canonical MARKER is `isCanonicalRewardChain`, set
   explicitly — but do not read that as this field being irrelevant:
-  `isMirrorRewardChain` is `!isCanonicalRewardChain && baseChainId != 0`,
-  so a non-canonical deployment that leaves `baseChainId` at zero is not
-  classified as a mirror and receives canonical / single-chain semantics,
-  which reaches mirror claim pricing and the commitment / remittance
-  paths. Zero here is a configuration state with consequences, not an
-  absence.) Note this
+  the reward role is resolved by `LibVaipakam.rewardRole` over FOUR
+  states — `Canonical`, `Mirror`, `Unconfigured`, `Detached` (#1566
+  closure 3) — and **zero here means two different things depending on
+  whether it was ever WRITTEN**:
+  - a zero that was **never written** (a deployment nobody configured)
+    resolves `Unconfigured` and keeps canonical / single-chain semantics —
+    the reward paths run unbounded from the schedule, exactly as before;
+  - an **explicit `setBaseChainId(0)`** stamps `rewardRoleConfigured` and
+    resolves `Detached`: the delivered-fresh bound is ZERO, so payouts
+    funded from delivered-fresh budget stop — and only those: schedule
+    rewards paid before arming are not consulted against the bound, and
+    recycled-funded legs still settle (Codex #2070 r20). It is not a payout
+    kill-switch; pausing the reward facets is. **That is the MIRROR's detach
+    procedure.** A CANONICAL chain is not detached by zeroing its base —
+    `Canonical` dominates a base, so `setBaseChainId(0)` on a canonical chain
+    leaves it `Canonical` (Codex #2070 r22/r23). Detaching a canonical chain
+    takes BOTH writes, in this order: `setBaseChainId(0)` first (still
+    `Canonical` — the flag dominates, so no mirror window opens), then
+    `setIsCanonicalRewardChain(false)`, which resolves `Detached` with the
+    base already zero. The reverse order resolves `Mirror` in between and
+    leaves delivered-fresh payouts enabled until the base is cleared; a
+    canonical deployment normally stores its own base, so the flag alone
+    never detaches it. Either procedure retires the delivered residual on the
+    way out. Do not call `setBaseChainId(0)` "to
+    reset" a chain — a chain you mean to leave unconfigured needs no call at
+    all. Note that
+    `setIsCanonicalRewardChain(false)` on a never-configured chain is a
+    no-op and does NOT stamp the role (an idempotent false→false write must
+    not turn `Unconfigured` into `Detached`); only enabling the flag, or
+    demoting a chain that was canonical, stamps it.
+  `ConfigureRewardReporter` refuses a zero base on a mirror for this
+  reason, and the in-place refresh requires `REWARD_ROLE_EXPECTED_<PREFIX>`
+  per chain so a Diamond detached under the old setters (field
+  zero-initialised) is backfilled to `Detached` rather than read as the
+  permissive `Unconfigured`. Read the resolved role back with
+  `getRewardRole()` — the two raw fields cannot tell these cases apart.)
+  Note this
   is a chain id, NOT a CCIP chain
   selector: since T-068 the reward flow identifies chains by
   `block.chainid` and leaves selector translation to the messenger. The

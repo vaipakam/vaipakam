@@ -301,10 +301,20 @@ contract RewardRemittanceLensFacet {
      *         released or reclassified delivery), so `paid` can legitimately
      *         exceed it and a hand-rolled subtraction would underflow.
      *
-     *         Zero `remaining` means armed-day payouts WAIT on this chain —
-     *         a satisfiable wait that the next remittance clears, not an
-     *         exhausted cap. On the canonical chain the bound does not apply
-     *         and `remaining` reads `type(uint256).max`.
+     *         Zero `remaining` has TWO meanings, and the reward role
+     *         ({RewardReporterFacet.getRewardRole}) tells them apart:
+     *           - on a `Mirror` it means armed-day payouts WAIT on this
+     *             chain — a satisfiable wait that the next remittance
+     *             clears, not an exhausted cap;
+     *           - on a `Detached` chain (#1566 closure 3) it is ROLE-ENFORCED:
+     *             no remittance can raise it while the role stays Detached,
+     *             because the chain has no authenticated source of further
+     *             delivery. Recovery is re-attachment (`setBaseChainId`),
+     *             not funding — a remittance sent to a Detached chain
+     *             changes nothing this lens reports.
+     *         On the canonical chain, and on an `Unconfigured` one, the
+     *         bound does not apply and `remaining` reads
+     *         `type(uint256).max`.
      * @return paid      Armed fresh this chain has paid out.
      * @return remaining Delivered-less-paid allowance still spendable.
      */

@@ -600,10 +600,28 @@ fi
 
 if [ "$FRESH" = "1" ]; then
   echo "[0] --fresh cleanup"
+  # #1566 (Codex #2070 r25 P1) — the sidecar this step creates is a RETIRED
+  # DIAMOND: the redeploy cannot wipe its on-chain custody, and the sidecar is
+  # gitignored, so it must land in the committed archive inventory BEFORE the
+  # move (record first, then move — the same order deploy-testnet/mainnet use)
+  # or the census loses that Diamond from its population. Any sidecar an
+  # earlier run left unrecorded is reconciled first; a failure to record aborts
+  # before anything is moved.
+  MANIFEST_WRITER="$REPO_ROOT/packages/contracts/scripts/archive-manifest.mjs"
+  ARCHIVE_MANIFEST="$CONTRACTS_DIR/deployments/archive-manifest.json"
+  for prior in "$CONTRACTS_DIR/deployments/$CHAIN_SLUG"/addresses.prior-rehearsal.*.json; do
+    [ -f "$prior" ] || continue
+    ts="$(basename "$prior" .json)"; ts="${ts##*.}"
+    node "$MANIFEST_WRITER" append "$ARCHIVE_MANIFEST" "$CHAIN_SLUG" "prior-rehearsal-$ts" "$prior" \
+      || { echo "ERROR: could not reconcile the unrecorded sidecar $(basename "$prior") into archive-manifest.json; refusing --fresh" >&2; exit 1; }
+  done
   if [ -f "$CONTRACTS_DIR/deployments/$CHAIN_SLUG/addresses.json" ]; then
-    BACKUP="$CONTRACTS_DIR/deployments/$CHAIN_SLUG/addresses.prior-rehearsal.$(date +%s).json"
+    TS="$(date +%s)"
+    BACKUP="$CONTRACTS_DIR/deployments/$CHAIN_SLUG/addresses.prior-rehearsal.$TS.json"
+    node "$MANIFEST_WRITER" append "$ARCHIVE_MANIFEST" "$CHAIN_SLUG" "prior-rehearsal-$TS" "$CONTRACTS_DIR/deployments/$CHAIN_SLUG/addresses.json" \
+      || { echo "ERROR: could not record the prior deployment in archive-manifest.json; refusing --fresh (nothing moved)" >&2; exit 1; }
     mv "$CONTRACTS_DIR/deployments/$CHAIN_SLUG/addresses.json" "$BACKUP"
-    echo "  ✓ backed up prior addresses.json → $(basename "$BACKUP")"
+    echo "  ✓ backed up prior addresses.json → $(basename "$BACKUP") — recorded in archive-manifest.json; COMMIT IT"
   else
     echo "  (no prior addresses.json — already clean)"
   fi
@@ -612,6 +630,42 @@ if [ "$FRESH" = "1" ]; then
   echo "  ✓ cleared step markers in $MARKERS_DIR"
   echo "  (indexer D1 cursor will be re-seeded in step [8d] for chainId=$CHAIN_ID)"
   echo
+fi
+
+# Codex #2070 r31 P1 — a chain dir whose addresses.json already names a Diamond
+# is a COMMITTED deployment. Without --fresh nothing above archived it into
+# archive-manifest.json, so re-running DeployDiamond would publish a new address
+# over it and the retired Diamond would never enter the census inventory. Same
+# refusal as deploy-testnet/mainnet: --fresh (archive, then replace) is the way
+# past an existing Diamond.
+# r32 P1 — --resume is exempt ONLY when it provably continues THIS deployment:
+# `.markers/` and `.history/` are gitignored, so a resume from a fresh checkout
+# (or after marker loss) has no `diamond.done`, `step_done` is false, and [2]
+# would broadcast a new Diamond over the committed one. The exemption therefore
+# needs the marker AND the post-[2] snapshot naming the very Diamond the
+# artifact names now; anything less is --fresh's job.
+if [ "$FRESH" != "1" ]; then
+  EXISTING_DIAMOND_HERE=$(jq -r '.diamond // empty' "$DEPLOY_DIR/addresses.json" 2>/dev/null || echo "")
+  if [ -n "$EXISTING_DIAMOND_HERE" ] && [ "$EXISTING_DIAMOND_HERE" != "null" ]; then
+    RESUMING_THIS_DIAMOND=0
+    if [ "$RESUME" = "1" ] && [ -f "$MARKERS_DIR/diamond.done" ]; then
+      LAST_POST_DIAMOND=$(ls -1t "$HISTORY_DIR"/post-diamond-*.json 2>/dev/null | head -n 1 || true)
+      if [ -n "$LAST_POST_DIAMOND" ] && [ "$(jq -r '.diamond // empty' "$LAST_POST_DIAMOND" 2>/dev/null)" = "$EXISTING_DIAMOND_HERE" ]; then
+        RESUMING_THIS_DIAMOND=1
+      fi
+    fi
+    if [ "$RESUMING_THIS_DIAMOND" != "1" ]; then
+      echo "ERROR: deployments/$CHAIN_SLUG/addresses.json already names a deployed Diamond ($EXISTING_DIAMOND_HERE)." >&2
+      if [ "$RESUME" = "1" ]; then
+        echo "       --resume was passed, but nothing here shows that Diamond was deployed by the run being resumed:" >&2
+        echo "       it needs $MARKERS_DIR/diamond.done AND a post-diamond snapshot in $HISTORY_DIR naming $EXISTING_DIAMOND_HERE" >&2
+        echo "       (both are gitignored — absent on a fresh checkout or after marker loss). Step [2] would broadcast a new Diamond over it." >&2
+      fi
+      echo "       Pass --fresh to archive it into archive-manifest.json and replace it." >&2
+      echo "       A plain re-run would overwrite the committed artifact and drop the retired Diamond from the census inventory." >&2
+      exit 1
+    fi
+  fi
 fi
 
 # ── 1. Build ──────────────────────────────────────────────────────────
@@ -660,6 +714,25 @@ fi
 # BEFORE the --fresh cleanup above — see "[0·pre] VPFI token preflight". #857.)
 
 # ── 2. Diamond ────────────────────────────────────────────────────────
+
+# #1566 (Codex #2070 r24–r26) — two-phase live publication with a durable
+# per-deploy token, the same protocol as deploy-testnet/mainnet. Marked BEFORE
+# the first identity-bearing artifact write of this run and cleared after the
+# last one ([4] writes the mirror token; [3b] the canonical token), so it also
+# covers a --resume that skips [2] but still runs [3b]/[4]. The identity keys
+# are GATED in Deployments.sol on the exported token, so a broadcast outside
+# this wrapper reverts before addresses.json changes.
+# Codex #2070 r27 P1 — a stale DEPLOY_SKIP_ARTIFACTS inherited from the
+# environment would deploy a Diamond the census inventory never sees.
+# DeployDiamond refuses it on a live broadcast before any transaction; fail
+# earlier still, before the marker is taken.
+if [ -n "${DEPLOY_SKIP_ARTIFACTS:-}" ]; then
+  echo "ERROR: DEPLOY_SKIP_ARTIFACTS=${DEPLOY_SKIP_ARTIFACTS} is set — a live deploy MUST publish its artifact (the census inventory is built from it); unset it" >&2; exit 1
+fi
+LIVE_PUB_TOKEN="$$-$(date +%s)-$RANDOM"
+node "$REPO_ROOT/packages/contracts/scripts/archive-manifest.mjs" live-begin "$CONTRACTS_DIR/deployments/archive-manifest.json" "$CHAIN_SLUG" "$LIVE_PUB_TOKEN" "$$" \
+  || { echo "ERROR: could not mark the live publication in archive-manifest.json (another deploy on $CHAIN_SLUG may be in progress — check for a live forge child before live-begin --force)" >&2; exit 1; }
+export VAIPAKAM_LIVE_PUBLICATION_TOKEN="$LIVE_PUB_TOKEN"
 
 if step_done "diamond"; then
   echo
@@ -786,6 +859,12 @@ else
   echo
   echo "[4] Skipping CCIP cross-chain stack (--skip-vpfi)"
 fi
+# The last identity-bearing write of this run is behind us: clear the marker
+# and record the publication (bumps liveGeneration). A failure here leaves the
+# marker for the operator to clear with the token; nothing on chain is undone.
+node "$REPO_ROOT/packages/contracts/scripts/archive-manifest.mjs" live-end "$CONTRACTS_DIR/deployments/archive-manifest.json" "$CHAIN_SLUG" "$LIVE_PUB_TOKEN" "$CONTRACTS_DIR/deployments/$CHAIN_SLUG/addresses.json" \
+  || echo "WARNING: could not record the live artifact publication in archive-manifest.json — record it before committing (archive-manifest.mjs live-end ... $LIVE_PUB_TOKEN)" >&2
+unset VAIPAKAM_LIVE_PUBLICATION_TOKEN
 
 # ── 5b. Master-flag flip (testnet ergonomics) ─────────────────────────
 # Range Orders Phase 1 governance-gated kill switches default `false` on

@@ -238,9 +238,13 @@ operator-supplied.
 Once per chain (Base, Ethereum, Polygon, Arbitrum, Optimism + their testnets):
 
 ```bash
-forge script script/DeployDiamond.s.sol:DeployDiamond \
-  --rpc-url $RPC_URL \
-  --broadcast --verify
+# Never broadcast DeployDiamond directly on a chain that has a committed
+# deployment inventory: the identity-bearing artifact keys are gated on a
+# marked live publication and the script REVERTS without one. Use a wrapper —
+# it marks the publication in contracts/deployments/archive-manifest.json
+# (archive-manifest.mjs live-begin / live-end) around the broadcast:
+bash script/deploy-chain.sh <chain-slug> [--fresh]
+# (deploy-testnet.sh / deploy-mainnet.sh for the full per-tier flows)
 ```
 
 `DeployDiamond` deploys every facet, the `VaipakamDiamond` proxy, and
@@ -269,9 +273,16 @@ export CCIP_RMN_PROXY=<local CCIP RMNProxy>
 # mirror-chain-only env additions
 export BASE_CHAIN_ID=<EVM chain id of canonical Base>
 
-forge script script/DeployCrosschain.s.sol:DeployCrosschain \
-  --rpc-url $RPC_URL \
-  --broadcast --verify
+# There is no separate broadcast for this step: the wrapper from Step 1 runs
+# DeployCrosschain as its step [4], inside the same marked publication window
+# as the Diamond ([2]), the timelock ([3]) and, on a canonical chain, the VPFI
+# token ([3b]). A bare `forge script DeployCrosschain --broadcast` writes the
+# `vpfiMirror` / `vpfiToken` identity keys, which the artifact gate refuses
+# without a marker, so it is not run by hand. To redo only the cross-chain
+# layer on a chain whose Diamond is already recorded, delete the wrapper's
+# `crosschain.done` marker (under $DEPLOY_DIR/.markers) and resume —
+# completed steps are skipped by their markers and [4] runs under a fresh marker:
+bash script/deploy-chain.sh <chain-slug> --resume
 ```
 
 What this does in one broadcast — chain-dependent:

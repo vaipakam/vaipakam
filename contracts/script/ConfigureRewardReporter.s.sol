@@ -199,6 +199,22 @@ contract ConfigureRewardReporter is Script {
             );
         }
 
+        // #1566 closure 3 — a MIRROR must name a real base. Since the role
+        // resolver distinguishes `Detached` from `Unconfigured`, writing a zero
+        // base on a non-canonical chain is a configuration act that puts this
+        // Diamond into the DETACHED role: bound zero, nothing claimable. Before
+        // the resolver the same misconfiguration silently granted canonical
+        // (unbounded) semantics to a chain that is not canonical, which is
+        // worse but quieter. Refuse it here so neither can happen — the comment
+        // above already states this must be a real chain id.
+        if (!canonical && baseChainId == 0) {
+            revert(
+                "BASE_CHAIN_ID must be the canonical reward chain's EVM chain id "
+                "(e.g. 8453 / 84532) on a mirror. Zero would configure this "
+                "Diamond into the DETACHED role and stop reward claims."
+            );
+        }
+
         vm.startBroadcast(deployerKey);
         RewardReporterFacet rr = RewardReporterFacet(diamond);
         // No `setLocalEid` — a chain's identity is `block.chainid`.
