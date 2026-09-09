@@ -3358,6 +3358,13 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
         String.raw`|outputFile(?:Sync)?|write_text|write_bytes` +
         String.raw`|copyFile(?:Sync)?|cpSync|cp|rename(?:Sync)?|copy|move` +
         String.raw`|copyfile|copy2|copytree)\s*\(` +
+        // `os.replace` renames ONTO an existing path — an overwrite by
+        // definition — and no spelling of it was in the set (r13). Written
+        // QUALIFIED, unlike its neighbours: the lookbehind above admits member
+        // access, so a bare `replace` would take `text.replace('a', 'b')` in
+        // any file that names a config. Same reasoning that bounded `copy`
+        // and `move` in r10, applied to a far commoner method name.
+        String.raw`|(?<![A-Za-z0-9_$.])os\s*\.\s*replace\s*\(` +
         // Shell write commands, optionally reached through a path — and only
         // in SHELL text. `const ratio = cp / total;` is ordinary JavaScript
         // and matched the whitespace-delimited `cp` branch (r11).
@@ -3366,8 +3373,20 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
         // `cp` exists — counted as a copy (r12). A command starts a line or
         // follows a separator, optionally behind one of the few wrappers that
         // take a command as their argument.
+        // …and a command position admits PREFIXES. Requiring the verb to
+        // follow the boundary or a bare wrapper name missed
+        // `MODE=copy cp gen.jsonc "$CFG"` and `sudo -u root cp gen.jsonc
+        // "$CFG"`, both of which copy (r13). Two prefix shapes, each of which
+        // cannot swallow a command name: a `VAR=value` assignment, and one of
+        // the listed wrappers with its own options — including the few sudo
+        // short options that take an argument, spelled out rather than
+        // approximated by "a word".
+        // `command` is deliberately NOT a wrapper here: `command -v cp` only
+        // TESTS for cp, and admitting it would restore the r12 false red.
         (shellish
-          ? String.raw`|(?:^|[;&|(]|\bsudo\s|\benv\s|\bxargs\s|\btime\s|\bnohup\s)\s*(?:[\w./-]*/)?(?:cp|mv|install|rsync|tee)\s`
+          ? String.raw`|(?:^|[;&|(])\s*(?:(?:[A-Za-z_]\w*=\S*` +
+            String.raw`|(?:sudo|env|xargs|time|nohup)(?:\s+-[-\w]+(?:=\S+)?|\s+-[ugUpChrtDR]\s+\S+)*` +
+            String.raw`)\s+)*(?:[\w./-]*/)?(?:cp|mv|install|rsync|tee)\s`
           : '') +
         // A REDIRECTION, not every `>`. The bare alternative also matched the
         // arrow in `=>` and the comparison in `2 > 1`, and since the deploy's
@@ -3381,7 +3400,11 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
         // once and r10 showed the narrowing was still language-blind). The
         // directly-named redirection is covered above; this alternative exists
         // for the write through a BINDING.
-        (shellish ? String.raw`|(?:^|[\s;&|)])\d*>{1,2}\s*["'$~/.]` : '') +
+        // `>|` (the noclobber override) and `>&` (stdout+stderr to one file)
+        // both truncate their target, and the target class saw the `|` or `&`
+        // and rejected the match (r13). Fd duplication is unaffected: `2>&1`
+        // has a digit for a target, which the class does not accept.
+        (shellish ? String.raw`|(?:^|[\s;&|)])\d*>{1,2}[|&]?\s*["'$~/.]` : '') +
         // The mode literal must CLOSE. Accepting a prefix let
         // `webbrowser.open("welcome")` match `"w` (r11).
         String.raw`|\.\s*open\s*\(\s*(?:mode\s*=\s*)?(["'\`])[rbt]*[wax+][rbt+]*\1` +
@@ -3421,8 +3444,46 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
     const kind = new Uint8Array(text.length); // 0 code, 1 string, 2 comment
     {
       const jsLike = lang === 'js';
-      const hashComments = lang !== 'js';
+      const pyLike = lang === 'py';
+      const hashComments = !jsLike;
+      // A JavaScript REGEX LITERAL is data, and telling one from division
+      // needs the preceding token: `/` after an operand divides, `/` after an
+      // operator or a keyword opens a pattern. `const example =
+      // /copy(source, destination)/` was read as code and reported a config
+      // nothing had touched (r13).
+      //
+      // Deliberately one-sided. `)`, `]` and `}` are NOT accepted as openers,
+      // so `(a + b) / c` and `x[i] / y` stay division — the direction that
+      // errs is the one that leaves a regex classified as code, which is the
+      // false red this fixes rather than a false green it could create.
+      const regexOpens = (idx) => {
+        let p = idx - 1;
+        while (p >= 0 && /\s/.test(text[p])) p -= 1;
+        if (p < 0) return true;
+        const ch = text[p];
+        if ('=(,[{;:!&|?+-*%~^'.includes(ch)) return true;
+        if (!/[A-Za-z0-9_$]/.test(ch)) return false;
+        let s = p;
+        while (s >= 0 && /[A-Za-z0-9_$]/.test(text[s])) s -= 1;
+        return /^(?:return|typeof|case|in|of|new|delete|void|instanceof|do|else|yield|await)$/.test(
+          text.slice(s + 1, p + 1),
+        );
+      };
+      // A Python string PREFIX, and whether it makes the literal an f-string.
+      const pyPrefix = (idx) => {
+        let p = idx;
+        while (p > 0 && idx - p < 2 && /[A-Za-z]/.test(text[p - 1])) p -= 1;
+        const pre = text.slice(p, idx);
+        if (!/^[rbuf]{1,2}$/i.test(pre)) return false;
+        if (p > 0 && /[A-Za-z0-9_$]/.test(text[p - 1])) return false;
+        return /f/i.test(pre);
+      };
+      // String frames suspended by an interpolation, innermost last.
+      const stack = [];
       let q = null;
+      let triple = false;
+      let fstr = false;
+      let braces = 0;
       for (let i = 0; i < text.length; i += 1) {
         const c = text[i];
         if (q) {
@@ -3430,18 +3491,89 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
           if (c === '\\') {
             if (i + 1 < text.length) kind[i + 1] = 1;
             i += 1;
-          } else if (c === q || (c === '\n' && lang !== 'js')) q = null;
+            continue;
+          }
+          // INTERPOLATION IS CODE. `` `${writeFileSync(cfg, "{}")}` `` and
+          // `f'{Path(cfg).write_text("{}")}'` perform the write they name, and
+          // marking the whole literal as data dropped both (r13). The braces
+          // themselves stay with the literal; what they enclose is scanned as
+          // ordinary code, so a write inside one counts.
+          const opensInterp =
+            (jsLike && q === '`' && c === '$' && text[i + 1] === '{') || (pyLike && fstr && c === '{');
+          if (opensInterp) {
+            // `{{` is an escaped brace in an f-string, not an expression.
+            if (pyLike && text[i + 1] === '{') {
+              kind[i + 1] = 1;
+              i += 1;
+              continue;
+            }
+            if (jsLike) kind[i + 1] = 1;
+            stack.push({ q, triple, fstr, braces });
+            q = null;
+            triple = false;
+            fstr = false;
+            braces = 1;
+            if (jsLike) i += 1;
+            continue;
+          }
+          // A Python TRIPLE-quoted literal spans lines. Closing string state
+          // at the first newline classified a docstring's later lines as code,
+          // so `"""\ncopy(source, destination)\n"""` reported a config nothing
+          // had touched (r13).
+          if (triple) {
+            if (c === q && text[i + 1] === q && text[i + 2] === q) {
+              kind[i + 1] = 1;
+              kind[i + 2] = 1;
+              i += 2;
+              q = null;
+              triple = false;
+              fstr = false;
+            }
+            continue;
+          }
+          if (c === q || (c === '\n' && !jsLike)) {
+            q = null;
+            fstr = false;
+          }
           continue;
+        }
+        // Inside an interpolation, the brace that balances it ends the code
+        // region and returns to the literal.
+        if (stack.length > 0) {
+          if (c === '{') braces += 1;
+          else if (c === '}') {
+            braces -= 1;
+            if (braces === 0) {
+              const f = stack.pop();
+              kind[i] = 1;
+              q = f.q;
+              triple = f.triple;
+              fstr = f.fstr;
+              braces = f.braces;
+              continue;
+            }
+          }
         }
         if (c === '"' || c === "'" || (jsLike && c === '`')) {
           q = c;
+          triple = pyLike && text[i + 1] === c && text[i + 2] === c;
+          fstr = pyLike && pyPrefix(i);
           kind[i] = 1;
+          if (triple) {
+            kind[i + 1] = 1;
+            kind[i + 2] = 1;
+            i += 2;
+          }
           continue;
         }
         // `//` is a comment in JavaScript and FLOOR DIVISION in Python; `#`
         // is a comment in shell and Python and not in JavaScript.
+        // …and `#` needs a token boundary only in SHELL, where `${VAR#pre}`
+        // and `foo#bar` are ordinary text. Python has no such rule, so
+        // `x = 1# copy(source, destination)` left the comment classified as
+        // code (r13).
         const lineComment =
-          (hashComments && c === '#' && (i === 0 || /\s/.test(text[i - 1]))) ||
+          (hashComments && c === '#' && (pyLike || i === 0 || /\s/.test(text[i - 1]))) ||
           (jsLike && c === '/' && text[i + 1] === '/');
         if (lineComment) {
           const nl = text.indexOf('\n', i);
@@ -3455,9 +3587,62 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
           const stop = e === -1 ? text.length : e + 2;
           kind.fill(2, i, stop);
           i = stop - 1;
+          continue;
+        }
+        if (jsLike && c === '/' && regexOpens(i)) {
+          let p = i + 1;
+          let cls = false;
+          let closed = false;
+          for (; p < text.length && text[p] !== '\n'; p += 1) {
+            const d = text[p];
+            if (d === '\\') p += 1;
+            else if (cls) {
+              if (d === ']') cls = false;
+            } else if (d === '[') cls = true;
+            else if (d === '/') {
+              closed = true;
+              break;
+            }
+          }
+          // Only a literal that CLOSES on its own line. An unterminated `/`
+          // is division after all, and blanking to end of file on it would be
+          // a false green.
+          if (closed) {
+            kind.fill(1, i, p + 1);
+            i = p;
+          }
         }
       }
     }
+    // A DECLARATION IS NOT A CALL. `def copy(source, destination):`,
+    // `function copy(source, destination) {` and a class-method shorthand all
+    // match the generic `name(` alternative although nothing is invoked, and
+    // each reported a config the file never touched (r13).
+    //
+    // Two tests, both narrow. The keyword form is exact. The brace form is
+    // JavaScript-only and asks what follows the ARGUMENT LIST: a body opens
+    // with `{`, a call does not. Python is left to the keyword alone —
+    // matching on a following `:` would take the true arm of a ternary and a
+    // slice bound with it, which would be a false green.
+    const isDeclaration = (idx) => {
+      if (/\b(?:def|function|class)\s+$/.test(text.slice(Math.max(0, idx - 24), idx))) return true;
+      if (lang !== 'js') return false;
+      const op = text.indexOf('(', idx);
+      if (op === -1 || op - idx > 40) return false;
+      let depth = 0;
+      let p = op;
+      for (; p < text.length && p - op < 2000; p += 1) {
+        if (text[p] === '(') depth += 1;
+        else if (text[p] === ')') {
+          depth -= 1;
+          if (depth === 0) break;
+        }
+      }
+      if (depth !== 0) return false;
+      let n = p + 1;
+      while (n < text.length && /\s/.test(text[n])) n += 1;
+      return text[n] === '{';
+    };
     for (const w of text.matchAll(ANY_WRITE)) {
       // The verb itself must be CODE — where "string" means DATA. In
       // JavaScript and Python a literal is data, so `const example =
@@ -3468,7 +3653,7 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
       // Excluding shell strings broke that fixture immediately.
       const at0 = w.index + (w[0].length - w[0].replace(/^[^A-Za-z0-9_$/>%]+/, '').length);
       const insideData = shellish ? kind[at0] === 2 : kind[at0] !== 0;
-      if (!insideData) writes.push(w.index);
+      if (!insideData && !isDeclaration(at0)) writes.push(w.index);
     }
     writes.sort((a, b) => a - b);
   }
@@ -7523,6 +7708,17 @@ function jsonValueLines(text) {
         text: decodeJsonString(mm[1]),
         line: i + 1,
         physical: true,
+        // PHYSICAL AND SHELL AT ONCE. `physical` answers "can this line set a
+        // working directory for a later one" — no, each manifest value is its
+        // own shell — and it was also being read as "this is not shell text",
+        // which for a script value is false: reading them AS COMMANDS is the
+        // whole reason this function exists. A value such as
+        // `CFG=configs/custom.jsonc; printf '{}' > $CFG; wrangler deploy
+        // --config configs/custom.jsonc` had its redirection classified as
+        // JSON data, so the rewrite went unseen and the deploy was blessed on
+        // the stale checked-in `keep_vars` (r13). The two questions get two
+        // fields.
+        lang: 'shell',
       }));
     }
     const m = null;
@@ -7847,14 +8043,17 @@ for (const file of walk(REPO_ROOT)) {
   // `shopt -s expand_aliases` has run, and expansion happens when the CALL is
   // parsed — so the gate is read at the call site, not at the definition.
   let aliasesOn = false;
-  folded.forEach(({ text: line, line: lineNo, block, physical, cwd: blockCwd, env: blockEnv }) => {
+  folded.forEach(({ text: line, line: lineNo, block, physical, lang: entryLang, cwd: blockCwd, env: blockEnv }) => {
     // SHELL-NESS IS PER LINE, not per file. A fenced `bash` block in Markdown
     // and a workflow `run:` body are extracted and processed as shell although
     // the containing file is `.md` or `.yml`, so a file-wide flag switched the
     // shell alternatives off for exactly the text that needs them
     // (Codex #2066 r11). `physical` marks a line that is NOT from a shell
     // block; anything from a block is shell.
-    const lineIsShell = fileIsShell || !physical;
+    // …or because the splitter that produced the line SAYS it is shell: a
+    // manifest script value is JSON syntactically and a command in substance
+    // (r13).
+    const lineIsShell = fileIsShell || !physical || entryLang === 'shell';
     // WHICH language this line is, for the comment and string rules. A line
     // lifted out of a `run:` block or a fenced fence is shell whatever the
     // container is; otherwise the file's own extension decides.
@@ -7912,6 +8111,23 @@ for (const file of walk(REPO_ROOT)) {
       // and HF_SCALE remedy beside an agent problem. The scope has to come from
       // the segment carrying the unsafe command.
       const lineScope = scopeOf(line, rel) ?? labelScope.get(lineNo) ?? null;
+      // A MANIFEST SCRIPT VALUE IS SCANNED IN ITS OWN COORDINATES. `part.start`
+      // is an offset into the folded entry; `lineStartOffset` adds it to the
+      // raw physical line, which is the same thing for a shell file and adrift
+      // for a JSON value, whose `"release": "` prefix and escape decoding the
+      // entry text does not carry. Mixing the two spaces compared a raw write
+      // offset against a decoded one, so the redirection in
+      // `printf '{}' > $CFG; wrangler deploy …` read as running AFTER the
+      // deploy on its own line and the rewrite went unseen (r13) — the
+      // language fix alone could not surface it.
+      //
+      // The value alone rather than a decoded-to-raw mapping: the two
+      // coordinates then cannot disagree, and it matches the stance
+      // `jsonValueLines` already takes — values are NOT joined, because a
+      // sequence spanning two of them is one no script performs.
+      const valueScoped = entryLang === 'shell';
+      const rewriteText = valueScoped ? line : text;
+      const rewriteAt = (start) => (valueScoped ? start : lineStartOffset(text, lineNo, start));
       // A markdown CODE SPAN is a command boundary, and prose has no shell
       // separator between two of them. `Use `wrangler deploy --keep-vars` for
       // the keeper and `wrangler deploy` for the agent.` is ONE segment to
@@ -7999,8 +8215,8 @@ for (const file of walk(REPO_ROOT)) {
             aliased ?? seg,
             safeHint,
             '',
-            text,
-            lineStartOffset(text, lineNo, part.start),
+            rewriteText,
+            rewriteAt(part.start),
             lineLang,
           ) ||
           (aliased === null &&
@@ -8008,8 +8224,8 @@ for (const file of walk(REPO_ROOT)) {
               expandCommandVars(seg, fileVars),
               safeHint,
               '',
-              text,
-              lineStartOffset(text, lineNo, part.start),
+              rewriteText,
+              rewriteAt(part.start),
             ))
         ) {
           continue;
@@ -8028,8 +8244,8 @@ for (const file of walk(REPO_ROOT)) {
           [{ cwd: '', stack: [] }],
           false,
           null,
-          text,
-          lineStartOffset(text, lineNo, part.start),
+          rewriteText,
+          rewriteAt(part.start),
           lineLang,
         );
         // A single filter can select BOTH packages, and each needs its own
