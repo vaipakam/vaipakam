@@ -4325,7 +4325,16 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
         // rather than extending it again.
         (shellish
           ? String.raw`|(?:^|[\s;&|(])(?:[\w./-]*/)?(?:sed|perl)` +
-            String.raw`(?:[^\S\n]+-[^\s;&|]*)*?[^\S\n]+(?:-[a-zA-Z]*i|--in-place)[^\s;&|]*` +
+            // WHERE THE LETTER SITS IN THE CLUSTER decides whether it is the
+            // in-place option at all. A short option that takes a value takes
+            // the REST of its token, so the letter is either first — carrying
+            // an attached suffix, `-i.bak` — or last in an all-letter cluster,
+            // `-pi`. Accepting it anywhere read Perl's include-directory
+            // option `-Ilib` as an in-place edit and reported a command that
+            // only prints (r36 self-review). That is the general rule for
+            // short options, not a table of these two tools' flags.
+            String.raw`(?:[^\S\n]+-[^\s;&|]*)*?[^\S\n]+` +
+            String.raw`(?:-i[^\s;&|]*|-[a-zA-Z]*i(?=[^\S\n]|$)|--in-place[^\s;&|]*)` +
             String.raw`(?:[^\S\n]+-[^\s;&|]*)*[^\S\n]+[^\s<>|&;-]`
           : '') +
         // A REDIRECTION, not every `>`. The bare alternative also matched the

@@ -11375,4 +11375,31 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     );
     expect(r.ok).toBe(false);
   });
+
+  it('an include-directory option is not an in-place edit (#2066 r36 self-review)', () => {
+    // A short option that takes a value takes the REST of its token, so the
+    // in-place letter is either first (carrying a suffix) or last in an
+    // all-letter cluster. Accepting it anywhere read Perl's `-Ilib` as one.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'na.sh',
+      'CFG=configs/custom.jsonc\n' +
+        "perl -Ilib -e 'print' \"$CFG\"\n" +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a trailing in-place letter is still in place (#2066 r36 self-review bounds)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'nb.sh',
+      'CFG=configs/custom.jsonc\n' +
+        "perl -pi -e 's/a/b/' \"$CFG\"\n" +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
 });
