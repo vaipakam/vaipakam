@@ -238,9 +238,13 @@ operator-supplied.
 Once per chain (Base, Ethereum, Polygon, Arbitrum, Optimism + their testnets):
 
 ```bash
-forge script script/DeployDiamond.s.sol:DeployDiamond \
-  --rpc-url $RPC_URL \
-  --broadcast --verify
+# Never broadcast DeployDiamond directly on a chain that has a committed
+# deployment inventory: the identity-bearing artifact keys are gated on a
+# marked live publication and the script REVERTS without one. Use a wrapper —
+# it marks the publication in contracts/deployments/archive-manifest.json
+# (archive-manifest.mjs live-begin / live-end) around the broadcast:
+bash script/deploy-chain.sh <chain-slug> [--fresh]
+# (deploy-testnet.sh / deploy-mainnet.sh for the full per-tier flows)
 ```
 
 `DeployDiamond` deploys every facet, the `VaipakamDiamond` proxy, and

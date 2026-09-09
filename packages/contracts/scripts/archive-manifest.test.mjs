@@ -344,8 +344,9 @@ test('two-phase live publication: begin marks, end clears and bumps; a second be
   assert.equal(endLivePublication(manifest, { slug: 'a', token: 'tok-1', diamond: '0xlive' }), 1);
   assert.deepEqual(livePublicationsInProgress(readManifest(manifest)), []);
   assert.equal(readManifest(manifest).liveGeneration, 1);
-  // a marker whose deploy SHELL is dead can be taken over; --force clears any marker
+  // a marker whose deploy SHELL is dead is NOT taken over automatically (r26: the forge child may outlive the shell); --force is the operator's deliberate act
   writeFileSync(manifest, JSON.stringify({ ...readManifest(manifest), livePublicationsInProgress: { b: { token: 'old', pid: 2 ** 22 - 1, startedAt: 'x' } } }));
-  assert.equal(beginLivePublication(manifest, { slug: 'b', token: 'new', pid: process.pid }).token, 'new');
+  assert.throws(() => beginLivePublication(manifest, { slug: 'b', token: 'new', pid: process.pid }), /shell gone.*--force/s);
+  assert.equal(beginLivePublication(manifest, { slug: 'b', token: 'new', pid: process.pid, force: true }).token, 'new');
   assert.equal(endLivePublication(manifest, { slug: 'b', token: 'wrong', force: true }), 2);
 });

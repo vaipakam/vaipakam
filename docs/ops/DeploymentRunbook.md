@@ -1208,15 +1208,26 @@ If any check fails → **do not broadcast**.
    export RPC_URL=https://...
    ```
    Phase-1 2-EOA topology: the deployer EOA owns the Diamond during the cut, then the script hands over ERC-173 ownership + all 7 access-control roles to `ADMIN_ADDRESS` and renounces the deployer's roles. Verify post-deploy that the deployer holds zero roles.
-2. Dry-run:
+2. Dry-run (simulation only — `forge script` still executes the artifact
+   writes during simulation, so skip them explicitly; without the skip the
+   publication gate below stops the simulation, which is the point):
    ```bash
-   forge script script/DeployDiamond.s.sol:DeployDiamond \
+   DEPLOY_SKIP_ARTIFACTS=true forge script script/DeployDiamond.s.sol:DeployDiamond \
      --rpc-url $RPC_URL --sender $(cast wallet address $PRIVATE_KEY)
    ```
-3. Broadcast:
+3. Broadcast — through a wrapper, never directly. The identity-bearing
+   artifact keys (`diamond`, `vpfiToken`, `vpfiMirror`, `chainId`,
+   `deployBlock`) are gated in `Deployments.sol` on
+   `VAIPAKAM_LIVE_PUBLICATION_TOKEN` matching the in-progress marker in
+   `contracts/deployments/archive-manifest.json` for the chain, and a bare
+   `forge script … --broadcast` reverts before `addresses.json` changes
+   (the local Anvil chain is exempt: its artifact is untracked); the
+   wrappers run
+   `archive-manifest.mjs live-begin` before the broadcast and `live-end`
+   after the last artifact write, so a census cannot publish across the
+   window (Codex #2070 r24–r26):
    ```bash
-   forge script script/DeployDiamond.s.sol:DeployDiamond \
-     --rpc-url $RPC_URL --broadcast --verify
+   bash script/deploy-testnet.sh <chain-slug> --phase contracts ...   # or deploy-mainnet.sh / deploy-chain.sh
    ```
 4. Record the logged addresses in `deployments/<chain>/addresses.json` and populate `<CHAIN>_DIAMOND_ADDRESS` in `contracts/.env`. The frontend + watcher consumer side is one command — `bash contracts/script/exportFrontendDeployments.sh` merges every chain artifact into the single `packages/contracts/src/deployments.json`, plus its provenance stamp. The frontend's `getDeployment(chainId)` and each Worker's `getChainConfigs(env)` both read from that merged JSON. Idempotent.
 

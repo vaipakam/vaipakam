@@ -63,10 +63,9 @@ cast balance $ADMIN_ADDRESS --rpc-url $BASE_SEPOLIA_RPC_URL
 ## 1. Deploy Diamond
 
 ```bash
-forge script script/DeployDiamond.s.sol \
-  --rpc-url $BASE_SEPOLIA_RPC_URL \
-  --broadcast --verify \
-  --etherscan-api-key $ETHERSCAN_API_KEY
+# Through the wrapper — a direct DeployDiamond broadcast reverts on the gated
+# artifact keys (they need the live-publication marker the wrapper sets):
+bash script/deploy-chain.sh base-sepolia --verify-contracts
 ```
 
 The script auto-writes the Diamond address (and a `chainId` /

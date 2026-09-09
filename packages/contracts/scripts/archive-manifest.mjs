@@ -474,7 +474,7 @@ export function bumpLiveGeneration(manifestPath, { slug, diamond } = {}, lockOpt
  * publishing is refused. `live-end` with no matching marker still bumps (a
  * crashed deploy is cleared by running it).
  */
-export function beginLivePublication(manifestPath, { slug, token, pid } = {}, lockOpts) {
+export function beginLivePublication(manifestPath, { slug, token, pid, force = false } = {}, lockOpts) {
   if (!slug) throw new Error('archive-manifest: live-begin needs a slug');
   // Codex #2070 r25 P1 — the marker is bound to a DURABLE per-deploy token and
   // the long-lived deploy SHELL's pid, never to this short-lived node process:
@@ -482,7 +482,8 @@ export function beginLivePublication(manifestPath, { slug, token, pid } = {}, lo
   // anyone checks it, and a concurrent deploy on the same slug could take the
   // marker over and then have its own marker cleared by the first deploy's
   // `live-end`. With a token, only the deploy that began can end (or an
-  // operator with --force), and a takeover needs the SHELL to be dead.
+  // operator with --force); the shell pid is recorded so the operator can
+  // check for a surviving forge child before forcing (r26: never automatic).
   if (!token) throw new Error('archive-manifest: live-begin needs a per-deploy token (e.g. "$$-$(date +%s)-$RANDOM")');
   const ownerPid = Number.isInteger(Number(pid)) && Number(pid) > 0 ? Number(pid) : process.pid;
   return withManifestLock(
@@ -491,10 +492,16 @@ export function beginLivePublication(manifestPath, { slug, token, pid } = {}, lo
       const m = readManifest(manifestPath) ?? emptyManifest();
       const inProgress = { ...(m.livePublicationsInProgress ?? {}) };
       const existing = inProgress[slug];
-      if (existing && existing.token !== token && pidAlive(existing.pid)) {
+      // Codex #2070 r26 P1 — a dead deploy SHELL does not prove the broadcast
+      // stopped: its forge child can outlive it and still write addresses.json.
+      // So an existing marker is NEVER taken over automatically; the operator
+      // checks for a live child (pgrep -P <pid>; ps -o pgid) and passes
+      // --force deliberately.
+      if (existing && existing.token !== token && !force) {
         throw new Error(
-          `archive-manifest: ${slug} is already publishing a live artifact (deploy pid ${existing.pid}, token ${existing.token}, since ${existing.startedAt}); ` +
-            `a second deploy on the same chain cannot begin until it ends`,
+          `archive-manifest: ${slug} is already publishing a live artifact (deploy pid ${existing.pid}${pidAlive(existing.pid) ? ', alive' : ', shell gone'}, token ${existing.token}, since ${existing.startedAt}); ` +
+            `a second deploy on the same chain cannot begin until it ends. If that deploy is dead, confirm no forge child of pid ${existing.pid} is still running ` +
+            `(pgrep -P ${existing.pid}; ps -o pid,pgid,cmd -g $(ps -o pgid= -p ${existing.pid} 2>/dev/null)) and re-run with --force`,
         );
       }
       inProgress[slug] = { token, pid: ownerPid, startedAt: new Date().toISOString() };
@@ -594,10 +601,10 @@ function main(argv) {
   if (cmd === 'live-begin') {
     // live-begin <manifest> <slug> <token> [<shell-pid>]
     if (!manifestPath || !slug || !stamp) {
-      process.stderr.write('usage: archive-manifest.mjs live-begin <manifest> <slug> <token> [<shell-pid>]\n');
+      process.stderr.write('usage: archive-manifest.mjs live-begin <manifest> <slug> <token> [<shell-pid>] [--force]\n');
       return 2;
     }
-    const mark = beginLivePublication(manifestPath, { slug, token: stamp, pid: addrPath });
+    const mark = beginLivePublication(manifestPath, { slug, token: stamp, pid: addrPath === '--force' ? undefined : addrPath, force: argv.includes('--force') });
     process.stdout.write(`  ✓ live publication of ${slug} marked in progress (deploy pid ${mark.pid}, token ${mark.token}); the census refuses to read or publish until live-end\n`);
     return 0;
   }

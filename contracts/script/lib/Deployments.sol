@@ -472,6 +472,7 @@ library Deployments {
     /// top of `DeployDiamond.s.sol` so a partial deploy that crashes
     /// halfway still leaves a discoverable artifact.
     function writeChainHeader() internal {
+        requireMarkedPublication(".chainId");
         string memory p = path();
         // Build a minimal header object. Subsequent writes to the
         // same file via `_writeAddr` will use vm.writeJson, which
@@ -542,12 +543,80 @@ library Deployments {
         }
     }
 
+    /// @notice Committed archive manifest the deploy wrappers mark their live
+    ///         publication in (archive-manifest.mjs live-begin / live-end).
+    string internal constant ARCHIVE_MANIFEST = "deployments/archive-manifest.json";
+
+    /// @notice The artifact keys the grandfathered-custody census reads as a
+    ///         deployment's IDENTITY. Writing one of them is a publication.
+    function isIdentityKey(string memory jsonKey) internal pure returns (bool) {
+        bytes32 k = keccak256(bytes(jsonKey));
+        return k == keccak256(".diamond") || k == keccak256(".vpfiToken") || k == keccak256(".vpfiMirror")
+            || k == keccak256(".chainId") || k == keccak256(".deployBlock");
+    }
+
+    /// @notice TRUE when `manifestJson` carries an in-progress live-publication
+    ///         marker for `slug` whose token is exactly `token`. The single
+    ///         predicate behind {requireMarkedPublication}; its test feeds it
+    ///         synthetic manifests, the gate feeds it the committed one.
+    function publicationMarked(string memory manifestJson, string memory slug, string memory token)
+        internal
+        view
+        returns (bool)
+    {
+        // Bracket form: slugs carry hyphens (`base-sepolia`), which a dotted
+        // JSON path would split. A manifest with no marker section at all
+        // (the committed state between deploys) simply has no such key.
+        string memory key = string.concat('.livePublicationsInProgress["', slug, '"].token');
+        if (bytes(token).length == 0 || !CHEATS.keyExistsJson(manifestJson, key)) return false;
+        return keccak256(bytes(CHEATS.parseJsonString(manifestJson, key))) == keccak256(bytes(token));
+    }
+
+    /// @dev #1566 (Codex #2070 r26 P1) — an identity key may only be written by
+    ///      a deploy that has MARKED its live publication in the committed
+    ///      archive manifest: the three deploy wrappers run
+    ///      `archive-manifest.mjs live-begin` and export the same token as
+    ///      `VAIPAKAM_LIVE_PUBLICATION_TOKEN`, and this gate requires the env
+    ///      token to MATCH the manifest's in-progress marker for this chain's
+    ///      slug — so neither a bare `forge script … --broadcast` (no token) nor
+    ///      an exported token with no marker reaches the artifact, and a census
+    ///      holding the manifest lock through its own publication always sees
+    ///      the write coming. Facet-address keys and the rest stay ungated: the
+    ///      in-place refresh scripts rewrite them and they change no inventory
+    ///      identity. `DEPLOY_SKIP_ARTIFACTS=true` never reaches a write. The
+    ///      local Anvil chain (31337) is exempt on the same ground the census
+    ///      excludes it: its artifact is gitignored and outside the inventory.
+    function requireMarkedPublication(string memory jsonKey) internal view {
+        if (!isIdentityKey(jsonKey) || block.chainid == 31337) return;
+        string memory token = CHEATS.envOr("VAIPAKAM_LIVE_PUBLICATION_TOKEN", string(""));
+        require(
+            bytes(token).length != 0,
+            string.concat(
+                "Deployments: writing ",
+                jsonKey,
+                " changes the census inventory and needs a MARKED live publication - run through deploy-chain.sh / deploy-testnet.sh / deploy-mainnet.sh (they run archive-manifest.mjs live-begin and export VAIPAKAM_LIVE_PUBLICATION_TOKEN), or set DEPLOY_SKIP_ARTIFACTS=true to broadcast without writing the artifact"
+            )
+        );
+        require(
+            publicationMarked(CHEATS.readFile(ARCHIVE_MANIFEST), chainSlug(), token),
+            string.concat(
+                "Deployments: VAIPAKAM_LIVE_PUBLICATION_TOKEN does not match an in-progress live-publication marker for ",
+                chainSlug(),
+                " in ",
+                ARCHIVE_MANIFEST,
+                " - the token must come from archive-manifest.mjs live-begin in the same deploy run"
+            )
+        );
+    }
+
     function _writeAddr(string memory jsonKey, address a) private {
+        requireMarkedPublication(jsonKey);
         _ensureFile();
         CHEATS.writeJson(CHEATS.toString(a), path(), jsonKey);
     }
 
     function _writeUint(string memory jsonKey, uint256 v) private {
+        requireMarkedPublication(jsonKey);
         _ensureFile();
         CHEATS.writeJson(CHEATS.toString(v), path(), jsonKey);
     }

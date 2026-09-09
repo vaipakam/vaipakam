@@ -1039,11 +1039,17 @@ EOF
   # generation. A census that takes the lock in between sees the marker and
   # refuses, so the unlocked write can no longer slip past its snapshot. Failing
   # to mark aborts here — nothing has been broadcast yet.
-  if command -v node >/dev/null 2>&1 && [ -f "$REPO_ROOT/packages/contracts/scripts/archive-manifest.mjs" ]; then
-    LIVE_PUB_TOKEN="$$-$(date +%s)-$RANDOM"   # durable per-deploy token: only THIS deploy can end what it began (Codex #2070 r25 P1)
-    node "$REPO_ROOT/packages/contracts/scripts/archive-manifest.mjs" live-begin "$CONTRACTS_DIR/deployments/archive-manifest.json" "$CHAIN_SLUG" "$LIVE_PUB_TOKEN" "$$" \
-      || { echo "ERROR: could not mark the live publication in archive-manifest.json (another deploy on $CHAIN_SLUG may be in progress)" >&2; exit 1; }
+  # node + the manifest module are REQUIRED, not optional: the artifact's
+  # identity keys are GATED in Deployments.sol on the env token matching this
+  # marker (Codex #2070 r26 P1), so an unmarked run would broadcast and then
+  # revert at the artifact write — fail here instead, before any broadcast.
+  if ! command -v node >/dev/null 2>&1 || [ ! -f "$REPO_ROOT/packages/contracts/scripts/archive-manifest.mjs" ]; then
+    echo "ERROR: node and packages/contracts/scripts/archive-manifest.mjs are required to mark the live publication before broadcasting" >&2; exit 1
   fi
+  LIVE_PUB_TOKEN="$$-$(date +%s)-$RANDOM"   # durable per-deploy token: only THIS deploy can end what it began (Codex #2070 r25 P1)
+  node "$REPO_ROOT/packages/contracts/scripts/archive-manifest.mjs" live-begin "$CONTRACTS_DIR/deployments/archive-manifest.json" "$CHAIN_SLUG" "$LIVE_PUB_TOKEN" "$$" \
+    || { echo "ERROR: could not mark the live publication in archive-manifest.json (another deploy on $CHAIN_SLUG may be in progress — check for a live forge child before live-begin --force)" >&2; exit 1; }
+  export VAIPAKAM_LIVE_PUBLICATION_TOKEN="$LIVE_PUB_TOKEN"
   echo "[2] DeployDiamond.s.sol"
   forge script script/DeployDiamond.s.sol --rpc-url "$RPC" --broadcast --slow --gas-estimate-multiplier "${FORGE_GAS_MULTIPLIER:-130}"
 

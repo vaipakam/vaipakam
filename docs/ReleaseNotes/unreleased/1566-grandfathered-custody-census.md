@@ -281,4 +281,12 @@ with a token only that deploy holds, so no other deploy can withdraw it, and
 the history proof is re-checked against the exact report being replaced and
 the exact block each chain was finally read at, just before writing.
 
+Finally the announcement protocol is enforced at the point of writing rather
+than trusted to the scripts: the deployment record's identity fields can only
+be written by a deploy that has made the announcement, so the direct broadcast
+the older documents showed now stops before it changes the record, and those
+documents route every deploy through the wrappers. A deploy that appears to
+have died is no longer overwritten automatically either, since its broadcast
+may still be running; taking over is an explicit operator act.
+
 Refs #1566, #1349, #1956

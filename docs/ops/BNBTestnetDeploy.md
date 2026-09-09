@@ -79,8 +79,9 @@ on Base Sepolia — no chain-specific tests gate this deploy.
 ## 1. Deploy the Diamond
 
 ```bash
-forge script script/DeployDiamond.s.sol:DeployDiamond \
-  --rpc-url $BNB_TESTNET_RPC_URL --broadcast --legacy --slow -vv
+# Through the wrapper — a direct DeployDiamond broadcast reverts on the gated
+# artifact keys (they need the live-publication marker the wrapper sets):
+bash script/deploy-chain.sh bnb-testnet
 ```
 
 Note: `--slow` IS safe HERE because the only post-broadcast wait is

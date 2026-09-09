@@ -679,20 +679,25 @@ fi
 
 # ── 2. Diamond ────────────────────────────────────────────────────────
 
+# #1566 (Codex #2070 r24–r26) — two-phase live publication with a durable
+# per-deploy token, the same protocol as deploy-testnet/mainnet. Marked BEFORE
+# the first identity-bearing artifact write of this run and cleared after the
+# last one ([4] writes the mirror token; [3b] the canonical token), so it also
+# covers a --resume that skips [2] but still runs [3b]/[4]. The identity keys
+# are GATED in Deployments.sol on the exported token, so a broadcast outside
+# this wrapper reverts before addresses.json changes.
+LIVE_PUB_TOKEN="$$-$(date +%s)-$RANDOM"
+node "$REPO_ROOT/packages/contracts/scripts/archive-manifest.mjs" live-begin "$CONTRACTS_DIR/deployments/archive-manifest.json" "$CHAIN_SLUG" "$LIVE_PUB_TOKEN" "$$" \
+  || { echo "ERROR: could not mark the live publication in archive-manifest.json (another deploy on $CHAIN_SLUG may be in progress — check for a live forge child before live-begin --force)" >&2; exit 1; }
+export VAIPAKAM_LIVE_PUBLICATION_TOKEN="$LIVE_PUB_TOKEN"
+
 if step_done "diamond"; then
   echo
   echo "[2] DeployDiamond.s.sol (skipped — marker exists)"
 else
   echo
   echo "[2] DeployDiamond.s.sol"
-  # #1566 (Codex #2070 r24/r25) — two-phase live publication with a durable
-  # per-deploy token, the same protocol as deploy-testnet/mainnet.
-  LIVE_PUB_TOKEN="$$-$(date +%s)-$RANDOM"
-  node "$REPO_ROOT/packages/contracts/scripts/archive-manifest.mjs" live-begin "$CONTRACTS_DIR/deployments/archive-manifest.json" "$CHAIN_SLUG" "$LIVE_PUB_TOKEN" "$$" \
-    || { echo "ERROR: could not mark the live publication in archive-manifest.json (another deploy on $CHAIN_SLUG may be in progress)" >&2; exit 1; }
   forge script script/DeployDiamond.s.sol --rpc-url "$RPC" --broadcast --slow
-  node "$REPO_ROOT/packages/contracts/scripts/archive-manifest.mjs" live-end "$CONTRACTS_DIR/deployments/archive-manifest.json" "$CHAIN_SLUG" "$LIVE_PUB_TOKEN" "$CONTRACTS_DIR/deployments/$CHAIN_SLUG/addresses.json" \
-    || echo "WARNING: could not record the live artifact publication in archive-manifest.json — record it before committing (archive-manifest.mjs live-end ... $LIVE_PUB_TOKEN)" >&2
   snapshot_addresses "post-diamond"
   mark_done "diamond"
 fi
@@ -811,6 +816,12 @@ else
   echo
   echo "[4] Skipping CCIP cross-chain stack (--skip-vpfi)"
 fi
+# The last identity-bearing write of this run is behind us: clear the marker
+# and record the publication (bumps liveGeneration). A failure here leaves the
+# marker for the operator to clear with the token; nothing on chain is undone.
+node "$REPO_ROOT/packages/contracts/scripts/archive-manifest.mjs" live-end "$CONTRACTS_DIR/deployments/archive-manifest.json" "$CHAIN_SLUG" "$LIVE_PUB_TOKEN" "$CONTRACTS_DIR/deployments/$CHAIN_SLUG/addresses.json" \
+  || echo "WARNING: could not record the live artifact publication in archive-manifest.json — record it before committing (archive-manifest.mjs live-end ... $LIVE_PUB_TOKEN)" >&2
+unset VAIPAKAM_LIVE_PUBLICATION_TOKEN
 
 # ── 5b. Master-flag flip (testnet ergonomics) ─────────────────────────
 # Range Orders Phase 1 governance-gated kill switches default `false` on

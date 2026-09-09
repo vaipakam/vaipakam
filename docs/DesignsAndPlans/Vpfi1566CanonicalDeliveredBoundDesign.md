@@ -5380,6 +5380,27 @@ reported a comfortable answer it had not earned:
   walks again to the capped block, and before publication the run reloads the
   file it will actually replace and walks again for any chain whose evidence
   is missing or bound elsewhere.
+
+  **Round 26 closed the last unmarked path and the last automatic takeover.**
+  The two-phase publication lived only in the wrapper scripts while four
+  documents still showed a bare `forge script DeployDiamond --broadcast`,
+  which rewrites `addresses.json` with no marker and no generation change.
+  The protocol is now enforced where the write happens: `Deployments.sol`
+  gates the identity-bearing keys (`diamond`, `vpfiToken`, `vpfiMirror`,
+  `chainId`, `deployBlock`) on `VAIPAKAM_LIVE_PUBLICATION_TOKEN` MATCHING the
+  in-progress marker the manifest holds for that chain's slug — the three
+  wrappers export the token right after `live-begin`, so a direct broadcast
+  (no token) and an exported token with no marker both revert before the
+  artifact changes; facet-address keys stay ungated so the in-place refresh
+  scripts are unaffected, `DEPLOY_SKIP_ARTIFACTS=true` never reaches a write,
+  and the local Anvil chain is exempt on the same ground the census excludes
+  it (its artifact is gitignored and outside the inventory). `deploy-chain.sh` marks before its first identity write and
+  clears after its last, so a resumed run that skips the Diamond step is
+  covered too, and the four documents now route every broadcast through a
+  wrapper. And a marker whose deploy shell is dead is no longer taken over
+  automatically — the forge child can outlive the shell and still write the
+  artifact — so `live-begin` refuses any existing marker and the operator
+  passes `--force` only after checking for a live child.
   Hand-computed storage slots were never an option: they fail SILENTLY as
   zero, manufacturing the exact "empty" result the census exists to
   establish. The event reconstruction is retained behind `--corroborate` as
@@ -5448,13 +5469,16 @@ run 26: 34,082 arb-sepolia blocks in 1,354 s, 22,529 bnb-testnet blocks in
 | indeterminate on every class | 1 | `base-sepolia/.archive/2026-07-01T01-03-39Z`: the recorded address is not a Vaipakam Diamond |
 | indeterminate on every class | 1 | `arb-sepolia/.archive/2026-07-01T01-36-25Z`: names the live Diamond but records no VPFI token, and that Diamond does not route the token getter, so the rows cannot be scoped from this artifact (the live twin scopes from its own artifact's token) |
 
-**Why the honest count is ten and not eighteen.** An earlier run of this
+**Why the honest count is eight and not eighteen.** An earlier run of this
 census reported eighteen proven, on the strength of a zero VPFI balance and of
 `FunctionDoesNotExist` on every custody selector. Both are withdrawn above:
 the first proves rows would be unbacked, not absent; the second proves the
 selectors are unrouted now, not that they never wrote rows. The eight
 deployments that moved from "proven" to "indeterminate" did not change; the
-proof did. Nothing in the nine indeterminate cells is EVIDENCE of a row — no
+proof did; the later moves to nine and then eight came from the round-16 reuse
+rule and the round-22 scope rule, and the twentieth deployment arrived
+indeterminate on class 3 like its siblings. Nothing in the twelve indeterminate
+deployments is EVIDENCE of a row — no
 read anywhere returned one — but absence of a row is a claim about storage,
 and it is made only where storage was actually read.
 
