@@ -201,23 +201,83 @@ export function blockRef(block) {
   if (!/^0x[0-9a-f]{64}$/.test(hash)) throw new Error(`blockRef: a state read must be pinned to the census block's HASH, got ${JSON.stringify(block?.hash)}`);
   return { blockHash: hash, requireCanonical: true };
 }
-function decodeRevertLikeViem(err, abi, functionName) {
-  const pick = (v) => (typeof v === 'string' && /^0x[0-9a-f]{8,}$/i.test(v) ? v : null);
-  const data = pick(err?.data) ?? pick(err?.cause?.data) ?? pick(err?.data?.data);
-  if (!data) return null;
+/**
+ * Shape a raw-transport revert the way viem's readContract shapes one, so the
+ * census's detectors keep matching on the same fields. Two cases, and BOTH
+ * must carry the revert data: an error the ABI knows is decoded to its name
+ * (`IntentNoCommit()`), and one it does not — the Diamond fallback's own
+ * `FunctionDoesNotExist(bytes4)` is not in any facet ABI — is reported by its
+ * SIGNATURE, exactly as viem does ("reverted with the following signature:
+ * 0xa9ad62f8…"). The first cut of this helper returned null for the unknown
+ * case and let the raw error through, whose `details` is just "execution
+ * reverted": the selector detector then missed, and three bare Diamond shells
+ * classified as "not a Vaipakam Diamond" (caught comparing a post-merge
+ * partial run with run 26; never published). Exported for the test.
+ */
+/**
+ * The Diamond FALLBACK's own "no facet for this selector" error,
+ * `VaipakamDiamond.FunctionDoesNotExist()` — no arguments, so the revert data
+ * is EXACTLY the four-byte selector 0xa9ad62f8. Only that exact payload proves
+ * a selector unrouted on a Vaipakam Diamond (#2088 r2 P2): a contract that
+ * answers the selector followed by anything else is some other contract
+ * talking and stays `notADiamond`. Reads the raw `data` that
+ * {revertErrorLikeViem} attaches, never the message text, so nothing that
+ * merely MENTIONS the selector counts. Exported for the test.
+ */
+export const FUNCTION_DOES_NOT_EXIST_SELECTOR = '0xa9ad62f8';
+export function isFunctionDoesNotExistRevert(err) {
+  const data = typeof err?.data === 'string' ? err.data.toLowerCase() : null;
+  if (data === FUNCTION_DOES_NOT_EXIST_SELECTOR) return true;
+  // decoded by name (only if some ABI carried the error): still requires the exact four-byte payload
+  return /^FunctionDoesNotExist$/.test(`${err?.errorName ?? ''}`) && data === FUNCTION_DOES_NOT_EXIST_SELECTOR;
+}
+/**
+ * viem's own gate, and no wider: JSON-RPC code 3 (`ExecutionRevertedError.code`,
+ * EIP-1474 "execution error"), its node message
+ * `/execution reverted|gas required exceeds allowance/`, or — the form
+ * viem's getContractError also accepts (#2088 r4 P2) — an INTERNAL error
+ * (-32603, `InternalRpcError.code`) that carries revert DATA: some nodes
+ * report an eth_call revert that way with only "Internal error" as text. A
+ * bare "revert" in a provider's text — a -32602 that cannot serve a
+ * "reverted" block, say — is NOT an execution revert and must surface as the
+ * provider failure it is, whatever hex `data` rides along (r1/r3 P2); and an
+ * internal error WITHOUT data is a provider failure too.
+ */
+const EXECUTION_REVERT_NODE_MESSAGE = /execution reverted|gas required exceeds allowance/i;
+const INTERNAL_RPC_ERROR_CODE = -32603;
+export function revertDataOf(err) {
+  const pick = (v) => (typeof v === 'string' && /^0x[0-9a-f]{8,}$/i.test(v) ? v.toLowerCase() : null);
+  return pick(err?.data) ?? pick(err?.cause?.data) ?? pick(err?.data?.data);
+}
+export function isExecutionRevert(err) {
+  const codes = [err?.code, err?.cause?.code, err?.cause?.cause?.code];
+  if (codes.some((c) => c === 3)) return true;
+  if (codes.some((c) => c === INTERNAL_RPC_ERROR_CODE) && revertDataOf(err) !== null) return true;
+  return EXECUTION_REVERT_NODE_MESSAGE.test(`${err?.details ?? ''} ${err?.shortMessage ?? ''} ${err?.message ?? ''} ${err?.cause?.message ?? ''}`);
+}
+export function revertErrorLikeViem(err, abi, functionName) {
+  if (!isExecutionRevert(err)) return null;
+  const lower = revertDataOf(err);
+  if (!lower) return null;
+  let e;
   try {
-    const d = decodeErrorResult({ abi, data });
+    const d = decodeErrorResult({ abi, data: lower });
     const sig = `${d.errorName}(${(d.args ?? []).map(String).join(', ')})`;
-    const e = new Error(`The contract function "${functionName}" reverted with the following reason:\n${sig}`);
-    e.shortMessage = `The contract function "${functionName}" reverted.`;
+    e = new Error(`The contract function "${functionName}" reverted with the following reason:\n${sig}`);
     e.metaMessages = [`Error: ${sig}`];
-    e.details = err?.details ?? err?.message;
     e.errorName = d.errorName;
-    e.cause = err;
-    return e;
   } catch {
-    return null;
+    e = new Error(
+      `The contract function "${functionName}" reverted with the following signature:\n${lower.slice(0, 10)}\nUnable to decode signature "${lower.slice(0, 10)}" as it was not found on the provided ABI.\nRaw revert data: ${lower}`,
+    );
+    e.metaMessages = [`Signature: ${lower.slice(0, 10)}`];
+    e.signature = lower.slice(0, 10);
   }
+  e.shortMessage = `The contract function "${functionName}" reverted.`;
+  e.details = err?.details ?? err?.message;
+  e.data = lower;
+  e.cause = err;
+  return e;
 }
 async function callAtHash(client, block, { address, abi, functionName, args = [] }) {
   const data = encodeFunctionData({ abi, functionName, args });
@@ -225,7 +285,7 @@ async function callAtHash(client, block, { address, abi, functionName, args = []
   try {
     raw = await client.request({ method: 'eth_call', params: [{ to: address, data }, blockRef(block)] });
   } catch (err) {
-    throw decodeRevertLikeViem(err, abi, functionName) ?? err;
+    throw revertErrorLikeViem(err, abi, functionName) ?? err;
   }
   if (!raw || raw === '0x') {
     const e = new Error(`The contract function "${functionName}" returned no data ("0x").`);
@@ -1482,10 +1542,7 @@ async function censusDeployment(dep) {
   // is a different contract talking — a bare shell answers 0xa9ad62f8 on every
   // selector, whereas one base-sepolia archive (18 KB of code at the recorded
   // address) reverts empty on everything and is simply not a Diamond.
-  const FUNCTION_DOES_NOT_EXIST = '0xa9ad62f8';
-  const isUnroutedOnDiamond = (err) =>
-    `${err?.shortMessage ?? ''} ${err?.details ?? ''} ${err?.message ?? ''}`.toLowerCase().includes(FUNCTION_DOES_NOT_EXIST)
-    || /FunctionDoesNotExist/.test(`${err?.cause?.data?.errorName ?? err?.data?.errorName ?? ''}`);
+  const isUnroutedOnDiamond = isFunctionDoesNotExistRevert;
   const rethrowUnlessRevert = (err) => {
     const kind = classifyRpcError(err);
     if (kind === 'pruned' || kind === 'rate' || !isRevert(err)) throw err;

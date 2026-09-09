@@ -2,7 +2,8 @@
 // are PURE functions (Codex #2070 r23); every rule they carry is pinned here.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { pickFinalitySample, snapshotRegression, blockRef, assertSampledHashesAgree } from './census-grandfathered-custody.mjs';
+import { pickFinalitySample, snapshotRegression, blockRef, assertSampledHashesAgree, revertErrorLikeViem, isExecutionRevert, isFunctionDoesNotExistRevert } from './census-grandfathered-custody.mjs';
+import { toFunctionSelector } from 'viem';
 
 const H = (n) => `0x${String(n).padStart(64, 'a')}`;
 const res = (chainSlug, deployment, atBlock, atBlockHash, diamond = '0xd1', vpfiToken = '0xt1') => ({ chainSlug, deployment, atBlock: String(atBlock), atBlockHash, diamond, vpfiToken });
@@ -67,4 +68,58 @@ test('assertSampledHashesAgree: every sampled replica must serve the pinned hash
   // unanimous but not the pinned hash: the chain moved under the census
   assert.throws(() => assertSampledHashesAgree([H(2), H(2)], H(1), 100n, 't'), /pinned .* sampled/);
   assert.throws(() => assertSampledHashesAgree([], H(1), 100n, 't'), /disagree/);
+});
+
+test('revertErrorLikeViem: a revert the ABI cannot decode still carries its signature and raw data, a known one its name (post-#2070 regression)', () => {
+  const abi = [{ type: 'error', name: 'IntentNoCommit', inputs: [] }, { type: 'function', name: 'getIntentCommit', inputs: [{ type: 'uint256', name: 'loanId' }], outputs: [], stateMutability: 'view' }];
+  // the Diamond fallback's FunctionDoesNotExist(bytes4) — selector 0xa9ad62f8 — is in no facet ABI
+  const raw = { code: 3, details: 'execution reverted', data: '0xA9AD62F8' };
+  const e = revertErrorLikeViem(raw, abi, 'getIntentCommit');
+  assert.ok(e instanceof Error);
+  assert.match(e.message, /reverted with the following signature:\n0xa9ad62f8/);
+  assert.equal(e.signature, '0xa9ad62f8');
+  assert.equal(e.data, '0xa9ad62f8', 'raw data is lower-cased and kept');
+  assert.equal(e.shortMessage, 'The contract function "getIntentCommit" reverted.');
+  // what the census's detector reads
+  assert.equal(`${e.shortMessage} ${e.details} ${e.message}`.toLowerCase().includes('0xa9ad62f8'), true);
+  // a known error decodes to its name, in the fields readContract populates
+  const known = revertErrorLikeViem({ code: 3, details: 'execution reverted', data: toFunctionSelector('IntentNoCommit()') }, abi, 'getIntentCommit');
+  assert.equal(known.errorName, 'IntentNoCommit');
+  assert.match(known.metaMessages.join(' '), /IntentNoCommit\(\)/);
+  // no revert data at all: not a revert the helper can shape
+  assert.equal(revertErrorLikeViem({ details: 'header not found' }, abi, 'x'), null);
+  // a PROVIDER failure that happens to carry hex data is never dressed as a revert (#2088 r1 P2)
+  const provider = { code: -32602, message: 'invalid block reference', details: 'invalid block reference', data: '0xa9ad62f8' + '00'.repeat(28) };
+  assert.equal(isExecutionRevert(provider), false);
+  assert.equal(revertErrorLikeViem(provider, abi, 'x'), null);
+  assert.equal(isExecutionRevert({ code: -32000, details: 'execution reverted: custom' }), true, 'the text still counts where a client uses another code');
+  assert.equal(isExecutionRevert({ cause: { code: 3 } }), true);
+  // a provider message that merely CONTAINS "revert" is not an execution revert (#2088 r3 P2)
+  const revertedBlock = { code: -32602, message: 'cannot serve a reverted block', details: 'cannot serve a reverted block', data: '0xa9ad62f8' };
+  assert.equal(isExecutionRevert(revertedBlock), false);
+  assert.equal(revertErrorLikeViem(revertedBlock, abi, 'x'), null);
+  // viem's other revert form (#2088 r4 P2): -32603 "Internal error" WITH revert data is a revert — the fallback signature comes through
+  const internalWithData = { code: -32603, message: 'Internal error', details: 'Internal error', data: '0xa9ad62f8' };
+  assert.equal(isExecutionRevert(internalWithData), true);
+  const shaped = revertErrorLikeViem(internalWithData, abi, 'facetAddresses');
+  assert.equal(shaped?.signature, '0xa9ad62f8');
+  assert.equal(shaped?.data, '0xa9ad62f8');
+  // … but an internal error WITHOUT data is a provider failure
+  assert.equal(isExecutionRevert({ code: -32603, message: 'Internal error', details: 'Internal error' }), false);
+  assert.equal(isExecutionRevert({ cause: { code: -32603, data: '0xa9ad62f8' } }), true, 'the code and data may sit on the cause');
+});
+
+test('isFunctionDoesNotExistRevert: only the EXACT four-byte fallback payload proves a selector unrouted on a Diamond (#2088 r2)', () => {
+  const abi = [{ type: 'function', name: 'facetAddresses', inputs: [], outputs: [], stateMutability: 'view' }];
+  // the real Diamond fallback: FunctionDoesNotExist() has no arguments → exactly 0xa9ad62f8
+  const shell = revertErrorLikeViem({ code: 3, details: 'execution reverted', data: '0xA9AD62F8' }, abi, 'facetAddresses');
+  assert.equal(isFunctionDoesNotExistRevert(shell), true);
+  // the selector followed by ANY payload is some other contract talking
+  const impostor = revertErrorLikeViem({ code: 3, details: 'execution reverted', data: '0xa9ad62f8' + '00'.repeat(31) + '01' }, abi, 'facetAddresses');
+  assert.equal(isFunctionDoesNotExistRevert(impostor), false);
+  // mentioning the selector in a message proves nothing
+  assert.equal(isFunctionDoesNotExistRevert({ message: 'reverted with the following signature: 0xa9ad62f8', details: 'execution reverted' }), false);
+  // an empty revert is not the fallback either
+  assert.equal(isFunctionDoesNotExistRevert({ data: '0x' }), false);
+  assert.equal(isFunctionDoesNotExistRevert(null), false);
 });
