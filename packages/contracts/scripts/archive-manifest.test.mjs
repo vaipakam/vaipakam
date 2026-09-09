@@ -359,8 +359,10 @@ test('--force is verified against the recorded PROCESS GROUP — an orphaned chi
   assert.equal(mark.pgid, pgidOf(process.pid));
   assert.ok(Number.isInteger(mark.pgid) && mark.pgid > 0, 'the group id is recorded');
   // an orphan in its own group, recorded under a marker whose shell died long ago
+  // NOT unref'd: the runner cancels a file whose event loop drains while a
+  // test still awaits (CI on a9ba15c69), and the child is killed below anyway.
   const orphan = spawn('sleep', ['60'], { detached: true, stdio: 'ignore' });
-  orphan.unref();
+  const keepAlive = setTimeout(() => {}, 20_000); // a referenced timer holds the loop across the waits
   const exited = new Promise((resolve) => orphan.once('exit', resolve));
   await new Promise((r) => setTimeout(r, 150));
   writeFileSync(manifest, JSON.stringify({ ...readManifest(manifest), livePublicationsInProgress: { g: { token: 'old', pid: 2 ** 22 - 1, pgid: orphan.pid, startedAt: 'x' } } }));
@@ -368,6 +370,7 @@ test('--force is verified against the recorded PROCESS GROUP — an orphaned chi
   assert.throws(() => beginLivePublication(manifest, { slug: 'g', token: 'new', pid: process.pid, force: true }), /still has live member.*sleep/s);
   process.kill(-orphan.pid, 'SIGKILL');
   await exited;
+  clearTimeout(keepAlive);
   assert.equal(beginLivePublication(manifest, { slug: 'g', token: 'new', pid: process.pid, force: true }).token, 'new');
 });
 
