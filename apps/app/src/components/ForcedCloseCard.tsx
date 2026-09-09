@@ -37,7 +37,7 @@
  * does not support, on the one card whose whole job is telling somebody
  * how they get paid.
  */
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { usePublicClient } from 'wagmi';
 import { AlertTriangle } from 'lucide-react';
@@ -51,7 +51,10 @@ import { settled } from '../contracts/ownReceipt';
 import { withTimeout } from '../lib/withTimeout';
 import {
   isHoldingAfterSubmit,
+  readForcedCloseSubmission,
+  writeForcedCloseSubmission,
   type ForcedCloseDisposition,
+  type ForcedCloseSubmission,
 } from '../data/forcedCloseHold';
 import {
   canSubmitFromApp,
@@ -191,16 +194,7 @@ export function ForcedCloseCard({
    *  removes the render-phase `setSubmitted(null)` that implemented the
    *  clearing, which was a state write during render. */
   const [submissions, setSubmissions] = useState<
-    Record<
-      string,
-      {
-        at: number;
-        /** The transaction this hold is about. The hold is reconciled
-         *  against THIS, not against how recently unrelated reads
-         *  settled. */
-        hash: `0x${string}`;
-      }
-    >
+    Record<string, ForcedCloseSubmission>
   >({});
 
   /** Identity of the position this card is currently showing.
@@ -209,7 +203,35 @@ export function ForcedCloseCard({
    *  a submission made with no wallet chain cannot be confused with one
    *  made on a real chain, which is the property that matters. */
   const submissionKey = `${walletChain?.chainId ?? 'none'}:${String(loanId)}`;
-  const submitted = submissions[submissionKey] ?? null;
+
+  /** ROUND 53 P1 — hydrated from device-local storage, not just from
+   *  this component's lifetime.
+   *
+   *  Round 52 keyed the in-memory map by chain and loan, which fixed a
+   *  chain switch and nothing else: the map is component state, so a
+   *  reload or a navigation away from the route destroys it exactly as
+   *  clearing it did, and returning re-offers the button over a
+   *  transaction that may still be mining. A reload is the likelier of
+   *  the two.
+   *
+   *  Re-seeded as a render-phase ADJUSTMENT rather than in an effect,
+   *  the same shape `useLoanSalePending` uses (#1520): React re-runs the
+   *  render before painting, so the previous identity's record is never
+   *  displayed, where the effect version committed one frame carrying
+   *  it. The lazy initializer alone would freeze the first identity. */
+  const [seededFor, setSeededFor] = useState(submissionKey);
+  if (seededFor !== submissionKey) {
+    setSeededFor(submissionKey);
+    const persisted = readForcedCloseSubmission(walletChain?.chainId, loanId);
+    setSubmissions((prev) =>
+      persisted === null ? prev : { ...prev, [submissionKey]: persisted },
+    );
+  }
+
+  const submitted =
+    submissions[submissionKey] ??
+    readForcedCloseSubmission(walletChain?.chainId, loanId);
+
 
   /** What the chain has established about the submitted close-out.
    *
@@ -246,11 +268,23 @@ export function ForcedCloseCard({
     queryKey: ['forcedClose', 'disposition', submissionKey, submitted?.hash],
     enabled: submitted !== null && Boolean(publicClient),
     retry: false,
-    // Only an UNDETERMINED wait is worth restarting. The others are
-    // final facts about a transaction, and nothing later changes them.
+    // ROUND 53 P2 — restarted IMMEDIATELY, not after another full
+    // timeout. `waitForTransactionReceipt` identifies a replacement from
+    // the original pending transaction's sender and nonce, which it has
+    // to fetch; leaving a three-minute gap with no waiter alive meant a
+    // wallet could reprice or cancel inside it and the next waiter, by
+    // then unable to fetch a transaction that is no longer pending, had
+    // nothing to reconcile against. It would then poll an orphaned hash
+    // and return `undetermined` forever, holding the action shut while
+    // the card said it was still watching. A 1-second restart keeps a
+    // waiter effectively continuous.
+    //
+    // Only an UNDETERMINED wait is worth restarting at all. The others
+    // are final facts about a transaction, and nothing later changes
+    // them.
     refetchInterval: (query) =>
       query.state.data === undefined || query.state.data === 'undetermined'
-        ? RECEIPT_WAIT_TIMEOUT_MS
+        ? 1_000
         : false,
     queryFn: async (): Promise<ForcedCloseDisposition> => {
       try {
@@ -268,6 +302,50 @@ export function ForcedCloseCard({
       }
     },
   });
+
+  const disposition = watch.data ?? null;
+
+  /** ROUND 53 P2 — the invalidation must follow the WATCHER, not only
+   *  the write.
+   *
+   *  `closeOut` invalidates after `await write(...)` resolves, so a write
+   *  that rejects — an RPC drop, a receipt wait that timed out — skips it
+   *  entirely. The transaction can still mine, and this watcher then
+   *  establishes `success` independently. At that point the hold requires
+   *  every readiness read to postdate the disposition, and `consent`
+   *  carries `staleTime: 10 * 60_000` with no `refetchInterval`, so
+   *  nothing would ever advance it: after a PARTIAL match the live
+   *  residual stays locked with success already known. That is the
+   *  round-29 latch again, reached through the round-52 anchor.
+   *
+   *  Keyed by hash so it fires once per transaction rather than on every
+   *  render while success is on screen, and it is deliberately
+   *  fire-and-forget — the hold releases on the resulting timestamps, not
+   *  on this promise.
+   */
+  //  A REF, not state: this value is never read during render, and
+  //  `react-hooks/set-state-in-effect` (rightly) rejects the state
+  //  version — a setState here would schedule a second render for a
+  //  bookkeeping flag nothing displays.
+  const invalidatedFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (disposition !== 'success' || submitted === null) return;
+    if (invalidatedFor.current === submitted.hash) return;
+    invalidatedFor.current = submitted.hash;
+    void queryClient.invalidateQueries({ queryKey: ['forcedClose'] });
+    onClosedOut();
+  }, [disposition, submitted, queryClient, onClosedOut]);
+
+  /** ROUND 53 P1 — the device-local record is cleared once the
+   *  transaction is DISPOSED of, not when the card unmounts. Leaving it
+   *  would make every later visit to this position re-watch a settled
+   *  transaction, and on a partial match that means holding the residual
+   *  shut behind a disposition that was already acted on. */
+  useEffect(() => {
+    if (disposition === null || disposition === 'undetermined') return;
+    if (submitted === null) return;
+    writeForcedCloseSubmission(walletChain?.chainId, loanId, null);
+  }, [disposition, submitted, walletChain?.chainId, loanId]);
 
   if (!shouldRenderForcedClose(readiness)) return null;
 
@@ -324,7 +402,6 @@ export function ForcedCloseCard({
   // table, because four consecutive rounds each fixed it here and broke
   // it again, and every one of those was a question about a small set of
   // discrete cases arguing from a comment instead of from cases.
-  const disposition = watch.data ?? null;
   const holdingAfterSubmit = isHoldingAfterSubmit({
     submittedAt: submitted?.at ?? null,
     disposition,
@@ -416,12 +493,19 @@ export function ForcedCloseCard({
       // where the transaction WENT, not where the wallet happens to
       // point when the promise resolves.
       const key = submissionKey;
+      const chainAtSend = walletChain?.chainId;
       await write('triggerDefault', [BigInt(loanId), []], {
-        onSubmitted: (hash) =>
-          setSubmissions((prev) => ({
-            ...prev,
-            [key]: { at: Date.now(), hash },
-          })),
+        onSubmitted: (hash) => {
+          const record = { at: Date.now(), hash };
+          setSubmissions((prev) => ({ ...prev, [key]: record }));
+          // ROUND 53 P1 — also to device-local storage, so a reload or a
+          // navigation away does not lose the only record of a live
+          // transaction. In-memory FIRST and unconditionally: a browser
+          // that refuses storage (private mode, quota, storage disabled)
+          // must still get the within-session hold, which is the larger
+          // half of the protection.
+          writeForcedCloseSubmission(chainAtSend, loanId, record);
+        },
       });
       onClosedOut();
       onCloseConfirm();

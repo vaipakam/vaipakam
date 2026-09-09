@@ -125,3 +125,69 @@ export function isHoldingAfterSubmit(input: ForcedCloseHoldInput): boolean {
   // `readsUpdatedAt`.
   return false;
 }
+
+/** Device-local record of a close-out this browser broadcast.
+ *
+ *  ROUND 53 P1 — round 52 keyed the submission by chain and loan, which
+ *  fixed a chain switch and nothing else, because the map was component
+ *  state. A reload or a navigation away from `/positions/:loanId`
+ *  destroys it just as completely as clearing it did, and returning then
+ *  presents the button over a transaction that may still be mining. A
+ *  reload is the more likely of the two by some margin.
+ *
+ *  It uses the same `makePendingMarkerStore` every other "remember what I
+ *  just broadcast" record in this app uses (sale listing, offset,
+ *  refinance, stuck-token recovery) rather than a private one, so the
+ *  keying scheme, the storage-refused behaviour and the cross-tab key
+ *  shape are defined once. This is the SAFETY tier of that store's two:
+ *  losing the record does not merely cost an affordance, it re-offers a
+ *  funds-moving action over an unresolved transaction — so `write`
+ *  reports whether it landed and the caller is expected to care.
+ *
+ *  The value is `<hash>:<submittedAtMs>`. Both halves are needed: the
+ *  hash is what gets watched, and the timestamp is the fallback anchor
+ *  when a disposition arrives without one. */
+import { makePendingMarkerStore } from '../lib/pendingMarker';
+
+const submitMarker = makePendingMarkerStore('app.forcedCloseSubmit');
+
+export interface ForcedCloseSubmission {
+  hash: `0x${string}`;
+  at: number;
+}
+
+export function readForcedCloseSubmission(
+  chainId: number | undefined,
+  loanId: string | number,
+): ForcedCloseSubmission | null {
+  if (chainId === undefined) return null;
+  const raw = submitMarker.read(chainId, String(loanId));
+  if (raw === null) return null;
+  // Tolerant of a malformed record rather than throwing on it: a value
+  // this browser cannot parse is one it cannot act on either, and a
+  // parse error here would take down the whole card. Treated as "no
+  // record", which is the same posture as storage being unavailable.
+  const at = raw.lastIndexOf(':');
+  if (at <= 0) return null;
+  const hash = raw.slice(0, at);
+  const ts = Number(raw.slice(at + 1));
+  if (!/^0x[0-9a-fA-F]{64}$/.test(hash) || !Number.isFinite(ts) || ts <= 0) {
+    return null;
+  }
+  return { hash: hash as `0x${string}`, at: ts };
+}
+
+/** @returns false when storage refused the write (private mode, quota,
+ *  storage disabled) — the caller must not treat that as recorded. */
+export function writeForcedCloseSubmission(
+  chainId: number | undefined,
+  loanId: string | number,
+  submission: ForcedCloseSubmission | null,
+): boolean {
+  if (chainId === undefined) return false;
+  return submitMarker.write(
+    chainId,
+    String(loanId),
+    submission === null ? null : `${submission.hash}:${submission.at}`,
+  );
+}

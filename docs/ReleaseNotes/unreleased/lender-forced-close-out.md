@@ -557,3 +557,22 @@ is told a match might still appear, which on that deployment it cannot.
 The app has no way to read that setting today — the protocol does not
 publish it — so this is recorded as its own piece of work rather than
 guessed at.
+
+Remembering the in-flight close-out turned out to need more than
+remembering it per network. The record lived only as long as the page
+did, so reloading, or moving away from the position and back, lost it
+just as completely — and reloading is the more likely of the two. It is
+now kept on the device the same way the app already remembers a sale
+listing or a recovery it has just broadcast, and cleared once the
+transaction's outcome is known.
+
+Two smaller corrections in the same area. The app stops and restarts its
+watch on the transaction; it used to wait three minutes before starting
+the next one, and a wallet that sped up or cancelled inside that gap
+could leave the app permanently unable to work out what happened —
+holding the button off while telling the lender it was still watching. It
+restarts immediately now. And if the app lost the connection while the
+transaction was still going, it never refreshed the position afterwards
+even once it worked out the close-out had succeeded; on a part-settled
+loan that left the remaining part locked with the answer already known.
+Working out the outcome now refreshes the position by itself.
