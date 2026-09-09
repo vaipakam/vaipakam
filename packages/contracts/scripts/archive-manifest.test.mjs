@@ -12,7 +12,7 @@ import { mkdtempSync, writeFileSync, readFileSync, mkdirSync, readdirSync, exist
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { appendEntry, readManifest, withManifestLock, entryFromArtifact } from './archive-manifest.mjs';
+import { appendEntry, readManifest, withManifestLock, entryFromArtifact, regenerateEntries } from './archive-manifest.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const WRITER = join(HERE, 'archive-manifest.mjs');
@@ -100,4 +100,47 @@ test('withManifestLock releases on throw', () => {
   const { manifest } = fixture();
   assert.throws(() => withManifestLock(manifest, () => { throw new Error('boom'); }), /boom/);
   assert.equal(existsSync(`${manifest}.lock`), false);
+});
+
+test('regenerate collects INSIDE the lock and sees every prior append (the r13 race)', () => {
+  const { dir, manifest } = fixture();
+  const e1 = entryFromArtifact({ slug: 'a', stamp: 's1', addrPath: artifact(dir, 1) });
+  const e2 = entryFromArtifact({ slug: 'a', stamp: 's2', addrPath: artifact(dir, 2) });
+  appendEntry(manifest, e1);
+  appendEntry(manifest, e2);
+  let lockedDuringCollect = null;
+  let seen = null;
+  const { manifest: out } = regenerateEntries(manifest, (current) => {
+    lockedDuringCollect = existsSync(`${manifest}.lock`);
+    seen = current.entries.length;
+    return [...current.entries, entryFromArtifact({ slug: 'b', stamp: 's3', addrPath: artifact(dir, 3) })];
+  });
+  assert.equal(lockedDuringCollect, true, 'collect must run while the lock is held');
+  assert.equal(seen, 2, 'collect receives the file as it stands under the lock');
+  assert.equal(out.entries.length, 3);
+  assert.equal(readManifest(manifest).entries.length, 3);
+  assert.equal(existsSync(`${manifest}.lock`), false);
+});
+
+test('regenerate refuses a DROP without the override, and refuses an empty result', () => {
+  const { dir, manifest } = fixture();
+  const e1 = entryFromArtifact({ slug: 'a', stamp: 's1', addrPath: artifact(dir, 1) });
+  const e2 = entryFromArtifact({ slug: 'a', stamp: 's2', addrPath: artifact(dir, 2) });
+  appendEntry(manifest, e1);
+  appendEntry(manifest, e2);
+  const before = readFileSync(manifest, 'utf8');
+  assert.throws(() => regenerateEntries(manifest, () => [e1]), /DROP 1/);
+  assert.throws(() => regenerateEntries(manifest, () => []), /EMPTY/);
+  assert.equal(readFileSync(manifest, 'utf8'), before, 'a refused regeneration leaves the file untouched');
+  const { dropped } = regenerateEntries(manifest, () => [e1], { allowDrop: true });
+  assert.equal(dropped, 1);
+  assert.equal(readManifest(manifest).entries.length, 1);
+});
+
+test('regenerate may CORRECT the content of an existing key (an in-place artifact fix)', () => {
+  const { dir, manifest } = fixture();
+  const e1 = entryFromArtifact({ slug: 'a', stamp: 's1', addrPath: artifact(dir, 1) });
+  appendEntry(manifest, e1);
+  regenerateEntries(manifest, () => [{ ...e1, diamond: '0xcorrected' }]);
+  assert.equal(readManifest(manifest).entries[0].diamond, '0xcorrected');
 });

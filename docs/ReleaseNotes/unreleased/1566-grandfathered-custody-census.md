@@ -152,6 +152,25 @@ retires the *migration* — there is nothing to move, and the shortfall question
 that would have gone to the owner does not arise — but it does not retire the
 protective changes that keep future holdings out of the shared balance in the
 first place. Those producers are still live and can create a qualifying record
-the moment after the census reads zero, so that work ships regardless.
+the moment after the census reads zero, so that work ships regardless. Review
+then tightened even the first half: a record created after the census but
+before the protective changes land would have nowhere to be moved to once the
+moving code is gone, so the report now states plainly that the migration is
+retirable only by a census taken after those producers were frozen, or after
+the protective changes are deployed, and says which deployments still have
+live producers.
+
+Five further corrections from that review round. Regenerating the archived-
+contract inventory now gathers its list while holding the same lock the deploy
+scripts take, so a redeploy recording its retired contract at the same moment
+cannot be overwritten. The testnet deploy script's repair of unrecorded
+archives now runs on every fresh redeploy, not only when a live record exists —
+the case it repairs is precisely the one without a live record. A prior report
+that cannot be read now stops the census rather than quietly removing the
+floor that keeps a report from going backwards, and the report is written in
+one step so an interruption cannot leave a half-written one. The check that the
+block being read is still the block that was pinned now runs before every
+early "proven" result, not only after a full enumeration. And one more comment
+describing the routing-history reading as a proof was retired.
 
 Refs #1566, #1349, #1956

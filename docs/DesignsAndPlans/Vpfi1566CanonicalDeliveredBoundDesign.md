@@ -4751,6 +4751,16 @@ cheap answer, and it decides the size of everything below: **if a class is
 empty on every deployed chain, its slice's MIGRATION half collapses to a
 certified no-op — and the shortfall disposition slice 0 would otherwise put to
 the owner does not arise at all**, because there is nothing to be short of.
+That certification carries the condition stated two paragraphs down, and the
+census's own verdict now carries it too (Codex #2070 r13 P1): "empty at block
+X" retires the movers only if no qualifying row can be written after X and
+before the isolation lands — a row written in that window sits in shared
+custody with no migration path once the movers are gone. The artifact records
+`migrationRetirable` with its reason, and a run whose deployments still route
+a custody surface (the census cannot see a freeze, so a routed surface is
+assumed live) reports the migration half as *not yet retirable* and names the
+re-run that would earn it: after a producer freeze that has finalized, or after
+isolation is deployed.
 
 ⚠️ **The census retires MIGRATION, never the prospective producer/consumer
 changes, and an earlier revision of this paragraph said "its slice collapses"
@@ -5058,6 +5068,24 @@ reported a comfortable answer it had not earned:
   pruned receipts make the cut-history reading `unreadable` there, which costs
   nothing now that the reading is refutation-only); each result records the
   endpoint host that served it.
+
+  **Round 13 (Codex #2070) closed five more doors in the same tools.** The
+  census regeneration of the manifest collected its replacement list *before*
+  taking the lock, so an append that won the lock in between was overwritten
+  by the stale list — collection now runs inside the lock, in the module, with
+  the never-drop policy beside it, so every regeneration path has both and a
+  test asserts the lock is held during collection. The testnet script's
+  reconcile had been placed inside the existing-Diamond branch, which is
+  skipped in exactly the half-failed case it repairs; it now runs on every
+  `--fresh` before the live artifact is consulted, as mainnet's does. An
+  unreadable prior artifact used to disable the height floor silently — it now
+  aborts, naming the committed copy as the recovery — and the artifact itself
+  is written by temp-and-rename so an interrupted run cannot leave a truncated
+  one behind. The block-identity re-read (hash pinned at resolution equals hash
+  now) was applied only at the end of a full enumeration; the early returns for
+  a bounded deployment could emit a proven verdict without it, so it now runs
+  before every proven-capable return. And one more comment calling the cut
+  history "a complete proof" was retired.
   Hand-computed storage slots were never an option: they fail SILENTLY as
   zero, manufacturing the exact "empty" result the census exists to
   establish. The event reconstruction is retained behind `--corroborate` as
@@ -5080,20 +5108,27 @@ reported a comfortable answer it had not earned:
   latter as a failure on op-sepolia rather than silently counting it as an
   absent commit.
 
-**RESULT (2026-09-09, run 17 — all nineteen retained deployments across five
+**RESULT (2026-09-09, run 19 — all nineteen retained deployments across five
 chains, inventory from the committed manifest, the two unsound bounds
 withdrawn, every chain read at or above the height the previous committed run
-certified, the serving endpoint recorded on every result): ten deployments are
-PROVEN EMPTY on every class; nine are INDETERMINATE on at least one.** 189 loans
-were enumerated across the eighteen distinct Diamonds (one arb-sepolia archive
-names the live Diamond and reuses its result); **zero rows were found in any
-class on any deployment where rows could be read**; every Diamond whose VPFI
-token resolves holds zero, and no backing shortfall exists anywhere rows were
-readable. Runs 15 and 16, made while closing the round-12 findings, reached the
-same standing for every deployment; run 15 was discarded for reading op-sepolia
-at a stale finality height (see the monotonic-height guard above) and run 16 for
-carrying the endpoint stamp on only part of the results. How each deployment
-stands:
+certified, the serving endpoint and producer liveness recorded on every
+result): ten deployments are PROVEN EMPTY on every class; nine are
+INDETERMINATE on at least one.** 189 loans were enumerated across the eighteen
+distinct Diamonds (one arb-sepolia archive names the live Diamond and reuses
+its result); **zero rows were found in any class on any deployment where rows
+could be read**; every Diamond whose VPFI token resolves holds zero, and no
+backing shortfall exists anywhere rows were readable. The artifact records
+`migrationRetirable: false` — the population is not yet established empty,
+and fifteen of the nineteen deployments still route a custody surface, so
+even a fully proven run would report the migration half as not yet retirable
+until it follows a finalized producer freeze or an isolation deploy. Runs 15
+to 18, made while closing the round-12 and round-13 findings, reached the same
+standing for every deployment they completed; run 15 was discarded for reading
+op-sepolia at a stale finality height (see the monotonic-height guard above),
+run 16 for carrying the endpoint stamp on only part of the results, run 17
+superseded by the round-13 fields, and run 18 lost arb-sepolia's 37-loan
+archive to a replica two hours behind head, past the retry budget. How each
+deployment stands:
 
 | Standing | Deployments | Basis |
 | --- | --- | --- |

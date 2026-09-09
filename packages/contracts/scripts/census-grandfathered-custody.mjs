@@ -84,8 +84,8 @@
  * then `CENSUS_RPC_URL`, then the public default for known testnets.
  */
 
-import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync } from 'node:fs';
-import { readManifest, replaceEntries } from './archive-manifest.mjs';
+import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync, renameSync, rmSync } from 'node:fs';
+import { readManifest, regenerateEntries } from './archive-manifest.mjs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createPublicClient, http, toFunctionSelector, parseAbiItem } from 'viem';
@@ -160,6 +160,37 @@ function classifyRpcError(err) {
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/** Write a JSON text atomically (temp + rename) and read it back. */
+function writeJsonAtomic(path, text) {
+  const tmp = `${path}.tmp-${process.pid}-${Date.now()}`;
+  try {
+    writeFileSync(tmp, text);
+    renameSync(tmp, path);
+  } finally {
+    rmSync(tmp, { force: true });
+  }
+  if (readFileSync(path, 'utf8') !== text) throw new Error(`${path} does not read back as written`);
+}
+
+/**
+ * Re-read the census block and confirm it still carries the hash pinned when
+ * the chain's identity was resolved (Codex #2070 P1; applied before EVERY
+ * return that can emit a proven verdict per r13 P2 — the early returns for
+ * a bounded deployment used to skip it, so a no-code read served by a replica
+ * at a different block could have been certified under the recorded hash).
+ * On a finalized block this can only fail catastrophically, which is exactly
+ * why it is worth asserting.
+ */
+async function assertBlockIdentity(client, censusBlock, who) {
+  const blockNow = await client.getBlock({ blockNumber: censusBlock.number });
+  if (blockNow.hash !== censusBlock.hash) {
+    throw new Error(
+      `${who}: block ${censusBlock.number} was ${censusBlock.hash} when the scan began and is ${blockNow.hash} now — ` +
+        `the chain reorganized under the census; refusing to certify a mixed snapshot`,
+    );
+  }
+}
 
 /**
  * A public RPC is often a load balancer over replicas that are not equally
@@ -320,39 +351,16 @@ function readArchiveManifest() {
 }
 
 function writeArchiveManifest() {
-  const entries = localArchivedDiamonds();
-  // Codex #2070 r7 P1 — from a clean checkout `.archive/` is absent, so this
-  // would have rewritten the committed 14-entry inventory as EMPTY and the next
-  // census would have censused five deployments as "everything": the exact
-  // failure the manifest exists to prevent, one door over. Regeneration may
-  // ADD entries; it may never silently DROP one. Dropping requires the
-  // operator to say so, and even then the dropped entries are named.
-  const prior = readArchiveManifest();
-  if (prior) {
-    const now = new Set(entries.map((e) => `${e.slug}|${e.stamp}`));
-    const dropped = prior.entries.filter((e) => !now.has(`${e.slug}|${e.stamp}`));
-    if (dropped.length && !process.argv.includes('--force-archive-manifest-rewrite')) {
-      throw new Error(
-        `refusing to rewrite ${ARCHIVE_MANIFEST}: it would DROP ${dropped.length} committed archived deployment(s) ` +
-          `(${dropped.map((e) => `${e.slug}/${e.stamp}`).join(', ')}). The local .archive/ tree is gitignored, so this ` +
-          `usually means it is absent or partial on this checkout — not that those Diamonds are gone from the chain. ` +
-          `Run on a checkout that has them, or pass --force-archive-manifest-rewrite to drop them deliberately.`,
-      );
-    }
-    if (dropped.length) process.stderr.write(`archive manifest: DROPPING ${dropped.length} entr(y/ies) on explicit override\n`);
-  }
-  if (!entries.length && !process.argv.includes('--force-archive-manifest-rewrite')) {
-    throw new Error(
-      `refusing to write an EMPTY archive manifest: no local .archive/ entries were found (the tree is gitignored). ` +
-        `An empty inventory would make a five-deployment census look complete.`,
-    );
-  }
-  // Codex #2070 r12 P1 — every writer of the manifest serializes through
-  // archive-manifest.mjs (exclusive lock, atomic rename, read-back verify), so
-  // a regeneration cannot race a concurrent --fresh's append and drop it. The
-  // never-drop guard above is this writer's own policy; the module only
-  // serializes and verifies.
-  return replaceEntries(ARCHIVE_MANIFEST, entries);
+  // Codex #2070 r7 P1 (never silently DROP a committed entry — from a clean
+  // checkout `.archive/` is absent and an unguarded rewrite would have emptied
+  // the fourteen-entry inventory) and r13 P1 (collect INSIDE the lock — a
+  // list gathered before the lock overwrote an append that won it in
+  // between) both live in archive-manifest.mjs now, so every regeneration path
+  // has both. This function only states the policy: dropping and writing an
+  // empty inventory need the explicit override, and the dropped entries are
+  // named either way.
+  const force = process.argv.includes('--force-archive-manifest-rewrite');
+  return regenerateEntries(ARCHIVE_MANIFEST, () => localArchivedDiamonds(), { allowDrop: force, allowEmpty: force }).manifest;
 }
 
 function deployedDiamonds() {
@@ -520,8 +528,20 @@ function loadPriorCommittedHeights(canonicalPath) {
   let prior;
   try {
     prior = JSON.parse(readFileSync(canonicalPath, 'utf8'));
-  } catch {
-    return; // an unreadable prior artifact is not evidence of anything; the run proceeds without a floor
+  } catch (err) {
+    // Codex #2070 r13 P2 — an unreadable prior is NOT "no prior". Treating it
+    // as absent silently disabled the height floor, and the next automatic
+    // run could then accept a stale finality tag below the last valid census
+    // height and overwrite the evidence. Abort; the recovery is the committed
+    // copy, and a truncated file here is exactly the case the atomic artifact
+    // write below now prevents.
+    throw new Error(
+      `${canonicalPath} exists but cannot be parsed (${err.message}). The committed-height floor needs it; ` +
+        `restore it from version control (git checkout -- <path>) rather than running without a floor.`,
+    );
+  }
+  if (!Array.isArray(prior?.results)) {
+    throw new Error(`${canonicalPath} parses but carries no results[] — not a census artifact; restore it from version control.`);
   }
   for (const r of prior.results ?? []) {
     if (!r?.chainSlug || r?.atBlock == null) continue;
@@ -1012,6 +1032,7 @@ async function censusDeployment(dep) {
   const provenBy = noCode ? 'no-code-at-address' : null;
   if (codeAbsentUnexplained) {
     // No code, but no deploy height to anchor the read to: cannot certify.
+    await assertBlockIdentity(client, censusBlock, who); // before EVERY proven-capable return (r13 P2)
     return {
       chainSlug: slug,
       deployment: label,
@@ -1027,7 +1048,7 @@ async function censusDeployment(dep) {
       atBlockHash: censusBlock.hash,
       blockTag: censusBlock.tag,
       rpcHost: rpcHostOf(rpc),
-      scanned: { loanIdsEnumerated: 0, totalLoansEverCreated: 'n/a', loanIdRange: 'none', enumerable: false, noCode: false, codeAbsentUnexplained: true, custodySurfaceUnrouted: false, notADiamond: false, loupeRouted: false, intentSurfaceRouted: false, intentProducerRouted: false, intentCorroboration: null },
+      scanned: { loanIdsEnumerated: 0, totalLoansEverCreated: 'n/a', loanIdRange: 'none', enumerable: false, noCode: false, codeAbsentUnexplained: true, custodySurfaceUnrouted: false, notADiamond: false, loupeRouted: false, intentSurfaceRouted: false, intentProducerRouted: false, intentCorroboration: null, producersMayBeLive: true },
       classes: Object.fromEntries(['vpfiHeldCustody', 'rebateRows', 'fallbackSnapshotCustody', 'liveIntentCommits'].map((k) => [k, {
         status: 'indeterminate',
         indeterminateReason: 'the address has no code at the census block but the artifact records no deployBlock, so this cannot be distinguished from a read that predates the deployment — undetermined',
@@ -1057,6 +1078,7 @@ async function censusDeployment(dep) {
           ? 'every custody selector is UNROUTED on this Diamond today, which says nothing about rows written before they were removed — storage is unreadable without a getter, so absence cannot be established without a calibrated storage read'
           : `this Diamond routes no loan-enumeration surface (getProtocolStats unrouted) — nothing here can be read per loan, and no sound bound proves it empty`;
     const cls = (extra = {}) => ({ status, indeterminateReason: reason, provenBy: provenBy ?? undefined, count: 0, total: '0', rows: [], ...extra });
+    await assertBlockIdentity(client, censusBlock, who); // before EVERY proven-capable return (r13 P2)
     return {
       chainSlug: slug,
       deployment: label,
@@ -1072,7 +1094,7 @@ async function censusDeployment(dep) {
       atBlockHash: censusBlock.hash,
       blockTag: censusBlock.tag,
       rpcHost: rpcHostOf(rpc),
-      scanned: { loanIdsEnumerated: 0, totalLoansEverCreated: 'n/a', loanIdRange: 'none', enumerable: false, noCode, custodySurfaceUnrouted, notADiamond, loupeRouted, intentSurfaceRouted: false, intentProducerRouted: false, intentCorroboration: null },
+      scanned: { loanIdsEnumerated: 0, totalLoansEverCreated: 'n/a', loanIdRange: 'none', enumerable: false, noCode, custodySurfaceUnrouted, notADiamond, loupeRouted, intentSurfaceRouted: false, intentProducerRouted: false, intentCorroboration: null, producersMayBeLive: !noCode && !notADiamond && !custodySurfaceUnrouted },
       classes: { vpfiHeldCustody: cls(), rebateRows: cls(), fallbackSnapshotCustody: cls({ nonVpfiRowsExcluded: [] }), liveIntentCommits: cls({ nonVpfiRowsExcluded: [] }) },
     };
   }
@@ -1140,11 +1162,14 @@ async function censusDeployment(dep) {
   // an unrouted getter cannot see. "The getter does not answer" and "no commit
   // was ever created" are different claims.
   //
-  // What IS a complete proof is the Diamond's own routing HISTORY: `DiamondCut`
-  // is emitted by every cut, so if the producer's selector was never added by
-  // any cut, no commit can ever have been created. That scan needs history and
-  // can therefore fail on a pruned endpoint — in which case the class is
-  // INDETERMINATE, which blocks the empty verdict instead of passing as a zero.
+  // Nor is the Diamond's routing HISTORY a proof (Codex #2070 r5 P1; this
+  // comment still called it "a complete proof" until r13 P2). `DiamondCut` is
+  // emitted by every cut, but an endpoint that omits an Add/Remove PAIR leaves
+  // the current surface fully accounted for, so the scan can only REFUTE
+  // absence (the producer seen routed) or report itself unreadable — see
+  // {refuteProducerNeverRouted}. With the getter unrouted the class is
+  // INDETERMINATE pending a state read of the rows, which blocks the empty
+  // verdict instead of passing as a zero.
   const intentSelector = toFunctionSelector(intentView.find((e) => e.name === 'getIntentCommit'));
   const intentHost = await read('facetAddress', [intentSelector]);
   const intentSurfaceRouted = intentHost && intentHost !== ZERO_ADDRESS;
@@ -1330,18 +1355,7 @@ async function censusDeployment(dep) {
     }
   }
 
-  // Codex #2070 P1 — re-read the census block and confirm it still has the hash
-  // we pinned. On a finalized block this can only fail catastrophically, which
-  // is exactly why it is worth asserting: a silent reorg underneath the scan
-  // would otherwise produce an artifact naming a height whose contents nobody
-  // can reproduce.
-  const blockNow = await client.getBlock({ blockNumber: atBlock });
-  if (blockNow.hash !== censusBlock.hash) {
-    throw new Error(
-      `${who}: block ${atBlock} was ${censusBlock.hash} when the scan began and is ${blockNow.hash} now — ` +
-        `the chain reorganized under the census; refusing to certify a mixed snapshot`,
-    );
-  }
+  await assertBlockIdentity(client, censusBlock, who);
 
   const sum = (rows, field) => rows.reduce((a, r) => a + BigInt(r[field]), 0n).toString();
 
@@ -1384,6 +1398,12 @@ async function censusDeployment(dep) {
       intentSurfaceRouted,
       intentProducerRouted: producerRouted,
       intentCorroboration: corroboration,
+      // Codex #2070 r13 P1 — the fallback producers (RiskFacet / DefaultedFacet
+      // full-collateral fallback) and the intent producer can write a
+      // qualifying row the moment after this read; a census cannot see a
+      // freeze, so a Diamond whose custody surface is routed is assumed live.
+      // The report's `migrationRetirable` is derived from this, conservatively.
+      producersMayBeLive: true,
     },
     classes: {
       // Classes 1 & 4 are VPFI by construction (`vpfiHeld` / `rebateAmount`
@@ -1573,6 +1593,23 @@ async function main() {
     indeterminateClasses: indeterminate,
     results,
   };
+  // Codex #2070 r13 P1 — "every class is empty at block X" retires the
+  // MIGRATION half only if no qualifying row can be written AFTER X and before
+  // the prospective isolation lands: a row written in that window sits in
+  // shared custody with no migration path once the movers are dropped. The
+  // design records the two conditions (a producer freeze that finalized before
+  // the scan, or isolation already deployed); this run can see neither, so the
+  // verdict says what it establishes and what it does not.
+  const liveProducerDeployments = results.filter((r) => r.scanned?.producersMayBeLive).map((r) => `${r.chainSlug}/${r.deployment}`);
+  report.migrationRetirable = report.allClassesEmpty === true && liveProducerDeployments.length === 0;
+  report.migrationRetirableReason =
+    report.allClassesEmpty !== true
+      ? 'the population is not established empty'
+      : liveProducerDeployments.length
+        ? `empty at the census block, but producers may be live on ${liveProducerDeployments.length} deployment(s) ` +
+          `(${liveProducerDeployments.join(', ')}); a row written after the census block and before isolation lands would ` +
+          `have no migration path — re-run after a producer freeze that has finalized, or after isolation is deployed`
+        : 'empty at the census block and no deployment has a live producer';
 
   mkdirSync(outDir, { recursive: true });
   // A partial run writes to its OWN file. The canonical artifact is the
@@ -1584,7 +1621,10 @@ async function main() {
       ? 'grandfathered-custody-census.json'
       : `grandfathered-custody-census.partial-${[...new Set(results.map((r) => r.chainSlug))].join('-') || 'none'}.json`,
   );
-  writeFileSync(outFile, `${JSON.stringify(report, null, 2)}\n`);
+  // Codex #2070 r13 P2 — temp + rename, so an interrupted run can never leave
+  // a truncated canonical artifact behind for the next run's height floor to
+  // choke on (or, before that fix, to silently ignore).
+  writeJsonAtomic(outFile, `${JSON.stringify(report, null, 2)}\n`);
 
   for (const r of results) {
     const c = r.classes;
@@ -1607,9 +1647,12 @@ async function main() {
       // fallback and intent producers are live and can create a qualifying row
       // the moment after this read-only scan, so the prospective
       // producer/consumer isolation in slices 2-3 still ships.
-      ? 'RESULT: every grandfathered class is PROVEN EMPTY on every censused chain — the MIGRATION half of slices 0-3\n' +
-        '        is a certified no-op (nothing to move, no shortfall disposition). The prospective custody isolation\n' +
-        '        in slices 2-3 is NOT retired by this result — its producers are still live.\n'
+      ? 'RESULT: every grandfathered class is PROVEN EMPTY on every censused chain AT THE CENSUS BLOCK.\n' +
+        (report.migrationRetirable
+          ? '        No deployment has a live producer, so the MIGRATION half of slices 0-3 is a certified no-op\n' +
+            '        (nothing to move, no shortfall disposition).\n'
+          : '        The MIGRATION half of slices 0-3 is NOT yet retirable: ' + report.migrationRetirableReason + '.\n') +
+        '        The prospective custody isolation in slices 2-3 is NOT retired by any census result.\n'
       : report.allClassesEmpty === null
         ? `RESULT: PARTIAL RUN — covered ${results.length} of ${report.deploymentsDeployed.length} deployments (live + archived) ` +
           `(missing: ${report.deploymentsNotCensused.join(', ') || 'none'}).\n` +

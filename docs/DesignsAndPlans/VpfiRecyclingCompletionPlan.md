@@ -39,7 +39,9 @@
 > nine is a **calibrated storage read of the rows** (not an archive endpoint —
 > history can only refute) plus that one artifact correction. Nothing found
 > so far is evidence of a row; the MIGRATION half of slices 0–3 is on course
-> to be a certified no-op, but the certification is not yet earned. **Their prospective producer/consumer
+> to be a certified no-op, but the certification is not yet earned — and it can be earned only by a run
+> taken after a producer freeze that has finalized, or after isolation is deployed, since a row written
+> after the census block and before isolation lands would have no migration path (Codex #2070 r13). **Their prospective producer/consumer
 > changes still ship** — the fallback and intent producers are live and can
 > create a qualifying row after the scan, so an empty census retires the
 > moving, not the isolation. Closure 3's resolver has LANDED — four-state, not three: the

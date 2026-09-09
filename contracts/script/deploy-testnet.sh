@@ -850,6 +850,18 @@ EOF
   # operator can't tell at a glance is internally consistent. Refuse
   # with --fresh as the explicit opt-in; with --fresh, archive the
   # prior state to .archive/<ISO-8601>/ before wiping.
+  # #1566 (Codex #2070 r10 P1, placed where it can run in r13 P1) — reconcile
+  # FIRST, on EVERY --fresh, BEFORE the live artifact is consulted: in the
+  # half-failed case this repairs, the artifact is already in .archive/ and
+  # there is no live Diamond to read. The r10 revision put this call inside
+  # the existing-Diamond branch below, which is skipped in exactly that case,
+  # so an unrecorded retired Diamond could still be missing from a
+  # clean-checkout census. Same placement as deploy-mainnet.sh. Nothing below
+  # proceeds until every local archive is in the committed inventory.
+  if [ "$FRESH" = "1" ]; then
+    reconcile_unrecorded_archives "$CHAIN_SLUG" \
+      || { echo "ERROR: unrecorded local archives could not be reconciled into archive-manifest.json; refusing --fresh" >&2; exit 1; }
+  fi
   local existing_diamond
   existing_diamond=$(jq -r '.diamond // empty' "$DEPLOY_DIR/addresses.json" 2>/dev/null || echo "")
   if [ -n "$existing_diamond" ] && [ "$existing_diamond" != "null" ]; then
@@ -885,13 +897,6 @@ EOF
     #    the ON-chain Diamond retains its storage — those offers
     #    keep existing, the indexer just stops seeing them once the
     #    cursor row is wiped + reseeded forward.
-    # #1566 (Codex #2070 r10 P1) — reconcile FIRST, on EVERY --fresh, before the
-    # live artifact is consulted: in the half-failed case this repairs, the
-    # artifact is already in .archive/ and there is no PRIOR_DIAMOND to read, so
-    # a reconcile that lived only inside archive_chain_state never ran. Nothing
-    # below proceeds until every local archive is in the committed inventory.
-    reconcile_unrecorded_archives "$CHAIN_SLUG" \
-      || { echo "ERROR: unrecorded local archives could not be reconciled into archive-manifest.json; refusing --fresh" >&2; exit 1; }
     PRIOR_DIAMOND=""
     if [ -f "$DEPLOY_DIR/addresses.json" ]; then
       PRIOR_DIAMOND=$(jq -r '.diamond // empty' "$DEPLOY_DIR/addresses.json" 2>/dev/null)

@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-09T03:36:35.117Z",
+  "generatedAt": "2026-09-09T05:26:20.325Z",
   "purpose": "#1566 grandfathered-custody census — decides whether slices 0-3 are live work or a certified no-op",
   "scope": "all-deployed-chains",
   "allClassesEmpty": false,
@@ -166,8 +166,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "306935600",
-      "atBlockHash": "0x35e1a12f8d1fb3e72a57b1afd80e745e64263a0786224a3e414f51c726528bb2",
+      "atBlock": "306961699",
+      "atBlockHash": "0xb82502b2c0f230fe1fb3509bdd0c50abf9d90b3623581bbf6f6fb7386d0a3d8d",
       "blockTag": "safe (finalized state pruned by endpoint)",
       "rpcHost": "sepolia-rollup.arbitrum.io",
       "scanned": {
@@ -181,7 +181,8 @@
         "intentSource": "getIntentCommit view (live state, history-independent)",
         "intentSurfaceRouted": true,
         "intentProducerRouted": true,
-        "intentCorroboration": null
+        "intentCorroboration": null,
+        "producersMayBeLive": true
       },
       "classes": {
         "vpfiHeldCustody": {
@@ -224,8 +225,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "306935600",
-      "atBlockHash": "0x35e1a12f8d1fb3e72a57b1afd80e745e64263a0786224a3e414f51c726528bb2",
+      "atBlock": "306961699",
+      "atBlockHash": "0xb82502b2c0f230fe1fb3509bdd0c50abf9d90b3623581bbf6f6fb7386d0a3d8d",
       "blockTag": "safe (finalized state pruned by endpoint)",
       "rpcHost": "sepolia-rollup.arbitrum.io",
       "scanned": {
@@ -239,7 +240,8 @@
         "intentSource": "getter unrouted — intentCommits storage is NOT readable here; the class is indeterminate pending a calibrated storage read (cut history can only refute)",
         "intentSurfaceRouted": false,
         "intentProducerRouted": false,
-        "intentCorroboration": null
+        "intentCorroboration": null,
+        "producersMayBeLive": true
       },
       "classes": {
         "vpfiHeldCustody": {
@@ -295,8 +297,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "306935600",
-      "atBlockHash": "0x35e1a12f8d1fb3e72a57b1afd80e745e64263a0786224a3e414f51c726528bb2",
+      "atBlock": "306961699",
+      "atBlockHash": "0xb82502b2c0f230fe1fb3509bdd0c50abf9d90b3623581bbf6f6fb7386d0a3d8d",
       "blockTag": "safe (finalized state pruned by endpoint)",
       "rpcHost": "sepolia-rollup.arbitrum.io",
       "scanned": {
@@ -310,7 +312,8 @@
         "intentSource": "getter unrouted — intentCommits storage is NOT readable here; the class is indeterminate pending a calibrated storage read (cut history can only refute)",
         "intentSurfaceRouted": false,
         "intentProducerRouted": false,
-        "intentCorroboration": null
+        "intentCorroboration": null,
+        "producersMayBeLive": true
       },
       "classes": {
         "vpfiHeldCustody": {
@@ -366,8 +369,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "306935600",
-      "atBlockHash": "0x35e1a12f8d1fb3e72a57b1afd80e745e64263a0786224a3e414f51c726528bb2",
+      "atBlock": "306961699",
+      "atBlockHash": "0xb82502b2c0f230fe1fb3509bdd0c50abf9d90b3623581bbf6f6fb7386d0a3d8d",
       "blockTag": "safe (finalized state pruned by endpoint)",
       "rpcHost": "sepolia-rollup.arbitrum.io",
       "scanned": {
@@ -381,7 +384,8 @@
         "intentSource": "getIntentCommit view (live state, history-independent)",
         "intentSurfaceRouted": true,
         "intentProducerRouted": true,
-        "intentCorroboration": null
+        "intentCorroboration": null,
+        "producersMayBeLive": true
       },
       "classes": {
         "vpfiHeldCustody": {
@@ -425,8 +429,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "46577649",
-      "atBlockHash": "0x582815f0d2f12476baf213c6ec71fa856dd18429b63c6c4c31fb7e31619a2e4d",
+      "atBlock": "46580780",
+      "atBlockHash": "0xfe609ec45ac9311050f4853d26d2f4d1fbb6343841ff41db027ab8d4327998ca",
       "blockTag": "finalized",
       "rpcHost": "sepolia.base.org",
       "scanned": {
@@ -440,7 +444,8 @@
         "intentSource": "getIntentCommit view (live state, history-independent)",
         "intentSurfaceRouted": true,
         "intentProducerRouted": true,
-        "intentCorroboration": null
+        "intentCorroboration": null,
+        "producersMayBeLive": true
       },
       "classes": {
         "vpfiHeldCustody": {
@@ -484,8 +489,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "46577649",
-      "atBlockHash": "0x582815f0d2f12476baf213c6ec71fa856dd18429b63c6c4c31fb7e31619a2e4d",
+      "atBlock": "46580780",
+      "atBlockHash": "0xfe609ec45ac9311050f4853d26d2f4d1fbb6343841ff41db027ab8d4327998ca",
       "blockTag": "finalized",
       "rpcHost": "sepolia.base.org",
       "scanned": {
@@ -499,7 +504,8 @@
         "intentSource": "getter unrouted — intentCommits storage is NOT readable here; the class is indeterminate pending a calibrated storage read (cut history can only refute)",
         "intentSurfaceRouted": false,
         "intentProducerRouted": false,
-        "intentCorroboration": null
+        "intentCorroboration": null,
+        "producersMayBeLive": true
       },
       "classes": {
         "vpfiHeldCustody": {
@@ -547,8 +553,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "46577649",
-      "atBlockHash": "0x582815f0d2f12476baf213c6ec71fa856dd18429b63c6c4c31fb7e31619a2e4d",
+      "atBlock": "46580780",
+      "atBlockHash": "0xfe609ec45ac9311050f4853d26d2f4d1fbb6343841ff41db027ab8d4327998ca",
       "blockTag": "finalized",
       "rpcHost": "sepolia.base.org",
       "scanned": {
@@ -562,7 +568,8 @@
         "intentSource": "getter unrouted — intentCommits storage is NOT readable here; the class is indeterminate pending a calibrated storage read (cut history can only refute)",
         "intentSurfaceRouted": false,
         "intentProducerRouted": false,
-        "intentCorroboration": null
+        "intentCorroboration": null,
+        "producersMayBeLive": true
       },
       "classes": {
         "vpfiHeldCustody": {
@@ -609,8 +616,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "46577649",
-      "atBlockHash": "0x582815f0d2f12476baf213c6ec71fa856dd18429b63c6c4c31fb7e31619a2e4d",
+      "atBlock": "46580780",
+      "atBlockHash": "0xfe609ec45ac9311050f4853d26d2f4d1fbb6343841ff41db027ab8d4327998ca",
       "blockTag": "finalized",
       "rpcHost": "sepolia.base.org",
       "scanned": {
@@ -624,7 +631,8 @@
         "intentSource": "getter unrouted — intentCommits storage is NOT readable here; the class is indeterminate pending a calibrated storage read (cut history can only refute)",
         "intentSurfaceRouted": false,
         "intentProducerRouted": false,
-        "intentCorroboration": null
+        "intentCorroboration": null,
+        "producersMayBeLive": true
       },
       "classes": {
         "vpfiHeldCustody": {
@@ -678,8 +686,8 @@
       "diamondVpfiBacking": null,
       "vpfiRowsTotal": null,
       "backingShortfall": null,
-      "atBlock": "46577649",
-      "atBlockHash": "0x582815f0d2f12476baf213c6ec71fa856dd18429b63c6c4c31fb7e31619a2e4d",
+      "atBlock": "46580780",
+      "atBlockHash": "0xfe609ec45ac9311050f4853d26d2f4d1fbb6343841ff41db027ab8d4327998ca",
       "blockTag": "finalized",
       "rpcHost": "sepolia.base.org",
       "scanned": {
@@ -693,7 +701,8 @@
         "loupeRouted": false,
         "intentSurfaceRouted": false,
         "intentProducerRouted": false,
-        "intentCorroboration": null
+        "intentCorroboration": null,
+        "producersMayBeLive": false
       },
       "classes": {
         "vpfiHeldCustody": {
@@ -738,8 +747,8 @@
       "diamondVpfiBacking": null,
       "vpfiRowsTotal": null,
       "backingShortfall": null,
-      "atBlock": "46577649",
-      "atBlockHash": "0x582815f0d2f12476baf213c6ec71fa856dd18429b63c6c4c31fb7e31619a2e4d",
+      "atBlock": "46580780",
+      "atBlockHash": "0xfe609ec45ac9311050f4853d26d2f4d1fbb6343841ff41db027ab8d4327998ca",
       "blockTag": "finalized",
       "rpcHost": "sepolia.base.org",
       "scanned": {
@@ -753,7 +762,8 @@
         "loupeRouted": false,
         "intentSurfaceRouted": false,
         "intentProducerRouted": false,
-        "intentCorroboration": null
+        "intentCorroboration": null,
+        "producersMayBeLive": false
       },
       "classes": {
         "vpfiHeldCustody": {
@@ -798,8 +808,8 @@
       "diamondVpfiBacking": null,
       "vpfiRowsTotal": null,
       "backingShortfall": null,
-      "atBlock": "46577649",
-      "atBlockHash": "0x582815f0d2f12476baf213c6ec71fa856dd18429b63c6c4c31fb7e31619a2e4d",
+      "atBlock": "46580780",
+      "atBlockHash": "0xfe609ec45ac9311050f4853d26d2f4d1fbb6343841ff41db027ab8d4327998ca",
       "blockTag": "finalized",
       "rpcHost": "sepolia.base.org",
       "scanned": {
@@ -813,7 +823,8 @@
         "loupeRouted": false,
         "intentSurfaceRouted": false,
         "intentProducerRouted": false,
-        "intentCorroboration": null
+        "intentCorroboration": null,
+        "producersMayBeLive": false
       },
       "classes": {
         "vpfiHeldCustody": {
@@ -859,8 +870,8 @@
       "diamondVpfiBacking": null,
       "vpfiRowsTotal": "0",
       "backingShortfall": null,
-      "atBlock": "46577649",
-      "atBlockHash": "0x582815f0d2f12476baf213c6ec71fa856dd18429b63c6c4c31fb7e31619a2e4d",
+      "atBlock": "46580780",
+      "atBlockHash": "0xfe609ec45ac9311050f4853d26d2f4d1fbb6343841ff41db027ab8d4327998ca",
       "blockTag": "finalized",
       "rpcHost": "sepolia.base.org",
       "scanned": {
@@ -874,7 +885,8 @@
         "intentSource": "getIntentCommit view (live state, history-independent)",
         "intentSurfaceRouted": true,
         "intentProducerRouted": true,
-        "intentCorroboration": null
+        "intentCorroboration": null,
+        "producersMayBeLive": true
       },
       "classes": {
         "vpfiHeldCustody": {
@@ -921,8 +933,8 @@
       "diamondVpfiBacking": null,
       "vpfiRowsTotal": null,
       "backingShortfall": null,
-      "atBlock": "46577649",
-      "atBlockHash": "0x582815f0d2f12476baf213c6ec71fa856dd18429b63c6c4c31fb7e31619a2e4d",
+      "atBlock": "46580780",
+      "atBlockHash": "0xfe609ec45ac9311050f4853d26d2f4d1fbb6343841ff41db027ab8d4327998ca",
       "blockTag": "finalized",
       "rpcHost": "sepolia.base.org",
       "scanned": {
@@ -936,7 +948,8 @@
         "loupeRouted": false,
         "intentSurfaceRouted": false,
         "intentProducerRouted": false,
-        "intentCorroboration": null
+        "intentCorroboration": null,
+        "producersMayBeLive": false
       },
       "classes": {
         "vpfiHeldCustody": {
@@ -981,8 +994,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "129951987",
-      "atBlockHash": "0x13234a69caf2fcf480dd792f0424d30c4e3a1d0040fc707579b6c631224cc63c",
+      "atBlock": "129966587",
+      "atBlockHash": "0xc163538b6364214ed9c0896a9b2a94dd8cb9b6a36a55d6d87e500863e7c41f45",
       "blockTag": "finalized",
       "rpcHost": "bsc-testnet-rpc.publicnode.com",
       "scanned": {
@@ -996,7 +1009,8 @@
         "intentSource": "getIntentCommit view (live state, history-independent)",
         "intentSurfaceRouted": true,
         "intentProducerRouted": true,
-        "intentCorroboration": null
+        "intentCorroboration": null,
+        "producersMayBeLive": true
       },
       "classes": {
         "vpfiHeldCustody": {
@@ -1040,8 +1054,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "129951987",
-      "atBlockHash": "0x13234a69caf2fcf480dd792f0424d30c4e3a1d0040fc707579b6c631224cc63c",
+      "atBlock": "129966587",
+      "atBlockHash": "0xc163538b6364214ed9c0896a9b2a94dd8cb9b6a36a55d6d87e500863e7c41f45",
       "blockTag": "finalized",
       "rpcHost": "bsc-testnet-rpc.publicnode.com",
       "scanned": {
@@ -1055,7 +1069,8 @@
         "intentSource": "getter unrouted — intentCommits storage is NOT readable here; the class is indeterminate pending a calibrated storage read (cut history can only refute)",
         "intentSurfaceRouted": false,
         "intentProducerRouted": false,
-        "intentCorroboration": null
+        "intentCorroboration": null,
+        "producersMayBeLive": true
       },
       "classes": {
         "vpfiHeldCustody": {
@@ -1102,8 +1117,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "48560536",
-      "atBlockHash": "0xf6d7ad5f2592dd4611110d5ee429fc73c50f6ff2b1d252201ddba6a94b1fde54",
+      "atBlock": "48563948",
+      "atBlockHash": "0x93ee1e1945071cbd163e41a6d0ef4cc8d0ac15546e4b49cb34186722b29c25b1",
       "blockTag": "finalized",
       "rpcHost": "optimism-sepolia-rpc.publicnode.com",
       "scanned": {
@@ -1117,7 +1132,8 @@
         "intentSource": "getter unrouted — intentCommits storage is NOT readable here; the class is indeterminate pending a calibrated storage read (cut history can only refute)",
         "intentSurfaceRouted": false,
         "intentProducerRouted": false,
-        "intentCorroboration": null
+        "intentCorroboration": null,
+        "producersMayBeLive": true
       },
       "classes": {
         "vpfiHeldCustody": {
@@ -1173,8 +1189,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "11665294",
-      "atBlockHash": "0x8691ff2794525154e7d7200c98b25945189bfd0cdc2cc29dd3ff1a42f169a427",
+      "atBlock": "11665821",
+      "atBlockHash": "0x3055089645b658081eec556e19a3b6025d006e7377e58c9cc4840f65fa6cc895",
       "blockTag": "finalized",
       "rpcHost": "ethereum-sepolia-rpc.publicnode.com",
       "scanned": {
@@ -1188,7 +1204,8 @@
         "intentSource": "getter unrouted — intentCommits storage is NOT readable here; the class is indeterminate pending a calibrated storage read (cut history can only refute)",
         "intentSurfaceRouted": false,
         "intentProducerRouted": false,
-        "intentCorroboration": null
+        "intentCorroboration": null,
+        "producersMayBeLive": true
       },
       "classes": {
         "vpfiHeldCustody": {
@@ -1235,8 +1252,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "11665294",
-      "atBlockHash": "0x8691ff2794525154e7d7200c98b25945189bfd0cdc2cc29dd3ff1a42f169a427",
+      "atBlock": "11665821",
+      "atBlockHash": "0x3055089645b658081eec556e19a3b6025d006e7377e58c9cc4840f65fa6cc895",
       "blockTag": "finalized",
       "rpcHost": "ethereum-sepolia-rpc.publicnode.com",
       "scanned": {
@@ -1250,7 +1267,8 @@
         "intentSource": "getter unrouted — intentCommits storage is NOT readable here; the class is indeterminate pending a calibrated storage read (cut history can only refute)",
         "intentSurfaceRouted": false,
         "intentProducerRouted": false,
-        "intentCorroboration": null
+        "intentCorroboration": null,
+        "producersMayBeLive": true
       },
       "classes": {
         "vpfiHeldCustody": {
@@ -1306,8 +1324,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "11665294",
-      "atBlockHash": "0x8691ff2794525154e7d7200c98b25945189bfd0cdc2cc29dd3ff1a42f169a427",
+      "atBlock": "11665821",
+      "atBlockHash": "0x3055089645b658081eec556e19a3b6025d006e7377e58c9cc4840f65fa6cc895",
       "blockTag": "finalized",
       "rpcHost": "ethereum-sepolia-rpc.publicnode.com",
       "scanned": {
@@ -1321,7 +1339,8 @@
         "intentSource": "getter unrouted — intentCommits storage is NOT readable here; the class is indeterminate pending a calibrated storage read (cut history can only refute)",
         "intentSurfaceRouted": false,
         "intentProducerRouted": false,
-        "intentCorroboration": null
+        "intentCorroboration": null,
+        "producersMayBeLive": true
       },
       "classes": {
         "vpfiHeldCustody": {
@@ -1358,5 +1377,7 @@
         }
       }
     }
-  ]
+  ],
+  "migrationRetirable": false,
+  "migrationRetirableReason": "the population is not established empty"
 }

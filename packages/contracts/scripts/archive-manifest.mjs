@@ -248,16 +248,62 @@ export function appendEntry(manifestPath, entry, lockOpts) {
 }
 
 /**
- * Replace the whole entry list (the census's `--write-archive-manifest`).
- * The caller decides what may be dropped; this only serializes and verifies.
+ * Regenerate the whole entry list (the census's `--write-archive-manifest`).
+ *
+ * `collect(current)` runs INSIDE the lock (Codex #2070 r13 P1): an earlier
+ * shape collected the replacement list before taking the lock, so an append
+ * that won the lock in between was overwritten by the stale list — both
+ * writers reporting success, the newly archived Diamond gone from the
+ * committed inventory, and the read-back verifying only the replacement.
+ * Collecting under the lock means no append can interleave, and `current` is
+ * the file as it stands at that moment.
+ *
+ * The never-drop policy (r7 P1) lives here too, so every regeneration path has
+ * it: an entry the current file lists but the collector did not return is a
+ * DROP, refused unless `allowDrop`, and named either way. A collector that
+ * returns nothing is refused unless `allowEmpty`. Content changes for an
+ * existing key are permitted — a regeneration from the local tree is how an
+ * in-place correction of an archived artifact reaches the manifest (r10).
+ *
+ * @param {(current: object) => object[]} collect
+ * @param {{allowDrop?: boolean, allowEmpty?: boolean}} [policy]
+ * @returns {{manifest: object, dropped: number}}
  */
-export function replaceEntries(manifestPath, entries, lockOpts) {
+export function regenerateEntries(manifestPath, collect, policy = {}, lockOpts) {
+  const { allowDrop = false, allowEmpty = false } = policy;
   return withManifestLock(
     manifestPath,
     () => {
-      const next = { purpose: MANIFEST_PURPOSE, generatedAt: new Date().toISOString(), entries: sortEntries(entries) };
+      const current = readManifest(manifestPath) ?? emptyManifest();
+      const collected = collect(current);
+      if (!Array.isArray(collected)) throw new Error('archive-manifest: collect() must return an array of entries');
+      if (!collected.length && !allowEmpty) {
+        throw new Error(
+          `archive-manifest: refusing to write an EMPTY manifest at ${manifestPath} — no entries were collected ` +
+            `(the local .archive/ tree is gitignored and is usually absent on a clean checkout). An empty inventory ` +
+            `would make a live-only census look complete.`,
+        );
+      }
+      const now = new Set(collected.map(entryKey));
+      const dropped = current.entries.filter((e) => !now.has(entryKey(e)));
+      if (dropped.length && !allowDrop) {
+        throw new Error(
+          `archive-manifest: refusing to rewrite ${manifestPath}: it would DROP ${dropped.length} committed archived ` +
+            `deployment(s) (${dropped.map(entryKey).join(', ')}). The local .archive/ tree is gitignored, so this usually ` +
+            `means it is absent or partial on this checkout — not that those Diamonds are gone from the chain. Run on a ` +
+            `checkout that has them, or drop them deliberately with the explicit override.`,
+        );
+      }
+      if (dropped.length) process.stderr.write(`archive-manifest: DROPPING ${dropped.length} entr(y/ies) on explicit override\n`);
+      const next = { purpose: MANIFEST_PURPOSE, generatedAt: new Date().toISOString(), entries: sortEntries(collected) };
       writeManifestAtomic(manifestPath, next);
-      return next;
+      const verify = readManifest(manifestPath);
+      for (const e of collected) {
+        if (!verify.entries.some((x) => sameEntry(x, e))) {
+          throw new Error(`archive-manifest: ${entryKey(e)} is not present after the regeneration — refusing to report success`);
+        }
+      }
+      return { manifest: next, dropped: dropped.length };
     },
     lockOpts,
   );
