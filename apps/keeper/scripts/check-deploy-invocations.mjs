@@ -3779,8 +3779,26 @@ function isCommandPayload(idx, text, kind) {
   // reopened one language over (r32). The classifier already knows which
   // offsets are comments in the language being read; blanking those needs no
   // second opinion about how a comment is spelled.
-  let args = '';
-  for (let i = open; i < start; i += 1) args += kind[i] === 2 ? ' ' : text[i];
+  //
+  // …and only REBUILT when there is trivia to blank. This runs per write
+  // match, and concatenating a character at a time made the common case —
+  // no comment between the call and the payload — pay for the rare one.
+  // Measured, and modest: 500 deploys against one config went 0.47 s to
+  // 0.28 s, 4,000 went 1.78 s to 1.61 s. It is not where the time goes.
+  let args = text.slice(open, start);
+  if (args.length > 0) {
+    let hasComment = false;
+    for (let i = open; i < start; i += 1)
+      if (kind[i] === 2) {
+        hasComment = true;
+        break;
+      }
+    if (hasComment) {
+      const out = [];
+      for (let i = open; i < start; i += 1) out.push(kind[i] === 2 ? ' ' : text[i]);
+      args = out.join('');
+    }
+  }
   if (!args.includes('[')) return true;
   // The EVALUATE flags by name, long and short. `--eval` does not end in
   // `e`-after-dashes the way a grouped short option does, so a suffix test
