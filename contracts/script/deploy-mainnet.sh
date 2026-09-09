@@ -1002,6 +1002,17 @@ EOF
   echo
   echo "✓ contracts phase done."
   snapshot_addresses "post-contracts"
+  # #1566 (Codex #2070 r20 P1) — the live artifact was written by forge, outside
+  # the manifest lock. Record its publication under the lock so a census that is
+  # holding the lock through its own publication can tell that a Diamond went
+  # live during its run (it compares this counter at start and at publication).
+  # Non-zero aborts nothing that has already landed on chain — the artifact is
+  # written; this only fails to RECORD it, which the operator must fix before
+  # committing (the manifest must be committed with the deploy either way).
+  if command -v node >/dev/null 2>&1 && [ -f "$REPO_ROOT/packages/contracts/scripts/archive-manifest.mjs" ]; then
+    node "$REPO_ROOT/packages/contracts/scripts/archive-manifest.mjs" bump-live "$CONTRACTS_DIR/deployments/archive-manifest.json" "$CHAIN_SLUG" "$DEPLOY_DIR/addresses.json" \
+      || echo "WARNING: could not record the live artifact publication in archive-manifest.json — record it before committing (node packages/contracts/scripts/archive-manifest.mjs bump-live ...)" >&2
+  fi
   # Write deployment_source.json (commit + deployer + timestamp) —
   # same shape as deploy-chain.sh writes, so the operator can see
   # at a glance which monorepo commit is live on this chain.

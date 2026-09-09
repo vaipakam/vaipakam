@@ -12,7 +12,7 @@ import { mkdtempSync, writeFileSync, readFileSync, mkdirSync, readdirSync, exist
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { appendEntry, readManifest, withManifestLock, entryFromArtifact, regenerateEntries, writeSnapshotGuarded } from './archive-manifest.mjs';
+import { appendEntry, readManifest, withManifestLock, entryFromArtifact, regenerateEntries, writeSnapshotGuarded, bumpLiveGeneration } from './archive-manifest.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const WRITER = join(HERE, 'archive-manifest.mjs');
@@ -290,7 +290,7 @@ test('a dead-owner takeover keeps the SAME directory: the owner file is replaced
   assert.equal(existsSync(lockDir), false);
 });
 
-test('regenerate: a displacement can be acknowledged BY KEY, and only that key (r18)', () => {
+test('regenerate: a displacement can be acknowledged BY KEY, and the displaced Diamond is RETAINED as a censusable record (r18/r20)', () => {
   const { dir, manifest } = fixture();
   const e1 = entryFromArtifact({ slug: 'a', stamp: 's1', addrPath: artifact(dir, 1) });
   const e2 = entryFromArtifact({ slug: 'a', stamp: 's2', addrPath: artifact(dir, 2) });
@@ -299,5 +299,29 @@ test('regenerate: a displacement can be acknowledged BY KEY, and only that key (
   assert.throws(() => regenerateEntries(manifest, () => [{ ...e1, diamond: '0xfix1' }, { ...e2, diamond: '0xfix2' }], { allowDisplace: ['a|s1'] }), /a\|s2: /);
   const { displaced } = regenerateEntries(manifest, () => [{ ...e1, diamond: '0xfix1' }, e2], { allowDisplace: ['a|s1'] });
   assert.equal(displaced.length, 1);
-  assert.equal(readManifest(manifest).entries.find((e) => e.stamp === 's1').diamond, '0xfix1');
+  const m = readManifest(manifest);
+  assert.equal(m.entries.find((e) => e.stamp === 's1').diamond, '0xfix1', 'the label now names the corrected Diamond');
+  const kept = m.entries.find((e) => e.stamp === 's1@displaced-1');
+  assert.ok(kept, 'the displaced Diamond is retained under a derived stamp');
+  assert.equal(kept.diamond, e1.diamond);
+  assert.equal(kept.displaced, true);
+  assert.equal(kept.displacedFrom, 's1');
+  assert.equal(kept.replacedBy, '0xfix1');
+  // A later regeneration from disk (which never yields displaced records) keeps it and does not count it as a drop.
+  const again = regenerateEntries(manifest, () => [{ ...e1, diamond: '0xfix1' }, e2]);
+  assert.equal(again.dropped, 0);
+  assert.ok(readManifest(manifest).entries.find((e) => e.stamp === 's1@displaced-1'), 'retained across regeneration');
+});
+
+test('bump-live increments liveGeneration under the lock and regeneration preserves it (r20)', () => {
+  const { dir, manifest } = fixture();
+  const e1 = entryFromArtifact({ slug: 'a', stamp: 's1', addrPath: artifact(dir, 1) });
+  appendEntry(manifest, e1);
+  assert.equal(bumpLiveGeneration(manifest, { slug: 'a', diamond: '0xlive' }), 1);
+  assert.equal(bumpLiveGeneration(manifest, { slug: 'a', diamond: '0xlive' }), 2);
+  regenerateEntries(manifest, () => [e1]);
+  const m = readManifest(manifest);
+  assert.equal(m.liveGeneration, 2, 'regeneration carries the counter');
+  assert.equal(m.lastLivePublished.slug, 'a');
+  assert.equal(readManifest(manifest).entries.length, 1);
 });

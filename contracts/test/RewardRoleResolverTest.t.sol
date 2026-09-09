@@ -150,4 +150,20 @@ contract RewardRoleResolverTest is SetupTest {
             "an explicit zero base is a configuration act"
         );
     }
+
+    /// @dev Codex #2070 r20 P2 — an idempotent false→false canonical write on a
+    ///      never-configured deployment must NOT stamp the role: stamping would
+    ///      resolve `Detached` (bound zero) from an admin call that changed
+    ///      nothing. Enabling, or demoting a chain that WAS canonical, stamps.
+    function test_FalseToFalseCanonicalWriteOnFreshDeployStaysUnconfigured() public {
+        assertEq(_role(), UNCONFIGURED, "fresh: Unconfigured");
+        _rep().setIsCanonicalRewardChain(false);
+        assertEq(_role(), UNCONFIGURED, "false->false must not stamp");
+        _rep().setIsCanonicalRewardChain(true);
+        assertEq(_role(), CANONICAL, "enable stamps");
+        _rep().setIsCanonicalRewardChain(false);
+        assertEq(
+            _role(), DETACHED, "demoting a canonical chain with no base is Detached"
+        );
+    }
 }

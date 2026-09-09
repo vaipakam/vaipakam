@@ -67,3 +67,11 @@ until then a detached chain bounds at zero, which is the safe direction and is
 unreachable on any chain deployed today.
 
 Refs #1566, #1349, #1956
+
+Two later corrections from review. Re-asserting "not canonical" on a chain
+that was never configured is now a genuine no-op: it does not record the role,
+so it cannot silently move such a chain into the detached state and its zero
+bound. And the operator documentation now says precisely what detaching stops:
+payouts funded from delivered-fresh budget, and only those — schedule rewards
+already due and recycled-funded legs still settle — so an incident that needs
+every reward outflow stopped is directed to pausing the reward facets instead.

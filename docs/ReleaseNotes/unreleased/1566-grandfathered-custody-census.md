@@ -219,4 +219,11 @@ until the report is in place, compares every field of every record, and a
 deliberate change of which contract an archived record names is acknowledged
 one record at a time rather than by a blanket override.
 
+A displaced contract now stays in the inventory as its own record and keeps
+being censused — an address that was corrected away is still a contract that
+can hold custody, and a note in a report is not a scan. And each deploy now
+records, under the inventory's lock, that it has published a new live contract,
+so a census cannot report its inventory as unchanged across a deployment that
+finished while it ran.
+
 Refs #1566, #1349, #1956

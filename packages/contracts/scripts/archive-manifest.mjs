@@ -381,7 +381,7 @@ export function regenerateEntries(manifestPath, collect, policy = {}, lockOpts) 
         );
       }
       const now = new Set(collected.map(entryKey));
-      const dropped = current.entries.filter((e) => !now.has(entryKey(e)));
+      const dropped = current.entries.filter((e) => e.displaced !== true && !now.has(entryKey(e)));
       if (dropped.length && !allowDrop) {
         throw new Error(
           `archive-manifest: refusing to rewrite ${manifestPath}: it would DROP ${dropped.length} committed archived ` +
@@ -392,6 +392,10 @@ export function regenerateEntries(manifestPath, collect, policy = {}, lockOpts) 
       }
       if (dropped.length) process.stderr.write(`archive-manifest: DROPPING ${dropped.length} entr(y/ies) on explicit override\n`);
       const byKey = new Map(current.entries.map((e) => [entryKey(e), e]));
+      // Displaced-record entries (`displaced: true`) are manifest RECORDS, not
+      // disk-derived — the collector never returns them — so they are retained
+      // across every regeneration and never count as drops (Codex #2070 r20 P1).
+      const retained = current.entries.filter((e) => e.displaced === true);
       const displaced = collected
         .filter((e) => byKey.has(entryKey(e)) && String(byKey.get(entryKey(e)).diamond).toLowerCase() !== String(e.diamond).toLowerCase())
         .map((e) => ({ key: entryKey(e), from: byKey.get(entryKey(e)).diamond, to: e.diamond }));
@@ -404,7 +408,26 @@ export function regenerateEntries(manifestPath, collect, policy = {}, lockOpts) 
         );
       }
       if (displaced.length) process.stderr.write(`archive-manifest: DISPLACING ${displaced.length} diamond(s) on explicit override: ${displaced.map((d) => `${d.key} ${d.from} → ${d.to}`).join(', ')}\n`);
-      const next = { purpose: MANIFEST_PURPOSE, generatedAt: new Date().toISOString(), entries: sortEntries(collected) };
+      // Codex #2070 r20 P1 — a displaced Diamond is still a contract with
+      // storage, and rows can be written to it after the census that last saw
+      // it; the promise "the displaced address stays on record" must mean
+      // CENSUSABLE record, not a log line. Each displacement RETAINS the old
+      // entry under a derived stamp (`<stamp>@displaced-<n>`), flagged
+      // `displaced: true`, so the census enumerates it as its own deployment.
+      const retainedNow = [...retained];
+      for (const d of displaced) {
+        const old = byKey.get(d.key);
+        const n = retainedNow.filter((e) => e.displacedFrom === old.stamp && e.slug === old.slug).length + 1;
+        retainedNow.push({
+          ...old,
+          stamp: `${old.stamp}@displaced-${n}`,
+          displaced: true,
+          displacedFrom: old.stamp,
+          displacedAt: new Date().toISOString(),
+          replacedBy: d.to,
+        });
+      }
+      const next = { ...current, purpose: MANIFEST_PURPOSE, generatedAt: new Date().toISOString(), entries: sortEntries([...collected, ...retainedNow]) };
       writeManifestAtomic(manifestPath, next);
       const verify = readManifest(manifestPath);
       for (const e of collected) {
@@ -413,6 +436,36 @@ export function regenerateEntries(manifestPath, collect, policy = {}, lockOpts) 
         }
       }
       return { manifest: next, dropped: dropped.length, displaced };
+    },
+    lockOpts,
+  );
+}
+
+/**
+ * Record that a LIVE artifact was just published (Codex #2070 r20 P1). The
+ * deploy scripts write `addresses.json` through forge, outside any lock; a
+ * census holding the manifest lock through its publication could still miss
+ * a Diamond that went live inside that window. So each deploy bumps a
+ * `liveGeneration` counter in the manifest, under the lock, immediately after
+ * the live artifact lands, and the census refuses to publish if the counter it
+ * read at its start snapshot differs from the one it reads at publication.
+ * (A Diamond that goes live AFTER the census block is out of the census's
+ * scope by construction — it has no code at that block — so the residual
+ * window between the forge write and this bump cannot hide custody; the
+ * counter makes the "inventory unchanged" claim precise, not the verdict.)
+ */
+export function bumpLiveGeneration(manifestPath, { slug, diamond } = {}, lockOpts) {
+  return withManifestLock(
+    manifestPath,
+    () => {
+      const m = readManifest(manifestPath) ?? emptyManifest();
+      const next = {
+        ...m,
+        liveGeneration: (Number(m.liveGeneration) || 0) + 1,
+        lastLivePublished: { slug: slug ?? null, diamond: diamond ?? null, at: new Date().toISOString() },
+      };
+      writeManifestAtomic(manifestPath, next);
+      return next.liveGeneration;
     },
     lockOpts,
   );
@@ -473,8 +526,23 @@ export function writeSnapshotGuarded(path, textOrProduce, { regressedBy, lockOpt
 // ── CLI ──────────────────────────────────────────────────────────────────────
 function main(argv) {
   const [cmd, manifestPath, slug, stamp, addrPath] = argv;
+  if (cmd === 'bump-live') {
+    if (!manifestPath || !slug) {
+      process.stderr.write('usage: archive-manifest.mjs bump-live <manifest> <slug> [<addresses.json>]\n');
+      return 2;
+    }
+    let diamond = null;
+    try {
+      if (stamp) diamond = JSON.parse(readFileSync(stamp, 'utf8')).diamond ?? null; // third arg is the live artifact path here
+    } catch {
+      diamond = null;
+    }
+    const gen = bumpLiveGeneration(manifestPath, { slug, diamond });
+    process.stdout.write(`  ✓ live artifact publication recorded (liveGeneration ${gen}) — COMMIT archive-manifest.json with the deploy\n`);
+    return 0;
+  }
   if (cmd !== 'append' || !manifestPath || !slug || !stamp || !addrPath) {
-    process.stderr.write('usage: archive-manifest.mjs append <manifest> <slug> <stamp> <addresses.json>\n');
+    process.stderr.write('usage: archive-manifest.mjs append <manifest> <slug> <stamp> <addresses.json>\n       archive-manifest.mjs bump-live <manifest> <slug> [<addresses.json>]\n');
     return 2;
   }
   const entry = entryFromArtifact({ slug, stamp, addrPath });

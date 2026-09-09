@@ -5200,6 +5200,34 @@ reported a comfortable answer it had not earned:
   skipped it. It now runs unconditionally under the manifest lock before the
   guarded write, and prints that it ran; a first write into an empty directory
   shows the line.
+
+  **Round 20 closed four.** An acknowledged displacement removed the displaced
+  Diamond from the sole committed inventory, so a later census would copy its
+  address into `identityChanges` from a prior report but never scan it again —
+  rows written to the still-callable old Diamond after the last census that
+  saw it could be certified away. A displacement now RETAINS the old entry as
+  a censusable record under a derived stamp (`<stamp>@displaced-<n>`, flagged
+  `displaced`), which the census enumerates as its own deployment and every
+  regeneration preserves without counting it as a drop. The deploy scripts
+  write the live artifact through forge outside any lock, so a census holding
+  the manifest lock through its publication could still miss a Diamond that
+  went live inside that window; each deploy now bumps a `liveGeneration`
+  counter in the manifest, under the lock, immediately after the live
+  artifact lands, and the census refuses to publish if the counter it read at
+  its start differs from the one it reads at publication (a Diamond that goes
+  live after the census block is out of scope by construction — no code at
+  that block — so the residual window between the forge write and the bump
+  cannot hide custody; the counter makes the "inventory unchanged" claim
+  precise). On the contracts, `setIsCanonicalRewardChain(false)` stamped the
+  role unconditionally, so an idempotent false→false write on a
+  never-configured deployment moved it from `Unconfigured` to `Detached` —
+  the zero bound — from an admin call whose emitted update read as a no-op;
+  it now stamps only when enabling the flag or demoting a chain that was
+  canonical, with a test. And the runbook and knob handbook overstated
+  detachment as "reward payouts stop": the zero delivered-fresh bound stops
+  payouts funded from delivered-fresh budget only — schedule rewards paid
+  before arming and recycled-funded legs still settle — so both now say so
+  and name the reward-facet pause as the actual kill-switch.
   Hand-computed storage slots were never an option: they fail SILENTLY as
   zero, manufacturing the exact "empty" result the census exists to
   establish. The event reconstruction is retained behind `--corroborate` as

@@ -373,9 +373,12 @@ function deployedDiamonds() {
   return withManifestLock(ARCHIVE_MANIFEST, deployedDiamondsUnderLock);
 }
 
+/** The manifest's live-artifact generation as read under the lock by the most recent `deployedDiamondsUnderLock()`. */
+let LIVE_GENERATION_SEEN = null;
 function deployedDiamondsUnderLock() {
   const out = [];
   const manifest = readArchiveManifest();
+  LIVE_GENERATION_SEEN = manifest ? Number(manifest.liveGeneration) || 0 : 0;
   if (!manifest) {
     throw new Error(
       `${ARCHIVE_MANIFEST} is missing. The archived-deployment inventory must be committed, because .archive/ is gitignored ` +
@@ -1702,7 +1705,18 @@ async function main() {
       `${d.slug}|${d.label}|${String(d.addresses.diamond ?? '').toLowerCase()}|${scopeOfInv(d.addresses.vpfiToken ?? d.addresses.vpfiMirror)}|` +
       `${d.addresses.chainId ?? 'null'}|${d.addresses.deployBlock ?? 'null'}`;
     const scannedInv = new Set(everything.map(inventoryKey)); // the FULL snapshot taken at start — a --chain run scans a subset of it
+    const generationAtStart = LIVE_GENERATION_SEEN;
     const nowInv = new Set(deployedDiamondsUnderLock().map(inventoryKey));
+    // Codex #2070 r20 P1 — the deploy scripts write the live artifact through
+    // forge, outside any lock, then bump `liveGeneration` under the lock; a
+    // changed counter means a Diamond went live during this run even if its
+    // artifact is otherwise identical to a record we hold.
+    if (LIVE_GENERATION_SEEN !== generationAtStart) {
+      throw new Error(
+        `refusing to publish ${outFile}: a live artifact was published while this run was scanning (liveGeneration ${generationAtStart} → ${LIVE_GENERATION_SEEN}); ` +
+          `this run's population is stale — re-run`,
+      );
+    }
     const added = [...nowInv].filter((k) => !scannedInv.has(k));
     const removed = [...scannedInv].filter((k) => !nowInv.has(k));
     if (added.length || removed.length) {
@@ -1711,7 +1725,7 @@ async function main() {
           `removed: ${removed.join(', ') || 'none'}); this run's population is stale and its verdict would not describe the inventory as it stands — re-run`,
       );
     }
-    process.stderr.write(`census: inventory re-validated at publication under the manifest lock — ${nowInv.size} deployment record(s) unchanged since the start snapshot\n`);
+    process.stderr.write(`census: inventory re-validated at publication under the manifest lock — ${nowInv.size} deployment record(s) unchanged since the start snapshot (liveGeneration ${LIVE_GENERATION_SEEN})\n`);
     return writeSnapshotGuarded(outFile, () => `${JSON.stringify(report, null, 2)}\n`, {
     regressedBy: (current) => {
       const theirs = new Map();

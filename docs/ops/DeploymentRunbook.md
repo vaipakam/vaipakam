@@ -464,10 +464,16 @@ surface stays inert.
    (Base mainnet 8453; Base Sepolia 84532), NOT Base's Chainlink
    CCIP chain selector — the adapter normalises selectors
    internally. **Never pass zero here to "reset" a chain**: an explicit
-   zero write records the `Detached` reward role (delivered bound zero —
-   reward payouts stop) and is the deliberate detach procedure, whereas a
-   chain that was simply never configured resolves `Unconfigured` and
-   keeps single-chain semantics without any call. Confirm with
+   zero write records the `Detached` reward role and is the deliberate
+   detach procedure, whereas a chain that was simply never configured
+   resolves `Unconfigured` and keeps single-chain semantics without any
+   call. **What detaching stops is narrower than "all rewards"**: the
+   `Detached` role sets the delivered-fresh bound to zero, so payouts that
+   would be funded from delivered-fresh budget stop; schedule rewards paid
+   before arming are not consulted against that bound, and recycled-funded
+   legs still settle. It is not a payout kill-switch — an incident that
+   needs every reward outflow stopped needs the reward facets paused, not
+   a detach. Confirm with
    `getRewardRole()` (0 Canonical, 1 Mirror, 2 Unconfigured, 3 Detached).
    On an in-place refresh, declare each chain's role with
    `REWARD_ROLE_EXPECTED_<PREFIX>` — the refresh reads the role back while

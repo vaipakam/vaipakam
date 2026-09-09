@@ -1322,8 +1322,16 @@ contract RewardReporterFacet is
         // #1566 closure 3 — see the twin stamp in {setBaseChainId}. Demoting a
         // canonical chain that has no `baseChainId` lands on the same two
         // field values a fresh deploy has; this bit is the only thing that
-        // distinguishes the two, so it must be written here as well.
-        s.rewardRoleConfigured = true;
+        // distinguishes the two, so it must be written here as well — but
+        // ONLY on a real transition (Codex #2070 r20 P2): enabling the flag,
+        // or demoting a chain that WAS canonical. A false→false write on a
+        // never-configured deployment is an idempotent no-op, and stamping it
+        // would silently move the resolved role from `Unconfigured` to
+        // `Detached` — the zero delivered-fresh bound, on a live chain, from
+        // an admin call whose emitted config update reads as false→false.
+        if (on || old) {
+            s.rewardRoleConfigured = true;
+        }
         // #1662 r9 — a FRESH canonical deployment uses per-receipt
         // attribution from inception, so mark it armed at watermark ZERO
         // (constraining nothing: receipt ids start at 1). Without this it
