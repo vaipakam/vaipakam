@@ -657,6 +657,23 @@ export function ForcedCloseCard({
    *  purpose: the in-kind branch reverts `LiquidationFailed` without
    *  both parties' consent, so nothing is recovered and only the fee is
    *  spent — the same thing that happens with no swap route. */
+  /*  The rental arm is UNREACHABLE on the argument that made round 54's
+   *  `matchRace: false` correct, and it is kept deliberately.
+   *
+   *  This is the fallback for a card already in `ready-internal-match`,
+   *  which requires the chain's own `hasInternalMatchCandidate` to have
+   *  answered true — and for a rental it cannot, for the three reasons
+   *  written on that row. So a rental never reaches this branch.
+   *
+   *  Deleting it would make this expression depend on the chain's read
+   *  agreeing with our model of the chain. It is the read that is
+   *  authoritative: if that view ever returns true for a rental — a feed
+   *  configured against a collection address, a future settlement path
+   *  for non-fungible legs — this is exactly the sentence that should be
+   *  shown, and its absence would fall through to `raceFallbackUnknown`
+   *  on the one card that must not be vague about what the lender gets.
+   *  An unreachable-but-correct branch costs a string; the alternative
+   *  costs an explanation at the moment one is needed. */
   const raceOutcome =
     matchFallback === 'ready-in-kind'
       ? copy.forcedClose.raceFallbackInKind
