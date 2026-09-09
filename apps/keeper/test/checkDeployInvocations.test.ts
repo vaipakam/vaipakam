@@ -9849,23 +9849,6 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(r.ok).toBe(false);
   });
 
-  it('a manifest value includes the scripts it runs (#2066 r17)', () => {
-    // `pnpm run generate` rewrites the selected config before the deploy in
-    // the same value; scanning only the release value never saw it.
-    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
-    const r = runWith(
-      'apps/agent/package.json',
-      '{\n' +
-        '  "name": "@vaipakam/agent",\n' +
-        '  "scripts": {\n' +
-        '    "generate": "cp generated.jsonc configs/custom.jsonc",\n' +
-        '    "release": "pnpm run generate && wrangler deploy --config configs/custom.jsonc"\n' +
-        '  }\n' +
-        '}\n',
-    );
-    expect(r.ok).toBe(false);
-  });
-
   // ---- Codex #2066 r18 ----
 
   it('a keyword-named property is an operand (#2066 r18)', () => {
@@ -9894,44 +9877,6 @@ describe('check-deploy-invocations — #1996 config identity', () => {
         'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
     );
     expect(r.ok).toBe(false);
-  });
-
-  it('a helper invoked AFTER the deploy does not invalidate it (#2066 r18)', () => {
-    // r17 prepended every helper the value mentioned, whenever it ran.
-    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
-    const r = runWith(
-      'apps/agent/package.json',
-      '{\n' +
-        '  "name": "@vaipakam/agent",\n' +
-        '  "scripts": {\n' +
-        '    "generate": "cp generated.jsonc configs/custom.jsonc",\n' +
-        '    "release": "wrangler deploy --config configs/custom.jsonc && pnpm run generate"\n' +
-        '  }\n' +
-        '}\n',
-    );
-    expect(r.ok).toBe(true);
-  });
-
-  it('a filter selects whose script runs (#2066 r18)', () => {
-    // The agent's own `generate` copies the config; the invocation selects the
-    // KEEPER's, which does not. Reading the containing package's scripts
-    // reported a rewrite the invoked script never performs.
-    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
-    seed(
-      'apps/keeper/package.json',
-      '{"name":"@vaipakam/keeper","scripts":{"generate":"echo nothing"}}\n',
-    );
-    const r = runWith(
-      'apps/agent/package.json',
-      '{\n' +
-        '  "name": "@vaipakam/agent",\n' +
-        '  "scripts": {\n' +
-        '    "generate": "cp generated.jsonc configs/custom.jsonc",\n' +
-        '    "release": "pnpm --filter @vaipakam/keeper run generate && wrangler deploy --config configs/custom.jsonc"\n' +
-        '  }\n' +
-        '}\n',
-    );
-    expect(r.ok).toBe(true);
   });
 
   // ---- Codex #2066 r19 ----
@@ -9970,21 +9915,6 @@ describe('check-deploy-invocations — #1996 config identity', () => {
       'ax.sh',
       "OUT='$(shutil.copy(source, destination))'\n" +
         'wrangler deploy --config configs/custom.jsonc\n',
-    );
-    expect(r.ok).toBe(true);
-  });
-
-  it('a quoted script name is not an invocation (#2066 r19)', () => {
-    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
-    const r = runWith(
-      'apps/agent/package.json',
-      '{\n' +
-        '  "name": "@vaipakam/agent",\n' +
-        '  "scripts": {\n' +
-        '    "generate": "cp generated.jsonc configs/custom.jsonc",\n' +
-        '    "release": "echo \'pnpm run generate\' && wrangler deploy --config configs/custom.jsonc"\n' +
-        '  }\n' +
-        '}\n',
     );
     expect(r.ok).toBe(true);
   });
@@ -10080,37 +10010,77 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(r.ok).toBe(false);
   });
 
-  it('an unquoted alias name must be in command position (#2066 r20)', () => {
+  // ---- Codex #2066 r21 ----
+
+  it('a bare cp declaration is not a copy (#2066 r21)', () => {
+    // `cp` has the same ambiguity as `copy` and `move`; leaving it in the
+    // distinctive branch was the r20 refactor left half-done.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
     seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
     const r = runWith(
-      'apps/agent/package.json',
-      '{\n' +
-        '  "name": "@vaipakam/agent",\n' +
-        '  "scripts": {\n' +
-        '    "generate": "cp generated.jsonc configs/custom.jsonc",\n' +
-        '    "release": "echo pnpm run generate && wrangler deploy --config configs/custom.jsonc"\n' +
-        '  }\n' +
-        '}\n',
+      'bf.mjs',
+      'function cp(source, destination) {\n  return source;\n}\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
     );
     expect(r.ok).toBe(true);
   });
 
-  it('a four-hop alias chain still reaches the writer (#2066 r20)', () => {
+  it('a comment may follow a closing paren (#2066 r21)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
     seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
     const r = runWith(
-      'apps/agent/package.json',
-      '{\n' +
-        '  "name": "@vaipakam/agent",\n' +
-        '  "scripts": {\n' +
-        '    "a": "pnpm run b",\n' +
-        '    "b": "pnpm run c",\n' +
-        '    "c": "pnpm run d",\n' +
-        '    "d": "cp generated.jsonc configs/custom.jsonc",\n' +
-        '    "release": "pnpm run a && wrangler deploy --config configs/custom.jsonc"\n' +
-        '  }\n' +
-        '}\n',
+      'bg.sh',
+      '( :)# shutil.copy(source, destination)\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a comment may precede a regex literal (#2066 r21)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'bh.mjs',
+      'const example = /* note */ /fs.copy(source, destination)/;\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a command inside a test expression still runs (#2066 r21)', () => {
+    // The `[[ ]]` exemption covers the COMPARISON, not commands run inside it.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'bi.sh',
+      'CFG=configs/custom.jsonc\n' +
+        'if [[ "$(printf new > "$CFG")" == new ]]; then echo done; fi\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
     );
     expect(r.ok).toBe(false);
+  });
+
+  it('a spawn payload in an array is executable (#2066 r21)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'bj.mjs',
+      'const cfg = "configs/custom.jsonc";\n' +
+        'spawnSync("node", ["-e", "require(\'fs\').writeFileSync(cfg, \'{}\')"]);\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a quoted heredoc body is input, not code (#2066 r21)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'bk.sh',
+      "cat <<'EOF'\nshutil.copy(source, destination)\nEOF\n" +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(true);
   });
 
   it('the PROSE path invalidates a rewritten config too', () => {

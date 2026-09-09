@@ -3276,7 +3276,9 @@ function classifyText(text, lang) {
     // false red this fixes rather than a false green it could create.
     const regexOpens = (idx) => {
       let p = idx - 1;
-      while (p >= 0 && /\s/.test(text[p])) p -= 1;
+      // Trivia, not only whitespace: `= /* note */ /re/` still follows an
+      // assignment, and stopping on the comment's own slash lost it (r21).
+      while (p >= 0 && (/\s/.test(text[p]) || kind[p] === 2)) p -= 1;
       if (p < 0) return true;
       const ch = text[p];
       // …but a POSTFIX `++`/`--` produces a VALUE, so the slash after it
@@ -3477,6 +3479,22 @@ function classifyText(text, lang) {
           }
         }
       }
+      // A QUOTED HEREDOC BODY IS INPUT, not code. `cat <<'EOF'` … `EOF` feeds
+      // text to a command, and leaving it eligible reported a config named
+      // only inside the document (r21). Marked non-executable rather than as a
+      // string, because a shell string IS executable here. Only the quoted
+      // form: an unquoted delimiter still expands, so its body is unchanged.
+      if (lang === 'shell' && c === '<' && text[i + 1] === '<') {
+        const h = /^<<-?\s*(['"])([A-Za-z_][A-Za-z0-9_]*)\1/.exec(text.slice(i, i + 80));
+        const nl = h ? text.indexOf('\n', i) : -1;
+        if (h && nl !== -1) {
+          const end = new RegExp(`\\n[ \\t]*${h[2]}[ \\t]*(?:\\n|$)`).exec(text.slice(nl));
+          const stop = end ? nl + end.index + end[0].length : text.length;
+          kind.fill(2, nl, stop);
+          i = stop - 1;
+          continue;
+        }
+      }
       if (c === '"' || c === "'" || (jsLike && c === '`')) {
         q = c;
         triple = pyLike && text[i + 1] === c && text[i + 2] === c;
@@ -3501,7 +3519,7 @@ function classifyText(text, lang) {
           // `#` starts a comment at the start of a WORD, and a control
           // operator ends a word just as whitespace does — `:;# note` is a
           // comment (r20).
-          (pyLike || i === 0 || /[\s;&|(]/.test(text[i - 1]))) ||
+          (pyLike || i === 0 || /[\s;&|()]/.test(text[i - 1]))) ||
         (jsLike && c === '/' && text[i + 1] === '/');
       if (lineComment) {
         const nl = text.indexOf('\n', i);
@@ -3585,7 +3603,12 @@ function inTestExpression(idx, text, kind) {
   if (open === -1) return false;
   const close = text.indexOf(']]', idx);
   const nl = text.indexOf('\n', idx);
-  return close !== -1 && (nl === -1 || close < nl);
+  if (close === -1 || (nl !== -1 && close < nl) === false) return false;
+  // …and only the COMPARISON is exempt. `[[ "$(printf new > "$CFG")" == new ]]`
+  // runs a command inside the test, and blanket containment suppressed the
+  // write it performs — a false green this exemption introduced (r21).
+  const between = text.slice(open, idx);
+  return !/\$\(|`/.test(between);
 }
 
 /**
@@ -3597,12 +3620,36 @@ function inTestExpression(idx, text, kind) {
  * side of the language split.
  */
 function isCommandPayload(idx, text, kind) {
-  let s = idx;
-  while (s > 0 && kind[s - 1] !== 0) s -= 1;
-  let p = s - 1;
-  while (p >= 0 && (/\s/.test(text[p]) || kind[p] === 2)) p -= 1;
-  if (text[p] !== '(' && text[p] !== ',' && text[p] !== '`') return false;
-  let q = p - 1;
+  let start = idx;
+  while (start > 0 && kind[start - 1] !== 0) start -= 1;
+  // Back to the CALL that owns this literal, past any earlier arguments and
+  // past an array wrapper: `spawnSync("node", ["-e", "…"])` puts the payload
+  // two levels in, and testing only the character immediately before it saw a
+  // comma and gave up (r21).
+  let depth = 0;
+  let p = start - 1;
+  let open = -1;
+  for (; p >= 0 && start - p < 4000; p -= 1) {
+    if (kind[p] !== 0) continue;
+    const c = text[p];
+    if (c === ')' || c === ']' || c === '}') depth += 1;
+    else if (c === '(' || c === '[' || c === '{') {
+      if (depth === 0) {
+        if (c === '{') return false;
+        if (c === '(') {
+          open = p;
+          break;
+        }
+        // An array wrapper: keep walking out to the call itself.
+        continue;
+      }
+      depth -= 1;
+    } else if (c === ';' || c === '\n') {
+      if (depth === 0) return false;
+    }
+  }
+  if (open === -1) return false;
+  let q = open - 1;
   while (q >= 0 && (/\s/.test(text[q]) || kind[q] === 2)) q -= 1;
   let e = q;
   while (e >= 0 && /[A-Za-z0-9_$]/.test(text[e])) e -= 1;
@@ -3770,7 +3817,11 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
       String.raw`(?<![A-Za-z0-9_$])` +
         String.raw`(?:writeFile(?:Sync)?|appendFile(?:Sync)?|createWriteStream` +
         String.raw`|outputFile(?:Sync)?|write_text|write_bytes` +
-        String.raw`|copyFile(?:Sync)?|cpSync|cp|rename(?:Sync)?)\s*\(` +
+        // `cp` moved behind the qualifier with `copy` and `move`: it has the
+        // same ambiguity (`function cp(source, destination)`), and leaving it
+        // in the distinctive branch was the r20 refactor left half-done (r21).
+        // `cpSync` stays — it is an API name, not a plausible declaration.
+        String.raw`|copyFile(?:Sync)?|cpSync|rename(?:Sync)?)\s*\(` +
         // A GENERIC COPY NAME NEEDS A FILESYSTEM QUALIFIER, or none at all.
         // The lookbehind above admits member access on purpose — it is what
         // lets `require("fs").writeFileSync(…)` and `fs.promises.cp(…)` match
@@ -3794,7 +3845,10 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
         // allowed; the edge list it replaces was not bounded at all. Same
         // trade, and the same reasoning, as `keep_vars` against per-call-site
         // `--keep-vars` in #1995.
-        String.raw`|(?<![A-Za-z0-9_$.])(?:shutil|fs|fse|fsExtra|fsp|promises)\s*\.\s*` +
+        // The qualifier may itself be DOTTED — `fs.promises.cp` — so the
+        // boundary here refuses a suffix but admits member access, exactly as
+        // the distinctive branch above does (r21).
+        String.raw`|(?<![A-Za-z0-9_$])(?:shutil|fs|fse|fsExtra|fsp|promises)\s*\.\s*` +
         String.raw`(?:copy|move|copyfile|copy2|copytree|cp)\s*\(` +
         // `os.replace` renames ONTO an existing path — an overwrite by
         // definition — and no spelling of it was in the set (r13). Written
@@ -8425,71 +8479,26 @@ for (const file of walk(REPO_ROOT)) {
       // answers "does this alias reach a deploy" and returns nothing for one
       // that merely rewrites, which is exactly the case here. The bodies are
       // wanted whatever they do.
-      // …and only the invocations that run BEFORE this deploy. Prepending
-      // every helper the value mentions claimed a rewrite for
-      // `wrangler deploy --config c.jsonc && pnpm run generate`, where the
-      // helper runs afterwards — a false red (r18). The bodies are collected
-      // per deploy, against that deploy's own offset in the value.
-      const INVOKE = new RegExp(
-        String.raw`\b(?:pnpm|npm|yarn)\b([^&|;]*?)\b(?:${RUN_ALIASES})\s+([A-Za-z_][\w:.-]*)`,
-        'g',
-      );
-      const aliasBodiesBefore = (limit) => {
-        if (!valueScoped) return [];
-        const out = [];
-        const seen = new Set();
-        const follow = (body, depth, bound) => {
-          // Bounded by the `seen` set, which already terminates cycles; the
-          // depth is only a runaway guard. At 2 a four-hop chain
-          // (release -> a -> b -> c -> d) never reached the helper that
-          // writes (r20).
-          if (depth > 16) return;
-          // QUOTED TEXT IS NOT AN INVOCATION. `echo 'pnpm run generate'` names
-          // a script without running it, and expanding on every textual match
-          // prepended that helper's body and rejected an unchanged config
-          // (r19). A payload genuinely handed to an interpreter is missed by
-          // this, which is incompleteness rather than noise.
-          const bodyKind = classifyText(body, 'shell');
-          for (const mm of body.matchAll(new RegExp(INVOKE))) {
-            if (bound !== null && mm.index >= bound) continue;
-            if (bodyKind[mm.index] !== 0) continue;
-            // …and in COMMAND POSITION. `echo pnpm run generate` prints the
-            // words; excluding only quoted text still accepted it (r20).
-            const before = body.slice(0, mm.index);
-            if (!/(?:^|[;&|(]|&&|\|\|)\s*$/.test(before)) continue;
-            const name = mm[2];
-            // THE SELECTOR DECIDES WHOSE SCRIPT THIS IS. `pnpm --filter
-            // @vaipakam/agent run generate` runs the agent's, not the
-            // manifest's own, and reading the containing package's scripts
-            // reported a rewrite the invoked script never performs (r18).
-            const sel = mm[1].match(/(?:--filter(?:-prod)?|-F)[=\s]+("[^"]*"|'[^']*'|[^\s]+)/);
-            const dir = sel
-              ? (SCOPED.find((sc) => sc.filter === dequote(sel[1]))?.dir ?? null)
-              : packageContextOf(rel);
-            const scripts = dir ? packageScripts(dir) : null;
-            const body2 = scripts?.[name];
-            const key = `${dir}\u0000${name}`;
-            if (seen.has(key) || typeof body2 !== 'string') continue;
-            seen.add(key);
-            out.push(body2);
-            follow(body2, depth + 1, null);
-          }
-        };
-        follow(line, 0, limit);
-        return out;
-      };
-      // PREPENDED, and the offsets moved with it: the bodies run BEFORE the
-      // value, so they must sit before it in the scanned text, and
-      // `part.start` indexes the value — adding the prefix without shifting
-      // would compare a write offset against a deploy offset measured in a
-      // different string, which is the coordinate mix-up r13 already cost a
-      // round.
-      const rewriteCtx = (start) => {
-        if (!valueScoped) return { text, at: lineStartOffset(text, lineNo, start) };
-        const bodies = aliasBodiesBefore(start);
-        const prefix = bodies.length > 0 ? `${bodies.join('\n')}\n` : '';
-        return { text: prefix + line, at: prefix.length + start };
-      };
+      // A MANIFEST VALUE IS SCANNED ALONE — the scripts it invokes are NOT
+      // followed. `part.start` indexes the value, and `lineStartOffset` adds
+      // it to the raw physical line, which is right for a shell file and
+      // adrift for a JSON value whose `"release": "` prefix the entry text
+      // does not carry; the value's own coordinates cannot disagree (r13).
+      //
+      // FOLLOWING `pnpm run generate` INTO ANOTHER SCRIPT WAS TRIED (r17) AND
+      // IS WITHDRAWN. It is inter-procedural reasoning — the same class as the
+      // hoisted-helper call this reader declined in r17 on the grounds that it
+      // does not build a call graph — and keeping one while declining the
+      // other was an inconsistency that generated NINE findings over five
+      // rounds: invocation ordering, `--filter` selection, quoted mentions,
+      // command position, chain depth twice, short-circuited branches, and npm
+      // pre/post hooks. Each fix was right and each exposed the next, which is
+      // the unbounded shape this reader is written to avoid. Deferred to a
+      // follow-up issue rather than half-done here.
+      const rewriteCtx = (start) =>
+        valueScoped
+          ? { text: line, at: start }
+          : { text, at: lineStartOffset(text, lineNo, start) };
       // A markdown CODE SPAN is a command boundary, and prose has no shell
       // separator between two of them. `Use `wrangler deploy --keep-vars` for
       // the keeper and `wrangler deploy` for the agent.` is ONE segment to
