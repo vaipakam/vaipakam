@@ -3684,8 +3684,13 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
   // rather than by normalising the file text. Normalising would move every
   // offset, and every offset in this function is an index into the classifier's
   // array for the ORIGINAL text.
+  //
+  // The per-character escape keeps the `g` flag even though each element is
+  // one character and can match at most once: a partial-escape reader cannot
+  // see that, and a suppression here would be a claim about the split rather
+  // than about the escape (CodeQL 1975).
   const esc = [...base]
-    .map((c) => c.replace(/[.*+?^${}()|[\]\\]/, '\\$&'))
+    .map((c) => c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
     .join(String.raw`["'\`\\]*`);
   const Q = String.raw`["'\`]`;
   // THE PATH IS NOT ALWAYS AN ARGUMENT. `Path("configs/custom.jsonc")
