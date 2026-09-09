@@ -76,11 +76,17 @@ import {
  *  residual.
  *
  *  So nothing is concluded here. The wait restarts, and only a receipt
- *  — the original's, or a replacement's, which `waitForTransactionReceipt`
- *  follows — ends the hold. The one thing the bound still buys is the
- *  chance to TELL the lender the transaction is unaccounted for, which
- *  is a better answer than either a silent latch or a button that
- *  implies a retry is safe. */
+ *  — the original's, or a replacement's, which `settled` follows — ends
+ *  the hold. The one thing the bound still buys is the chance to TELL
+ *  the lender the transaction is unaccounted for, which is a better
+ *  answer than either a silent latch or a button that implies a retry is
+ *  safe.
+ *
+ *  ROUND 53 P2 — it bounds ONE wait and no longer sets the gap between
+ *  waits, which is a second job it used to carry silently and got wrong.
+ *  See the `refetchInterval` below: the restart is immediate, because a
+ *  window with no waiter alive loses the pending transaction that
+ *  replacement detection needs. */
 const RECEIPT_WAIT_TIMEOUT_MS = 3 * 60_000;
 
 export function ForcedCloseCard({
@@ -125,12 +131,17 @@ export function ForcedCloseCard({
   setBusy: (b: boolean) => void;
   /** Lets the page refetch status after the loan goes terminal. */
   onClosedOut: () => void;
-  /** When the readiness reads behind this card were last refreshed.
+  /** When the readiness reads behind this card were last refreshed —
+   *  the MINIMUM across them, so one stale read still counts as stale.
    *
-   *  The card holds its post-submit state only until this passes the
-   *  submit stamp — see `submitted` below. Sourced from the queries
-   *  themselves rather than a timer, so the hold is released by
-   *  evidence rather than by a guess about how long a refetch takes. */
+   *  On the SUCCESS path the card holds until this passes the moment the
+   *  transaction's disposition was established (round 52 P2 — not the
+   *  submit stamp; those differ by the whole life of the transaction,
+   *  and reads that refresh in between still describe the pre-close
+   *  loan). Sourced from the queries themselves rather than a timer, so
+   *  the hold is released by evidence rather than by a guess about how
+   *  long a refetch takes. See `data/forcedCloseHold`, which owns the
+   *  rule and its case table. */
   readsUpdatedAt: number;
   /** The page's live sale-settlement re-check, run immediately before
    *  sending. Returns a message to show and abort on, or `null` to

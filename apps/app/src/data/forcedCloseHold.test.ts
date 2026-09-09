@@ -2,8 +2,9 @@
  * `isHoldingAfterSubmit` — the post-submit hold on the forced-close
  * action.
  *
- * Written as the regression suite for four consecutive review rounds
- * that each fixed this predicate and broke it again (47, 48, 49, 50).
+ * Written as the regression suite for the review rounds that each fixed
+ * this predicate and broke it again — 47, 48, 49, 50, then 52 moving the
+ * success anchor and adding a disposition.
  * Every case below is labelled with the round whose defect it pins, so
  * a future edit that reintroduces one fails against the round that
  * found it rather than against an anonymous assertion.
@@ -43,7 +44,7 @@ const AFTER_DISPOSAL = DISPOSED_AT + 1;
 /** The case this file exists to pin twice over: newer than the send,
  *  older than the mine. Everything the app can see refreshed, and all of
  *  it still describes the loan before the close-out. */
-const BETWEEN = SUBMITTED_AT + 1;
+const BETWEEN = SUBMITTED_AT + 15_000;
 
 describe('isHoldingAfterSubmit — nothing outstanding', () => {
   it('does not hold when no close-out has been submitted', () => {

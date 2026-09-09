@@ -34,21 +34,34 @@
  *   `undetermined` is NOT an ending. A transaction still pending has
  *   not been dropped, and releasing on a timer queues a second
  *   close-out behind a live first one.
+ * - **Round 52** moved the success anchor off the SEND and onto the
+ *   MINE. Reads can refresh between the two while still describing the
+ *   pre-close loan, so the old anchor was already satisfied when success
+ *   arrived — the slower the transaction, the more likely the wrong
+ *   release. It also added `replaced`.
+ * - **Round 53** made the record survive a reload rather than only a
+ *   chain switch (see the store at the bottom of this file); keying it
+ *   in component state answered one of those and not the other.
  *
  * ## The rule
  *
- * Hold while the disposition is unknown; hold after a success until one
- * read postdates the submit; release on anything the chain has actually
- * settled against the close-out having happened.
+ * Hold while the disposition is unknown. Hold after a success until one
+ * read postdates the DISPOSITION — not the submit; that distinction is
+ * round 52 and it is the easiest sentence in this file to get wrong.
+ * Release on anything the chain has actually settled against the
+ * close-out having happened.
  */
+
+import { makePendingMarkerStore } from '../lib/pendingMarker';
 
 /** What the chain has established about a submitted close-out.
  *
- *  `cancelled` is separate from `reverted` because they are reached
- *  differently — a wallet replaced the send with a no-op, rather than
- *  the call itself failing — even though both mean the close-out did
- *  not execute and both release the hold. Keeping them apart is what
- *  lets the caller tell a lender which happened. */
+ *  Three of these mean "the close-out did not execute" and all three
+ *  release the hold, yet they stay separate because they are reached
+ *  differently and a lender is owed the difference: the call itself
+ *  failed, the wallet cancelled it, or something else took its place in
+ *  the queue. Collapsing them would save a branch and lose the only
+ *  thing the card can honestly say about what happened. */
 export type ForcedCloseDisposition =
   | 'success'
   /** Our call executed and reverted. */
@@ -147,7 +160,6 @@ export function isHoldingAfterSubmit(input: ForcedCloseHoldInput): boolean {
  *  The value is `<hash>:<submittedAtMs>`. Both halves are needed: the
  *  hash is what gets watched, and the timestamp is the fallback anchor
  *  when a disposition arrives without one. */
-import { makePendingMarkerStore } from '../lib/pendingMarker';
 
 const submitMarker = makePendingMarkerStore('app.forcedCloseSubmit');
 
