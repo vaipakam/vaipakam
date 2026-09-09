@@ -10935,4 +10935,35 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     );
     expect(r.ok).toBe(false);
   });
+
+  it('an unrelated option does not excuse a copy (#2066 r32 self-review)', () => {
+    // The "makes no changes" look-ahead scanned the rest of the LINE, so
+    // `echo -n` beside a real copy disabled it. A false green introduced by
+    // the fix for a false red, in the same round.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'es.sh',
+      'CFG=configs/custom.jsonc\n' +
+        'cp generated.jsonc "$CFG" && echo -n done\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('an inert list after a process call is still inert (#2066 r32 bounds)', () => {
+    // Dropping the newline from the owner walk must not let a standalone
+    // string be attributed to an earlier call. The depth accounting is what
+    // prevents it, and this pins that.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'et.py',
+      'import subprocess\n' +
+        'subprocess.run(["ls"])\n' +
+        'NOTES = [\n  "open(\'configs/custom.jsonc\', \'w\')",\n]\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(true);
+  });
 });

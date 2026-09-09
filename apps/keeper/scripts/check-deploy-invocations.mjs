@@ -4214,7 +4214,12 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
             // per-command table of flags: if a fourth spelling arrives, the
             // command comes out of this list instead.
             String.raw`)\s+)*(?:[\w./-]*/)?(?:cp|mv|install|rsync|tee)` +
-            String.raw`(?![^\n]*(?:[^\S\n]--(?:dry-run|no-clobber)\b` +
+            // …AND THE LOOK-AHEAD STOPS AT THE COMMAND. Scanning the rest of
+            // the LINE let an unrelated option disable the copy beside it:
+            // `cp generated.jsonc "$CFG" && echo -n done` went unreported
+            // because `echo`'s `-n` was in range (r32 self-review). A false
+            // green introduced by the fix for a false red, in the same round.
+            String.raw`(?![^\n;&|]*(?:[^\S\n]--(?:dry-run|no-clobber)\b` +
             String.raw`|[^\S\n]-[a-zA-Z]*n[a-zA-Z]*(?=[^\S\n]|$)))` +
             String.raw`[^\S\n]+(?:-\S+[^\S\n]+)*[^\s<>|&;-]`
           : '') +
