@@ -433,6 +433,15 @@ part, runs for real against what is left. The card now records the
 attempt the moment the transaction has an identifier, which is the point
 at which it stops being safe to assume nothing happened.
 
+That fix was half a fix, and reviewing it found the other half. Recording
+the attempt disables the button on the position — but after a failed
+confirmation the page is not showing that button, it is showing the open
+confirmation panel, and the confirm inside it was not covered. The retry
+the whole change was meant to prevent was still one click away, by a
+different route. Both are closed now, and the close-out additionally
+refuses to start a second time while a first is unaccounted for,
+regardless of what the screen is showing.
+
 Two smaller items alongside it. A live check on the deployed site treated
 the Terms notice appearing over a claims, vault, recovery or desk page as
 an inconclusive result and told whoever ran it to accept the Terms and try

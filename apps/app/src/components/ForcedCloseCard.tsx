@@ -174,6 +174,11 @@ export function ForcedCloseCard({
   const submittable = canSubmitFromApp(readiness) && !holdingAfterSubmit;
 
   async function closeOut() {
+    // Belt and braces on a money path: no render path may reach a
+    // second submit while the first is unreconciled. The `disabled`
+    // props above are the UI half; this is the half that survives a
+    // future caller wiring the confirmation differently.
+    if (holdingAfterSubmit || busy) return;
     setError(null);
     setBusy(true);
     try {
@@ -590,6 +595,18 @@ export function ForcedCloseCard({
             <div style={{ marginTop: 8 }}>
               <ConfirmReceipt
                 busy={busy}
+                // ROUND 47 P1, SECOND HALF — found reviewing my own fix.
+                // Stamping in `onSubmitted` gates `submittable`, which
+                // gates the OUTER button — but that button is not
+                // rendered while the confirmation is open, and after a
+                // failed receipt wait the confirmation IS still open
+                // (`onCloseConfirm` runs only on success). Its confirm
+                // button is `disabled={busy || disabled}`, and this card
+                // was passing only `busy` — which `finally` has just
+                // cleared. So the exact retry the P1 describes stayed
+                // one click away, through the panel rather than the
+                // button.
+                disabled={holdingAfterSubmit}
                 confirmLabel={copy.forcedClose.submit}
                 onBack={onCloseConfirm}
                 onConfirm={closeOut}
