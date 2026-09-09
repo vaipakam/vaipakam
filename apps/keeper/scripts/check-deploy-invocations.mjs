@@ -3385,7 +3385,14 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
         // TESTS for cp, and admitting it would restore the r12 false red.
         (shellish
           ? String.raw`|(?:^|[;&|(])\s*(?:(?:[A-Za-z_]\w*=\S*` +
-            String.raw`|(?:sudo|env|xargs|time|nohup)(?:\s+-[-\w]+(?:=\S+)?|\s+-[ugUpChrtDR]\s+\S+)*` +
+            // A long option can take its argument SEPARATED — `sudo --user
+            // root cp …` — and the generic branch consumed `--user` while
+            // leaving `root` to be read as the command (r14). The long forms
+            // that take an argument are named, the same way the short ones
+            // are, rather than approximated by "a following word".
+            String.raw`|(?:sudo|env|xargs|time|nohup)(?:` +
+            String.raw`\s+--(?:user|group|prompt|close-from|host|role|type|chdir|other-user)\s+\S+` +
+            String.raw`|\s+-[-\w]+(?:=\S+)?|\s+-[ugUpChrtDR]\s+\S+)*` +
             String.raw`)\s+)*(?:[\w./-]*/)?(?:cp|mv|install|rsync|tee)\s`
           : '') +
         // A REDIRECTION, not every `>`. The bare alternative also matched the
@@ -3404,7 +3411,12 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
         // both truncate their target, and the target class saw the `|` or `&`
         // and rejected the match (r13). Fd duplication is unaffected: `2>&1`
         // has a digit for a target, which the class does not accept.
-        (shellish ? String.raw`|(?:^|[\s;&|)])\d*>{1,2}[|&]?\s*["'$~/.]` : '') +
+        // …and `*>` redirects every stream in PowerShell — and is a glob
+        // followed by a redirection in POSIX shell (`cat *> out`), which is
+        // also a write — so the prefix class admits it alongside the IO
+        // number (r14). This is the OPERATOR only; PowerShell's write cmdlets
+        // stay out of scope, as recorded at r11.
+        (shellish ? String.raw`|(?:^|[\s;&|)])[\d*]*>{1,2}[|&]?\s*["'$~/.]` : '') +
         // The mode literal must CLOSE. Accepting a prefix let
         // `webbrowser.open("welcome")` match `"w` (r11).
         String.raw`|\.\s*open\s*\(\s*(?:mode\s*=\s*)?(["'\`])[rbt]*[wax+][rbt+]*\1` +
@@ -3461,6 +3473,13 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
         while (p >= 0 && /\s/.test(text[p])) p -= 1;
         if (p < 0) return true;
         const ch = text[p];
+        // …but a POSTFIX `++`/`--` produces a VALUE, so the slash after it
+        // divides. Reading the second `+` as an operator made
+        // `x++ / (copyFileSync("generated.jsonc", cfg), 2) / 3` a pattern and
+        // classified the copy between the slashes as data — the false GREEN
+        // the one-sidedness above exists to prevent, arriving through the one
+        // operator that can also end an operand (r14).
+        if ((ch === '+' || ch === '-') && text[p - 1] === ch) return false;
         if ('=(,[{;:!&|?+-*%~^'.includes(ch)) return true;
         if (!/[A-Za-z0-9_$]/.test(ch)) return false;
         let s = p;
@@ -3484,6 +3503,14 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
       let triple = false;
       let fstr = false;
       let braces = 0;
+      // Parenthesis depth inside the current replacement field, and whether we
+      // have passed its top-level `:` into the FORMAT SPECIFICATION. Only the
+      // expression before that colon is Python; what follows is text handed to
+      // `__format__`, so `f'{X():copy(source, destination)}'` invokes nothing
+      // (r14). Depth is what makes the colon "top-level": a lambda's colon and
+      // a dict literal's sit inside `(`/`{`, and those keep the field code.
+      let parens = 0;
+      let spec = false;
       for (let i = 0; i < text.length; i += 1) {
         const c = text[i];
         if (q) {
@@ -3508,11 +3535,13 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
               continue;
             }
             if (jsLike) kind[i + 1] = 1;
-            stack.push({ q, triple, fstr, braces });
+            stack.push({ q, triple, fstr, braces, parens, spec });
             q = null;
             triple = false;
             fstr = false;
             braces = 1;
+            parens = 0;
+            spec = false;
             if (jsLike) i += 1;
             continue;
           }
@@ -3537,11 +3566,46 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
           }
           continue;
         }
+        // A format specification is DATA — except for the nested replacement
+        // fields it may contain, which are code again (`f'{x:{width}}'`).
+        if (spec) {
+          kind[i] = 1;
+          if (c === '{') {
+            stack.push({ q, triple, fstr, braces, parens, spec });
+            q = null;
+            triple = false;
+            fstr = false;
+            braces = 1;
+            parens = 0;
+            spec = false;
+          } else if (c === '}') {
+            const f = stack.pop();
+            q = f.q;
+            triple = f.triple;
+            fstr = f.fstr;
+            braces = f.braces;
+            parens = f.parens;
+            spec = f.spec;
+          }
+          continue;
+        }
         // Inside an interpolation, the brace that balances it ends the code
         // region and returns to the literal.
         if (stack.length > 0) {
-          if (c === '{') braces += 1;
-          else if (c === '}') {
+          if (c === '(' || c === '[') parens += 1;
+          else if (c === ')' || c === ']') parens -= 1;
+          else if (c === '{') braces += 1;
+          else if (
+            c === ':' &&
+            pyLike &&
+            braces === 1 &&
+            parens === 0 &&
+            stack[stack.length - 1].fstr
+          ) {
+            kind[i] = 1;
+            spec = true;
+            continue;
+          } else if (c === '}') {
             braces -= 1;
             if (braces === 0) {
               const f = stack.pop();
@@ -3550,6 +3614,8 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
               triple = f.triple;
               fstr = f.fstr;
               braces = f.braces;
+              parens = f.parens;
+              spec = f.spec;
               continue;
             }
           }
@@ -3632,6 +3698,14 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
       let depth = 0;
       let p = op;
       for (; p < text.length && p - op < 2000; p += 1) {
+        // Delimiters inside a STRING are not syntax. Counting them ended the
+        // parameter list at the `)` inside `copy(source = ")", destination)`,
+        // so a method that is never invoked failed the declaration test and
+        // reported a config nothing had touched (r14). The classifier built
+        // above already knows which offsets are code — asking it is what this
+        // reader does everywhere else, rather than adding a fourth ad-hoc
+        // recogniser.
+        if (kind[p] !== 0) continue;
         if (text[p] === '(') depth += 1;
         else if (text[p] === ')') {
           depth -= 1;

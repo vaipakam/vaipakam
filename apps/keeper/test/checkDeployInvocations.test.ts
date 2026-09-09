@@ -9615,6 +9615,116 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(r.ok).toBe(false);
   });
 
+  // ---- Codex #2066 r14 ----
+
+  it('a postfix increment does not open a regex (#2066 r14)', () => {
+    // `++` produces a VALUE, so the slash after it divides. Reading the second
+    // `+` as an operator made the copy between the slashes regex data — the
+    // false GREEN the one-sidedness exists to prevent, arriving through the
+    // one operator that can also END an operand.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      's.mjs',
+      'const cfg = "configs/custom.jsonc";\n' +
+        'const ratio = x++ / (copyFileSync("generated.jsonc", cfg), 2) / 3;\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a separated long option keeps cp in command position (#2066 r14)', () => {
+    // The r13 generic option branch consumed `--user` and left `root` to be
+    // read as the command.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      't.sh',
+      'CFG=configs/custom.jsonc\n' +
+        'sudo --user root cp generated.jsonc "$CFG"\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('an all-stream redirection is a write (#2066 r14)', () => {
+    // `*>` in PowerShell; a glob and a redirection in POSIX shell. A write
+    // either way. The OPERATOR only — PowerShell write cmdlets stay out of
+    // scope, as recorded at r11.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'u.sh',
+      'CFG=configs/custom.jsonc\n' +
+        "printf '{}' *> \"$CFG\"\n" +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a parameter default containing a paren still reads as a declaration (#2066 r14)', () => {
+    // The paren walk counted delimiters inside a string as syntax, so the
+    // parameter list appeared to end early and a method that is never invoked
+    // failed the declaration test. It consults the classifier now.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'v.mjs',
+      'class Mover {\n  copy(source = ")", destination) {\n    return source;\n  }\n}\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('an f-string format spec is data, not code (#2066 r14)', () => {
+    // Only the replacement expression is Python; what follows the top-level
+    // `:` is handed to `__format__`.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'w.py',
+      'import subprocess\n' +
+        "msg = f'{X():copy(source, destination)}'\n" +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a nested replacement field inside a format spec is still code (#2066 r14 bounds)', () => {
+    // The spec is data, but `{...}` within it reopens a replacement field, so
+    // a write there must still count. A bounds guard: before the spec rule
+    // existed the whole field was code and this passed anyway. It exists to
+    // fail if the spec is ever made data all the way to the closing brace.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'x.py',
+      'import subprocess\n' +
+        'from pathlib import Path\n' +
+        'cfg = "configs/custom.jsonc"\n' +
+        "msg = f'{value:>{Path(cfg).write_text(\"{}\")}}'\n" +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a lambda colon does not start a format spec (#2066 r14 bounds)', () => {
+    // The colon is "top-level" only at paren depth zero, so a lambda's colon
+    // and a dict literal's leave the field as code. Bounds guard against a
+    // widening of the spec rule turning real writes into data.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'y.py',
+      'import subprocess\n' +
+        'from pathlib import Path\n' +
+        'cfg = "configs/custom.jsonc"\n' +
+        "msg = f'{(lambda: Path(cfg).write_text(\"{}\"))()}'\n" +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
   it('the PROSE path invalidates a rewritten config too', () => {
     // That path passed the rewrite context to the safety reader and not to the
     // identity reader, so the identity half trusted the stale copy and sent the
