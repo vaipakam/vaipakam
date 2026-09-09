@@ -443,6 +443,29 @@ Thin-market honesty rules apply.
   yet, so the post-submit message describes the result as still being decided
   and directs the lender to the refreshed position, never to a claim that may
   not exist.
+- A surface that has lost track of a submitted transaction says so, and keeps
+  the action withheld while it does not know. Elapsed time is not evidence that
+  a transaction failed: one that has not confirmed may still confirm, and
+  offering the action again on the strength of a timer invites a second
+  close-out behind a live first one. So the surface states that it cannot
+  account for the transaction, that this does not mean it failed, why the
+  action is withheld, and that the wallet is where the answer is.
+- Withholding an action indefinitely over a question the platform cannot answer
+  requires an answer from someone who can. Because a record of the submitted
+  transaction now survives leaving the page and returning, no ordinary action
+  by the lender clears a transaction that has genuinely vanished — so the
+  surface offers them a way to state that their wallet no longer shows it,
+  which ends the wait. It is framed as the lender's statement about their own
+  wallet rather than as a control that checks anything, and it says what it
+  costs to be wrong, because presenting it as a check would claim a capability
+  the platform does not have.
+- A record that a close-out was submitted belongs to the position and the
+  network it was sent on, not to the page that sent it. Reloading, navigating
+  away and returning, or having the same position open more than once must not
+  produce a surface that offers the action again over a transaction already on
+  its way; and equally, learning that the record has been cleared elsewhere
+  must stop the wait rather than leave it running against a record that no
+  longer exists.
 - A conditional sentence whose condition cannot arise on the route being shown
   does not belong on it. The swap-to-repay cancellation note is the case in
   point: that facility covers ordinary-asset loans only, so an overdue rental
@@ -455,6 +478,16 @@ Thin-market honesty rules apply.
   is worse served than one shown the gap and told what it is. The rule holds
   even when the omission is the source behaving correctly — an admitted
   undercount is still an admission the surface must carry.
+- The same rule binds in the opposite direction, and more strongly. Where the
+  subtotals add up to MORE than the total they sit beneath, the figures
+  contradict each other, and the surface says so rather than presenting the
+  smaller discrepancy of nothing at all. Rounding a contradiction away asserts
+  by omission that the numbers reconcile, which is a claim the surface cannot
+  support and a reader can disprove with arithmetic. What it states is the
+  disagreement itself: that the fault lies in the counting rather than in any
+  position, that nothing is at risk because of it, and that the correct split
+  is not known. Both the total and the breakdown remain on screen exactly as
+  reported, so the discrepancy can be seen rather than taken on trust.
 - Where one freshness figure is stated over data drawn from more than one
   request, it is the figure of the LAGGING request. Quoting the more advanced
   of two reads presents one dataset's coverage as though it covered both.
