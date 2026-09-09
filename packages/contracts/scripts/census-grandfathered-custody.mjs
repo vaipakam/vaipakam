@@ -11,9 +11,12 @@
  * The owner ratified (2026-09-07) that this census runs BEFORE any migration
  * machinery is written. Its output decides scope:
  *
- *   - every class empty on every deployed chain  → slices 0–3 collapse to a
- *     certified no-op, and slice 0's shortfall disposition never reaches the
- *     owner, because there is nothing to be short of;
+ *   - every class empty on every deployment      → the MIGRATION half of slices
+ *     0–3 is a certified no-op, and slice 0's shortfall disposition never
+ *     reaches the owner, because there is nothing to be short of. It retires
+ *     the MOVING only: slices 2–3's prospective producer/consumer isolation
+ *     still ships, because the fallback and intent producers are live and can
+ *     write a qualifying row the moment after this read-only snapshot;
  *   - any class non-empty                        → that slice is live work, and
  *     the figures here are what carry the owner the shortfall question.
  *
@@ -346,14 +349,26 @@ function deployedDiamonds() {
         `that has the .archive/ directories, review the diff, and commit it.`,
     );
   }
-  // Staleness: any LOCAL archive entry absent from the manifest means the
-  // manifest no longer describes the deployments — refuse rather than census
-  // a subset that looks complete.
-  const inManifest = new Set(manifest.entries.map((e) => `${e.slug}|${e.stamp}`));
-  const missing = localArchivedDiamonds().filter((e) => !inManifest.has(`${e.slug}|${e.stamp}`));
-  if (missing.length) {
+  // Staleness, on CONTENT and not only on keys (Codex #2070 r10 P2): a local
+  // archived artifact corrected in place — the scheduled correction of the
+  // archive that names a non-Diamond is exactly this — keeps its directory
+  // stamp, so a `slug|stamp` comparison would pass while the manifest still
+  // carried the stale address, and the census would scan the stale record
+  // instead of the corrected one. Every field the census reads from an entry
+  // is compared; any difference is a refusal.
+  const byKey = new Map(manifest.entries.map((e) => [`${e.slug}|${e.stamp}`, e]));
+  const norm = (v) => (v === null || v === undefined ? null : `${v}`.toLowerCase());
+  const local = localArchivedDiamonds();
+  const missing = local.filter((e) => !byKey.has(`${e.slug}|${e.stamp}`));
+  const changed = local.filter((e) => {
+    const m = byKey.get(`${e.slug}|${e.stamp}`);
+    return m && ['chainId', 'diamond', 'deployBlock', 'vpfiToken'].some((k) => norm(m[k]) !== norm(e[k]));
+  });
+  if (missing.length || changed.length) {
     throw new Error(
-      `archive manifest is STALE — local .archive entries not in it: ${missing.map((e) => `${e.slug}/${e.stamp}`).join(', ')}. ` +
+      `archive manifest is STALE — ` +
+        (missing.length ? `local .archive entries not in it: ${missing.map((e) => `${e.slug}/${e.stamp}`).join(', ')}. ` : '') +
+        (changed.length ? `entries whose local artifact DIFFERS from the manifest record: ${changed.map((e) => `${e.slug}/${e.stamp}`).join(', ')}. ` : '') +
         `Regenerate with --write-archive-manifest and commit.`,
     );
   }

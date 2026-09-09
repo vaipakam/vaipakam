@@ -7252,12 +7252,26 @@ library LibVaipakam {
         ///         setters are the only sites that mutate the role, and both
         ///         stamp this flag, so {rewardRole} is total by construction.
         ///
-        ///         Defaulting to FALSE is correct for every already-deployed
-        ///         chain and needs no migration — canonical and mirror chains
-        ///         resolve on the earlier arms regardless of it, and a chain
-        ///         still sitting at the defaults IS unconfigured. As of
-        ///         2026-09-07 arb-sepolia and bnb-testnet are in exactly that
-        ///         state, and this flag is what keeps them working.
+        ///         Defaulting to FALSE is correct for every chain that is
+        ///         canonical, a mirror, or genuinely never configured —
+        ///         canonical and mirror chains resolve on the earlier arms
+        ///         regardless of it, and a chain still sitting at the defaults
+        ///         IS unconfigured. As of 2026-09-07 arb-sepolia and
+        ///         bnb-testnet are in exactly that state, and this flag is
+        ///         what keeps them working.
+        ///
+        ///         It is NOT correct for a Diamond that was configured and
+        ///         then DETACHED under the pre-field setters: that chain is
+        ///         zero-initialised here after an in-place upgrade and would
+        ///         resolve `Unconfigured` — `max` bound, fail-OPEN — where it
+        ///         must be `Detached`. State cannot tell the two apart (a
+        ///         demoted canonical chain and a never-configured one are
+        ///         byte-identical), so the upgrade BACKFILLS the record from
+        ///         the operator's declaration: `RefreshAllFacetsInPlace`
+        ///         requires `REWARD_ROLE_EXPECTED`, reads {rewardRole} back
+        ///         while paused, and applies `setBaseChainId(0)` for a
+        ///         declared-detached chain that reads Unconfigured. Any other
+        ///         upgrade path MUST carry the same step.
         bool rewardRoleConfigured;
     }
 

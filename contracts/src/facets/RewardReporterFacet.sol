@@ -1237,14 +1237,25 @@ contract RewardReporterFacet is
     ///         inert either, and an earlier draft of this comment
     ///         overcorrected by saying canonical-vs-mirror is decided
     ///         "never by this field being zero" (Codex #1653 r2 P2).
-    ///         `LibVaipakam.isMirrorRewardChain` is
-    ///         `!isCanonicalRewardChain && baseChainId != 0`, so a
-    ///         NON-canonical deployment that leaves this at zero is not
-    ///         classified as a mirror and receives canonical /
-    ///         single-chain semantics — which reaches mirror claim
-    ///         pricing and the commitment / remittance paths. Zero here is
-    ///         a real configuration state with consequences, not an
-    ///         absence.
+    ///         Since #1566 closure 3 the role is resolved by
+    ///         {LibVaipakam.rewardRole} over FOUR states, and zero here
+    ///         means two different things depending on whether it was ever
+    ///         WRITTEN:
+    ///           - a zero that was never written (nobody configured this
+    ///             deployment) resolves `Unconfigured` and keeps canonical /
+    ///             single-chain semantics — the reward paths run unbounded
+    ///             from the schedule;
+    ///           - an EXPLICIT `setBaseChainId(0)` stamps
+    ///             `rewardRoleConfigured` and resolves `Detached`: the
+    ///             delivered-fresh bound is ZERO and reward payouts stop.
+    ///             That is the detach procedure, and the only one; it also
+    ///             retires the delivered residual on the way out.
+    ///         So zero is a real configuration state with consequences,
+    ///         not an absence — and calling this with zero to "reset" a
+    ///         chain freezes its rewards. `ConfigureRewardReporter` refuses
+    ///         a zero base on a mirror for this reason. Read the resolved
+    ///         role back with {getRewardRole}; these two raw fields cannot
+    ///         distinguish the cases.
     /// @param chainId EVM chain id of the canonical reward chain.
     function setBaseChainId(
         uint32 chainId

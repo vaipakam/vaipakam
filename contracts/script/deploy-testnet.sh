@@ -872,6 +872,13 @@ EOF
     #    the ON-chain Diamond retains its storage — those offers
     #    keep existing, the indexer just stops seeing them once the
     #    cursor row is wiped + reseeded forward.
+    # #1566 (Codex #2070 r10 P1) — reconcile FIRST, on EVERY --fresh, before the
+    # live artifact is consulted: in the half-failed case this repairs, the
+    # artifact is already in .archive/ and there is no PRIOR_DIAMOND to read, so
+    # a reconcile that lived only inside archive_chain_state never ran. Nothing
+    # below proceeds until every local archive is in the committed inventory.
+    reconcile_unrecorded_archives "$CHAIN_SLUG" \
+      || { echo "ERROR: unrecorded local archives could not be reconciled into archive-manifest.json; refusing --fresh" >&2; exit 1; }
     PRIOR_DIAMOND=""
     if [ -f "$DEPLOY_DIR/addresses.json" ]; then
       PRIOR_DIAMOND=$(jq -r '.diamond // empty' "$DEPLOY_DIR/addresses.json" 2>/dev/null)

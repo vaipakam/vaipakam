@@ -463,7 +463,15 @@ surface stays inert.
    — the source-chain gate. Use the canonical EVM chain ID
    (Base mainnet 8453; Base Sepolia 84532), NOT Base's Chainlink
    CCIP chain selector — the adapter normalises selectors
-   internally.
+   internally. **Never pass zero here to "reset" a chain**: an explicit
+   zero write records the `Detached` reward role (delivered bound zero —
+   reward payouts stop) and is the deliberate detach procedure, whereas a
+   chain that was simply never configured resolves `Unconfigured` and
+   keeps single-chain semantics without any call. Confirm with
+   `getRewardRole()` (0 Canonical, 1 Mirror, 2 Unconfigured, 3 Detached).
+   On an in-place refresh, declare each chain's role with
+   `REWARD_ROLE_EXPECTED_<PREFIX>` — the refresh reads the role back while
+   paused and backfills a pre-field detached chain.
 
 7. `ConfigFacet.setMirrorTierMaxAgeSec(<seconds>)` — cache
    staleness threshold (default 60 days; setter floor 30 days).

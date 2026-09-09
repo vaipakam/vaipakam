@@ -705,6 +705,15 @@ EOF
   # operator's affirmative "yes, I am abandoning the prior on-chain
   # deploy and I have reviewed the archive". Without both, the
   # script refuses.
+  # #1566 (Codex #2070 r10 P1) — on --fresh, reconcile every local archive into
+  # the committed inventory BEFORE the live artifact is consulted; the
+  # half-failed case (artifact already archived, append failed) has no
+  # existing_diamond to read, so a reconcile inside archive_chain_state alone
+  # never reached it. Nothing below proceeds until the inventory is whole.
+  if [ "$FRESH" = "1" ]; then
+    reconcile_unrecorded_archives "$CHAIN_SLUG" \
+      || { echo "ERROR: unrecorded local archives could not be reconciled into archive-manifest.json; refusing --fresh" >&2; exit 1; }
+  fi
   local existing_diamond
   existing_diamond=$(jq -r '.diamond // empty' "$DEPLOY_DIR/addresses.json" 2>/dev/null || echo "")
   if [ -n "$existing_diamond" ] && [ "$existing_diamond" != "null" ]; then

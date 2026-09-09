@@ -5002,7 +5002,7 @@ reported a comfortable answer it had not earned:
   latter as a failure on op-sepolia rather than silently counting it as an
   absent commit.
 
-**RESULT (2026-09-08, run 13 — all nineteen retained deployments across five
+**RESULT (2026-09-08, run 14 — all nineteen retained deployments across five
 chains, inventory from the committed manifest, the two unsound bounds
 withdrawn): ten deployments are PROVEN EMPTY on every class; nine are
 INDETERMINATE on at least one.** 202 loans were enumerated; **zero rows were
@@ -5147,7 +5147,14 @@ deployments):
   keep their behaviour verbatim.
 - `Storage.rewardRoleConfigured`, stamped by **both** role setters. Appended to
   the struct (layout-safe) and defaulting to `false`, which is correct for
-  every deployed chain — **no migration**.
+  every canonical, mirror, or never-configured chain — **but a Diamond
+  configured and then detached under the pre-field setters needs a BACKFILL
+  on in-place upgrade** (r10 P2; an earlier revision of this line said "no
+  migration"): zero-initialised, it would resolve `Unconfigured` (fail-open)
+  where it must be `Detached`, and state cannot tell the two apart. The
+  refresh requires `REWARD_ROLE_EXPECTED_<PREFIX>`, reads the role back while
+  paused, and stamps a declared-detached chain via `setBaseChainId(0)`. See
+  the four-state section for the full rule.
 - `Detached` behaviour at the sites that need no new machinery: the bound
   itself returns `0` (row 14), and the forfeit-sweep allowance, expiry-sweep
   allowance, expiry payability test and the executability predicate
