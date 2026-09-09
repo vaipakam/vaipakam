@@ -2405,7 +2405,9 @@
       "other": "Autres",
       "offersRetentionNote": "Le total compte les offres actuellement enregistrées. Les offres annulées sont retirées de l’index au bout d’un mois environ ; il ne s’agit donc pas d’un total cumulé — il peut diminuer à mesure que les anciennes annulations disparaissent.",
       "activeUnknownExpiry": "Active, expiration inconnue",
-      "offersScope": "Offres on-chain uniquement. Les ordres signés sans frais de gaz ne sont pas comptés ici, bien qu’ils soient exécutables et figurent dans le carnet d’offres."
+      "offersScope": "Offres on-chain uniquement. Les ordres signés sans frais de gaz ne sont pas comptés ici, bien qu’ils soient exécutables et figurent dans le carnet d’offres.",
+      "unclassifiedActive": "Actifs, type pas encore lu",
+      "unclassifiedActiveNote": "Certains prêts actifs sont arrivés avant que l’indexeur n’ait lu dans quel actif ils sont libellés ; ils comptent donc dans le total mais pas encore dans l’un des types ci-dessous. Ils rejoignent le bon dès que les détails sont complétés."
     },
     "protocolConsole": {
       "title": "Console du protocole",

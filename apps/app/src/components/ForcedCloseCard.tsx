@@ -56,6 +56,7 @@ export function ForcedCloseCard({
   loanId,
   readiness,
   matchFallback,
+  swapToRepayPossible,
   confirmOpen,
   onOpenConfirm,
   onCloseConfirm,
@@ -75,6 +76,14 @@ export function ForcedCloseCard({
    *  `ready-internal-match`. Resolved on the page by
    *  `forcedCloseWithoutMatch` — like `readiness`, never derived here. */
   matchFallback: ForcedCloseReadiness;
+  /** Whether this loan's shape can carry a swap-to-repay intent at all.
+   *
+   *  `SwapToRepayIntentFacet` reverts `UnsupportedLoanShape` unless BOTH
+   *  legs are ERC-20 and BOTH are Liquid, so a rental, NFT collateral,
+   *  or an illiquid asset on either leg can never have one. `false` for
+   *  a shape the contract rejects, `undefined` when the app has not read
+   *  enough to say. Never derived here. */
+  swapToRepayPossible: boolean | undefined;
   /** The page's single confirmation slot — opening this receipt closes
    *  any other, matching every other write card on the page. */
   confirmOpen: boolean;
@@ -374,24 +383,28 @@ export function ForcedCloseCard({
 
       {submittable ? (
         <>
-          {/* Not on the rental route. `SwapToRepayFacet` is
-              "ERC20-on-ERC20 loans only in v1" and its own error doc
-              names "NFT collateral / NFT rental / illiquid-asset loans"
-              as out of scope, so a rental can never carry a pending
-              swap-to-repay order. The sentence is conditional and so was
-              never FALSE — but its condition cannot be met, and it
-              introduces a "borrower" repaying a loan where the position
-              has a renter paying rent. Same class as the round-40
-              findings, one notch milder.
+          {/* Shown only where a swap-to-repay intent could exist.
+              `SwapToRepayIntentFacet` reverts `UnsupportedLoanShape`
+              unless both legs are ERC-20 and both are Liquid, so a
+              rental, NFT collateral, or an illiquid asset on either leg
+              can never carry one.
 
-              RESIDUAL, and stated rather than fixed: an ERC-20 loan
-              secured by NFT collateral is equally out of scope, and it
-              reaches `ready-in-kind` — which this card cannot tell apart
-              from illiquid-ERC-20 collateral, where the note IS live.
-              Distinguishing them needs `collateralIsNft` threaded in for
-              a note that is merely unreachable rather than wrong, which
-              did not seem worth another prop. */}
-          {readiness !== 'ready-rental' ? (
+              Round 40 exempted rentals alone, which left the note on an
+              ERC-20 loan secured by NFT or illiquid collateral, where it
+              is equally unreachable. I recorded that as a residual and
+              judged the extra prop not worth it; round 41 disagreed, and
+              was right — the whole point of the rule in the functional
+              spec is that unreachable conditions appear only where they
+              are reachable, and a partial application of it is just the
+              same bug with a smaller blast radius.
+
+              ASYMMETRIC ON PURPOSE: suppressed only on a POSITIVE `false`.
+              An unread shape (`undefined`) still shows the note, because
+              the two errors are not equal — displaying a conditional
+              that never fires costs a sentence, while hiding a live one
+              means a lender cancels the borrower's pending order without
+              being told. */}
+          {swapToRepayPossible !== false ? (
             <p className="field-hint">{copy.forcedClose.intentNote}</p>
           ) : null}
           {error ? (

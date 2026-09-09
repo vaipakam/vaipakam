@@ -449,6 +449,15 @@ Thin-market honesty rules apply.
   can never carry such an order — and the sentence, while never false, puts a
   borrower repaying a loan on a surface whose position has a renter paying
   rent. Unreachable conditions are shown only where they are reachable.
+- Where a surface shows subtotals beneath a total, and the source may count
+  something in the total that it cannot yet place in any subtotal, the surface
+  states the difference. A reader who can subtract and find an unexplained gap
+  is worse served than one shown the gap and told what it is. The rule holds
+  even when the omission is the source behaving correctly — an admitted
+  undercount is still an admission the surface must carry.
+- Where one freshness figure is stated over data drawn from more than one
+  request, it is the figure of the LAGGING request. Quoting the more advanced
+  of two reads presents one dataset's coverage as though it covered both.
 - Withholding an action for safety must not withhold the explanation with it.
   Where a check that guards the close-out is unanswered — pending, failed, or
   undecodable — the surface stays visible in its unresolved state and says a

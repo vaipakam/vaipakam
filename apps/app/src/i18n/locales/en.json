@@ -2443,7 +2443,9 @@
       "ageSeconds": "{{n}}s ago",
       "ageMinutes": "{{n}} min ago",
       "ageHours": "{{n}} h ago",
-      "offersScope": "On-chain offers only. Gasless signed orders are not counted here, though they are fillable and do appear in the offer book."
+      "offersScope": "On-chain offers only. Gasless signed orders are not counted here, though they are fillable and do appear in the offer book.",
+      "unclassifiedActive": "Active, type not yet read",
+      "unclassifiedActiveNote": "Some active loans arrived before the indexer had read what asset they are in, so they are counted in the total but not yet in either type below it. They move into the right one as the details are filled in."
     },
     "protocolConsole": {
       "title": "Protocol console",

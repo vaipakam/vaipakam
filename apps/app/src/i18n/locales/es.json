@@ -2405,7 +2405,9 @@
       "other": "Otros",
       "offersRetentionNote": "El total cuenta las ofertas registradas actualmente. Las ofertas canceladas se eliminan del índice al cabo de un mes aproximadamente, por lo que no es un total histórico: puede bajar a medida que caducan las cancelaciones antiguas.",
       "activeUnknownExpiry": "Activa, vencimiento desconocido",
-      "offersScope": "Solo ofertas on-chain. Las órdenes firmadas sin gas no se cuentan aquí, aunque son ejecutables y sí aparecen en el libro de ofertas."
+      "offersScope": "Solo ofertas on-chain. Las órdenes firmadas sin gas no se cuentan aquí, aunque son ejecutables y sí aparecen en el libro de ofertas.",
+      "unclassifiedActive": "Activos, tipo aún no leído",
+      "unclassifiedActiveNote": "Algunos préstamos activos llegaron antes de que el indexador hubiera leído en qué activo están, así que se cuentan en el total pero todavía no en ninguno de los tipos de abajo. Pasan al que corresponda a medida que se completan los detalles."
     },
     "protocolConsole": {
       "title": "Consola del protocolo",

@@ -2405,7 +2405,9 @@
       "other": "Sonstige",
       "offersRetentionNote": "Die Gesamtzahl zählt die derzeit erfassten Angebote. Stornierte Angebote werden nach etwa einem Monat aus dem Index entfernt, daher ist dies keine Gesamtzahl über die gesamte Laufzeit — sie kann sinken, wenn alte Stornierungen herausfallen.",
       "activeUnknownExpiry": "Aktiv, Ablauf unbekannt",
-      "offersScope": "Nur On-Chain-Angebote. Gaslose signierte Orders werden hier nicht mitgezählt, obwohl sie ausführbar sind und im Angebotsbuch erscheinen."
+      "offersScope": "Nur On-Chain-Angebote. Gaslose signierte Orders werden hier nicht mitgezählt, obwohl sie ausführbar sind und im Angebotsbuch erscheinen.",
+      "unclassifiedActive": "Aktiv, Typ noch nicht gelesen",
+      "unclassifiedActiveNote": "Einige aktive Darlehen kamen an, bevor der Indexer gelesen hatte, in welchem Vermögenswert sie laufen. Sie zählen daher zur Gesamtzahl, aber noch zu keinem der Typen darunter. Sie wandern in den richtigen, sobald die Angaben ergänzt sind."
     },
     "protocolConsole": {
       "title": "Protokoll-Konsole",

@@ -50,6 +50,28 @@ import { idleAware } from '../lib/idle';
 import { useEffect, useRef } from 'react';
 
 /** Renders a counter, keeping "not reported" distinct from zero. */
+/** The lagging of two indexer cursors, or whichever one exists.
+ *
+ *  Compared on `lastBlock` when both report one, since that is what the
+ *  provenance line actually claims coverage through; `updatedAt` breaks
+ *  the tie only when the blocks match, and a cursor missing `lastBlock`
+ *  cannot be compared at all so the other one stands. */
+export function olderCursor<T extends { lastBlock?: number; updatedAt?: number }>(
+  a: T | null,
+  b: T | null,
+): T | null {
+  if (a === null) return b;
+  if (b === null) return a;
+  const ab = a.lastBlock;
+  const bb = b.lastBlock;
+  if (typeof ab !== 'number') return typeof bb === 'number' ? b : a;
+  if (typeof bb !== 'number') return a;
+  if (ab !== bb) return ab < bb ? a : b;
+  const au = a.updatedAt ?? Number.POSITIVE_INFINITY;
+  const bu = b.updatedAt ?? Number.POSITIVE_INFINITY;
+  return au <= bu ? a : b;
+}
+
 function Stat({ label, value }: { label: string; value: number | undefined }) {
   const reported = typeof value === 'number';
   return (
@@ -159,9 +181,41 @@ export function Analytics() {
   // sourced from an empty database is the most reassuring number here
   // and the least earned. The freshness line cannot rescue it either:
   // with no cursor there is no age to state.
-  const cursor = offers?.indexer ?? loans?.indexer ?? null;
+  // OLDEST WINS WHEN COMBINING TWO SOURCES (round 41 P2). This used to
+  // take the first cursor that existed, so the page could state its
+  // freshness from the offers response while the loans counters came
+  // from an older read — presenting one dataset's coverage as though it
+  // covered both. When a claim spans two responses, only the LAGGING one
+  // is true of the whole.
+  //
+  // Still an app-side floor rather than a guarantee: each endpoint reads
+  // its aggregates and its cursor in separate queries, so an ingest
+  // committing between them returns pre-ingest counters with a
+  // post-ingest cursor. Fixing that means capturing the cursor BEFORE
+  // the aggregates, or binding both to one snapshot, inside the indexer
+  // — tracked separately. Taking the oldest cannot repair a cursor that
+  // is already ahead of its own counters; it only stops the page
+  // borrowing the fresher of two.
+  const cursor = olderCursor(offers?.indexer ?? null, loans?.indexer ?? null);
   const uninitialized =
     !unreachable && stats.isSuccess && typeof cursor?.lastBlock !== 'number';
+
+  /** Active loans the indexer counted but could not type, because the
+   *  row still carries the `'0x'` lending-asset placeholder. Derived
+   *  from one response so the arithmetic is internally consistent, and
+   *  `undefined` unless every input is present — a residual computed
+   *  against a missing counter would be a figure this page invented.
+   *  Clamped at zero: a negative difference would mean the endpoint
+   *  contradicted itself, which is not something to render as a count. */
+  const unclassifiedActive =
+    typeof loans?.active === 'number' &&
+    typeof loans?.erc20ActiveLoans === 'number' &&
+    typeof loans?.nftRentalsActive === 'number'
+      ? Math.max(
+          0,
+          loans.active - loans.erc20ActiveLoans - loans.nftRentalsActive,
+        )
+      : undefined;
 
   // PENDING IS NOT AN ANSWER. Before the first response settles, both
   // `isSuccess` and `isError` are false, so every counter fell through to
@@ -279,10 +333,36 @@ export function Analytics() {
               <Stat label={copy.analytics.other} value={loans?.other} />
               <Stat label={copy.analytics.total} value={loans?.total} />
             </div>
+            {/* Round 41 P2 — these two do NOT have to sum to `Active`,
+                and rendering them alone made them look as though they
+                did. The indexer excludes rows whose `lending_asset` is
+                still the `'0x'` placeholder from both subtotals while
+                counting them in `active`, and says so in its own
+                comment: "the subtotals may sum to less than `active`
+                while metadata-less rows await healing… undercounting a
+                type is an admitted gap, misfiling it is a false
+                statement."
+
+                It is the right call server-side, and this page was
+                dropping the admission. A reader could subtract and find
+                a gap with nothing on the page to explain it — which on
+                a transparency surface is worse than the gap. The
+                residual is now shown whenever it is non-zero, and only
+                when all three inputs are present, since a difference
+                computed from a missing counter would be invented. */}
             <div className="an-grid an-grid-sub">
               <Stat label={copy.analytics.erc20Active} value={loans?.erc20ActiveLoans} />
               <Stat label={copy.analytics.nftRentalsActive} value={loans?.nftRentalsActive} />
+              {unclassifiedActive !== undefined && unclassifiedActive > 0 ? (
+                <Stat
+                  label={copy.analytics.unclassifiedActive}
+                  value={unclassifiedActive}
+                />
+              ) : null}
             </div>
+            {unclassifiedActive !== undefined && unclassifiedActive > 0 ? (
+              <p className="an-note">{copy.analytics.unclassifiedActiveNote}</p>
+            ) : null}
           </section>
 
           <section className="an-section" aria-labelledby="an-offers">

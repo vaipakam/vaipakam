@@ -154,3 +154,34 @@ protocol's present configuration. So the two now resolve to one message,
 and its wording moved from "no timestamp" to "no usable timestamp"
 because it now speaks for both. The day-old warning is reserved for a
 snapshot that is genuinely that old.
+
+Two more corrections to the analytics page, both about claiming more
+certainty than the data supports.
+
+The page shows how many loans are active, and beneath that how many are
+ordinary loans and how many are NFT rentals. Those two do not have to
+add up to the first, and the page was presenting them as though they
+did. When a loan is indexed before the details of what asset it is in
+have been read, it is counted in the total and deliberately left out of
+both types — the indexer's own note calls undercounting a type an
+admitted gap and misfiling it a false statement, which is the right call.
+What the page was doing was dropping the admission: a reader could
+subtract, find a difference, and have nothing on the page to explain it.
+The difference is now shown, whenever there is one, as active loans
+whose type has not been read yet.
+
+The freshness line had a subtler version of the same problem. The page
+draws its counters from two separate requests and states a single "as
+of" figure for all of them, and it was taking whichever of the two
+answers happened to arrive with one. If those two reads are at different
+points in the indexer's progress, the page was quoting the more advanced
+of them over numbers that came from the other. It now quotes the one
+that is further behind, which is the only figure true of everything
+shown.
+
+That is a floor rather than a guarantee, and the note it is written
+against says so. Each request reads its counters and its position marker
+separately, so a write landing between them can still return older
+counters with a newer marker. Closing that needs the two bound together
+inside the indexer, which is a change to a different service and is
+tracked on its own.

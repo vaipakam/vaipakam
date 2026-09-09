@@ -2405,7 +2405,9 @@
       "other": "其他",
       "offersRetentionNote": "总数统计的是当前仍有记录的报价。已取消的报价会在约一个月后从索引中删除，因此这不是累计总数——随着旧的取消记录过期，它可能会下降。",
       "activeUnknownExpiry": "有效，到期时间未知",
-      "offersScope": "仅统计链上报价。免 Gas 的签名订单未计入此处，但它们可被成交，并会显示在报价簿中。"
+      "offersScope": "仅统计链上报价。免 Gas 的签名订单未计入此处，但它们可被成交，并会显示在报价簿中。",
+      "unclassifiedActive": "进行中，类型尚未读取",
+      "unclassifiedActiveNote": "部分进行中的贷款在索引器读取其计价资产之前就已到达，因此计入总数，但尚未计入下方任一类型。待细节补全后，它们会归入正确的类型。"
     },
     "protocolConsole": {
       "title": "协议控制台",

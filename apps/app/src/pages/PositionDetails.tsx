@@ -1444,6 +1444,22 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
    *  the same resolver rather than restated, so it cannot drift from the
    *  contract's branch order. */
   const forcedCloseMatchFallback = forcedCloseWithoutMatch(forcedCloseInput);
+  /** Can this loan carry a swap-to-repay intent at all (round 41 P3)?
+   *
+   *  `SwapToRepayIntentFacet` reverts `UnsupportedLoanShape` unless the
+   *  principal AND collateral legs are both ERC-20 and both Liquid. The
+   *  three facts the app already reads answer it: a rental fails the
+   *  first leg, NFT collateral the second, and illiquid collateral the
+   *  liquidity test. `undefined` while any of them is unread — the card
+   *  keeps showing the note in that case on purpose. */
+  const forcedCloseSwapToRepayPossible: boolean | undefined =
+    forcedCloseInput.assetType === undefined ||
+    forcedCloseInput.collateralIsNft === undefined ||
+    forcedCloseInput.collateralIlliquid === undefined
+      ? undefined
+      : forcedCloseInput.assetType === 'erc20' &&
+        !forcedCloseInput.collateralIsNft &&
+        !forcedCloseInput.collateralIlliquid;
 
   /** `loanLive`'s chain clock, ADVANCED by local elapsed time.
    *
@@ -3389,6 +3405,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
             saleHoldResolving ? 'unknown' : forcedCloseReadiness
           }
           matchFallback={forcedCloseMatchFallback}
+          swapToRepayPossible={forcedCloseSwapToRepayPossible}
           confirmOpen={confirmingSurface === 'forced-close'}
           onOpenConfirm={() => setConfirmingSurface('forced-close')}
           onCloseConfirm={() => setConfirmingSurface(null)}

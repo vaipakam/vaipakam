@@ -4690,6 +4690,13 @@ const copySource = {
     settled: 'Settled',
     total: 'Total',
     erc20Active: 'ERC-20 loans active',
+    // Round 41 P2 — the indexer counts an active row whose lending
+    // asset is still the `'0x'` placeholder, but excludes it from both
+    // typed subtotals. Naming the difference is the whole point: an
+    // unexplained gap on a transparency page is worse than the gap.
+    unclassifiedActive: 'Active, type not yet read',
+    unclassifiedActiveNote:
+      'Some active loans arrived before the indexer had read what asset they are in, so they are counted in the total but not yet in either type below it. They move into the right one as the details are filled in.',
     nftRentalsActive: 'NFT rentals active',
     accepted: 'Accepted',
     cancelled: 'Cancelled',
