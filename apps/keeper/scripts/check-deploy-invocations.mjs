@@ -3315,6 +3315,10 @@ function classifyText(text, lang) {
       if (!/[A-Za-z0-9_$]/.test(ch)) return false;
       let s = p;
       while (s >= 0 && /[A-Za-z0-9_$]/.test(text[s])) s -= 1;
+      // A PROPERTY NAMED LIKE A KEYWORD IS AN OPERAND. `obj.return / x / y` is
+      // division; reading the bare word made the slash open a pattern and
+      // swallowed the copy between the two — a false green (r18).
+      if (text[s] === '.') return false;
       return /^(?:return|throw|typeof|case|in|of|new|delete|void|instanceof|do|else|yield|await)$/.test(
         text.slice(s + 1, p + 1),
       );
@@ -3821,6 +3825,25 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
     // with `{`, a call does not. Python is left to the keyword alone —
     // matching on a following `:` would take the true arm of a ternary and a
     // slice bound with it, which would be a false green.
+    // Does an unmatched ternary `?` sit between the start of this statement
+    // and `idx`? `?.` and `??` are not it.
+    const ternaryBefore = (idx) => {
+      let depth = 0;
+      for (let i = idx - 1; i >= 0 && idx - i < 400; i -= 1) {
+        if (kind[i] !== 0) continue;
+        const c = text[i];
+        if (c === ')' || c === ']' || c === '}') depth += 1;
+        else if (c === '(' || c === '[' || c === '{') {
+          if (depth === 0) return false;
+          depth -= 1;
+        } else if (c === ';' || c === '\n') {
+          if (depth === 0) return false;
+        } else if (c === '?' && depth === 0 && text[i + 1] !== '.' && text[i + 1] !== '?' && text[i - 1] !== '?') {
+          return true;
+        }
+      }
+      return false;
+    };
     const isDeclaration = (idx) => {
       if (/\b(?:def|function|class)\s+$/.test(text.slice(Math.max(0, idx - 24), idx))) return true;
       if (lang !== 'js') return false;
@@ -3845,7 +3868,9 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
       }
       if (depth !== 0) return false;
       let n = p + 1;
-      while (n < text.length && /\s/.test(text[n])) n += 1;
+      // Comments too, not only whitespace — a comment is legal between the
+      // parameter list and the body (r18).
+      while (n < text.length && (/\s/.test(text[n]) || kind[n] === 2)) n += 1;
       // A TYPESCRIPT RETURN TYPE sits between the parameter list and the body,
       // so `copy(source: string, destination: string): void {}` shows a colon
       // where a body brace was expected and read as an executed write (r15).
@@ -3869,10 +3894,19 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
         let t = n + 1;
         let lastEnd = -1;
         const stop = Math.min(text.length, n + 400);
+        // Whitespace AND COMMENTS are skipped: a comment is legal between the
+        // parameter list and the body, and stopping at the `/` of
+        // `copy(a, b) /* note */ {}` recorded an uncalled declaration as a
+        // copy (r18).
+        const skip = (i) => {
+          while (i < text.length && (/\s/.test(text[i]) || kind[i] === 2)) i += 1;
+          return i;
+        };
+        t = skip(t);
         while (t < stop) {
           const ch = text[t];
-          if (/\s/.test(ch)) {
-            t += 1;
+          if (/\s/.test(ch) || kind[t] === 2) {
+            t = skip(t);
             continue;
           }
           if (ch === '{' || ch === '(' || ch === '[') {
@@ -3880,6 +3914,11 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
             let d = 0;
             let u = t;
             for (; u < stop; u += 1) {
+              // BALANCED THROUGH THE CLASSIFIER, as the parameter-list scan
+              // already is. Counting a `}` inside a string literal made
+              // `enabled ? copyFileSync(…) : { value: "}" }` look like a
+              // declaration and dropped a real copy — a false green (r18).
+              if (kind[u] !== 0) continue;
               if (text[u] === ch) d += 1;
               else if (text[u] === close) {
                 d -= 1;
@@ -3934,6 +3973,17 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
           !';,)]'.includes(text[t] ?? '')
         )
           return true;
+        // A TYPE-ONLY SIGNATURE HAS NO BODY. An interface member or an
+        // abstract method — `copy(source: string, destination: string): void;`
+        // — ends at a semicolon by design, and requiring a brace recorded it
+        // as an executed copy (r18).
+        //
+        // Told from a ternary arm by looking BACKWARD for the `?` that would
+        // own the colon, rather than by guessing from the type text: `enabled
+        // ? copy(a, b) : x;` has one and stays a call, which is the direction
+        // that matters.
+        if (lastEnd === -1 && text[t] === ';' && /[A-Za-z0-9_$]/.test(text.slice(n + 1, t)))
+          return !ternaryBefore(idx);
       }
       return text[n] === '{';
     };
@@ -8460,37 +8510,56 @@ for (const file of walk(REPO_ROOT)) {
       // answers "does this alias reach a deploy" and returns nothing for one
       // that merely rewrites, which is exactly the case here. The bodies are
       // wanted whatever they do.
-      const aliasBodies = [];
-      if (valueScoped) {
-        const ctx = packageContextOf(rel);
-        const scripts = ctx ? packageScripts(ctx) : null;
-        if (scripts) {
-          const seen = new Set();
-          const follow = (body, depth) => {
-            if (depth > 2) return;
-            for (const mm of body.matchAll(
-              new RegExp(String.raw`\b(?:pnpm|npm|yarn)\b[^&|;]*?\b(?:${RUN_ALIASES})\s+([A-Za-z_][\w:.-]*)`, 'g'),
-            )) {
-              const name = mm[1];
-              if (seen.has(name) || typeof scripts[name] !== 'string') continue;
-              seen.add(name);
-              aliasBodies.push(scripts[name]);
-              follow(scripts[name], depth + 1);
-            }
-          };
-          follow(line, 0);
-        }
-      }
+      // …and only the invocations that run BEFORE this deploy. Prepending
+      // every helper the value mentions claimed a rewrite for
+      // `wrangler deploy --config c.jsonc && pnpm run generate`, where the
+      // helper runs afterwards — a false red (r18). The bodies are collected
+      // per deploy, against that deploy's own offset in the value.
+      const INVOKE = new RegExp(
+        String.raw`\b(?:pnpm|npm|yarn)\b([^&|;]*?)\b(?:${RUN_ALIASES})\s+([A-Za-z_][\w:.-]*)`,
+        'g',
+      );
+      const aliasBodiesBefore = (limit) => {
+        if (!valueScoped) return [];
+        const out = [];
+        const seen = new Set();
+        const follow = (body, depth, bound) => {
+          if (depth > 2) return;
+          for (const mm of body.matchAll(new RegExp(INVOKE))) {
+            if (bound !== null && mm.index >= bound) continue;
+            const name = mm[2];
+            // THE SELECTOR DECIDES WHOSE SCRIPT THIS IS. `pnpm --filter
+            // @vaipakam/agent run generate` runs the agent's, not the
+            // manifest's own, and reading the containing package's scripts
+            // reported a rewrite the invoked script never performs (r18).
+            const sel = mm[1].match(/(?:--filter(?:-prod)?|-F)[=\s]+("[^"]*"|'[^']*'|[^\s]+)/);
+            const dir = sel
+              ? (SCOPED.find((sc) => sc.filter === dequote(sel[1]))?.dir ?? null)
+              : packageContextOf(rel);
+            const scripts = dir ? packageScripts(dir) : null;
+            const body2 = scripts?.[name];
+            const key = `${dir}\u0000${name}`;
+            if (seen.has(key) || typeof body2 !== 'string') continue;
+            seen.add(key);
+            out.push(body2);
+            follow(body2, depth + 1, null);
+          }
+        };
+        follow(line, 0, limit);
+        return out;
+      };
       // PREPENDED, and the offsets moved with it: the bodies run BEFORE the
       // value, so they must sit before it in the scanned text, and
       // `part.start` indexes the value — adding the prefix without shifting
       // would compare a write offset against a deploy offset measured in a
       // different string, which is the coordinate mix-up r13 already cost a
       // round.
-      const rewritePrefix = aliasBodies.length > 0 ? `${aliasBodies.join('\n')}\n` : '';
-      const rewriteText = valueScoped ? rewritePrefix + line : text;
-      const rewriteAt = (start) =>
-        valueScoped ? rewritePrefix.length + start : lineStartOffset(text, lineNo, start);
+      const rewriteCtx = (start) => {
+        if (!valueScoped) return { text, at: lineStartOffset(text, lineNo, start) };
+        const bodies = aliasBodiesBefore(start);
+        const prefix = bodies.length > 0 ? `${bodies.join('\n')}\n` : '';
+        return { text: prefix + line, at: prefix.length + start };
+      };
       // A markdown CODE SPAN is a command boundary, and prose has no shell
       // separator between two of them. `Use `wrangler deploy --keep-vars` for
       // the keeper and `wrangler deploy` for the agent.` is ONE segment to
@@ -8578,8 +8647,8 @@ for (const file of walk(REPO_ROOT)) {
             aliased ?? seg,
             safeHint,
             '',
-            rewriteText,
-            rewriteAt(part.start),
+            rewriteCtx(part.start).text,
+            rewriteCtx(part.start).at,
             lineLang,
           ) ||
           (aliased === null &&
@@ -8587,8 +8656,8 @@ for (const file of walk(REPO_ROOT)) {
               expandCommandVars(seg, fileVars),
               safeHint,
               '',
-              rewriteText,
-              rewriteAt(part.start),
+              rewriteCtx(part.start).text,
+              rewriteCtx(part.start).at,
             ))
         ) {
           continue;
@@ -8607,8 +8676,8 @@ for (const file of walk(REPO_ROOT)) {
           [{ cwd: '', stack: [] }],
           false,
           null,
-          rewriteText,
-          rewriteAt(part.start),
+          rewriteCtx(part.start).text,
+          rewriteCtx(part.start).at,
           lineLang,
         );
         // A single filter can select BOTH packages, and each needs its own
