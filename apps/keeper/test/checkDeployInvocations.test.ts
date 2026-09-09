@@ -10505,4 +10505,57 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     );
     expect(r.ok).toBe(true);
   });
+
+  it('trivia after the dot does not unqualify a receiver (#2066 r27 self-review)', () => {
+    // Testing the single character before the member name found a SPACE, read
+    // the call as unqualified — which the generic names admit — and reported
+    // an inert regex match. The walk-back has to be on the receiver side of
+    // the dot, which is where a formatter puts the break.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'dg.mjs',
+      'const m = /writeFileSync/.\n  exec("writeFileSync(\'configs/custom.jsonc\', \'{}\')");\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('trivia after the dot keeps a module qualified (#2066 r27 self-review)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'dh.mjs',
+      'child_process.\n  exec("printf new > configs/custom.jsonc");\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('an optional module exec is still a child process (#2066 r27 self-review)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'di.mjs',
+      'child_process?.exec("printf new > configs/custom.jsonc");\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a continued line inside a workflow step keeps its folds (#2066 r27 self-review)', () => {
+    // `offset` rebuilt each entry field by field and dropped `folds`, so the
+    // coordinate correction reached plain shell files and none of the blocks
+    // this guard actually reads most of its shell from.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      '.github/workflows/dj.yml',
+      'jobs:\n  go:\n    steps:\n      - run: |\n' +
+        '          C=configs/custom.jsonc\n' +
+        '          true \\\n           \\\n           \\\n           \\\n           \\\n           \\\n           \\\n' +
+        '          ;>"$C";wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
 });

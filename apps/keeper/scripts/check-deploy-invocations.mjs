@@ -3631,9 +3631,16 @@ function isCommandPayload(idx, text, kind) {
     // is not a rooted module identifier (a regex literal, a string, a call
     // result) is not one.
     if (!/^(?:exec|run|call)$/.test(owner)) return false;
-    if (text[e] === '.') {
-      const recv = text.slice(Math.max(0, e - 40), e + 1);
-      if (!/(?:^|[^\w$.])(?:child_process|childProcess|subprocess|cp|proc)\s*\.$/.test(recv))
+    // The dot need not be adjacent — `child_process\n  .exec(…)` and
+    // `/re/ .exec(s)` both put trivia between receiver and member — so the
+    // scan walks back over whitespace and comments the way the callee scan
+    // above does, rather than testing one character.
+    let d = e;
+    while (d >= 0 && (/\s/.test(text[d]) || kind[d] === 2)) d -= 1;
+    if (text[d] === '.') {
+      const recv = text.slice(Math.max(0, d - 60), d + 1);
+      // `?.` reaches the same member, so the receiver is read through it.
+      if (!/(?:^|[^\w$.])(?:child_process|childProcess|subprocess|cp|proc)\s*\??\s*\.$/.test(recv))
         return false;
     }
   }
@@ -6839,6 +6846,12 @@ function offset(block, start, blockId, cwd = '', env = null) {
   return block.map((l) => ({
     text: l.text,
     line: l.line + start,
+    // Carried, not dropped. `folds` is how a position inside a continued
+    // command is translated back to the file's coordinates (r27), and
+    // rebuilding the entry field by field silently lost it for every block
+    // this function wraps — the YAML `run:` bodies, the fenced blocks and the
+    // Makefile recipes, which is most of the shell this guard reads.
+    folds: l.folds,
     block: blockId,
     cwd,
     env,
