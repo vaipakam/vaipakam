@@ -754,3 +754,35 @@ publishing nothing is a different fact from a deployment we have not
 heard from, and only the second is a reason to stop asking. The console
 keeps the reading, still reports when it was taken, and says plainly
 that the values themselves did not arrive.
+
+Two follow-ons to the changes just described, both found by reading the
+result rather than the intent.
+
+The first is about readings the app decides not to wait for. A close-out
+can leave a loan in a state that pauses these checks, and the borrower
+can undo that state — at which point the checks resume with whatever
+they last held, which is a picture of the loan from before the close-out
+ran. Skipping them was right; leaving them where they could come back
+was not. They are now discarded, so a resumed check starts from nothing,
+says it is still running, and offers no action until it has an answer of
+its own.
+
+The second is a promise the console was making and not keeping. When a
+reading arrives with no parameter values in it, the page says the
+provenance below — which source, which block, how long ago — is still
+accurate. It was printed inside the same block that hides the values, so
+there was nothing below. It now sits outside, where the sentence says it
+is.
+
+And the language-formatting change went one placeholder deep where it
+needed to go all the way. A line reading "2% (200 bps)" was formatting
+the percentage for the reader's language and leaving the bracketed
+figure beside it in the device's — one line, two conventions. Every
+figure now follows the chosen language. The VPFI tier threshold takes a
+slightly different route, because it is a number a reader is invited to
+check against the chain digit by digit: formatting it the ordinary way
+would round it in the process, so it is formatted without that
+conversion, and where a browser cannot do so it is shown unformatted
+rather than shortened. Losing the separators a reader expects is a
+cosmetic problem; losing a digit of the figure they came to verify is
+not.

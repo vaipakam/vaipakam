@@ -144,6 +144,13 @@ including people who never will.
   console has heard nothing from a source that in fact answered — an unread
   source and a source that answered without values are different facts about
   the deployment, and only the first is a reason to stop asking.
+- Retaining those facts and not showing them is the same failure with an extra
+  step. Where a surface tells the reader that its provenance — which source,
+  which block, how long ago — is still accurate, that provenance is on the
+  page. A statement that something is disclosed below, followed by nothing
+  below, is worse than saying nothing: it spends the reader's trust on a
+  disclosure that never happens, and it is the surface's own copy that
+  disproves it.
 
 ## Wallet and Network Behaviour
 
@@ -654,6 +661,16 @@ Thin-market honesty rules apply.
   the wait included it. Waiting on more than is needed is not the safer error
   here: it is indistinguishable, to the reader, from the surface having lost
   the transaction.
+- Reads left out of that wait are DISCARDED, not just left alone. A read the
+  surface has stopped consuming still holds its last answer, and the states
+  that stop it consuming one are reversible: a close-out that leaves the loan
+  awaiting a further step suspends these checks, and a borrower curing that
+  state resumes them. Resuming them against answers taken before the close-out
+  would put a route, and an action, back on screen on facts the close-out
+  already invalidated — with the wait long since satisfied, because there was
+  nothing left in it to wait for. So a reading that will not be refreshed is
+  dropped rather than kept: the check resumes from nothing, says it is running,
+  and asserts no route until it has an answer of its own.
 - Where a transaction is never resolved, the lender's own statement that their
   wallet no longer shows it is the only route back to the action. Because it is
   the only one, when the surface offers it must not depend on the device's clock
@@ -1068,6 +1085,20 @@ Thin-market honesty rules apply.
   chosen a language whose digit grouping and decimal mark differ from their
   operating system's sees the surrounding page in one convention and the
   figures in another, and has no way to tell which of the two the page meant.
+- Every figure in a line, not the first one. Where a sentence carries a value
+  and then restates it in the underlying unit — a percentage beside the raw
+  basis points, an interval in hours beside the same interval in seconds —
+  both are figures the reader is being shown, and formatting one while leaving
+  the other reproduces the mismatch inside a single line instead of across the
+  page. The rule is about the reader's ability to tell which convention is in
+  force, and one raw figure is enough to remove it.
+- Formatting a figure may never change it. Where a value carries more
+  precision than the formatting path can represent — a threshold taken from a
+  full-width integer, shown to the digit so it can be checked against the
+  chain — the surface formats it without a lossy conversion, or shows it
+  unformatted. Losing the reader's separators is a cosmetic failure; losing a
+  digit of the number they came to verify defeats the purpose of publishing
+  it, and does so invisibly.
 - Where signing-critical text cannot be translated, the reader is not
   simply left with a language they may not read. A declaration the user
   must affirm they have understood is shown in their own language

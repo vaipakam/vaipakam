@@ -51,7 +51,7 @@ import {
 } from '../data/indexer';
 import { resolveSnapshotAge } from '../data/snapshotAge';
 import { useActiveChain } from '../chain/useActiveChain';
-import { exactAmountString, localeNumber } from '../lib/format';
+import { exactAmountString, localeDecimalString, localeNumber } from '../lib/format';
 import { VPFI_DECIMALS } from '../data/vpfi';
 import { useNowSec } from '../hooks/useNowSec';
 import { idleAware } from '../lib/idle';
@@ -69,32 +69,48 @@ const DOCS_URL = 'https://vaipakam.com/protocol-console/docs';
  *  render from `i18n.resolvedLanguage`; `LanguageRemount` re-keys the
  *  tree on a language change, so the binding cannot go stale. */
 function makeFormatters(locale: string | undefined) {
-/** bps → percent, without pretending to more precision than we have. */
-function bps(v: string | undefined): string {
-  if (v === undefined) return '—';
-  const n = Number(v);
-  if (!Number.isFinite(n)) return v;
-  return copy.protocolConsole.bpsValue(
-    localeNumber(n / 100, locale, { maximumFractionDigits: 2 }),
-    n,
-  );
-}
+  const num = (n: number, opts?: Intl.NumberFormatOptions): string =>
+    localeNumber(n, locale, opts);
 
-function seconds(v: string | undefined): string {
-  if (v === undefined) return '—';
-  const n = Number(v);
-  if (!Number.isFinite(n)) return v;
-  if (n % 3600 === 0)
-    return copy.protocolConsole.hoursValue(n / 3600, n);
-  if (n % 60 === 0)
-    return copy.protocolConsole.minutesValue(n / 60, n);
-  return copy.protocolConsole.secondsValue(n);
-}
+  /** bps → percent, without pretending to more precision than we have.
+   *
+   *  ROUND 66 P2 — the parenthetical raw bps is formatted too. Round
+   *  65 localised the percentage and left the figure beside it in
+   *  brackets raw, which is the worst of the three available states:
+   *  one sentence, two conventions, and no way for the reader to tell
+   *  which one the page meant. */
+  function bps(v: string | undefined): string {
+    if (v === undefined) return '—';
+    const n = Number(v);
+    if (!Number.isFinite(n)) return v;
+    return copy.protocolConsole.bpsValue(num(n / 100, { maximumFractionDigits: 2 }), num(n));
+  }
 
-function plain(v: string | undefined, unit = ''): string {
-  return v === undefined ? '—' : `${localeNumber(Number(v), locale)}${unit}`;
-}
-  return { bps, seconds, plain };
+  /** ROUND 66 P2 — every placeholder, not only the leading one. These
+   *  templates carry the converted unit AND the raw seconds, and both
+   *  are figures the reader is being shown. */
+  function seconds(v: string | undefined): string {
+    if (v === undefined) return '—';
+    const n = Number(v);
+    if (!Number.isFinite(n)) return v;
+    if (n % 3600 === 0) return copy.protocolConsole.hoursValue(num(n / 3600), num(n));
+    if (n % 60 === 0) return copy.protocolConsole.minutesValue(num(n / 60), num(n));
+    return copy.protocolConsole.secondsValue(num(n));
+  }
+
+  function plain(v: string | undefined, unit = ''): string {
+    return v === undefined ? '—' : `${num(Number(v))}${unit}`;
+  }
+
+  /** A `uint256` threshold, formatted for the locale WITHOUT a numeric
+   *  round-trip — see `localeDecimalString`. `localeNumber(Number(s))`
+   *  would round an 18-decimal figure the page exists to let a reader
+   *  check. */
+  function exactDecimal(v: string): string {
+    return localeDecimalString(v, locale);
+  }
+
+  return { bps, seconds, plain, exactDecimal };
 }
 
 /** Snapshot age, against a caller-supplied ticking clock (never
@@ -145,7 +161,7 @@ export function ProtocolConsole() {
   // device's. `LanguageRemount` re-keys the tree on a change, so these
   // formatters are rebuilt with it.
   const { i18n } = useTranslation();
-  const { bps, seconds, plain } = makeFormatters(i18n.resolvedLanguage);
+  const { bps, seconds, plain, exactDecimal } = makeFormatters(i18n.resolvedLanguage);
   // Ticks, so the snapshot age below advances instead of freezing at
   // whenever React last rendered.
   const nowSec = useNowSec();
@@ -387,32 +403,42 @@ export function ProtocolConsole() {
                     // must not quietly round the figure being checked.
                     // `exactAmountString` is `formatUnits` with no
                     // numeric round-trip.
-                    exactAmountString(BigInt(t), VPFI_DECIMALS),
+                    exactDecimal(exactAmountString(BigInt(t), VPFI_DECIMALS)),
                     bps(v.tierDiscountBps?.[i]),
                   )}
                 />
               ))
             )}
           </section>
-
-          <p className="pc-provenance">
-            {copy.protocolConsole.provenance}
-            {typeof snap.sourceBlock === 'number'
-              ? copy.protocolConsole.provenanceBlock(
-                  localeNumber(snap.sourceBlock, i18n.resolvedLanguage),
-                )
-              : ''}
-            {/* The age rides in the provenance sentence, so it is read
-                whenever the source is — not only when a day-old
-                threshold trips a warning. */}
-            {ageState !== 'unusable-stamp' && typeof snap.updatedAt === 'number'
-              ? copy.protocolConsole.provenanceAge(
-                  ageText(snap.updatedAt, nowSec),
-                )
-              : copy.protocolConsole.provenanceAgeUnknown}
-            {copy.protocolConsole.provenanceTail}
-          </p>
         </>
+      )}
+
+      {/* ROUND 66 P2 — OUTSIDE the value-label guard.
+          The provenance was nested inside it, so an available snapshot
+          that arrived without labels lost its block and its age — the
+          exact two facts the round-65 fix retained in order to disclose
+          them, and which `labelsUnavailable` tells the reader are "still
+          accurate" a few lines above. A surface that names a disclosure
+          and then withholds it is worse than one that never claimed it.
+          It is gated on `snap` alone: the sentence describes where the
+          reading came from and when, which is knowable for every
+          snapshot the page holds, labelled or not. */}
+      {!unavailable && snap && (
+        <p className="pc-provenance">
+          {copy.protocolConsole.provenance}
+          {typeof snap.sourceBlock === 'number'
+            ? copy.protocolConsole.provenanceBlock(
+                localeNumber(snap.sourceBlock, i18n.resolvedLanguage),
+              )
+            : ''}
+          {/* The age rides in the provenance sentence, so it is read
+              whenever the source is — not only when a day-old
+              threshold trips a warning. */}
+          {ageState !== 'unusable-stamp' && typeof snap.updatedAt === 'number'
+            ? copy.protocolConsole.provenanceAge(ageText(snap.updatedAt, nowSec))
+            : copy.protocolConsole.provenanceAgeUnknown}
+          {copy.protocolConsole.provenanceTail}
+        </p>
       )}
     </div>
   );

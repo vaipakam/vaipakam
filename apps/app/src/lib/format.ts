@@ -144,3 +144,50 @@ export function localeNumber(
 ): string {
   return n.toLocaleString(locale, opts);
 }
+
+/** Does this runtime's `Intl.NumberFormat` accept a STRING and keep
+ *  every digit of it?
+ *
+ *  ES2023 added arbitrary-precision formatting for string input. An
+ *  older engine coerces the argument to `number` instead, which for an
+ *  18-decimal threshold silently rounds — and rounding a figure on a
+ *  page that exists so figures can be checked is worse than leaving it
+ *  unformatted. So this probes with a value only the exact path can
+ *  reproduce (`1.000000000000000001` survives; a `number` round-trip
+ *  collapses it to `1`) and the caller falls back to the raw string. */
+const FORMATS_EXACT_STRINGS = ((): boolean => {
+  try {
+    return (
+      new Intl.NumberFormat('en', { maximumFractionDigits: 20 }).format(
+        '1.000000000000000001' as unknown as number,
+      ) === '1.000000000000000001'
+    );
+  } catch {
+    return false;
+  }
+})();
+
+/**
+ * Locale-format an EXACT decimal string with no numeric round-trip.
+ *
+ * The companion to `localeNumber` for values that must not be rounded:
+ * a `uint256`-derived threshold has more significant digits than a
+ * double carries, so `localeNumber(Number(s), …)` would change the
+ * figure while formatting it. Where the runtime cannot format exactly,
+ * the raw string is returned unchanged — ASCII separators are a
+ * cosmetic loss, a rounded threshold is a factual one.
+ */
+export function localeDecimalString(
+  value: string,
+  locale: string | undefined,
+): string {
+  if (!FORMATS_EXACT_STRINGS) return value;
+  if (!/^-?\d+(\.\d+)?$/.test(value)) return value;
+  try {
+    return new Intl.NumberFormat(locale, {
+      maximumFractionDigits: 20,
+    }).format(value as unknown as number);
+  } catch {
+    return value;
+  }
+}

@@ -622,19 +622,47 @@ export function ForcedCloseCard({
     // counters, so cancelling before snapshotting leaves nothing running
     // that could satisfy the target spuriously. Everything counted after
     // that started after the success.
+    // ROUND 66 P2 — what will NOT refetch is DISCARDED, not merely
+    // skipped.
+    //
+    // Round 64 excluded the non-refetching queries from the wait, which
+    // stopped the latch and left a second hole: inactivity here is
+    // REVERSIBLE. `useForcedCloseReads` is enabled on the page's
+    // `effectivelyActive`, so a close-out that lands the loan in
+    // `FallbackPending` — seen by the live-status rail or another tab
+    // before this watcher processes the receipt — disables all seven
+    // reads while the card stays mounted. They keep their PRE-CLOSE
+    // cache. The active set is then empty, the target completes on the
+    // spot, and if the borrower later cures back to Active those
+    // queries reactivate and serve the old readings to a card whose
+    // hold has already been released: action copy, and a submit
+    // control, built from facts the close-out invalidated.
+    //
+    // Waiting on them instead is not the fix — a disabled query never
+    // refetches, so that is the round-29 latch by the other door. The
+    // resolution is to stop the stale reading being servable at all:
+    // remove it, so a reactivated read starts from nothing, resolves to
+    // `unknown` while it fetches, and cannot assert a route. An empty
+    // active set is then a truthful "nothing to wait for", because
+    // nothing stale survives it.
     onClosedOutRef.current();
     void queryClient.cancelQueries(READINESS_READS).then(() => {
       const cache = queryClient.getQueryCache();
+      const willRefetch = new Set(
+        cache
+          .findAll({ ...READINESS_READS, type: 'active' })
+          .filter((q) => !q.isDisabled() && !q.isStatic()),
+      );
+      for (const q of cache.findAll(READINESS_READS)) {
+        if (!willRefetch.has(q)) cache.remove(q);
+      }
       refreshTargets.current.set(
         submittedHash,
         new Map(
-          cache
-            .findAll({ ...READINESS_READS, type: 'active' })
-            .filter((q) => !q.isDisabled() && !q.isStatic())
-            .map((q) => [
-              q.queryHash,
-              q.state.dataUpdateCount + q.state.errorUpdateCount,
-            ]),
+          [...willRefetch].map((q) => [
+            q.queryHash,
+            q.state.dataUpdateCount + q.state.errorUpdateCount,
+          ]),
         ),
       );
       void queryClient.invalidateQueries(READINESS_READS);
