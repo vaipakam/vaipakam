@@ -10,12 +10,14 @@ a later reader must be able to re-run, not take on trust.
 The result: across all nineteen retained deployments on the five chains —
 current contracts and the earlier ones a redeploy left behind — the census read
 202 loans and found no holding in any category anywhere it could actually read
-the records. Ten deployments are settled on that basis. Nine are not, and the
+the records. Nine deployments are settled on that basis. Ten are not, and the
 census says so rather than rounding them to empty: five because the one
 function that would read the intent records is not installed on those
 contracts, three because they are bare shells with no reading function at all,
-and one because the address on record turns out to hold something that is not
-the platform's contract. An earlier run had counted eighteen as settled on two
+one because the address on record turns out to hold something that is not
+the platform's contract, and one because its record names a contract without
+the token that would let its holdings be told apart from other assets — a
+record that had until now borrowed its twin's answer. An earlier run had counted eighteen as settled on two
 shortcuts since withdrawn; the contracts did not change, the standard of proof
 did. The interesting part of this change is that it reports undetermined
 instead of zero.
@@ -187,5 +189,14 @@ that check now also refuses a report that would drop a contract the committed
 report already covers, not only one read at an older block. Recovery from a
 crashed writer's abandoned lock was also made single-winner, so two writers
 recovering at once can no longer end up writing at the same time.
+
+A further round made changing *which contract* an archived record names an
+explicit, recorded act: neither the inventory nor the report will silently
+replace a retired contract's address under the same label, since the displaced
+contract may still hold custody; the operator must name the address being
+displaced, and the report keeps it on record beside its replacement. Two
+records naming the same contract now share a result only when they carry the
+same scoping metadata, and recovery of an abandoned lock whose owner never got
+written now works.
 
 Refs #1566, #1349, #1956

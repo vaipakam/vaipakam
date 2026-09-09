@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-09T05:26:20.325Z",
+  "generatedAt": "2026-09-09T07:10:43.991Z",
   "purpose": "#1566 grandfathered-custody census — decides whether slices 0-3 are live work or a certified no-op",
   "scope": "all-deployed-chains",
   "allClassesEmpty": false,
@@ -39,6 +39,30 @@
       "deployment": "archived 2026-07-01T01-28-35Z",
       "class": "liveIntentCommits",
       "reason": "the intent getter is unrouted; a zero VPFI balance proves the rows would be UNBACKED, not that they are absent, and cut history can only refute — undetermined pending a calibrated storage read of intentCommits[loanId] or routing of the getter"
+    },
+    {
+      "chainSlug": "arb-sepolia",
+      "deployment": "archived 2026-07-01T01-36-25Z",
+      "class": "vpfiHeldCustody",
+      "reason": "VPFI token unresolvable (neither on-chain nor in the artifact); VPFI custody cannot be scoped"
+    },
+    {
+      "chainSlug": "arb-sepolia",
+      "deployment": "archived 2026-07-01T01-36-25Z",
+      "class": "rebateRows",
+      "reason": "VPFI token unresolvable (neither on-chain nor in the artifact); VPFI custody cannot be scoped"
+    },
+    {
+      "chainSlug": "arb-sepolia",
+      "deployment": "archived 2026-07-01T01-36-25Z",
+      "class": "fallbackSnapshotCustody",
+      "reason": "VPFI token unresolvable (neither on-chain nor in the artifact); VPFI custody cannot be scoped"
+    },
+    {
+      "chainSlug": "arb-sepolia",
+      "deployment": "archived 2026-07-01T01-36-25Z",
+      "class": "liveIntentCommits",
+      "reason": "the intent getter answered but no VPFI token resolved, so every returned intent has an UNKNOWN asset — not provably non-VPFI"
     },
     {
       "chainSlug": "base-sepolia",
@@ -166,8 +190,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "306961699",
-      "atBlockHash": "0xb82502b2c0f230fe1fb3509bdd0c50abf9d90b3623581bbf6f6fb7386d0a3d8d",
+      "atBlock": "306986387",
+      "atBlockHash": "0x60f29feb36138f564535445f6c505e9a18d25fe05ce55a1ddc697befeabcff78",
       "blockTag": "safe (finalized state pruned by endpoint)",
       "rpcHost": "sepolia-rollup.arbitrum.io",
       "scanned": {
@@ -225,8 +249,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "306961699",
-      "atBlockHash": "0xb82502b2c0f230fe1fb3509bdd0c50abf9d90b3623581bbf6f6fb7386d0a3d8d",
+      "atBlock": "306986387",
+      "atBlockHash": "0x60f29feb36138f564535445f6c505e9a18d25fe05ce55a1ddc697befeabcff78",
       "blockTag": "safe (finalized state pruned by endpoint)",
       "rpcHost": "sepolia-rollup.arbitrum.io",
       "scanned": {
@@ -297,8 +321,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "306961699",
-      "atBlockHash": "0xb82502b2c0f230fe1fb3509bdd0c50abf9d90b3623581bbf6f6fb7386d0a3d8d",
+      "atBlock": "306986387",
+      "atBlockHash": "0x60f29feb36138f564535445f6c505e9a18d25fe05ce55a1ddc697befeabcff78",
       "blockTag": "safe (finalized state pruned by endpoint)",
       "rpcHost": "sepolia-rollup.arbitrum.io",
       "scanned": {
@@ -364,13 +388,13 @@
       "deployment": "archived 2026-07-01T01-36-25Z",
       "chainId": 421614,
       "diamond": "0x55d7872cC9738994cc6b04F89d128cB4c8745431",
-      "vpfiToken": "0xDed6a45313E216ad4B74be089D2411f6E222d074",
-      "vpfiTokenSource": "deployment artifact",
-      "diamondVpfiBacking": "0",
+      "vpfiToken": null,
+      "vpfiTokenSource": "unresolvable",
+      "diamondVpfiBacking": null,
       "vpfiRowsTotal": "0",
-      "backingShortfall": "0",
-      "atBlock": "306961699",
-      "atBlockHash": "0xb82502b2c0f230fe1fb3509bdd0c50abf9d90b3623581bbf6f6fb7386d0a3d8d",
+      "backingShortfall": null,
+      "atBlock": "306986387",
+      "atBlockHash": "0x60f29feb36138f564535445f6c505e9a18d25fe05ce55a1ddc697befeabcff78",
       "blockTag": "safe (finalized state pruned by endpoint)",
       "rpcHost": "sepolia-rollup.arbitrum.io",
       "scanned": {
@@ -389,19 +413,22 @@
       },
       "classes": {
         "vpfiHeldCustody": {
-          "status": "proven",
+          "status": "indeterminate",
+          "indeterminateReason": "VPFI token unresolvable (neither on-chain nor in the artifact); VPFI custody cannot be scoped",
           "count": 0,
           "total": "0",
           "rows": []
         },
         "rebateRows": {
-          "status": "proven",
+          "status": "indeterminate",
+          "indeterminateReason": "VPFI token unresolvable (neither on-chain nor in the artifact); VPFI custody cannot be scoped",
           "count": 0,
           "total": "0",
           "rows": []
         },
         "fallbackSnapshotCustody": {
-          "status": "proven",
+          "status": "indeterminate",
+          "indeterminateReason": "VPFI token unresolvable (neither on-chain nor in the artifact); VPFI custody cannot be scoped",
           "count": 0,
           "total": "0",
           "rows": [],
@@ -409,15 +436,15 @@
           "unknownAssetRows": []
         },
         "liveIntentCommits": {
-          "status": "proven",
+          "status": "indeterminate",
           "unknownAssetRows": [],
+          "indeterminateReason": "the intent getter answered but no VPFI token resolved, so every returned intent has an UNKNOWN asset — not provably non-VPFI",
           "count": 0,
           "total": "0",
           "rows": [],
           "nonVpfiRowsExcluded": []
         }
-      },
-      "duplicateOfDeployment": "live"
+      }
     },
     {
       "chainSlug": "base-sepolia",
@@ -429,8 +456,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "46580780",
-      "atBlockHash": "0xfe609ec45ac9311050f4853d26d2f4d1fbb6343841ff41db027ab8d4327998ca",
+      "atBlock": "46583884",
+      "atBlockHash": "0x5b0cad89874ed678ab84e9307f9d25e90d290ddc9f2d136b361ec8631d31c68c",
       "blockTag": "finalized",
       "rpcHost": "sepolia.base.org",
       "scanned": {
@@ -489,8 +516,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "46580780",
-      "atBlockHash": "0xfe609ec45ac9311050f4853d26d2f4d1fbb6343841ff41db027ab8d4327998ca",
+      "atBlock": "46583884",
+      "atBlockHash": "0x5b0cad89874ed678ab84e9307f9d25e90d290ddc9f2d136b361ec8631d31c68c",
       "blockTag": "finalized",
       "rpcHost": "sepolia.base.org",
       "scanned": {
@@ -553,8 +580,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "46580780",
-      "atBlockHash": "0xfe609ec45ac9311050f4853d26d2f4d1fbb6343841ff41db027ab8d4327998ca",
+      "atBlock": "46583884",
+      "atBlockHash": "0x5b0cad89874ed678ab84e9307f9d25e90d290ddc9f2d136b361ec8631d31c68c",
       "blockTag": "finalized",
       "rpcHost": "sepolia.base.org",
       "scanned": {
@@ -616,8 +643,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "46580780",
-      "atBlockHash": "0xfe609ec45ac9311050f4853d26d2f4d1fbb6343841ff41db027ab8d4327998ca",
+      "atBlock": "46583884",
+      "atBlockHash": "0x5b0cad89874ed678ab84e9307f9d25e90d290ddc9f2d136b361ec8631d31c68c",
       "blockTag": "finalized",
       "rpcHost": "sepolia.base.org",
       "scanned": {
@@ -686,8 +713,8 @@
       "diamondVpfiBacking": null,
       "vpfiRowsTotal": null,
       "backingShortfall": null,
-      "atBlock": "46580780",
-      "atBlockHash": "0xfe609ec45ac9311050f4853d26d2f4d1fbb6343841ff41db027ab8d4327998ca",
+      "atBlock": "46583884",
+      "atBlockHash": "0x5b0cad89874ed678ab84e9307f9d25e90d290ddc9f2d136b361ec8631d31c68c",
       "blockTag": "finalized",
       "rpcHost": "sepolia.base.org",
       "scanned": {
@@ -747,8 +774,8 @@
       "diamondVpfiBacking": null,
       "vpfiRowsTotal": null,
       "backingShortfall": null,
-      "atBlock": "46580780",
-      "atBlockHash": "0xfe609ec45ac9311050f4853d26d2f4d1fbb6343841ff41db027ab8d4327998ca",
+      "atBlock": "46583884",
+      "atBlockHash": "0x5b0cad89874ed678ab84e9307f9d25e90d290ddc9f2d136b361ec8631d31c68c",
       "blockTag": "finalized",
       "rpcHost": "sepolia.base.org",
       "scanned": {
@@ -808,8 +835,8 @@
       "diamondVpfiBacking": null,
       "vpfiRowsTotal": null,
       "backingShortfall": null,
-      "atBlock": "46580780",
-      "atBlockHash": "0xfe609ec45ac9311050f4853d26d2f4d1fbb6343841ff41db027ab8d4327998ca",
+      "atBlock": "46583884",
+      "atBlockHash": "0x5b0cad89874ed678ab84e9307f9d25e90d290ddc9f2d136b361ec8631d31c68c",
       "blockTag": "finalized",
       "rpcHost": "sepolia.base.org",
       "scanned": {
@@ -870,8 +897,8 @@
       "diamondVpfiBacking": null,
       "vpfiRowsTotal": "0",
       "backingShortfall": null,
-      "atBlock": "46580780",
-      "atBlockHash": "0xfe609ec45ac9311050f4853d26d2f4d1fbb6343841ff41db027ab8d4327998ca",
+      "atBlock": "46583884",
+      "atBlockHash": "0x5b0cad89874ed678ab84e9307f9d25e90d290ddc9f2d136b361ec8631d31c68c",
       "blockTag": "finalized",
       "rpcHost": "sepolia.base.org",
       "scanned": {
@@ -933,8 +960,8 @@
       "diamondVpfiBacking": null,
       "vpfiRowsTotal": null,
       "backingShortfall": null,
-      "atBlock": "46580780",
-      "atBlockHash": "0xfe609ec45ac9311050f4853d26d2f4d1fbb6343841ff41db027ab8d4327998ca",
+      "atBlock": "46583884",
+      "atBlockHash": "0x5b0cad89874ed678ab84e9307f9d25e90d290ddc9f2d136b361ec8631d31c68c",
       "blockTag": "finalized",
       "rpcHost": "sepolia.base.org",
       "scanned": {
@@ -994,8 +1021,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "129966587",
-      "atBlockHash": "0xc163538b6364214ed9c0896a9b2a94dd8cb9b6a36a55d6d87e500863e7c41f45",
+      "atBlock": "129980496",
+      "atBlockHash": "0x2e25297d975e119a3ae063894c76e1f6fa32f49f9bfbe2908171f79705a91b44",
       "blockTag": "finalized",
       "rpcHost": "bsc-testnet-rpc.publicnode.com",
       "scanned": {
@@ -1054,8 +1081,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "129966587",
-      "atBlockHash": "0xc163538b6364214ed9c0896a9b2a94dd8cb9b6a36a55d6d87e500863e7c41f45",
+      "atBlock": "129980496",
+      "atBlockHash": "0x2e25297d975e119a3ae063894c76e1f6fa32f49f9bfbe2908171f79705a91b44",
       "blockTag": "finalized",
       "rpcHost": "bsc-testnet-rpc.publicnode.com",
       "scanned": {
@@ -1117,8 +1144,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "48563948",
-      "atBlockHash": "0x93ee1e1945071cbd163e41a6d0ef4cc8d0ac15546e4b49cb34186722b29c25b1",
+      "atBlock": "48567016",
+      "atBlockHash": "0x4eb90b6881835a6488cb6df644918abf3ffc6dae6833eb7dfb98111bcf051aa3",
       "blockTag": "finalized",
       "rpcHost": "optimism-sepolia-rpc.publicnode.com",
       "scanned": {
@@ -1189,8 +1216,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "11665821",
-      "atBlockHash": "0x3055089645b658081eec556e19a3b6025d006e7377e58c9cc4840f65fa6cc895",
+      "atBlock": "11666316",
+      "atBlockHash": "0x545b5e246170ff3ed3d0aa10dac30478e525aa8ad807368863a57e627b0c3f6c",
       "blockTag": "finalized",
       "rpcHost": "ethereum-sepolia-rpc.publicnode.com",
       "scanned": {
@@ -1252,8 +1279,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "11665821",
-      "atBlockHash": "0x3055089645b658081eec556e19a3b6025d006e7377e58c9cc4840f65fa6cc895",
+      "atBlock": "11666316",
+      "atBlockHash": "0x545b5e246170ff3ed3d0aa10dac30478e525aa8ad807368863a57e627b0c3f6c",
       "blockTag": "finalized",
       "rpcHost": "ethereum-sepolia-rpc.publicnode.com",
       "scanned": {
@@ -1324,8 +1351,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "11665821",
-      "atBlockHash": "0x3055089645b658081eec556e19a3b6025d006e7377e58c9cc4840f65fa6cc895",
+      "atBlock": "11666316",
+      "atBlockHash": "0x545b5e246170ff3ed3d0aa10dac30478e525aa8ad807368863a57e627b0c3f6c",
       "blockTag": "finalized",
       "rpcHost": "ethereum-sepolia-rpc.publicnode.com",
       "scanned": {

@@ -1522,11 +1522,18 @@ async function main() {
   while (queue.length) {
     const dep = queue.shift();
     const who = `${dep.slug} (${dep.label})`;
-    const addrKey = `${dep.slug}|${(dep.addresses.diamond || '').toLowerCase()}`;
+    // Codex #2070 r16 P1 — a result is reused across artifacts naming the
+    // same Diamond ONLY when their scoping metadata is identical. Where the
+    // token getter is unrouted the artifact's VPFI token is what scopes rows,
+    // so two config snapshots straddling a token rotation would file a live
+    // row as non-VPFI under the first token and copy that verdict to the
+    // second. Same Diamond, different artifact token ⇒ its own scan.
+    const scopeToken = (dep.addresses.vpfiToken ?? dep.addresses.vpfiMirror ?? 'none').toString().toLowerCase();
+    const addrKey = `${dep.slug}|${(dep.addresses.diamond || '').toLowerCase()}|${scopeToken}`;
     if (byAddress.has(addrKey)) {
       const prior = byAddress.get(addrKey);
       results.push({ ...prior, deployment: dep.label, duplicateOfDeployment: prior.deployment });
-      process.stderr.write(`census: ${who} — same Diamond as "${prior.deployment}"; reusing that result\n`);
+      process.stderr.write(`census: ${who} — same Diamond AND scoping metadata as "${prior.deployment}"; reusing that result\n`);
       continue;
     }
     process.stderr.write(`census: ${who} …\n`);
@@ -1639,7 +1646,9 @@ async function main() {
     const h = BigInt(r.atBlock);
     if (!mine.has(r.chainSlug) || h > mine.get(r.chainSlug)) mine.set(r.chainSlug, h);
   }
-  writeSnapshotGuarded(outFile, `${JSON.stringify(report, null, 2)}\n`, {
+  // The text is PRODUCED after the comparison so an acknowledged displacement
+  // the comparison recorded is in the bytes written (r16).
+  writeSnapshotGuarded(outFile, () => `${JSON.stringify(report, null, 2)}\n`, {
     regressedBy: (current) => {
       const theirs = new Map();
       for (const r of current.results ?? []) {
@@ -1660,16 +1669,41 @@ async function main() {
       // slower pre-deploy run would overwrite the newer, more complete
       // artifact, dropping that Diamond (and possibly its custody) from the
       // committed evidence. So a snapshot may never DROP a deployment the
-      // committed one covers. Keys are `slug|label`; the same key with a
-      // corrected diamond address is allowed to replace — this run's inventory
-      // came from the committed manifest under its lock, which is the source
-      // of truth for what an archived label names.
-      const covered = new Set(allDeployed);
-      const dropped = (current.deploymentsDeployed ?? []).filter((k) => !covered.has(k));
-      return dropped.length
-        ? `the committed census covers ${dropped.length} deployment(s) this run does not (${dropped.join(', ')}); ` +
-            `a snapshot may never drop a deployment the committed one covers — re-run against the current inventory`
-        : null;
+      // committed one covers.
+      //
+      // Codex #2070 r16 P1 — and the identity INCLUDES the Diamond address:
+      // `slug|label|diamond`. An in-place correction of an archived artifact
+      // from X to Y under the same stamp must not silently retire X — and any
+      // custody X holds — from the evidence. Displacing an address is an
+      // audited act: `--acknowledge-displaced-diamond <addr>[,<addr>]` names
+      // the address being displaced, and the report records it under
+      // `displacedDiamonds` so the displaced address stays on record.
+      const identity = (slug, label, diamond) => `${slug}|${label}|${String(diamond ?? '').toLowerCase()}`;
+      const mineIds = new Set(deployments.map((d) => identity(d.slug, d.label, d.addresses.diamond)));
+      const acknowledged = new Set(
+        (arg('--acknowledge-displaced-diamond', '') || '').split(',').map((a) => a.trim().toLowerCase()).filter(Boolean),
+      );
+      const missing = (current.results ?? [])
+        .filter((r) => r?.chainSlug && r?.deployment && !mineIds.has(identity(r.chainSlug, r.deployment, r.diamond)))
+        .map((r) => ({ chainSlug: r.chainSlug, deployment: r.deployment, previousDiamond: r.diamond }));
+      const unacknowledged = missing.filter((m) => !acknowledged.has(String(m.previousDiamond ?? '').toLowerCase()));
+      if (unacknowledged.length) {
+        return (
+          `the committed census covers ${unacknowledged.length} deployment identit(y/ies) this run does not ` +
+          `(${unacknowledged.map((m) => `${m.chainSlug}|${m.deployment}|${m.previousDiamond}`).join(', ')}); a snapshot may never drop a ` +
+          `deployment the committed one covers, and a changed Diamond under the same label is a displacement — re-run against the ` +
+          `current inventory, or acknowledge a deliberate displacement with --acknowledge-displaced-diamond <address>`
+        );
+      }
+      if (missing.length) {
+        report.displacedDiamonds = missing.map((m) => ({
+          ...m,
+          replacedBy: deployments.find((d) => d.slug === m.chainSlug && d.label === m.deployment)?.addresses.diamond ?? null,
+          acknowledgedBy: '--acknowledge-displaced-diamond',
+        }));
+        process.stderr.write(`census: DISPLACING ${missing.length} diamond(s) on explicit acknowledgement — recorded under displacedDiamonds\n`);
+      }
+      return null;
     },
   });
 

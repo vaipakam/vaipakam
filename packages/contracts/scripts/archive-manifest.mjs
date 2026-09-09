@@ -172,8 +172,11 @@ export function withManifestLock(manifestPath, fn, opts = {}) {
       owner = null;
     }
     let ageMs = 0;
+    let inoObserved = null;
     try {
-      ageMs = Date.now() - statSync(lockDir).mtimeMs;
+      const st = statSync(lockDir);
+      ageMs = Date.now() - st.mtimeMs;
+      inoObserved = st.ino;
     } catch {
       continue; // released between our mkdir and stat — retry immediately
     }
@@ -207,16 +210,25 @@ export function withManifestLock(manifestPath, fn, opts = {}) {
       } catch {
         ownerNow = null;
       }
-      let ageNow = 0;
+      // Codex #2070 r16 P2 — creating the claim file bumps the directory's
+      // mtime, so an age re-measured here is never stale and an OWNERLESS lock
+      // (a writer that died between mkdir and writing owner.json) could never
+      // be recovered. Identity is the directory's INODE captured before the
+      // claim: the same inode means the same directory object we observed
+      // dead and old; a different one means it was released and re-created
+      // by someone else in between.
+      let inoNow = null;
       try {
-        ageNow = Date.now() - statSync(lockDir).mtimeMs;
+        inoNow = statSync(lockDir).ino;
       } catch {
         continue; // gone underneath us — retry the acquire
       }
+      const sameDirectory = inoObserved !== null && inoNow === inoObserved;
       const sameIdentity =
-        owner === null && ownerNow === null
-          ? ageNow > staleMs
-          : Boolean(owner && ownerNow && owner.pid === ownerNow.pid && owner.at === ownerNow.at && !pidAlive(ownerNow.pid));
+        sameDirectory &&
+        (owner === null && ownerNow === null
+          ? true
+          : Boolean(owner && ownerNow && owner.pid === ownerNow.pid && owner.at === ownerNow.at && !pidAlive(ownerNow.pid)));
       if (sameIdentity) {
         process.stderr.write(
           `archive-manifest: breaking a stale lock on ${manifestPath} (owner pid ${owner?.pid ?? '?'} is gone, ${Math.round(ageMs / 1000)}s old)\n`,
@@ -320,12 +332,19 @@ export function appendEntry(manifestPath, entry, lockOpts) {
  * existing key are permitted — a regeneration from the local tree is how an
  * in-place correction of an archived artifact reaches the manifest (r10).
  *
+ * A same-key entry whose DIAMOND differs is a DISPLACEMENT (Codex #2070 r16
+ * P1): an in-place correction of an archived artifact from X to Y under the
+ * same stamp would otherwise silently retire X — and any custody X holds —
+ * from the committed inventory. It is refused unless `allowDisplace`, and the
+ * displaced addresses are named either way. Other field changes (chainId,
+ * deployBlock, vpfiToken) are corrections and are permitted.
+ *
  * @param {(current: object) => object[]} collect
- * @param {{allowDrop?: boolean, allowEmpty?: boolean}} [policy]
- * @returns {{manifest: object, dropped: number}}
+ * @param {{allowDrop?: boolean, allowEmpty?: boolean, allowDisplace?: boolean}} [policy]
+ * @returns {{manifest: object, dropped: number, displaced: {key: string, from: string, to: string}[]}}
  */
 export function regenerateEntries(manifestPath, collect, policy = {}, lockOpts) {
-  const { allowDrop = false, allowEmpty = false } = policy;
+  const { allowDrop = false, allowEmpty = false, allowDisplace = false } = policy;
   return withManifestLock(
     manifestPath,
     () => {
@@ -350,6 +369,18 @@ export function regenerateEntries(manifestPath, collect, policy = {}, lockOpts) 
         );
       }
       if (dropped.length) process.stderr.write(`archive-manifest: DROPPING ${dropped.length} entr(y/ies) on explicit override\n`);
+      const byKey = new Map(current.entries.map((e) => [entryKey(e), e]));
+      const displaced = collected
+        .filter((e) => byKey.has(entryKey(e)) && String(byKey.get(entryKey(e)).diamond).toLowerCase() !== String(e.diamond).toLowerCase())
+        .map((e) => ({ key: entryKey(e), from: byKey.get(entryKey(e)).diamond, to: e.diamond }));
+      if (displaced.length && !allowDisplace) {
+        throw new Error(
+          `archive-manifest: refusing to rewrite ${manifestPath}: ${displaced.length} archived label(s) would change the DIAMOND they name ` +
+            `(${displaced.map((d) => `${d.key}: ${d.from} → ${d.to}`).join(', ')}). That retires the displaced Diamond — and any custody it ` +
+            `holds — from the committed inventory; do it deliberately with the explicit override, and keep the displaced address on record.`,
+        );
+      }
+      if (displaced.length) process.stderr.write(`archive-manifest: DISPLACING ${displaced.length} diamond(s) on explicit override: ${displaced.map((d) => `${d.key} ${d.from} → ${d.to}`).join(', ')}\n`);
       const next = { purpose: MANIFEST_PURPOSE, generatedAt: new Date().toISOString(), entries: sortEntries(collected) };
       writeManifestAtomic(manifestPath, next);
       const verify = readManifest(manifestPath);
@@ -358,7 +389,7 @@ export function regenerateEntries(manifestPath, collect, policy = {}, lockOpts) 
           throw new Error(`archive-manifest: ${entryKey(e)} is not present after the regeneration — refusing to report success`);
         }
       }
-      return { manifest: next, dropped: dropped.length };
+      return { manifest: next, dropped: dropped.length, displaced };
     },
     lockOpts,
   );
@@ -378,11 +409,15 @@ export function regenerateEntries(manifestPath, collect, policy = {}, lockOpts) 
  * refuses the write and leaves the file untouched. An unparsable current file
  * is refused too (r13 P2: unreadable is not absent).
  *
+ * `text` may be a function: it is then evaluated AFTER the comparison, still
+ * under the lock, so what the comparison learned (an acknowledged
+ * displacement, say) can be recorded in the bytes that are written (r16).
+ *
  * @param {string} path
- * @param {string} text the exact bytes to write
+ * @param {string|(() => string)} textOrProduce the exact bytes to write, or a producer of them
  * @param {{regressedBy: (current: object) => string|null, lockOpts?: object}} opts
  */
-export function writeSnapshotGuarded(path, text, { regressedBy, lockOpts } = {}) {
+export function writeSnapshotGuarded(path, textOrProduce, { regressedBy, lockOpts } = {}) {
   if (typeof regressedBy !== 'function') throw new Error('writeSnapshotGuarded: regressedBy is required');
   return withManifestLock(
     path,
@@ -397,6 +432,7 @@ export function writeSnapshotGuarded(path, text, { regressedBy, lockOpts } = {})
         const reason = regressedBy(current);
         if (reason) throw new Error(`refusing to replace ${path}: ${reason}`);
       }
+      const text = typeof textOrProduce === 'function' ? textOrProduce() : textOrProduce;
       const tmp = `${path}.tmp-${process.pid}-${Date.now()}`;
       try {
         writeFileSync(tmp, text);

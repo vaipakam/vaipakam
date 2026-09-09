@@ -5118,6 +5118,29 @@ reported a comfortable answer it had not earned:
   `wx`-created so exactly one claimant wins — and revalidated by re-reading the
   owner immediately before deletion, withdrawing if a live owner has taken
   over. Eight processes breaking one dead lock at once all land their appends.
+
+  **Round 16 closed the last three doors in those two guards.** The
+  replacement identity omitted the Diamond address, and the census deliberately
+  let a same-label correction replace — which meant an erroneous in-place
+  correction of an archived artifact from X to Y could silently retire X, and
+  any custody X holds, from the evidence; the identity is now `slug|label|
+  diamond`, and displacing an address is an audited act: the manifest
+  regeneration refuses a same-key Diamond change without its explicit override
+  (other field corrections stay permitted), and the census refuses the snapshot
+  unless the displaced address is named with `--acknowledge-displaced-diamond`,
+  in which case the report records it under `displacedDiamonds` with the
+  address that replaced it — the displaced address stays on record either way.
+  A result was reused across artifacts naming the same Diamond regardless of
+  their VPFI metadata, but where the token getter is unrouted the artifact's
+  token is what scopes rows, so two config snapshots straddling a token
+  rotation would file a live row as non-VPFI under the first and copy that
+  verdict to the second; reuse now requires identical scoping metadata, and the
+  one such pair in the inventory (arb-sepolia's 01-36-25Z archive carries no
+  token) is scanned on its own. And an ownerless stale lock — a writer that
+  died between creating the directory and writing its owner — could never be
+  recovered, because creating the claim file bumped the directory's age; the
+  revalidation is anchored on the directory's inode captured before the claim
+  instead of a re-measured age.
   Hand-computed storage slots were never an option: they fail SILENTLY as
   zero, manufacturing the exact "empty" result the census exists to
   establish. The event reconstruction is retained behind `--corroborate` as
@@ -5140,35 +5163,41 @@ reported a comfortable answer it had not earned:
   latter as a failure on op-sepolia rather than silently counting it as an
   absent commit.
 
-**RESULT (2026-09-09, run 19 — all nineteen retained deployments across five
+**RESULT (2026-09-09, run 20 — all nineteen retained deployments across five
 chains, inventory from the committed manifest, the two unsound bounds
 withdrawn, every chain read at or above the height the previous committed run
 certified, the serving endpoint and producer liveness recorded on every
-result): ten deployments are PROVEN EMPTY on every class; nine are
-INDETERMINATE on at least one.** 189 loans were enumerated across the eighteen
-distinct Diamonds (one arb-sepolia archive names the live Diamond and reuses
-its result); **zero rows were found in any class on any deployment where rows
-could be read**; every Diamond whose VPFI token resolves holds zero, and no
-backing shortfall exists anywhere rows were readable. The artifact records
-`migrationRetirable: false` — the population is not yet established empty,
-and fifteen of the nineteen deployments still route a custody surface, so
-even a fully proven run would report the migration half as not yet retirable
-until it follows a finalized producer freeze or an isolation deploy. Runs 15
-to 18, made while closing the round-12 and round-13 findings, reached the same
-standing for every deployment they completed; run 15 was discarded for reading
-op-sepolia at a stale finality height (see the monotonic-height guard above),
-run 16 for carrying the endpoint stamp on only part of the results, run 17
-superseded by the round-13 fields, and run 18 lost arb-sepolia's 37-loan
-archive to a replica two hours behind head, past the retry budget. How each
-deployment stands:
+result, and a result shared between artifacts only when their scoping
+metadata is identical): nine deployments are PROVEN EMPTY on every class; ten
+are INDETERMINATE on at least one.** 202 loan reads were made across the
+nineteen artifacts (eighteen distinct Diamonds: arb-sepolia's 01-36-25Z
+archive names the live Diamond but records no VPFI token, and since that
+Diamond does not route the token getter it is scanned on its own and cannot be
+scoped — runs 14 to 19 had reused the live result for it, which round 16
+showed to be unsound when the metadata differs); **zero rows were found in
+any class on any deployment where rows could be read**; every Diamond whose
+VPFI token resolves holds zero, and no backing shortfall exists anywhere rows
+were readable. The artifact records `migrationRetirable: false` — the
+population is not yet established empty, and fifteen of the nineteen
+deployments still route a custody surface, so even a fully proven run would
+report the migration half as not yet retirable until it follows a finalized
+producer freeze or an isolation deploy. Runs 15 to 19, made while closing the
+round-12 to round-15 findings, reached the earlier ten-and-nine standing for
+every deployment they completed; run 15 was discarded for reading op-sepolia
+at a stale finality height (see the monotonic-height guard above), run 16 for
+carrying the endpoint stamp on only part of the results, run 17 superseded by
+the round-13 fields, run 18 lost arb-sepolia's 37-loan archive to a replica
+two hours behind head, and run 19 was superseded by the round-16 reuse rule.
+How each deployment stands:
 
 | Standing | Deployments | Basis |
 | --- | --- | --- |
-| proven — enumerated | 4 | every loan read through routed getters in all four classes: 0 rows |
+| proven — enumerated | 3 | every loan read through routed getters in all four classes: 0 rows |
 | proven — `no-loans-ever-created` | 6 | loan counter is zero (state read) and every class is loan-keyed |
 | indeterminate on class 3 ONLY | 5 | classes 1/2/4 enumerated empty; the intent getter is unrouted, so `intentCommits` cannot be read (arb-sepolia ×2 archives, base-sepolia 06-30 archive, op-sepolia live, sepolia 05-10 archive) |
 | indeterminate on every class | 3 | bare shells: every custody selector unrouted TODAY, storage unreadable without a getter |
 | indeterminate on every class | 1 | `base-sepolia/.archive/2026-07-01T01-03-39Z`: the recorded address is not a Vaipakam Diamond |
+| indeterminate on every class | 1 | `arb-sepolia/.archive/2026-07-01T01-36-25Z`: names the live Diamond but records no VPFI token, and that Diamond does not route the token getter, so the rows cannot be scoped from this artifact (the live twin scopes from its own artifact's token) |
 
 **Why the honest count is ten and not eighteen.** An earlier run of this
 census reported eighteen proven, on the strength of a zero VPFI balance and of
@@ -5219,7 +5248,7 @@ returned zero on both unrouted chains and reported both as proven** — an empty
 scan manufacturing the comfortable answer, which is the exact failure this
 census exists to refuse, reintroduced by the machinery meant to prevent it.
 
-**Outstanding — two items, and neither is an archive endpoint.**
+**Outstanding — three items, and none is an archive endpoint.**
 
 1. **A calibrated storage read.** The eight deployments indeterminate for
    want of a getter (five on class 3, three shells on every class) can be
@@ -5237,6 +5266,16 @@ census exists to refuse, reintroduced by the machinery meant to prevent it.
    that is not a Vaipakam Diamond. Either the address is wrong in the artifact
    or an unrelated contract was recorded as the Diamond at that redeploy; the
    census cannot tell which and will not guess.
+3. **Complete the `arb-sepolia/.archive/2026-07-01T01-36-25Z` artifact's VPFI
+   token.** It names the live Diamond, which does not route the token getter,
+   and records no token, so nothing in that artifact can scope its rows. The
+   live artifact records the mirror token; whether the archived snapshot was
+   taken under the same token is a fact about that snapshot, not something the
+   census may infer from its twin — the round-16 rule exists precisely because
+   two snapshots can straddle a rotation. Recording the token (an artifact
+   correction, operator-gated like item 2, and one that regeneration of the
+   manifest treats as a permitted non-identity correction) lets the next run
+   scope it.
 
 **The refusal was then confirmed independently, and the confirmation is the
 part worth keeping.** Archive `eth_getCode` probes bound the Diamond's creation

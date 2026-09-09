@@ -28,12 +28,13 @@
 > closure 3's resolver, then closure 2, slice 4 last). The census is DONE and
 > read 202 loans across all **nineteen retained deployments** (live plus
 > archived, five chains) and found **zero custody rows in any class anywhere
-> rows could be read**, with zero backing shortfall. **Ten deployments are
-> PROVEN empty on every class; nine are indeterminate** — five on class 3
+> rows could be read**, with zero backing shortfall. **Nine deployments are
+> PROVEN empty on every class; ten are indeterminate** — five on class 3
 > only (the intent getter is unrouted, so `intentCommits` cannot be read),
-> three bare shells with no custody getter at all, and one artifact defect
+> three bare shells with no custody getter at all, and two artifact defects
 > (`base-sepolia/.archive/2026-07-01T01-03-39Z` records an address that is
-> not a Vaipakam Diamond). An earlier revision claimed eighteen proven on two
+> not a Vaipakam Diamond; `arb-sepolia/.archive/2026-07-01T01-36-25Z` names
+> the live Diamond without its VPFI token, so its rows cannot be scoped). An earlier revision claimed eighteen proven on two
 > bounds since withdrawn (a zero balance proves rows unbacked, not absent; an
 > unrouted selector today does not mean it never wrote). What settles the
 > nine is a **calibrated storage read of the rows** (not an archive endpoint —

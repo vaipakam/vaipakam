@@ -137,12 +137,29 @@ test('regenerate refuses a DROP without the override, and refuses an empty resul
   assert.equal(readManifest(manifest).entries.length, 1);
 });
 
-test('regenerate may CORRECT the content of an existing key (an in-place artifact fix)', () => {
+test('regenerate may correct non-identity fields, but a DIAMOND change is a displacement needing the override (r16)', () => {
   const { dir, manifest } = fixture();
   const e1 = entryFromArtifact({ slug: 'a', stamp: 's1', addrPath: artifact(dir, 1) });
   appendEntry(manifest, e1);
-  regenerateEntries(manifest, () => [{ ...e1, diamond: '0xcorrected' }]);
+  regenerateEntries(manifest, () => [{ ...e1, deployBlock: 77 }]);
+  assert.equal(readManifest(manifest).entries[0].deployBlock, 77, 'a deployBlock correction is permitted');
+  const before = readFileSync(manifest, 'utf8');
+  assert.throws(() => regenerateEntries(manifest, () => [{ ...e1, deployBlock: 77, diamond: '0xcorrected' }]), /would change the DIAMOND/);
+  assert.equal(readFileSync(manifest, 'utf8'), before, 'a refused displacement leaves the file untouched');
+  const { displaced } = regenerateEntries(manifest, () => [{ ...e1, deployBlock: 77, diamond: '0xcorrected' }], { allowDisplace: true });
+  assert.deepEqual(displaced, [{ key: 'a|s1', from: e1.diamond, to: '0xcorrected' }]);
   assert.equal(readManifest(manifest).entries[0].diamond, '0xcorrected');
+});
+
+test('an OWNERLESS stale lock (writer died before owner.json) is recovered — the claim must not reset its age (r16)', () => {
+  const { dir, manifest } = fixture();
+  const lockDir = `${manifest}.lock`;
+  mkdirSync(lockDir); // no owner.json at all
+  const old = new Date(Date.now() - 3_600_000);
+  utimesSync(lockDir, old, old);
+  const e = entryFromArtifact({ slug: 'a', stamp: 'b', addrPath: artifact(dir, 6) });
+  assert.equal(appendEntry(manifest, e, { timeoutMs: 2_000, pollMs: 20, staleMs: 1_000 }).status, 'recorded');
+  assert.equal(existsSync(lockDir), false);
 });
 
 test('a guarded snapshot write compares under the lock and refuses a regression (the r14 lost update)', () => {
@@ -210,4 +227,13 @@ test('N concurrent processes all get through a DEAD stale lock, and every append
   for (const r of runs) assert.equal(r.code, 0, r.err);
   assert.equal(readManifest(manifest).entries.length, N);
   assert.deepEqual(readdirSync(dirname(manifest)), ['archive-manifest.json']);
+});
+
+test('a producer form of the text is evaluated AFTER the comparison, so what it learned is written (r16)', () => {
+  const { dir } = fixture();
+  const p = join(dir, 'snap.json');
+  writeSnapshotGuarded(p, JSON.stringify({ v: 1 }), { regressedBy: () => null });
+  let learned = null;
+  writeSnapshotGuarded(p, () => JSON.stringify({ v: 2, learned }), { regressedBy: (cur) => { learned = `saw v${cur.v}`; return null; } });
+  assert.deepEqual(JSON.parse(readFileSync(p, 'utf8')), { v: 2, learned: 'saw v1' });
 });
