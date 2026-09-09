@@ -443,6 +443,12 @@ Thin-market honesty rules apply.
   yet, so the post-submit message describes the result as still being decided
   and directs the lender to the refreshed position, never to a claim that may
   not exist.
+- A conditional sentence whose condition cannot arise on the route being shown
+  does not belong on it. The swap-to-repay cancellation note is the case in
+  point: that facility covers ordinary-asset loans only, so an overdue rental
+  can never carry such an order — and the sentence, while never false, puts a
+  borrower repaying a loan on a surface whose position has a renter paying
+  rent. Unreachable conditions are shown only where they are reachable.
 - Withholding an action for safety must not withhold the explanation with it.
   Where a check that guards the close-out is unanswered — pending, failed, or
   undecodable — the surface stays visible in its unresolved state and says a

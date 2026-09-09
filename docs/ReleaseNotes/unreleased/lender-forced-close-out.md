@@ -256,3 +256,14 @@ problem lasted. Failing safe should mean the button does not work, not
 that the page pretends the position has nothing to offer. The card now
 stays where it is and says a check is still running — which is what it
 does for every other unresolved check, and what it was built to do.
+
+One more of the same kind, found by checking a claim rather than by
+being told. In answering the round above I said the card's two remaining
+unconditional notes were true on every route. One is not. The note
+warning that closing out cancels a borrower's pending swap-to-repay
+order describes a facility that covers ordinary-asset loans only — an
+overdue rental can never have such an order. The sentence was never
+false, since it is conditional and the condition simply never holds; but
+it puts a borrower repaying a loan on a screen whose position has a
+renter paying rent, which is the same confusion in a quieter voice. It
+is no longer shown there.

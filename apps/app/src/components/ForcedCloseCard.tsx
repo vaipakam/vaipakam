@@ -351,7 +351,26 @@ export function ForcedCloseCard({
 
       {submittable ? (
         <>
-          <p className="field-hint">{copy.forcedClose.intentNote}</p>
+          {/* Not on the rental route. `SwapToRepayFacet` is
+              "ERC20-on-ERC20 loans only in v1" and its own error doc
+              names "NFT collateral / NFT rental / illiquid-asset loans"
+              as out of scope, so a rental can never carry a pending
+              swap-to-repay order. The sentence is conditional and so was
+              never FALSE — but its condition cannot be met, and it
+              introduces a "borrower" repaying a loan where the position
+              has a renter paying rent. Same class as the round-40
+              findings, one notch milder.
+
+              RESIDUAL, and stated rather than fixed: an ERC-20 loan
+              secured by NFT collateral is equally out of scope, and it
+              reaches `ready-in-kind` — which this card cannot tell apart
+              from illiquid-ERC-20 collateral, where the note IS live.
+              Distinguishing them needs `collateralIsNft` threaded in for
+              a note that is merely unreachable rather than wrong, which
+              did not seem worth another prop. */}
+          {readiness !== 'ready-rental' ? (
+            <p className="field-hint">{copy.forcedClose.intentNote}</p>
+          ) : null}
           {error ? (
             <div
               className="banner banner-danger"
