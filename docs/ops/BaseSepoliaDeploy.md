@@ -64,8 +64,13 @@ cast balance $ADMIN_ADDRESS --rpc-url $BASE_SEPOLIA_RPC_URL
 
 ```bash
 # Through the wrapper — a direct DeployDiamond broadcast reverts on the gated
-# artifact keys (they need the live-publication marker the wrapper sets):
-bash script/deploy-chain.sh base-sepolia --verify-contracts
+# artifact keys (they need the live-publication marker the wrapper sets).
+# --fresh is REQUIRED on a chain whose addresses.json already names a Diamond
+# (base-sepolia's does): the wrapper refuses to redeploy over a committed
+# deployment without it, and --fresh records the retired Diamond in
+# archive-manifest.json and moves its artifact aside BEFORE the broadcast, so
+# the census inventory keeps it. (--resume continues a partial run instead.)
+bash script/deploy-chain.sh base-sepolia --fresh --verify-contracts
 ```
 
 The script auto-writes the Diamond address (and a `chainId` /

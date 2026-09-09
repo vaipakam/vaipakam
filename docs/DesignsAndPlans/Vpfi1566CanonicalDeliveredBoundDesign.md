@@ -5487,6 +5487,20 @@ reported a comfortable answer it had not earned:
   predates the deployment describes nothing — and the README's cross-chain
   step no longer shows a bare broadcast, since `deploy-chain.sh` runs it
   inside the marked window.
+
+  **Round 31 closed the second forced door and the wrapper's overwrite.** A
+  forced `live-end` cleared a marker with none of the process-group proof a
+  forced `live-begin` demands, so an orphaned forge could still write the
+  artifact after a census had published against the cleared marker; one
+  shared proof of death now sits behind both doors. `deploy-chain.sh` would
+  redeploy over a committed `addresses.json` when `--fresh` was omitted,
+  with nothing archiving the retired Diamond into the manifest; it now
+  refuses an existing Diamond without `--fresh` or `--resume`, as the
+  testnet and mainnet wrappers already did, and both testnet guides pass
+  `--fresh`. The release-note fragment stated the retired no-code rule
+  alongside the new one and now states only the new one, and the lens
+  NatSpec separates a Mirror's satisfiable zero bound from Detached's
+  role-enforced zero, whose recovery is re-attachment rather than funding.
   Hand-computed storage slots were never an option: they fail SILENTLY as
   zero, manufacturing the exact "empty" result the census exists to
   establish. The event reconstruction is retained behind `--corroborate` as

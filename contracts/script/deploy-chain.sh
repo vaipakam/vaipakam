@@ -632,6 +632,22 @@ if [ "$FRESH" = "1" ]; then
   echo
 fi
 
+# Codex #2070 r31 P1 — a chain dir whose addresses.json already names a Diamond
+# is a COMMITTED deployment. Without --fresh nothing above archived it into
+# archive-manifest.json, so re-running DeployDiamond would publish a new address
+# over it and the retired Diamond would never enter the census inventory. Same
+# refusal as deploy-testnet/mainnet: --fresh (archive, then replace) or --resume
+# (continue this very deployment) are the only ways past an existing Diamond.
+if [ "$FRESH" != "1" ] && [ "$RESUME" != "1" ]; then
+  EXISTING_DIAMOND_HERE=$(jq -r '.diamond // empty' "$DEPLOY_DIR/addresses.json" 2>/dev/null || echo "")
+  if [ -n "$EXISTING_DIAMOND_HERE" ] && [ "$EXISTING_DIAMOND_HERE" != "null" ]; then
+    echo "ERROR: deployments/$CHAIN_SLUG/addresses.json already names a deployed Diamond ($EXISTING_DIAMOND_HERE)." >&2
+    echo "       Pass --fresh to archive it into archive-manifest.json and replace it, or --resume to continue that deployment." >&2
+    echo "       A plain re-run would overwrite the committed artifact and drop the retired Diamond from the census inventory." >&2
+    exit 1
+  fi
+fi
+
 # ── 1. Build ──────────────────────────────────────────────────────────
 
 if step_done "build"; then

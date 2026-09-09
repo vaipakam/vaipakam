@@ -154,6 +154,32 @@ export function liveGroupMembers(pgid, { exclude = [], table = processTable() } 
   }
   return table.filter((r) => r.pgid === pgid && !excluded.has(r.pid));
 }
+/**
+ * r27/r31 — before a marker is REPLACED (`live-begin --force`) or CLEARED
+ * (`live-end --force`), the recorded deploy must be provably dead: no live
+ * member of its process group outside the caller's own lineage, and the
+ * process table readable at all. ONE implementation for both doors — r31 P1
+ * found the forced end had none, so an orphaned forge could still write
+ * addresses.json after a census had published against the cleared marker.
+ */
+function assertRecordedDeployDead(existing, { slug, ownerPid, table = processTable(), door }) {
+  const survivors = Number.isInteger(existing.pgid)
+    ? liveGroupMembers(existing.pgid, { exclude: [process.pid, ownerPid], table })
+    : pidAlive(existing.pid)
+      ? [{ pid: existing.pid, comm: 'recorded deploy shell' }]
+      : [];
+  if (survivors === null) {
+    throw new Error(
+      `archive-manifest: --force refused — the process table cannot be read, so ${slug}'s recorded deploy ${existing.pid} (process group ${existing.pgid}) cannot be proven dead`,
+    );
+  }
+  if (survivors.length) {
+    throw new Error(
+      `archive-manifest: --force refused — process group ${existing.pgid ?? existing.pid} of ${slug}'s recorded deploy still has live member(s) ${survivors.map((r) => `${r.pid} (${r.comm})`).join(', ')}; ` +
+        `its broadcast may still be running and would write addresses.json ${door === 'end' ? 'after the marker is cleared' : 'under a replaced marker'}. Wait for it or kill it, then re-run`,
+    );
+  }
+}
 function pidAlive(pid) {
   if (!Number.isInteger(pid) || pid <= 0) return false;
   try {
@@ -557,22 +583,7 @@ export function beginLivePublication(manifestPath, { slug, token, pid, force = f
               `a second deploy on the same chain cannot begin until it ends. If that deploy is dead, confirm its process group has no live member (${groupCheck}) — an orphaned forge keeps the group — and re-run with --force`,
           );
         }
-        const survivors = Number.isInteger(existing.pgid)
-          ? liveGroupMembers(existing.pgid, { exclude: [process.pid, ownerPid], table })
-          : pidAlive(existing.pid)
-            ? [{ pid: existing.pid, comm: 'recorded deploy shell' }]
-            : [];
-        if (survivors === null) {
-          throw new Error(
-            `archive-manifest: --force refused — the process table cannot be read, so deploy ${existing.pid} (process group ${existing.pgid}) cannot be proven dead`,
-          );
-        }
-        if (survivors.length) {
-          throw new Error(
-            `archive-manifest: --force refused — process group ${existing.pgid ?? existing.pid} of the recorded deploy still has live member(s) ${survivors.map((r) => `${r.pid} (${r.comm})`).join(', ')}; ` +
-              `its broadcast may still be running and would write addresses.json under a replaced marker. Wait for it or kill it, then re-run`,
-          );
-        }
+        assertRecordedDeployDead(existing, { slug, ownerPid, table, door: 'begin' });
       }
       inProgress[slug] = { token, pid: ownerPid, pgid: pgidOf(ownerPid), startedAt: new Date().toISOString() };
       const next = { ...m, livePublicationsInProgress: inProgress };
@@ -589,11 +600,17 @@ export function endLivePublication(manifestPath, { slug, token, diamond, force =
       const m = readManifest(manifestPath) ?? emptyManifest();
       const inProgress = { ...(m.livePublicationsInProgress ?? {}) };
       const existing = slug ? inProgress[slug] : undefined;
-      if (existing && !force && existing.token !== token) {
-        throw new Error(
-          `archive-manifest: ${slug}'s live publication belongs to another deploy (token ${existing.token}, pid ${existing.pid}); ` +
-            `this end (token ${token ?? 'none'}) does not match and the marker is left in place — pass --force only to clear a crashed deploy deliberately`,
-        );
+      if (existing && existing.token !== token) {
+        if (!force) {
+          throw new Error(
+            `archive-manifest: ${slug}'s live publication belongs to another deploy (token ${existing.token}, pid ${existing.pid}); ` +
+              `this end (token ${token ?? 'none'}) does not match and the marker is left in place — pass --force only to clear a crashed deploy deliberately`,
+          );
+        }
+        // r31 P1 — a forced CLEAR needs the same proof of death as a forced
+        // replacement: an orphaned forge writes addresses.json just the same
+        // after the marker is gone.
+        assertRecordedDeployDead(existing, { slug, ownerPid: process.pid, door: 'end' });
       }
       if (slug) delete inProgress[slug];
       const next = {

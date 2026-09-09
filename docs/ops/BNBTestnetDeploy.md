@@ -80,8 +80,13 @@ on Base Sepolia — no chain-specific tests gate this deploy.
 
 ```bash
 # Through the wrapper — a direct DeployDiamond broadcast reverts on the gated
-# artifact keys (they need the live-publication marker the wrapper sets):
-bash script/deploy-chain.sh bnb-testnet
+# artifact keys (they need the live-publication marker the wrapper sets).
+# --fresh is REQUIRED here: deployments/bnb-testnet/addresses.json already
+# names a live Diamond, and the wrapper refuses to redeploy over a committed
+# deployment without it — --fresh records the retired Diamond in
+# archive-manifest.json and moves its artifact aside BEFORE the broadcast, so
+# the census inventory keeps it. (--resume continues a partial run instead.)
+bash script/deploy-chain.sh bnb-testnet --fresh
 ```
 
 Note: `--slow` IS safe HERE because the only post-broadcast wait is

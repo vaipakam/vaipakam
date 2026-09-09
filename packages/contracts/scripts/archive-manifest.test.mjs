@@ -348,6 +348,9 @@ test('two-phase live publication: begin marks, end clears and bumps; a second be
   writeFileSync(manifest, JSON.stringify({ ...readManifest(manifest), livePublicationsInProgress: { b: { token: 'old', pid: 2 ** 22 - 1, startedAt: 'x' } } }));
   assert.throws(() => beginLivePublication(manifest, { slug: 'b', token: 'new', pid: process.pid }), /shell gone.*--force/s);
   assert.equal(beginLivePublication(manifest, { slug: 'b', token: 'new', pid: process.pid, force: true }).token, 'new');
+  // r31: a forced clear is held to the proof of death too. This marker was recorded in THIS process's group, where
+  // sibling test processes are indistinguishable from an orphaned forge, so re-record it under a dead group first.
+  writeFileSync(manifest, JSON.stringify({ ...readManifest(manifest), livePublicationsInProgress: { b: { token: 'new', pid: 2 ** 22 - 1, pgid: 2 ** 22 - 1, startedAt: 'x' } } }));
   assert.equal(endLivePublication(manifest, { slug: 'b', token: 'wrong', force: true }), 2);
 });
 
@@ -368,9 +371,16 @@ test('--force is verified against the recorded PROCESS GROUP — an orphaned chi
   writeFileSync(manifest, JSON.stringify({ ...readManifest(manifest), livePublicationsInProgress: { g: { token: 'old', pid: 2 ** 22 - 1, pgid: orphan.pid, startedAt: 'x' } } }));
   assert.throws(() => beginLivePublication(manifest, { slug: 'g', token: 'new', pid: process.pid }), /shell gone.*process group.*--force/s);
   assert.throws(() => beginLivePublication(manifest, { slug: 'g', token: 'new', pid: process.pid, force: true }), /still has live member.*sleep/s);
+  // r31: the forced CLEAR is held to the same proof — the orphan writes the artifact just the same after the marker is gone
+  assert.throws(() => endLivePublication(manifest, { slug: 'g', token: 'other', diamond: '0x', force: true }), /still has live member.*sleep.*after the marker is cleared/s);
+  assert.deepEqual(livePublicationsInProgress(readManifest(manifest)).map((x) => x.slug), ['g'], 'the marker survived the refused clear');
   process.kill(-orphan.pid, 'SIGKILL');
   await exited;
   clearTimeout(keepAlive);
+  // group dead: both doors open
+  assert.equal(endLivePublication(manifest, { slug: 'g', token: 'other', diamond: '0x', force: true }) > 0, true);
+  assert.deepEqual(livePublicationsInProgress(readManifest(manifest)), []);
+  writeFileSync(manifest, JSON.stringify({ ...readManifest(manifest), livePublicationsInProgress: { g: { token: 'old', pid: 2 ** 22 - 1, pgid: orphan.pid, startedAt: 'x' } } }));
   assert.equal(beginLivePublication(manifest, { slug: 'g', token: 'new', pid: process.pid, force: true }).token, 'new');
 });
 

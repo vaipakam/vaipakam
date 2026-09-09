@@ -86,10 +86,12 @@ this one. The command that regenerates that manifest may add entries but will
 refuse to silently drop any it already lists — on a fresh checkout, where the
 local directories are absent, an unguarded rewrite would have emptied it and
 made a five-deployment census look complete. Dropping an entry requires an
-explicit override and is reported by name. One further guard: an address that
-holds no code at the block being read is only treated as empty when that block
-is known to be at or after the deployment; a read taken before the contract
-existed proves nothing, and is refused or reported as undetermined instead.
+explicit override and is reported by name. One further guard: a read taken
+at a block before the recorded deployment describes nothing and is refused;
+and an address that holds no code at the block being read is never treated as
+empty at all — on every chain in the inventory a contract keeps its code once
+deployed, so such a record names no contract and is reported as a gap in
+coverage to be corrected, never as a proof.
 
 The manifest also has exactly one writer now, shared by the deploy scripts and
 the census, and it takes a lock before it reads. Review found that two chains
