@@ -3485,7 +3485,12 @@ function classifyText(text, lang) {
       // string, because a shell string IS executable here. Only the quoted
       // form: an unquoted delimiter still expands, so its body is unchanged.
       if (lang === 'shell' && c === '<' && text[i + 1] === '<') {
-        const h = /^<<(-?)\s*(['"])([A-Za-z_][A-Za-z0-9_]*)\2/.exec(text.slice(i, i + 80));
+        // Bash quote-removes the delimiter word, so `<<\\EOF` is as quoted as
+        // `<<'EOF'` and its body is literal input too (r23).
+        const h =
+          /^<<(-?)\s*(?:(['"])([A-Za-z_][A-Za-z0-9_]*)\2|\\([A-Za-z_][A-Za-z0-9_]*))/.exec(
+            text.slice(i, i + 80),
+          );
         const nl = h ? text.indexOf('\n', i) : -1;
         if (h && nl !== -1) {
           // `<<` wants the delimiter at column zero; only `<<-` strips leading
@@ -3493,7 +3498,7 @@ function classifyText(text, lang) {
           // `  EOF` terminate the document early, so the text after it read as
           // code (r22).
           const lead = h[1] === '-' ? '\\t*' : '';
-          const end = new RegExp(`\\n${lead}${h[3]}[ \\t]*(?:\\n|$)`).exec(text.slice(nl));
+          const end = new RegExp(`\\n${lead}${h[3] ?? h[4]}[ \\t]*(?:\\n|$)`).exec(text.slice(nl));
           const stop = end ? nl + end.index + end[0].length : text.length;
           kind.fill(2, nl, stop);
           i = stop - 1;
@@ -3616,13 +3621,17 @@ function inTestExpression(idx, text, kind) {
   // "did one appear earlier": in `[[ "$(echo x)" > "$CFG" ]]` the substitution
   // has already closed and the `>` is still a comparison (r22).
   let sub = 0;
+  let tick = false;
   for (let i = open; i < idx; i += 1) {
-    if (text[i] === '$' && text[i + 1] === '(') {
+    // Backticks are the legacy spelling of the same thing, and leaving them
+    // untracked exempted a live redirection inside one (r23).
+    if (text[i] === '`') tick = !tick;
+    else if (text[i] === '$' && text[i + 1] === '(') {
       sub += 1;
       i += 1;
     } else if (text[i] === ')' && sub > 0) sub -= 1;
   }
-  return sub === 0;
+  return sub === 0 && !tick;
 }
 
 /**
@@ -3682,7 +3691,10 @@ function isCommandPayload(idx, text, kind) {
   if (text[start - 1] === undefined) return true;
   const args = text.slice(open, start);
   if (!args.includes('[')) return true;
-  return /(['"`])-{1,2}[a-zA-Z]*[ce]\1\s*,\s*$/.test(args);
+  // The EVALUATE flags by name, long and short. `--eval` does not end in
+  // `e`-after-dashes the way a grouped short option does, so a suffix test
+  // missed it (r23); matching any option ending in c/e would take `--trace`.
+  return /(['"`])(?:-{1,2}(?:eval|command|c)|-[a-zA-Z]*e)\1\s*,\s*$/.test(args);
 }
 
 function isInertAssignment(idx, text, kind) {
@@ -3704,7 +3716,10 @@ function isInertAssignment(idx, text, kind) {
   if (text[s] !== "'" && /\$\(|`/.test(text.slice(s, e))) return false;
   let b = s;
   while (b > 0 && !'\n;&|('.includes(text[b - 1])) b -= 1;
-  return /(?:^|\s)(?:export\s+|local\s+|declare\s+(?:-\S+\s+)*|readonly\s+|typeset\s+)?[A-Za-z_]\w*=$/.test(
+  // The whole assignment WORD, not only a value that starts at the quote:
+  // `EXAMPLE=prefix"fs.copy(a, b)"` concatenates chunks and still just stores
+  // text (r23).
+  return /(?:^|\s)(?:export\s+|local\s+|declare\s+(?:-\S+\s+)*|readonly\s+|typeset\s+)?[A-Za-z_]\w*=[^\s'"]*$/.test(
     text.slice(b, s),
   );
 }
@@ -3776,6 +3791,14 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
   if (writesCache.text === text && writesCache.key === wkey) {
     return finishRewrite(writesCache.writes, text, cfgPath, at, esc);
   }
+  // THROUGH THE CLASSIFIER, like the named-write scan below. These directly
+  // named patterns were exempt, so `const example =
+  // 'writeFileSync("configs/custom.jsonc", "{}")'` — a string DESCRIBING a
+  // write — reported a config nothing had touched (r23). One classifier, and
+  // now every reader of write offsets consults it; the release note said as
+  // much before it was true.
+  const directKind = classifyText(text, lang);
+  const shellishDirect = lang === 'shell';
   const writes = [
     ...text.matchAll(
       new RegExp(
@@ -3783,7 +3806,19 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
         'g',
       ),
     ),
-  ].map((m) => m.index);
+  ]
+    .filter((m) => {
+      const k = directKind[m.index];
+      if (k === 2) return false;
+      // In shell a quoted payload still executes, so only an inert assignment
+      // is data there — the same split the named scan makes.
+      if (k === 1)
+        return shellishDirect
+          ? !isInertAssignment(m.index, text, directKind)
+          : isCommandPayload(m.index, text, directKind);
+      return true;
+    })
+    .map((m) => m.index);
   // THE NAME, THEN ANY WRITE. Every pattern above requires the config's name
   // AT the write, which a binding removes: `p = Path("…/custom.jsonc")`
   // followed by `p.write_text(…)` names the file once and writes through a
@@ -3968,7 +4003,11 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
         String.raw`|\bopen\s*\(\s*(?:(?:[^()]|\([^()]*\))*,\s*)?mode\s*=\s*(["'\`])[rbt]*[wax+][rbt+]*\2` +
         // `open(Path(cfg), "w")` wraps the path, and stopping at the first
         // `)` never reached the positional mode (r10).
-        String.raw`|\bopen\s*\((?:[^()]|\([^()]*\))*,\s*(["'\`])[rbt]*[wax+][rbt+]*\3`,
+        // …and the POSITIONAL form needs an `open` that is Python's builtin or a
+        // filesystem one. Any member method whose second argument looks like a
+        // mode matched — `browser.open(url, "w")` opens a window named `w` (r23).
+        String.raw`|(?<![A-Za-z0-9_$.])(?:(?:os|io|codecs|pathlib|gzip|bz2|lzma)\s*\.\s*)?` +
+        String.raw`open\s*\((?:[^()]|\([^()]*\))*,\s*(["'\`])[rbt]*[wax+][rbt+]*\3`,
       'gm',
     );
     // NO ORDERING BETWEEN THE NAME AND THE WRITE. Requiring the write to come
