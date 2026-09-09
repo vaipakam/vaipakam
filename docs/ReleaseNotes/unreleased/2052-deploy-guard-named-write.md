@@ -224,6 +224,41 @@ drawn by POSITION — text quoted and handed to something that runs it is judged
 on whether something runs it, and only text claiming to be the file's own
 syntax is read in the file's own language.
 
+That correction was then applied to only one of the two scans. The other went
+on compiling its shell spellings away whenever the containing file was not a
+shell, so a redirection inside a command that a JavaScript wrapper executes was
+never looked for at all — and because the target of that redirection was held
+in a variable, the scan that matches on the configuration's own name could not
+see it either. Both scans now ask the same question, and they ask it the same
+way: which spelling matched is a fact about the pattern, so the shell spellings
+are a separate pass rather than an alternative inside the other one whose
+identity had to be recovered by re-reading the matched text afterwards. That
+re-reading was itself a second, drifting copy of every shell spelling — one
+that had never learned about the write-to-both-streams command, the in-place
+editors, or the named-descriptor redirections added after it — and it is now
+deleted rather than corrected. Separating the passes also removes an
+interference that would otherwise have been possible: two families of spelling
+competing inside one pattern let a shell-shaped expression earlier on a line
+consume the text a real write occupies later on it.
+
+A payload also begins at its opening quote, and a command position had never
+counted a quote as one. Reaching inside executed payloads made that visible
+immediately: the redirection was found, and the copy command one character
+further in was not.
+
+Opening a file for writing is a write on its own, in every language this reads.
+The Node spelling that takes a mode and hands back a descriptor was absent from
+the vocabulary, so a helper that opened the configuration that way and wrote
+through the descriptor was passed as safe. The truncating open is what is
+recognised — the write that follows it names neither a file nor a mode, and the
+verb it uses is exactly the kind of generic name this work keeps out.
+
+An executable helper with no file extension is classified by its shebang, which
+had been true for one interpreter and not the other. A Node helper was read as
+a language with no string literals, so an inert example inside one was taken
+for the file's own code — a false report, and false reports are the failure
+this checker is least allowed.
+
 Where a file-open mode may sit depends on what the call is opening, and that
 is the language's rule rather than a preference. For the builtin and for a
 module's open, the first argument is the file — so a call with a single string

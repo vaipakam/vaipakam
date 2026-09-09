@@ -3620,16 +3620,22 @@ const CALL = String.raw`\s*(?:\?\.)?\s*\(`;
 // and in shell text it is neither a builtin nor valid, so a bare one there is
 // already only reachable through a payload. Gating on Python alone also broke
 // two fixtures older than this loop, which is what surfaced the distinction.
+//
+// …and NODE OPENS FILES TOO. `fs.openSync(cfg, 'w')` truncates the file on the
+// spot and hands back a descriptor, and neither the qualifier list nor the
+// `open` spelling reached it — so a helper that opened the config and wrote
+// through the descriptor was a false GREEN before a config-selected deploy
+// (r40). The TRUNCATING OPEN is the write here, which is why no
+// descriptor-writing verb joins the vocabulary with it: `fs.writeSync(fd, …)`
+// names neither a file nor a mode, and `write` is the generic name this file
+// keeps out. Same reasoning as `os.open(cfg, os.O_TRUNC)` below — the open
+// carries the intent, the subsequent write does not.
 const fsOpen = (lang) =>
   String.raw`(?<![A-Za-z0-9_$.])(?:(?:io|codecs|pathlib|gzip|bz2|lzma)\s*\.\s*` +
+  String.raw`|(?:fs|fsp|fse|fsExtra)(?:\s*\.\s*promises)?\s*\.\s*` +
   String.raw`|Path\s*\([^()]*\)\s*\.\s*)` +
   (lang === 'js' ? '' : '?') +
-  String.raw`open`;
-
-// The direct alternatives that are SHELL SPELLINGS: a redirection, and a copy
-// command in command position. Used to drop them when a match in code position
-// comes from a file that is not a shell.
-const SHELL_SYNTAX_WRITE = /^[\s;&|(]*(?:>|(?:cp|mv|install|rsync)\s)/;
+  String.raw`open(?:Sync)?`;
 
 // The evaluate-option tests, by which letter the interpreter runs source with.
 // Built once: `isCommandPayload` is called per write match, and compiling a
@@ -4112,15 +4118,16 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
   // is the signature this file deletes on. The miss is nameable: a copy run
   // as a child process through an argument list is not seen. It is behind the
   // `keep_vars: true` declaration, and the shell spelling below is unaffected.
-  const COPY =
+  const COPY_SHELL =
     // …and the space after the verb may NOT be a NEWLINE. `\s` matches one,
     // so `echo cp` on its own line ran on into the NEXT line and found the
     // config name in the deploy command itself — any mention of the word `cp`
     // in a script that deploys reported a copy (found while probing r38, and
     // the third pattern in this file to make the same mistake after r26 and
     // r31).
-    String.raw`(?:^|[\s;&|(])(?:cp|mv|install|rsync)[^\S\n][^\n]*?` + esc +
-    String.raw`|(?:copyFile|rename|cpSync|copyFileSync|renameSync)` + CALL + String.raw`[^)]*` + esc +
+    String.raw`(?:^|[\s;&|("'\`])(?:cp|mv|install|rsync)[^\S\n][^\n]*?` + esc;
+  const COPY_CALL =
+    String.raw`(?:copyFile|rename|cpSync|copyFileSync|renameSync)` + CALL + String.raw`[^)]*` + esc +
     String.raw`|(?<![A-Za-z0-9_$.])(?:shutil|fs|fse|fsExtra|fsp)` +
     String.raw`(?:\s*\.\s*promises)?\s*\.\s*(?:copy|move)` + CALL + String.raw`[^)]*` + esc;
   // …AND THE WHOLE SCAN IS CACHED PER (file, config, language). Everything from
@@ -4142,14 +4149,14 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
   const directKind = classifyText(text, lang);
   const shellishDirect = lang === 'shell';
   const writes = [
-    ...text.matchAll(
-      new RegExp(
-        [WRITE_CALL, OPEN_WRITE, RECEIVER_WRITE, RECEIVER_OPEN, REDIRECT, COPY].join('|'),
-        'g',
+    ...[
+      ...text.matchAll(
+        new RegExp(
+          [WRITE_CALL, OPEN_WRITE, RECEIVER_WRITE, RECEIVER_OPEN, COPY_CALL].join('|'),
+          'g',
+        ),
       ),
-    ),
-  ]
-    .filter((m) => {
+    ].filter((m) => {
       const k = directKind[m.index];
       if (k === 2) return false;
       // In shell a quoted payload still executes, so only an inert assignment
@@ -4158,27 +4165,47 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
         return shellishDirect
           ? !isInertAssignment(m.index, text, directKind)
           : isCommandPayload(m.index, text, directKind);
-      // SHELL SYNTAX IN CODE POSITION IS ONLY SHELL IN A SHELL. A redirection
-      // and a bare copy command are shell spellings, and in JavaScript the
-      // same characters are an arrow function, a comparison, or an ordinary
-      // identifier — `const pick = x => "configs/custom.jsonc"` and `if cp and
-      // target == "…"` both reported a config nothing touched (r35).
-      //
-      // Asked of the POSITION and not of the FILE, which is the correction
-      // that matters here. Gating these alternatives on the file's language
-      // was the obvious reading of the finding and it is wrong: a payload
-      // handed to `sh -c` inside a `.mjs` wrapper IS shell, and eight pinned
-      // payload fixtures went red on it. A quoted run reaches this branch as
-      // a string and is judged by whether something runs it; only a match in
-      // CODE position is claiming to be the file's own syntax.
-      if (!shellishDirect && SHELL_SYNTAX_WRITE.test(m[0])) return false;
+      return true;
+    }),
+    // SHELL SPELLINGS ARE A SEPARATE PASS, not an alternative inside the one
+    // above. A redirection and a bare copy command are shell syntax, and in
+    // JavaScript the same characters are an arrow function, a comparison, or
+    // an ordinary identifier — `const pick = x => "configs/custom.jsonc"` and
+    // `if cp and target == "…"` both reported a config nothing touched (r35).
+    //
+    // Asked of the POSITION and not of the FILE, which is the correction that
+    // matters here. Gating these alternatives on the file's language was the
+    // obvious reading of that finding and it is wrong: a payload handed to
+    // `sh -c` inside a `.mjs` wrapper IS shell, and eight pinned payload
+    // fixtures went red on it.
+    //
+    // r35 answered it by re-reading the MATCHED TEXT (`SHELL_SYNTAX_WRITE`) to
+    // ask which alternative had produced it. That predicate is deleted here:
+    // which alternative matched is a fact the regex already knows, and
+    // re-deriving it from the text meant a second, drifting spelling of every
+    // shell alternative — one that never learned about `tee`, the in-place
+    // editors, or the `{name}>` and `<>` redirections added after it (r40).
+    // Two passes instead, so the answer is structural. Separate passes also
+    // stop one family consuming the other's matches: sharing a regex, a
+    // `mv`-flavoured expression earlier on a line could swallow a real
+    // `writeFileSync` after it and never report the write.
+    ...[...text.matchAll(new RegExp([REDIRECT, COPY_SHELL].join('|'), 'g'))].filter((m) => {
+      const k = directKind[m.index];
+      if (k === 2) return false;
+      // OUTSIDE A SHELL, shell syntax only executes if something RUNS it. A
+      // match in code position is claiming to be the file's own syntax, which
+      // in JavaScript or Python it is not; a quoted one is judged by whether
+      // it is a payload, exactly as the calls above are.
+      if (!shellishDirect) return k === 1 && isCommandPayload(m.index, text, directKind);
+      if (k === 1) return !isInertAssignment(m.index, text, directKind);
       // A `[[ … ]]` comparison is not a redirection on this path either. The
       // named scan exempted it and this one did not, so
       // `[[ "$left" > "configs/custom.jsonc" ]]` reported a rewrite (r24).
-      if (shellishDirect && inTestExpression(m.index, text, directKind)) return false;
-      return true;
-    })
-    .map((m) => m.index);
+      return !inTestExpression(m.index, text, directKind);
+    }),
+  ]
+    .map((m) => m.index)
+    .sort((a, b) => a - b);
   // THE NAME, THEN ANY WRITE. Every pattern above requires the config's name
   // AT the write, which a binding removes: `p = Path("…/custom.jsonc")`
   // followed by `p.write_text(…)` names the file once and writes through a
@@ -4228,6 +4255,174 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
     // more fully — a dotted qualifier, an IO-number prefix, a path-qualified
     // command — not a new kind of write, so they are handled by making the
     // existing entries exact instead of by lengthening the list.
+  // THE SHELL SPELLINGS ARE A SEPARATE PATTERN, run as its own pass below.
+  // They were alternatives inside the scan, included only when the FILE was a
+  // shell — so `execSync(`printf '{}' > ${cfg}`)` inside a `.mjs` wrapper had
+  // its redirection compiled away and the write went unreported, a false GREEN
+  // before a config-selected deploy (r40). What decides whether shell syntax
+  // executes is not the containing file but whether something RUNS the text,
+  // which is the correction r35 already made on the directly-named scan; this
+  // scan kept the file-wide gate. Lifted out so both scans ask it the same way.
+  //
+  // A separate pass rather than a flag, for the same reason the direct scan
+  // uses one: sharing a regex lets a shell-shaped expression earlier on a line
+  // consume the text a real write call occupies later on it.
+  const SHELL_COPY_CMD =
+  // Shell write commands, optionally reached through a path — and only
+  // in SHELL text. `const ratio = cp / total;` is ordinary JavaScript
+  // and matched the whitespace-delimited `cp` branch (r11).
+  // …and in COMMAND POSITION. Any whitespace before the word was
+  // enough, so `command -v cp && echo found` — which only tests whether
+  // `cp` exists — counted as a copy (r12). A command starts a line or
+  // follows a separator, optionally behind one of the few wrappers that
+  // take a command as their argument.
+  // …and a command position admits PREFIXES. Requiring the verb to
+  // follow the boundary or a bare wrapper name missed
+  // `MODE=copy cp gen.jsonc "$CFG"` and `sudo -u root cp gen.jsonc
+  // "$CFG"`, both of which copy (r13). Two prefix shapes, each of which
+  // cannot swallow a command name: a `VAR=value` assignment, and one of
+  // the listed wrappers with its own options — including the few sudo
+  // short options that take an argument, spelled out rather than
+  // approximated by "a word".
+  // `command` is deliberately NOT a wrapper here: `command -v cp` only
+  // TESTS for cp, and admitting it would restore the r12 false red.
+  // …and A PAYLOAD BEGINS AT ITS QUOTE. `execSync(`cp gen.jsonc ${cfg}`)`
+  // starts its command at the backtick, which was not a boundary, so lifting
+  // these alternatives out of the file-wide gate reached the payload and then
+  // failed to see the command inside it. The quote is a boundary in exactly
+  // the sense the others are: nothing can precede the verb there.
+    // An assignment VALUE may be quoted, and quoted whitespace is still
+      // one word — `LABEL="two words" cp gen.jsonc "$CFG"` copies (r17).
+      // Matched as a shell word rather than as "contains no space".
+      // …and after a RESERVED WORD. `if true; then cp gen.jsonc "$CFG"; fi`
+      // starts a command at `then`, which is neither a line start nor a
+      // separator, so the copy was invisible (r24).
+      // …and a `case` arm opens with `)`. The boundary may NOT cross a
+      // newline: `\\s*` did, so a comment ending in a reserved word absorbed
+      // the next real command into a match anchored in comment text, and
+      // `matchAll` resumed past it — the command was never reconsidered
+      // (r26).
+      String.raw`(?:^|[;&|()"'\`]|\b(?:if|elif|then|else|while|until|do)\b|[!{])[^\S\n]*(?:(?:[A-Za-z_]\w*=(?:"[^"]*"|'[^']*'|\S)*` +
+      // A long option can take its argument SEPARATED — `sudo --user
+      // root cp …` — and the generic branch consumed `--user` while
+      // leaving `root` to be read as the command (r14). The long forms
+      // that take an argument are named, the same way the short ones
+      // are, rather than approximated by "a following word".
+      // `command` RUNS its argument — `command cp gen.jsonc "$CFG"`
+      // copies — and r12 excluded it wholesale to stop `command -v cp`
+      // counting as one. Admitted here with the QUERY MODES excluded
+      // instead, which is the distinction bash's own help draws (r17).
+      // …and `--` ENDS ITS OPTIONS. `command -- cp gen.jsonc "$CFG"` runs
+      // the copy, and requiring the verb immediately after `command` never
+      // reached it (r38). The query modes stay excluded.
+      String.raw`|command(?!\s+-[vV]\b)(?:\s+--)?` +
+      String.raw`|(?:sudo|env|xargs|time|nohup)(?:` +
+      String.raw`\s+--(?:user|group|prompt|close-from|host|role|type|chdir|other-user)\s+\S+` +
+      // `env -u NAME` and friends take an OPERAND, and stopping before it
+      // let the operand be read as the command — `env -u cp echo harmless`
+      // reported a copy (r22).
+      String.raw`|\s+--?(?:u|unset|C|chdir|S|split-string)(?:=\S+|\s+\S+)` +
+      // The generic alternative must NOT be able to match an
+      // operand-taking option, or backtracking simply re-enters it and
+      // hands the operand back as the command.
+      String.raw`|\s+-(?!(?:u|C|S)(?:\s|=))(?!-(?:unset|chdir|split-string)(?:\s|=))[-\w]+(?:=\S+)?` +
+      String.raw`|\s+-[ugUpChrtDR]\s+\S+)*` +
+      // …AND IT NEEDS A FILE OPERAND. `cp --help` prints usage and `tee`
+      // with no operand writes to standard output, and both were counted
+      // as writes on the strength of the command name alone (r31). Asked
+      // as one question — is there a word here that is not an option and
+      // not a redirection — rather than as a list of the flags that mean
+      // 'do nothing', which is the shape this file keeps deleting.
+      //
+      // The operand search may NOT cross a newline. `\s` does, so
+      // `cp --help` swallowed the line break and took the next line's
+      // first word as its operand — the same mistake the command
+      // boundary made in r26, in a pattern written after it.
+      // …AND NOT IN A MODE THAT MAKES NO CHANGES — which is now ONE
+      // spelling, not three. `--dry-run` means the same thing wherever
+      // it appears and nothing reverses it. `-n` and `--no-clobber` do
+      // NOT: GNU says that of `-i`, `-f` and `-n` only the LAST takes
+      // effect, so `mv --no-clobber -f a b` overwrites, and excluding it
+      // on sight was a false green (r33).
+      //
+      // Reading that ordering means modelling how each command's options
+      // override each other, which is the per-command flag table this
+      // file refuses. So the two order-dependent spellings are dropped
+      // rather than ordered, and `cp -n a b` is reported — a write that
+      // may not happen, which is the direction this reader prefers.
+      String.raw`)\s+)*(?:[\w./-]*/)?(?:cp|mv|install|rsync|tee)` +
+      // …AND THE LOOK-AHEAD STOPS AT THE COMMAND. Scanning the rest of
+      // the LINE let an unrelated option disable the copy beside it:
+      // `cp generated.jsonc "$CFG" && echo -n done` went unreported
+      // because `echo`'s `-n` was in range (r32 self-review). A false
+      // green introduced by the fix for a false red, in the same round.
+      String.raw`(?![^\n;&|]*[^\S\n]--dry-run\b)` +
+      String.raw`[^\S\n]+(?:-\S+[^\S\n]+)*[^\s<>|&;-]`;
+
+  const SHELL_INPLACE_EDIT =
+  // AN IN-PLACE EDIT IS A WRITE. `sed -i 's/old/new/' "$CFG"` rewrites
+  // the file with no redirection and no copy verb, so nothing above saw
+  // it (r34). Two commands, not a category: `sed` and `perl` are the
+  // in-place editors that appear in deploy scripts, and `-i` means
+  // something else entirely on `cp`, `mv` and `grep`, so this cannot be
+  // asked of the option alone.
+  //
+  // The FIRST spelling of this asked whether the option group right
+  // after the command contained an `i`, and r36 returned three findings
+  // against that in one round: `-i.bak` attaches a backup suffix,
+  // `-E -i` puts other options first, and `-i --help` edits nothing.
+  // Parsing an option sequence per command is the flag table this file
+  // refuses — so the shape is replaced rather than patched, with the
+  // one the copy commands beside it already use: the command, then its
+  // options, then an OPERAND. The operand is what excludes `--help`,
+  // and it is the rule already written above rather than a new one.
+  //
+  // The withdrawal condition, restated because r34's was too narrow: a
+  // third editor OR another round of option-shape findings ends this,
+  // rather than extending it again.
+    String.raw`(?:^|[\s;&|("'\`])(?:[\w./-]*/)?(?:sed|perl)` +
+      // WHERE THE LETTER SITS IN THE CLUSTER decides whether it is the
+      // in-place option at all. A short option that takes a value takes
+      // the REST of its token, so the letter is either first — carrying
+      // an attached suffix, `-i.bak` — or last in an all-letter cluster,
+      // `-pi`. Accepting it anywhere read Perl's include-directory
+      // option `-Ilib` as an in-place edit and reported a command that
+      // only prints (r36 self-review). That is the general rule for
+      // short options, not a table of these two tools' flags.
+      String.raw`(?:[^\S\n]+-[^\s;&|]*)*?[^\S\n]+` +
+      String.raw`(?:-i[^\s;&|]*|-[a-zA-Z]*i(?=[^\S\n]|$)|--in-place[^\s;&|]*)` +
+      String.raw`(?:[^\S\n]+-[^\s;&|]*)*[^\S\n]+[^\s<>|&;-]`;
+
+  const SHELL_REDIRECT_BOUND =
+  // A REDIRECTION, not every `>`. The bare alternative also matched the
+  // arrow in `=>` and the comparison in `2 > 1`, and since the deploy's
+  // own `--config` already satisfies the name test, any such operator
+  // reported a config that was never touched (Codex #2066 r9). A
+  // redirection sits at a command boundary and is followed by a target.
+  // …and its TARGET is a path or a variable, with the IO-number prefix
+  // shells allow (`2>"$CFG"`). Only in SHELL text: whitespace is not a
+  // command boundary in JavaScript, so `if (value > "$CFG")` matched
+  // here and reported a config nothing had touched (r9 narrowed this
+  // once and r10 showed the narrowing was still language-blind). The
+  // directly-named redirection is covered above; this alternative exists
+  // for the write through a BINDING.
+  // `>|` (the noclobber override) and `>&` (stdout+stderr to one file)
+  // both truncate their target, and the target class saw the `|` or `&`
+  // and rejected the match (r13). Fd duplication is unaffected: `2>&1`
+  // has a digit for a target, which the class does not accept.
+  // …and `*>` redirects every stream in PowerShell — and is a glob
+  // followed by a redirection in POSIX shell (`cat *> out`), which is
+  // also a write — so the prefix class admits it alongside the IO
+  // number (r14). This is the OPERATOR only; PowerShell's write cmdlets
+  // stay out of scope, as recorded at r11.
+  // …and bash NAMES a descriptor: `exec {out}>"$CFG"` allocates one and
+  // truncates the target exactly as `3>` does, while a prefix class of
+  // digits could not see it (r31). Closed syntax, one alternative.
+  // …and `<>` OPENS FOR WRITING TOO. `exec 3<>"$CFG"` takes a
+  // descriptor that can write, and a pattern beginning at `>` never saw
+  // the operator at all (r38).
+    String.raw`(?:^|[\s;&|)"'\`])(?:\{\w+\}|[\d*]*)(?:<>|>{1,2})[|&]?\s*["'$~/.]`;
+
     const ANY_WRITE = new RegExp(
       // A word boundary that admits MEMBER ACCESS but not a suffix. Consuming
       // the preceding character and excluding `.` blocked
@@ -4289,157 +4484,6 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
         // rather than the type resolution this reader declines: a bare
         // `.replace(` on an unknown value stays out (r25).
         String.raw`|(?<![A-Za-z0-9_$.])Path\s*\((?:[^()]|\([^()]*\))*\)\s*\.\s*replace` + CALL +
-        // Shell write commands, optionally reached through a path — and only
-        // in SHELL text. `const ratio = cp / total;` is ordinary JavaScript
-        // and matched the whitespace-delimited `cp` branch (r11).
-        // …and in COMMAND POSITION. Any whitespace before the word was
-        // enough, so `command -v cp && echo found` — which only tests whether
-        // `cp` exists — counted as a copy (r12). A command starts a line or
-        // follows a separator, optionally behind one of the few wrappers that
-        // take a command as their argument.
-        // …and a command position admits PREFIXES. Requiring the verb to
-        // follow the boundary or a bare wrapper name missed
-        // `MODE=copy cp gen.jsonc "$CFG"` and `sudo -u root cp gen.jsonc
-        // "$CFG"`, both of which copy (r13). Two prefix shapes, each of which
-        // cannot swallow a command name: a `VAR=value` assignment, and one of
-        // the listed wrappers with its own options — including the few sudo
-        // short options that take an argument, spelled out rather than
-        // approximated by "a word".
-        // `command` is deliberately NOT a wrapper here: `command -v cp` only
-        // TESTS for cp, and admitting it would restore the r12 false red.
-        (shellish
-          ? // An assignment VALUE may be quoted, and quoted whitespace is still
-            // one word — `LABEL="two words" cp gen.jsonc "$CFG"` copies (r17).
-            // Matched as a shell word rather than as "contains no space".
-            // …and after a RESERVED WORD. `if true; then cp gen.jsonc "$CFG"; fi`
-            // starts a command at `then`, which is neither a line start nor a
-            // separator, so the copy was invisible (r24).
-            // …and a `case` arm opens with `)`. The boundary may NOT cross a
-            // newline: `\\s*` did, so a comment ending in a reserved word absorbed
-            // the next real command into a match anchored in comment text, and
-            // `matchAll` resumed past it — the command was never reconsidered
-            // (r26).
-            String.raw`|(?:^|[;&|()]|\b(?:if|elif|then|else|while|until|do)\b|[!{])[^\S\n]*(?:(?:[A-Za-z_]\w*=(?:"[^"]*"|'[^']*'|\S)*` +
-            // A long option can take its argument SEPARATED — `sudo --user
-            // root cp …` — and the generic branch consumed `--user` while
-            // leaving `root` to be read as the command (r14). The long forms
-            // that take an argument are named, the same way the short ones
-            // are, rather than approximated by "a following word".
-            // `command` RUNS its argument — `command cp gen.jsonc "$CFG"`
-            // copies — and r12 excluded it wholesale to stop `command -v cp`
-            // counting as one. Admitted here with the QUERY MODES excluded
-            // instead, which is the distinction bash's own help draws (r17).
-            // …and `--` ENDS ITS OPTIONS. `command -- cp gen.jsonc "$CFG"` runs
-            // the copy, and requiring the verb immediately after `command` never
-            // reached it (r38). The query modes stay excluded.
-            String.raw`|command(?!\s+-[vV]\b)(?:\s+--)?` +
-            String.raw`|(?:sudo|env|xargs|time|nohup)(?:` +
-            String.raw`\s+--(?:user|group|prompt|close-from|host|role|type|chdir|other-user)\s+\S+` +
-            // `env -u NAME` and friends take an OPERAND, and stopping before it
-            // let the operand be read as the command — `env -u cp echo harmless`
-            // reported a copy (r22).
-            String.raw`|\s+--?(?:u|unset|C|chdir|S|split-string)(?:=\S+|\s+\S+)` +
-            // The generic alternative must NOT be able to match an
-            // operand-taking option, or backtracking simply re-enters it and
-            // hands the operand back as the command.
-            String.raw`|\s+-(?!(?:u|C|S)(?:\s|=))(?!-(?:unset|chdir|split-string)(?:\s|=))[-\w]+(?:=\S+)?` +
-            String.raw`|\s+-[ugUpChrtDR]\s+\S+)*` +
-            // …AND IT NEEDS A FILE OPERAND. `cp --help` prints usage and `tee`
-            // with no operand writes to standard output, and both were counted
-            // as writes on the strength of the command name alone (r31). Asked
-            // as one question — is there a word here that is not an option and
-            // not a redirection — rather than as a list of the flags that mean
-            // 'do nothing', which is the shape this file keeps deleting.
-            //
-            // The operand search may NOT cross a newline. `\s` does, so
-            // `cp --help` swallowed the line break and took the next line's
-            // first word as its operand — the same mistake the command
-            // boundary made in r26, in a pattern written after it.
-            // …AND NOT IN A MODE THAT MAKES NO CHANGES — which is now ONE
-            // spelling, not three. `--dry-run` means the same thing wherever
-            // it appears and nothing reverses it. `-n` and `--no-clobber` do
-            // NOT: GNU says that of `-i`, `-f` and `-n` only the LAST takes
-            // effect, so `mv --no-clobber -f a b` overwrites, and excluding it
-            // on sight was a false green (r33).
-            //
-            // Reading that ordering means modelling how each command's options
-            // override each other, which is the per-command flag table this
-            // file refuses. So the two order-dependent spellings are dropped
-            // rather than ordered, and `cp -n a b` is reported — a write that
-            // may not happen, which is the direction this reader prefers.
-            String.raw`)\s+)*(?:[\w./-]*/)?(?:cp|mv|install|rsync|tee)` +
-            // …AND THE LOOK-AHEAD STOPS AT THE COMMAND. Scanning the rest of
-            // the LINE let an unrelated option disable the copy beside it:
-            // `cp generated.jsonc "$CFG" && echo -n done` went unreported
-            // because `echo`'s `-n` was in range (r32 self-review). A false
-            // green introduced by the fix for a false red, in the same round.
-            String.raw`(?![^\n;&|]*[^\S\n]--dry-run\b)` +
-            String.raw`[^\S\n]+(?:-\S+[^\S\n]+)*[^\s<>|&;-]`
-          : '') +
-        // AN IN-PLACE EDIT IS A WRITE. `sed -i 's/old/new/' "$CFG"` rewrites
-        // the file with no redirection and no copy verb, so nothing above saw
-        // it (r34). Two commands, not a category: `sed` and `perl` are the
-        // in-place editors that appear in deploy scripts, and `-i` means
-        // something else entirely on `cp`, `mv` and `grep`, so this cannot be
-        // asked of the option alone.
-        //
-        // The FIRST spelling of this asked whether the option group right
-        // after the command contained an `i`, and r36 returned three findings
-        // against that in one round: `-i.bak` attaches a backup suffix,
-        // `-E -i` puts other options first, and `-i --help` edits nothing.
-        // Parsing an option sequence per command is the flag table this file
-        // refuses — so the shape is replaced rather than patched, with the
-        // one the copy commands beside it already use: the command, then its
-        // options, then an OPERAND. The operand is what excludes `--help`,
-        // and it is the rule already written above rather than a new one.
-        //
-        // The withdrawal condition, restated because r34's was too narrow: a
-        // third editor OR another round of option-shape findings ends this,
-        // rather than extending it again.
-        (shellish
-          ? String.raw`|(?:^|[\s;&|(])(?:[\w./-]*/)?(?:sed|perl)` +
-            // WHERE THE LETTER SITS IN THE CLUSTER decides whether it is the
-            // in-place option at all. A short option that takes a value takes
-            // the REST of its token, so the letter is either first — carrying
-            // an attached suffix, `-i.bak` — or last in an all-letter cluster,
-            // `-pi`. Accepting it anywhere read Perl's include-directory
-            // option `-Ilib` as an in-place edit and reported a command that
-            // only prints (r36 self-review). That is the general rule for
-            // short options, not a table of these two tools' flags.
-            String.raw`(?:[^\S\n]+-[^\s;&|]*)*?[^\S\n]+` +
-            String.raw`(?:-i[^\s;&|]*|-[a-zA-Z]*i(?=[^\S\n]|$)|--in-place[^\s;&|]*)` +
-            String.raw`(?:[^\S\n]+-[^\s;&|]*)*[^\S\n]+[^\s<>|&;-]`
-          : '') +
-        // A REDIRECTION, not every `>`. The bare alternative also matched the
-        // arrow in `=>` and the comparison in `2 > 1`, and since the deploy's
-        // own `--config` already satisfies the name test, any such operator
-        // reported a config that was never touched (Codex #2066 r9). A
-        // redirection sits at a command boundary and is followed by a target.
-        // …and its TARGET is a path or a variable, with the IO-number prefix
-        // shells allow (`2>"$CFG"`). Only in SHELL text: whitespace is not a
-        // command boundary in JavaScript, so `if (value > "$CFG")` matched
-        // here and reported a config nothing had touched (r9 narrowed this
-        // once and r10 showed the narrowing was still language-blind). The
-        // directly-named redirection is covered above; this alternative exists
-        // for the write through a BINDING.
-        // `>|` (the noclobber override) and `>&` (stdout+stderr to one file)
-        // both truncate their target, and the target class saw the `|` or `&`
-        // and rejected the match (r13). Fd duplication is unaffected: `2>&1`
-        // has a digit for a target, which the class does not accept.
-        // …and `*>` redirects every stream in PowerShell — and is a glob
-        // followed by a redirection in POSIX shell (`cat *> out`), which is
-        // also a write — so the prefix class admits it alongside the IO
-        // number (r14). This is the OPERATOR only; PowerShell's write cmdlets
-        // stay out of scope, as recorded at r11.
-        // …and bash NAMES a descriptor: `exec {out}>"$CFG"` allocates one and
-        // truncates the target exactly as `3>` does, while a prefix class of
-        // digits could not see it (r31). Closed syntax, one alternative.
-        // …and `<>` OPENS FOR WRITING TOO. `exec 3<>"$CFG"` takes a
-        // descriptor that can write, and a pattern beginning at `>` never saw
-        // the operator at all (r38).
-        (shellish
-          ? String.raw`|(?:^|[\s;&|)])(?:\{\w+\}|[\d*]*)(?:<>|>{1,2})[|&]?\s*["'$~/.]`
-          : '') +
         // …AND EACH ALTERNATIVE CLOSES WITH ITS OWN QUOTE, by NAME. These
         // were numbered backreferences, and inserting two alternatives in r34
         // shifted the numbering under the two below them: they went on
@@ -4536,6 +4580,25 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
     // spans, which also answers the quadratic path r12 measured at 32k/64k/128k
     // commented lines.
     const kind = classifyText(text, lang);
+    const ANY_WRITE_SHELL = new RegExp(
+      [SHELL_COPY_CMD, SHELL_INPLACE_EDIT, SHELL_REDIRECT_BOUND].join('|'),
+      'gm',
+    );
+    for (const w of text.matchAll(ANY_WRITE_SHELL)) {
+      // A SHELL SPELLING EXECUTES WHERE A SHELL READS IT. In a shell file that
+      // is the file's own syntax, judged exactly as the calls below are; in
+      // JavaScript or Python the same characters are an arrow function, a
+      // comparison or an ordinary identifier UNLESS something runs the text —
+      // `execSync(`printf '{}' > ${cfg}`)` runs it, and the binding means the
+      // directly-named matcher cannot recover the basename either (r40).
+      const at0 = w.index + (w[0].length - w[0].replace(/^[^A-Za-z0-9_$/>%]+/, '').length);
+      if (kind[at0] === 2) continue;
+      const executes = shellish
+        ? !(kind[at0] === 1 && isInertAssignment(at0, text, kind)) &&
+          !inTestExpression(at0, text, kind)
+        : kind[at0] === 1 && isCommandPayload(at0, text, kind);
+      if (executes) anyWrites.push(w.index);
+    }
     for (const w of text.matchAll(ANY_WRITE)) {
       // The verb itself must be CODE — where "string" means DATA. In
       // JavaScript and Python a literal is data, so `const example =
@@ -8809,6 +8872,14 @@ for (const file of walk(REPO_ROOT)) {
   // other interpreter this reader knows.
   const fileIsPython =
     /\.py$/.test(rel) || /^#![^\n]*\bpython[\d.]*\b/.test(text.slice(0, 200));
+  // …AND THE SAME IS TRUE OF A NODE HELPER. `#!/usr/bin/env node` with no
+  // suffix was classified `other`, where a template literal is not a string —
+  // so an inert example inside one was read as the file's own code and
+  // reported a config nothing had touched (r40). A false RED, which blocks CI.
+  // The JavaScript runtimes are a closed set, written the way the Python line
+  // above is rather than as a general interpreter table.
+  const fileIsJs =
+    /\.(?:m|c)?[jt]sx?$/.test(rel) || /^#![^\n]*\b(?:node|bun|deno)\b/.test(text.slice(0, 200));
   const foldedText = foldStringConcat(text);
   const folded = winInterp || isShellFile(rel, text)
     ? logicalLines(text)
@@ -9000,13 +9071,7 @@ for (const file of walk(REPO_ROOT)) {
     // WHICH language this line is, for the comment and string rules. A line
     // lifted out of a `run:` block or a fenced fence is shell whatever the
     // container is; otherwise the file's own extension decides.
-    const lineLang = lineIsShell
-      ? 'shell'
-      : /\.(?:m|c)?[jt]sx?$/.test(rel)
-        ? 'js'
-        : fileIsPython
-          ? 'py'
-          : 'other';
+    const lineLang = lineIsShell ? 'shell' : fileIsJs ? 'js' : fileIsPython ? 'py' : 'other';
     // Each embedded block is a SEPARATE shell — an Actions step starts fresh,
     // and so does the next fenced example. Carrying `cwdIsKeeper` across them
     // made one block's `cd apps/keeper` reject the NEXT block's agent deploy

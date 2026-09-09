@@ -11710,4 +11710,99 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     );
     expect(r.ok).toBe(false);
   });
+
+  // ---- Codex #2066 r40 ----
+
+  it('a descriptor open in write mode is a write (#2066 r40)', () => {
+    // The truncating OPEN is the write: `fs.openSync(cfg, "w")` empties the
+    // file before anything is written through the descriptor, which is why no
+    // descriptor-writing verb joined the vocabulary with it.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'ug.mjs',
+      'const cfg="configs/custom.jsonc";\nconst fd = fs.openSync(cfg, "w");\n' +
+        'fs.writeSync(fd, generated);\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a descriptor open for reading is not (#2066 r40 bounds)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'uh.mjs',
+      'const cfg="configs/custom.jsonc";\nconst fd = fs.openSync(cfg, "r");\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('an executed redirection is a write in JavaScript (#2066 r40)', () => {
+    // The redirection is compiled into the scan whatever the file is, and
+    // judged by whether something RUNS the text. `execSync` does, and the
+    // binding is why the directly-named matcher cannot see the basename.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'ui.mjs',
+      'const cfg="configs/custom.jsonc";\nexecSync(`printf \'{}\' > ${cfg}`);\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('an unexecuted redirection in JavaScript is not (#2066 r40 bounds)', () => {
+    // The same characters in CODE position are a comparison, and in a string
+    // nothing runs they are prose. Both stay green — this is the false red the
+    // file-wide gate was protecting against, kept without it.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'uj.mjs',
+      'const cfg="configs/custom.jsonc";\nconst pick = (x) => x > cfg;\n' +
+        'const help = `printf \'{}\' > ${cfg}`;\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('an executed copy command is a write in JavaScript (#2066 r40 bounds)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'uk.mjs',
+      'const cfg="configs/custom.jsonc";\nexecSync(`cp gen.jsonc ${cfg}`);\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('an extensionless node helper reads its shebang (#2066 r40)', () => {
+    // Classified `other` on its filename, a template literal was not a string
+    // and the inert example inside it was read as the file's own code — a
+    // false RED, which blocks CI.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'ul',
+      '#!/usr/bin/env node\nconst cfg="configs/custom.jsonc";\n' +
+        'const usage = `writeFileSync(cfg, "{}")`;\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('an extensionless node helper still reports a real write (#2066 r40 bounds)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'um',
+      '#!/usr/bin/env node\nconst cfg="configs/custom.jsonc";\n' +
+        'fs.writeFileSync(cfg, "{}");\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
 });
