@@ -551,11 +551,18 @@ reward reporter, all setter-accepts-and-emits with no numeric range:
     resolves `Unconfigured` and keeps canonical / single-chain semantics —
     the reward paths run unbounded from the schedule, exactly as before;
   - an **explicit `setBaseChainId(0)`** stamps `rewardRoleConfigured` and
-    resolves `Detached`: the delivered-fresh bound is ZERO and reward
-    payouts stop. **That is the detach procedure**, and it is the only one;
-    it also retires the delivered residual on the way out. Do not call it
-    "to reset" a chain — a chain you mean to leave unconfigured needs no
-    call at all.
+    resolves `Detached`: the delivered-fresh bound is ZERO, so payouts
+    funded from delivered-fresh budget stop — and only those: schedule
+    rewards paid before arming are not consulted against the bound, and
+    recycled-funded legs still settle (Codex #2070 r20). It is not a payout
+    kill-switch; pausing the reward facets is. **That is the detach
+    procedure**, and it is the only one; it also retires the delivered
+    residual on the way out. Do not call it "to reset" a chain — a chain
+    you mean to leave unconfigured needs no call at all. Note that
+    `setIsCanonicalRewardChain(false)` on a never-configured chain is a
+    no-op and does NOT stamp the role (an idempotent false→false write must
+    not turn `Unconfigured` into `Detached`); only enabling the flag, or
+    demoting a chain that was canonical, stamps it.
   `ConfigureRewardReporter` refuses a zero base on a mirror for this
   reason, and the in-place refresh requires `REWARD_ROLE_EXPECTED_<PREFIX>`
   per chain so a Diamond detached under the old setters (field
