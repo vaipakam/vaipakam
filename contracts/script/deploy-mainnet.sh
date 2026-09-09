@@ -828,16 +828,19 @@ EOF
   # For testnet rehearsal the (dirty) flag is acceptable because the
   # whole rehearsal can be re-run; for mainnet it's a hard NO since
   # post-incident forensics depend on commit→bytecode equivalence.
-  # The archive step above deliberately writes contracts/deployments/
-  # archive-manifest.json (the committed archive inventory) BEFORE this gate;
-  # it is deployment OUTPUT, not source, and the bytecode this gate protects
-  # does not depend on it. Excluding that one path keeps the gate's intent —
-  # every SOURCE change must be committed — without making every --fresh
-  # stop here to commit its own inventory update (Codex #2070 r9 P1). The
-  # operator still commits the manifest with the deploy, as the archive step
-  # prints.
-  if ! git -C "$REPO_ROOT" diff --quiet -- . ':(exclude)contracts/deployments/archive-manifest.json' 2>/dev/null || \
-     ! git -C "$REPO_ROOT" diff --cached --quiet -- . ':(exclude)contracts/deployments/archive-manifest.json' 2>/dev/null; then
+  # Judge the tree AS IT WAS AT START — the provenance snapshot taken at the
+  # top of this script, before it wrote anything — not the tree as it stands
+  # now. By this point a --fresh has ALREADY run archive_chain_state: it wrote
+  # archive-manifest.json and MOVED the tracked addresses.json and
+  # deployment_source.json into the gitignored .archive tree, so a live diff
+  # here reports the deploy's own deliberate output as "uncommitted changes"
+  # and aborts every --fresh after the destructive archive (Codex #2070 r9 P1,
+  # then r10 P1 for the moved artifacts once only the manifest was excluded).
+  # Enumerating the archive's outputs to exclude is a list that drifts; the
+  # start-of-run reading has no output of its own to discount and answers the
+  # only question this gate asks: was the SOURCE tree clean when the deploy
+  # began? The operator still commits the archive's outputs with the deploy.
+  if [ -n "$TREE_DIRTY_AT_START" ]; then
     cat >&2 <<EOF
 Refusing --phase contracts: working tree is dirty (uncommitted changes).
 Mainnet deploys must be reproducible from a commit hash; a dirty deploy

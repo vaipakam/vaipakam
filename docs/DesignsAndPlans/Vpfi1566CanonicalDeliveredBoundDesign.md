@@ -4908,12 +4908,17 @@ reported a comfortable answer it had not earned:
   to detect — the manifest would read complete while omitting the retired
   Diamond. The check is the operation, and it runs first.
 
-  **The mainnet dirty-tree gate excludes its own output** (r9 P1). That gate
-  runs after the archive step and would count the manifest it had just
-  written, stopping every mainnet `--fresh` after a destructive archive. It
-  now excludes exactly `contracts/deployments/archive-manifest.json` from its
-  diff — deployment output, not source; the bytecode the gate protects does
-  not depend on it — and refuses every source change as before.
+  **The mainnet dirty-tree gate judges the tree as it was at START** (r9
+  P1, corrected r10 P1). That gate runs after the archive step, which by then
+  has written the manifest AND moved the tracked `addresses.json` and
+  `deployment_source.json` into the gitignored tree — so a live diff reports
+  the deploy's own deliberate output as uncommitted changes and aborts every
+  `--fresh` after a destructive archive. The r9 revision excluded only the
+  manifest, which left the moved artifacts tripping it. Enumerating the
+  archive's outputs is a list that drifts; the gate now reads the provenance
+  snapshot the script takes before writing anything, which has no output to
+  discount and answers the only question the gate asks: was the SOURCE tree
+  clean when the deploy began? Every source change is refused as before.
 
   **The inventory is a UNION** (r9 P1). A chain retired on purpose, or whose
   `--fresh` aborted between archiving and writing its new artifact, has no
