@@ -2419,6 +2419,7 @@
       "reference": "Référence des paramètres",
       "hiddenBody": "La visibilité des paramètres est désactivée sur ce déploiement, les valeurs en direct ne sont donc pas affichées ici. Il s'agit uniquement d'un réglage d'affichage — les paramètres eux-mêmes sont on-chain et lisibles par tout le monde directement depuis les contrats.",
       "unavailable": "Aucun instantané de configuration n'est disponible pour cette chaîne. Rien n'en est déduit : la valeur est inconnue ici, elle n'est pas pour autant non définie on-chain.",
+      "labelsUnavailable": "Un instantané de configuration existe pour cette chaîne, mais ses valeurs sont arrivées sans les noms dont cette page a besoin pour les étiqueter. Plutôt que de deviner quel nombre correspond à quel réglage — et risquer d’afficher une valeur réelle sous un mauvais nom — les valeurs sont retenues. La provenance ci-dessous reste exacte, et les paramètres eux-mêmes restent lisibles directement dans les contrats.",
       "stale": "Cet instantané a plus d'un jour : traitez les valeurs ci-dessous comme historiques. Les changements de configuration atteignent normalement l'instantané en un cycle d'ingestion.",
       "notReported": "non communiqué",
       "feesHeading": "Frais",

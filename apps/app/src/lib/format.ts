@@ -120,3 +120,27 @@ export function fullTermInterest(
     (principal * BigInt(rateBps) * BigInt(durationDays)) / (10_000n * 365n)
   );
 }
+
+/**
+ * A number formatted in the APP's selected language, not the device's.
+ *
+ * ROUND 65 P2 — `toLocaleString()` with no locale uses the runtime
+ * default, which is the browser or OS setting. That is the wrong source
+ * for any surface whose labels come from this app's own language
+ * picker: German selected on an en-US device produced German labels
+ * beside English-formatted numbers, and the functional spec requires
+ * live values to follow the chosen language.
+ *
+ * Deliberately separate from `exactAmountString` above, which pins
+ * `en-US` on purpose — a token amount is a quantity a user may copy,
+ * paste and compare, and locale-swapping its separators would change
+ * what it appears to say. This helper is for figures being READ:
+ * percentages, counts, block numbers.
+ */
+export function localeNumber(
+  n: number,
+  locale: string | undefined,
+  opts?: Intl.NumberFormatOptions,
+): string {
+  return n.toLocaleString(locale, opts);
+}

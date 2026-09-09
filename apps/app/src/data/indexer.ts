@@ -928,6 +928,21 @@ export interface ProtocolKnobValues {
 
 export interface ProtocolKnobSnapshot {
   values: ProtocolKnobValues;
+  /** The deployment HAS a snapshot, but this app will not put names to
+   *  its numbers (round 65 P2).
+   *
+   *  Reached two ways: an older Worker that returns only the positional
+   *  bundle, and — the important one — the indexer deliberately omitting
+   *  `values` because a stored bundle's length no longer matches the
+   *  current ABI. That second case is the console's founding rule doing
+   *  its job: a governance parameter shown against the wrong label is
+   *  worse than one not shown, because it looks authoritative.
+   *
+   *  This is NOT "no snapshot exists", and collapsing the two threw away
+   *  what the deployment actually knows — the provenance, the flags, the
+   *  age, the staleness verdict — while telling the reader nothing is
+   *  there. `values` is empty here; everything else still applies. */
+  labelsUnavailable?: boolean;
   flags: Record<string, boolean>;
   sourceBlock?: number;
   /** Unix SECONDS. Callers MUST surface this — see `protocolConfigFresh`. */
@@ -949,9 +964,15 @@ export async function fetchProtocolKnobs(
     updatedAt?: number;
     stale?: boolean;
   }>(`/config/${chainId}`);
-  if (!res || res.available !== true || !res.values) return null;
+  if (!res || res.available !== true) return null;
   return {
-    values: res.values,
+    // An available snapshot whose values cannot be trusted to their
+    // names is preserved rather than collapsed to `null` — see
+    // `labelsUnavailable`. Everything the response DOES carry (flags,
+    // provenance, the staleness verdict) is still true and still worth
+    // showing.
+    values: res.values ?? {},
+    labelsUnavailable: res.values === undefined,
     flags: res.flags ?? {},
     sourceBlock: res.sourceBlock,
     updatedAt: res.updatedAt,

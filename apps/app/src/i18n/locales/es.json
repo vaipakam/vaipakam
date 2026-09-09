@@ -2419,6 +2419,7 @@
       "reference": "Referencia de parámetros",
       "hiddenBody": "La visibilidad de los parámetros está desactivada en este despliegue, así que aquí no se muestran los valores en vivo. Es solo un ajuste de visualización — los parámetros están on-chain y cualquiera puede leerlos directamente desde los contratos.",
       "unavailable": "No hay instantánea de configuración disponible para esta cadena. No se infiere nada de ello: significa que el valor se desconoce aquí, no que esté sin definir en la cadena.",
+      "labelsUnavailable": "Existe una instantánea de configuración para esta cadena, pero sus valores llegaron sin los nombres que esta página necesita para etiquetarlos. En lugar de adivinar qué número corresponde a qué ajuste —y arriesgarse a mostrar un valor real con un nombre equivocado—, los valores se retienen. La procedencia de abajo sigue siendo exacta, y los parámetros pueden leerse directamente desde los contratos.",
       "stale": "Esta instantánea tiene más de un día, así que trata los valores siguientes como históricos. Los cambios de configuración suelen llegar a la instantánea en un ciclo de ingesta.",
       "notReported": "no informado",
       "feesHeading": "Comisiones",

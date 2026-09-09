@@ -1404,14 +1404,25 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
    *  viewing their own position should not be paying RPC for a card
    *  they never see.
    *
-   *  `active` is affirmative-only. While `resolvedLoanStatus` is
-   *  undefined this passes `false`, which resolves to
-   *  `not-applicable` and renders nothing — correct for the brief
-   *  window before the status lands, and self-correcting on the next
-   *  poll. The alternative, treating unread as active, would flash a
-   *  close-out card onto loans that turn out to be repaid. */
-  const forcedCloseActive =
-    isLenderHolder && resolvedLoanStatus === LoanStatus.Active;
+   *  ROUND 65 P2 — an unread status is passed as `undefined`, not
+   *  `false`. It used to be affirmative-only, on the reasoning that the
+   *  window is brief and self-correcting; that was wrong twice over. A
+   *  persistent RPC failure is not brief, and `not-applicable` does not
+   *  merely delay the card, it removes it — so the capability becomes
+   *  indistinguishable from one that does not exist, which is the exact
+   *  failure the functional spec forbids for this surface. Even the
+   *  ordinary first load flickered it.
+   *
+   *  The old comment's fear — "treating unread as active would flash a
+   *  close-out card onto loans that turn out to be repaid" — is answered
+   *  by `unknown` rather than by `false`: visible, explicitly waiting on
+   *  a check, and non-submittable. Not the lender is still a firm
+   *  `false`; that is a fact, not an unread. */
+  const forcedCloseActive = !isLenderHolder
+    ? false
+    : resolvedLoanStatus === undefined
+      ? undefined
+      : resolvedLoanStatus === LoanStatus.Active;
   const forcedCloseInput: ForcedCloseInput = {
     active: forcedCloseActive,
     defaultable: forcedCloseReads.defaultable,

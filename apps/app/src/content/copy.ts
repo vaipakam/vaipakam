@@ -4890,6 +4890,20 @@ const copySource = {
       'Parameter visibility is turned off on this deployment, so the live values are not shown here. This is a display setting only — the parameters themselves are on-chain and readable by anyone directly from the contracts.',
     unavailable:
       'No configuration snapshot is available for this chain. Nothing is inferred from that — it means the value is unknown here, not that it is unset on-chain.',
+    /* Round 65 P2 — the state between "here are the values" and "there is
+       no snapshot", which used to be reported as the latter.
+
+       The published snapshot arrived, but without the named values this
+       page insists on. That happens when an older worker sends only the
+       positional bundle, and — the case worth protecting — when the
+       indexer withholds the names because a stored bundle's length no
+       longer matches the current contract. Guessing at that point would
+       show a real number under the wrong label, which is the one failure
+       this page was built to avoid. Saying "no snapshot" instead was
+       also wrong, just more quietly: it discarded the age, the block and
+       the staleness verdict, all of which are real. */
+    labelsUnavailable:
+      'A configuration snapshot exists for this chain, but its values did not arrive with the names this page needs to label them. Rather than guess which number belongs to which setting — and risk showing a real value under the wrong name — the values are withheld. The provenance below is still accurate, and the parameters themselves remain readable directly from the contracts.',
     // Distinct from `undated` on purpose: this is the indexer telling us
     // the values ARE behind, not that their age is unknown.
     /* Round 64 P2 — this used to send readers to the parameter reference

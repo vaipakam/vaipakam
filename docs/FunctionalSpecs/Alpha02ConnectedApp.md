@@ -136,6 +136,14 @@ including people who never will.
 - An operator may hide the live parameter values on a deployment. In
   that state the console says so plainly, and does not direct the reader
   to any resource that the same setting has also withheld.
+- A published snapshot that carries no parameter values is not the same as no
+  snapshot, and the console does not collapse the two. The snapshot still
+  states when it was read and that the deployment is publishing, and the
+  console reports that the values themselves did not arrive. Discarding the
+  whole reading because one part of it was empty would tell the reader the
+  console has heard nothing from a source that in fact answered — an unread
+  source and a source that answered without values are different facts about
+  the deployment, and only the first is a reason to stop asking.
 
 ## Wallet and Network Behaviour
 
@@ -566,6 +574,13 @@ Thin-market honesty rules apply.
   anticipated, planned around, or asked about.
 - An unresolved check is never reported as "not available". The two are opposite
   claims: one describes the app's knowledge, the other the protocol's answer.
+- That rule binds hardest on the read that decides whether the surface belongs
+  on the page at all. A loan whose status has not been read yet is not a loan
+  the protocol has said is closed, so the surface appears in its unresolved
+  state rather than being removed. Removing it is the strongest possible
+  statement — it tells the lender the capability does not apply to this
+  position — made on the one reading that has not happened, and a lender who
+  never sees the surface has nothing to wait on and no reason to return.
 - Sequencer health is judged before collateral is classified. While the sequencer
   is unavailable the protocol reports every asset as unpriceable, so a surface
   that classified collateral first would describe the wrong settlement route and
@@ -626,6 +641,19 @@ Thin-market honesty rules apply.
   timestamps whether the figures look new enough; a device whose clock moves is
   then unable to make a refreshed reading look stale, or a stale one look
   refreshed.
+- The refresh it waits for must be one that could have seen the close-out. A
+  read already in flight when the outcome arrived was sent against the position
+  as it stood BEFORE settlement, so letting it satisfy the wait releases the
+  action over figures that predate the transaction — the exact staleness the
+  wait exists to prevent, arriving faster than the wait can notice. Reads
+  outstanding at that moment are therefore abandoned rather than counted, and
+  the surface waits on reads it started afterwards.
+- The wait is also scoped to the reads whose answers the lender is about to act
+  on. A read the surface has stopped consuming, or one the refresh would not
+  re-issue, can never report anything and would hold the action open forever if
+  the wait included it. Waiting on more than is needed is not the safer error
+  here: it is indistinguishable, to the reader, from the surface having lost
+  the transaction.
 - Where a transaction is never resolved, the lender's own statement that their
   wallet no longer shows it is the only route back to the action. Because it is
   the only one, when the surface offers it must not depend on the device's clock
@@ -1032,6 +1060,14 @@ Thin-market honesty rules apply.
   text (the exact message a wallet signs, cryptographic domain names)
   and proper nouns (chain and asset names) stay in one language by
   necessity.
+- A number standing on its own follows the chosen language the same way a
+  number inside a sentence does. Figures printed as their own cell — a
+  parameter's value, a counter on a public page — are formatted for the
+  language the reader picked, not for the one the device happens to be
+  configured in. The two disagree often enough to matter: a reader who has
+  chosen a language whose digit grouping and decimal mark differ from their
+  operating system's sees the surrounding page in one convention and the
+  figures in another, and has no way to tell which of the two the page meant.
 - Where signing-critical text cannot be translated, the reader is not
   simply left with a language they may not read. A declaration the user
   must affirm they have understood is shown in their own language

@@ -541,3 +541,47 @@ describe('decideForcedClose — repayment window before sequencer', () => {
     ).toBe('unknown');
   });
 });
+
+/**
+ * ROUND 65 P2 — an unread loan status is `unknown`, not `not-applicable`.
+ *
+ * `not-applicable` is the one readiness that removes the card entirely
+ * (`shouldRenderForcedClose` returns false for it). Mapping an unread
+ * status there made a slow or failing status read indistinguishable from
+ * a protocol without the feature — and not for a moment either: a
+ * persistent RPC failure hid it for as long as the failure lasted, and
+ * even an ordinary first load flickered it.
+ */
+describe('decideForcedClose — an unread active status', () => {
+  const base = {
+    paused: false,
+    defaultable: true,
+    sequencerHealthy: true,
+    internalMatchCandidate: false,
+    assetType: 'erc20' as const,
+    collateralIsNft: false,
+    collateralIlliquid: false,
+    ltvCollapsed: false,
+    consentFromBoth: true,
+  };
+
+  it('is unknown while the status read has not answered', () => {
+    expect(decideForcedClose({ ...base, active: undefined })).toBe('unknown');
+  });
+
+  // The distinction that matters: `unknown` still RENDERS, so the lender
+  // sees the capability and what it is waiting on. `not-applicable` does
+  // not.
+  it('renders while unknown and does not while not-applicable', () => {
+    expect(shouldRenderForcedClose('unknown')).toBe(true);
+    expect(shouldRenderForcedClose('not-applicable')).toBe(false);
+  });
+
+  // A terminal loan is still firmly not-applicable — this must not have
+  // widened into "never hide the card".
+  it('is not-applicable for a loan the chain says is closed', () => {
+    expect(decideForcedClose({ ...base, active: false })).toBe(
+      'not-applicable',
+    );
+  });
+});

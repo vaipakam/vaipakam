@@ -2419,6 +2419,7 @@
       "reference": "Parameter-Referenz",
       "hiddenBody": "Die Sichtbarkeit der Parameter ist in diesem Deployment ausgeschaltet, daher werden die Live-Werte hier nicht angezeigt. Das ist nur eine Anzeigeeinstellung — die Parameter selbst liegen on-chain und sind für alle direkt aus den Verträgen lesbar.",
       "unavailable": "Für diese Chain liegt kein Konfigurations-Snapshot vor. Daraus wird nichts gefolgert: der Wert ist hier unbekannt, nicht etwa on-chain ungesetzt.",
+      "labelsUnavailable": "Für diese Chain existiert ein Konfigurations-Snapshot, seine Werte kamen jedoch ohne die Namen an, die diese Seite zur Beschriftung braucht. Statt zu raten, welche Zahl zu welcher Einstellung gehört — und damit einen echten Wert unter falschem Namen zu zeigen —, werden die Werte zurückgehalten. Die Herkunftsangaben unten stimmen weiterhin, und die Parameter selbst bleiben direkt aus den Verträgen lesbar.",
       "stale": "Dieser Snapshot ist älter als ein Tag — behandeln Sie die Werte unten als historisch. Konfigurationsänderungen erreichen den Snapshot normalerweise innerhalb eines Erfassungslaufs.",
       "notReported": "nicht gemeldet",
       "feesHeading": "Gebühren",

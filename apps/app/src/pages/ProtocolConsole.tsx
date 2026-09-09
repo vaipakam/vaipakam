@@ -41,6 +41,7 @@
  * multisig, not a web form.
  */
 import { useQuery } from '@tanstack/react-query';
+import { useTranslation } from 'react-i18next';
 import { copy } from '../content/copy';
 import { SlidersHorizontal, RefreshCw, ExternalLink, AlertTriangle } from 'lucide-react';
 import {
@@ -50,7 +51,7 @@ import {
 } from '../data/indexer';
 import { resolveSnapshotAge } from '../data/snapshotAge';
 import { useActiveChain } from '../chain/useActiveChain';
-import { exactAmountString } from '../lib/format';
+import { exactAmountString, localeNumber } from '../lib/format';
 import { VPFI_DECIMALS } from '../data/vpfi';
 import { useNowSec } from '../hooks/useNowSec';
 import { idleAware } from '../lib/idle';
@@ -60,13 +61,21 @@ import { isProtocolConsolePublic } from '../lib/protocolConsoleVisibility';
  *  apart across the cards below. */
 const DOCS_URL = 'https://vaipakam.com/protocol-console/docs';
 
+/** The three value formatters, bound to the app's selected language.
+ *
+ *  ROUND 65 P2 — a factory rather than a `locale` parameter on each,
+ *  because there are thirteen call sites and threading an argument
+ *  through every one of them is how one gets missed. Built once per
+ *  render from `i18n.resolvedLanguage`; `LanguageRemount` re-keys the
+ *  tree on a language change, so the binding cannot go stale. */
+function makeFormatters(locale: string | undefined) {
 /** bps → percent, without pretending to more precision than we have. */
 function bps(v: string | undefined): string {
   if (v === undefined) return '—';
   const n = Number(v);
   if (!Number.isFinite(n)) return v;
   return copy.protocolConsole.bpsValue(
-    (n / 100).toLocaleString(undefined, { maximumFractionDigits: 2 }),
+    localeNumber(n / 100, locale, { maximumFractionDigits: 2 }),
     n,
   );
 }
@@ -80,6 +89,12 @@ function seconds(v: string | undefined): string {
   if (n % 60 === 0)
     return copy.protocolConsole.minutesValue(n / 60, n);
   return copy.protocolConsole.secondsValue(n);
+}
+
+function plain(v: string | undefined, unit = ''): string {
+  return v === undefined ? '—' : `${localeNumber(Number(v), locale)}${unit}`;
+}
+  return { bps, seconds, plain };
 }
 
 /** Snapshot age, against a caller-supplied ticking clock (never
@@ -97,9 +112,6 @@ function ageText(updatedAtSec: number, nowSec: number): string {
   return copy.analytics.ageHours(Math.round(secs / 3600));
 }
 
-function plain(v: string | undefined, unit = ''): string {
-  return v === undefined ? '—' : `${Number(v).toLocaleString()}${unit}`;
-}
 
 function flag(v: boolean | undefined): string {
   if (v === undefined) return '—';
@@ -129,6 +141,11 @@ export function ProtocolConsole() {
   // resolution, honouring VITE_DEFAULT_CHAIN_ID.
   const { readChain } = useActiveChain();
   const chainId = readChain.chainId;
+  // ROUND 65 P2 — number formatting follows the APP's language, not the
+  // device's. `LanguageRemount` re-keys the tree on a change, so these
+  // formatters are rebuilt with it.
+  const { i18n } = useTranslation();
+  const { bps, seconds, plain } = makeFormatters(i18n.resolvedLanguage);
   // Ticks, so the snapshot age below advances instead of freezing at
   // whenever React last rendered.
   const nowSec = useNowSec();
@@ -268,6 +285,18 @@ export function ProtocolConsole() {
         </p>
       )}
 
+      {/* ROUND 65 P2 — a snapshot EXISTS and its numbers cannot be
+          trusted to their names. Distinct from `unavailable`, which says
+          nothing is there: here the age, the block and the staleness
+          verdict below are all real and worth reading, and the values
+          are withheld deliberately rather than missing. */}
+      {snap?.labelsUnavailable && (
+        <p className="pc-unavailable" role="status">
+          <AlertTriangle aria-hidden="true" />{' '}
+          {copy.protocolConsole.labelsUnavailable}
+        </p>
+      )}
+
       {knownStale && (
         <p className="pc-stale" role="status">
           <AlertTriangle aria-hidden="true" /> {copy.protocolConsole.knownStale}
@@ -286,7 +315,7 @@ export function ProtocolConsole() {
         </p>
       )}
 
-      {!unavailable && v && (
+      {!unavailable && !snap?.labelsUnavailable && v && (
         <>
           <section className="pc-section" aria-labelledby="pc-fees">
             <h2 id="pc-fees">{copy.protocolConsole.feesHeading}</h2>
@@ -369,7 +398,9 @@ export function ProtocolConsole() {
           <p className="pc-provenance">
             {copy.protocolConsole.provenance}
             {typeof snap.sourceBlock === 'number'
-              ? copy.protocolConsole.provenanceBlock(snap.sourceBlock.toLocaleString())
+              ? copy.protocolConsole.provenanceBlock(
+                  localeNumber(snap.sourceBlock, i18n.resolvedLanguage),
+                )
               : ''}
             {/* The age rides in the provenance sentence, so it is read
                 whenever the source is — not only when a day-old

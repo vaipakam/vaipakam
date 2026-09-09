@@ -144,7 +144,18 @@ export interface ForcedCloseInput {
   /** `LoanStatus.Active`. Affirmative only — an unread status is not
    *  an active one, so pass `false` while it is unknown and let the
    *  caller's own unknown-handling decide. */
-  active: boolean;
+  /** Whether the loan is still open, from the CHAIN's status read.
+   *
+   *  ROUND 65 P2 — `boolean | undefined`, not `boolean`. Collapsing an
+   *  unread status to `false` resolves `not-applicable` and removes the
+   *  card outright, which makes a slow or failing status read
+   *  indistinguishable from the capability not existing. That is the
+   *  failure `Alpha02ConnectedApp.md` forbids in as many words: the
+   *  surface appears while checks are still running and stays visible in
+   *  its unresolved state. An unread status is now `unknown` — visible,
+   *  non-submittable, and saying a check is running — which is what
+   *  every other unread input here already resolves to. */
+  active: boolean | undefined;
   /** The chain's `DefaultedFacet.isLoanDefaultable(loanId)`.
    *
    *  `undefined` while in flight or after a failed read. NEVER compute
@@ -227,6 +238,13 @@ export interface ForcedCloseInput {
 export function decideForcedClose(input: ForcedCloseInput): ForcedCloseReadiness {
   // Nothing to force on a loan that already reached a terminal state.
   // Checked first because every question below is meaningless for one.
+  //
+  // UNREAD IS NOT TERMINAL (round 65 P2). `undefined` means the status
+  // read has not answered — in flight, or failed — and answering
+  // `not-applicable` to that removes the whole surface, so a persistent
+  // RPC failure looks exactly like a protocol that has no such feature.
+  // It is `unknown`, like every other unread input in this resolver.
+  if (input.active === undefined) return 'unknown';
   if (!input.active) return 'not-applicable';
 
   // `whenNotPaused` is `triggerDefault`'s first modifier, so this sits

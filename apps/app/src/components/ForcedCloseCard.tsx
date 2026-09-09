@@ -604,21 +604,41 @@ export function ForcedCloseCard({
     // cache. An empty result then means nothing will refetch — so there
     // is nothing to wait for, and the target completes rather than
     // waiting for an event that cannot arrive.
-    const cache = queryClient.getQueryCache();
-    refreshTargets.current.set(
-      submittedHash,
-      new Map(
-        cache
-          .findAll({ ...READINESS_READS, type: 'active' })
-          .filter((q) => !q.isDisabled() && !q.isStatic())
-          .map((q) => [
-            q.queryHash,
-            q.state.dataUpdateCount + q.state.errorUpdateCount,
-          ]),
-      ),
-    );
+    // ROUND 65 P1 — CANCEL FIRST, so the advance we wait for cannot come
+    // from a read that started before the close-out landed.
+    //
+    // A counter advancing proves a fetch SETTLED; it does not prove that
+    // fetch began after the mine, and the two come apart on exactly the
+    // path this record exists for. Reload with a pending close-out and
+    // the readiness queries are on their FIRST load — `state.data ===
+    // undefined` — where `Query.fetch` returns the in-flight retryer
+    // promise instead of restarting, `cancelRefetch` notwithstanding
+    // (`query.js:184-193`). That pre-mine read then settles, advances the
+    // counter, clears the invalidation, and nothing refetches again: the
+    // hold releases with no post-success read at all, which after a
+    // partial match re-offers the residual under the old match copy.
+    //
+    // `cancelQueries` reverts in-flight fetches without advancing
+    // counters, so cancelling before snapshotting leaves nothing running
+    // that could satisfy the target spuriously. Everything counted after
+    // that started after the success.
     onClosedOutRef.current();
-    void queryClient.invalidateQueries(READINESS_READS);
+    void queryClient.cancelQueries(READINESS_READS).then(() => {
+      const cache = queryClient.getQueryCache();
+      refreshTargets.current.set(
+        submittedHash,
+        new Map(
+          cache
+            .findAll({ ...READINESS_READS, type: 'active' })
+            .filter((q) => !q.isDisabled() && !q.isStatic())
+            .map((q) => [
+              q.queryHash,
+              q.state.dataUpdateCount + q.state.errorUpdateCount,
+            ]),
+        ),
+      );
+      void queryClient.invalidateQueries(READINESS_READS);
+    });
   }, [disposition, submittedHash, queryClient]);
 
   /** Watches the readiness queries for the generation advance the effect

@@ -722,3 +722,35 @@ check was watching some readings that were never going to be refreshed —
 including one the app deliberately switches off until it knows what the
 collateral is. Waiting on those would have kept the action withheld for
 several minutes after everything relevant had finished.
+
+That same "have my figures caught up" check had one more gap, and it was
+the one that mattered most. A reading that was already on its way when
+the close-out confirmed was sent against the loan as it stood beforehand
+— and the app was counting it as proof the figures had caught up. So the
+action could come back over numbers that predate the transaction, which
+is the exact thing the wait exists to prevent, and it would do so sooner
+than any of the earlier fixes could catch. The card now abandons every
+reading outstanding at the moment the outcome arrives, and waits only on
+ones it started afterwards.
+
+The card also used to disappear entirely while the app was still reading
+whether the loan is open. That is the one reading that had not happened
+yet, and removing the card is the strongest thing the surface can say —
+it tells a lender the capability does not apply to their position. A
+slow or failing read left them with no card, no explanation and nothing
+to wait for. The card now stays on screen in its "a check is running"
+state until the protocol has actually answered.
+
+The public analytics page and the protocol console now print their
+numbers in the language the reader chose, rather than the one their
+device is configured in. The two disagree often — the digit grouping and
+decimal mark differ between them — and the result was a page whose prose
+followed one convention and whose figures followed another, with nothing
+to say which was intended.
+
+Finally, the protocol console no longer throws away a reading that
+arrives without any parameter values in it. A deployment answering and
+publishing nothing is a different fact from a deployment we have not
+heard from, and only the second is a reason to stop asking. The console
+keeps the reading, still reports when it was taken, and says plainly
+that the values themselves did not arrive.

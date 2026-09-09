@@ -28,9 +28,11 @@
  * because an unreachable indexer must never read as an up-to-date one.
  */
 import { useQuery } from '@tanstack/react-query';
+import { useTranslation } from 'react-i18next';
 import { copy } from '../content/copy';
 import { resolveActiveSplit } from '../data/activeSplit';
 import { isReportedCount } from '../data/reportedCount';
+import { localeNumber } from '../lib/format';
 import { olderCursor } from '../data/olderCursor';
 import {
   BarChart3,
@@ -64,10 +66,14 @@ import { useEffect, useRef } from 'react';
  *  the same reason. */
 function Stat({ label, value }: { label: string; value: number | undefined }) {
   const reported = isReportedCount(value);
+  // ROUND 65 P2 — the APP's language, not the device's. A visitor who
+  // picked German on an en-US machine was getting German labels beside
+  // English-grouped numbers.
+  const { i18n } = useTranslation();
   return (
     <div className="an-stat">
       <div className="an-stat-value" data-reported={reported}>
-        {reported ? value.toLocaleString() : '—'}
+        {reported ? localeNumber(value, i18n.resolvedLanguage) : '—'}
       </div>
       <div className="an-stat-label">{label}</div>
       {/* Absent and impossible are different facts about the indexer, and
@@ -122,6 +128,9 @@ export function Analytics() {
   // resolution, honouring VITE_DEFAULT_CHAIN_ID.
   const { readChain } = useActiveChain();
   const chainId = readChain.chainId;
+  // ROUND 65 P2 — the block number below is formatted in the app's
+  // language, like every other figure on this page.
+  const { i18n } = useTranslation();
   // Ticks, so the freshness line below keeps telling the truth for a
   // visitor who leaves the page open.
   const nowSec = useNowSec();
@@ -480,7 +489,7 @@ export function Analytics() {
               <dt>{copy.analytics.cursorBlock}</dt>
               <dd>
                 {typeof cursor?.lastBlock === 'number'
-                  ? cursor.lastBlock.toLocaleString()
+                  ? localeNumber(cursor.lastBlock, i18n.resolvedLanguage)
                   : copy.analytics.unknown}
               </dd>
               <dt>{copy.analytics.lastIngest}</dt>
