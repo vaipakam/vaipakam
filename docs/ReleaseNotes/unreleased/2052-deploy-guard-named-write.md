@@ -195,6 +195,19 @@ work had used the mode-string spelling, which that function refuses at
 runtime — so it pinned code that cannot execute, and has been rewritten against
 a module that does take one.
 
+That in-place rule was written twice. The first spelling asked whether the
+option group immediately after the command contained the in-place letter, and
+review returned three separate objections to it in one round: the option may
+carry an attached backup suffix, it may come after other options, and a
+command that only prints its help edits nothing. Parsing a command's option
+sequence is the flag table this work refuses, so the shape was replaced rather
+than corrected — with the one the copying commands beside it already use: the
+command, then its options wherever they sit, then an operand. The operand is
+what excludes the help invocation, and it is a rule that already existed. The
+condition for giving this up was restated at the same time, because the
+original was too narrow: a third such editor, or another round of objections
+about option shapes, ends it rather than extending it again.
+
 Editing a file in place is a write, and until now nothing recognised it: there
 is no redirection and no copying verb in it. Two commands are admitted with
 their in-place option, not a category, because the same option letter means

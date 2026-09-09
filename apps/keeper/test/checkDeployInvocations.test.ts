@@ -11304,4 +11304,75 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     );
     expect(r.ok).toBe(false);
   });
+
+  // ---- Codex #2066 r36 ----
+
+  it('an in-place edit with a backup suffix is a write (#2066 r36)', () => {
+    // `-i.bak` attaches the suffix to the option, which the first spelling of
+    // this rule could not see.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'ma.sh',
+      'CFG=configs/custom.jsonc\n' +
+        "sed -i.bak 's/old/new/' \"$CFG\"\n" +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('an in-place option after other options is a write (#2066 r36)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'mb.sh',
+      'CFG=configs/custom.jsonc\n' +
+        "sed -E -i 's/old/new/' \"$CFG\"\n" +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('an editor that only prints help edits nothing (#2066 r36)', () => {
+    // Excluded by the OPERAND requirement the copy commands already use, not
+    // by naming the informational flags.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'mc.sh',
+      'CFG=configs/custom.jsonc\n' +
+        'sed -i --help\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a permission mode is not an access flag (#2066 r36)', () => {
+    // `os.open(cfg, os.O_RDONLY, mode=os.O_TRUNC)` opens for reading; the
+    // third argument is a permission mode. Scanning the whole call read it as
+    // a truncation.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'mg.py',
+      'import subprocess, os\n' +
+        'cfg = "configs/custom.jsonc"\n' +
+        'os.open(cfg, os.O_RDONLY, mode=os.O_TRUNC)\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a keyword flags argument still truncates (#2066 r36 bounds)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'mi.py',
+      'import subprocess, os\n' +
+        'cfg = "configs/custom.jsonc"\n' +
+        'os.open(cfg, flags=os.O_TRUNC)\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(false);
+  });
 });

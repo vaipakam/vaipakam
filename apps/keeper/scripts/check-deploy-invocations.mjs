@@ -4310,12 +4310,23 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
         // something else entirely on `cp`, `mv` and `grep`, so this cannot be
         // asked of the option alone.
         //
-        // If a third editor arrives, that is the signal to withdraw this
-        // rather than extend it — the same condition the argv-copy reader was
-        // given, and met.
+        // The FIRST spelling of this asked whether the option group right
+        // after the command contained an `i`, and r36 returned three findings
+        // against that in one round: `-i.bak` attaches a backup suffix,
+        // `-E -i` puts other options first, and `-i --help` edits nothing.
+        // Parsing an option sequence per command is the flag table this file
+        // refuses — so the shape is replaced rather than patched, with the
+        // one the copy commands beside it already use: the command, then its
+        // options, then an OPERAND. The operand is what excludes `--help`,
+        // and it is the rule already written above rather than a new one.
+        //
+        // The withdrawal condition, restated because r34's was too narrow: a
+        // third editor OR another round of option-shape findings ends this,
+        // rather than extending it again.
         (shellish
-          ? String.raw`|(?:^|[\s;&|(])(?:[\w./-]*/)?(?:sed|perl)[^\S\n]+` +
-            String.raw`(?:-[a-zA-Z]*i[a-zA-Z]*(?=[^\S\n]|$)|--in-place\b)`
+          ? String.raw`|(?:^|[\s;&|(])(?:[\w./-]*/)?(?:sed|perl)` +
+            String.raw`(?:[^\S\n]+-[^\s;&|]*)*?[^\S\n]+(?:-[a-zA-Z]*i|--in-place)[^\s;&|]*` +
+            String.raw`(?:[^\S\n]+-[^\s;&|]*)*[^\S\n]+[^\s<>|&;-]`
           : '') +
         // A REDIRECTION, not every `>`. The bare alternative also matched the
         // arrow in `=>` and the comparison in `2 > 1`, and since the deploy's
@@ -4376,8 +4387,14 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
         // the file while every mode-string pattern above walks past it (r34).
         // The POSIX names are a closed set, which is why this is admissible
         // where a list of tool options would not be.
-        String.raw`|(?<![A-Za-z0-9_$.])os\s*\.\s*open\s*\((?:[^()]|\([^()]*\))*` +
-        String.raw`O_(?:WRONLY|RDWR|TRUNC|CREAT|APPEND)` +
+        // …and the flags are the SECOND ARGUMENT. Scanning the whole call read
+        // the permission mode as an access flag, so
+        // `os.open(cfg, os.O_RDONLY, mode=os.O_TRUNC)` — which opens for
+        // reading — reported a truncation (r36). Bounded to the one argument
+        // that carries them, or to a `flags=` keyword.
+        String.raw`|(?<![A-Za-z0-9_$.])os\s*\.\s*open\s*\(` +
+        String.raw`(?:[^(),]|\([^()]*\))*,\s*(?:flags\s*=\s*)?` +
+        String.raw`(?:[^(),]|\([^()]*\))*O_(?:WRONLY|RDWR|TRUNC|CREAT|APPEND)` +
         // `mode=` may come FIRST: Python accepts `open(mode="w", file=cfg)`,
         // and requiring it after a comma missed that ordering (r9).
         // Every open-mode branch requires the literal to CLOSE. r11 fixed
