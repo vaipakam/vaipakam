@@ -214,7 +214,17 @@ export function blockRef(block) {
  * classified as "not a Vaipakam Diamond" (caught comparing a post-merge
  * partial run with run 26; never published). Exported for the test.
  */
+export function isExecutionRevert(err) {
+  // JSON-RPC code 3 is "execution error" (EIP-1474), what every client uses for
+  // a revert; the message check covers providers that keep the text but use
+  // another code. A -32602 "invalid block reference" that happens to carry hex
+  // `data` is a PROVIDER failure and must surface as one (#2088 r1 P2).
+  const codes = [err?.code, err?.cause?.code, err?.cause?.cause?.code];
+  if (codes.some((c) => c === 3)) return true;
+  return /execution reverted|revert/i.test(`${err?.details ?? ''} ${err?.shortMessage ?? ''} ${err?.message ?? ''} ${err?.cause?.message ?? ''}`);
+}
 export function revertErrorLikeViem(err, abi, functionName) {
+  if (!isExecutionRevert(err)) return null;
   const pick = (v) => (typeof v === 'string' && /^0x[0-9a-f]{8,}$/i.test(v) ? v : null);
   const data = pick(err?.data) ?? pick(err?.cause?.data) ?? pick(err?.data?.data);
   if (!data) return null;
