@@ -3788,6 +3788,16 @@ function immediatelyInvoked(open, text, kind) {
 function isCommandPayload(idx, text, kind) {
   let start = idx;
   while (start > 0 && kind[start - 1] !== 0) start -= 1;
+  // A TAGGED TEMPLATE CAN RUN ITS BODY. Bun's shell tag spells it `$`, so
+  // ``await $`cp gen.jsonc ${CFG}` `` is a command and not a string — and a
+  // reader that only walks out to a CALL saw no owner at all (r38). The tag
+  // sits immediately before the backtick, which is syntax rather than a
+  // binding, so this needs nothing the reader declines to do.
+  if (text[start] === '`') {
+    let t = start - 1;
+    while (t >= 0 && (/\s/.test(text[t]) || kind[t] === 2)) t -= 1;
+    if (text[t] === '$' && !/[A-Za-z0-9_$]/.test(text[t - 1] ?? '')) return true;
+  }
   const open = spawnCallOwner(start, text, kind);
   if (open === -1) return false;
   // …and for the ARGV forms, only the argument an interpreter EVALUATES.
@@ -3876,6 +3886,23 @@ function isCommandPayload(idx, text, kind) {
   return letters.attached.test(text.slice(start, idx));
 }
 
+/**
+ * Does this quoted run contain a substitution the shell will actually perform?
+ *
+ * A marker preceded by an ODD number of backslashes is escaped and inert; an
+ * even number leaves the marker live (the backslashes escape each other).
+ */
+function hasLiveSubstitution(run) {
+  for (let i = 0; i < run.length; i += 1) {
+    const two = run[i] === '$' && run[i + 1] === '(';
+    if (!two && run[i] !== '`') continue;
+    let back = 0;
+    for (let j = i - 1; j >= 0 && run[j] === '\\'; j -= 1) back += 1;
+    if (back % 2 === 0) return true;
+  }
+  return false;
+}
+
 function isInertAssignment(idx, text, kind) {
   let s = idx;
   while (s > 0 && kind[s - 1] === 1) s -= 1;
@@ -3892,7 +3919,15 @@ function isInertAssignment(idx, text, kind) {
   // prefers everywhere else.
   // …in a form that EXPANDS. Inside single quotes a `$(` or a backtick is
   // ordinary text, so `OUT='$(copy(a, b))'` performs nothing (r19).
-  if (text[s] !== "'" && /\$\(|`/.test(text.slice(s, e))) return false;
+  // …and an ESCAPED marker is literal text. Inside double quotes `\$(` is a
+  // dollar sign, so `EXAMPLE="\$(cmd)"` stores it and runs nothing, while a
+  // blanket search read it as live (r38).
+  //
+  // By PARITY of the backslashes before it, not by "is there one": `\\$(cmd)`
+  // is a literal backslash followed by a REAL substitution, so testing for a
+  // single preceding backslash would have turned this false red into a false
+  // green — the direction that matters more here.
+  if (text[s] !== "'" && hasLiveSubstitution(text.slice(s, e))) return false;
   // THROUGH THE CLASSIFIER, like every other reader here. This walk looked at
   // characters and not at their kind, so a parenthesis inside a quoted
   // element — `EXAMPLES=("f(x)" "…")` — ended it, and the assignment it was
@@ -4012,6 +4047,10 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
   // here, by NAME, rather than by following the binding: see `NAMED_THEN_WRITE`.
   const WRITE_CALL =
     String.raw`(?:writeFile(?:Sync)?|appendFile(?:Sync)?|createWriteStream` +
+    // `truncate` EMPTIES a file, which is a rewrite by the shortest route.
+    // Distinctive enough to admit on the name, and absent from this list
+    // until r38.
+    String.raw`|truncate(?:Sync)?` +
     String.raw`|outputFile(?:Sync)?|write_text|write_bytes)\s*\([^)]*` + esc;
   // …and it must be a FILESYSTEM open. `webbrowser.open("configs/custom.jsonc",
   // "w")` opens a browser, and this alternative admitted any receiver — the
@@ -4056,7 +4095,13 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
   // as a child process through an argument list is not seen. It is behind the
   // `keep_vars: true` declaration, and the shell spelling below is unaffected.
   const COPY =
-    String.raw`(?:^|[\s;&|(])(?:cp|mv|install|rsync)\s[^\n]*?` + esc +
+    // …and the space after the verb may NOT be a NEWLINE. `\s` matches one,
+    // so `echo cp` on its own line ran on into the NEXT line and found the
+    // config name in the deploy command itself — any mention of the word `cp`
+    // in a script that deploys reported a copy (found while probing r38, and
+    // the third pattern in this file to make the same mistake after r26 and
+    // r31).
+    String.raw`(?:^|[\s;&|(])(?:cp|mv|install|rsync)[^\S\n][^\n]*?` + esc +
     String.raw`|(?:copyFile|rename|cpSync|copyFileSync|renameSync)\s*\([^)]*` + esc +
     String.raw`|(?<![A-Za-z0-9_$.])(?:shutil|fs|fse|fsExtra|fsp)` +
     String.raw`(?:\s*\.\s*promises)?\s*\.\s*(?:copy|move)\s*\([^)]*` + esc;
@@ -4174,7 +4219,11 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
       // lookbehind rejects only an identifier character, so `.cp(` is a call
       // and `remove(` is not.
       String.raw`(?<![A-Za-z0-9_$])` +
-        String.raw`(?:writeFile(?:Sync)?|appendFile(?:Sync)?|createWriteStream` +
+        // `truncate` empties a file, and belongs in BOTH write lists: the
+        // named one catches `truncateSync("configs/custom.jsonc", 0)`, this
+        // generic one catches `truncateSync(CFG, 0)` where the name is bound
+        // elsewhere — which is the shape #2052 is about (r38).
+        String.raw`(?:truncate(?:Sync)?|writeFile(?:Sync)?|appendFile(?:Sync)?|createWriteStream` +
         String.raw`|outputFile(?:Sync)?|write_text|write_bytes` +
         // `cp` moved behind the qualifier with `copy` and `move`: it has the
         // same ambiguity (`function cp(source, destination)`), and leaving it
@@ -4266,7 +4315,10 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
             // copies — and r12 excluded it wholesale to stop `command -v cp`
             // counting as one. Admitted here with the QUERY MODES excluded
             // instead, which is the distinction bash's own help draws (r17).
-            String.raw`|command(?!\s+-[vV]\b)` +
+            // …and `--` ENDS ITS OPTIONS. `command -- cp gen.jsonc "$CFG"` runs
+            // the copy, and requiring the verb immediately after `command` never
+            // reached it (r38). The query modes stay excluded.
+            String.raw`|command(?!\s+-[vV]\b)(?:\s+--)?` +
             String.raw`|(?:sudo|env|xargs|time|nohup)(?:` +
             String.raw`\s+--(?:user|group|prompt|close-from|host|role|type|chdir|other-user)\s+\S+` +
             // `env -u NAME` and friends take an OPERAND, and stopping before it
@@ -4368,8 +4420,11 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
         // …and bash NAMES a descriptor: `exec {out}>"$CFG"` allocates one and
         // truncates the target exactly as `3>` does, while a prefix class of
         // digits could not see it (r31). Closed syntax, one alternative.
+        // …and `<>` OPENS FOR WRITING TOO. `exec 3<>"$CFG"` takes a
+        // descriptor that can write, and a pattern beginning at `>` never saw
+        // the operator at all (r38).
         (shellish
-          ? String.raw`|(?:^|[\s;&|)])(?:\{\w+\}|[\d*]*)>{1,2}[|&]?\s*["'$~/.]`
+          ? String.raw`|(?:^|[\s;&|)])(?:\{\w+\}|[\d*]*)(?:<>|>{1,2})[|&]?\s*["'$~/.]`
           : '') +
         // …AND EACH ALTERNATIVE CLOSES WITH ITS OWN QUOTE, by NAME. These
         // were numbered backreferences, and inserting two alternatives in r34

@@ -168,6 +168,28 @@ withdrawn in the same sitting: a list of plausible variable names is precisely
 the open-ended predicate this work keeps removing. Where the path is
 constructed in place the shape is syntax rather than type, and is still read.
 
+The set of writes gained four more spellings, each a real one the checker had
+been walking past: a descriptor opened for reading AND writing, which does not
+begin with the redirection character the pattern looked for; a command reached
+through the standard end-of-options marker; the call that empties a file, which
+rewrites it by the shortest route and was in neither write list; and a shell
+command written as a tagged template, which one runtime executes although it
+looks like an ordinary string.
+
+Two corrections went the other way. An escaped substitution marker inside a
+stored value is literal text and the shell performs nothing — asked by the
+PARITY of the backslashes before it, because one backslash escapes the marker
+while two escape each other and leave it live, so testing merely for the
+presence of one would have turned a false report into a missed write.
+
+And a mistake this work has now made three times in three different patterns:
+the space after a copying command was written as "any whitespace", which
+includes a LINE BREAK. The pattern therefore ran past the end of its own line
+and found the configuration's name in the deployment command below it, so any
+mention of the word in a script that deploys reported a copy. This one was not
+reported by review; it surfaced while checking something else, which is the
+argument for probing a change rather than reading it.
+
 Shell syntax only reads as shell where a shell is running. A greater-than is a
 redirection in a script and an arrow, or a comparison, in JavaScript; a copying
 verb is a command in a script and an ordinary name in Python. One of the two

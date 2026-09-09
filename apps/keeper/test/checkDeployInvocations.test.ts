@@ -11458,4 +11458,117 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     );
     expect(r.ok).toBe(false);
   });
+
+  // ---- Codex #2066 r38 ----
+
+  it('a read-write descriptor open is a write (#2066 r38)', () => {
+    // `exec 3<>"$CFG"` takes a descriptor that can write; a pattern beginning
+    // at `>` never saw the operator.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'pa.sh',
+      'CFG=configs/custom.jsonc\nexec 3<>"$CFG"\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('the end-of-options marker still runs the command (#2066 r38)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'pb.sh',
+      'CFG=configs/custom.jsonc\ncommand -- cp generated.jsonc "$CFG"\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a query mode is not a command (#2066 r38 bounds)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'pc.sh',
+      'CFG=configs/custom.jsonc\ncommand -v cp\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('the word cp on its own line copies nothing (#2066 r38 probe)', () => {
+    // Found while probing r38, not reported: the direct copy matcher's space
+    // after the verb was `\s`, which matches a NEWLINE — so it ran on into the
+    // next line and found the config name in the deploy command itself. Any
+    // mention of `cp` in a script that deploys reported a copy. The third
+    // pattern in this file to make this mistake, after r26 and r31.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'pz.sh',
+      'echo cp\nwrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a same-line copy is unaffected by that (#2066 r38 bounds)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'py.sh',
+      'cp generated.jsonc configs/custom.jsonc\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('truncating through a bound name is a write (#2066 r38)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'pd.mjs',
+      'const CFG="configs/custom.jsonc";\nfs.truncateSync(CFG, 0);\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('an escaped substitution marker is stored text (#2066 r38)', () => {
+    // Inside double quotes `\$(` is a dollar sign. Asked by PARITY of the
+    // backslashes, because `\\$(` is a literal backslash and a real
+    // substitution — testing for "is there one" would turn this false red
+    // into a false green.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'pe.sh',
+      'EXAMPLE="\\$(writeFileSync(\'configs/custom.jsonc\',\'{}\'))"\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('an unescaped substitution still runs (#2066 r38 bounds)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'pf.sh',
+      'CFG=configs/custom.jsonc\nOUT="$(printf new > "$CFG")"\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a shell tagged template runs its body (#2066 r38)', () => {
+    // Bun's `$` tag makes the template a command rather than a string. The
+    // owner walk only looked for a CALL.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'pg.mjs',
+      'await $`printf new > configs/custom.jsonc`;\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
 });
