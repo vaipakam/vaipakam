@@ -351,7 +351,7 @@ correctly and each time only where it had been noticed; four is the point at
 which a habit should become a thing that exists.
 <!-- assembled-fragment: 2044-one-rule-for-late-answers.md sha256=e6ac4ccd7992695e35ffddfc45d835abfe75c72be9480015cf9de15025eed2f8 -->
 
-## Thread — VPFI recycling: the perk absorption channel, and a broadcast that could strand a mirror (PR #1349)
+## Thread — VPFI recycling: the perk absorption channel, and a broadcast that could strand a mirror (#1349, PR #2031)
 
 The recycling loop's absorption side has been thin: until now only forfeited
 interaction rewards, the notification tariff and the Full tariff put value back

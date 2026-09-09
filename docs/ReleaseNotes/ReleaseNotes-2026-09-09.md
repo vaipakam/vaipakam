@@ -2,9 +2,12 @@
 
 Two entries from one pull request, both about refusing to conclude more than
 the chain can show. The first is a read-only census of the legacy custody the
-recycling programme may have to move: across twenty deployments on five
-chains it found nothing, and it is exact about which of its findings count as
-proof and which do not. The second gives the cross-chain reward role four
+recycling programme may have to move. Across twenty deployments on five
+chains it found no holdings anywhere it could read: eight deployments are
+settled empty on every category, and twelve stay undetermined where a record
+could not be read soundly — so this is not a finding that all twenty are
+empty, and the entry is exact about which of its findings count as proof and
+which do not. The second gives the cross-chain reward role four
 states instead of three, because two live deployments sit in the state a
 three-state design would have frozen.
 
