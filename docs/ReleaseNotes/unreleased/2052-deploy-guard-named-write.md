@@ -168,17 +168,23 @@ withdrawn in the same sitting: a list of plausible variable names is precisely
 the open-ended predicate this work keeps removing. Where the path is
 constructed in place the shape is syntax rather than type, and is still read.
 
-Three shapes are deliberately NOT recognised, and all are misses rather than
-noise. A file operation reached through a variable is one, as just described. A command run through a module imported under an arbitrary alias is one:
+Two further shapes are deliberately NOT recognised, and both are misses — the
+checker stays quiet where a more determined reader would speak. A file
+operation reached through a variable is the first, as just described. The
+second is a command run through a module imported under an arbitrary alias:
 resolving that name means following a binding, which this reader declines
-everywhere and which is the subject of the open question above — the alternative
-of admitting any named receiver was measured against the common case of matching
-a pattern held in a variable, and would report that. The other is a script that
-quotes an example of a write to its own configuration: in a shell a quoted
-string handed to a command may be executed by it, so quoted shell text is read
-as executable unless it is plainly being stored. Narrowing that was tried when
-the classifier was written and immediately lost real payloads. Both are named
-here so they are limits rather than surprises.
+everywhere and which is the subject of the open question above. The alternative
+of admitting any named receiver was measured against the common case of
+matching a pattern held in a variable, and would report that.
+
+One shape is deliberately recognised too eagerly, and it is the opposite trade
+— noise rather than a miss, so it is set out separately. A script that quotes
+an example of a write to its own configuration will be reported, because in a
+shell a quoted string handed to a command may well be executed by it; quoted
+shell text is therefore read as executable unless it is plainly being stored.
+Narrowing that was tried when the classifier was written and immediately lost
+real payloads. All three are named here so they are limits rather than
+surprises.
 
 The boundary this reader works to is stated in it: it is defence in depth
 behind the configuration declaration that actually preserves operator-managed

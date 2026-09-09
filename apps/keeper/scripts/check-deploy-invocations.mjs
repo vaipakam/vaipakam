@@ -3513,24 +3513,37 @@ function classifyText(text, lang) {
  * grammar — is not one, and keeps its existing reading.
  */
 /**
- * Is `idx` inside a `[[ … ]]` conditional?
+ * Is `idx` inside a `[[ … ]]` conditional or a `(( … ))` arithmetic expression?
  *
  * `[[ "$left" > "$right" ]]` compares lexicographically; it does not redirect,
  * and reading the `>` as a write reported a script that only compares (r20).
+ * `(( 2 > $limit ))` is the same `>` meaning the same thing in arithmetic, and
+ * was reported for the same reason (r31) — so it is the same reader with one
+ * more delimiter pair, not a second one.
  */
 function inTestExpression(idx, text, kind) {
+  for (const [L, R] of [
+    ['[', ']'],
+    ['(', ')'],
+  ]) {
+    if (inDelimitedExpression(idx, text, kind, L, R)) return true;
+  }
+  return false;
+}
+
+function inDelimitedExpression(idx, text, kind, L, R) {
   let open = -1;
   for (let i = idx; i >= 0 && idx - i < 400; i -= 1) {
     if (kind[i] !== 0) continue;
     if (text[i] === '\n') break;
-    if (text[i] === '[' && text[i - 1] === '[') {
+    if (text[i] === L && text[i - 1] === L) {
       open = i - 1;
       break;
     }
-    if (text[i] === ']' && text[i + 1] === ']') return false;
+    if (text[i] === R && text[i + 1] === R) return false;
   }
   if (open === -1) return false;
-  const close = text.indexOf(']]', idx);
+  const close = text.indexOf(R + R, idx);
   const nl = text.indexOf('\n', idx);
   if (close === -1 || (nl !== -1 && close < nl) === false) return false;
   // …and only the COMPARISON is exempt. `[[ "$(printf new > "$CFG")" == new ]]`
@@ -3622,6 +3635,15 @@ function spawnCallOwner(start, text, kind) {
   // it, and `Function("…writeFileSync…")()` is a spelling of the same write
   // (r30). Distinctive enough to admit on the name: nothing else is called
   // `Function` with a source string.
+  //
+  // …but only when the function it returns is CALLED. Constructing one and
+  // dropping it runs nothing, and admitting the name alone reported a write
+  // that cannot happen (r31). Asked by balancing the call's own parentheses
+  // and looking at what follows — a closed question about syntax, not a
+  // judgement about what the value is later used for. Anything less direct
+  // than `Function(…)()` — bound to a name and called on the next line — is
+  // deliberately NOT followed: that is the binding resolution this reader
+  // declines everywhere, and the miss is the same nameable one.
   if (!/^(?:eval|Function|execSync|execFileSync|execFile|spawnSync|spawn|system|popen|check_output|check_call)$/.test(owner)) {
     // The DISTINCTIVE names above are admitted on the name alone. `exec`,
     // `run` and `call` are not distinctive — `RegExp.prototype.exec` is one
@@ -3648,7 +3670,32 @@ function spawnCallOwner(start, text, kind) {
         return -1;
     }
   }
+  if (owner === 'Function' && !immediatelyInvoked(open, text, kind)) return -1;
   return open;
+}
+
+/**
+ * Does the call opening at `open` have its result called straight away?
+ *
+ * Balances the call's own parentheses through the classifier — so a `)` inside
+ * a string or a comment does not close it — and asks whether the next thing is
+ * another `(`.
+ */
+function immediatelyInvoked(open, text, kind) {
+  let depth = 0;
+  for (let i = open; i < text.length && i - open < 8000; i += 1) {
+    if (kind[i] !== 0) continue;
+    if (text[i] === '(') depth += 1;
+    else if (text[i] === ')') {
+      depth -= 1;
+      if (depth === 0) {
+        let j = i + 1;
+        while (j < text.length && (/\s/.test(text[j]) || kind[j] === 2)) j += 1;
+        return text[j] === '(';
+      }
+    }
+  }
+  return false;
 }
 
 /**
@@ -3746,14 +3793,30 @@ function isInertAssignment(idx, text, kind) {
   // (r30). Stepping back over that one paren, and only when an assignment
   // opened it, keeps the boundary otherwise intact: a `(` that begins a
   // SUBSHELL still ends the scan, because nothing assigns into it.
+  //
+  // …and the stored literal may be a LATER element. `EXAMPLES=("harmless"
+  // "…writeFileSync…")` puts an earlier quoted word between the `=(` and this
+  // one, so a pattern anchored on the opener alone rejected it (r31). The
+  // question is whether the literal is anywhere INSIDE the initializer, which
+  // is what `inArrayInitializer` records.
+  let inArrayInitializer = false;
   if (text[b - 1] === '(') {
     let a2 = b - 1;
     while (a2 > 0 && !'\n;&|('.includes(text[a2 - 1])) a2 -= 1;
     if (/(?:^|\s)(?:export\s+|local\s+|declare\s+(?:-\S+\s+)*|readonly\s+|typeset\s+)?[A-Za-z_]\w*(?:\[[^\]]*\])?\+?=$/.test(
         text.slice(a2, b - 1),
-      ))
+      )) {
       b = a2;
+      inArrayInitializer = true;
+    }
   }
+  // Inside an initializer, everything from the opener to here is stored: the
+  // elements before this one are words, not commands, so they do not have to
+  // look like the tail of an assignment.
+  if (inArrayInitializer)
+    return /(?:^|\s)(?:export\s+|local\s+|declare\s+(?:-\S+\s+)*|readonly\s+|typeset\s+)?[A-Za-z_]\w*(?:\[[^\]]*\])?\+?=\([^()]*$/.test(
+      text.slice(b, s),
+    );
   // The whole assignment WORD, not only a value that starts at the quote:
   // `EXAMPLE=prefix"fs.copy(a, b)"` concatenates chunks and still just stores
   // text (r23).
@@ -4064,7 +4127,18 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
             // hands the operand back as the command.
             String.raw`|\s+-(?!(?:u|C|S)(?:\s|=))(?!-(?:unset|chdir|split-string)(?:\s|=))[-\w]+(?:=\S+)?` +
             String.raw`|\s+-[ugUpChrtDR]\s+\S+)*` +
-            String.raw`)\s+)*(?:[\w./-]*/)?(?:cp|mv|install|rsync|tee)\s`
+            // …AND IT NEEDS A FILE OPERAND. `cp --help` prints usage and `tee`
+            // with no operand writes to standard output, and both were counted
+            // as writes on the strength of the command name alone (r31). Asked
+            // as one question — is there a word here that is not an option and
+            // not a redirection — rather than as a list of the flags that mean
+            // 'do nothing', which is the shape this file keeps deleting.
+            //
+            // The operand search may NOT cross a newline. `\s` does, so
+            // `cp --help` swallowed the line break and took the next line's
+            // first word as its operand — the same mistake the command
+            // boundary made in r26, in a pattern written after it.
+            String.raw`)\s+)*(?:[\w./-]*/)?(?:cp|mv|install|rsync|tee)[^\S\n]+(?:-\S+[^\S\n]+)*[^\s<>|&;-]`
           : '') +
         // A REDIRECTION, not every `>`. The bare alternative also matched the
         // arrow in `=>` and the comparison in `2 > 1`, and since the deploy's
@@ -4087,7 +4161,12 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
         // also a write — so the prefix class admits it alongside the IO
         // number (r14). This is the OPERATOR only; PowerShell's write cmdlets
         // stay out of scope, as recorded at r11.
-        (shellish ? String.raw`|(?:^|[\s;&|)])[\d*]*>{1,2}[|&]?\s*["'$~/.]` : '') +
+        // …and bash NAMES a descriptor: `exec {out}>"$CFG"` allocates one and
+        // truncates the target exactly as `3>` does, while a prefix class of
+        // digits could not see it (r31). Closed syntax, one alternative.
+        (shellish
+          ? String.raw`|(?:^|[\s;&|)])(?:\{\w+\}|[\d*]*)>{1,2}[|&]?\s*["'$~/.]`
+          : '') +
         // The mode literal must CLOSE. Accepting a prefix let
         // `webbrowser.open("welcome")` match `"w` (r11).
         // …and the METHOD form is GONE (r30). `webbrowser.open("w")` opens a
