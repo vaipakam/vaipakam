@@ -10083,6 +10083,70 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(r.ok).toBe(true);
   });
 
+  // ---- Codex #2066 r22 ----
+
+  it('a closed substitution leaves the comparison a comparison (#2066 r22)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'bl.sh',
+      'CFG=configs/custom.jsonc\n' +
+        'if [[ "$(echo x)" > "$CFG" ]]; then echo bigger; fi\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('an argv string is not an evaluated payload (#2066 r22)', () => {
+    // `spawnSync("echo", ["fs.copy(a, b)"])` prints its argument.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'bm.mjs',
+      'spawnSync("echo", ["fs.copy(source, destination)"]);\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('an indented delimiter does not end a plain heredoc (#2066 r22)', () => {
+    // `<<` wants the delimiter at column zero; only `<<-` strips leading tabs.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'bn.sh',
+      "cat <<'EOF'\n  EOF\nshutil.copy(source, destination)\nEOF\n" +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a filesystem qualifier must be rooted (#2066 r22)', () => {
+    // `archive.fs.copy(…)` may be an in-memory method.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'bo.mjs',
+      'const cfg = "configs/custom.jsonc";\n' +
+        'archive.fs.copy(source, destination);\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a wrapper option consumes its operand (#2066 r22)', () => {
+    // `env -u cp echo harmless` unsets the variable named cp and runs echo.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'bp.sh',
+      'CFG=configs/custom.jsonc\n' +
+        'env -u cp echo harmless\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
   it('the PROSE path invalidates a rewritten config too', () => {
     // That path passed the rewrite context to the safety reader and not to the
     // identity reader, so the identity half trusted the stale copy and sent the

@@ -3485,10 +3485,15 @@ function classifyText(text, lang) {
       // string, because a shell string IS executable here. Only the quoted
       // form: an unquoted delimiter still expands, so its body is unchanged.
       if (lang === 'shell' && c === '<' && text[i + 1] === '<') {
-        const h = /^<<-?\s*(['"])([A-Za-z_][A-Za-z0-9_]*)\1/.exec(text.slice(i, i + 80));
+        const h = /^<<(-?)\s*(['"])([A-Za-z_][A-Za-z0-9_]*)\2/.exec(text.slice(i, i + 80));
         const nl = h ? text.indexOf('\n', i) : -1;
         if (h && nl !== -1) {
-          const end = new RegExp(`\\n[ \\t]*${h[2]}[ \\t]*(?:\\n|$)`).exec(text.slice(nl));
+          // `<<` wants the delimiter at column zero; only `<<-` strips leading
+          // TABS (not spaces). Accepting either for both let an indented
+          // `  EOF` terminate the document early, so the text after it read as
+          // code (r22).
+          const lead = h[1] === '-' ? '\\t*' : '';
+          const end = new RegExp(`\\n${lead}${h[3]}[ \\t]*(?:\\n|$)`).exec(text.slice(nl));
           const stop = end ? nl + end.index + end[0].length : text.length;
           kind.fill(2, nl, stop);
           i = stop - 1;
@@ -3607,8 +3612,17 @@ function inTestExpression(idx, text, kind) {
   // …and only the COMPARISON is exempt. `[[ "$(printf new > "$CFG")" == new ]]`
   // runs a command inside the test, and blanket containment suppressed the
   // write it performs — a false green this exemption introduced (r21).
-  const between = text.slice(open, idx);
-  return !/\$\(|`/.test(between);
+  // Asked as "is the operator inside a substitution that is still OPEN", not
+  // "did one appear earlier": in `[[ "$(echo x)" > "$CFG" ]]` the substitution
+  // has already closed and the `>` is still a comparison (r22).
+  let sub = 0;
+  for (let i = open; i < idx; i += 1) {
+    if (text[i] === '$' && text[i + 1] === '(') {
+      sub += 1;
+      i += 1;
+    } else if (text[i] === ')' && sub > 0) sub -= 1;
+  }
+  return sub === 0;
 }
 
 /**
@@ -3653,9 +3667,22 @@ function isCommandPayload(idx, text, kind) {
   while (q >= 0 && (/\s/.test(text[q]) || kind[q] === 2)) q -= 1;
   let e = q;
   while (e >= 0 && /[A-Za-z0-9_$]/.test(text[e])) e -= 1;
-  return /^(?:execSync|exec|execFileSync|execFile|spawnSync|spawn|system|popen|run|call|check_output|check_call)$/.test(
-    text.slice(e + 1, q + 1),
-  );
+  if (
+    !/^(?:execSync|exec|execFileSync|execFile|spawnSync|spawn|system|popen|run|call|check_output|check_call)$/.test(
+      text.slice(e + 1, q + 1),
+    )
+  )
+    return false;
+  // …and for the ARGV forms, only the argument an interpreter EVALUATES.
+  // `spawnSync("echo", ["fs.copy(a, b)"])` prints its argument; marking every
+  // array element as code reported a copy that never happens (r22). The
+  // single-string forms (`execSync("…")`) are the command itself and need no
+  // such test, which is why this only applies when the literal came through a
+  // bracket.
+  if (text[start - 1] === undefined) return true;
+  const args = text.slice(open, start);
+  if (!args.includes('[')) return true;
+  return /(['"`])-{1,2}[a-zA-Z]*[ce]\1\s*,\s*$/.test(args);
 }
 
 function isInertAssignment(idx, text, kind) {
@@ -3848,7 +3875,12 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
         // The qualifier may itself be DOTTED — `fs.promises.cp` — so the
         // boundary here refuses a suffix but admits member access, exactly as
         // the distinctive branch above does (r21).
-        String.raw`|(?<![A-Za-z0-9_$])(?:shutil|fs|fse|fsExtra|fsp|promises)\s*\.\s*` +
+        // ROOTED, not any object carrying a matching member name:
+        // `archive.fs.copy(…)` may be an in-memory method (r22). The chain
+        // starts at a module root, with `promises` admitted only as `fs`'s
+        // own member — which is how `fs.promises.cp` is spelled.
+        String.raw`|(?<![A-Za-z0-9_$.])(?:shutil|fs|fse|fsExtra|fsp)` +
+        String.raw`(?:\s*\.\s*promises)?\s*\.\s*` +
         String.raw`(?:copy|move|copyfile|copy2|copytree|cp)\s*\(` +
         // `os.replace` renames ONTO an existing path — an overwrite by
         // definition — and no spelling of it was in the set (r13). Written
@@ -3892,7 +3924,15 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
             String.raw`|command(?!\s+-[vV]\b)` +
             String.raw`|(?:sudo|env|xargs|time|nohup)(?:` +
             String.raw`\s+--(?:user|group|prompt|close-from|host|role|type|chdir|other-user)\s+\S+` +
-            String.raw`|\s+-[-\w]+(?:=\S+)?|\s+-[ugUpChrtDR]\s+\S+)*` +
+            // `env -u NAME` and friends take an OPERAND, and stopping before it
+            // let the operand be read as the command — `env -u cp echo harmless`
+            // reported a copy (r22).
+            String.raw`|\s+--?(?:u|unset|C|chdir|S|split-string)(?:=\S+|\s+\S+)` +
+            // The generic alternative must NOT be able to match an
+            // operand-taking option, or backtracking simply re-enters it and
+            // hands the operand back as the command.
+            String.raw`|\s+-(?!(?:u|C|S)(?:\s|=))(?!-(?:unset|chdir|split-string)(?:\s|=))[-\w]+(?:=\S+)?` +
+            String.raw`|\s+-[ugUpChrtDR]\s+\S+)*` +
             String.raw`)\s+)*(?:[\w./-]*/)?(?:cp|mv|install|rsync|tee)\s`
           : '') +
         // A REDIRECTION, not every `>`. The bare alternative also matched the

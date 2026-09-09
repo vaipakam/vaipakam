@@ -41,8 +41,27 @@ writes count, while the format specification after a top-level colon in an
 f-string is not; a triple-quoted Python literal spans lines; a JavaScript
 regular expression is data, told apart from division by the token in front of
 it and deliberately biased so that an ambiguous slash stays division, because
-the other reading turns real code into data. A function or method declaration
-is not a call, so declaring one named like a copy no longer reports anything.
+the other reading turns real code into data.
+
+The checker briefly tried to tell a declaration from a call, so that declaring
+a function named like a copy would not be reported. That reader had to
+understand parameter lists, default values, return types, class members and
+conditional expressions, and each correction it received exposed another form
+it had not anticipated — eventually including cases where it discarded a real
+write. It was removed. In its place, the generic copy verbs are recognised only
+when they carry a filesystem qualifier, because a declaration named for a
+module's copy function is not something anyone writes; the distinctive names
+never needed the distinction at all. The narrower guarantee is therefore about
+the generic names only: declaring `copy`, `move` or `cp` is not a write, while
+declaring a function named for one of the distinctive APIs still reads as one.
+That is a deliberate, nameable gap rather than an open-ended list of shapes to
+keep recognising.
+
+Following a package script into another script was tried on the same reasoning
+and withdrawn for the same reason: it is inter-procedural analysis, the checker
+declines that elsewhere, and doing it in one place and not the others produced
+a steady stream of corrections rather than a settled rule. Whether this checker
+should follow invocations at all is recorded as a separate question.
 
 The set of writes the checker recognises was widened at its edges rather than
 lengthened: a manifest script value is shell text and is now read as such;
