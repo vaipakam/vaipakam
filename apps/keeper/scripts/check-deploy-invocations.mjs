@@ -51,6 +51,12 @@
  * allowlisted SENTENCE verbatim in executable shell — and the entries are
  * long, specific strings.
  *
+ * #2066 r26 settled that slice the other way and for good: a heredoc reader
+ * was written for the write scan, produced delimiter findings in six
+ * consecutive rounds, and was deleted. So the limit recorded here is now the
+ * whole reader's position rather than one function's — this scanner does not
+ * know where a heredoc body begins or ends anywhere.
+ *
  * THIRD KNOWN LIMIT, recorded after being tried and reverted: a `cd` that
  * FAILS at runtime leaves the shell where it was, so
  * `cd apps/keeper && cd missing; wrangler deploy` really does deploy from the
