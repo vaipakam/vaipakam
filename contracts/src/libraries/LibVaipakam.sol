@@ -7232,10 +7232,15 @@ library LibVaipakam {
         ///         `chainKeeperAllocDebited` while the mirror still treated
         ///         those tokens as fundable for claims and repatriation.
         mapping(uint256 => bool) mirrorKeeperEarmarkApplied;
-        /// @notice #1566 closure 3 — TRUE once this Diamond has ever been
-        ///         written into a reward-mesh role by either role setter
-        ///         ({RewardReporterFacet.setBaseChainId} or
-        ///         {RewardReporterFacet.setIsCanonicalRewardChain}).
+        /// @notice #1566 closure 3 — TRUE once either role setter has
+        ///         recorded a role TRANSITION: any
+        ///         {RewardReporterFacet.setBaseChainId} write, or
+        ///         {RewardReporterFacet.setIsCanonicalRewardChain} when
+        ///         enabling the flag or demoting a chain that was canonical.
+        ///         An idempotent `setIsCanonicalRewardChain(false)` on a
+        ///         never-configured chain stamps NOTHING (Codex #2070 r20/r22),
+        ///         so a false bit proves only that no transition was ever
+        ///         recorded — not that neither setter ever ran.
         ///
         ///         This is the ONE bit that separates a DETACHED chain from a
         ///         never-configured one. Both present as

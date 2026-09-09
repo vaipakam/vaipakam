@@ -555,10 +555,15 @@ reward reporter, all setter-accepts-and-emits with no numeric range:
     funded from delivered-fresh budget stop — and only those: schedule
     rewards paid before arming are not consulted against the bound, and
     recycled-funded legs still settle (Codex #2070 r20). It is not a payout
-    kill-switch; pausing the reward facets is. **That is the detach
-    procedure**, and it is the only one; it also retires the delivered
-    residual on the way out. Do not call it "to reset" a chain — a chain
-    you mean to leave unconfigured needs no call at all. Note that
+    kill-switch; pausing the reward facets is. **That is the MIRROR's detach
+    procedure.** A CANONICAL chain is not detached by zeroing its base —
+    `Canonical` dominates a base, so `setBaseChainId(0)` on a canonical chain
+    leaves it `Canonical` (Codex #2070 r22); demote it with
+    `setIsCanonicalRewardChain(false)`, which stamps the role and, with no
+    base, resolves `Detached` on its own. Either procedure retires the
+    delivered residual on the way out. Do not call `setBaseChainId(0)` "to
+    reset" a chain — a chain you mean to leave unconfigured needs no call at
+    all. Note that
     `setIsCanonicalRewardChain(false)` on a never-configured chain is a
     no-op and does NOT stamp the role (an idempotent false→false write must
     not turn `Unconfigured` into `Detached`); only enabling the flag, or

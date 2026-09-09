@@ -10,11 +10,13 @@ a later reader must be able to re-run, not take on trust.
 The result: across all nineteen retained deployments on the five chains —
 current contracts and the earlier ones a redeploy left behind — the census read
 202 loans and found no holding in any category anywhere it could actually read
-the records. Nine deployments are settled on that basis. Ten are not, and the
-census says so rather than rounding them to empty: five because the one
+the records. Eight deployments are settled on that basis. Eleven are not, and
+the census says so rather than rounding them to empty: five because the one
 function that would read the intent records is not installed on those
-contracts, three because they are bare shells with no reading function at all,
-one because the address on record turns out to hold something that is not
+contracts, one because the contract no longer says which token it treats as
+VPFI and the record's token cannot be trusted to settle the two categories that
+depend on it, three because they are bare shells with no reading function at
+all, one because the address on record turns out to hold something that is not
 the platform's contract, and one because its record names a contract without
 the token that would let its holdings be told apart from other assets — a
 record that had until now borrowed its twin's answer. An earlier run had counted eighteen as settled on two
@@ -225,5 +227,32 @@ can hold custody, and a note in a report is not a scan. And each deploy now
 records, under the inventory's lock, that it has published a new live contract,
 so a census cannot report its inventory as unchanged across a deployment that
 finished while it ran.
+
+The last inference the census drew from a deployment record is gone too. Where
+a contract no longer answers which token it treats as VPFI, the record's token
+had been used to decide which holdings counted; but that token can have been
+rotated on the contract before the answer was removed, so a holding in the
+newer token would have been filed as out of scope and the category settled
+wrongly. The record's token is still used to read and list holdings, so a
+reader can see what would have been counted, but the two categories that
+depend on it are now reported as undetermined unless the contract itself
+supplied the token. One live deployment is affected and moves to undetermined
+on those two categories. Two reports that read different block hashes at the
+same height now refuse to replace each other as well.
+
+One operational fix surfaced by the regenerations themselves: two full runs
+were lost to a public endpoint that kept serving the census from a single
+out-of-date machine, because the connection was reused for every retry. The
+census now opens fresh connections when it retries, so a retry can land on a
+healthy machine instead of the one that just failed. It also chooses the
+block it reads from more carefully: the endpoint's machines can be far apart
+in how much of the chain they have, so the census asks several of them which
+block is final and takes the lowest answer, and if a machine still turns out to
+be behind that, it re-reads the whole chain at the height that machine has —
+which is still a final block — rather than failing the run. When even that
+could not find a block the endpoint's machines all had, the census reported
+the chain as failed rather than guess, and that chain's default endpoint was
+moved to one that served every reading cleanly; each report names the endpoint
+that served each chain.
 
 Refs #1566, #1349, #1956

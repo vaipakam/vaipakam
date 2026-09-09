@@ -75,3 +75,8 @@ bound. And the operator documentation now says precisely what detaching stops:
 payouts funded from delivered-fresh budget, and only those — schedule rewards
 already due and recycled-funded legs still settle — so an incident that needs
 every reward outflow stopped is directed to pausing the reward facets instead.
+
+One more correction from review: zeroing the base chain on a chain that is
+itself the canonical one does not detach it, because the canonical flag takes
+precedence; such a chain is detached by clearing that flag, and the operator
+documentation now says which write detaches which kind of chain.

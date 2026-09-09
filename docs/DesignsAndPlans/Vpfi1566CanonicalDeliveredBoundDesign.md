@@ -5228,6 +5228,69 @@ reported a comfortable answer it had not earned:
   payouts funded from delivered-fresh budget only — schedule rewards paid
   before arming and recycled-funded legs still settle — so both now say so
   and name the reward-facet pause as the actual kill-switch.
+
+  **Round 22 withdrew the last inference the census made from an artifact.**
+  Where the token getter is unrouted, the census had taken the artifact's
+  VPFI token as the scope for classes 2 and 3; but `setVPFIToken` permits
+  rotations, and a Diamond that rotated from A to B before its getter was cut
+  out leaves an artifact saying A, so a live row denominated in B would be
+  filed as non-VPFI and the class certified empty. Confirming the getter is
+  unrouted now says nothing about whether the token ever changed, and a
+  rotation-event history can only refute. The artifact token is still used to
+  read and file rows, so a reader sees what it would have scoped, but it never
+  certifies: classes 2 and 3 stay indeterminate unless the scope came from the
+  chain itself or the no-loans bound settles them, and every result records
+  `vpfiScopeAuthoritative`. The one deployment this touches is arb-sepolia's
+  live Diamond, whose getter is unrouted, so its standing moves to
+  indeterminate on those two classes. The replacement guard also now refuses
+  an equal-height hash conflict — two runs that read different block hashes at
+  the same finalized height describe different chain states, and neither may
+  silently replace the other. On the documentation side: zeroing the base on
+  a CANONICAL chain does not detach it, because `Canonical` dominates a base;
+  the canonical chain is demoted with `setIsCanonicalRewardChain(false)`, and
+  the handbook, runbook and setter NatSpec now say which write detaches which
+  role and that only delivered-fresh-funded payouts stop; and the storage
+  field's NatSpec no longer claims the bit is set whenever either setter has
+  run, since the idempotent false write stamps nothing.
+
+  **Found while regenerating for round 22: the census process was PINNED to a
+  lagging replica.** Runs 18 and 21 both lost arb-sepolia's archives to
+  `metadata is not found, <height>` after the full retry budget, while twelve
+  fresh connections to the same endpoint read the same block cleanly at the
+  same moment. Node's global fetch keeps a connection alive indefinitely under
+  continuous load, and a load-balanced public endpoint then keeps routing the
+  process to whichever replica it first landed on — every retry reused the
+  same connection to the same replica. The census now supplies viem's
+  transport with a fetch built on Node's own http(s) agents (the undici
+  dispatcher is not resolvable from this package) and ROTATES the connection
+  pool before every lagging-replica retry and every stale-finality retry, so
+  a retry is balanced anew; each rotation is logged. That alone was not
+  enough: a targeted arb-sepolia run rotated through all eight retries and
+  still met a replica 35,000 blocks behind, and a direct experiment at the
+  height the run had chosen as finalized found twelve of twelve HTTP/1.1 reads
+  and ten of twelve HTTP/2 reads landing on replicas that had not reached it —
+  the finality tag was answered consistently, the STATE reads were not. Two
+  further rules follow. The finality tag is now resolved from six fresh
+  connections and the LOWEST height wins: a lagging replica's finalized block
+  is still a finalized block, so the minimum is reorg-proof and servable by
+  every replica sampled, and the committed-height floor still applies. And
+  when a state read outlasts the rotated retries on a lagging replica, the
+  chain is re-resolved AT that replica's reported head — below the finalized
+  block, so finalized by construction — with its hash fetched by number, and
+  restarted there through the same discard-and-requeue the `safe` downgrade
+  uses, bounded to two such caps per chain; the tag recorded on every result
+  names the cap. A run therefore reads each chain at the highest finalized
+  height its endpoint can actually serve, never at one only its freshest
+  replica has. Even that was not enough on the day: the official endpoint's
+  lagging heads sat BELOW the committed floor, so no cap could be taken
+  without regressing the artifact, and three full runs lost arb-sepolia. The
+  census refused honestly each time — a partial run is never canonical — and
+  arb-sepolia's default endpoint is now Tenderly's public gateway, which
+  answered the same finalized height as the official endpoint, served state
+  there, at the floor and 200,000 blocks back, answered log ranges, and
+  censused all four deployments at FINALIZED with no downgrade and no
+  rotation; the official endpoint remains the documented alternative through
+  the per-chain override, and every result records the host that served it.
   Hand-computed storage slots were never an option: they fail SILENTLY as
   zero, manufacturing the exact "empty" result the census exists to
   establish. The event reconstruction is retained behind `--corroborate` as
@@ -5250,37 +5313,41 @@ reported a comfortable answer it had not earned:
   latter as a failure on op-sepolia rather than silently counting it as an
   absent commit.
 
-**RESULT (2026-09-09, run 20 — all nineteen retained deployments across five
+**RESULT (2026-09-09, run 23 — all nineteen retained deployments across five
 chains, inventory from the committed manifest, the two unsound bounds
 withdrawn, every chain read at or above the height the previous committed run
-certified, the serving endpoint and producer liveness recorded on every
-result, and a result shared between artifacts only when their scoping
-metadata is identical): nine deployments are PROVEN EMPTY on every class; ten
-are INDETERMINATE on at least one.** 202 loan reads were made across the
-nineteen artifacts (eighteen distinct Diamonds: arb-sepolia's 01-36-25Z
+certified, the serving endpoint, producer liveness and scope authority
+recorded on every result, a result shared between artifacts only when their
+scoping metadata is identical, and an artifact-sourced token never certifying
+a scope-dependent class): eight deployments are PROVEN EMPTY on every class;
+eleven are INDETERMINATE on at least one.** 202 loan reads were made across
+the nineteen artifacts (eighteen distinct Diamonds: arb-sepolia's 01-36-25Z
 archive names the live Diamond but records no VPFI token, and since that
 Diamond does not route the token getter it is scanned on its own and cannot be
-scoped — runs 14 to 19 had reused the live result for it, which round 16
-showed to be unsound when the metadata differs); **zero rows were found in
-any class on any deployment where rows could be read**; every Diamond whose
-VPFI token resolves holds zero, and no backing shortfall exists anywhere rows
-were readable. The artifact records `migrationRetirable: false` — the
-population is not yet established empty, and fifteen of the nineteen
-deployments still route a custody surface, so even a fully proven run would
-report the migration half as not yet retirable until it follows a finalized
-producer freeze or an isolation deploy. Runs 15 to 19, made while closing the
-round-12 to round-15 findings, reached the earlier ten-and-nine standing for
-every deployment they completed; run 15 was discarded for reading op-sepolia
-at a stale finality height (see the monotonic-height guard above), run 16 for
-carrying the endpoint stamp on only part of the results, run 17 superseded by
-the round-13 fields, run 18 lost arb-sepolia's 37-loan archive to a replica
-two hours behind head, and run 19 was superseded by the round-16 reuse rule.
-How each deployment stands:
+scoped); **zero rows were found in any class on any deployment where rows
+could be read**; every Diamond whose VPFI token resolves holds zero, and no
+backing shortfall exists anywhere rows were readable. The artifact records
+`migrationRetirable: false` — the population is not yet established empty,
+and fifteen of the nineteen deployments still route a custody surface, so
+even a fully proven run would report the migration half as not yet retirable
+until it follows a finalized producer freeze or an isolation deploy. The move
+from nine to eight is arb-sepolia's live Diamond: its token getter is
+unrouted, so its scope came from the artifact, and under the round-22 rule an
+artifact token reads and files rows but never certifies — classes 2 and 3
+there are indeterminate pending routing of the getter or a calibrated read of
+the token slot. Runs 15 to 22, made while closing the round-12 to round-22
+findings, reached the standing of their day for every deployment they
+completed; runs 15 and 16 were discarded for a stale finality height and a
+partial endpoint stamp, runs 17, 19 and 20 were superseded by later rules,
+and runs 18, 21 and 22 lost arb-sepolia to the official endpoint's lagging
+replicas, which is why that chain now reads through Tenderly's gateway. How
+each deployment stands:
 
 | Standing | Deployments | Basis |
 | --- | --- | --- |
-| proven — enumerated | 3 | every loan read through routed getters in all four classes: 0 rows |
+| proven — enumerated | 2 | every loan read through routed getters in all four classes, scope from the chain: 0 rows |
 | proven — `no-loans-ever-created` | 6 | loan counter is zero (state read) and every class is loan-keyed |
+| indeterminate on classes 2 and 3 | 1 | `arb-sepolia/live`: classes 1/4 enumerated empty and 0 rows read in 2/3 by the artifact's token, but the token getter is unrouted, so the scope is not authoritative — a rotation could postdate the artifact |
 | indeterminate on class 3 ONLY | 5 | classes 1/2/4 enumerated empty; the intent getter is unrouted, so `intentCommits` cannot be read (arb-sepolia ×2 archives, base-sepolia 06-30 archive, op-sepolia live, sepolia 05-10 archive) |
 | indeterminate on every class | 3 | bare shells: every custody selector unrouted TODAY, storage unreadable without a getter |
 | indeterminate on every class | 1 | `base-sepolia/.archive/2026-07-01T01-03-39Z`: the recorded address is not a Vaipakam Diamond |
@@ -5335,7 +5402,7 @@ returned zero on both unrouted chains and reported both as proven** — an empty
 scan manufacturing the comfortable answer, which is the exact failure this
 census exists to refuse, reintroduced by the machinery meant to prevent it.
 
-**Outstanding — three items, and none is an archive endpoint.**
+**Outstanding — four items, and none is an archive endpoint.**
 
 1. **A calibrated storage read.** The eight deployments indeterminate for
    want of a getter (five on class 3, three shells on every class) can be
@@ -5362,7 +5429,14 @@ census exists to refuse, reintroduced by the machinery meant to prevent it.
    two snapshots can straddle a rotation. Recording the token (an artifact
    correction, operator-gated like item 2, and one that regeneration of the
    manifest treats as a permitted non-identity correction) lets the next run
-   scope it.
+   read it — though under item 4 it still cannot certify.
+4. **An authoritative VPFI scope for arb-sepolia's live Diamond.** Its
+   token getter is unrouted, so the only scope available is the artifact's,
+   which the round-22 rule reads but never certifies: a rotation via
+   `setVPFIToken` could postdate it. Routing `getVPFIToken` on that Diamond
+   (a facet cut, operator-gated) or a calibrated read of the token's storage
+   slot — proven against a routed getter on another deployment first, the
+   same discipline as item 1 — is what settles its classes 2 and 3.
 
 **The refusal was then confirmed independently, and the confirmation is the
 part worth keeping.** Archive `eth_getCode` probes bound the Diamond's creation

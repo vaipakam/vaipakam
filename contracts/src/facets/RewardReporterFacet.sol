@@ -1246,16 +1246,26 @@ contract RewardReporterFacet is
     ///             single-chain semantics — the reward paths run unbounded
     ///             from the schedule;
     ///           - an EXPLICIT `setBaseChainId(0)` stamps
-    ///             `rewardRoleConfigured` and resolves `Detached`: the
-    ///             delivered-fresh bound is ZERO and reward payouts stop.
-    ///             That is the detach procedure, and the only one; it also
-    ///             retires the delivered residual on the way out.
+    ///             `rewardRoleConfigured` and, on a MIRROR, resolves
+    ///             `Detached`: the delivered-fresh bound is ZERO, so payouts
+    ///             funded from delivered-fresh budget stop — and only those
+    ///             (Codex #2070 r22): schedule rewards paid before arming are
+    ///             not consulted against the bound, and recycled-funded legs
+    ///             still settle. It is not a payout kill-switch; pausing the
+    ///             reward facets is. That is the mirror's detach procedure;
+    ///             it also retires the delivered residual on the way out.
+    ///           - on a CANONICAL chain zero here does NOT detach:
+    ///             {LibVaipakam.rewardRole} resolves `Canonical` whenever the
+    ///             canonical flag is set, whatever the base. Demote with
+    ///             {setIsCanonicalRewardChain}(false) instead, which stamps
+    ///             and — with no base — resolves `Detached` on its own.
     ///         So zero is a real configuration state with consequences,
     ///         not an absence — and calling this with zero to "reset" a
-    ///         chain freezes its rewards. `ConfigureRewardReporter` refuses
-    ///         a zero base on a mirror for this reason. Read the resolved
-    ///         role back with {getRewardRole}; these two raw fields cannot
-    ///         distinguish the cases.
+    ///         mirror stops its delivered-fresh-funded payouts.
+    ///         `ConfigureRewardReporter` refuses a zero base on a mirror for
+    ///         this reason. Read the resolved role back with
+    ///         {getRewardRole}; these two raw fields cannot distinguish the
+    ///         cases.
     /// @param chainId EVM chain id of the canonical reward chain.
     function setBaseChainId(
         uint32 chainId

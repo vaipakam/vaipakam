@@ -465,9 +465,11 @@ surface stays inert.
    CCIP chain selector — the adapter normalises selectors
    internally. **Never pass zero here to "reset" a chain**: an explicit
    zero write records the `Detached` reward role and is the deliberate
-   detach procedure, whereas a chain that was simply never configured
-   resolves `Unconfigured` and keeps single-chain semantics without any
-   call. **What detaching stops is narrower than "all rewards"**: the
+   detach procedure FOR A MIRROR, whereas a chain that was simply never
+   configured resolves `Unconfigured` and keeps single-chain semantics
+   without any call. To detach a CANONICAL chain use
+   `setIsCanonicalRewardChain(false)` — `Canonical` dominates a base, so
+   zeroing the base on a canonical chain leaves it `Canonical`. **What detaching stops is narrower than "all rewards"**: the
    `Detached` role sets the delivered-fresh bound to zero, so payouts that
    would be funded from delivered-fresh budget stop; schedule rewards paid
    before arming are not consulted against that bound, and recycled-funded

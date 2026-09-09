@@ -93,6 +93,8 @@ import { readManifest, regenerateEntries, withManifestLock, writeSnapshotGuarded
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createPublicClient, http, toFunctionSelector, parseAbiItem } from 'viem';
+import { Agent as HttpsAgent, request as httpsRequest } from 'node:https';
+import { Agent as HttpAgent, request as httpRequest } from 'node:http';
 
 /**
  * EIP-2535's cut event — the COMPLETE routing history of a Diamond. Declared
@@ -123,7 +125,20 @@ const PUBLIC_RPC = {
   // and class 3 on this chain is indeterminate without a routed getter either
   // way. State certifies; logs never did. Override with CENSUS_RPC_OP_SEPOLIA.
   'op-sepolia': 'https://optimism-sepolia-rpc.publicnode.com',
-  'arb-sepolia': 'https://sepolia-rollup.arbitrum.io/rpc',
+  // arb-sepolia: Tenderly's public gateway, not the official
+  // `sepolia-rollup.arbitrum.io`. On 2026-09-09 the official endpoint's
+  // replicas were dispersed by ~35k blocks: its finality tag answered
+  // consistently but STATE reads at that height kept landing on replicas
+  // that had not reached it (12/12 HTTP/1.1, 10/12 HTTP/2 in a direct
+  // experiment), and the lagging heads sat below the committed floor, so
+  // neither connection rotation nor the lagging-head cap could find a
+  // servable height — three full runs lost arb-sepolia that way. Tenderly
+  // answered the same finalized height as the official endpoint (307055614),
+  // served state there, at the floor and 200k blocks back, answered log
+  // ranges, and censused all four deployments at FINALIZED (no safe
+  // downgrade) with zero rotations. The official endpoint remains the
+  // documented alternative via CENSUS_RPC_ARB_SEPOLIA.
+  'arb-sepolia': 'https://arbitrum-sepolia.gateway.tenderly.co',
   sepolia: 'https://ethereum-sepolia-rpc.publicnode.com',
   'bnb-testnet': 'https://bsc-testnet-rpc.publicnode.com',
 };
@@ -214,9 +229,61 @@ async function withReplicaRetry(requestedBlock, fn) {
       const h = laggingReplicaHeight(err);
       const lagging = h !== null && requestedBlock !== undefined && h < requestedBlock;
       if (!lagging || i >= LAGGING_REPLICA_RETRIES) throw err;
+      // A retry on the SAME keep-alive connection lands on the SAME lagging
+      // replica (runs 18 and 21 lost arb-sepolia this way while fresh
+      // connections read fine); rotate the connection pool so the retry is
+      // balanced anew.
+      rotateConnections(`lagging replica at ${h} < ${requestedBlock}, attempt ${i + 1}/${LAGGING_REPLICA_RETRIES}`);
       await sleep(400 * 2 ** i); // 0.4s, 0.8s, 1.6s, 3.2s, 6.4s — a different replica usually answers within this
     }
   }
+}
+
+/**
+ * The RPC transport's fetch, built on Node's own http(s) agents so the
+ * connection POOL can be rotated (Codex #2070 / runs 18 & 21). Node's global
+ * fetch keeps connections alive indefinitely under continuous load, and a
+ * load-balanced public endpoint then keeps routing this process to whichever
+ * replica it first landed on — including one hours behind head — while every
+ * retry reuses that same connection. `undici`'s dispatcher is not resolvable
+ * from this package, so the adapter uses `node:https` directly and returns a
+ * real `Response`, which is all viem's RPC layer reads (`ok`, `status`,
+ * `statusText`, `headers.get`, `json()`, `text()`).
+ */
+let connectionAgents = { https: new HttpsAgent({ keepAlive: true, maxSockets: 8 }), http: new HttpAgent({ keepAlive: true, maxSockets: 8 }) };
+let connectionRotations = 0;
+function rotateConnections(reason, quiet = false) {
+  connectionAgents.https.destroy();
+  connectionAgents.http.destroy();
+  connectionAgents = { https: new HttpsAgent({ keepAlive: true, maxSockets: 8 }), http: new HttpAgent({ keepAlive: true, maxSockets: 8 }) };
+  connectionRotations += 1;
+  if (!quiet) process.stderr.write(`census: rotating RPC connections (${reason}) — rotation ${connectionRotations}\n`);
+}
+function fetchViaNodeAgents(url, init = {}) {
+  return new Promise((resolve, reject) => {
+    const u = new URL(String(url));
+    const isHttps = u.protocol === 'https:';
+    const doRequest = isHttps ? httpsRequest : httpRequest;
+    const req = doRequest(
+      u,
+      { method: init.method ?? 'POST', headers: init.headers ?? {}, agent: isHttps ? connectionAgents.https : connectionAgents.http, signal: init.signal },
+      (res) => {
+        const chunks = [];
+        res.on('data', (c) => chunks.push(c));
+        res.on('error', reject);
+        res.on('end', () => {
+          const headers = {};
+          for (const [k, v] of Object.entries(res.headers)) if (v !== undefined) headers[k] = Array.isArray(v) ? v.join(', ') : String(v);
+          const status = res.statusCode ?? 0;
+          const body = [204, 205, 304].includes(status) ? null : Buffer.concat(chunks);
+          resolve(new Response(body, { status, statusText: res.statusMessage ?? '', headers }));
+        });
+      },
+    );
+    req.on('error', reject);
+    if (init.body) req.write(init.body);
+    req.end();
+  });
 }
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 /**
@@ -571,6 +638,8 @@ function loadPriorCommittedHeights(canonicalPath) {
 // labelled as current finality. The finality read is one RPC, so a stale
 // replica is retried; persistence past the budget is a recorded failure.
 const STALE_FINALITY_RETRIES = 6;
+/** Fresh-connection samples of a finality tag per resolution; the LOWEST height wins (see resolveCensusBlock). */
+const FINALITY_SAMPLES = 6;
 /**
  * Arbitrum Sepolia's public RPC keeps a MOVING state window, and its
  * `finalized` tag lags far enough behind head that the finalized block can
@@ -587,6 +656,39 @@ function downgradeChainToSafe(slug) {
   CENSUS_BLOCK_BY_CHAIN.delete(slug);
   return true;
 }
+/**
+ * Cap a chain's census height at a LAGGING REPLICA'S OWN HEAD (2026-09-09,
+ * arb-sepolia). The finality tag was consistent across every sampled replica,
+ * but STATE reads at that height kept landing on replicas whose own head was
+ * tens of thousands of blocks lower — `metadata is not found, <head>` on all
+ * eight rotated retries, three runs in a row. That head is BELOW the chain's
+ * finalized block, so a block at that height is itself finalized and
+ * reorg-proof; reading there is sound, and it is servable by the replicas
+ * that were failing. So on a lagging failure that survived the retry budget,
+ * the chain is re-resolved AT that head (hash fetched by number), still
+ * subject to the committed-height floor, and RESTARTED — the same discard-
+ * and-requeue the `safe` downgrade uses, so one block identity per chain
+ * holds. Bounded to `MAX_HEAD_CAPS_PER_CHAIN` so the run cannot chase ever-
+ * lower stragglers; past that it is a recorded failure.
+ */
+const MAX_HEAD_CAPS_PER_CHAIN = 2;
+const CHAIN_HEAD_CAPS = new Map();
+async function capChainAtLaggingHead(client, slug, who, head) {
+  const caps = CHAIN_HEAD_CAPS.get(slug) ?? 0;
+  if (caps >= MAX_HEAD_CAPS_PER_CHAIN) return null;
+  const current = CENSUS_BLOCK_BY_CHAIN.get(slug);
+  if (!current || head >= current.number) return null; // not actually lower than what we read at
+  const floor = PRIOR_COMMITTED_HEIGHT.get(slug);
+  if (floor !== undefined && head < floor) {
+    process.stderr.write(`census: ${who} — lagging replica head ${head} is BELOW the committed floor ${floor}; cannot cap there\n`);
+    return null;
+  }
+  const b = await withReplicaRetry(head, () => client.getBlock({ blockNumber: head }));
+  if (!b?.hash) return null;
+  CHAIN_HEAD_CAPS.set(slug, caps + 1);
+  CENSUS_BLOCK_BY_CHAIN.set(slug, { number: b.number, hash: b.hash, tag: `${current.tag} → capped at lagging replica head ${head} (finalized by construction; cap ${caps + 1}/${MAX_HEAD_CAPS_PER_CHAIN})` });
+  return CENSUS_BLOCK_BY_CHAIN.get(slug);
+}
 
 async function resolveCensusBlock(client, who, tags = ['finalized', 'safe'], chainSlug = null) {
   // Resolve finality FIRST, unconditionally. Codex #2070 r4 P1 — `--block`
@@ -600,18 +702,37 @@ async function resolveCensusBlock(client, who, tags = ['finalized', 'safe'], cha
   for (let attempt = 0; ; attempt++) {
     finality = null;
     for (const blockTag of tags) {
-      try {
-        const b = await client.getBlock({ blockTag });
-        if (b?.number != null && b?.hash) {
-          finality = {
-            number: b.number,
-            hash: b.hash,
-            tag: tags.length === 1 && blockTag === 'safe' ? 'safe (finalized state pruned by endpoint)' : blockTag,
-          };
-          break;
+      // A public endpoint is a load balancer over replicas that can be
+      // DISPERSED by tens of thousands of blocks (arb-sepolia, 2026-09-09:
+      // at the height one replica called finalized, 12/12 fresh HTTP/1.1 and
+      // 10/12 HTTP/2 reads landed on replicas that had not reached it).
+      // Resolving the tag once takes whichever replica answers — often the
+      // freshest — and every later read then fails on the rest. So the tag is
+      // SAMPLED over several fresh connections and the LOWEST height wins: a
+      // lagging replica's finalized block is still a finalized block (the tag
+      // is monotonic), so the minimum is reorg-proof AND servable by every
+      // replica sampled. The committed-height floor below still applies.
+      const samples = [];
+      for (let i = 0; i < FINALITY_SAMPLES; i++) {
+        try {
+          const b = await client.getBlock({ blockTag });
+          if (b?.number != null && b?.hash) samples.push({ number: b.number, hash: b.hash });
+        } catch {
+          // Not every chain/RPC implements both tags; a sample that fails is simply absent.
         }
-      } catch {
-        // Not every chain/RPC implements both tags; try the next one.
+        if (i < FINALITY_SAMPLES - 1) rotateConnections(`sampling ${blockTag} ${i + 2}/${FINALITY_SAMPLES}`, true);
+      }
+      if (samples.length) {
+        const lowest = samples.reduce((a, b) => (b.number < a.number ? b : a));
+        const heights = [...new Set(samples.map((x) => x.number.toString()))].sort();
+        finality = {
+          number: lowest.number,
+          hash: lowest.hash,
+          tag:
+            (tags.length === 1 && blockTag === 'safe' ? 'safe (finalized state pruned by endpoint)' : blockTag) +
+            (heights.length > 1 ? ` (lowest of ${samples.length} samples: ${heights.join(', ')})` : ''),
+        };
+        break;
       }
     }
     if (!finality) {
@@ -645,6 +766,7 @@ async function resolveCensusBlock(client, who, tags = ['finalized', 'safe'], cha
       );
     }
     process.stderr.write(`census: ${who} — ${why}; retrying the finality read (${attempt + 1}/${STALE_FINALITY_RETRIES})\n`);
+    rotateConnections(`stale finality tag, attempt ${attempt + 1}/${STALE_FINALITY_RETRIES}`);
     await sleep(1_000 * 2 ** attempt);
   }
 
@@ -855,7 +977,7 @@ async function censusDeployment(dep) {
     'SwapToRepayIntentForceCancelled',
   ]);
 
-  const client = createPublicClient({ transport: http(rpc) });
+  const client = createPublicClient({ transport: http(rpc, { fetchFn: fetchViaNodeAgents }) });
   const chainId = await client.getChainId();
   if (addresses.chainId && Number(addresses.chainId) !== Number(chainId)) {
     throw new Error(
@@ -1046,6 +1168,20 @@ async function censusDeployment(dep) {
     vpfiToken = addresses.vpfiToken ?? addresses.vpfiMirror;
     vpfiTokenSource = 'deployment artifact';
   }
+  // Codex #2070 r22 P1 — an artifact token is NOT an authoritative scope.
+  // `setVPFIToken` permits rotations; if the Diamond rotated A → B and the
+  // getter was later cut out, the artifact still says A, and a live fallback
+  // or intent row denominated in B would be filed as non-VPFI and the class
+  // certified empty. Confirming the getter is unrouted NOW says nothing about
+  // whether the token ever changed, and a rotation-event history can only
+  // refute. So the artifact token is used to READ and file rows (so a reader
+  // can see what it would have scoped), never to CERTIFY: classes 2 and 3 —
+  // the scope-dependent ones — stay indeterminate unless the scope came from
+  // the chain itself or the no-loans bound settles them.
+  const vpfiScopeAuthoritative = vpfiTokenSource === 'on-chain getVPFIToken()';
+  const scopeNotAuthoritativeReason =
+    'the VPFI token getter is unrouted, so the effective token cannot be read; the artifact token may predate a rotation via setVPFIToken, ' +
+    'and a row denominated in the live token would be filed as non-VPFI — undetermined pending routing of the getter or a calibrated read of the token slot';
   const diamondVpfiBalance = vpfiToken && !noCode
     ? await withReplicaRetry(atBlock, () =>
         client.readContract({ address: vpfiToken, abi: [ERC20_BALANCE_OF], functionName: 'balanceOf', args: [diamond], blockNumber: atBlock }),
@@ -1079,6 +1215,7 @@ async function censusDeployment(dep) {
       diamond,
       vpfiToken: null,
       vpfiTokenSource: 'unresolvable',
+      vpfiScopeAuthoritative: false,
       provenBy: undefined,
       diamondVpfiBacking: null,
       vpfiRowsTotal: null,
@@ -1125,6 +1262,7 @@ async function censusDeployment(dep) {
       diamond,
       vpfiToken,
       vpfiTokenSource,
+      vpfiScopeAuthoritative: vpfiTokenSource === 'on-chain getVPFIToken()',
       provenBy: provenBy ?? undefined,
       diamondVpfiBacking: diamondVpfiBalance === null ? null : diamondVpfiBalance.toString(),
       vpfiRowsTotal: null,
@@ -1405,6 +1543,7 @@ async function censusDeployment(dep) {
     diamond,
     vpfiToken,
     vpfiTokenSource,
+    vpfiScopeAuthoritative,
     provenBy: provenByEnumerable ?? undefined,
     // BACKING, not a proof: what the Diamond holds, against what its rows claim.
     // Rows total > backing is exactly the shortfall slice 0 must reconcile.
@@ -1465,9 +1604,13 @@ async function censusDeployment(dep) {
         rows: rebateRows,
       },
       fallbackSnapshotCustody: {
-        status: vpfiToken || provenByEnumerable ? 'proven' : 'indeterminate',
+        status: provenByEnumerable || (vpfiToken && vpfiScopeAuthoritative) ? 'proven' : 'indeterminate',
         provenBy: provenByEnumerable ?? undefined,
-        indeterminateReason: vpfiToken || provenByEnumerable ? undefined : 'VPFI token unresolvable (neither on-chain nor in the artifact); VPFI custody cannot be scoped',
+        indeterminateReason: provenByEnumerable || (vpfiToken && vpfiScopeAuthoritative)
+          ? undefined
+          : vpfiToken
+            ? scopeNotAuthoritativeReason
+            : 'VPFI token unresolvable (neither on-chain nor in the artifact); VPFI custody cannot be scoped',
         count: fallbackRows.length,
         total: sum(fallbackRows, 'collateralTotal'),
         rows: fallbackRows,
@@ -1486,7 +1629,7 @@ async function censusDeployment(dep) {
           provenByEnumerable && !corroboration?.contradictsPrimaryProof
             ? 'proven'
             : intentSurfaceRouted
-              ? corroboration?.contradictsPrimaryProof || !vpfiToken
+              ? corroboration?.contradictsPrimaryProof || !vpfiToken || !vpfiScopeAuthoritative
                 ? 'indeterminate'
                 : 'proven'
               : intentAbsenceProof?.proven
@@ -1506,7 +1649,9 @@ async function censusDeployment(dep) {
                 ? 'the event-lifecycle reconstruction disagrees with the live-state view'
                 : !vpfiToken
                   ? 'the intent getter answered but no VPFI token resolved, so every returned intent has an UNKNOWN asset — not provably non-VPFI'
-                  : undefined
+                  : !vpfiScopeAuthoritative
+                    ? scopeNotAuthoritativeReason
+                    : undefined
               : intentAbsenceProof?.reason,
         absenceProof:
           provenByEnumerable && !corroboration?.contradictsPrimaryProof ? undefined : intentSurfaceRouted ? undefined : intentAbsenceProof,
@@ -1576,6 +1721,29 @@ async function main() {
       results.push(r);
       byAddress.set(addrKey, r);
     } catch (err) {
+      // A lagging replica that outlasted the rotated retries: cap the chain's
+      // height at that replica's head (still finalized) and restart the chain
+      // there, before the generic pruned → safe downgrade is even considered.
+      const laggingHead = laggingReplicaHeight(err);
+      const cappedAt =
+        laggingHead !== null
+          ? await capChainAtLaggingHead(createPublicClient({ transport: http(rpcFor(dep.slug), { fetchFn: fetchViaNodeAgents }) }), dep.slug, who, laggingHead).catch(() => null)
+          : null;
+      if (cappedAt) {
+        const dropped = results.filter((r) => r.chainSlug === dep.slug).length;
+        for (let i = results.length - 1; i >= 0; i--) if (results[i].chainSlug === dep.slug) results.splice(i, 1);
+        for (const k of [...byAddress.keys()]) if (k.startsWith(`${dep.slug}|`)) byAddress.delete(k);
+        const staleFailures = failures.filter((f) => f.chainSlug === dep.slug).length;
+        for (let i = failures.length - 1; i >= 0; i--) if (failures[i].chainSlug === dep.slug) failures.splice(i, 1);
+        const chainDeps = deployments.filter((d) => d.slug === dep.slug);
+        for (let i = queue.length - 1; i >= 0; i--) if (queue[i].slug === dep.slug) queue.splice(i, 1);
+        queue.unshift(...chainDeps);
+        process.stderr.write(
+          `census: ${who} — state reads kept landing on a replica at ${laggingHead}; re-resolving ${dep.slug} at that height (${cappedAt.tag}) and RESTARTING the chain ` +
+            `(discarding ${dropped} result(s) and ${staleFailures} recorded failure(s))\n`,
+        );
+        continue;
+      }
       if (classifyRpcError(err) === 'pruned' && downgradeChainToSafe(dep.slug)) {
         // Restart THIS CHAIN from scratch at `safe`.
         const dropped = results.filter((r) => r.chainSlug === dep.slug).length;
@@ -1733,6 +1901,25 @@ async function main() {
         if (!r?.chainSlug || r?.atBlock == null) continue;
         const h = BigInt(r.atBlock);
         if (!theirs.has(r.chainSlug) || h > theirs.get(r.chainSlug)) theirs.set(r.chainSlug, h);
+      }
+      // Codex #2070 r22 P2 — at an EQUAL height, a different block hash means
+      // the two runs read different chain states (inconsistent replicas, or a
+      // reorg one of them caught); each run's own end-of-run identity re-read
+      // only proves internal consistency. Refuse rather than overwrite the
+      // evidence that the snapshots disagree.
+      const theirsHash = new Map();
+      for (const r of current.results ?? []) {
+        if (!r?.chainSlug || r?.atBlock == null || !r?.atBlockHash) continue;
+        theirsHash.set(`${r.chainSlug}|${r.atBlock}`, String(r.atBlockHash).toLowerCase());
+      }
+      const hashConflicts = results
+        .filter((r) => theirsHash.has(`${r.chainSlug}|${r.atBlock}`) && theirsHash.get(`${r.chainSlug}|${r.atBlock}`) !== String(r.atBlockHash).toLowerCase())
+        .map((r) => `${r.chainSlug}@${r.atBlock}: committed ${theirsHash.get(`${r.chainSlug}|${r.atBlock}`)} ≠ this run ${r.atBlockHash}`);
+      if (hashConflicts.length) {
+        return (
+          `the committed census read a DIFFERENT block hash at the same height (${[...new Set(hashConflicts)].join('; ')}); the two snapshots ` +
+          `describe different chain states — an inconsistent endpoint or a reorg — and neither may silently replace the other; re-run against a consistent endpoint`
+        );
       }
       const regressed = [...mine].filter(([slug, h]) => theirs.has(slug) && theirs.get(slug) > h);
       if (regressed.length) {
