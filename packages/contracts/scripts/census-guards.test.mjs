@@ -94,6 +94,10 @@ test('revertErrorLikeViem: a revert the ABI cannot decode still carries its sign
   assert.equal(revertErrorLikeViem(provider, abi, 'x'), null);
   assert.equal(isExecutionRevert({ code: -32000, details: 'execution reverted: custom' }), true, 'the text still counts where a client uses another code');
   assert.equal(isExecutionRevert({ cause: { code: 3 } }), true);
+  // a provider message that merely CONTAINS "revert" is not an execution revert (#2088 r3 P2)
+  const revertedBlock = { code: -32602, message: 'cannot serve a reverted block', details: 'cannot serve a reverted block', data: '0xa9ad62f8' };
+  assert.equal(isExecutionRevert(revertedBlock), false);
+  assert.equal(revertErrorLikeViem(revertedBlock, abi, 'x'), null);
 });
 
 test('isFunctionDoesNotExistRevert: only the EXACT four-byte fallback payload proves a selector unrouted on a Diamond (#2088 r2)', () => {

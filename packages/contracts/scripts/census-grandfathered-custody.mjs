@@ -231,14 +231,19 @@ export function isFunctionDoesNotExistRevert(err) {
   // decoded by name (only if some ABI carried the error): still requires the exact four-byte payload
   return /^FunctionDoesNotExist$/.test(`${err?.errorName ?? ''}`) && data === FUNCTION_DOES_NOT_EXIST_SELECTOR;
 }
+/**
+ * viem's own gate, and no wider: JSON-RPC code 3 (`ExecutionRevertedError.code`,
+ * EIP-1474 "execution error") or its node message
+ * `/execution reverted|gas required exceeds allowance/`. A bare "revert" in a
+ * provider's text — a -32602 that cannot serve a "reverted" block, say — is
+ * NOT an execution revert and must surface as the provider failure it is,
+ * whatever hex `data` rides along (#2088 r1/r3 P2).
+ */
+const EXECUTION_REVERT_NODE_MESSAGE = /execution reverted|gas required exceeds allowance/i;
 export function isExecutionRevert(err) {
-  // JSON-RPC code 3 is "execution error" (EIP-1474), what every client uses for
-  // a revert; the message check covers providers that keep the text but use
-  // another code. A -32602 "invalid block reference" that happens to carry hex
-  // `data` is a PROVIDER failure and must surface as one (#2088 r1 P2).
   const codes = [err?.code, err?.cause?.code, err?.cause?.cause?.code];
   if (codes.some((c) => c === 3)) return true;
-  return /execution reverted|revert/i.test(`${err?.details ?? ''} ${err?.shortMessage ?? ''} ${err?.message ?? ''} ${err?.cause?.message ?? ''}`);
+  return EXECUTION_REVERT_NODE_MESSAGE.test(`${err?.details ?? ''} ${err?.shortMessage ?? ''} ${err?.message ?? ''} ${err?.cause?.message ?? ''}`);
 }
 export function revertErrorLikeViem(err, abi, functionName) {
   if (!isExecutionRevert(err)) return null;
