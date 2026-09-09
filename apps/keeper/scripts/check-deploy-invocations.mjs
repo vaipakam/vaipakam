@@ -4364,6 +4364,16 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
         (shellish
           ? String.raw`|(?:^|[\s;&|)])(?:\{\w+\}|[\d*]*)>{1,2}[|&]?\s*["'$~/.]`
           : '') +
+        // …AND EACH ALTERNATIVE CLOSES WITH ITS OWN QUOTE, by NAME. These
+        // were numbered backreferences, and inserting two alternatives in r34
+        // shifted the numbering under the two below them: they went on
+        // referring to a group belonging to an EARLIER alternative, which in
+        // an unmatched alternative is empty — so JavaScript accepted the
+        // backreference against nothing and the mode matched on its first
+        // letter alone, reporting `open(path, "welcome")` as a write (r37).
+        //
+        // Named, so the coupling is to the group and not to a position, and
+        // the next inserted alternative cannot repeat this.
         // The mode literal must CLOSE. Accepting a prefix let
         // `webbrowser.open("welcome")` match `"w` (r11).
         // …and the METHOD form is GONE (r30). `webbrowser.open("w")` opens a
@@ -4385,11 +4395,11 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
         // reads a file named `w` and the mode defaults to reading, and
         // accepting an optional keyword there reported it as a write (r34).
         // A mode in first position is therefore admitted only as a KEYWORD.
-        String.raw`|` + FS_OPEN + String.raw`\s*\(\s*mode\s*=\s*(["'\`])[rbt]*[wax+][rbt+]*\1` +
+        String.raw`|` + FS_OPEN + String.raw`\s*\(\s*mode\s*=\s*(?<mk>["'\`])[rbt]*[wax+][rbt+]*\k<mk>` +
         // …and on a CONSTRUCTED PATH the first argument IS the mode, so both
         // spellings are read there. Splitting these apart is what lets the
         // builtin tighten without losing `Path("…").open("w")`.
-        String.raw`|Path\s*\([^()]*\)\s*\.\s*open\s*\(\s*(?:mode\s*=\s*)?(["'\`])[rbt]*[wax+][rbt+]*\2` +
+        String.raw`|Path\s*\([^()]*\)\s*\.\s*open\s*\(\s*(?:mode\s*=\s*)?(?<mp>["'\`])[rbt]*[wax+][rbt+]*\k<mp>` +
         // `os.open` DOES NOT TAKE A MODE STRING AT ALL. Its second argument is
         // an integer flag set, so the only way to see its intent is to read
         // the flags — and `os.open(cfg, os.O_WRONLY | os.O_TRUNC)` truncates
@@ -4409,13 +4419,13 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
         // Every open-mode branch requires the literal to CLOSE. r11 fixed
         // only the method form, so `webbrowser.open("https://x", "welcome")`
         // still matched the prefix `"w` in the positional one (r12).
-        String.raw`|` + FS_OPEN + String.raw`\s*\(\s*(?:(?:[^()]|\([^()]*\))*,\s*)?mode\s*=\s*(["'\`])[rbt]*[wax+][rbt+]*\2` +
+        String.raw`|` + FS_OPEN + String.raw`\s*\(\s*(?:(?:[^()]|\([^()]*\))*,\s*)?mode\s*=\s*(?<ma>["'\`])[rbt]*[wax+][rbt+]*\k<ma>` +
         // `open(Path(cfg), "w")` wraps the path, and stopping at the first
         // `)` never reached the positional mode (r10).
         // …and the POSITIONAL form needs an `open` that is Python's builtin or a
         // filesystem one. Any member method whose second argument looks like a
         // mode matched — `browser.open(url, "w")` opens a window named `w` (r23).
-        String.raw`|` + FS_OPEN + String.raw`\s*\((?:[^()]|\([^()]*\))*,\s*(["'\`])[rbt]*[wax+][rbt+]*\3`,
+        String.raw`|` + FS_OPEN + String.raw`\s*\((?:[^()]|\([^()]*\))*,\s*(?<mo>["'\`])[rbt]*[wax+][rbt+]*\k<mo>`,
       'gm',
     );
     // NO ORDERING BETWEEN THE NAME AND THE WRITE. Requiring the write to come

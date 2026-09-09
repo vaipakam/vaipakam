@@ -11402,4 +11402,60 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     );
     expect(r.ok).toBe(false);
   });
+
+  // ---- Codex #2066 r37 ----
+
+  it('an invalid positional mode is not a write (#2066 r37)', () => {
+    // These alternatives closed on NUMBERED backreferences, and inserting two
+    // alternatives in r34 shifted the numbering under them — so they referred
+    // to a group belonging to an earlier, unmatched alternative, which is
+    // empty, and the mode matched on its first letter alone. Named now.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'oa.py',
+      'import subprocess\n' +
+        'try:\n    open("other.jsonc", "welcome")\nexcept ValueError:\n    pass\n' +
+        'cfg = "configs/custom.jsonc"\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('an invalid keyword mode is not a write (#2066 r37)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'ob.py',
+      'import subprocess\n' +
+        'try:\n    open("other.jsonc", mode="welcome")\nexcept ValueError:\n    pass\n' +
+        'cfg = "configs/custom.jsonc"\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a real positional write mode still counts (#2066 r37 bounds)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'oc.py',
+      'import subprocess\n' +
+        'open("configs/custom.jsonc", "w").write("{}")\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a real keyword write mode still counts (#2066 r37 bounds)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'od.py',
+      'import subprocess\n' +
+        'open("configs/custom.jsonc", mode="w").write("{}")\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(false);
+  });
 });
