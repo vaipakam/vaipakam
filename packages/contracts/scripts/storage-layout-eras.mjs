@@ -1,0 +1,166 @@
+#!/usr/bin/env node
+/**
+ * storage-layout-eras.mjs — the storage slots of the fields the custody census
+ * reads directly, for EVERY layout era `LibVaipakam.Storage` has had since the
+ * earliest deployment (#1566, design §7a).
+ *
+ * The provenance walker found that the struct was not append-only, so a slot
+ * from today's layout is wrong for facets compiled before a change. Instead of
+ * identifying each deployment's source, the census reads a row at every era's
+ * slot and proves it absent only when all of them are zero. This tool produces
+ * that era table, from the COMPILER at one commit per era:
+ *
+ *   1. eras = the first walked commit, every change-event commit the walker
+ *      reports, and HEAD;
+ *   2. for each era, a throwaway git worktree at that commit, a probe contract
+ *      holding `LibVaipakam.Storage s;`, and
+ *      `forge build --skip test --skip script --extra-output storageLayout`;
+ *   3. the artifact's storageLayout gives every member's slot relative to `s`,
+ *      the era's own `VANGKI_STORAGE_POSITION` (or the plain hash, where the
+ *      source still used it) gives the base, and the sum is the absolute slot.
+ *
+ * Every era is recorded — an era whose build failed is listed under
+ * `unavailable`, never silently dropped, because an incomplete era table would
+ * make the census's "zero at every era" claim false. Never hand-edit the
+ * output; re-run this.
+ *
+ * Usage: node scripts/storage-layout-eras.mjs [--since 2026-05-01] [--only-head] [--keep-worktrees] [--out <path>]
+ */
+import { execFileSync } from 'node:child_process';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync, symlinkSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve as resolvePath } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { keccak256, toBytes } from 'viem';
+import { walkProvenance, REPO_ROOT, LIB_PATH, DEFAULT_SINCE } from './storage-layout-provenance.mjs';
+
+export const FIELDS = ['nextLoanId', 'totalLoansEverCreated', 'intentLiveCommitCount', 'intentCommits', 'borrowerLifRebate', 'fallbackSnapshot'];
+export const ROW_STRUCTS = ['SwapToRepayIntentCommit', 'BorrowerLifRebate', 'FallbackSnapshot'];
+export const OUT_DEFAULT = join(REPO_ROOT, 'contracts', 'deployments', 'storage-slot-eras.json');
+const PROBE_SRC = `// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+import {LibVaipakam} from "./libraries/LibVaipakam.sol";
+/// Throwaway: holds the struct so the compiler reports its layout. Written by storage-layout-eras.mjs.
+contract StorageLayoutEraProbe {
+    LibVaipakam.Storage internal s;
+}
+`;
+
+function sh(cmd, args, cwd, opts = {}) {
+  return execFileSync(cmd, args, { cwd, encoding: 'utf8', maxBuffer: 256 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'], ...opts });
+}
+
+/** The era's own storage position: the ERC-7201 constant if declared, else the plain hash the older source used. */
+export function storagePositionOf(libSource) {
+  const c = /VANGKI_STORAGE_POSITION\s*=\s*(0x[0-9a-fA-F]{64})/.exec(libSource);
+  if (c) return { position: c[1].toLowerCase(), derivation: 'VANGKI_STORAGE_POSITION constant (ERC-7201)' };
+  if (/keccak256\("vaipakam\.storage"\)/.test(libSource)) return { position: keccak256(toBytes('vaipakam.storage')), derivation: 'keccak256("vaipakam.storage") (pre-ERC-7201 source)' };
+  return null;
+}
+
+/** Pull the members we need out of a forge storageLayout artifact. Pure; exported for the test. */
+export function slotsFromLayout(layout, position, fields = FIELDS, rowStructs = ROW_STRUCTS) {
+  const s = (layout.storage ?? []).find((v) => v.label === 's');
+  if (!s) throw new Error('storageLayout has no variable `s`');
+  const struct = layout.types[s.type];
+  if (!struct?.members) throw new Error(`type ${s.type} has no members`);
+  const base = BigInt(position);
+  const out = {};
+  for (const f of fields) {
+    const m = struct.members.find((x) => x.label === f);
+    out[f] = m ? { slot: '0x' + (base + BigInt(m.slot)).toString(16).padStart(64, '0'), relative: Number(m.slot), offset: Number(m.offset), type: m.type } : null;
+  }
+  const rows = {};
+  for (const name of rowStructs) {
+    const key = Object.keys(layout.types).find((k) => new RegExp(`^t_struct\\(${name}\\)`).test(k));
+    rows[name] = key ? Object.fromEntries(layout.types[key].members.map((m) => [m.label, { slot: Number(m.slot), offset: Number(m.offset), type: m.type }])) : null;
+  }
+  return { fields: out, rows };
+}
+
+function eraCommits(walk, commitsAsc) {
+  const set = new Map();
+  if (commitsAsc.length) set.set(commitsAsc[0].sha, commitsAsc[0]);
+  for (const e of walk.changeEvents) set.set(e.commit, { sha: e.commit, date: e.date, event: `${e.struct} ${e.kind} @${e.firstDifferentIndex}` });
+  return [...set.values()];
+}
+
+export function buildEra(sha, { repo = REPO_ROOT, keep = false, log = () => {} } = {}) {
+  const dir = join(tmpdir(), `vaipakam-era-${sha.slice(0, 9)}`);
+  if (existsSync(dir)) {
+    try { sh('git', ['worktree', 'remove', '--force', dir], repo); } catch { rmSync(dir, { recursive: true, force: true }); }
+  }
+  sh('git', ['worktree', 'add', '--detach', dir, sha], repo);
+  try {
+    const c = join(dir, 'contracts');
+    // dependencies: the pinned submodules from the superproject's own store; a symlink to the main checkout's lib is the fallback
+    try {
+      sh('git', ['submodule', 'update', '--init', '--recursive', '--', 'contracts/lib'], dir);
+    } catch (e) {
+      log(`  ${sha.slice(0, 9)}: submodule update failed (${String(e.stderr || e.message).split('\n')[0].slice(0, 80)}); linking contracts/lib from the main checkout`);
+      rmSync(join(c, 'lib'), { recursive: true, force: true });
+      symlinkSync(join(repo, 'contracts', 'lib'), join(c, 'lib'));
+    }
+    writeFileSync(join(c, 'src', 'StorageLayoutEraProbe.sol'), PROBE_SRC);
+    const lib = readFileSync(join(dir, LIB_PATH), 'utf8');
+    const pos = storagePositionOf(lib);
+    if (!pos) throw new Error('no storage position found in the era source');
+    const profile = /^\[profile\.quick\]/m.test(readFileSync(join(c, 'foundry.toml'), 'utf8')) ? 'quick' : 'default';
+    sh('forge', ['build', '--skip', 'test', '--skip', 'script', '--extra-output', 'storageLayout', '--silent'], c, { env: { ...process.env, FOUNDRY_PROFILE: profile } });
+    const art = JSON.parse(readFileSync(join(c, 'out', 'StorageLayoutEraProbe.sol', 'StorageLayoutEraProbe.json'), 'utf8'));
+    if (!art.storageLayout) throw new Error('artifact carries no storageLayout');
+    return { ...slotsFromLayout(art.storageLayout, pos.position), storagePosition: pos.position, positionDerivation: pos.derivation, profile };
+  } finally {
+    if (!keep) {
+      try { sh('git', ['worktree', 'remove', '--force', dir], repo); } catch { /* leave it; `git worktree prune` cleans up */ }
+    }
+  }
+}
+
+export function main(argv = process.argv.slice(2)) {
+  const arg = (k, d) => { const i = argv.indexOf(k); return i >= 0 ? argv[i + 1] : d; };
+  const since = arg('--since', DEFAULT_SINCE);
+  const out = arg('--out', OUT_DEFAULT);
+  const onlyHead = argv.includes('--only-head');
+  const keep = argv.includes('--keep-worktrees');
+  const log = (m) => process.stderr.write(m + '\n');
+  const walk = walkProvenance({ since, fields: FIELDS });
+  const commitsAsc = sh('git', ['log', '--format=%H %cI', `--since=${since}`, '--', LIB_PATH], REPO_ROOT).trim().split('\n').filter(Boolean).map((l) => { const [sha, date] = l.split(' '); return { sha, date }; }).reverse();
+  const head = walk.head;
+  const eras = onlyHead ? [] : eraCommits(walk, commitsAsc);
+  if (!eras.some((e) => e.sha === head)) eras.push({ sha: head, date: new Date().toISOString(), event: 'HEAD' });
+  log(`storage-layout-eras: ${eras.length} era(s) to build since ${since} (walk: ${walk.commitsWalked} commits, ${walk.changeEvents.length} change events)`);
+  const built = [];
+  const unavailable = [];
+  for (const e of eras) {
+    const t0 = Date.now();
+    try {
+      const r = buildEra(e.sha, { keep, log });
+      built.push({ commit: e.sha, date: e.date, event: e.event ?? null, ...r });
+      log(`  ${e.sha.slice(0, 9)} ${e.date.slice(0, 10)} ${(e.event ?? '').padEnd(34)} ok in ${Math.round((Date.now() - t0) / 1000)}s (${r.profile}); intentCommits ${r.fields.intentCommits ? r.fields.intentCommits.slot.slice(0, 12) + '…' : 'absent'}`);
+    } catch (err) {
+      const reason = String(err.stderr || err.message).split('\n').slice(0, 3).join(' | ').slice(0, 300);
+      unavailable.push({ commit: e.sha, date: e.date, event: e.event ?? null, reason });
+      log(`  ${e.sha.slice(0, 9)} ${e.date.slice(0, 10)} FAILED: ${reason.slice(0, 160)}`);
+    }
+  }
+  const distinct = {};
+  for (const f of FIELDS) distinct[f] = [...new Set(built.map((b) => b.fields[f]?.slot).filter(Boolean))];
+  const result = {
+    purpose: 'Every storage slot each census-read field has occupied across the layout eras of LibVaipakam.Storage since the walk began (#1566, design section 7a). A row is proven absent only when it reads zero at EVERY era slot. Generated by storage-layout-eras.mjs from the compiler at one commit per era; never hand-edit.',
+    generatedAt: new Date().toISOString(),
+    head,
+    since,
+    walk: { commitsWalked: walk.commitsWalked, changeEvents: walk.changeEvents.map((x) => ({ commit: x.commit, date: x.date, struct: x.struct, kind: x.kind, index: x.firstDifferentIndex, lengthDelta: x.lengthDelta })) },
+    complete: unavailable.length === 0,
+    eras: built,
+    unavailable,
+    distinctSlots: distinct,
+  };
+  mkdirSync(resolvePath(out, '..'), { recursive: true });
+  writeFileSync(out, JSON.stringify(result, null, 2) + '\n');
+  log(`written ${out}: ${built.length} era(s) built, ${unavailable.length} unavailable; distinct intentCommits slots: ${distinct.intentCommits.length}`);
+  return result.complete ? 0 : 1;
+}
+
+if (process.argv[1] && fileURLToPath(import.meta.url) === resolvePath(process.argv[1])) process.exit(main());
