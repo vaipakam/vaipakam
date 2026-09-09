@@ -254,79 +254,166 @@ export function ForcedCloseCard({
           ? copy.forcedClose.raceFallbackFails
           : copy.forcedClose.raceFallbackUnknown;
 
-  /** Round 39 P2 — a rental default has no sale, no borrower
-   *  collateral and no shortfall, so the shared receipt's every row was
-   *  wrong for it. The receipt is state-independent, which is why it
-   *  survived three earlier corrections to the rental description
-   *  elsewhere: it reads correctly for the majority route. */
-  const receipt =
-    readiness === 'ready-rental'
-      ? copy.forcedClose.rentalReceipt
-      : copy.forcedClose.receipt;
-
-  /** Round 40 P2 — two notes were unconditional and neither is true of
-   *  every route.
+  /** ONE EXHAUSTIVE TABLE, because choosing the set by hand is the bug.
    *
-   *  `outcomeNote` named a COLLATERAL VALUATION. A rental has none: the
-   *  rent was prepaid at origination and what becomes claimable is that
-   *  fixed amount less the treasury split. An internal match has none
-   *  either — it repays the LENT asset at the oracle price when the
-   *  transaction runs, which is a different unknown wearing the same
-   *  words.
+   *  Six findings on this PR were the same shape: a string true of one
+   *  route, rendered on a set of routes picked by hand — the rental
+   *  described as a collateral transfer, the race promising failure, the
+   *  race disclosed in one direction, then disclosed on two of the four
+   *  states it applies to. Every one of those was a `readiness === 'a'
+   *  || readiness === 'b'` written while looking at a and b.
    *
-   *  `claimNote` said nothing reaches the wallet by itself. On the
-   *  internal-match route something does: `DefaultedFacet` passes
-   *  `msg.sender` to `attemptInternalMatchAutoDispatch` as the matcher,
-   *  and `_settleLeg` sends the per-leg incentive to that address with a
-   *  direct `safeTransfer`, crediting only `moved - incentive` to the
-   *  lender's vault. A lender submitting their own close-out is paid
-   *  immediately, out of what they would otherwise claim. */
-  const outcomeNote =
-    readiness === 'ready-rental'
-      ? copy.forcedClose.outcomeNoteRental
-      : readiness === 'ready-internal-match'
-        ? copy.forcedClose.outcomeNoteInternalMatch
-        : copy.forcedClose.outcomeNote;
-  const claimNote =
-    readiness === 'ready-internal-match'
-      ? copy.forcedClose.claimNoteInternalMatch
-      : copy.forcedClose.claimNote;
-
-  const body = holdingAfterSubmit
-    ? copy.forcedClose.submitted
-    : readiness === 'not-yet'
-      ? copy.forcedClose.notYet
-      : readiness === 'unknown'
-        ? copy.forcedClose.unknown
-        : readiness === 'blocked-sequencer'
-          ? copy.forcedClose.blockedSequencer
-          : readiness === 'blocked-paused'
-            ? copy.forcedClose.blockedPaused
-            : readiness === 'blocked-no-consent'
-              ? copy.forcedClose.blockedNoConsent
-              : readiness === 'ready-needs-route'
-                ? copy.forcedClose.readyNeedsRoute
-                : readiness === 'ready-internal-match'
-                  ? copy.forcedClose.readyInternalMatch
-                  : readiness === 'ready-rental'
-                    ? copy.forcedClose.readyRental
-                    : copy.forcedClose.readyInKind;
-
-  /** The overdue heading ONLY where the chain has actually said so.
+   *  A `Record<ForcedCloseReadiness, …>` cannot be written that way: the
+   *  compiler refuses it until every state has an entry, so adding a
+   *  state forces a decision about every column rather than inheriting
+   *  whatever the last `else` happened to be. The previous `body` chain
+   *  ended in a bare `: copy.forcedClose.readyInKind`, which means a new
+   *  state would have silently described itself as an in-kind transfer.
    *
-   *  Round 28 P2 — `blocked-sequencer` and `blocked-paused` are
-   *  resolved BEFORE `defaultable` is consulted, deliberately, so
-   *  during an outage a loan three days into a ninety-day term reaches
-   *  them. Mapping those to "This loan is overdue" put a false
-   *  statement in the card's largest text on every position, for the
-   *  duration of every outage. Only the states downstream of an
-   *  affirmative `defaultable` may claim it. */
-  const overdueEstablished =
-    readiness === 'ready-in-kind' ||
-    readiness === 'ready-needs-route' ||
-    readiness === 'ready-internal-match' ||
-    readiness === 'ready-rental' ||
-    readiness === 'blocked-no-consent';
+   *  `not-applicable` is listed even though `shouldRenderForcedClose`
+   *  returns false for it — exhaustiveness is the point, and an entry
+   *  that says "never rendered" is information. */
+  const PRESENTATION: Record<
+    ForcedCloseReadiness,
+    {
+      body: string;
+      /** May the heading say the loan is overdue? Only states downstream
+       *  of an affirmative `defaultable` may (round 28 P2). */
+      overdue: boolean;
+      /** Does the execution-time match check apply to this state's
+       *  stated outcome? True wherever the copy names what the lender
+       *  gets AND `attemptInternalMatchAutoDispatch` (line 287) runs
+       *  before the branch that would produce it. */
+      matchRace: boolean;
+      /** Does this state render the action block — the not-exclusive
+       *  note, the outcome and claim notes, and the submit affordance
+       *  below them? The two note fields are non-null exactly here. */
+      actionBlock: boolean;
+      /** Null where `actionBlock` is false. */
+      outcomeNote: string | null;
+      claimNote: string | null;
+      rentalReceipt: boolean;
+    }
+  > = {
+    'ready-in-kind': {
+      body: copy.forcedClose.readyInKind,
+      overdue: true,
+      matchRace: true,
+      actionBlock: true,
+      outcomeNote: copy.forcedClose.outcomeNote,
+      claimNote: copy.forcedClose.claimNote,
+      rentalReceipt: false,
+    },
+    'ready-needs-route': {
+      body: copy.forcedClose.readyNeedsRoute,
+      overdue: true,
+      // No button here, but its whole message is that a sale must be
+      // routed — which a match appearing makes wrong too.
+      matchRace: true,
+      actionBlock: true,
+      outcomeNote: copy.forcedClose.outcomeNote,
+      claimNote: copy.forcedClose.claimNote,
+      rentalReceipt: false,
+    },
+    'ready-internal-match': {
+      body: copy.forcedClose.readyInternalMatch,
+      overdue: true,
+      // This state IS the match. Its own race warning covers losing it,
+      // rendered separately.
+      matchRace: false,
+      actionBlock: true,
+      outcomeNote: copy.forcedClose.outcomeNoteInternalMatch,
+      claimNote: copy.forcedClose.claimNoteInternalMatch,
+      rentalReceipt: false,
+    },
+    'ready-rental': {
+      body: copy.forcedClose.readyRental,
+      overdue: true,
+      // `LibMetricsHooks` indexes every loan into
+      // `assetPairActiveLoanIds` with no asset-type filter, so a rental
+      // can be matched — and a match settles instead of ending it.
+      matchRace: true,
+      actionBlock: true,
+      outcomeNote: copy.forcedClose.outcomeNoteRental,
+      claimNote: copy.forcedClose.claimNote,
+      rentalReceipt: true,
+    },
+    'blocked-no-consent': {
+      body: copy.forcedClose.blockedNoConsent,
+      overdue: true,
+      // The sharpest one: this state claims the close-out is refused for
+      // EVERYONE, and the match dispatch returns before the consent gate
+      // is ever reached.
+      matchRace: true,
+      actionBlock: false,
+      outcomeNote: null,
+      claimNote: null,
+      rentalReceipt: false,
+    },
+    'not-yet': {
+      body: copy.forcedClose.notYet,
+      overdue: false,
+      matchRace: false,
+      actionBlock: false,
+      outcomeNote: null,
+      claimNote: null,
+      rentalReceipt: false,
+    },
+    'blocked-sequencer': {
+      body: copy.forcedClose.blockedSequencer,
+      overdue: false,
+      matchRace: false,
+      actionBlock: false,
+      outcomeNote: null,
+      claimNote: null,
+      rentalReceipt: false,
+    },
+    'blocked-paused': {
+      body: copy.forcedClose.blockedPaused,
+      overdue: false,
+      matchRace: false,
+      actionBlock: false,
+      outcomeNote: null,
+      claimNote: null,
+      rentalReceipt: false,
+    },
+    unknown: {
+      body: copy.forcedClose.unknown,
+      overdue: false,
+      matchRace: false,
+      actionBlock: false,
+      outcomeNote: null,
+      claimNote: null,
+      rentalReceipt: false,
+    },
+    // Never rendered — `shouldRenderForcedClose` returns false.
+    'not-applicable': {
+      body: copy.forcedClose.unknown,
+      overdue: false,
+      matchRace: false,
+      actionBlock: false,
+      outcomeNote: null,
+      claimNote: null,
+      rentalReceipt: false,
+    },
+  };
+  const view = PRESENTATION[readiness];
+  const receipt = view.rentalReceipt
+    ? copy.forcedClose.rentalReceipt
+    : copy.forcedClose.receipt;
+  const outcomeNote = view.outcomeNote ?? copy.forcedClose.outcomeNote;
+  const claimNote = view.claimNote ?? copy.forcedClose.claimNote;
+
+  const body = holdingAfterSubmit ? copy.forcedClose.submitted : view.body;
+
+  /** The overdue heading ONLY where the chain has actually said so
+   *  (round 28 P2): `blocked-sequencer` and `blocked-paused` are
+   *  resolved BEFORE `defaultable`, so during an outage a loan three
+   *  days into a ninety-day term reaches them, and mapping those to
+   *  "This loan is overdue" put a false statement in the card's largest
+   *  text. Now a column of the table above rather than a hand-listed
+   *  set. */
+  const overdueEstablished = view.overdue;
 
   return (
     <section className="card" data-testid="forced-close-card">
@@ -393,24 +480,22 @@ export function ForcedCloseCard({
           indexes every loan into `assetPairActiveLoanIds` with no
           asset-type filter, so a rental can be matched too, and the
           match settles instead of ending the rental. */}
-      {(readiness === 'ready-in-kind' ||
-        readiness === 'ready-needs-route' ||
-        readiness === 'ready-rental' ||
-        readiness === 'blocked-no-consent') &&
-      !holdingAfterSubmit ? (
+      {view.matchRace && !holdingAfterSubmit ? (
         <p className="muted" data-testid="forced-close-match-may-appear">
           {copy.forcedClose.matchMayAppear}
         </p>
       ) : null}
 
-      {/* Shown on both ready states — a lender who cannot submit here
-          still needs to know a keeper may close it, so that finding the
-          position already closed reads as normal rather than as loss. */}
-      {!holdingAfterSubmit &&
-      (readiness === 'ready-in-kind' ||
-        readiness === 'ready-needs-route' ||
-        readiness === 'ready-internal-match' ||
-        readiness === 'ready-rental') ? (
+      {/* Shown on every actionable state — a lender who cannot submit
+          from here still needs to know a keeper may close it, so that
+          finding the position already closed reads as normal rather than
+          as loss.
+
+          Its old comment said "both ready states" while the condition
+          listed four, which is the same rot in miniature: the set grew
+          and the sentence describing it did not. It is a table column
+          now, so there is no set to describe. */}
+      {!holdingAfterSubmit && view.actionBlock ? (
         <>
           <p className="field-hint">{copy.forcedClose.notExclusive}</p>
           <p className="field-hint">{outcomeNote}</p>

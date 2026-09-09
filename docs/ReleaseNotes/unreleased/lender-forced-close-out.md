@@ -364,3 +364,25 @@ The lesson, written down because the round before it had just written
 the rule and then broken it: a disclosure that belongs on a route belongs
 on every route where the same thing can happen, and "the ones I was
 looking at" is not that list.
+
+One structural change came out of all this, and it is the only reason to
+expect the pattern to stop. Almost every correction above has the same
+shape: a sentence that is true of one situation, shown in a list of
+situations somebody wrote out by hand. The rental described as a
+collateral transfer, the warning that promised failure, the warning
+given in one direction and then on two of the four cases it applies to —
+each was a hand-written list, assembled while looking at the two or
+three cases in front of whoever wrote it.
+
+The card now decides all of that from a single table with one row per
+situation it can be in. A row cannot be left out: the code will not
+build until every situation has one, and every column in it is answered
+explicitly. Where the old code ended a chain of choices with a default,
+a newly added situation would quietly have inherited whatever that
+default was — which for the outcome text meant describing itself as a
+collateral transfer. That cannot happen now; a new situation stops the
+build until somebody decides what it says.
+
+The table earned its keep immediately: adding a column to it produced
+build errors on three rows that had been missed, which under the old
+shape would have been three more of the findings above.
