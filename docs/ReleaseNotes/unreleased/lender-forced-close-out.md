@@ -386,3 +386,21 @@ build until somebody decides what it says.
 The table earned its keep immediately: adding a column to it produced
 build errors on three rows that had been missed, which under the old
 shape would have been three more of the findings above.
+
+Two sentences were left standing by an earlier correction rather than
+broken by it, which is worth separating from the rest. Admitting that a
+settlement against an opposing position may cover only part of a loan
+made two neighbouring statements false, and neither was in the sentence
+being corrected.
+
+The first told the lender that if somebody else closes the position out
+first, it will simply show as closed. Where only part settles, it shows
+as smaller instead and carries on. The second said what is owed becomes
+claimable once the close-out settles. For a partial settlement it does
+not: the protocol holds that portion and it becomes claimable when the
+remainder is closed later, which may be considerably later. A lender
+told to go and collect would have found nothing there and no explanation
+for it.
+
+Both are the same lesson as the rest of this note, one step removed: a
+correction changes what is true around it, not only where it lands.

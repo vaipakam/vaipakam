@@ -2358,7 +2358,7 @@ const copySource = {
     // transaction runs, and this card is reachable by a wallet whose
     // last ownership poll is up to a minute old.
     notExclusive:
-      'Anyone can close out an overdue loan, not just you. If someone else does it first, this position will simply show as closed. Whatever the close-out recovers goes to whoever holds the lender position for this loan at that moment — so if you have transferred or sold it, it is theirs, not yours.',
+      'Anyone can close out an overdue loan, not just you. If someone else does it first, this position will show as closed, or — if only part of it settled — as smaller than it was. Whatever the close-out recovers goes to whoever holds the lender position for this loan at that moment — so if you have transferred or sold it, it is theirs, not yours.',
     claimNote: 'Closing out does not move funds to your wallet by itself. Once it settles, what you are owed becomes claimable.',
     // Round 40 P2 — true of every route EXCEPT the internal match.
     // `DefaultedFacet` passes `msg.sender` as the matcher, and
@@ -2369,7 +2369,7 @@ const copySource = {
     // the lender later claims. Saying "nothing moves to your wallet"
     // was wrong in both directions at once.
     claimNoteInternalMatch:
-      'The amount you are owed does not arrive in your wallet by itself — it becomes claimable once this settles. One part is different: the protocol pays whoever submits this transaction a small matcher incentive, sent straight to the submitting wallet, and it comes out of the same settled amount rather than on top of it. Submit it yourself and that part is yours immediately.',
+      'The amount you are owed does not arrive in your wallet by itself — it becomes claimable once the loan reaches a terminal state. If the opposing position covers only part of this loan, the settled part is held for you and becomes claimable when the rest is closed later, not straight away. One part is different: the protocol pays whoever submits this transaction a small matcher incentive, sent straight to the submitting wallet, and it comes out of the same settled amount rather than on top of it. Submit it yourself and that part is yours immediately.',
     // Round 40 P2 — the shared note names a collateral valuation, and
     // neither of these two routes has one. A rental makes the FIXED
     // prepaid rent claimable after the treasury split; an internal match

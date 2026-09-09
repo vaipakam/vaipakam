@@ -490,6 +490,12 @@ Thin-market honesty rules apply.
   operator to configure a value in a template that nothing loads produces a
   deployment that is misconfigured while its operator believes otherwise, which
   is worse than no instruction at all.
+- Where a settlement may be partial, no sentence on the surface may describe
+  its result as terminal — including sentences about what SOMEONE ELSE's
+  close-out does, and sentences about when the proceeds can be collected. A
+  partial settlement leaves the position open and smaller, and holds the
+  settled portion until the remainder closes, so "it will show as closed" and
+  "it becomes claimable once this settles" are both wrong for it.
 - Withholding an action for safety must not withhold the explanation with it.
   Where a check that guards the close-out is unanswered — pending, failed, or
   undecodable — the surface stays visible in its unresolved state and says a
