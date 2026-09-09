@@ -215,6 +215,19 @@
   },
   {
     "type": "function",
+    "name": "getRewardRole",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "role",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "onRewardBroadcastReceived",
     "inputs": [
       {

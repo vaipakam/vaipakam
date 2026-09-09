@@ -1,0 +1,126 @@
+{
+  "purpose": "Committed inventory of every ARCHIVED Diamond (a --fresh redeploy archives the off-chain artifact but cannot wipe on-chain custody). The local .archive/ directories are gitignored; this file is what a clean checkout censuses. Regenerate with --write-archive-manifest.",
+  "generatedAt": "2026-09-09T14:04:23.510Z",
+  "entries": [
+    {
+      "slug": "arb-sepolia",
+      "stamp": "2026-05-10T02-37-43Z",
+      "chainId": 421614,
+      "diamond": "0x8EcD41ecE070f6B68ae35A495AA820E1bFC19AeC",
+      "deployBlock": 10801627,
+      "vpfiToken": "0x08c2937486B2215aFE6d1a69F011145fE023840F"
+    },
+    {
+      "slug": "arb-sepolia",
+      "stamp": "2026-07-01T01-28-35Z",
+      "chainId": 421614,
+      "diamond": "0x17Fe0D808F8971D7A14994a1205ee6AFd949Be91",
+      "deployBlock": 266947649,
+      "vpfiToken": "0x2f4E10F00bB7f8A5fEDB0b1EB171bb6dfEAF1246"
+    },
+    {
+      "slug": "arb-sepolia",
+      "stamp": "2026-07-01T01-36-25Z",
+      "chainId": 421614,
+      "diamond": "0x55d7872cC9738994cc6b04F89d128cB4c8745431",
+      "deployBlock": null,
+      "vpfiToken": null
+    },
+    {
+      "slug": "base-sepolia",
+      "stamp": "2026-05-10T01-28-54Z",
+      "chainId": 84532,
+      "diamond": "0x84879F7cb87295B67916Ad257a8087b55981EbFc",
+      "deployBlock": 41303261,
+      "vpfiToken": "0x3bA7e2C46ED97beeb4BEA8efe845b5227512DE27"
+    },
+    {
+      "slug": "base-sepolia",
+      "stamp": "2026-05-11T02-10-48Z",
+      "chainId": 84532,
+      "diamond": "0x804Bc3E9625548e50c1B589b25111783A632D964",
+      "deployBlock": 41304124,
+      "vpfiToken": "0x75e60702fe3dD4F107596d1da28e89B88982E82a"
+    },
+    {
+      "slug": "base-sepolia",
+      "stamp": "2026-06-30T23-56-49Z",
+      "chainId": 84532,
+      "diamond": "0x725C7912956b254030A2DBF152B2F739C46C07c0",
+      "deployBlock": 41350522,
+      "vpfiToken": "0xC27AEd85208FfF75374999ad0f20c21b91251e22"
+    },
+    {
+      "slug": "base-sepolia",
+      "stamp": "2026-07-01T00-15-58Z",
+      "chainId": 84532,
+      "diamond": "0x217333C94Ccd0a2710F09Ae6596C50dCDb9e6fd5",
+      "deployBlock": 43547894,
+      "vpfiToken": null
+    },
+    {
+      "slug": "base-sepolia",
+      "stamp": "2026-07-01T00-27-51Z",
+      "chainId": 84532,
+      "diamond": "0x7944A00C3195F230454f5393B88CBf1BA2fbb0b0",
+      "deployBlock": 43548359,
+      "vpfiToken": null
+    },
+    {
+      "slug": "base-sepolia",
+      "stamp": "2026-07-01T00-39-00Z",
+      "chainId": 84532,
+      "diamond": "0x152134F790F179DC48CFAddA160E654F8bD5D9aD",
+      "deployBlock": 43548717,
+      "vpfiToken": null
+    },
+    {
+      "slug": "base-sepolia",
+      "stamp": "2026-07-01T00-54-13Z",
+      "chainId": 84532,
+      "diamond": "0x6CcCAd5056a478237f023FCa8dc6Acd23c3896FD",
+      "deployBlock": 43549137,
+      "vpfiToken": null
+    },
+    {
+      "slug": "base-sepolia",
+      "stamp": "2026-07-01T01-03-39Z",
+      "chainId": 84532,
+      "diamond": "0x760e5727a9949d38E1030a0438Ee3327fd6BCD47",
+      "deployBlock": 43549580,
+      "vpfiToken": null
+    },
+    {
+      "slug": "bnb-testnet",
+      "stamp": "2026-07-01T01-54-09Z",
+      "chainId": 97,
+      "diamond": "0xe46F8AE352bc28998083A2EC8Cf379063A73BEf7",
+      "deployBlock": 104535174,
+      "vpfiToken": "0x771248712d35c54261C2A9441f3cAc7f9ad57839"
+    },
+    {
+      "slug": "op-sepolia",
+      "stamp": "prior-rehearsal-1778076638",
+      "chainId": 11155420,
+      "diamond": "0x933f99ae856509c2cF2f47709BD957AdF8477Ed0",
+      "deployBlock": 43106460,
+      "vpfiToken": "0xf2a8E7Cb9e1207398ade20C8448b22879DC6890E"
+    },
+    {
+      "slug": "sepolia",
+      "stamp": "2026-05-10T13-02-26Z",
+      "chainId": 11155111,
+      "diamond": "0x3458758ec056db565CBE3FC6489480cd6f8B8eb7",
+      "deployBlock": 10788476,
+      "vpfiToken": "0x3e45b30fb832e611dCCcCAe89eec92bc1099A7FF"
+    },
+    {
+      "slug": "sepolia",
+      "stamp": "2026-05-11T04-15-49Z",
+      "chainId": 11155111,
+      "diamond": "0xD2903cbb8Bb0f34fbb688a6E381Dc6c73056DB1c",
+      "deployBlock": 10826913,
+      "vpfiToken": "0x1C837b53553D4134B00f474E04C904062CA69341"
+    }
+  ]
+}

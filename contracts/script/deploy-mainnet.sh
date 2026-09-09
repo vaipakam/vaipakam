@@ -223,6 +223,31 @@ TREE_DIRTY_AT_START=""
 if ! git -C "$REPO_ROOT" diff --quiet HEAD 2>/dev/null; then
   TREE_DIRTY_AT_START=" (dirty)"
 fi
+# ── Live re-reading of the SOURCE tree (#1502; Codex #2070 r11 P1) ──────────
+# The opening snapshot is not an immutable description of this run's inputs:
+# the deploy consumes source for many minutes after it (forge build, forge
+# script), and a tracked file edited in between would be built and broadcast
+# while the stamp said clean. This helper re-reads the tree NOW, and it is
+# the ONE comparison every later site uses — the gate before the build, the
+# refusal before the first broadcast, and the stamp at the end — so the
+# readings cannot compare different things (#1502's first failed attempt was
+# three sites with three pathspecs, one of them a silent no-op).
+#
+# Anchored at the repo root with an EXCLUSION of this script's own output
+# root, never an allowlist of inputs (an allowlist missed foundry.toml and
+# the lib submodule pointers, both of which change bytecode). Everything
+# this run writes lands under `contracts/deployments` — addresses.json,
+# deployment_source.json, .history, the .archive tree and its manifest — so
+# that one directory is judged ONCE, at start, when it holds no output of
+# this run, and every other tracked path is source and is re-judged live.
+# One directory boundary, not an enumeration of outputs (r10). A mid-run
+# edit to a recorded artifact of ANOTHER chain is therefore outside this
+# reading on purpose: it cannot change the bytecode this run deploys, which
+# is the property the stamp certifies. A git failure reads as dirty, the
+# same way the opening snapshot treats it.
+source_tree_dirty_now() {
+  ! git -C "$REPO_ROOT" diff --quiet HEAD -- . ':(exclude)contracts/deployments' 2>/dev/null
+}
 # Stage 3 / Stage 4 source-tree split — see CLAUDE.md "Worker ABI
 # consumption (Stage 3 split)" + "Frontend ABI sync". apps/app and
 # apps/www are the two SPAs; apps/{keeper,indexer,agent} are the
@@ -587,12 +612,66 @@ phase_preflight() {
 # logically abandons the prior on-chain deploy. Gated behind
 # --fresh + --confirm-purging-prior-mainnet-deploy so a typo on
 # mainnet day cannot rotate the diamond.
+# ── #1566: the archived deployment must land in the COMMITTED inventory as part
+# of the archive operation (Codex #2070 r8 P1). `.archive/` is gitignored, so a
+# clean checkout has no local entry for the census's staleness check to detect
+# after the next --fresh; the manifest would read complete while omitting the
+# retired Diamond. The check must BE the operation: this append happens here,
+# in the same step that moves the artifact, and a failure to record it aborts
+# the deploy before the new live artifact can replace the old one.
+# Codex #2070 r12 P1 — this used to be an inline node read-modify-write, and
+# two chains running --fresh at once could each read the old inventory, append
+# only their own archive and overwrite in either order: both reported success,
+# both moved their prior artifacts into the gitignored tree, and the last
+# writer silently dropped the other Diamond from the committed record. The
+# write now goes through the ONE manifest writer the census also uses —
+# packages/contracts/scripts/archive-manifest.mjs — which takes an exclusive
+# lock (mkdir, portable), merges over the file as it stands INSIDE the lock,
+# writes by atomic rename and reads the result back before reporting. A lock
+# it cannot take fails non-zero, and this function's non-zero return aborts
+# the archive before anything is moved.
+append_archive_manifest() {
+  local chain_slug="$1" stamp="$2" addr="$3"
+  local manifest="$CONTRACTS_DIR/deployments/archive-manifest.json"
+  local writer="$REPO_ROOT/packages/contracts/scripts/archive-manifest.mjs"
+  [ -f "$addr" ] || { echo "  (no addresses.json to record)"; return 0; }
+  command -v node >/dev/null 2>&1 || { echo "ERROR: node is required to record the archived deployment in $manifest" >&2; return 1; }
+  [ -f "$writer" ] || { echo "ERROR: manifest writer missing at $writer" >&2; return 1; }
+  node "$writer" append "$manifest" "$chain_slug" "$stamp" "$addr" || return 1
+}
+
+# Every local archive that the committed inventory does not yet list is
+# recorded before anything else moves — a half-failed earlier run (append
+# failed after the move, or the script died between the two) must not leave a
+# retired Diamond unrecorded forever (Codex #2070 r9 P1). Idempotent.
+reconcile_unrecorded_archives() {
+  local chain_slug="$1"
+  local deploy_dir="$CONTRACTS_DIR/deployments/$chain_slug"
+  [ -d "$deploy_dir/.archive" ] || return 0
+  local d
+  for d in "$deploy_dir"/.archive/*/; do
+    [ -f "$d/addresses.json" ] || continue
+    append_archive_manifest "$chain_slug" "$(basename "$d")" "$d/addresses.json" \
+      || { echo "ERROR: could not reconcile archived deployment $(basename "$d") into archive-manifest.json" >&2; return 1; }
+  done
+}
+
 archive_chain_state() {
   local chain_slug="$1"
   local deploy_dir="$CONTRACTS_DIR/deployments/$chain_slug"
   local stamp
   stamp=$(date -u +%Y-%m-%dT%H-%M-%SZ)
   local archive="$deploy_dir/.archive/$stamp"
+
+  # Reconcile first, then RECORD the artifact we are about to archive while it
+  # is still in place — the committed inventory must never lag the move
+  # (Codex #2070 r9 P1: an append that failed AFTER the mv left the archive
+  # unrecorded, and the next --fresh saw no top-level artifact to revisit).
+  # Nothing is moved unless both succeed.
+  reconcile_unrecorded_archives "$chain_slug" \
+    || { echo "ERROR: unrecorded local archives could not be reconciled; refusing to archive" >&2; exit 1; }
+  append_archive_manifest "$chain_slug" "$stamp" "$deploy_dir/addresses.json" \
+    || { echo "ERROR: could not record the deployment being archived in archive-manifest.json; refusing to archive" >&2; exit 1; }
 
   mkdir -p "$archive"
   for entry in addresses.json deployment_source.json .markers .history; do
@@ -650,6 +729,15 @@ EOF
   # operator's affirmative "yes, I am abandoning the prior on-chain
   # deploy and I have reviewed the archive". Without both, the
   # script refuses.
+  # #1566 (Codex #2070 r10 P1) — on --fresh, reconcile every local archive into
+  # the committed inventory BEFORE the live artifact is consulted; the
+  # half-failed case (artifact already archived, append failed) has no
+  # existing_diamond to read, so a reconcile inside archive_chain_state alone
+  # never reached it. Nothing below proceeds until the inventory is whole.
+  if [ "$FRESH" = "1" ]; then
+    reconcile_unrecorded_archives "$CHAIN_SLUG" \
+      || { echo "ERROR: unrecorded local archives could not be reconciled into archive-manifest.json; refusing --fresh" >&2; exit 1; }
+  fi
   local existing_diamond
   existing_diamond=$(jq -r '.diamond // empty' "$DEPLOY_DIR/addresses.json" 2>/dev/null || echo "")
   if [ -n "$existing_diamond" ] && [ "$existing_diamond" != "null" ]; then
@@ -764,8 +852,22 @@ EOF
   # For testnet rehearsal the (dirty) flag is acceptable because the
   # whole rehearsal can be re-run; for mainnet it's a hard NO since
   # post-incident forensics depend on commit→bytecode equivalence.
-  if ! git -C "$REPO_ROOT" diff --quiet 2>/dev/null || \
-     ! git -C "$REPO_ROOT" diff --cached --quiet 2>/dev/null; then
+  # Two readings, and BOTH must be clean (Codex #2070 r9 → r10 → r11):
+  #  1. the tree AS IT WAS AT START — the provenance snapshot taken at the top
+  #     of this script, before it wrote anything. By this point a --fresh has
+  #     ALREADY run archive_chain_state: it wrote archive-manifest.json and
+  #     MOVED the tracked addresses.json and deployment_source.json into the
+  #     gitignored .archive tree, so a whole-tree diff here reports the
+  #     deploy's own deliberate output as "uncommitted changes" and aborts
+  #     every --fresh after the destructive archive (r9 P1; r10 P1 for the
+  #     moved artifacts once only the manifest was excluded);
+  #  2. the SOURCE tree as it stands NOW, via `source_tree_dirty_now` — a
+  #     tracked file edited during the preflight / archive work is invisible
+  #     to the snapshot and would be built and broadcast by the steps below
+  #     (r11 P1). The helper excludes the one directory this run writes to,
+  #     so the archive's outputs cannot trip it and nothing is enumerated.
+  # The operator still commits the archive's outputs with the deploy.
+  if [ -n "$TREE_DIRTY_AT_START" ] || source_tree_dirty_now; then
     cat >&2 <<EOF
 Refusing --phase contracts: working tree is dirty (uncommitted changes).
 Mainnet deploys must be reproducible from a commit hash; a dirty deploy
@@ -835,7 +937,49 @@ EOF
     exit 1
   fi
 
+  # Same point, same reason, for the WORKTREE (Codex #2070 r11 P1; #1502):
+  # an unchanged HEAD does not mean unchanged source. A tracked file edited
+  # after the gate above is in the artifacts [1] just built, or would be in
+  # the next script's compile, and the commit recorded at the end would not
+  # reproduce them. This is still the last free stop, so refuse; after [2]
+  # the same reading can only be recorded.
+  if source_tree_dirty_now; then
+    cat >&2 <<EOF
+Refusing to broadcast: a tracked source file changed in the working tree
+between this script starting and the first deploy transaction.
+  git -C "$REPO_ROOT" status --short -- . ':(exclude)contracts/deployments'
+Mainnet requires commit-to-bytecode equivalence for incident forensics, and
+the recorded commit would not reproduce artifacts built from that edit.
+Nothing has been broadcast — commit or revert the change, then re-run.
+EOF
+    exit 1
+  fi
+
   echo
+  # #1566 (Codex #2070 r24 P1) — mark the live publication IN PROGRESS under the
+  # manifest lock BEFORE the broadcast writes addresses.json outside it; the
+  # matching live-end after the artifact lands clears the marker and bumps the
+  # generation. A census that takes the lock in between sees the marker and
+  # refuses, so the unlocked write can no longer slip past its snapshot. Failing
+  # to mark aborts here — nothing has been broadcast yet.
+  # node + the manifest module are REQUIRED, not optional: the artifact's
+  # identity keys are GATED in Deployments.sol on the env token matching this
+  # marker (Codex #2070 r26 P1), so an unmarked run would broadcast and then
+  # revert at the artifact write — fail here instead, before any broadcast.
+  if ! command -v node >/dev/null 2>&1 || [ ! -f "$REPO_ROOT/packages/contracts/scripts/archive-manifest.mjs" ]; then
+    echo "ERROR: node and packages/contracts/scripts/archive-manifest.mjs are required to mark the live publication before broadcasting" >&2; exit 1
+  fi
+  # Codex #2070 r27 P1 — a stale DEPLOY_SKIP_ARTIFACTS inherited from the
+  # environment would deploy a Diamond the census inventory never sees.
+  # DeployDiamond refuses it on a live broadcast before any transaction; fail
+  # earlier still, before the marker is taken.
+  if [ -n "${DEPLOY_SKIP_ARTIFACTS:-}" ]; then
+    echo "ERROR: DEPLOY_SKIP_ARTIFACTS=${DEPLOY_SKIP_ARTIFACTS} is set — a live deploy MUST publish its artifact (the census inventory is built from it); unset it" >&2; exit 1
+  fi
+  LIVE_PUB_TOKEN="$$-$(date +%s)-$RANDOM"   # durable per-deploy token: only THIS deploy can end what it began (Codex #2070 r25 P1)
+  node "$REPO_ROOT/packages/contracts/scripts/archive-manifest.mjs" live-begin "$CONTRACTS_DIR/deployments/archive-manifest.json" "$CHAIN_SLUG" "$LIVE_PUB_TOKEN" "$$" \
+    || { echo "ERROR: could not mark the live publication in archive-manifest.json (another deploy on $CHAIN_SLUG may be in progress — check for a live forge child before live-begin --force)" >&2; exit 1; }
+  export VAIPAKAM_LIVE_PUBLICATION_TOKEN="$LIVE_PUB_TOKEN"
   echo "[2] DeployDiamond.s.sol"
   forge script script/DeployDiamond.s.sol --rpc-url "$RPC" --broadcast --slow
 
@@ -882,6 +1026,17 @@ EOF
   echo
   echo "✓ contracts phase done."
   snapshot_addresses "post-contracts"
+  # #1566 (Codex #2070 r20 P1) — the live artifact was written by forge, outside
+  # the manifest lock. Record its publication under the lock so a census that is
+  # holding the lock through its own publication can tell that a Diamond went
+  # live during its run (it compares this counter at start and at publication).
+  # Non-zero aborts nothing that has already landed on chain — the artifact is
+  # written; this only fails to RECORD it, which the operator must fix before
+  # committing (the manifest must be committed with the deploy either way).
+  if command -v node >/dev/null 2>&1 && [ -f "$REPO_ROOT/packages/contracts/scripts/archive-manifest.mjs" ]; then
+    node "$REPO_ROOT/packages/contracts/scripts/archive-manifest.mjs" live-end "$CONTRACTS_DIR/deployments/archive-manifest.json" "$CHAIN_SLUG" "${LIVE_PUB_TOKEN:-none}" "$DEPLOY_DIR/addresses.json" \
+      || echo "WARNING: could not record the live artifact publication in archive-manifest.json — record it before committing (node packages/contracts/scripts/archive-manifest.mjs live-end ...)" >&2
+  fi
   # Write deployment_source.json (commit + deployer + timestamp) —
   # same shape as deploy-chain.sh writes, so the operator can see
   # at a glance which monorepo commit is live on this chain.
@@ -931,6 +1086,24 @@ The contracts are already on chain and are recorded below against the
 STARTING commit, marked "(dirty)" because that commit no longer matches
 the tree. Treat this deploy as not reproducible from the recorded hash and
 reconcile before handover.
+EOF
+  fi
+  # The source re-check the #1495 r1 P2 comment above promises — until Codex
+  # #2070 r11 P1 this site compared HEAD only, so a worktree edit made after
+  # the opening snapshot stamped clean. Placed AFTER the last source-consuming
+  # step ([2]-[4] are done), per #1502, and RECORDED rather than refused for
+  # the same reason as the HEAD check: the contracts are already on chain.
+  # `source_tree_dirty_now` is the reading the gate and the pre-broadcast
+  # refusal used, so the three sites cannot disagree about what "source" is.
+  if source_tree_dirty_now; then
+    TREE_DIRTY_AT_START=" (dirty)"
+    cat >&2 <<EOF
+
+WARNING: a tracked source file is modified (uncommitted) at the end of this
+mainnet deploy. The contracts are on chain and are recorded below against the
+STARTING commit, marked "(dirty)": that commit may not reproduce the source
+they were built from. Reconcile before handover:
+  git -C "$REPO_ROOT" status --short -- . ':(exclude)contracts/deployments'
 EOF
   fi
   COMMIT_DIRTY="$TREE_DIRTY_AT_START"

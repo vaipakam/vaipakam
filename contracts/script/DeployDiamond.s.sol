@@ -132,6 +132,11 @@ contract DeployDiamond is Script {
     ) public virtual {
         address deployerAddr = vm.addr(deployerKey);
 
+        // #2070 r27 P1 — a live broadcast carrying DEPLOY_SKIP_ARTIFACTS is
+        // refused HERE, before anything is deployed: the simulation fails, so
+        // no transaction is sent and no Diamond reaches a chain unrecorded.
+        Deployments.artifactWritesEnabled();
+
         console.log("=== Vaipakam Diamond Deployment ===");
         console.log("Admin:   ", admin);
         console.log("Treasury:", treasury);
@@ -846,11 +851,14 @@ contract DeployDiamond is Script {
         // `forge test` run can exercise `run()` end-to-end (Steps 1–6
         // including the per-selector ownership assertion above) without
         // clobbering the committed `deployments/anvil/addresses.json`
-        // every CI invocation. Also useful for dry-run-style local
-        // experiments where the operator wants to deploy + inspect the
-        // diamond without overwriting the artifact in their working tree.
-        if (vm.envOr("DEPLOY_SKIP_ARTIFACTS", false)) {
-            console.log("DEPLOY_SKIP_ARTIFACTS=true -- skipping addresses.json writes.");
+        // every CI invocation. Since #2070 r27 the skip is honoured ONLY on
+        // Anvil or under `forge test`, and a dry-run (no --broadcast) never
+        // writes: `Deployments.artifactWriteMode` is the one rule, and a live
+        // broadcast with the flag set reverts at the top of `runWith` before
+        // any transaction — a Diamond that reaches a chain reaches the
+        // inventory.
+        if (!Deployments.artifactWritesEnabled()) {
+            console.log("artifact writes are off for this run (dry-run, or DEPLOY_SKIP_ARTIFACTS on Anvil / under forge test) -- skipping addresses.json writes.");
             return;
         }
 
@@ -2396,7 +2404,7 @@ contract DeployDiamond is Script {
     }
 
     function _getRewardReporterSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](20);
+        s = new bytes4[](21);
         s[0] = RewardReporterFacet.closeDay.selector;
         s[1] = RewardReporterFacet.onRewardBroadcastReceived.selector;
         // #1222 M3 B2-b — per-destination V2 broadcast ingress.
@@ -2424,6 +2432,9 @@ contract DeployDiamond is Script {
         s[10] = RewardReporterFacet.getRewardGraceSeconds.selector;
         // #1944 — per-mirror readback the M7 arming ceremony needs.
         s[19] = RewardReporterFacet.getBroadcastV2Applied.selector;
+        // #1566 closure 3 — the resolved role. The two raw fields above
+        // cannot distinguish Detached from Unconfigured.
+        s[20] = RewardReporterFacet.getRewardRole.selector;
     }
 
     /// #1222 M3 B2-c — mirror→Base per-loan headroom commitment report.

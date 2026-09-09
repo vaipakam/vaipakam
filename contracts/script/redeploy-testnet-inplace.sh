@@ -81,6 +81,25 @@
 #   ARMED_FRESH_PAID_NO_HISTORY the forge script reads — per chain, inside the
 #   loop, so a multi-chain run can never apply one chain's answer to another.
 #
+#   REWARD ROLE BACKFILL (#1566 closure 3) — required for EVERY selected chain.
+#   The four-state reward-role resolver records the role in a field that did
+#   not exist before this upgrade; a chain that was configured and then
+#   DETACHED under the old setters would otherwise read as never-configured
+#   (fail-OPEN: unbounded delivered allowance). State cannot tell the two
+#   apart, so the operator declares each chain's role from the recorded
+#   topology, in the same refuse-to-default posture as the P1-b seed:
+#
+#     REWARD_ROLE_EXPECTED_<PREFIX>   one of canonical | mirror | unconfigured | detached
+#                                     e.g. REWARD_ROLE_EXPECTED_BASE_SEPOLIA=canonical
+#
+#   RefreshAllFacetsInPlace reads the role back (getRewardRole) while paused and
+#   compares it to the declaration; the ONLY transition it applies is the
+#   backfill case itself (a pre-field detached chain reading Unconfigured is
+#   recorded Detached). A declared canonical/mirror role the Diamond does not
+#   record is refused — run ConfigureRewardReporter for those. The orchestrator
+#   exports the resolved value as the process-global REWARD_ROLE_EXPECTED, per
+#   chain, inside the loop.
+#
 # USAGE
 #   # gate only (safe default) — validate, print broadcast commands:
 #   bash script/redeploy-testnet-inplace.sh
@@ -251,6 +270,17 @@ for slug in $CHAINS; do
   # and skips the block entirely, so demanding an obsolete value would just
   # re-create the wedge that gating fixed.
   pfx="$(prefix_for "$slug")" || fail "chain '$slug': no env-prefix mapping"
+  # Reward-role declaration (#1566 closure 3) — required for every selected
+  # chain, validated BEFORE any broadcast. Unlike the P1-b seed there is no
+  # on-chain "already done" flag to skip on: the forge script compares the
+  # live role to this declaration every run and refuses on mismatch.
+  role_var="REWARD_ROLE_EXPECTED_${pfx}"
+  role_val="${!role_var:-}"
+  case "$role_val" in
+    canonical|mirror|unconfigured|detached) ;;
+    "") fail "chain '$slug': set ${role_var}=canonical|mirror|unconfigured|detached (this Diamond's reward-mesh role per the recorded topology). Refusing to default an irreversible role record." ;;
+    *)  fail "chain '$slug': ${role_var}='${role_val}' is not one of canonical|mirror|unconfigured|detached" ;;
+  esac
   seed_var="ARMED_FRESH_PAID_SEED_${pfx}"
   nohist_var="ARMED_FRESH_PAID_NO_HISTORY_${pfx}"
   seed_val="${!seed_var:-}"
@@ -395,6 +425,7 @@ EOF
     # SAME answer the orchestrator would have resolved, or it migrates blind.
     echo "  #   (P1-b, only if this chain is not yet seeded: prefix the command with"
     echo "  #    ARMED_FRESH_PAID_SEED=\$ARMED_FRESH_PAID_SEED_${pfx}  or  ARMED_FRESH_PAID_NO_HISTORY=true)"
+    echo "  #   (#1566 role backfill, ALWAYS: prefix with REWARD_ROLE_EXPECTED=\$REWARD_ROLE_EXPECTED_${pfx})"
     echo "  FOUNDRY_PROFILE=default forge script script/RefreshAllFacetsInPlace.s.sol --sig \"refresh()\" --rpc-url \$$var --broadcast --slow"
     [ "$SKIP_VAULT" -eq 0 ] && \
     echo "  FOUNDRY_PROFILE=default forge script script/UpgradeVaultImplementation.s.sol --sig \"run()\" --rpc-url \$$var --broadcast --slow"
@@ -419,6 +450,10 @@ for slug in $CHAINS; do
   unset ARMED_FRESH_PAID_SEED ARMED_FRESH_PAID_NO_HISTORY
   [ -n "${!seed_var:-}" ] && export ARMED_FRESH_PAID_SEED="${!seed_var}"
   [ "${!nohist_var:-}" = "true" ] && export ARMED_FRESH_PAID_NO_HISTORY=true
+  # Same per-chain scoping for the reward-role declaration (validated above).
+  role_var="REWARD_ROLE_EXPECTED_${pfx}"
+  unset REWARD_ROLE_EXPECTED
+  export REWARD_ROLE_EXPECTED="${!role_var}"
   banner "[4] $slug — RefreshAllFacetsInPlace (diamond cuts)"
   "${NICE[@]}" forge script script/RefreshAllFacetsInPlace.s.sol --sig "refresh()" \
     --rpc-url "$rpc" --broadcast --slow \

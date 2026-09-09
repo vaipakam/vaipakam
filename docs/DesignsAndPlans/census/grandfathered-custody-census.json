@@ -1,0 +1,1527 @@
+{
+  "generatedAt": "2026-09-09T15:37:56.751Z",
+  "purpose": "#1566 grandfathered-custody census — decides whether slices 0-3 are live work or a certified no-op",
+  "scope": "all-deployed-chains",
+  "allClassesEmpty": false,
+  "deploymentsDeployed": [
+    "arb-sepolia|live",
+    "arb-sepolia|archived 2026-05-10T02-37-43Z",
+    "arb-sepolia|archived 2026-07-01T01-28-35Z",
+    "arb-sepolia|archived 2026-07-01T01-36-25Z",
+    "base-sepolia|live",
+    "base-sepolia|archived 2026-05-10T01-28-54Z",
+    "base-sepolia|archived 2026-05-11T02-10-48Z",
+    "base-sepolia|archived 2026-06-30T23-56-49Z",
+    "base-sepolia|archived 2026-07-01T00-15-58Z",
+    "base-sepolia|archived 2026-07-01T00-27-51Z",
+    "base-sepolia|archived 2026-07-01T00-39-00Z",
+    "base-sepolia|archived 2026-07-01T00-54-13Z",
+    "base-sepolia|archived 2026-07-01T01-03-39Z",
+    "bnb-testnet|live",
+    "bnb-testnet|archived 2026-07-01T01-54-09Z",
+    "op-sepolia|live",
+    "op-sepolia|archived prior-rehearsal-1778076638",
+    "sepolia|live",
+    "sepolia|archived 2026-05-10T13-02-26Z",
+    "sepolia|archived 2026-05-11T04-15-49Z"
+  ],
+  "deploymentsCensused": 20,
+  "chainsFailed": [],
+  "deploymentsNotCensused": [],
+  "indeterminateClasses": [
+    {
+      "chainSlug": "arb-sepolia",
+      "deployment": "live",
+      "class": "fallbackSnapshotCustody",
+      "reason": "the VPFI token getter is unrouted, so the effective token cannot be read; the artifact token may predate a rotation via setVPFIToken, and a row denominated in the live token would be filed as non-VPFI — undetermined pending routing of the getter or a calibrated read of the token slot"
+    },
+    {
+      "chainSlug": "arb-sepolia",
+      "deployment": "live",
+      "class": "liveIntentCommits",
+      "reason": "the VPFI token getter is unrouted, so the effective token cannot be read; the artifact token may predate a rotation via setVPFIToken, and a row denominated in the live token would be filed as non-VPFI — undetermined pending routing of the getter or a calibrated read of the token slot"
+    },
+    {
+      "chainSlug": "arb-sepolia",
+      "deployment": "archived 2026-05-10T02-37-43Z",
+      "class": "liveIntentCommits",
+      "reason": "the intent getter is unrouted; a zero VPFI balance proves the rows would be UNBACKED, not that they are absent, and cut history can only refute — undetermined pending a calibrated storage read of intentCommits[loanId] or routing of the getter"
+    },
+    {
+      "chainSlug": "arb-sepolia",
+      "deployment": "archived 2026-07-01T01-28-35Z",
+      "class": "liveIntentCommits",
+      "reason": "the intent getter is unrouted; a zero VPFI balance proves the rows would be UNBACKED, not that they are absent, and cut history can only refute — undetermined pending a calibrated storage read of intentCommits[loanId] or routing of the getter"
+    },
+    {
+      "chainSlug": "arb-sepolia",
+      "deployment": "archived 2026-07-01T01-36-25Z",
+      "class": "vpfiHeldCustody",
+      "reason": "VPFI token unresolvable (neither on-chain nor in the artifact); VPFI custody cannot be scoped"
+    },
+    {
+      "chainSlug": "arb-sepolia",
+      "deployment": "archived 2026-07-01T01-36-25Z",
+      "class": "rebateRows",
+      "reason": "VPFI token unresolvable (neither on-chain nor in the artifact); VPFI custody cannot be scoped"
+    },
+    {
+      "chainSlug": "arb-sepolia",
+      "deployment": "archived 2026-07-01T01-36-25Z",
+      "class": "fallbackSnapshotCustody",
+      "reason": "VPFI token unresolvable (neither on-chain nor in the artifact); VPFI custody cannot be scoped"
+    },
+    {
+      "chainSlug": "arb-sepolia",
+      "deployment": "archived 2026-07-01T01-36-25Z",
+      "class": "liveIntentCommits",
+      "reason": "the intent getter answered but no VPFI token resolved, so every returned intent has an UNKNOWN asset — not provably non-VPFI"
+    },
+    {
+      "chainSlug": "base-sepolia",
+      "deployment": "archived 2026-06-30T23-56-49Z",
+      "class": "liveIntentCommits",
+      "reason": "the intent getter is unrouted; a zero VPFI balance proves the rows would be UNBACKED, not that they are absent, and cut history can only refute — undetermined pending a calibrated storage read of intentCommits[loanId] or routing of the getter"
+    },
+    {
+      "chainSlug": "base-sepolia",
+      "deployment": "archived 2026-07-01T00-15-58Z",
+      "class": "vpfiHeldCustody",
+      "reason": "every custody selector is UNROUTED on this Diamond today, which says nothing about rows written before they were removed — storage is unreadable without a getter, so absence cannot be established without a calibrated storage read"
+    },
+    {
+      "chainSlug": "base-sepolia",
+      "deployment": "archived 2026-07-01T00-15-58Z",
+      "class": "rebateRows",
+      "reason": "every custody selector is UNROUTED on this Diamond today, which says nothing about rows written before they were removed — storage is unreadable without a getter, so absence cannot be established without a calibrated storage read"
+    },
+    {
+      "chainSlug": "base-sepolia",
+      "deployment": "archived 2026-07-01T00-15-58Z",
+      "class": "fallbackSnapshotCustody",
+      "reason": "every custody selector is UNROUTED on this Diamond today, which says nothing about rows written before they were removed — storage is unreadable without a getter, so absence cannot be established without a calibrated storage read"
+    },
+    {
+      "chainSlug": "base-sepolia",
+      "deployment": "archived 2026-07-01T00-15-58Z",
+      "class": "liveIntentCommits",
+      "reason": "every custody selector is UNROUTED on this Diamond today, which says nothing about rows written before they were removed — storage is unreadable without a getter, so absence cannot be established without a calibrated storage read"
+    },
+    {
+      "chainSlug": "base-sepolia",
+      "deployment": "archived 2026-07-01T00-27-51Z",
+      "class": "vpfiHeldCustody",
+      "reason": "every custody selector is UNROUTED on this Diamond today, which says nothing about rows written before they were removed — storage is unreadable without a getter, so absence cannot be established without a calibrated storage read"
+    },
+    {
+      "chainSlug": "base-sepolia",
+      "deployment": "archived 2026-07-01T00-27-51Z",
+      "class": "rebateRows",
+      "reason": "every custody selector is UNROUTED on this Diamond today, which says nothing about rows written before they were removed — storage is unreadable without a getter, so absence cannot be established without a calibrated storage read"
+    },
+    {
+      "chainSlug": "base-sepolia",
+      "deployment": "archived 2026-07-01T00-27-51Z",
+      "class": "fallbackSnapshotCustody",
+      "reason": "every custody selector is UNROUTED on this Diamond today, which says nothing about rows written before they were removed — storage is unreadable without a getter, so absence cannot be established without a calibrated storage read"
+    },
+    {
+      "chainSlug": "base-sepolia",
+      "deployment": "archived 2026-07-01T00-27-51Z",
+      "class": "liveIntentCommits",
+      "reason": "every custody selector is UNROUTED on this Diamond today, which says nothing about rows written before they were removed — storage is unreadable without a getter, so absence cannot be established without a calibrated storage read"
+    },
+    {
+      "chainSlug": "base-sepolia",
+      "deployment": "archived 2026-07-01T00-39-00Z",
+      "class": "vpfiHeldCustody",
+      "reason": "every custody selector is UNROUTED on this Diamond today, which says nothing about rows written before they were removed — storage is unreadable without a getter, so absence cannot be established without a calibrated storage read"
+    },
+    {
+      "chainSlug": "base-sepolia",
+      "deployment": "archived 2026-07-01T00-39-00Z",
+      "class": "rebateRows",
+      "reason": "every custody selector is UNROUTED on this Diamond today, which says nothing about rows written before they were removed — storage is unreadable without a getter, so absence cannot be established without a calibrated storage read"
+    },
+    {
+      "chainSlug": "base-sepolia",
+      "deployment": "archived 2026-07-01T00-39-00Z",
+      "class": "fallbackSnapshotCustody",
+      "reason": "every custody selector is UNROUTED on this Diamond today, which says nothing about rows written before they were removed — storage is unreadable without a getter, so absence cannot be established without a calibrated storage read"
+    },
+    {
+      "chainSlug": "base-sepolia",
+      "deployment": "archived 2026-07-01T00-39-00Z",
+      "class": "liveIntentCommits",
+      "reason": "every custody selector is UNROUTED on this Diamond today, which says nothing about rows written before they were removed — storage is unreadable without a getter, so absence cannot be established without a calibrated storage read"
+    },
+    {
+      "chainSlug": "base-sepolia",
+      "deployment": "archived 2026-07-01T01-03-39Z",
+      "class": "vpfiHeldCustody",
+      "reason": "the contract at the recorded address is NOT a Vaipakam Diamond (every custody selector reverts without the Diamond fallback's FunctionDoesNotExist signature) — it cannot be scoped, and its artifact should be checked"
+    },
+    {
+      "chainSlug": "base-sepolia",
+      "deployment": "archived 2026-07-01T01-03-39Z",
+      "class": "rebateRows",
+      "reason": "the contract at the recorded address is NOT a Vaipakam Diamond (every custody selector reverts without the Diamond fallback's FunctionDoesNotExist signature) — it cannot be scoped, and its artifact should be checked"
+    },
+    {
+      "chainSlug": "base-sepolia",
+      "deployment": "archived 2026-07-01T01-03-39Z",
+      "class": "fallbackSnapshotCustody",
+      "reason": "the contract at the recorded address is NOT a Vaipakam Diamond (every custody selector reverts without the Diamond fallback's FunctionDoesNotExist signature) — it cannot be scoped, and its artifact should be checked"
+    },
+    {
+      "chainSlug": "base-sepolia",
+      "deployment": "archived 2026-07-01T01-03-39Z",
+      "class": "liveIntentCommits",
+      "reason": "the contract at the recorded address is NOT a Vaipakam Diamond (every custody selector reverts without the Diamond fallback's FunctionDoesNotExist signature) — it cannot be scoped, and its artifact should be checked"
+    },
+    {
+      "chainSlug": "op-sepolia",
+      "deployment": "live",
+      "class": "liveIntentCommits",
+      "reason": "the intent getter is unrouted; a zero VPFI balance proves the rows would be UNBACKED, not that they are absent, and cut history can only refute — undetermined pending a calibrated storage read of intentCommits[loanId] or routing of the getter"
+    },
+    {
+      "chainSlug": "op-sepolia",
+      "deployment": "archived prior-rehearsal-1778076638",
+      "class": "liveIntentCommits",
+      "reason": "the intent getter is unrouted; a zero VPFI balance proves the rows would be UNBACKED, not that they are absent, and cut history can only refute — undetermined pending a calibrated storage read of intentCommits[loanId] or routing of the getter"
+    },
+    {
+      "chainSlug": "sepolia",
+      "deployment": "archived 2026-05-10T13-02-26Z",
+      "class": "liveIntentCommits",
+      "reason": "the intent getter is unrouted; a zero VPFI balance proves the rows would be UNBACKED, not that they are absent, and cut history can only refute — undetermined pending a calibrated storage read of intentCommits[loanId] or routing of the getter"
+    }
+  ],
+  "results": [
+    {
+      "chainSlug": "arb-sepolia",
+      "deployment": "live",
+      "chainId": 421614,
+      "diamond": "0x55d7872cC9738994cc6b04F89d128cB4c8745431",
+      "vpfiToken": "0xDed6a45313E216ad4B74be089D2411f6E222d074",
+      "vpfiTokenSource": "deployment artifact",
+      "vpfiScopeAuthoritative": false,
+      "diamondVpfiBacking": "0",
+      "vpfiRowsTotal": "0",
+      "backingShortfall": "0",
+      "atBlock": "307094207",
+      "atBlockHash": "0x29de372097ef589b61a757db0052e20fc05deaa15e65b8b0248d1076f43daf07",
+      "blockTag": "finalized",
+      "rpcHost": "arbitrum-sepolia.gateway.tenderly.co",
+      "scanned": {
+        "loanIdsEnumerated": 13,
+        "totalLoansEverCreated": "13",
+        "loanIdRange": "1..13",
+        "enumerable": true,
+        "noCode": false,
+        "custodySurfaceUnrouted": false,
+        "loupeRouted": true,
+        "intentSource": "getIntentCommit view (live state, history-independent)",
+        "intentSurfaceRouted": true,
+        "intentProducerRouted": true,
+        "intentCorroboration": null,
+        "producersMayBeLive": true
+      },
+      "classes": {
+        "vpfiHeldCustody": {
+          "status": "proven",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "rebateRows": {
+          "status": "proven",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "fallbackSnapshotCustody": {
+          "status": "indeterminate",
+          "indeterminateReason": "the VPFI token getter is unrouted, so the effective token cannot be read; the artifact token may predate a rotation via setVPFIToken, and a row denominated in the live token would be filed as non-VPFI — undetermined pending routing of the getter or a calibrated read of the token slot",
+          "count": 0,
+          "total": "0",
+          "rows": [],
+          "nonVpfiRowsExcluded": [],
+          "unknownAssetRows": []
+        },
+        "liveIntentCommits": {
+          "status": "indeterminate",
+          "unknownAssetRows": [],
+          "indeterminateReason": "the VPFI token getter is unrouted, so the effective token cannot be read; the artifact token may predate a rotation via setVPFIToken, and a row denominated in the live token would be filed as non-VPFI — undetermined pending routing of the getter or a calibrated read of the token slot",
+          "count": 0,
+          "total": "0",
+          "rows": [],
+          "nonVpfiRowsExcluded": []
+        }
+      }
+    },
+    {
+      "chainSlug": "arb-sepolia",
+      "deployment": "archived 2026-05-10T02-37-43Z",
+      "chainId": 421614,
+      "diamond": "0x8EcD41ecE070f6B68ae35A495AA820E1bFC19AeC",
+      "vpfiToken": "0x08c2937486B2215aFE6d1a69F011145fE023840F",
+      "vpfiTokenSource": "on-chain getVPFIToken()",
+      "vpfiScopeAuthoritative": true,
+      "diamondVpfiBacking": "0",
+      "vpfiRowsTotal": "0",
+      "backingShortfall": "0",
+      "atBlock": "307094207",
+      "atBlockHash": "0x29de372097ef589b61a757db0052e20fc05deaa15e65b8b0248d1076f43daf07",
+      "blockTag": "finalized",
+      "rpcHost": "arbitrum-sepolia.gateway.tenderly.co",
+      "scanned": {
+        "loanIdsEnumerated": 24,
+        "totalLoansEverCreated": "24",
+        "loanIdRange": "1..24",
+        "enumerable": true,
+        "noCode": false,
+        "custodySurfaceUnrouted": false,
+        "loupeRouted": true,
+        "intentSource": "getter unrouted — intentCommits storage is NOT readable here; the class is indeterminate pending a calibrated storage read (cut history can only refute)",
+        "intentSurfaceRouted": false,
+        "intentProducerRouted": false,
+        "intentCorroboration": null,
+        "producersMayBeLive": true
+      },
+      "classes": {
+        "vpfiHeldCustody": {
+          "status": "proven",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "rebateRows": {
+          "status": "proven",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "fallbackSnapshotCustody": {
+          "status": "proven",
+          "count": 0,
+          "total": "0",
+          "rows": [],
+          "nonVpfiRowsExcluded": [],
+          "unknownAssetRows": []
+        },
+        "liveIntentCommits": {
+          "status": "indeterminate",
+          "unknownAssetRows": [],
+          "indeterminateReason": "the intent getter is unrouted; a zero VPFI balance proves the rows would be UNBACKED, not that they are absent, and cut history can only refute — undetermined pending a calibrated storage read of intentCommits[loanId] or routing of the getter",
+          "absenceProof": {
+            "proven": false,
+            "reason": "the intent getter is unrouted; a zero VPFI balance proves the rows would be UNBACKED, not that they are absent, and cut history can only refute — undetermined pending a calibrated storage read of intentCommits[loanId] or routing of the getter",
+            "diamondVpfiBacking": "0",
+            "cutHistoryRefutation": {
+              "refuted": false,
+              "verdict": "not-refuted",
+              "reason": "no DiamondCut in the RETURNED history routes the intent producer, and that history carries an ADD for every selector the Diamond currently routes — but an omitted Add/Remove pair is invisible to this test, so this is NOT a proof of absence; the class stays indeterminate pending a state read of the rows",
+              "cutsScanned": 4,
+              "routedSelectors": 396
+            }
+          },
+          "count": 0,
+          "total": "0",
+          "rows": [],
+          "nonVpfiRowsExcluded": []
+        }
+      }
+    },
+    {
+      "chainSlug": "arb-sepolia",
+      "deployment": "archived 2026-07-01T01-28-35Z",
+      "chainId": 421614,
+      "diamond": "0x17Fe0D808F8971D7A14994a1205ee6AFd949Be91",
+      "vpfiToken": "0x2f4E10F00bB7f8A5fEDB0b1EB171bb6dfEAF1246",
+      "vpfiTokenSource": "on-chain getVPFIToken()",
+      "vpfiScopeAuthoritative": true,
+      "diamondVpfiBacking": "0",
+      "vpfiRowsTotal": "0",
+      "backingShortfall": "0",
+      "atBlock": "307094207",
+      "atBlockHash": "0x29de372097ef589b61a757db0052e20fc05deaa15e65b8b0248d1076f43daf07",
+      "blockTag": "finalized",
+      "rpcHost": "arbitrum-sepolia.gateway.tenderly.co",
+      "scanned": {
+        "loanIdsEnumerated": 37,
+        "totalLoansEverCreated": "37",
+        "loanIdRange": "1..37",
+        "enumerable": true,
+        "noCode": false,
+        "custodySurfaceUnrouted": false,
+        "loupeRouted": true,
+        "intentSource": "getter unrouted — intentCommits storage is NOT readable here; the class is indeterminate pending a calibrated storage read (cut history can only refute)",
+        "intentSurfaceRouted": false,
+        "intentProducerRouted": false,
+        "intentCorroboration": null,
+        "producersMayBeLive": true
+      },
+      "classes": {
+        "vpfiHeldCustody": {
+          "status": "proven",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "rebateRows": {
+          "status": "proven",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "fallbackSnapshotCustody": {
+          "status": "proven",
+          "count": 0,
+          "total": "0",
+          "rows": [],
+          "nonVpfiRowsExcluded": [],
+          "unknownAssetRows": []
+        },
+        "liveIntentCommits": {
+          "status": "indeterminate",
+          "unknownAssetRows": [],
+          "indeterminateReason": "the intent getter is unrouted; a zero VPFI balance proves the rows would be UNBACKED, not that they are absent, and cut history can only refute — undetermined pending a calibrated storage read of intentCommits[loanId] or routing of the getter",
+          "absenceProof": {
+            "proven": false,
+            "reason": "the intent getter is unrouted; a zero VPFI balance proves the rows would be UNBACKED, not that they are absent, and cut history can only refute — undetermined pending a calibrated storage read of intentCommits[loanId] or routing of the getter",
+            "diamondVpfiBacking": "0",
+            "cutHistoryRefutation": {
+              "refuted": false,
+              "verdict": "not-refuted",
+              "reason": "no DiamondCut in the RETURNED history routes the intent producer, and that history carries an ADD for every selector the Diamond currently routes — but an omitted Add/Remove pair is invisible to this test, so this is NOT a proof of absence; the class stays indeterminate pending a state read of the rows",
+              "cutsScanned": 3,
+              "routedSelectors": 407
+            }
+          },
+          "count": 0,
+          "total": "0",
+          "rows": [],
+          "nonVpfiRowsExcluded": []
+        }
+      }
+    },
+    {
+      "chainSlug": "arb-sepolia",
+      "deployment": "archived 2026-07-01T01-36-25Z",
+      "chainId": 421614,
+      "diamond": "0x55d7872cC9738994cc6b04F89d128cB4c8745431",
+      "vpfiToken": null,
+      "vpfiTokenSource": "unresolvable",
+      "vpfiScopeAuthoritative": false,
+      "diamondVpfiBacking": null,
+      "vpfiRowsTotal": "0",
+      "backingShortfall": null,
+      "atBlock": "307094207",
+      "atBlockHash": "0x29de372097ef589b61a757db0052e20fc05deaa15e65b8b0248d1076f43daf07",
+      "blockTag": "finalized",
+      "rpcHost": "arbitrum-sepolia.gateway.tenderly.co",
+      "scanned": {
+        "loanIdsEnumerated": 13,
+        "totalLoansEverCreated": "13",
+        "loanIdRange": "1..13",
+        "enumerable": true,
+        "noCode": false,
+        "custodySurfaceUnrouted": false,
+        "loupeRouted": true,
+        "intentSource": "getIntentCommit view (live state, history-independent)",
+        "intentSurfaceRouted": true,
+        "intentProducerRouted": true,
+        "intentCorroboration": null,
+        "producersMayBeLive": true
+      },
+      "classes": {
+        "vpfiHeldCustody": {
+          "status": "indeterminate",
+          "indeterminateReason": "VPFI token unresolvable (neither on-chain nor in the artifact); VPFI custody cannot be scoped",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "rebateRows": {
+          "status": "indeterminate",
+          "indeterminateReason": "VPFI token unresolvable (neither on-chain nor in the artifact); VPFI custody cannot be scoped",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "fallbackSnapshotCustody": {
+          "status": "indeterminate",
+          "indeterminateReason": "VPFI token unresolvable (neither on-chain nor in the artifact); VPFI custody cannot be scoped",
+          "count": 0,
+          "total": "0",
+          "rows": [],
+          "nonVpfiRowsExcluded": [],
+          "unknownAssetRows": []
+        },
+        "liveIntentCommits": {
+          "status": "indeterminate",
+          "unknownAssetRows": [],
+          "indeterminateReason": "the intent getter answered but no VPFI token resolved, so every returned intent has an UNKNOWN asset — not provably non-VPFI",
+          "count": 0,
+          "total": "0",
+          "rows": [],
+          "nonVpfiRowsExcluded": []
+        }
+      }
+    },
+    {
+      "chainSlug": "base-sepolia",
+      "deployment": "live",
+      "chainId": 84532,
+      "diamond": "0xd89fd7F787e4415460b23891E97570a4881fb995",
+      "vpfiToken": "0x030dB965D504D34e36533acB97638dDF231Cc3CA",
+      "vpfiTokenSource": "on-chain getVPFIToken()",
+      "vpfiScopeAuthoritative": true,
+      "diamondVpfiBacking": "0",
+      "vpfiRowsTotal": "0",
+      "backingShortfall": "0",
+      "atBlock": "46598283",
+      "atBlockHash": "0xd49a1a9bb24b0463ccb63f0d8f5af366d39a9a0150245a3440abce651957e8fe",
+      "blockTag": "finalized",
+      "rpcHost": "sepolia.base.org",
+      "scanned": {
+        "loanIdsEnumerated": 21,
+        "totalLoansEverCreated": "21",
+        "loanIdRange": "1..21",
+        "enumerable": true,
+        "noCode": false,
+        "custodySurfaceUnrouted": false,
+        "loupeRouted": true,
+        "intentSource": "getIntentCommit view (live state, history-independent)",
+        "intentSurfaceRouted": true,
+        "intentProducerRouted": true,
+        "intentCorroboration": null,
+        "producersMayBeLive": true
+      },
+      "classes": {
+        "vpfiHeldCustody": {
+          "status": "proven",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "rebateRows": {
+          "status": "proven",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "fallbackSnapshotCustody": {
+          "status": "proven",
+          "count": 0,
+          "total": "0",
+          "rows": [],
+          "nonVpfiRowsExcluded": [],
+          "unknownAssetRows": []
+        },
+        "liveIntentCommits": {
+          "status": "proven",
+          "unknownAssetRows": [],
+          "count": 0,
+          "total": "0",
+          "rows": [],
+          "nonVpfiRowsExcluded": []
+        }
+      }
+    },
+    {
+      "chainSlug": "base-sepolia",
+      "deployment": "archived 2026-05-10T01-28-54Z",
+      "chainId": 84532,
+      "diamond": "0x84879F7cb87295B67916Ad257a8087b55981EbFc",
+      "vpfiToken": "0x3bA7e2C46ED97beeb4BEA8efe845b5227512DE27",
+      "vpfiTokenSource": "on-chain getVPFIToken()",
+      "vpfiScopeAuthoritative": true,
+      "provenBy": "no-loans-ever-created",
+      "diamondVpfiBacking": "0",
+      "vpfiRowsTotal": "0",
+      "backingShortfall": "0",
+      "atBlock": "46598283",
+      "atBlockHash": "0xd49a1a9bb24b0463ccb63f0d8f5af366d39a9a0150245a3440abce651957e8fe",
+      "blockTag": "finalized",
+      "rpcHost": "sepolia.base.org",
+      "scanned": {
+        "loanIdsEnumerated": 0,
+        "totalLoansEverCreated": "0",
+        "loanIdRange": "none",
+        "enumerable": true,
+        "noCode": false,
+        "custodySurfaceUnrouted": false,
+        "loupeRouted": true,
+        "intentSource": "getter unrouted — intentCommits storage is NOT readable here; the class is indeterminate pending a calibrated storage read (cut history can only refute)",
+        "intentSurfaceRouted": false,
+        "intentProducerRouted": false,
+        "intentCorroboration": null,
+        "producersMayBeLive": true
+      },
+      "classes": {
+        "vpfiHeldCustody": {
+          "status": "proven",
+          "provenBy": "no-loans-ever-created",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "rebateRows": {
+          "status": "proven",
+          "provenBy": "no-loans-ever-created",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "fallbackSnapshotCustody": {
+          "status": "proven",
+          "provenBy": "no-loans-ever-created",
+          "count": 0,
+          "total": "0",
+          "rows": [],
+          "nonVpfiRowsExcluded": [],
+          "unknownAssetRows": []
+        },
+        "liveIntentCommits": {
+          "status": "proven",
+          "provenBy": "no-loans-ever-created",
+          "unknownAssetRows": [],
+          "count": 0,
+          "total": "0",
+          "rows": [],
+          "nonVpfiRowsExcluded": []
+        }
+      }
+    },
+    {
+      "chainSlug": "base-sepolia",
+      "deployment": "archived 2026-05-11T02-10-48Z",
+      "chainId": 84532,
+      "diamond": "0x804Bc3E9625548e50c1B589b25111783A632D964",
+      "vpfiToken": "0x75e60702fe3dD4F107596d1da28e89B88982E82a",
+      "vpfiTokenSource": "on-chain getVPFIToken()",
+      "vpfiScopeAuthoritative": true,
+      "provenBy": "no-loans-ever-created",
+      "diamondVpfiBacking": "0",
+      "vpfiRowsTotal": "0",
+      "backingShortfall": "0",
+      "atBlock": "46598283",
+      "atBlockHash": "0xd49a1a9bb24b0463ccb63f0d8f5af366d39a9a0150245a3440abce651957e8fe",
+      "blockTag": "finalized",
+      "rpcHost": "sepolia.base.org",
+      "scanned": {
+        "loanIdsEnumerated": 0,
+        "totalLoansEverCreated": "0",
+        "loanIdRange": "none",
+        "enumerable": true,
+        "noCode": false,
+        "custodySurfaceUnrouted": false,
+        "loupeRouted": true,
+        "intentSource": "getter unrouted — intentCommits storage is NOT readable here; the class is indeterminate pending a calibrated storage read (cut history can only refute)",
+        "intentSurfaceRouted": false,
+        "intentProducerRouted": false,
+        "intentCorroboration": null,
+        "producersMayBeLive": true
+      },
+      "classes": {
+        "vpfiHeldCustody": {
+          "status": "proven",
+          "provenBy": "no-loans-ever-created",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "rebateRows": {
+          "status": "proven",
+          "provenBy": "no-loans-ever-created",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "fallbackSnapshotCustody": {
+          "status": "proven",
+          "provenBy": "no-loans-ever-created",
+          "count": 0,
+          "total": "0",
+          "rows": [],
+          "nonVpfiRowsExcluded": [],
+          "unknownAssetRows": []
+        },
+        "liveIntentCommits": {
+          "status": "proven",
+          "provenBy": "no-loans-ever-created",
+          "unknownAssetRows": [],
+          "count": 0,
+          "total": "0",
+          "rows": [],
+          "nonVpfiRowsExcluded": []
+        }
+      }
+    },
+    {
+      "chainSlug": "base-sepolia",
+      "deployment": "archived 2026-06-30T23-56-49Z",
+      "chainId": 84532,
+      "diamond": "0x725C7912956b254030A2DBF152B2F739C46C07c0",
+      "vpfiToken": "0xC27AEd85208FfF75374999ad0f20c21b91251e22",
+      "vpfiTokenSource": "on-chain getVPFIToken()",
+      "vpfiScopeAuthoritative": true,
+      "diamondVpfiBacking": "0",
+      "vpfiRowsTotal": "0",
+      "backingShortfall": "0",
+      "atBlock": "46598283",
+      "atBlockHash": "0xd49a1a9bb24b0463ccb63f0d8f5af366d39a9a0150245a3440abce651957e8fe",
+      "blockTag": "finalized",
+      "rpcHost": "sepolia.base.org",
+      "scanned": {
+        "loanIdsEnumerated": 33,
+        "totalLoansEverCreated": "33",
+        "loanIdRange": "1..33",
+        "enumerable": true,
+        "noCode": false,
+        "custodySurfaceUnrouted": false,
+        "loupeRouted": true,
+        "intentSource": "getter unrouted — intentCommits storage is NOT readable here; the class is indeterminate pending a calibrated storage read (cut history can only refute)",
+        "intentSurfaceRouted": false,
+        "intentProducerRouted": false,
+        "intentCorroboration": null,
+        "producersMayBeLive": true
+      },
+      "classes": {
+        "vpfiHeldCustody": {
+          "status": "proven",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "rebateRows": {
+          "status": "proven",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "fallbackSnapshotCustody": {
+          "status": "proven",
+          "count": 0,
+          "total": "0",
+          "rows": [],
+          "nonVpfiRowsExcluded": [],
+          "unknownAssetRows": []
+        },
+        "liveIntentCommits": {
+          "status": "indeterminate",
+          "unknownAssetRows": [],
+          "indeterminateReason": "the intent getter is unrouted; a zero VPFI balance proves the rows would be UNBACKED, not that they are absent, and cut history can only refute — undetermined pending a calibrated storage read of intentCommits[loanId] or routing of the getter",
+          "absenceProof": {
+            "proven": false,
+            "reason": "the intent getter is unrouted; a zero VPFI balance proves the rows would be UNBACKED, not that they are absent, and cut history can only refute — undetermined pending a calibrated storage read of intentCommits[loanId] or routing of the getter",
+            "diamondVpfiBacking": "0",
+            "cutHistoryRefutation": {
+              "refuted": false,
+              "verdict": "unreadable",
+              "reason": "the cut history could not be read in full (rate), so absence cannot be established"
+            }
+          },
+          "count": 0,
+          "total": "0",
+          "rows": [],
+          "nonVpfiRowsExcluded": []
+        }
+      }
+    },
+    {
+      "chainSlug": "base-sepolia",
+      "deployment": "archived 2026-07-01T00-15-58Z",
+      "chainId": 84532,
+      "diamond": "0x217333C94Ccd0a2710F09Ae6596C50dCDb9e6fd5",
+      "vpfiToken": null,
+      "vpfiTokenSource": "unresolvable",
+      "vpfiScopeAuthoritative": false,
+      "diamondVpfiBacking": null,
+      "vpfiRowsTotal": null,
+      "backingShortfall": null,
+      "atBlock": "46598283",
+      "atBlockHash": "0xd49a1a9bb24b0463ccb63f0d8f5af366d39a9a0150245a3440abce651957e8fe",
+      "blockTag": "finalized",
+      "rpcHost": "sepolia.base.org",
+      "scanned": {
+        "loanIdsEnumerated": 0,
+        "totalLoansEverCreated": "n/a",
+        "loanIdRange": "none",
+        "enumerable": false,
+        "noCode": false,
+        "codeAtDeployBlock": null,
+        "custodySurfaceUnrouted": true,
+        "notADiamond": false,
+        "loupeRouted": false,
+        "intentSurfaceRouted": false,
+        "intentProducerRouted": false,
+        "intentCorroboration": null,
+        "producersMayBeLive": false
+      },
+      "classes": {
+        "vpfiHeldCustody": {
+          "status": "indeterminate",
+          "indeterminateReason": "every custody selector is UNROUTED on this Diamond today, which says nothing about rows written before they were removed — storage is unreadable without a getter, so absence cannot be established without a calibrated storage read",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "rebateRows": {
+          "status": "indeterminate",
+          "indeterminateReason": "every custody selector is UNROUTED on this Diamond today, which says nothing about rows written before they were removed — storage is unreadable without a getter, so absence cannot be established without a calibrated storage read",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "fallbackSnapshotCustody": {
+          "status": "indeterminate",
+          "indeterminateReason": "every custody selector is UNROUTED on this Diamond today, which says nothing about rows written before they were removed — storage is unreadable without a getter, so absence cannot be established without a calibrated storage read",
+          "count": 0,
+          "total": "0",
+          "rows": [],
+          "nonVpfiRowsExcluded": []
+        },
+        "liveIntentCommits": {
+          "status": "indeterminate",
+          "indeterminateReason": "every custody selector is UNROUTED on this Diamond today, which says nothing about rows written before they were removed — storage is unreadable without a getter, so absence cannot be established without a calibrated storage read",
+          "count": 0,
+          "total": "0",
+          "rows": [],
+          "nonVpfiRowsExcluded": []
+        }
+      }
+    },
+    {
+      "chainSlug": "base-sepolia",
+      "deployment": "archived 2026-07-01T00-27-51Z",
+      "chainId": 84532,
+      "diamond": "0x7944A00C3195F230454f5393B88CBf1BA2fbb0b0",
+      "vpfiToken": null,
+      "vpfiTokenSource": "unresolvable",
+      "vpfiScopeAuthoritative": false,
+      "diamondVpfiBacking": null,
+      "vpfiRowsTotal": null,
+      "backingShortfall": null,
+      "atBlock": "46598283",
+      "atBlockHash": "0xd49a1a9bb24b0463ccb63f0d8f5af366d39a9a0150245a3440abce651957e8fe",
+      "blockTag": "finalized",
+      "rpcHost": "sepolia.base.org",
+      "scanned": {
+        "loanIdsEnumerated": 0,
+        "totalLoansEverCreated": "n/a",
+        "loanIdRange": "none",
+        "enumerable": false,
+        "noCode": false,
+        "codeAtDeployBlock": null,
+        "custodySurfaceUnrouted": true,
+        "notADiamond": false,
+        "loupeRouted": false,
+        "intentSurfaceRouted": false,
+        "intentProducerRouted": false,
+        "intentCorroboration": null,
+        "producersMayBeLive": false
+      },
+      "classes": {
+        "vpfiHeldCustody": {
+          "status": "indeterminate",
+          "indeterminateReason": "every custody selector is UNROUTED on this Diamond today, which says nothing about rows written before they were removed — storage is unreadable without a getter, so absence cannot be established without a calibrated storage read",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "rebateRows": {
+          "status": "indeterminate",
+          "indeterminateReason": "every custody selector is UNROUTED on this Diamond today, which says nothing about rows written before they were removed — storage is unreadable without a getter, so absence cannot be established without a calibrated storage read",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "fallbackSnapshotCustody": {
+          "status": "indeterminate",
+          "indeterminateReason": "every custody selector is UNROUTED on this Diamond today, which says nothing about rows written before they were removed — storage is unreadable without a getter, so absence cannot be established without a calibrated storage read",
+          "count": 0,
+          "total": "0",
+          "rows": [],
+          "nonVpfiRowsExcluded": []
+        },
+        "liveIntentCommits": {
+          "status": "indeterminate",
+          "indeterminateReason": "every custody selector is UNROUTED on this Diamond today, which says nothing about rows written before they were removed — storage is unreadable without a getter, so absence cannot be established without a calibrated storage read",
+          "count": 0,
+          "total": "0",
+          "rows": [],
+          "nonVpfiRowsExcluded": []
+        }
+      }
+    },
+    {
+      "chainSlug": "base-sepolia",
+      "deployment": "archived 2026-07-01T00-39-00Z",
+      "chainId": 84532,
+      "diamond": "0x152134F790F179DC48CFAddA160E654F8bD5D9aD",
+      "vpfiToken": null,
+      "vpfiTokenSource": "unresolvable",
+      "vpfiScopeAuthoritative": false,
+      "diamondVpfiBacking": null,
+      "vpfiRowsTotal": null,
+      "backingShortfall": null,
+      "atBlock": "46598283",
+      "atBlockHash": "0xd49a1a9bb24b0463ccb63f0d8f5af366d39a9a0150245a3440abce651957e8fe",
+      "blockTag": "finalized",
+      "rpcHost": "sepolia.base.org",
+      "scanned": {
+        "loanIdsEnumerated": 0,
+        "totalLoansEverCreated": "n/a",
+        "loanIdRange": "none",
+        "enumerable": false,
+        "noCode": false,
+        "codeAtDeployBlock": null,
+        "custodySurfaceUnrouted": true,
+        "notADiamond": false,
+        "loupeRouted": false,
+        "intentSurfaceRouted": false,
+        "intentProducerRouted": false,
+        "intentCorroboration": null,
+        "producersMayBeLive": false
+      },
+      "classes": {
+        "vpfiHeldCustody": {
+          "status": "indeterminate",
+          "indeterminateReason": "every custody selector is UNROUTED on this Diamond today, which says nothing about rows written before they were removed — storage is unreadable without a getter, so absence cannot be established without a calibrated storage read",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "rebateRows": {
+          "status": "indeterminate",
+          "indeterminateReason": "every custody selector is UNROUTED on this Diamond today, which says nothing about rows written before they were removed — storage is unreadable without a getter, so absence cannot be established without a calibrated storage read",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "fallbackSnapshotCustody": {
+          "status": "indeterminate",
+          "indeterminateReason": "every custody selector is UNROUTED on this Diamond today, which says nothing about rows written before they were removed — storage is unreadable without a getter, so absence cannot be established without a calibrated storage read",
+          "count": 0,
+          "total": "0",
+          "rows": [],
+          "nonVpfiRowsExcluded": []
+        },
+        "liveIntentCommits": {
+          "status": "indeterminate",
+          "indeterminateReason": "every custody selector is UNROUTED on this Diamond today, which says nothing about rows written before they were removed — storage is unreadable without a getter, so absence cannot be established without a calibrated storage read",
+          "count": 0,
+          "total": "0",
+          "rows": [],
+          "nonVpfiRowsExcluded": []
+        }
+      }
+    },
+    {
+      "chainSlug": "base-sepolia",
+      "deployment": "archived 2026-07-01T00-54-13Z",
+      "chainId": 84532,
+      "diamond": "0x6CcCAd5056a478237f023FCa8dc6Acd23c3896FD",
+      "vpfiToken": null,
+      "vpfiTokenSource": "unresolvable",
+      "vpfiScopeAuthoritative": false,
+      "provenBy": "no-loans-ever-created",
+      "diamondVpfiBacking": null,
+      "vpfiRowsTotal": "0",
+      "backingShortfall": null,
+      "atBlock": "46598283",
+      "atBlockHash": "0xd49a1a9bb24b0463ccb63f0d8f5af366d39a9a0150245a3440abce651957e8fe",
+      "blockTag": "finalized",
+      "rpcHost": "sepolia.base.org",
+      "scanned": {
+        "loanIdsEnumerated": 0,
+        "totalLoansEverCreated": "0",
+        "loanIdRange": "none",
+        "enumerable": true,
+        "noCode": false,
+        "custodySurfaceUnrouted": false,
+        "loupeRouted": true,
+        "intentSource": "getIntentCommit view (live state, history-independent)",
+        "intentSurfaceRouted": true,
+        "intentProducerRouted": true,
+        "intentCorroboration": null,
+        "producersMayBeLive": true
+      },
+      "classes": {
+        "vpfiHeldCustody": {
+          "status": "proven",
+          "provenBy": "no-loans-ever-created",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "rebateRows": {
+          "status": "proven",
+          "provenBy": "no-loans-ever-created",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "fallbackSnapshotCustody": {
+          "status": "proven",
+          "provenBy": "no-loans-ever-created",
+          "count": 0,
+          "total": "0",
+          "rows": [],
+          "nonVpfiRowsExcluded": [],
+          "unknownAssetRows": []
+        },
+        "liveIntentCommits": {
+          "status": "proven",
+          "provenBy": "no-loans-ever-created",
+          "unknownAssetRows": [],
+          "count": 0,
+          "total": "0",
+          "rows": [],
+          "nonVpfiRowsExcluded": []
+        }
+      }
+    },
+    {
+      "chainSlug": "base-sepolia",
+      "deployment": "archived 2026-07-01T01-03-39Z",
+      "chainId": 84532,
+      "diamond": "0x760e5727a9949d38E1030a0438Ee3327fd6BCD47",
+      "vpfiToken": null,
+      "vpfiTokenSource": "unresolvable",
+      "vpfiScopeAuthoritative": false,
+      "diamondVpfiBacking": null,
+      "vpfiRowsTotal": null,
+      "backingShortfall": null,
+      "atBlock": "46598283",
+      "atBlockHash": "0xd49a1a9bb24b0463ccb63f0d8f5af366d39a9a0150245a3440abce651957e8fe",
+      "blockTag": "finalized",
+      "rpcHost": "sepolia.base.org",
+      "scanned": {
+        "loanIdsEnumerated": 0,
+        "totalLoansEverCreated": "n/a",
+        "loanIdRange": "none",
+        "enumerable": false,
+        "noCode": false,
+        "codeAtDeployBlock": null,
+        "custodySurfaceUnrouted": false,
+        "notADiamond": true,
+        "loupeRouted": false,
+        "intentSurfaceRouted": false,
+        "intentProducerRouted": false,
+        "intentCorroboration": null,
+        "producersMayBeLive": false
+      },
+      "classes": {
+        "vpfiHeldCustody": {
+          "status": "indeterminate",
+          "indeterminateReason": "the contract at the recorded address is NOT a Vaipakam Diamond (every custody selector reverts without the Diamond fallback's FunctionDoesNotExist signature) — it cannot be scoped, and its artifact should be checked",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "rebateRows": {
+          "status": "indeterminate",
+          "indeterminateReason": "the contract at the recorded address is NOT a Vaipakam Diamond (every custody selector reverts without the Diamond fallback's FunctionDoesNotExist signature) — it cannot be scoped, and its artifact should be checked",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "fallbackSnapshotCustody": {
+          "status": "indeterminate",
+          "indeterminateReason": "the contract at the recorded address is NOT a Vaipakam Diamond (every custody selector reverts without the Diamond fallback's FunctionDoesNotExist signature) — it cannot be scoped, and its artifact should be checked",
+          "count": 0,
+          "total": "0",
+          "rows": [],
+          "nonVpfiRowsExcluded": []
+        },
+        "liveIntentCommits": {
+          "status": "indeterminate",
+          "indeterminateReason": "the contract at the recorded address is NOT a Vaipakam Diamond (every custody selector reverts without the Diamond fallback's FunctionDoesNotExist signature) — it cannot be scoped, and its artifact should be checked",
+          "count": 0,
+          "total": "0",
+          "rows": [],
+          "nonVpfiRowsExcluded": []
+        }
+      }
+    },
+    {
+      "chainSlug": "bnb-testnet",
+      "deployment": "live",
+      "chainId": 97,
+      "diamond": "0x7D4BfD2CA7908Fb088300f29276bF5A2E4FfBAd2",
+      "vpfiToken": "0x3E50DD64e82Ab967026AB38B65aCD736d0255e1d",
+      "vpfiTokenSource": "on-chain getVPFIToken()",
+      "vpfiScopeAuthoritative": true,
+      "diamondVpfiBacking": "0",
+      "vpfiRowsTotal": "0",
+      "backingShortfall": "0",
+      "atBlock": "130045140",
+      "atBlockHash": "0x66f773a5b32b549f0a4b6579b96576c00008afd493ce37cbc86ea2e09b18cf9b",
+      "blockTag": "finalized (lowest of 6 samples: 130045140, 130045143, 130045144, 130045147)",
+      "rpcHost": "bsc-testnet-rpc.publicnode.com",
+      "scanned": {
+        "loanIdsEnumerated": 4,
+        "totalLoansEverCreated": "4",
+        "loanIdRange": "1..4",
+        "enumerable": true,
+        "noCode": false,
+        "custodySurfaceUnrouted": false,
+        "loupeRouted": true,
+        "intentSource": "getIntentCommit view (live state, history-independent)",
+        "intentSurfaceRouted": true,
+        "intentProducerRouted": true,
+        "intentCorroboration": null,
+        "producersMayBeLive": true
+      },
+      "classes": {
+        "vpfiHeldCustody": {
+          "status": "proven",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "rebateRows": {
+          "status": "proven",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "fallbackSnapshotCustody": {
+          "status": "proven",
+          "count": 0,
+          "total": "0",
+          "rows": [],
+          "nonVpfiRowsExcluded": [],
+          "unknownAssetRows": []
+        },
+        "liveIntentCommits": {
+          "status": "proven",
+          "unknownAssetRows": [],
+          "count": 0,
+          "total": "0",
+          "rows": [],
+          "nonVpfiRowsExcluded": []
+        }
+      }
+    },
+    {
+      "chainSlug": "bnb-testnet",
+      "deployment": "archived 2026-07-01T01-54-09Z",
+      "chainId": 97,
+      "diamond": "0xe46F8AE352bc28998083A2EC8Cf379063A73BEf7",
+      "vpfiToken": "0x771248712d35c54261C2A9441f3cAc7f9ad57839",
+      "vpfiTokenSource": "on-chain getVPFIToken()",
+      "vpfiScopeAuthoritative": true,
+      "provenBy": "no-loans-ever-created",
+      "diamondVpfiBacking": "0",
+      "vpfiRowsTotal": "0",
+      "backingShortfall": "0",
+      "atBlock": "130045140",
+      "atBlockHash": "0x66f773a5b32b549f0a4b6579b96576c00008afd493ce37cbc86ea2e09b18cf9b",
+      "blockTag": "finalized (lowest of 6 samples: 130045140, 130045143, 130045144, 130045147)",
+      "rpcHost": "bsc-testnet-rpc.publicnode.com",
+      "scanned": {
+        "loanIdsEnumerated": 0,
+        "totalLoansEverCreated": "0",
+        "loanIdRange": "none",
+        "enumerable": true,
+        "noCode": false,
+        "custodySurfaceUnrouted": false,
+        "loupeRouted": true,
+        "intentSource": "getter unrouted — intentCommits storage is NOT readable here; the class is indeterminate pending a calibrated storage read (cut history can only refute)",
+        "intentSurfaceRouted": false,
+        "intentProducerRouted": false,
+        "intentCorroboration": null,
+        "producersMayBeLive": true
+      },
+      "classes": {
+        "vpfiHeldCustody": {
+          "status": "proven",
+          "provenBy": "no-loans-ever-created",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "rebateRows": {
+          "status": "proven",
+          "provenBy": "no-loans-ever-created",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "fallbackSnapshotCustody": {
+          "status": "proven",
+          "provenBy": "no-loans-ever-created",
+          "count": 0,
+          "total": "0",
+          "rows": [],
+          "nonVpfiRowsExcluded": [],
+          "unknownAssetRows": []
+        },
+        "liveIntentCommits": {
+          "status": "proven",
+          "provenBy": "no-loans-ever-created",
+          "unknownAssetRows": [],
+          "count": 0,
+          "total": "0",
+          "rows": [],
+          "nonVpfiRowsExcluded": []
+        }
+      }
+    },
+    {
+      "chainSlug": "op-sepolia",
+      "deployment": "live",
+      "chainId": 11155420,
+      "diamond": "0x58824401F769b0A760b6CD98Af503Bd5ED648377",
+      "vpfiToken": "0x08c2937486B2215aFE6d1a69F011145fE023840F",
+      "vpfiTokenSource": "on-chain getVPFIToken()",
+      "vpfiScopeAuthoritative": true,
+      "diamondVpfiBacking": "0",
+      "vpfiRowsTotal": "0",
+      "backingShortfall": "0",
+      "atBlock": "48582033",
+      "atBlockHash": "0x9e8bf1082ed93f95c5ab198df33a9c3634500c8a16d514b70f139b9c79afe8bb",
+      "blockTag": "finalized (lowest of 6 samples: 48582033, 48582153)",
+      "rpcHost": "optimism-sepolia-rpc.publicnode.com",
+      "scanned": {
+        "loanIdsEnumerated": 33,
+        "totalLoansEverCreated": "33",
+        "loanIdRange": "1..33",
+        "enumerable": true,
+        "noCode": false,
+        "custodySurfaceUnrouted": false,
+        "loupeRouted": true,
+        "intentSource": "getter unrouted — intentCommits storage is NOT readable here; the class is indeterminate pending a calibrated storage read (cut history can only refute)",
+        "intentSurfaceRouted": false,
+        "intentProducerRouted": false,
+        "intentCorroboration": null,
+        "producersMayBeLive": true
+      },
+      "classes": {
+        "vpfiHeldCustody": {
+          "status": "proven",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "rebateRows": {
+          "status": "proven",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "fallbackSnapshotCustody": {
+          "status": "proven",
+          "count": 0,
+          "total": "0",
+          "rows": [],
+          "nonVpfiRowsExcluded": [],
+          "unknownAssetRows": []
+        },
+        "liveIntentCommits": {
+          "status": "indeterminate",
+          "unknownAssetRows": [],
+          "indeterminateReason": "the intent getter is unrouted; a zero VPFI balance proves the rows would be UNBACKED, not that they are absent, and cut history can only refute — undetermined pending a calibrated storage read of intentCommits[loanId] or routing of the getter",
+          "absenceProof": {
+            "proven": false,
+            "reason": "the intent getter is unrouted; a zero VPFI balance proves the rows would be UNBACKED, not that they are absent, and cut history can only refute — undetermined pending a calibrated storage read of intentCommits[loanId] or routing of the getter",
+            "diamondVpfiBacking": "0",
+            "cutHistoryRefutation": {
+              "refuted": false,
+              "verdict": "unreadable",
+              "reason": "the cut-history scan returned ZERO DiamondCut events, but every Diamond emits at least one at deploy — the history was not actually read (pruned endpoint, or a deployBlock that does not match this address), so absence is not established. Re-run against an archive endpoint.",
+              "cutsScanned": 0
+            }
+          },
+          "count": 0,
+          "total": "0",
+          "rows": [],
+          "nonVpfiRowsExcluded": []
+        }
+      }
+    },
+    {
+      "chainSlug": "op-sepolia",
+      "deployment": "archived prior-rehearsal-1778076638",
+      "chainId": 11155420,
+      "diamond": "0x933f99ae856509c2cF2f47709BD957AdF8477Ed0",
+      "vpfiToken": "0xf2a8E7Cb9e1207398ade20C8448b22879DC6890E",
+      "vpfiTokenSource": "on-chain getVPFIToken()",
+      "vpfiScopeAuthoritative": true,
+      "diamondVpfiBacking": "0",
+      "vpfiRowsTotal": "0",
+      "backingShortfall": "0",
+      "atBlock": "48582033",
+      "atBlockHash": "0x9e8bf1082ed93f95c5ab198df33a9c3634500c8a16d514b70f139b9c79afe8bb",
+      "blockTag": "finalized (lowest of 6 samples: 48582033, 48582153)",
+      "rpcHost": "optimism-sepolia-rpc.publicnode.com",
+      "scanned": {
+        "loanIdsEnumerated": 13,
+        "totalLoansEverCreated": "13",
+        "loanIdRange": "1..13",
+        "enumerable": true,
+        "noCode": false,
+        "custodySurfaceUnrouted": false,
+        "loupeRouted": true,
+        "intentSource": "getter unrouted — intentCommits storage is NOT readable here; the class is indeterminate pending a calibrated storage read (cut history can only refute)",
+        "intentSurfaceRouted": false,
+        "intentProducerRouted": false,
+        "intentCorroboration": null,
+        "producersMayBeLive": true
+      },
+      "classes": {
+        "vpfiHeldCustody": {
+          "status": "proven",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "rebateRows": {
+          "status": "proven",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "fallbackSnapshotCustody": {
+          "status": "proven",
+          "count": 0,
+          "total": "0",
+          "rows": [],
+          "nonVpfiRowsExcluded": [],
+          "unknownAssetRows": []
+        },
+        "liveIntentCommits": {
+          "status": "indeterminate",
+          "unknownAssetRows": [],
+          "indeterminateReason": "the intent getter is unrouted; a zero VPFI balance proves the rows would be UNBACKED, not that they are absent, and cut history can only refute — undetermined pending a calibrated storage read of intentCommits[loanId] or routing of the getter",
+          "absenceProof": {
+            "proven": false,
+            "reason": "the intent getter is unrouted; a zero VPFI balance proves the rows would be UNBACKED, not that they are absent, and cut history can only refute — undetermined pending a calibrated storage read of intentCommits[loanId] or routing of the getter",
+            "diamondVpfiBacking": "0",
+            "cutHistoryRefutation": {
+              "refuted": false,
+              "verdict": "unreadable",
+              "reason": "the cut-history scan returned ZERO DiamondCut events, but every Diamond emits at least one at deploy — the history was not actually read (pruned endpoint, or a deployBlock that does not match this address), so absence is not established. Re-run against an archive endpoint.",
+              "cutsScanned": 0
+            }
+          },
+          "count": 0,
+          "total": "0",
+          "rows": [],
+          "nonVpfiRowsExcluded": []
+        }
+      }
+    },
+    {
+      "chainSlug": "sepolia",
+      "deployment": "live",
+      "chainId": 11155111,
+      "diamond": "0x492f83F2Ab99B7b13E1F8CAf6fbAeB7300B85302",
+      "vpfiToken": "0x669b6f785A8a9c73E8c11C4CC840eBEC23a17Dea",
+      "vpfiTokenSource": "on-chain getVPFIToken()",
+      "vpfiScopeAuthoritative": true,
+      "provenBy": "no-loans-ever-created",
+      "diamondVpfiBacking": "0",
+      "vpfiRowsTotal": "0",
+      "backingShortfall": "0",
+      "atBlock": "11668793",
+      "atBlockHash": "0x31a3cb98f30afb6c4b10546694f9a5ddde91beab0b761b4b8f24fb94a045f625",
+      "blockTag": "finalized",
+      "rpcHost": "ethereum-sepolia-rpc.publicnode.com",
+      "scanned": {
+        "loanIdsEnumerated": 0,
+        "totalLoansEverCreated": "0",
+        "loanIdRange": "none",
+        "enumerable": true,
+        "noCode": false,
+        "custodySurfaceUnrouted": false,
+        "loupeRouted": true,
+        "intentSource": "getter unrouted — intentCommits storage is NOT readable here; the class is indeterminate pending a calibrated storage read (cut history can only refute)",
+        "intentSurfaceRouted": false,
+        "intentProducerRouted": false,
+        "intentCorroboration": null,
+        "producersMayBeLive": true
+      },
+      "classes": {
+        "vpfiHeldCustody": {
+          "status": "proven",
+          "provenBy": "no-loans-ever-created",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "rebateRows": {
+          "status": "proven",
+          "provenBy": "no-loans-ever-created",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "fallbackSnapshotCustody": {
+          "status": "proven",
+          "provenBy": "no-loans-ever-created",
+          "count": 0,
+          "total": "0",
+          "rows": [],
+          "nonVpfiRowsExcluded": [],
+          "unknownAssetRows": []
+        },
+        "liveIntentCommits": {
+          "status": "proven",
+          "provenBy": "no-loans-ever-created",
+          "unknownAssetRows": [],
+          "count": 0,
+          "total": "0",
+          "rows": [],
+          "nonVpfiRowsExcluded": []
+        }
+      }
+    },
+    {
+      "chainSlug": "sepolia",
+      "deployment": "archived 2026-05-10T13-02-26Z",
+      "chainId": 11155111,
+      "diamond": "0x3458758ec056db565CBE3FC6489480cd6f8B8eb7",
+      "vpfiToken": "0x3e45b30fb832e611dCCcCAe89eec92bc1099A7FF",
+      "vpfiTokenSource": "on-chain getVPFIToken()",
+      "vpfiScopeAuthoritative": true,
+      "diamondVpfiBacking": "0",
+      "vpfiRowsTotal": "0",
+      "backingShortfall": "0",
+      "atBlock": "11668793",
+      "atBlockHash": "0x31a3cb98f30afb6c4b10546694f9a5ddde91beab0b761b4b8f24fb94a045f625",
+      "blockTag": "finalized",
+      "rpcHost": "ethereum-sepolia-rpc.publicnode.com",
+      "scanned": {
+        "loanIdsEnumerated": 24,
+        "totalLoansEverCreated": "24",
+        "loanIdRange": "1..24",
+        "enumerable": true,
+        "noCode": false,
+        "custodySurfaceUnrouted": false,
+        "loupeRouted": true,
+        "intentSource": "getter unrouted — intentCommits storage is NOT readable here; the class is indeterminate pending a calibrated storage read (cut history can only refute)",
+        "intentSurfaceRouted": false,
+        "intentProducerRouted": false,
+        "intentCorroboration": null,
+        "producersMayBeLive": true
+      },
+      "classes": {
+        "vpfiHeldCustody": {
+          "status": "proven",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "rebateRows": {
+          "status": "proven",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "fallbackSnapshotCustody": {
+          "status": "proven",
+          "count": 0,
+          "total": "0",
+          "rows": [],
+          "nonVpfiRowsExcluded": [],
+          "unknownAssetRows": []
+        },
+        "liveIntentCommits": {
+          "status": "indeterminate",
+          "unknownAssetRows": [],
+          "indeterminateReason": "the intent getter is unrouted; a zero VPFI balance proves the rows would be UNBACKED, not that they are absent, and cut history can only refute — undetermined pending a calibrated storage read of intentCommits[loanId] or routing of the getter",
+          "absenceProof": {
+            "proven": false,
+            "reason": "the intent getter is unrouted; a zero VPFI balance proves the rows would be UNBACKED, not that they are absent, and cut history can only refute — undetermined pending a calibrated storage read of intentCommits[loanId] or routing of the getter",
+            "diamondVpfiBacking": "0",
+            "cutHistoryRefutation": {
+              "refuted": false,
+              "verdict": "not-refuted",
+              "reason": "no DiamondCut in the RETURNED history routes the intent producer, and that history carries an ADD for every selector the Diamond currently routes — but an omitted Add/Remove pair is invisible to this test, so this is NOT a proof of absence; the class stays indeterminate pending a state read of the rows",
+              "cutsScanned": 5,
+              "routedSelectors": 395
+            }
+          },
+          "count": 0,
+          "total": "0",
+          "rows": [],
+          "nonVpfiRowsExcluded": []
+        }
+      }
+    },
+    {
+      "chainSlug": "sepolia",
+      "deployment": "archived 2026-05-11T04-15-49Z",
+      "chainId": 11155111,
+      "diamond": "0xD2903cbb8Bb0f34fbb688a6E381Dc6c73056DB1c",
+      "vpfiToken": "0x1C837b53553D4134B00f474E04C904062CA69341",
+      "vpfiTokenSource": "on-chain getVPFIToken()",
+      "vpfiScopeAuthoritative": true,
+      "provenBy": "no-loans-ever-created",
+      "diamondVpfiBacking": "0",
+      "vpfiRowsTotal": "0",
+      "backingShortfall": "0",
+      "atBlock": "11668793",
+      "atBlockHash": "0x31a3cb98f30afb6c4b10546694f9a5ddde91beab0b761b4b8f24fb94a045f625",
+      "blockTag": "finalized",
+      "rpcHost": "ethereum-sepolia-rpc.publicnode.com",
+      "scanned": {
+        "loanIdsEnumerated": 0,
+        "totalLoansEverCreated": "0",
+        "loanIdRange": "none",
+        "enumerable": true,
+        "noCode": false,
+        "custodySurfaceUnrouted": false,
+        "loupeRouted": true,
+        "intentSource": "getter unrouted — intentCommits storage is NOT readable here; the class is indeterminate pending a calibrated storage read (cut history can only refute)",
+        "intentSurfaceRouted": false,
+        "intentProducerRouted": false,
+        "intentCorroboration": null,
+        "producersMayBeLive": true
+      },
+      "classes": {
+        "vpfiHeldCustody": {
+          "status": "proven",
+          "provenBy": "no-loans-ever-created",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "rebateRows": {
+          "status": "proven",
+          "provenBy": "no-loans-ever-created",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "fallbackSnapshotCustody": {
+          "status": "proven",
+          "provenBy": "no-loans-ever-created",
+          "count": 0,
+          "total": "0",
+          "rows": [],
+          "nonVpfiRowsExcluded": [],
+          "unknownAssetRows": []
+        },
+        "liveIntentCommits": {
+          "status": "proven",
+          "provenBy": "no-loans-ever-created",
+          "unknownAssetRows": [],
+          "count": 0,
+          "total": "0",
+          "rows": [],
+          "nonVpfiRowsExcluded": []
+        }
+      }
+    }
+  ],
+  "migrationRetirable": false,
+  "migrationRetirableReason": "the population is not established empty"
+}

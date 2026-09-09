@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.29;
 
-import {Vm} from "forge-std/Vm.sol";
+import {Vm, VmSafe} from "forge-std/Vm.sol";
 
 /**
  * @title Deployments
@@ -472,6 +472,7 @@ library Deployments {
     /// top of `DeployDiamond.s.sol` so a partial deploy that crashes
     /// halfway still leaves a discoverable artifact.
     function writeChainHeader() internal {
+        requireMarkedPublication(".chainId");
         string memory p = path();
         // Build a minimal header object. Subsequent writes to the
         // same file via `_writeAddr` will use vm.writeJson, which
@@ -542,12 +543,129 @@ library Deployments {
         }
     }
 
+    /// @notice Committed archive manifest the deploy wrappers mark their live
+    ///         publication in (archive-manifest.mjs live-begin / live-end).
+    string internal constant ARCHIVE_MANIFEST = "deployments/archive-manifest.json";
+
+    /// @notice The artifact keys the grandfathered-custody census reads as a
+    ///         deployment's IDENTITY. Writing one of them is a publication.
+    function isIdentityKey(string memory jsonKey) internal pure returns (bool) {
+        bytes32 k = keccak256(bytes(jsonKey));
+        return k == keccak256(".diamond") || k == keccak256(".vpfiToken") || k == keccak256(".vpfiMirror")
+            || k == keccak256(".chainId") || k == keccak256(".deployBlock");
+    }
+
+    /// @notice TRUE when `manifestJson` carries an in-progress live-publication
+    ///         marker for `slug` whose token is exactly `token`. The single
+    ///         predicate behind {requireMarkedPublication}; its test feeds it
+    ///         synthetic manifests, the gate feeds it the committed one.
+    function publicationMarked(string memory manifestJson, string memory slug, string memory token)
+        internal
+        view
+        returns (bool)
+    {
+        // Bracket form: slugs carry hyphens (`base-sepolia`), which a dotted
+        // JSON path would split. A manifest with no marker section at all
+        // (the committed state between deploys) simply has no such key.
+        string memory key = string.concat('.livePublicationsInProgress["', slug, '"].token');
+        if (bytes(token).length == 0 || !CHEATS.keyExistsJson(manifestJson, key)) return false;
+        return keccak256(bytes(CHEATS.parseJsonString(manifestJson, key))) == keccak256(bytes(token));
+    }
+
+    /// @notice What a run may do with the artifact. Decided by ONE pure rule so
+    ///         the gate's test can exercise every combination the live call
+    ///         cannot reach from inside `forge test`.
+    enum ArtifactWrites {
+        Write,
+        Skip,
+        RefuseSkipOnLiveBroadcast
+    }
+
+    /// @notice #2070 r27 P1 — `DEPLOY_SKIP_ARTIFACTS` used to be honoured
+    ///         anywhere, so a live `forge script … --broadcast` carrying it
+    ///         (stale in the environment, say) deployed a Diamond the
+    ///         inventory never saw: no artifact, no marker, no generation bump,
+    ///         and a later census could certify every class empty while
+    ///         omitting it. The skip is now LOCAL-ONLY — the Anvil chain or a
+    ///         `forge test` run — and a live broadcast that carries it is
+    ///         REFUSED. A dry-run (no `--broadcast`) never writes: its addresses
+    ///         are simulated.
+    function artifactWriteMode(uint256 chainId, bool dryRun, bool underTest, bool skipRequested)
+        internal
+        pure
+        returns (ArtifactWrites)
+    {
+        if (dryRun) return ArtifactWrites.Skip;
+        if (!skipRequested) return ArtifactWrites.Write;
+        if (chainId == 31337 || underTest) return ArtifactWrites.Skip;
+        return ArtifactWrites.RefuseSkipOnLiveBroadcast;
+    }
+
+    /// @notice TRUE when this run writes the artifact. Reverts when
+    ///         `DEPLOY_SKIP_ARTIFACTS` is set on a live broadcast — call it at
+    ///         the top of a deploy script so the simulation fails BEFORE any
+    ///         transaction is sent.
+    function artifactWritesEnabled() internal view returns (bool) {
+        ArtifactWrites mode = artifactWriteMode(
+            block.chainid,
+            CHEATS.isContext(VmSafe.ForgeContext.ScriptDryRun),
+            CHEATS.isContext(VmSafe.ForgeContext.TestGroup),
+            CHEATS.envOr("DEPLOY_SKIP_ARTIFACTS", false)
+        );
+        require(
+            mode != ArtifactWrites.RefuseSkipOnLiveBroadcast,
+            "Deployments: DEPLOY_SKIP_ARTIFACTS is honoured only on Anvil (31337) or under forge test - a live broadcast MUST publish its artifact so the census inventory sees the deployment; unset it and run through deploy-chain.sh / deploy-testnet.sh / deploy-mainnet.sh"
+        );
+        return mode == ArtifactWrites.Write;
+    }
+
+    /// @dev #1566 (Codex #2070 r26 P1) — an identity key may only be written by
+    ///      a deploy that has MARKED its live publication in the committed
+    ///      archive manifest: the three deploy wrappers run
+    ///      `archive-manifest.mjs live-begin` and export the same token as
+    ///      `VAIPAKAM_LIVE_PUBLICATION_TOKEN`, and this gate requires the env
+    ///      token to MATCH the manifest's in-progress marker for this chain's
+    ///      slug — so neither a bare `forge script … --broadcast` (no token) nor
+    ///      an exported token with no marker reaches the artifact, and a census
+    ///      holding the manifest lock through its own publication always sees
+    ///      the write coming. Facet-address keys and the rest stay ungated: the
+    ///      in-place refresh scripts rewrite them and they change no inventory
+    ///      identity. A run that writes nothing (a dry-run, or the LOCAL-ONLY
+    ///      `DEPLOY_SKIP_ARTIFACTS` — see {artifactWriteMode}) never reaches
+    ///      this. The local Anvil chain (31337) is exempt on the same ground
+    ///      the census excludes it: its artifact is gitignored and outside the
+    ///      inventory.
+    function requireMarkedPublication(string memory jsonKey) internal view {
+        if (!isIdentityKey(jsonKey) || block.chainid == 31337) return;
+        string memory token = CHEATS.envOr("VAIPAKAM_LIVE_PUBLICATION_TOKEN", string(""));
+        require(
+            bytes(token).length != 0,
+            string.concat(
+                "Deployments: writing ",
+                jsonKey,
+                " changes the census inventory and needs a MARKED live publication - run through deploy-chain.sh / deploy-testnet.sh / deploy-mainnet.sh (they run archive-manifest.mjs live-begin and export VAIPAKAM_LIVE_PUBLICATION_TOKEN)"
+            )
+        );
+        require(
+            publicationMarked(CHEATS.readFile(ARCHIVE_MANIFEST), chainSlug(), token),
+            string.concat(
+                "Deployments: VAIPAKAM_LIVE_PUBLICATION_TOKEN does not match an in-progress live-publication marker for ",
+                chainSlug(),
+                " in ",
+                ARCHIVE_MANIFEST,
+                " - the token must come from archive-manifest.mjs live-begin in the same deploy run"
+            )
+        );
+    }
+
     function _writeAddr(string memory jsonKey, address a) private {
+        requireMarkedPublication(jsonKey);
         _ensureFile();
         CHEATS.writeJson(CHEATS.toString(a), path(), jsonKey);
     }
 
     function _writeUint(string memory jsonKey, uint256 v) private {
+        requireMarkedPublication(jsonKey);
         _ensureFile();
         CHEATS.writeJson(CHEATS.toString(v), path(), jsonKey);
     }

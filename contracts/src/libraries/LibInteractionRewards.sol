@@ -3241,11 +3241,14 @@ library LibInteractionRewards {
             // paid for a SECOND one (Codex #1499 r5 P2). The value is now
             // computed once above; the branch below is the bound's test, which
             // is what was actually mirror-only.
-            bool deliveredPayable = true;
-            if (LibVaipakam.isMirrorRewardChain(s)) {
-                deliveredPayable = armedFresh == 0
-                    || armedFresh <= deliveredFreshBound(s);
-            }
+            // #1566 closure 3 — the bound's test is now UNCONDITIONAL. It was
+            // mirror-gated, which let `Detached` skip it entirely and sweep as
+            // though unbounded. Removing the gate changes nothing for the
+            // roles it protected: `deliveredFreshBound` returns `max` for
+            // Canonical and Unconfigured, so `armedFresh <= max` is trivially
+            // true and those chains keep sweeping exactly as before.
+            bool deliveredPayable = armedFresh == 0
+                || armedFresh <= deliveredFreshBound(s);
             bool executable = !_recycledDroughtWith(s, recycledUpper) &&
                 _poolCappedPayable(toUser) != 0 &&
                 deliveredPayable &&
@@ -3773,10 +3776,13 @@ library LibInteractionRewards {
             uint256 userLegs,
             uint256 treasuryLegs
         ) = _userArmedFreshNeedWithLegs(s, e.user);
-        if (LibVaipakam.isMirrorRewardChain(s)) {
-            if (armedFresh != 0 && armedFresh > deliveredFreshBound(s)) {
-                return false;
-            }
+        // #1566 closure 3 — unconditional, matching the sweep's test above so
+        // the predicate and the operation it predicts cannot disagree about a
+        // role. `max` for Canonical and Unconfigured makes this a no-op there;
+        // `Detached` now reads non-executable instead of inheriting the
+        // mirror-gate's skip.
+        if (armedFresh != 0 && armedFresh > deliveredFreshBound(s)) {
+            return false;
         }
         return
             IERC20Metadata(s.vpfiToken).balanceOf(address(this)) >=
@@ -4205,10 +4211,26 @@ library LibInteractionRewards {
     ///         day — the failure mode the withdrawn B2-d4 attempt was
     ///         rejected for — so the bound floors at zero and the day
     ///         simply defers until fresh delivery restores headroom.
+    ///         #1566 closure 3 — `Detached` bounds at ZERO, not `max`. A chain
+    ///         that was in a role and lost it has no authenticated source of
+    ///         further delivery, so any non-zero allowance is a promise it
+    ///         cannot keep; the role transition retires the residual
+    ///         (`paid = received`) so there is nothing left to spend either.
+    ///         Under the old negation this state read "not a mirror" and fell
+    ///         through to `max` — unbounded payouts off persisted stamps, the
+    ///         fail-OPEN half of the defect.
+    ///
+    ///         `Unconfigured` keeps `max`, and that distinction is the reason
+    ///         the role has four states: a never-configured single-chain
+    ///         deploy shares this state's field values but has no delivered
+    ///         ledger to bind to, so bounding it to zero would freeze it. Two
+    ///         live deployments were in exactly that position when this landed.
     function deliveredFreshBound(
         LibVaipakam.Storage storage s
     ) internal view returns (uint256) {
-        if (!LibVaipakam.isMirrorRewardChain(s)) return type(uint256).max;
+        LibVaipakam.RewardRole role = LibVaipakam.rewardRole(s);
+        if (role == LibVaipakam.RewardRole.Detached) return 0;
+        if (role != LibVaipakam.RewardRole.Mirror) return type(uint256).max;
         uint256 received = s.rewardBudgetArmedFreshReceived;
         uint256 paid = s.rewardBudgetArmedFreshPaid;
         return received > paid ? received - paid : 0;

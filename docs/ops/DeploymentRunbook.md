@@ -463,7 +463,28 @@ surface stays inert.
    — the source-chain gate. Use the canonical EVM chain ID
    (Base mainnet 8453; Base Sepolia 84532), NOT Base's Chainlink
    CCIP chain selector — the adapter normalises selectors
-   internally.
+   internally. **Never pass zero here to "reset" a chain**: an explicit
+   zero write records the `Detached` reward role and is the deliberate
+   detach procedure FOR A MIRROR, whereas a chain that was simply never
+   configured resolves `Unconfigured` and keeps single-chain semantics
+   without any call. To detach a CANONICAL chain two writes are needed, in
+   this order: first `setBaseChainId(0)` (the chain stays `Canonical`, since
+   the flag dominates a base — no mirror window opens), then
+   `setIsCanonicalRewardChain(false)`, which resolves `Detached` now that
+   the base is zero. The reverse order is unsafe: clearing the flag while a
+   base is still stored resolves `Mirror` and leaves delivered-fresh payouts
+   enabled until the base is cleared. A canonical deployment normally stores
+   its own base, so the flag alone never detaches it. **What detaching stops is narrower than "all rewards"**: the
+   `Detached` role sets the delivered-fresh bound to zero, so payouts that
+   would be funded from delivered-fresh budget stop; schedule rewards paid
+   before arming are not consulted against that bound, and recycled-funded
+   legs still settle. It is not a payout kill-switch — an incident that
+   needs every reward outflow stopped needs the reward facets paused, not
+   a detach. Confirm with
+   `getRewardRole()` (0 Canonical, 1 Mirror, 2 Unconfigured, 3 Detached).
+   On an in-place refresh, declare each chain's role with
+   `REWARD_ROLE_EXPECTED_<PREFIX>` — the refresh reads the role back while
+   paused and backfills a pre-field detached chain.
 
 7. `ConfigFacet.setMirrorTierMaxAgeSec(<seconds>)` — cache
    staleness threshold (default 60 days; setter floor 30 days).
@@ -1187,15 +1208,28 @@ If any check fails → **do not broadcast**.
    export RPC_URL=https://...
    ```
    Phase-1 2-EOA topology: the deployer EOA owns the Diamond during the cut, then the script hands over ERC-173 ownership + all 7 access-control roles to `ADMIN_ADDRESS` and renounces the deployer's roles. Verify post-deploy that the deployer holds zero roles.
-2. Dry-run:
+2. Dry-run (simulation only). A dry-run never writes the artifact: without
+   `--broadcast` the deploy script skips the writes itself, since the
+   addresses are simulated. `DEPLOY_SKIP_ARTIFACTS` is honoured only on the
+   local Anvil chain or under `forge test`; a live broadcast that carries it
+   is refused before any transaction, so never set it for a real deploy.
    ```bash
    forge script script/DeployDiamond.s.sol:DeployDiamond \
      --rpc-url $RPC_URL --sender $(cast wallet address $PRIVATE_KEY)
    ```
-3. Broadcast:
+3. Broadcast — through a wrapper, never directly. The identity-bearing
+   artifact keys (`diamond`, `vpfiToken`, `vpfiMirror`, `chainId`,
+   `deployBlock`) are gated in `Deployments.sol` on
+   `VAIPAKAM_LIVE_PUBLICATION_TOKEN` matching the in-progress marker in
+   `contracts/deployments/archive-manifest.json` for the chain, and a bare
+   `forge script … --broadcast` reverts before `addresses.json` changes
+   (the local Anvil chain is exempt: its artifact is untracked); the
+   wrappers run
+   `archive-manifest.mjs live-begin` before the broadcast and `live-end`
+   after the last artifact write, so a census cannot publish across the
+   window (Codex #2070 r24–r26):
    ```bash
-   forge script script/DeployDiamond.s.sol:DeployDiamond \
-     --rpc-url $RPC_URL --broadcast --verify
+   bash script/deploy-testnet.sh <chain-slug> --phase contracts ...   # or deploy-mainnet.sh / deploy-chain.sh
    ```
 4. Record the logged addresses in `deployments/<chain>/addresses.json` and populate `<CHAIN>_DIAMOND_ADDRESS` in `contracts/.env`. The frontend + watcher consumer side is one command — `bash contracts/script/exportFrontendDeployments.sh` merges every chain artifact into the single `packages/contracts/src/deployments.json`, plus its provenance stamp. The frontend's `getDeployment(chainId)` and each Worker's `getChainConfigs(env)` both read from that merged JSON. Idempotent.
 
