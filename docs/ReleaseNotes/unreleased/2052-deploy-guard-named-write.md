@@ -140,6 +140,16 @@ written with quotes in the middle of it — and the name is now recognised
 through that spelling, as the reader that selects the configuration already
 did.
 
+A copy can also be spelled as an argument list rather than as a command line —
+a wrapper handing the same four copy commands to a child process — and that
+spelling needed one thing the command line does not: something has to run the
+list. A list of the same strings stored in a variable copies nothing. The
+question of which call owns a piece of code was already answered here, for
+deciding whether a quoted string is an evaluated payload, so the walk that
+answers it is now shared rather than written twice. The two readers ask the
+same question and draw different conclusions from it: a payload additionally
+has to be evaluated by an interpreter, while a copy list only has to be run.
+
 Two shapes are deliberately NOT recognised, and both are misses rather than
 noise. A command run through a module imported under an arbitrary alias is one:
 resolving that name means following a binding, which this reader declines

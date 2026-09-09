@@ -10614,4 +10614,60 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     );
     expect(r.ok).toBe(true);
   });
+
+  // ---- Codex #2066 r29 ----
+
+  it('a multiline argv copy is a copy (#2066 r29)', () => {
+    // The span stopped at the newline after the executable, so ordinary
+    // formatting hid the destination.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'do.py',
+      'import subprocess\n' +
+        'subprocess.run([\n    "cp",\n    "generated.jsonc",\n    "configs/custom.jsonc",\n])\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a stored argv list copies nothing (#2066 r29)', () => {
+    // Three strings in a variable. The argv alternative matched the list
+    // itself, without asking whether anything runs it.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'dp.py',
+      'import subprocess\n' +
+        'args = ["cp", "generated.jsonc", "configs/custom.jsonc"]\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a keyword argv program gates the evaluate letter (#2066 r29)', () => {
+    // `subprocess.run(args=[…])` is the same call; the anchor could not cross
+    // the keyword, so no program was found and both letters were accepted.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'dq.py',
+      'import subprocess\n' +
+        'subprocess.run(args=["echo", "-e", "shutil.copy(src, \'configs/custom.jsonc\')"])\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a keyword argv interpreter still evaluates (#2066 r29 bounds)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'dr.py',
+      'import subprocess\n' +
+        'subprocess.run(args=["bash", "-c", "printf new > configs/custom.jsonc"])\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(false);
+  });
 });

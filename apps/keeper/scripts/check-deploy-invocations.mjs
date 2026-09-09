@@ -3556,6 +3556,10 @@ function inTestExpression(idx, text, kind) {
 // Built once: `isCommandPayload` is called per write match, and compiling a
 // pattern per call to interpolate one character is the sort of cost this file
 // has already paid for twice.
+// The argv spelling of a copy command, as the direct scan matched it — used
+// to ask whether that particular match needs a process call around it.
+const ARGV_COMMAND = /^[([,]\s*(['"`])(?:cp|mv|install|rsync)\1\s*,/;
+
 const EVAL_C = {
   grouped: /(['"`])(?:-{1,2}(?:eval|command)|-[a-zA-Z]*c[a-zA-Z]*)\1\s*,\s*$/,
   attached: /-{1,2}(?:eval|command|c)=/,
@@ -3570,16 +3574,18 @@ const EVAL_CE = {
 };
 
 /**
- * Is the string literal containing `idx` handed to something that RUNS it?
+ * The call that owns the code at `idx`, if that call SPAWNS A PROCESS.
  *
- * In JavaScript a literal is data — except when it is the command given to
- * `execSync` and friends, which is a shell script by another route (r20). The
- * shell reader has had this rule since r12; this is the same rule on the other
- * side of the language split.
+ * Two questions in this file need it and they are not the same question: is a
+ * string literal an evaluated payload, and is an argv list an executed command
+ * (r29). Both start by walking out to the owning call and naming it. That walk
+ * lived inside the payload test and the second question was about to grow its
+ * own copy — so it is one function, asked twice, rather than two recognisers
+ * drifting apart the way the three comment readers did.
+ *
+ * Returns the offset of the call's `(`, or -1.
  */
-function isCommandPayload(idx, text, kind) {
-  let start = idx;
-  while (start > 0 && kind[start - 1] !== 0) start -= 1;
+function spawnCallOwner(start, text, kind) {
   // Back to the CALL that owns this literal, past any earlier arguments and
   // past an array wrapper: `spawnSync("node", ["-e", "…"])` puts the payload
   // two levels in, and testing only the character immediately before it saw a
@@ -3593,7 +3599,7 @@ function isCommandPayload(idx, text, kind) {
     if (c === ')' || c === ']' || c === '}') depth += 1;
     else if (c === '(' || c === '[' || c === '{') {
       if (depth === 0) {
-        if (c === '{') return false;
+        if (c === '{') return -1;
         if (c === '(') {
           open = p;
           break;
@@ -3603,10 +3609,10 @@ function isCommandPayload(idx, text, kind) {
       }
       depth -= 1;
     } else if (c === ';' || c === '\n') {
-      if (depth === 0) return false;
+      if (depth === 0) return -1;
     }
   }
-  if (open === -1) return false;
+  if (open === -1) return -1;
   let q = open - 1;
   while (q >= 0 && (/\s/.test(text[q]) || kind[q] === 2)) q -= 1;
   // An OPTIONAL call still calls: `eval?.(…)` executes, and the identifier
@@ -3630,7 +3636,7 @@ function isCommandPayload(idx, text, kind) {
     // or qualified by a process module, and by nothing else. A receiver that
     // is not a rooted module identifier (a regex literal, a string, a call
     // result) is not one.
-    if (!/^(?:exec|run|call)$/.test(owner)) return false;
+    if (!/^(?:exec|run|call)$/.test(owner)) return -1;
     // The dot need not be adjacent — `child_process\n  .exec(…)` and
     // `/re/ .exec(s)` both put trivia between receiver and member — so the
     // scan walks back over whitespace and comments the way the callee scan
@@ -3641,9 +3647,25 @@ function isCommandPayload(idx, text, kind) {
       const recv = text.slice(Math.max(0, d - 60), d + 1);
       // `?.` reaches the same member, so the receiver is read through it.
       if (!/(?:^|[^\w$.])(?:child_process|childProcess|subprocess|cp|proc)\s*\??\s*\.$/.test(recv))
-        return false;
+        return -1;
     }
   }
+  return open;
+}
+
+/**
+ * Is the string literal containing `idx` handed to something that RUNS it?
+ *
+ * In JavaScript a literal is data — except when it is the command given to
+ * `execSync` and friends, which is a shell script by another route (r20). The
+ * shell reader has had this rule since r12; this is the same rule on the other
+ * side of the language split.
+ */
+function isCommandPayload(idx, text, kind) {
+  let start = idx;
+  while (start > 0 && kind[start - 1] !== 0) start -= 1;
+  const open = spawnCallOwner(start, text, kind);
+  if (open === -1) return false;
   // …and for the ARGV forms, only the argument an interpreter EVALUATES.
   // `spawnSync("echo", ["fs.copy(a, b)"])` prints its argument; marking every
   // array element as code reported a copy that never happens (r22). The
@@ -3672,7 +3694,10 @@ function isCommandPayload(idx, text, kind) {
   // none the reader fell back to accepting both evaluate letters — which made
   // `echo -e "…"` an evaluation again, the very thing the gate was added in
   // r25 to stop (r28).
-  const prog = /\(\s*\[?\s*(['"`])([^'"`]*)\1/.exec(args);
+  // …and Python may name it: `subprocess.run(args=["echo", …])` is the same
+  // call with a keyword, and the anchor could not cross `args=` — so `prog`
+  // was null again and the fallback accepted both letters (r29).
+  const prog = /\(\s*(?:[A-Za-z_]\w*\s*=\s*)?\[?\s*(['"`])([^'"`]*)\1/.exec(args);
   const INTERP = /(?:^|\/)(?:node|deno|bun|python[\d.]*|perl|ruby|sh|bash|zsh|dash|ksh|env)$/;
   if (prog && !INTERP.test(prog[2])) return false;
   // A GROUPED short option counts when it contains the evaluate letter:
@@ -3815,7 +3840,7 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
   // quoted examples out. The bracket is code.
   const COPY =
     String.raw`(?:^|[\s;&|(])(?:cp|mv|install|rsync)\s[^\n]*?` + esc +
-    String.raw`|[([,]\s*(['"\`])(?:cp|mv|install|rsync)\1\s*,[^)\n]*?` + esc +
+    String.raw`|[([,]\s*(['"\`])(?:cp|mv|install|rsync)\1\s*,[^)]*?` + esc +
     String.raw`|(?:copyFile|rename|cpSync|copyFileSync|renameSync)\s*\([^)]*` + esc +
     String.raw`|(?<![A-Za-z0-9_$.])(?:shutil|fs|fse|fsExtra|fsp)` +
     String.raw`(?:\s*\.\s*promises)?\s*\.\s*(?:copy|move)\s*\([^)]*` + esc;
@@ -3854,6 +3879,15 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
         return shellishDirect
           ? !isInertAssignment(m.index, text, directKind)
           : isCommandPayload(m.index, text, directKind);
+      // An ARGV LIST IS ONLY A COMMAND WHEN SOMETHING RUNS IT. `args = ["cp",
+      // "generated.jsonc", "configs/custom.jsonc"]` stores three strings and
+      // copies nothing, and the argv alternative added in r28 matched the list
+      // itself (r29). Asked with the walk-back the payload test already uses,
+      // rather than a second reader of the same shape: the question here is
+      // only whether a process call owns the list, not whether an interpreter
+      // evaluates it, which is why the two share the walk and not the verdict.
+      if (ARGV_COMMAND.test(m[0]) && spawnCallOwner(m.index, text, directKind) === -1)
+        return false;
       // A `[[ … ]]` comparison is not a redirection on this path either. The
       // named scan exempted it and this one did not, so
       // `[[ "$left" > "configs/custom.jsonc" ]]` reported a rewrite (r24).
