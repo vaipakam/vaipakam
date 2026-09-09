@@ -238,45 +238,6 @@ async function codeAtHash(client, block, address) {
   return client.request({ method: 'eth_getCode', params: [address, blockRef(block)] });
 }
 /**
- * Codex #2070 r29 P1 — creation evidence must be bound to the CENSUS CHAIN,
- * not merely to a block at the deploy height: a load-balanced replica on a
- * competing fork can serve its own block there, hold code at the address on
- * that fork, and hand back "code was here" for a history the census block is
- * not on. A parent-hash walk from the census block to a months-old deploy
- * block is out of reach, so the binding is made by ONE replica in ONE
- * request: a JSON-RPC batch that reads the code at the deploy block AND at the
- * census block, both pinned by hash with `requireCanonical`, answered by
- * whichever replica takes the batch. A replica answers both only if both
- * blocks are on ITS canonical chain, and on one chain the lower block is an
- * ancestor of the higher. The deploy-block hash is first sampled across fresh
- * connections like the census hash, and the census-block half of the batch
- * must agree with the census read (no code) or the pair is rejected.
- */
-export function boundCreationVerdict({ thenCode, nowCode }, who = 'creation evidence') {
-  if (nowCode && nowCode !== '0x') {
-    throw new Error(`${who}: the replica that answered the bound creation read holds code at the census block, where the census read none — the pair is not one view of one chain`);
-  }
-  return Boolean(thenCode && thenCode !== '0x');
-}
-async function creationEvidenceBoundToChain(rpc, client, censusBlock, deployHeight, address, who) {
-  const deployBlock = await withReplicaRetry(deployHeight, () => client.getBlock({ blockNumber: deployHeight }), { client });
-  if (!deployBlock?.hash) throw new Error(`${who}: block ${deployHeight} unavailable`);
-  assertSampledHashesAgree(await sampleHashesAt(client, deployHeight, `${who} deployBlock`), deployBlock.hash, deployHeight, `${who} deployBlock`);
-  // One batch → one HTTP request → one replica (this is exactly the per-connection
-  // pinning the census otherwise fights, used here on purpose).
-  const batcher = createPublicClient({ transport: http(rpc, { fetchFn: fetchViaNodeAgents, batch: { batchSize: 2, wait: 0 } }) });
-  const [thenCode, nowCode] = await withReplicaRetry(
-    censusBlock.number,
-    () =>
-      Promise.all([
-        batcher.request({ method: 'eth_getCode', params: [address, blockRef(deployBlock)] }),
-        batcher.request({ method: 'eth_getCode', params: [address, blockRef(censusBlock)] }),
-      ]),
-    { client },
-  );
-  return { codeAtDeployBlock: boundCreationVerdict({ thenCode, nowCode }, who), deployBlockHash: String(deployBlock.hash).toLowerCase() };
-}
-/**
  * r28 P1 — the hash the census pins must be what EVERY replica serves at that
  * height: the sampler refused conflicting hashes only among samples that
  * shared a height, so with A at 100/A100 and B at 101/B101 it chose A100
@@ -1468,10 +1429,10 @@ async function censusDeployment(dep) {
   //     head that still predates a freshly deployed Diamond, or an operator
   //     `--block` older than the deploy, reads `0x` at an address that simply
   //     did not exist YET, and "no code" would certify every class empty
-  //     without ever reading the deployment's storage. So `no-code` is a proof
-  //     only when `atBlock >= deployBlock` is KNOWN; a census block that
-  //     predates the deployment is refused outright, and an unknown deploy
-  //     height makes an empty-code read indeterminate rather than proven.
+  //     without ever reading the deployment's storage. A census block that
+  //     predates the deployment is refused outright. (Since r30 an empty read
+  //     is never a proof at all — see below — but a read that predates the
+  //     deployment describes nothing and is still refused.)
   const deployBlockKnown = addresses.deployBlock !== null && addresses.deployBlock !== undefined;
   if (deployBlockKnown && atBlock < BigInt(addresses.deployBlock)) {
     throw new Error(
@@ -1481,39 +1442,25 @@ async function censusDeployment(dep) {
   }
   const code = await withReplicaRetry(atBlock, () => codeAtHash(client, censusBlock, diamond), { client });
   const codeAbsent = !code || code === '0x';
-  // Codex #2070 r17 P1 — a known deploy height only orders the read after the
-  // deployment; it does not show that code was EVER at this address. An
-  // archived artifact recording a wrong address (the inventory already holds
-  // one naming a non-Diamond) would read empty and be certified proven, while
-  // the real retired Diamond went uncensused inside a coverage check that
-  // agreed. So an empty read is a proof only with CREATION EVIDENCE: code
-  // present at the recorded deployBlock. Unreadable there (a pruned endpoint)
-  // or absent there ⇒ indeterminate, with the reason recorded.
-  let codeAtDeployBlock = null; // true | false | 'unreadable' | null (not needed)
-  let creationEvidenceBlockHash = null;
-  if (codeAbsent && deployBlockKnown) {
-    try {
-      // r28: pinned to the deploy block's HASH; r29: and BOUND to the census
-      // chain — read by one replica in one batch together with the census
-      // block, so the evidence and the census come from one canonical view.
-      const bound = await creationEvidenceBoundToChain(rpc, client, censusBlock, BigInt(addresses.deployBlock), diamond, who);
-      codeAtDeployBlock = bound.codeAtDeployBlock;
-      creationEvidenceBlockHash = bound.deployBlockHash;
-    } catch (err) {
-      codeAtDeployBlock = 'unreadable';
-      process.stderr.write(`census: ${who} — code at deployBlock ${addresses.deployBlock} unreadable (${classifyRpcError(err)}); the empty read cannot be certified\n`);
-    }
-  }
-  // Only a KNOWN-post-deployment empty read WITH creation evidence is "no
-  // code"; every other empty read is unexplained and the deployment is
-  // indeterminate.
-  const noCode = codeAbsent && deployBlockKnown && codeAtDeployBlock === true;
-  const codeAbsentUnexplained = codeAbsent && !noCode;
-  const codeAbsentReason = !deployBlockKnown
-    ? 'the address has no code at the census block but the artifact records no deployBlock, so this cannot be distinguished from a read that predates the deployment — undetermined'
-    : codeAtDeployBlock === false
-      ? `the address has no code at the census block AND none at the recorded deployBlock ${addresses.deployBlock} — nothing shows a contract was ever deployed here, so the artifact may name a wrong address and the real deployment would be uncensused; undetermined until the artifact is verified`
-      : `the address has no code at the census block, and whether it held code at the recorded deployBlock ${addresses.deployBlock} could not be read from this endpoint — an empty read without creation evidence is not a proof; undetermined`;
+  // Codex #2070 r17 → r30 — an empty read is NEVER a proof, and needs no
+  // creation evidence to say so. Every deployment in this inventory postdates
+  // Cancun on its chain (EIP-6780: SELFDESTRUCT deletes an account only inside
+  // the transaction that created it), so a contract that once lived at an
+  // address still has its code at every later block. No code at the
+  // hash-pinned, finalized census block therefore means no persistent contract
+  // EVER lived at the recorded address on this chain: the artifact names no
+  // Diamond, and the deployment's real Diamond — if the deploy happened at all
+  // — is uncensused. That is a COVERAGE gap, undetermined until the operator
+  // corrects the artifact from the broadcast record, exactly like an address
+  // that holds a non-Diamond. Rows at THIS address are indeed impossible
+  // (storage cannot outlive code, and a CREATE-derived address never carries
+  // an EIP-7702 delegation), but the census certifies deployments, not
+  // addresses. The r17 rule certified "no code here WITH code at the deploy
+  // block" as proven; that pair cannot occur on one post-Cancun chain, so any
+  // read producing it came from two histories — rounds 29 and 30 were spent
+  // binding it before that was seen — and the rule is retired, not bound.
+  const codeAbsentUnexplained = codeAbsent;
+  const codeAbsentReason = `the address has no code at the census block; on a post-Cancun chain (EIP-6780) no persistent contract ever lived here, so the artifact names no Diamond and the real deployment, if any, is uncensused — undetermined until the artifact is corrected from the broadcast record${deployBlockKnown ? ` (recorded deployBlock ${addresses.deployBlock})` : ' (the artifact records no deployBlock either)'}`;
   // (2) No CUSTODY SURFACE routed ⇒ no facet can have written a custody row.
   //     "The loupe is unrouted" is NOT sufficient on its own: a Diamond whose
   //     facets were cut without a loupe still answers its custody views, and
@@ -1546,41 +1493,40 @@ async function censusDeployment(dep) {
   let noFacets = false;
   let notADiamond = false;
   let loupeRouted = true;
-  if (!noCode) {
-    try {
-      await read('facetAddresses');
-    } catch (err) {
-      rethrowUnlessRevert(err);
-      loupeRouted = false;
-    }
-    if (!loupeRouted) {
-      const custodyProbes = [
-        ['getProtocolStats', []],
-        ['getBorrowerLifRebate', [1n]],
-        ['getFallbackSnapshot', [1n]],
-        ['getIntentCommit', [1n]],
-      ];
-      let anyAnswered = false;
-      let allUnroutedOnDiamond = true;
-      for (const [fn, args] of custodyProbes) {
-        try {
-          await read(fn, args);
-          anyAnswered = true;
-        } catch (err) {
-          // `IntentNoCommit` is the intent view ANSWERING (no commit for loan 1),
-          // so it counts as a routed surface, not as absence of one.
-          if (isNoCommitRevert(err)) { anyAnswered = true; continue; }
-          rethrowUnlessRevert(err);
-          if (!isUnroutedOnDiamond(err)) allUnroutedOnDiamond = false;
-        }
-        if (anyAnswered) break;
+  // Code is present from here on: an empty read returned above.
+  try {
+    await read('facetAddresses');
+  } catch (err) {
+    rethrowUnlessRevert(err);
+    loupeRouted = false;
+  }
+  if (!loupeRouted) {
+    const custodyProbes = [
+      ['getProtocolStats', []],
+      ['getBorrowerLifRebate', [1n]],
+      ['getFallbackSnapshot', [1n]],
+      ['getIntentCommit', [1n]],
+    ];
+    let anyAnswered = false;
+    let allUnroutedOnDiamond = true;
+    for (const [fn, args] of custodyProbes) {
+      try {
+        await read(fn, args);
+        anyAnswered = true;
+      } catch (err) {
+        // `IntentNoCommit` is the intent view ANSWERING (no commit for loan 1),
+        // so it counts as a routed surface, not as absence of one.
+        if (isNoCommitRevert(err)) { anyAnswered = true; continue; }
+        rethrowUnlessRevert(err);
+        if (!isUnroutedOnDiamond(err)) allUnroutedOnDiamond = false;
       }
-      // Proven facet-less ONLY when the Diamond fallback itself said so on
-      // every custody selector. Reverts of any other shape mean the contract
-      // at this address is not a Vaipakam Diamond — undetermined, not empty.
-      noFacets = !anyAnswered && allUnroutedOnDiamond;
-      notADiamond = !anyAnswered && !allUnroutedOnDiamond;
+      if (anyAnswered) break;
     }
+    // Proven facet-less ONLY when the Diamond fallback itself said so on
+    // every custody selector. Reverts of any other shape mean the contract
+    // at this address is not a Vaipakam Diamond — undetermined, not empty.
+    noFacets = !anyAnswered && allUnroutedOnDiamond;
+    notADiamond = !anyAnswered && !allUnroutedOnDiamond;
   }
   // (3) VPFI BACKING — recorded, never a proof (Codex #2070 r6 P1: a zero
   //     balance proves rows UNBACKED, not absent). The token is resolved
@@ -1599,7 +1545,7 @@ async function censusDeployment(dep) {
   // and an empty revert is — correctly — not "unrouted", so the propagation
   // rule would fail the deployment before its own indeterminate verdict could
   // be recorded. It has no token to resolve; skip the read.
-  if (!noCode && !noFacets && !notADiamond) {
+  if (!noFacets && !notADiamond) {
     const vpfiSelector = toFunctionSelector(vpfiView.find((e) => e.name === 'getVPFIToken'));
     let vpfiGetterRouted;
     if (loupeRouted) {
@@ -1639,7 +1585,7 @@ async function censusDeployment(dep) {
   const scopeNotAuthoritativeReason =
     'the VPFI token getter is unrouted, so the effective token cannot be read; the artifact token may predate a rotation via setVPFIToken, ' +
     'and a row denominated in the live token would be filed as non-VPFI — undetermined pending routing of the getter or a calibrated read of the token slot';
-  const diamondVpfiBalance = vpfiToken && !noCode
+  const diamondVpfiBalance = vpfiToken
     ? await withReplicaRetry(atBlock, () => callAtHash(client, censusBlock, { address: vpfiToken, abi: [ERC20_BALANCE_OF], functionName: 'balanceOf', args: [diamond] }), { client })
     : null;
   // Codex #2070 r6 P1 ×2 — TWO of the earlier bounds were NOT proofs of
@@ -1656,12 +1602,12 @@ async function censusDeployment(dep) {
   //     selectors are unrouted NOW, not that they never wrote rows: facets can
   //     be cut in, write loan-keyed rows, and be cut out with storage intact.
   //     Recorded as `custodySurfaceUnrouted`; not a proof.
-  // What remains sound: no code at the address; and, where the counter is
-  // routed, zero loans ever created (every class is loan-keyed).
+  // What remains sound: where the counter is routed, zero loans ever created
+  // (every class is loan-keyed). An empty-code read is a coverage gap, not a
+  // proof (r30).
   const custodySurfaceUnrouted = noFacets;
-  const provenBy = noCode ? 'no-code-at-address' : null;
   if (codeAbsentUnexplained) {
-    // No code, but no deploy height to anchor the read to: cannot certify.
+    // No code: the artifact names no contract on this chain; cannot certify.
     await assertBlockIdentity(client, censusBlock, who); // before EVERY proven-capable return (r13 P2)
     return {
       chainSlug: slug,
@@ -1679,7 +1625,7 @@ async function censusDeployment(dep) {
       atBlockHash: censusBlock.hash,
       blockTag: censusBlock.tag,
       rpcHost: rpcHostOf(rpc),
-      scanned: { loanIdsEnumerated: 0, totalLoansEverCreated: 'n/a', loanIdRange: 'none', enumerable: false, noCode: false, codeAbsentUnexplained: true, codeAtDeployBlock, custodySurfaceUnrouted: false, notADiamond: false, loupeRouted: false, intentSurfaceRouted: false, intentProducerRouted: false, intentCorroboration: null, producersMayBeLive: true },
+      scanned: { loanIdsEnumerated: 0, totalLoansEverCreated: 'n/a', loanIdRange: 'none', enumerable: false, noCode: false, codeAbsentUnexplained: true, custodySurfaceUnrouted: false, notADiamond: false, loupeRouted: false, intentSurfaceRouted: false, intentProducerRouted: false, intentCorroboration: null, producersMayBeLive: true },
       classes: Object.fromEntries(['vpfiHeldCustody', 'rebateRows', 'fallbackSnapshotCustody', 'liveIntentCommits'].map((k) => [k, {
         status: 'indeterminate',
         indeterminateReason: codeAbsentReason,
@@ -1693,22 +1639,20 @@ async function censusDeployment(dep) {
   // not a thrown failure, so it stays inside coverage and blocks the verdict.
   const statsSelector = toFunctionSelector(metrics.find((e) => e.name === 'getProtocolStats'));
   let enumerable = false;
-  if (!noCode && !notADiamond) {
+  if (!notADiamond) {
     if (loupeRouted) enumerable = (await read('facetAddress', [statsSelector])) !== ZERO_ADDRESS;
     else {
       try { await read('getProtocolStats'); enumerable = true; } catch (err) { rethrowUnlessRevert(err); }
     }
   }
   if (!enumerable) {
-    const status = provenBy ? 'proven' : 'indeterminate';
-    const reason = provenBy
-      ? undefined
-      : notADiamond
+    const status = 'indeterminate';
+    const reason = notADiamond
         ? 'the contract at the recorded address is NOT a Vaipakam Diamond (every custody selector reverts without the Diamond fallback\'s FunctionDoesNotExist signature) — it cannot be scoped, and its artifact should be checked'
         : custodySurfaceUnrouted
           ? 'every custody selector is UNROUTED on this Diamond today, which says nothing about rows written before they were removed — storage is unreadable without a getter, so absence cannot be established without a calibrated storage read'
           : `this Diamond routes no loan-enumeration surface (getProtocolStats unrouted) — nothing here can be read per loan, and no sound bound proves it empty`;
-    const cls = (extra = {}) => ({ status, indeterminateReason: reason, provenBy: provenBy ?? undefined, count: 0, total: '0', rows: [], ...extra });
+    const cls = (extra = {}) => ({ status, indeterminateReason: reason, provenBy: undefined, count: 0, total: '0', rows: [], ...extra });
     await assertBlockIdentity(client, censusBlock, who); // before EVERY proven-capable return (r13 P2)
     return {
       chainSlug: slug,
@@ -1718,7 +1662,7 @@ async function censusDeployment(dep) {
       vpfiToken,
       vpfiTokenSource,
       vpfiScopeAuthoritative: vpfiTokenSource === 'on-chain getVPFIToken()',
-      provenBy: provenBy ?? undefined,
+      provenBy: undefined,
       diamondVpfiBacking: diamondVpfiBalance === null ? null : diamondVpfiBalance.toString(),
       vpfiRowsTotal: null,
       backingShortfall: null,
@@ -1726,7 +1670,7 @@ async function censusDeployment(dep) {
       atBlockHash: censusBlock.hash,
       blockTag: censusBlock.tag,
       rpcHost: rpcHostOf(rpc),
-      scanned: { loanIdsEnumerated: 0, totalLoansEverCreated: 'n/a', loanIdRange: 'none', enumerable: false, noCode, codeAtDeployBlock, creationEvidenceBlockHash, custodySurfaceUnrouted, notADiamond, loupeRouted, intentSurfaceRouted: false, intentProducerRouted: false, intentCorroboration: null, producersMayBeLive: !noCode && !notADiamond && !custodySurfaceUnrouted },
+      scanned: { loanIdsEnumerated: 0, totalLoansEverCreated: 'n/a', loanIdRange: 'none', enumerable: false, noCode: false, custodySurfaceUnrouted, notADiamond, loupeRouted, intentSurfaceRouted: false, intentProducerRouted: false, intentCorroboration: null, producersMayBeLive: !notADiamond && !custodySurfaceUnrouted },
       classes: { vpfiHeldCustody: cls(), rebateRows: cls(), fallbackSnapshotCustody: cls({ nonVpfiRowsExcluded: [] }), liveIntentCommits: cls({ nonVpfiRowsExcluded: [] }) },
     };
   }
@@ -1780,7 +1724,7 @@ async function censusDeployment(dep) {
   //     and the enumeration agree on zero (the enumeration guard above has
   //     already refused a non-zero counter with an empty scan).
   const noLoansEver = totalLoansEverCreated === 0n && loanIds.length === 0;
-  const provenByEnumerable = provenBy ?? (noLoansEver ? 'no-loans-ever-created' : null);
+  const provenByEnumerable = noLoansEver ? 'no-loans-ever-created' : null;
 
   // ── Classes 1 & 4 — vpfiHeld custody and rebate rows ──────────────────
   // ── Class 2 — fallback snapshot custody ───────────────────────────────

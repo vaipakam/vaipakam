@@ -2,7 +2,7 @@
 // are PURE functions (Codex #2070 r23); every rule they carry is pinned here.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { pickFinalitySample, snapshotRegression, blockRef, assertSampledHashesAgree, boundCreationVerdict } from './census-grandfathered-custody.mjs';
+import { pickFinalitySample, snapshotRegression, blockRef, assertSampledHashesAgree } from './census-grandfathered-custody.mjs';
 
 const H = (n) => `0x${String(n).padStart(64, 'a')}`;
 const res = (chainSlug, deployment, atBlock, atBlockHash, diamond = '0xd1', vpfiToken = '0xt1') => ({ chainSlug, deployment, atBlock: String(atBlock), atBlockHash, diamond, vpfiToken });
@@ -67,13 +67,4 @@ test('assertSampledHashesAgree: every sampled replica must serve the pinned hash
   // unanimous but not the pinned hash: the chain moved under the census
   assert.throws(() => assertSampledHashesAgree([H(2), H(2)], H(1), 100n, 't'), /pinned .* sampled/);
   assert.throws(() => assertSampledHashesAgree([], H(1), 100n, 't'), /disagree/);
-});
-
-test('boundCreationVerdict: the census half of the one-replica batch must agree with the census read (r29)', () => {
-  assert.equal(boundCreationVerdict({ thenCode: '0x6080', nowCode: '0x' }), true);
-  assert.equal(boundCreationVerdict({ thenCode: '0x', nowCode: '0x' }), false);
-  assert.equal(boundCreationVerdict({ thenCode: null, nowCode: null }), false);
-  // the replica that answered holds code NOW where the census read none: two histories, refuse
-  assert.throws(() => boundCreationVerdict({ thenCode: '0x6080', nowCode: '0x6080' }), /not one view of one chain/);
-  assert.throws(() => boundCreationVerdict({ thenCode: '0x', nowCode: '0x6080' }), /not one view of one chain/);
 });

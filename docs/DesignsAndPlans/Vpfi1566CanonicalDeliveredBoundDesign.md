@@ -5188,7 +5188,8 @@ reported a comfortable answer it had not earned:
   order), so a `--fresh` cannot commit between the comparison and the
   publication; and that comparison covers the complete inventory record,
   including `chainId` and `deployBlock`, since a permitted deploy-block
-  correction changes the no-code creation evidence this run read. Finally the
+  correction changes the ordering check this run applied (and, until round
+  30 retired it, the no-code creation evidence). Finally the
   manifest regeneration acknowledges a displacement BY KEY —
   `--acknowledge-manifest-displacement <slug|stamp>` — rather than through the
   blanket force flag, which had never forwarded it at all; the scheduled
@@ -5460,6 +5461,32 @@ reported a comfortable answer it had not earned:
   is sampled across fresh connections first, and the census half of the pair
   must agree with the census read or the pair is refused. The hash the
   evidence was read at is recorded with the verdict.
+
+  **Round 30 retired the no-code proof instead of binding it further.** The
+  batch binding assumed one HTTP request reaches one backend, which a gateway
+  that dispatches batch members independently does not guarantee — and
+  looking for what would bind the two reads cryptographically exposed that
+  the state they were meant to certify cannot exist. Every deployment in the
+  inventory postdates Cancun on its chain, and under EIP-6780 a contract
+  deletes itself only inside the transaction that created it, so a contract
+  that once lived at an address still has its code at every later block. No
+  code at the hash-pinned finalized census block therefore means no
+  persistent contract EVER lived at the recorded address on that chain: the
+  artifact names no Diamond, and the deployment's real Diamond, if the
+  deploy happened at all, is uncensused. That is a coverage gap — the same
+  verdict as an address holding a non-Diamond — undetermined until the
+  operator corrects the artifact from the broadcast record. "No code here
+  with code at the deploy block", the pair round 17 certified as proven,
+  cannot occur on one post-Cancun chain; any read producing it came from two
+  histories, which is precisely what rounds 28 and 29 kept finding. Rows at
+  the empty address are indeed impossible (storage cannot outlive code, and a
+  CREATE-derived address carries no EIP-7702 delegation), but the census
+  certifies deployments, not addresses. No proof in the standing count rested
+  on it: the eight proven deployments are six with no loan ever created and
+  two enumerated. The deploy-block ordering check stays — a census block that
+  predates the deployment describes nothing — and the README's cross-chain
+  step no longer shows a bare broadcast, since `deploy-chain.sh` runs it
+  inside the marked window.
   Hand-computed storage slots were never an option: they fail SILENTLY as
   zero, manufacturing the exact "empty" result the census exists to
   establish. The event reconstruction is retained behind `--corroborate` as
