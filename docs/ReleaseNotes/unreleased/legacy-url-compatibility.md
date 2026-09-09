@@ -61,3 +61,12 @@ address, so a rule aimed at everything deeper cannot catch one of them;
 that is now checked automatically, so publishing a nested public page in
 future has to be a deliberate decision rather than an accident that
 quietly hides it from search.
+
+One related gap has been closed since. The individual NFT token pages
+had already been taken out of search — they are an unbounded set of thin
+lookups and have never been listed in the sitemap — but only in the page
+itself, which a search crawler sees only if it runs the app's
+JavaScript. Every other crawler was still free to list them, and the
+file that would have said otherwise still described those pages as
+listed. Both now agree, and the exclusion is in the response as well as
+in the page. The verifier's own page is unaffected and stays listed.

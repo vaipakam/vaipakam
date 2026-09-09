@@ -133,14 +133,32 @@
 /faucet/*
   X-Robots-Tag: noindex
 
+# `/nft/:tokenId` — REAL pages, deliberately not indexed. A category of
+# its own, and it is neither of the two below it: the children are not
+# soft 404s, and the parent stays indexable.
+#
+# This block is round 56 P3 and it closes a gap rather than only
+# correcting a comment. SeoMeta widened `/nft/*` from "noindex the
+# malformed ids" to "noindex every token id" — token details are an
+# unbounded url space of thin lookups and the sitemap has never listed
+# them — but that decision is a META TAG, which only a crawler that
+# executes JavaScript ever sees. The header is what the others read, and
+# without this line they were free to index the whole space. A noindex
+# that depends on JS execution is precisely the failure this file exists
+# to prevent.
+#
+# `/nft` itself is absent on purpose: the verifier's entry point is
+# indexable and is in the sitemap. `/nft/*` does not match it.
+/nft/*
+  X-Robots-Tag: noindex
+
 # Childless PUBLIC routes — the route itself is indexable, but any
 # deeper path (`/borrow/anything`) is NotFound in the router: the SPA
 # fallback still serves the index shell with a 200, so a non-executing
-# crawler would otherwise index a soft 404 (Codex #1309 r8). `/nft` is
-# deliberately ABSENT from this list: `/nft/:tokenId` children are
-# valid, indexable pages (SeoMeta noindexes the malformed ones after
-# hydration). `/positions/*` already carries noindex in the
-# wallet-gated block above.
+# crawler would otherwise index a soft 404 (Codex #1309 r8).
+# `/positions/*` already carries noindex in the wallet-gated block
+# above, and `/nft/*` in the block directly above this one — for a
+# different reason, which is why it is not folded in here.
 
 /borrow/*
   X-Robots-Tag: noindex

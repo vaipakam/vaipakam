@@ -1026,7 +1026,7 @@ export function ForcedCloseCard({
           the table above, and it is a column precisely so that neither
           correction has to be made by hand again.
 
-          `blocked-no-consent` is the sharpest of the four: it says the
+          Of those three, `blocked-no-consent` is the sharpest: it says the
           close-out is refused FOR EVERYONE. The dispatch at
           DefaultedFacet.sol:287 returns before the consent-gated in-kind
           branch is ever reached, and `hasInternalMatchCandidate` filters

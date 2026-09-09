@@ -1042,6 +1042,12 @@ Thin-market honesty rules apply.
   activity, settings, faucet) are never indexed. The exclusion is
   visible both to browsers and to crawlers that do not run
   JavaScript.
+- A per-item lookup reached from an indexable entry point is not itself
+  indexed. The NFT verifier's own page is listed; the individual token
+  pages beneath it are an unbounded space of thin lookups, have never
+  been listed in the sitemap, and are excluded — in the response as well
+  as in the page, so the exclusion does not depend on the crawler running
+  the app.
 - A crawl policy file and a sitemap of the indexable pages ship with
   every build.
 - The public data service's root address should answer with a
