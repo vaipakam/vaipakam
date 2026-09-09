@@ -2335,7 +2335,7 @@ const copySource = {
     // moving collateral. The receipt already admitted both outcomes; the
     // card body and its valuation note still promised one.
     matchMayAppear:
-      'One thing can change this. The protocol looks for an opposing position to settle against at the moment the transaction runs, not when this page was loaded — so if one has appeared since, you are repaid in the asset you lent instead of receiving the collateral, and only part of the loan may settle that way.',
+      'One thing can change this. The protocol looks for an opposing position to settle against at the moment the transaction runs, not when this page was loaded — so if one has appeared since, the loan is settled that way instead: you are repaid in the asset you lent, and possibly only in part.',
     raceFallbackFails:
       'Someone else may settle against that opposing position first. If that happens this close-out does not simply stop — it carries on down whatever route the protocol finds next. Here that route cannot complete, so the attempt would fail and cost you only the network fee. The loan stays open and you can try again.',
     raceFallbackInKind:
@@ -2350,7 +2350,7 @@ const copySource = {
     // it is the one state on this card where waiting is genuinely
     // pointless and support is the only route.
     blockedNoConsent:
-      'This loan is past its grace period, but it was opened without both sides recording the risk-and-terms acknowledgement the protocol requires before it will hand over collateral that has no market price. The close-out is refused for everyone, not just for you — contact support.',
+      'This loan is past its grace period, but it was opened without both sides recording the risk-and-terms acknowledgement the protocol requires before it will hand over collateral that has no market price. As things stand the close-out is refused for everyone, not just for you — contact support.',
     submitted:
       'Close-out submitted. Give the page a moment to catch up — what actually happened is decided while the transaction runs, and the refreshed position will show whether the loan ended or part of it is still running. Anything that became yours appears on the Claims page.',
     // Round 28 P2 — names WHO is paid, not just who may act. The

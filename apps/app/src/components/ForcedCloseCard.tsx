@@ -374,13 +374,29 @@ export function ForcedCloseCard({
           in-kind, or as needing a routed sale, can settle as a match and
           repay the lent asset instead of moving collateral.
 
-          Shown on `ready-needs-route` as well as `ready-in-kind`, even
-          though that state offers no button: its whole message is that
-          an operator must route a sale, and a match appearing makes that
-          advice wrong too. Disclosing one direction of a symmetric race
-          and not the other is how the first version of this warning got
-          written. */}
-      {(readiness === 'ready-in-kind' || readiness === 'ready-needs-route') &&
+          Shown on EVERY state whose copy names an outcome, which is all
+          four non-terminal ones — and getting there took a second pass.
+          The first version covered `ready-in-kind` and
+          `ready-needs-route` only, which is the same half-a-symmetric-
+          disclosure mistake the finding was about, one cycle later.
+
+          `blocked-no-consent` is the sharpest of the four: it says the
+          close-out is refused FOR EVERYONE. The dispatch at
+          DefaultedFacet.sol:287 returns before the consent-gated in-kind
+          branch is ever reached, and `hasInternalMatchCandidate` filters
+          only on status and matchable collateral — not on consent, not
+          on asset type — so a candidate appearing makes that absolute
+          claim false. Its copy now says "as things stand" and this
+          sentence supplies the exception.
+
+          `ready-rental` qualifies for the same reason: `LibMetricsHooks`
+          indexes every loan into `assetPairActiveLoanIds` with no
+          asset-type filter, so a rental can be matched too, and the
+          match settles instead of ending the rental. */}
+      {(readiness === 'ready-in-kind' ||
+        readiness === 'ready-needs-route' ||
+        readiness === 'ready-rental' ||
+        readiness === 'blocked-no-consent') &&
       !holdingAfterSubmit ? (
         <p className="muted" data-testid="forced-close-match-may-appear">
           {copy.forcedClose.matchMayAppear}

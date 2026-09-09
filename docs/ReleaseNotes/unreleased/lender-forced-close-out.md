@@ -345,3 +345,22 @@ Nothing reads the example file — it is a template. An operator following
 it exactly would have got a sitemap and robots file pointing at the
 default hosted address while believing they had changed it. The note now
 says to copy it to a file that is actually loaded, and lists them.
+
+Finishing that thought properly took a second pass, and the gap it left
+is worth recording because it is the same mistake one step down. The
+warning about a settlement appearing at the last moment was added to the
+two states that describe handing over collateral. There are four states
+that name an outcome, not two.
+
+The one that mattered most was the state that says the close-out is
+refused for everyone. That sentence is the strongest claim the card
+makes — it tells a lender to stop trying and go and ask for help — and it
+is not true if a settlement partner turns up, because the protocol looks
+for one before it ever reaches the check that refuses these loans. It now
+says "as things stand", and carries the same explanation as the others.
+An overdue rental was in the same position for the same reason.
+
+The lesson, written down because the round before it had just written
+the rule and then broken it: a disclosure that belongs on a route belongs
+on every route where the same thing can happen, and "the ones I was
+looking at" is not that list.
