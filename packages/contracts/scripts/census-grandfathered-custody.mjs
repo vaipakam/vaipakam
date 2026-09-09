@@ -85,6 +85,7 @@
  */
 
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync } from 'node:fs';
+import { readManifest, replaceEntries } from './archive-manifest.mjs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createPublicClient, http, toFunctionSelector, parseAbiItem } from 'viem';
@@ -107,7 +108,17 @@ const ABIS = join(HERE, '../src/abis');
 
 const PUBLIC_RPC = {
   'base-sepolia': 'https://sepolia.base.org',
-  'op-sepolia': 'https://sepolia.optimism.io',
+  // op-sepolia: publicnode, not the official `sepolia.optimism.io`. On
+  // 2026-09-09 the official endpoint's load balancer served a `finalized` tag
+  // 1.46 M blocks (~34 days) stale on most requests and the fresh one on a
+  // minority, with `safe` below its own `finalized` — the monotonic-height
+  // guard refused it 7/7 times. publicnode served consistent finality and every
+  // state read at it. publicnode PRUNES receipts (the first lesson this file
+  // learned, on this very chain), so the cut-history reading comes back
+  // `unreadable` here — which costs nothing now that reading is refutation-only
+  // and class 3 on this chain is indeterminate without a routed getter either
+  // way. State certifies; logs never did. Override with CENSUS_RPC_OP_SEPOLIA.
+  'op-sepolia': 'https://optimism-sepolia-rpc.publicnode.com',
   'arb-sepolia': 'https://sepolia-rollup.arbitrum.io/rpc',
   sepolia: 'https://ethereum-sepolia-rpc.publicnode.com',
   'bnb-testnet': 'https://bsc-testnet-rpc.publicnode.com',
@@ -220,6 +231,15 @@ function arg(flag, fallback = undefined) {
   return i !== -1 && process.argv[i + 1] ? process.argv[i + 1] : fallback;
 }
 
+/** The endpoint HOST that served a result — provenance for a reader comparing runs (never the full URL: it may carry a key). */
+function rpcHostOf(rpc) {
+  try {
+    return new URL(rpc).host;
+  } catch {
+    return 'unknown';
+  }
+}
+
 function rpcFor(slug) {
   const fromFlag = arg('--rpc');
   if (fromFlag) return fromFlag;
@@ -296,8 +316,7 @@ function localArchivedDiamonds() {
 }
 
 function readArchiveManifest() {
-  if (!existsSync(ARCHIVE_MANIFEST)) return null;
-  return JSON.parse(readFileSync(ARCHIVE_MANIFEST, 'utf8'));
+  return readManifest(ARCHIVE_MANIFEST);
 }
 
 function writeArchiveManifest() {
@@ -328,15 +347,12 @@ function writeArchiveManifest() {
         `An empty inventory would make a five-deployment census look complete.`,
     );
   }
-  const manifest = {
-    purpose:
-      'Committed inventory of every ARCHIVED Diamond (a --fresh redeploy archives the off-chain artifact but cannot wipe on-chain custody). ' +
-      'The local .archive/ directories are gitignored; this file is what a clean checkout censuses. Regenerate with --write-archive-manifest.',
-    generatedAt: new Date().toISOString(),
-    entries,
-  };
-  writeFileSync(ARCHIVE_MANIFEST, `${JSON.stringify(manifest, null, 2)}\n`);
-  return manifest;
+  // Codex #2070 r12 P1 — every writer of the manifest serializes through
+  // archive-manifest.mjs (exclusive lock, atomic rename, read-back verify), so
+  // a regeneration cannot race a concurrent --fresh's append and drop it. The
+  // never-drop guard above is this writer's own policy; the module only
+  // serializes and verifies.
+  return replaceEntries(ARCHIVE_MANIFEST, entries);
 }
 
 function deployedDiamonds() {
@@ -486,10 +502,42 @@ const CHAIN_DOWNGRADED_TO_SAFE = new Set();
 async function censusBlockFor(client, slug, who) {
   if (!CENSUS_BLOCK_BY_CHAIN.has(slug)) {
     const tags = CHAIN_DOWNGRADED_TO_SAFE.has(slug) ? ['safe'] : ['finalized', 'safe'];
-    CENSUS_BLOCK_BY_CHAIN.set(slug, await resolveCensusBlock(client, who, tags));
+    CENSUS_BLOCK_BY_CHAIN.set(slug, await resolveCensusBlock(client, who, tags, slug));
   }
   return CENSUS_BLOCK_BY_CHAIN.get(slug);
 }
+/**
+ * The height each chain was censused at in the COMMITTED canonical artifact.
+ * A certification must never move BACKWARDS across committed runs: a later run
+ * reading an older height would "un-see" state the earlier run already saw,
+ * and a row created between the two heights would be absent from the newer
+ * artifact while present at the older one's state. Loaded once, in main().
+ */
+const PRIOR_COMMITTED_HEIGHT = new Map();
+function loadPriorCommittedHeights(canonicalPath) {
+  PRIOR_COMMITTED_HEIGHT.clear();
+  if (!existsSync(canonicalPath)) return;
+  let prior;
+  try {
+    prior = JSON.parse(readFileSync(canonicalPath, 'utf8'));
+  } catch {
+    return; // an unreadable prior artifact is not evidence of anything; the run proceeds without a floor
+  }
+  for (const r of prior.results ?? []) {
+    if (!r?.chainSlug || r?.atBlock == null) continue;
+    const h = BigInt(r.atBlock);
+    const cur = PRIOR_COMMITTED_HEIGHT.get(r.chainSlug);
+    if (cur === undefined || h > cur) PRIOR_COMMITTED_HEIGHT.set(r.chainSlug, h);
+  }
+}
+// A finality tag can be served STALE without any error: on run 15 the official
+// op-sepolia endpoint answered `finalized` with a height 1.46 MILLION blocks
+// (~34 days) below the one it had served 90 minutes earlier — its `safe` tag
+// sat below its own `finalized`, which the protocol forbids — and the census
+// would have committed a snapshot a month older than the one it replaced,
+// labelled as current finality. The finality read is one RPC, so a stale
+// replica is retried; persistence past the budget is a recorded failure.
+const STALE_FINALITY_RETRIES = 6;
 /**
  * Arbitrum Sepolia's public RPC keeps a MOVING state window, and its
  * `finalized` tag lags far enough behind head that the finalized block can
@@ -507,43 +555,76 @@ function downgradeChainToSafe(slug) {
   return true;
 }
 
-async function resolveCensusBlock(client, slug, tags = ['finalized', 'safe']) {
+async function resolveCensusBlock(client, who, tags = ['finalized', 'safe'], chainSlug = null) {
   // Resolve finality FIRST, unconditionally. Codex #2070 r4 P1 — `--block`
   // used to bypass this entirely, so an operator could pass the current head,
   // receive a globally empty verdict, and lose the named state to a reorg
   // after the end-of-run hash check had already passed. An explicit block is
   // accepted only at or below the chain's own finality mark; there is no way
   // to name a reorg-able height and still get a certification out.
+  const prior = chainSlug ? PRIOR_COMMITTED_HEIGHT.get(chainSlug) : undefined;
   let finality = null;
-  for (const blockTag of tags) {
-    try {
-      const b = await client.getBlock({ blockTag });
-      if (b?.number != null && b?.hash) {
-        finality = {
-          number: b.number,
-          hash: b.hash,
-          tag: tags.length === 1 && blockTag === 'safe' ? 'safe (finalized state pruned by endpoint)' : blockTag,
-        };
-        break;
+  for (let attempt = 0; ; attempt++) {
+    finality = null;
+    for (const blockTag of tags) {
+      try {
+        const b = await client.getBlock({ blockTag });
+        if (b?.number != null && b?.hash) {
+          finality = {
+            number: b.number,
+            hash: b.hash,
+            tag: tags.length === 1 && blockTag === 'safe' ? 'safe (finalized state pruned by endpoint)' : blockTag,
+          };
+          break;
+        }
+      } catch {
+        // Not every chain/RPC implements both tags; try the next one.
       }
-    } catch {
-      // Not every chain/RPC implements both tags; try the next one.
     }
-  }
-  if (!finality) {
-    throw new Error(
-      `${slug}: the endpoint exposes neither a 'finalized' nor a 'safe' block, so no height can be shown to be ` +
-        `reorg-proof here — not even one passed with --block. Use an endpoint that reports finality.`,
-    );
+    if (!finality) {
+      throw new Error(
+        `${who}: the endpoint exposes neither a 'finalized' nor a 'safe' block, so no height can be shown to be ` +
+          `reorg-proof here — not even one passed with --block. Use an endpoint that reports finality.`,
+      );
+    }
+    // Two sanity bounds on the tag the endpoint served, both cheap, both about
+    // the ENDPOINT rather than the chain: a finality height above the head is
+    // nonsense, and one below the committed artifact's height for this chain
+    // is a stale replica (see STALE_FINALITY_RETRIES). Either is retried, then
+    // refused — never certified at silently.
+    let latest = null;
+    try {
+      latest = (await client.getBlock({ blockTag: 'latest' }))?.number ?? null;
+    } catch {
+      latest = null;
+    }
+    const aboveHead = latest !== null && finality.number > latest;
+    const behindPrior = prior !== undefined && finality.number < prior;
+    if (!aboveHead && !behindPrior) break;
+    const why = aboveHead
+      ? `${finality.tag} ${finality.number} is ABOVE the endpoint's own head ${latest}`
+      : `${finality.tag} ${finality.number} is BELOW the committed artifact's height ${prior} for this chain`;
+    if (attempt >= STALE_FINALITY_RETRIES) {
+      throw new Error(
+        `${who}: the endpoint's finality tag is not trustworthy — ${why} after ${attempt + 1} attempts. ` +
+          `A certification height must never move backwards across committed runs (a stale replica served this). ` +
+          `Use a different endpoint for this chain (--rpc / CENSUS_RPC_<CHAIN>) or wait for the replicas to catch up.`,
+      );
+    }
+    process.stderr.write(`census: ${who} — ${why}; retrying the finality read (${attempt + 1}/${STALE_FINALITY_RETRIES})\n`);
+    await sleep(1_000 * 2 ** attempt);
   }
 
   const forced = arg('--block');
   if (!forced) return finality;
 
   const requested = BigInt(forced);
+  // An explicit --block is the operator's deliberate choice (bounded by
+  // finality above); the monotonic floor applies to the automatic path only,
+  // so a deliberate historical re-read stays possible.
   if (requested > finality.number) {
     throw new Error(
-      `${slug}: --block ${requested} is ABOVE the endpoint's ${finality.tag} block ${finality.number}. ` +
+      `${who}: --block ${requested} is ABOVE the endpoint's ${finality.tag} block ${finality.number}. ` +
         `A height that can still be reorganized cannot certify custody away; pass ${finality.number} or lower.`,
     );
   }
@@ -553,19 +634,36 @@ async function resolveCensusBlock(client, slug, tags = ['finalized', 'safe']) {
 
 
 /**
- * Establish, from the Diamond's COMPLETE routing history, that the intent
- * producer was never routed — and therefore that no intent commit can ever have
- * been created on this chain.
+ * Read the Diamond's `DiamondCut` history for the intent PRODUCER, as a
+ * REFUTATION-ONLY reading: it can show that the producer WAS routed at some
+ * point (so rows may exist that an unrouted getter cannot see), and it can
+ * show that the returned history is incomplete. It can NEVER show that the
+ * producer was never routed.
  *
- * This is the discharge for an unrouted getter. It is a real proof rather than
- * an inference: `DiamondCut` is emitted by every cut a Diamond has ever taken,
- * so a producer selector absent from all of them was never callable. If the
- * history cannot be read in full (pruning, range caps, a missing deploy block)
- * the answer is `indeterminate` — never "empty".
+ * An earlier revision called this a proof ("a producer selector absent from
+ * every cut was never callable") and returned `proven: true`. That was
+ * withdrawn (Codex #2070 r5 P1) and the positive shape itself retired (r12
+ * P2): an endpoint that omits an `Add`/`Remove` PAIR leaves the CURRENT
+ * surface fully accounted for, so no continuity test over `eth_getLogs` can
+ * detect the omission — and a nested `proven: true` beside an outer
+ * `indeterminate` verdict is contradictory metadata a consumer may treat as
+ * authoritative. The result therefore carries a `verdict` and a `refuted`
+ * flag and no `proven` field at all:
  *
- * @returns {{proven: boolean, reason: string, cutsScanned?: number}}
+ *   - `refuted`      — the producer is routed now, or an `Add` for it appears in
+ *                      the history: rows MAY exist; the class is indeterminate.
+ *   - `unreadable`   — the history was not read in full (zero cuts, an `Add`
+ *                      missing for a currently-routed selector, an RPC error).
+ *   - `not-refuted`  — nothing in the returned history routes the producer and
+ *                      the history accounts for the whole current surface.
+ *                      This is the STRONGEST reading available and it is still
+ *                      not a proof of absence; the class stays indeterminate
+ *                      pending a state read (a calibrated storage slot proven
+ *                      against a routed getter, or routing the getter).
+ *
+ * @returns {{refuted: boolean, verdict: 'refuted'|'unreadable'|'not-refuted', reason: string, cutsScanned?: number}}
  */
-async function proveProducerNeverRouted({
+async function refuteProducerNeverRouted({
   client,
   diamond,
   fromBlock,
@@ -577,7 +675,8 @@ async function proveProducerNeverRouted({
   // The producer answering right now settles it without any history at all.
   if (producerRouted) {
     return {
-      proven: false,
+      refuted: true,
+      verdict: 'refuted',
       reason:
         'the intent PRODUCER is routed on this Diamond while its getter is not — commits may exist and cannot be read',
     };
@@ -598,7 +697,8 @@ async function proveProducerNeverRouted({
     );
     if (everRouted) {
       return {
-        proven: false,
+        refuted: true,
+        verdict: 'refuted',
         reason:
           'the intent producer WAS routed at some point in this Diamond\'s cut history — rows may have been written before the facet was removed',
         cutsScanned: logs.length,
@@ -617,7 +717,8 @@ async function proveProducerNeverRouted({
     // either. Those chains are INDETERMINATE until read from an archive node.
     if (logs.length === 0) {
       return {
-        proven: false,
+        refuted: false,
+        verdict: 'unreadable',
         reason:
           'the cut-history scan returned ZERO DiamondCut events, but every Diamond emits at least one at deploy — ' +
           'the history was not actually read (pruned endpoint, or a deployBlock that does not match this address), ' +
@@ -657,7 +758,8 @@ async function proveProducerNeverRouted({
     const unexplained = routedSelectors.filter((sel) => !addedSelectors.has(sel.toLowerCase()));
     if (unexplained.length !== 0) {
       return {
-        proven: false,
+        refuted: false,
+        verdict: 'unreadable',
         reason:
           `the cut history carries no ADD for ${unexplained.length} of the ${routedSelectors.length} selectors the ` +
           'Diamond currently routes, so it is INCOMPLETE — the endpoint omitted the cut(s) that introduced them ' +
@@ -668,18 +770,24 @@ async function proveProducerNeverRouted({
         unexplainedSelectors: unexplained.length,
       };
     }
+    // Codex #2070 r12 P2 — this is the strongest reading the history can give
+    // and it is NOT a proof. An omitted Add/Remove pair for the producer would
+    // leave every check above satisfied. Say so in the result itself, so the
+    // artifact can never carry a reusable positive proof.
     return {
-      proven: true,
+      refuted: false,
+      verdict: 'not-refuted',
       reason:
-        'the intent producer never appears in any DiamondCut in this Diamond\'s history, and that history carries an ' +
-        'ADD for every selector the Diamond currently routes (so the deployment cut and every later addition are ' +
-        'present) — no commit can ever have been created',
+        'no DiamondCut in the RETURNED history routes the intent producer, and that history carries an ADD for every ' +
+        'selector the Diamond currently routes — but an omitted Add/Remove pair is invisible to this test, so this ' +
+        'is NOT a proof of absence; the class stays indeterminate pending a state read of the rows',
       cutsScanned: logs.length,
       routedSelectors: routedSelectors.length,
     };
   } catch (err) {
     return {
-      proven: false,
+      refuted: false,
+      verdict: 'unreadable',
       reason: `the cut history could not be read in full (${classifyRpcError(err)}), so absence cannot be established`,
     };
   }
@@ -701,11 +809,11 @@ async function censusDeployment(dep) {
   // absence. Without the error in the ABI viem cannot name it, and an absent
   // commit would be indistinguishable from a genuine failure.
   const intentView = pick(loadAbi('SwapToRepayIntentFacet'), ['getIntentCommit', 'IntentNoCommit']);
-  // The PRODUCER, for the routing-history proof: an unrouted getter says
+  // The PRODUCER, for the routing-history REFUTATION: an unrouted getter says
   // nothing about whether this selector was ever callable.
   const intentProducer = pick(loadAbi('SwapToRepayIntentFacet'), ['commitSwapToRepayIntent']);
   // `facets()` gives the Diamond's CURRENT routed surface, which is what makes
-  // the cut history checkable for continuity — see {proveProducerNeverRouted}.
+  // the cut history checkable for continuity — see {refuteProducerNeverRouted}.
   const loupe = pick(loadAbi('DiamondLoupeFacet'), ['facetAddress', 'facetAddresses', 'facets']);
   const intentEvents = pick(loadAbi('SwapToRepayIntentFacet'), [
     'SwapToRepayIntentCommitted',
@@ -918,6 +1026,7 @@ async function censusDeployment(dep) {
       atBlock: atBlock.toString(),
       atBlockHash: censusBlock.hash,
       blockTag: censusBlock.tag,
+      rpcHost: rpcHostOf(rpc),
       scanned: { loanIdsEnumerated: 0, totalLoansEverCreated: 'n/a', loanIdRange: 'none', enumerable: false, noCode: false, codeAbsentUnexplained: true, custodySurfaceUnrouted: false, notADiamond: false, loupeRouted: false, intentSurfaceRouted: false, intentProducerRouted: false, intentCorroboration: null },
       classes: Object.fromEntries(['vpfiHeldCustody', 'rebateRows', 'fallbackSnapshotCustody', 'liveIntentCommits'].map((k) => [k, {
         status: 'indeterminate',
@@ -962,6 +1071,7 @@ async function censusDeployment(dep) {
       atBlock: atBlock.toString(),
       atBlockHash: censusBlock.hash,
       blockTag: censusBlock.tag,
+      rpcHost: rpcHostOf(rpc),
       scanned: { loanIdsEnumerated: 0, totalLoansEverCreated: 'n/a', loanIdRange: 'none', enumerable: false, noCode, custodySurfaceUnrouted, notADiamond, loupeRouted, intentSurfaceRouted: false, intentProducerRouted: false, intentCorroboration: null },
       classes: { vpfiHeldCustody: cls(), rebateRows: cls(), fallbackSnapshotCustody: cls({ nonVpfiRowsExcluded: [] }), liveIntentCommits: cls({ nonVpfiRowsExcluded: [] }) },
     };
@@ -970,15 +1080,17 @@ async function censusDeployment(dep) {
   const stats = await read('getProtocolStats');
   const totalLoansEverCreated = stats[3];
 
-  // How much VPFI does this Diamond HOLD, at the census block? This single
-  // number is a history-free UPPER BOUND on every class: all four are VPFI
-  // custody, and custody the Diamond does not hold cannot exist. Zero here
-  // settles class 3 even where its getter is unrouted, with no reliance on a
-  // log stream being complete (Codex #2070 r5 P1: no continuity test over
-  // eth_getLogs can PROVE completeness — an omitted Add/Remove pair nets to
-  // zero routing change and is invisible to every such test. Logs can only
-  // refute; a balance read cannot be fooled by an omitted receipt).
-  // (`diamondVpfiBalance` was read above, before enumeration.)
+  // How much VPFI does this Diamond HOLD, at the census block? Recorded as
+  // BACKING — an upper bound on what the rows of every class could pay out —
+  // and NEVER as an absence proof. An earlier revision of this comment said a
+  // zero balance "settles class 3 even where its getter is unrouted"; that
+  // was withdrawn (Codex #2070 r6 P1, the comment caught in r12 P2): a payout
+  // can spend the backing while the row survives, so a zero balance proves
+  // the rows would be UNBACKED, not that they are absent — zero balance with
+  // live rows is the WORST case, not the settled one. The implementation
+  // below records `diamondVpfiBacking` / `backingShortfall` and leaves an
+  // unrouted class 3 indeterminate. (`diamondVpfiBalance` was read above,
+  // before enumeration.)
 
   // ── Enumerate every loan id ever created ──────────────────────────────
   const loanIds = [];
@@ -1059,7 +1171,7 @@ async function censusDeployment(dep) {
     // to explain for its continuity to be established.
     const facetList = await read('facets');
     const routedSelectors = facetList.flatMap((f) => f.functionSelectors ?? f[1] ?? []);
-    const cutHistory = await proveProducerNeverRouted({
+    const cutHistory = await refuteProducerNeverRouted({
       client,
       diamond,
       fromBlock: BigInt(addresses.deployBlock ?? 0),
@@ -1078,9 +1190,12 @@ async function censusDeployment(dep) {
     intentAbsenceProof = {
       proven: false,
       reason:
-        'the intent getter is unrouted; a zero VPFI balance proves the rows would be UNBACKED, not that they are absent, and cut history can only refute — ' +
+        (cutHistory.refuted
+          ? 'the intent getter is unrouted and the cut history REFUTES absence (the producer was routed) — rows may exist that cannot be read; '
+          : 'the intent getter is unrouted; a zero VPFI balance proves the rows would be UNBACKED, not that they are absent, and cut history can only refute — ') +
         'undetermined pending a calibrated storage read of intentCommits[loanId] or routing of the getter',
       diamondVpfiBacking: diamondVpfiBalance === null ? null : diamondVpfiBalance.toString(),
+      // Refutation-only: `{refuted, verdict, reason}`, never `proven` (r12 P2).
       cutHistoryRefutation: cutHistory,
     };
   }
@@ -1254,6 +1369,7 @@ async function censusDeployment(dep) {
     // reproducible across a reorg.
     atBlockHash: censusBlock.hash,
     blockTag: censusBlock.tag,
+    rpcHost: rpcHostOf(rpc),
     scanned: {
       loanIdsEnumerated: loanIds.length,
       totalLoansEverCreated: totalLoansEverCreated.toString(),
@@ -1299,12 +1415,12 @@ async function censusDeployment(dep) {
         nonVpfiRowsExcluded: nonVpfiFallbackRows,
         unknownAssetRows: unknownAssetFallbackRows,
       },
-      // Class 3 earns `proven` in exactly two ways: the getter was routed and
-      // live state was read, or the getter was unrouted AND the cut history
-      // shows the producer was never routed. Anything else — an unreadable cut
-      // history, a producer that WAS routed, or a corroboration that
-      // contradicts the view — is `indeterminate`, which blocks the empty
-      // verdict rather than passing as a zero.
+      // Class 3 earns `proven` in exactly two ways: the no-loans bound, or the
+      // getter was routed and live state was read. With the getter UNROUTED
+      // there is no sound certification in this script (r6 P1): the cut
+      // history can only refute and `intentAbsenceProof.proven` is always
+      // false on that branch — the class is `indeterminate`, which blocks the
+      // empty verdict rather than passing as a zero.
       liveIntentCommits: {
         // Class 3 is loan-keyed too, so the no-loans bound settles it as well.
         status:
@@ -1355,6 +1471,12 @@ async function main() {
   const deployments = which === 'all' ? everything : everything.filter((d) => d.slug === which);
   if (which !== 'all' && deployments.length === 0) throw new Error(`no deployment directory for chain '${which}'`);
   const outDir = arg('--out', join(REPO, 'docs/DesignsAndPlans/census'));
+  loadPriorCommittedHeights(join(outDir, 'grandfathered-custody-census.json'));
+  if (PRIOR_COMMITTED_HEIGHT.size) {
+    process.stderr.write(
+      `census: committed heights this run must not fall below — ${[...PRIOR_COMMITTED_HEIGHT].map(([k, v]) => `${k}:${v}`).join(', ')}\n`,
+    );
+  }
 
   const results = [];
   const failures = [];
@@ -1393,13 +1515,19 @@ async function main() {
         const dropped = results.filter((r) => r.chainSlug === dep.slug).length;
         for (let i = results.length - 1; i >= 0; i--) if (results[i].chainSlug === dep.slug) results.splice(i, 1);
         for (const k of [...byAddress.keys()]) if (k.startsWith(`${dep.slug}|`)) byAddress.delete(k);
+        // Codex #2070 r12 P2 — a restart re-reads EVERY deployment on the
+        // chain, so a failure recorded for one of them at the old height is
+        // stale too: left in place it would report a recovered chain as
+        // failed, force `allClassesEmpty` false and fail the run.
+        const staleFailures = failures.filter((f) => f.chainSlug === dep.slug).length;
+        for (let i = failures.length - 1; i >= 0; i--) if (failures[i].chainSlug === dep.slug) failures.splice(i, 1);
         const chainDeps = deployments.filter((d) => d.slug === dep.slug);
         // Remove any still-queued entries for this slug, then re-queue the whole chain in order.
         for (let i = queue.length - 1; i >= 0; i--) if (queue[i].slug === dep.slug) queue.splice(i, 1);
         queue.unshift(...chainDeps);
         process.stderr.write(
           `census: ${who} — finalized state pruned by the endpoint; re-resolving ${dep.slug} at 'safe' and RESTARTING the chain ` +
-            `(discarding ${dropped} result(s) read at the finalized height)\n`,
+            `(discarding ${dropped} result(s) and ${staleFailures} recorded failure(s) from the finalized height)\n`,
         );
         continue;
       }

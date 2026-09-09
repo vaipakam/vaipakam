@@ -4816,6 +4816,27 @@ reported a comfortable answer it had not earned:
   hole, one door over. Dropping needs an explicit override and prints what it
   drops.
 
+  **Every writer of the manifest is ONE module, and it serializes** (Codex
+  #2070 r12 P1). The deploy scripts each carried an inline read-modify-write
+  of the file; two chains running `--fresh` at once could both read the old
+  inventory, each append only its own archive and overwrite in either order —
+  both reporting success, both then moving their prior artifacts into the
+  gitignored tree, and the last writer silently dropping the other Diamond
+  from the committed record. Reproduced before fixing: twelve concurrent
+  appends through the old writer left three entries, every process exiting
+  zero, three trials in a row. `packages/contracts/scripts/archive-manifest.mjs`
+  is now the only writer, used by both deploy scripts and by the census's
+  regeneration: an exclusive `mkdir` lock (atomic on every platform, no
+  `flock` dependency), a merge over the file as it stands *inside* the lock,
+  an atomic rename, and a read-back that verifies the entry by content before
+  "recorded" is printed. A lock it cannot take fails non-zero and the deploy
+  aborts before anything is moved; a lock whose owner is dead and old is
+  broken, a lock whose owner is alive is never broken. A conflicting record —
+  same slug and stamp, different content — is refused rather than resolved by
+  whichever write came last. Twelve concurrent appends through the module keep
+  twelve entries with nothing left behind, and a `node:test` suite exercises
+  that with real processes in CI.
+
   **Every row is filtered to this deployment's VPFI** (Codex #2070 r5 P2). The
   four classes are VPFI custody specifically — the shared VPFI balance is the
   design's whole premise — so a fallback snapshot or intent commit whose asset
@@ -4995,6 +5016,48 @@ reported a comfortable answer it had not earned:
   against a routed getter on a live row first. The balance is recorded as
   backing; the cut scan is retained and can downgrade (producer seen routed),
   but its passing is not evidence.
+
+  The scan's result now says that about itself (Codex #2070 r12 P2). Its
+  positive shape — a nested `proven: true` reading "no commit can ever have
+  been created" beside an outer indeterminate verdict — survived the r5
+  withdrawal and reached the committed artifact for two deployments, where a
+  consumer could take the nested claim as authoritative. The reading is
+  refutation-only in its own fields: a `verdict` of `refuted` (the producer is
+  or was routed — rows may exist), `unreadable` (the history was not read in
+  full) or `not-refuted` (nothing in the returned history routes the producer
+  and the current surface is accounted for — the strongest reading available,
+  and still not a proof), with a `refuted` flag and no `proven` field at all.
+  A comment that still said a zero balance "settles class 3" with the getter
+  unrouted was retired at the same time; the implementation never did that
+  after r6, but a comment instructing the next implementer to is the same
+  hole waiting. And a chain restart on the safe downgrade now also discards
+  that chain's recorded *failures*, not only its results — a transient failure
+  logged at the finalized height would otherwise report a recovered chain as
+  failed and fail the run.
+
+  **A chain's census height never moves backwards across committed runs**
+  (found regenerating the artifact for r12, not by review). Run 15 read
+  op-sepolia at a `finalized` height 1.46 million blocks — about 34 days —
+  BELOW the height run 14 had committed ninety minutes earlier. A finalized
+  head cannot do that; the official endpoint's load balancer was serving a
+  stale replica's finality tag on most requests, with no error, and its `safe`
+  sat below its own `finalized`, which the protocol forbids. The reading was a
+  true state at the height it named and the artifact would have said so — and
+  a consumer comparing the two artifacts would have seen the platform
+  un-see a month of op-sepolia state under a "current finality" label. The
+  census now loads the committed artifact's height for every chain before it
+  resolves a block, refuses any finality tag below that floor (or above the
+  endpoint's own head), retries the finality read across replicas, and on
+  persistence records the chain as failed rather than certify at an older
+  height. Proven able to fire: a doctored prior of 999999999999 for op-sepolia
+  was refused after seven attempts with a partial artifact and exit 1, the
+  canonical file untouched. An explicit `--block` is exempt — a deliberate
+  historical re-read stays possible. Since the official endpoint kept serving
+  the stale tag on most requests, op-sepolia's default endpoint is now
+  publicnode, which served consistent finality and every state read (its
+  pruned receipts make the cut-history reading `unreadable` there, which costs
+  nothing now that the reading is refutation-only); each result records the
+  endpoint host that served it.
   Hand-computed storage slots were never an option: they fail SILENTLY as
   zero, manufacturing the exact "empty" result the census exists to
   establish. The event reconstruction is retained behind `--corroborate` as
@@ -5017,13 +5080,20 @@ reported a comfortable answer it had not earned:
   latter as a failure on op-sepolia rather than silently counting it as an
   absent commit.
 
-**RESULT (2026-09-08, run 14 — all nineteen retained deployments across five
+**RESULT (2026-09-09, run 17 — all nineteen retained deployments across five
 chains, inventory from the committed manifest, the two unsound bounds
-withdrawn): ten deployments are PROVEN EMPTY on every class; nine are
-INDETERMINATE on at least one.** 202 loans were enumerated; **zero rows were
-found in any class on any deployment where rows could be read**; every Diamond
-whose VPFI token resolves holds zero, and no backing shortfall exists anywhere
-rows were readable. How each deployment stands:
+withdrawn, every chain read at or above the height the previous committed run
+certified, the serving endpoint recorded on every result): ten deployments are
+PROVEN EMPTY on every class; nine are INDETERMINATE on at least one.** 189 loans
+were enumerated across the eighteen distinct Diamonds (one arb-sepolia archive
+names the live Diamond and reuses its result); **zero rows were found in any
+class on any deployment where rows could be read**; every Diamond whose VPFI
+token resolves holds zero, and no backing shortfall exists anywhere rows were
+readable. Runs 15 and 16, made while closing the round-12 findings, reached the
+same standing for every deployment; run 15 was discarded for reading op-sepolia
+at a stale finality height (see the monotonic-height guard above) and run 16 for
+carrying the endpoint stamp on only part of the results. How each deployment
+stands:
 
 | Standing | Deployments | Basis |
 | --- | --- | --- |

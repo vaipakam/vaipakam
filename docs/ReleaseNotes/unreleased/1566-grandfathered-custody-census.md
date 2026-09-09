@@ -83,6 +83,35 @@ holds no code at the block being read is only treated as empty when that block
 is known to be at or after the deployment; a read taken before the contract
 existed proves nothing, and is refused or reported as undetermined instead.
 
+The manifest also has exactly one writer now, shared by the deploy scripts and
+the census, and it takes a lock before it reads. Review found that two chains
+being redeployed at the same moment could each record their own retired
+contract and overwrite the other's — both reporting success, and the committed
+inventory quietly one contract short. That was reproduced before it was fixed:
+twelve simultaneous records through the old writer left three. The shared
+writer serializes the records, writes the file in one step so a reader never
+sees it half-written, and reads it back before it reports a record as made;
+twelve simultaneous records now leave twelve. A deploy that cannot take the
+lock stops before it moves anything.
+
+Two smaller corrections from the same review. The reading of a contract's
+routing history now describes itself as what it is — a check that can rule a
+record *in* but never rule one *out* — so a report can no longer carry a nested
+"proven" beside an undetermined verdict for a consumer to mistake for the
+answer. And when a chain has to be re-read at a safer block, the failures
+recorded during the first attempt are discarded along with its results, so a
+chain that recovers on the second attempt is not still reported as failed.
+
+Regenerating the report surfaced one more thing the census now refuses. A public
+endpoint answered "what is the latest finalized block" with a height about a
+month older than the one it had given ninety minutes earlier — not an error,
+just a stale answer from one of the machines behind the address — and the
+report would have been rebuilt on state a month older than the version it
+replaced, labelled as current. The census now reads the heights recorded in the
+committed report before it starts and refuses to read any chain at an older
+height than that, retrying for a fresher answer and otherwise reporting the
+chain as failed. Each chain's result also names the endpoint that served it.
+
 Including the archived contracts also surfaced what an "archived deployment"
 can actually be. Some are complete earlier versions of the platform; some are
 bare shells where deployment was abandoned before any logic was installed; and

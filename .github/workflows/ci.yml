@@ -1005,6 +1005,13 @@ jobs:
       # a real hook-order crash on Create Offer reaching production
       # (#1521); apps/app lints clean under its full config, so it needs
       # no such carve-out.
+      # #1566 / Codex #2070 r12 P1 — the archived-Diamond manifest writer
+      # (exclusive lock + atomic rename + read-back) is exercised with REAL
+      # concurrent processes, because the race it closes is between two
+      # --fresh deploys. node:test, no extra dependency.
+      - name: Tests — packages/contracts (archive-manifest writer)
+        run: pnpm --filter @vaipakam/contracts test
+
       - name: Typecheck — apps/keeper
         run: pnpm --filter @vaipakam/keeper typecheck
 

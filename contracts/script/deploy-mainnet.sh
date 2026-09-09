@@ -619,26 +619,25 @@ phase_preflight() {
 # retired Diamond. The check must BE the operation: this append happens here,
 # in the same step that moves the artifact, and a failure to record it aborts
 # the deploy before the new live artifact can replace the old one.
+# Codex #2070 r12 P1 — this used to be an inline node read-modify-write, and
+# two chains running --fresh at once could each read the old inventory, append
+# only their own archive and overwrite in either order: both reported success,
+# both moved their prior artifacts into the gitignored tree, and the last
+# writer silently dropped the other Diamond from the committed record. The
+# write now goes through the ONE manifest writer the census also uses —
+# packages/contracts/scripts/archive-manifest.mjs — which takes an exclusive
+# lock (mkdir, portable), merges over the file as it stands INSIDE the lock,
+# writes by atomic rename and reads the result back before reporting. A lock
+# it cannot take fails non-zero, and this function's non-zero return aborts
+# the archive before anything is moved.
 append_archive_manifest() {
   local chain_slug="$1" stamp="$2" addr="$3"
   local manifest="$CONTRACTS_DIR/deployments/archive-manifest.json"
+  local writer="$REPO_ROOT/packages/contracts/scripts/archive-manifest.mjs"
   [ -f "$addr" ] || { echo "  (no addresses.json to record)"; return 0; }
   command -v node >/dev/null 2>&1 || { echo "ERROR: node is required to record the archived deployment in $manifest" >&2; return 1; }
-  node - "$manifest" "$chain_slug" "$stamp" "$addr" <<'NODE' || return 1
-const fs = require('fs');
-const [manifestPath, slug, stamp, addrPath] = process.argv.slice(2);
-const a = JSON.parse(fs.readFileSync(addrPath, 'utf8'));
-if (!a.diamond) { console.log('  (archived artifact names no diamond — nothing on-chain to record)'); process.exit(0); }
-const m = fs.existsSync(manifestPath)
-  ? JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
-  : { purpose: 'Committed inventory of every ARCHIVED Diamond. .archive/ is gitignored; this file is what a clean checkout censuses.', generatedAt: null, entries: [] };
-if (m.entries.some((e) => e.slug === slug && e.stamp === stamp)) { console.log('  (already recorded)'); process.exit(0); }
-m.entries.push({ slug, stamp, chainId: a.chainId ?? null, diamond: a.diamond, deployBlock: a.deployBlock ?? null, vpfiToken: a.vpfiToken ?? a.vpfiMirror ?? null });
-m.entries.sort((x, y) => (x.slug + x.stamp).localeCompare(y.slug + y.stamp));
-m.generatedAt = new Date().toISOString();
-fs.writeFileSync(manifestPath, JSON.stringify(m, null, 2) + '\n');
-console.log(`  ✓ recorded archived Diamond ${a.diamond} in ${manifestPath.split('/deployments/')[1]} — COMMIT THIS FILE with the deploy`);
-NODE
+  [ -f "$writer" ] || { echo "ERROR: manifest writer missing at $writer" >&2; return 1; }
+  node "$writer" append "$manifest" "$chain_slug" "$stamp" "$addr" || return 1
 }
 
 # Every local archive that the committed inventory does not yet list is
