@@ -48,6 +48,10 @@ import { useActiveChain } from '../chain/useActiveChain';
 import { useSanctionsCheck } from '../data/sanctions';
 import { ConfirmReceipt } from './ConfirmReceipt';
 import {
+  isHoldingAfterSubmit,
+  type ForcedCloseDisposition,
+} from '../data/forcedCloseHold';
+import {
   canSubmitFromApp,
   shouldRenderForcedClose,
   type ForcedCloseReadiness,
@@ -201,8 +205,7 @@ export function ForcedCloseCard({
    *  cancellation's receipt has `status: 'success'`, because the
    *  cancelling self-send succeeded. Reading the receipt alone would
    *  report a cancelled close-out as a completed one. */
-  type Disposition = 'success' | 'reverted' | 'cancelled' | 'undetermined';
-  const watch = useQuery<Disposition>({
+  const watch = useQuery<ForcedCloseDisposition>({
     queryKey: ['forcedClose', 'disposition', submitted?.chainId, submitted?.hash],
     enabled: submitted !== null && Boolean(publicClient),
     retry: false,
@@ -212,7 +215,7 @@ export function ForcedCloseCard({
       query.state.data === undefined || query.state.data === 'undetermined'
         ? RECEIPT_WAIT_TIMEOUT_MS
         : false,
-    queryFn: async (): Promise<Disposition> => {
+    queryFn: async (): Promise<ForcedCloseDisposition> => {
       let replacement: 'replaced' | 'repriced' | 'cancelled' | null = null;
       try {
         const receipt = await publicClient!.waitForTransactionReceipt({
@@ -295,12 +298,17 @@ export function ForcedCloseCard({
   //   queues a second close-out behind a live first one. The hold STAYS,
   //   the wait restarts, and the card says plainly that it has lost track
   //   rather than presenting a dead button with no explanation.
+  //
+  // The predicate itself lives in `data/forcedCloseHold` with a case
+  // table, because four consecutive rounds each fixed it here and broke
+  // it again, and every one of those was a question about a small set of
+  // discrete cases arguing from a comment instead of from cases.
   const disposition = watch.data ?? null;
-  const undetermined = disposition === null || disposition === 'undetermined';
-  const holdingAfterSubmit =
-    submitted !== null &&
-    (undetermined ||
-      (disposition === 'success' && readsUpdatedAt <= submitted.at));
+  const holdingAfterSubmit = isHoldingAfterSubmit({
+    submittedAt: submitted?.at ?? null,
+    disposition,
+    readsUpdatedAt,
+  });
   const submittable = canSubmitFromApp(readiness) && !holdingAfterSubmit;
 
   async function closeOut() {
