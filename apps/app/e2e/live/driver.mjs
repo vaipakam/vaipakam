@@ -442,24 +442,37 @@ function loadWallets(opts = {}) {
  * check alone was not enough; the check has to be per ROLE, at the point
  * of use.
  */
-function walletFor(role) {
-  const wallets = loadWallets();
+/**
+ * The four things that make a role's entry a USABLE credential, in ONE
+ * place (#2069 review round 52 P2).
+ *
+ * There were two copies of this: `walletFor` below, and the
+ * `onSetupFailure: 'throw'` branch in `launch`, which reimplemented the
+ * same four checks so it could raise a `LiveSetupError` instead of
+ * exiting. They differed only in transport, and the comment history in
+ * that branch records the duplication drifting TWICE already — once
+ * checking only `privateKey` and not the declared address (round 17 P2),
+ * once missing the secp256k1 validity check. Both were caught in review
+ * rather than by a run, which is the failure mode a second definition of
+ * a security-sensitive invariant has: nothing executes the copies
+ * side by side.
+ *
+ * The checks are ordered so each one's precondition is already
+ * established: shape before curve validity (the regex is what makes
+ * `privateKeyToAccount` meaningful), declared address before derivation
+ * (there is nothing to compare against otherwise).
+ *
+ * @returns `{ ok: true, wallet }`, or `{ ok: false, why, roles }` where
+ *   `why` completes the sentence "no usable credential for role X — ".
+ */
+function validateWalletEntry(wallets, role) {
+  const roles = Object.keys(wallets ?? {});
   const w = wallets?.[role];
   const key = w?.privateKey;
-  // Shared exit, not a local copy of it (#1581).
-  const blocked = (why) => {
-    const roles = Object.keys(wallets ?? {});
-    blockedSync(
-      `the dev wallet file has no usable credential for role "${role}" — ${why}.` +
-        `\n  path:  ${WALLETS_PATH}` +
-        `\n  roles: ${roles.length ? roles.join(', ') : '(none)'}` +
-        `\n  → each role needs { address, privateKey } with a 32-byte key,` +
-        ` and the address must be the one that key derives.`,
-    );
-  };
+  const no = (why) => ({ ok: false, why, roles });
 
   if (typeof key !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(key)) {
-    blocked('no valid privateKey');
+    return no('no valid privateKey');
   }
   // The ADDRESS is a credential too, not decoration. `addressOf` is used
   // BEFORE launch by several drivers, so a missing one crashes with exit 1
@@ -467,26 +480,45 @@ function walletFor(role) {
   // key makes a drive inspect one wallet while injecting another, which
   // fails in a way that looks like an app bug (#1529 review round 8).
   if (typeof w.address !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(w.address)) {
-    blocked('no valid address');
+    return no('no valid address');
   }
   // The regex proves 32 bytes of hex, not a usable key: secp256k1 also
   // requires 1 <= k < n, so the all-zero placeholder and anything at or
   // above the curve order pass the shape test and throw here. Letting
   // that escape exits 1 from every signing driver, and the batch reports
-  // an unusable CREDENTIAL as a possible product FAIL — the precondition
-  // shape this file's `blocked()` exists for (#1529 review round 20).
+  // an unusable CREDENTIAL as a possible product FAIL (#1529 round 20).
   let derived;
   try {
     derived = privateKeyToAccount(key).address;
   } catch {
-    blocked('privateKey is 32 bytes of hex but not a valid secp256k1 key');
+    return no('privateKey is 32 bytes of hex but not a valid secp256k1 key');
   }
   if (derived.toLowerCase() !== w.address.toLowerCase()) {
-    blocked(
+    return no(
       `address ${w.address} is not the one its privateKey derives (${derived})`,
     );
   }
-  return w;
+  return { ok: true, wallet: w };
+}
+
+/** The remedy line, shared so both transports say the same thing. */
+const CREDENTIAL_REMEDY =
+  '\n  → each role needs { address, privateKey } with a 32-byte key,' +
+  ' and the address must be the one that key derives.';
+
+function walletFor(role) {
+  const wallets = loadWallets();
+  const r = validateWalletEntry(wallets, role);
+  if (!r.ok) {
+    // Shared exit, not a local copy of it (#1581).
+    blockedSync(
+      `the dev wallet file has no usable credential for role "${role}" — ${r.why}.` +
+        `\n  path:  ${WALLETS_PATH}` +
+        `\n  roles: ${r.roles.length ? r.roles.join(', ') : '(none)'}` +
+        CREDENTIAL_REMEDY,
+    );
+  }
+  return r.wallet;
 }
 
 export const CHAINS = {
@@ -733,71 +765,31 @@ export async function launch({
   let account = null;
   if (!keyless) {
     if (onSetupFailure === 'throw') {
-      // Resolve without the exiting path: read the file directly and
-      // raise a LiveSetupError the caller can catch, matching how every
-      // other setup failure reaches an accumulating caller.
+      // Same validator as `walletFor`, different transport (round 52 P2).
+      // This branch used to reimplement all four checks so it could raise
+      // instead of exiting, and the duplication drifted twice before it
+      // was noticed — once checking only `privateKey` and not the
+      // declared address (round 17 P2), once missing the secp256k1
+      // validity check. Nothing runs the two copies side by side, so
+      // neither drift could fail a test; both were caught by reading.
+      //
+      // What legitimately differs is only the failure transport, and
+      // that is now all that differs. `loadWallets` still needs
+      // `throwOnUnreadable`, because an unreadable FILE fails before any
+      // per-role validation can run.
       const wallets = loadWallets({ throwOnUnreadable: true });
-      const key = wallets?.[role]?.privateKey;
-      if (typeof key !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(key)) {
-        const roles = Object.keys(wallets ?? {});
+      const r = validateWalletEntry(wallets, role);
+      if (!r.ok) {
         throw new LiveSetupError(
           `the dev wallet file has no usable credential for role "${role}" —` +
-            ` no valid privateKey.\n  path:  ${WALLETS_PATH}` +
-            `\n  roles: ${roles.length ? roles.join(', ') : '(none)'}`,
+            ` ${r.why}.\n  path:  ${WALLETS_PATH}` +
+            `\n  roles: ${r.roles.length ? r.roles.join(', ') : '(none)'}` +
+            CREDENTIAL_REMEDY,
           undefined,
           'credential',
         );
       }
-      // A 32-byte hex string is not necessarily a USABLE key: the
-      // all-zero placeholder and any scalar outside the secp256k1 range
-      // pass the regex and make `privateKeyToAccount` throw a plain
-      // Error. An accumulating caller catches only `LiveSetupError`, so
-      // that plain throw exited 1 before the report was written and
-      // filed a credential precondition as a product failure — the
-      // classification this branch exists to get right.
-      try {
-        account = privateKeyToAccount(key);
-      } catch (err) {
-        throw new LiveSetupError(
-          `the dev wallet file's key for role "${role}" is not a usable` +
-            ` secp256k1 private key: ${String(err?.message ?? err).slice(0, 120)}` +
-            `\n  path:  ${WALLETS_PATH}`,
-          err,
-          'credential',
-        );
-      }
-      // THE ADDRESS IS A CREDENTIAL HERE TOO (review round 17 P2).
-      // `walletFor` — the branch below — checks the declared address and
-      // that the key actually derives it; this branch read only
-      // `privateKey`, so a wallet file with a missing or mismatched
-      // address injected the key-derived account and LABELLED it as the
-      // requested funded role. The connected scenarios would then run
-      // against a different wallet than the one named, and report their
-      // findings as product results: a false pass if that wallet happens
-      // to satisfy them, a product FAIL if it does not. Either way the
-      // honest verdict is a credential BLOCKED, which is precisely the
-      // classification this whole branch exists to get right — so it
-      // must not be reintroduced one field over.
-      const declared = wallets?.[role]?.address;
-      if (typeof declared !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(declared)) {
-        throw new LiveSetupError(
-          `the dev wallet file has no valid address for role "${role}".` +
-            `\n  path:  ${WALLETS_PATH}` +
-            '\n  → each role needs { address, privateKey }, and the address' +
-            ' must be the one that key derives.',
-          undefined,
-          'credential',
-        );
-      }
-      if (account.address.toLowerCase() !== declared.toLowerCase()) {
-        throw new LiveSetupError(
-          `the dev wallet file's address for role "${role}" is not the one` +
-            ` its privateKey derives — declared ${declared}, derived` +
-            ` ${account.address}.\n  path:  ${WALLETS_PATH}`,
-          undefined,
-          'credential',
-        );
-      }
+      account = privateKeyToAccount(r.wallet.privateKey);
     } else {
       account = privateKeyToAccount(walletFor(role).privateKey);
     }

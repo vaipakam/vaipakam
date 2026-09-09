@@ -47,6 +47,8 @@ import { useDiamondWrite, DIAMOND_ABI_VIEM } from '../contracts/diamond';
 import { useActiveChain } from '../chain/useActiveChain';
 import { useSanctionsCheck } from '../data/sanctions';
 import { ConfirmReceipt } from './ConfirmReceipt';
+import { settled } from '../contracts/ownReceipt';
+import { withTimeout } from '../lib/withTimeout';
 import {
   isHoldingAfterSubmit,
   type ForcedCloseDisposition,
@@ -171,64 +173,94 @@ export function ForcedCloseCard({
    *  through the page's own reconciliation, and a live residual gets
    *  its button back.
    *
-   *  The stamp carries chain and loan identity because
-   *  `PositionDetailsInner` is keyed by loan id alone, so a chain
-   *  switch keeps this component mounted (round 29's second finding).
-   *  The page's chain-change block clears its own confirmation slot but
-   *  cannot reach child state, which would have shown loan N on the
-   *  destination chain as already closed. */
-  const [submitted, setSubmitted] = useState<{
-    at: number;
-    chainId: number | undefined;
-    loanId: string;
-    /** The transaction this hold is about. The hold is reconciled
-     *  against THIS, not against how recently unrelated reads settled. */
-    hash: `0x${string}`;
-  } | null>(null);
+   *  ROUND 52 P1 — a MAP keyed by chain and loan, not a single slot.
+   *  `PositionDetailsInner` is keyed by loan id alone, so a chain switch
+   *  keeps this component mounted (round 29's second finding), and the
+   *  previous version answered that by CLEARING the slot on any chain or
+   *  loan change. Clearing discards the only record of a live
+   *  transaction. A lender who switches networks while a close-out is
+   *  pending and then switches back arrives with `submitted` null: the
+   *  transaction is no longer watched, the readiness reads still say the
+   *  loan is closable because it is still Active, and the button is
+   *  offered again over a close-out that may be about to mine.
+   *
+   *  Keying preserves what clearing destroyed while keeping the property
+   *  round 29 asked for — loan N on the destination chain has its own
+   *  key and no entry, so it is not shown as closed. Nothing is
+   *  discarded; the current key simply selects what to look at. It also
+   *  removes the render-phase `setSubmitted(null)` that implemented the
+   *  clearing, which was a state write during render. */
+  const [submissions, setSubmissions] = useState<
+    Record<
+      string,
+      {
+        at: number;
+        /** The transaction this hold is about. The hold is reconciled
+         *  against THIS, not against how recently unrelated reads
+         *  settled. */
+        hash: `0x${string}`;
+      }
+    >
+  >({});
 
-  /** What the chain has established about the submitted transaction.
+  /** Identity of the position this card is currently showing.
    *
-   *  ROUND 50 P2 — `getTransactionReceipt` on the submitted hash was the
-   *  wrong instrument, because that hash is not necessarily the
-   *  transaction that runs. A wallet that speeds up, cancels or
-   *  otherwise replaces a pending send produces a DIFFERENT hash for the
-   *  same nonce, and the original then never receives a receipt at all.
-   *  Polling it alone meant a repriced close-out that mined perfectly
-   *  well looked identical to one that vanished, and a confirmed
-   *  cancellation — positive evidence the call did NOT execute — looked
-   *  identical too.
+   *  `undefined` chain is folded into the key rather than special-cased:
+   *  a submission made with no wallet chain cannot be confused with one
+   *  made on a real chain, which is the property that matters. */
+  const submissionKey = `${walletChain?.chainId ?? 'none'}:${String(loanId)}`;
+  const submitted = submissions[submissionKey] ?? null;
+
+  /** What the chain has established about the submitted close-out.
    *
-   *  `waitForTransactionReceipt` is the instrument that already knows
-   *  about this: it follows the nonce, so a replacement's receipt comes
-   *  back here, and `onReplaced` names which kind of replacement it was.
-   *  That distinction is load-bearing rather than cosmetic — a
-   *  cancellation's receipt has `status: 'success'`, because the
-   *  cancelling self-send succeeded. Reading the receipt alone would
-   *  report a cancelled close-out as a completed one. */
+   *  ROUND 52 P2 — this delegates to `contracts/ownReceipt.settled`,
+   *  the repository's existing answer to exactly this question and a
+   *  more careful one than the inline version it replaces. Round 50
+   *  rebuilt a subset of it here and got the replacement cases wrong:
+   *
+   *  - `replaced` — a DIFFERENT transaction took the nonce, so our call
+   *    can never execute. The inline version fell through to reading the
+   *    replacement's receipt, so an unrelated transaction that happened
+   *    to succeed reported as a successful CLOSE-OUT. Not a wrong hold:
+   *    a wrong assertion that the loan closed.
+   *  - `repriced` — a Speed Up carries our own call at a higher gas
+   *    price, so its receipt IS ours and its status is the answer. The
+   *    inline version got this right only by accident of checking
+   *    `cancelled` alone; widening it without the repriced/replaced
+   *    distinction would have broken it in the other direction.
+   *
+   *  `settled` also carries a belt-and-braces case the inline version
+   *  had no equivalent for: a receipt under a hash we did not submit,
+   *  with no `onReplaced` reason to explain it, is treated as `replaced`
+   *  rather than waved through.
+   *
+   *  Two definitions of "did our transaction take effect" is the same
+   *  defect round 52 raised about the live-driver credential check, one
+   *  layer up. There is one now.
+   *
+   *  The timeout is applied HERE rather than passed to `settled`: it is
+   *  this card's policy about when to stop waiting and say so, not a
+   *  fact about settlement, and `settled` deliberately has no opinion
+   *  about it. */
   const watch = useQuery<ForcedCloseDisposition>({
-    queryKey: ['forcedClose', 'disposition', submitted?.chainId, submitted?.hash],
+    queryKey: ['forcedClose', 'disposition', submissionKey, submitted?.hash],
     enabled: submitted !== null && Boolean(publicClient),
     retry: false,
-    // Only an UNDETERMINED wait is worth restarting. The other three are
+    // Only an UNDETERMINED wait is worth restarting. The others are
     // final facts about a transaction, and nothing later changes them.
     refetchInterval: (query) =>
       query.state.data === undefined || query.state.data === 'undetermined'
         ? RECEIPT_WAIT_TIMEOUT_MS
         : false,
     queryFn: async (): Promise<ForcedCloseDisposition> => {
-      let replacement: 'replaced' | 'repriced' | 'cancelled' | null = null;
       try {
-        const receipt = await publicClient!.waitForTransactionReceipt({
-          hash: submitted!.hash,
-          timeout: RECEIPT_WAIT_TIMEOUT_MS,
-          onReplaced: (r) => {
-            replacement = r.reason;
-          },
-        });
-        // Checked BEFORE the status: see the note above on why a
-        // cancellation reads as a success if you only look at the receipt.
-        if (replacement === 'cancelled') return 'cancelled';
-        return receipt.status === 'success' ? 'success' : 'reverted';
+        const r = await withTimeout(
+          settled(publicClient!, submitted!.hash),
+          RECEIPT_WAIT_TIMEOUT_MS,
+        );
+        // `reason` is already the vocabulary this card holds on:
+        // 'reverted' | 'cancelled' | 'replaced'.
+        return r.ok ? 'success' : r.reason;
       } catch {
         // A timeout, or a read that failed. Neither says anything about
         // the transaction, so neither is allowed to say anything here.
@@ -236,17 +268,6 @@ export function ForcedCloseCard({
       }
     },
   });
-
-  // A render-phase adjustment, matching how the page resets its own
-  // chain-scoped state: no frame is committed carrying the previous
-  // chain's or loan's stamp.
-  if (
-    submitted !== null &&
-    (submitted.chainId !== walletChain?.chainId ||
-      submitted.loanId !== String(loanId))
-  ) {
-    setSubmitted(null);
-  }
 
   if (!shouldRenderForcedClose(readiness)) return null;
 
@@ -307,6 +328,10 @@ export function ForcedCloseCard({
   const holdingAfterSubmit = isHoldingAfterSubmit({
     submittedAt: submitted?.at ?? null,
     disposition,
+    // ROUND 52 P2 — when the disposition was ESTABLISHED, which is what
+    // the reads must postdate. `dataUpdatedAt` freezes once the wait
+    // resolves, because a final disposition stops the refetch interval.
+    disposedAt: disposition === null ? null : watch.dataUpdatedAt,
     readsUpdatedAt,
   });
   const submittable = canSubmitFromApp(readiness) && !holdingAfterSubmit;
@@ -381,17 +406,22 @@ export function ForcedCloseCard({
       // Neither is something to risk because a receipt wait timed out.
       //
       // So the stamp goes down the moment a hash exists. The hold it
-      // starts is still released by evidence (`readsUpdatedAt` passing
-      // it), so a transaction that genuinely failed to mine unblocks on
-      // the next read rather than latching.
+      // starts is released by the TRANSACTION's disposition, never by
+      // elapsed time (round 50 P1).
+      //
+      // Recorded under the key for the chain and loan it was sent on, so
+      // switching networks mid-flight no longer discards it (round 52
+      // P1). The key is captured here rather than read at callback time
+      // for the same reason it is recorded at all: it must describe
+      // where the transaction WENT, not where the wallet happens to
+      // point when the promise resolves.
+      const key = submissionKey;
       await write('triggerDefault', [BigInt(loanId), []], {
         onSubmitted: (hash) =>
-          setSubmitted({
-            at: Date.now(),
-            chainId: walletChain?.chainId,
-            loanId: String(loanId),
-            hash,
-          }),
+          setSubmissions((prev) => ({
+            ...prev,
+            [key]: { at: Date.now(), hash },
+          })),
       });
       onClosedOut();
       onCloseConfirm();

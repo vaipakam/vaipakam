@@ -524,3 +524,36 @@ hedging was correct once, when the app checked sequencer health before
 the repayment window; it stopped being correct when the order was
 changed to match the contract, and the sentence explaining it outlived
 the ordering it described.
+
+A later pass tightened three more things about that wait, and one of them
+matters more than it sounds. Waiting for the position to refresh before
+offering the button again was measured from when the transaction was
+sent, and that is the wrong moment: anything can refresh the page's
+readings in between — another card, switching back to the window, an
+ordinary poll — and those readings still describe the loan as it was
+before the close-out. On a slow transaction the wait was therefore
+already satisfied when the close-out landed, and the button came back
+immediately over figures from before it. It is now measured from when
+the app learned the transaction's outcome, which is the earliest moment
+anything could have changed.
+
+The second: if a completely unrelated transaction takes the same slot in
+the queue, ours can never run — and the app was reading that other
+transaction's outcome as though it were ours, so an unrelated success
+was reported as a successful close-out. It now uses the same shared piece
+of the app that every other transaction goes through, which already knew
+the difference between our transaction sped up (still ours, read its
+result), cancelled (ours never ran), and displaced by something else
+(ours never ran either).
+
+The third: switching networks while a close-out was in flight threw away
+the only record of it. Switching back left the app no longer watching a
+transaction that could still land, with the button offered again over the
+top of it. Submissions are now remembered per network and per position,
+so switching away and back finds what was left running.
+
+Separately, a lender whose deployment has internal matching switched off
+is told a match might still appear, which on that deployment it cannot.
+The app has no way to read that setting today — the protocol does not
+publish it — so this is recorded as its own piece of work rather than
+guessed at.
