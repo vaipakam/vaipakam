@@ -132,3 +132,25 @@ reorders those values without changing how many there are could show a
 real figure under the wrong parameter name until the next capture. That
 is a change to how the indexer stores its snapshot, tracked separately;
 it predates these pages, which only make the surface public.
+
+Sharing that tolerance turned out not to be the whole fix, and the rest
+of it is worth recording because the page ended up contradicting itself
+in the one way it must not. The console warns when its published values
+are more than a day old. It worked that warning out by asking whether
+the snapshot was fresh and treating every "no" as age — but a capture
+time from the future is also not fresh, for an entirely different
+reason. So a producer with a wrong clock, or a corrupted stamp, made the
+console announce that its values were more than a day old directly
+beside a line reporting their age as unknown. Two confident and
+incompatible claims about governance parameters, on the page that exists
+to tell a reader how far to trust them.
+
+A capture time in the future is not an age at all; it is a broken
+reading, and the only honest thing to say about it is that the age
+cannot be determined. That is already exactly what the page says about a
+snapshot bearing no capture time, and the advice a reader needs is the
+same in both cases — treat the values as unverified rather than as the
+protocol's present configuration. So the two now resolve to one message,
+and its wording moved from "no timestamp" to "no usable timestamp"
+because it now speaks for both. The day-old warning is reserved for a
+snapshot that is genuinely that old.

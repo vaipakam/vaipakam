@@ -46,9 +46,9 @@ import { SlidersHorizontal, RefreshCw, ExternalLink, AlertTriangle } from 'lucid
 import {
   fetchProtocolKnobs,
   CLOCK_SKEW_ALLOWANCE_SEC,
-  protocolConfigFresh,
   type ProtocolKnobSnapshot,
 } from '../data/indexer';
+import { resolveSnapshotAge } from '../data/snapshotAge';
 import { useActiveChain } from '../chain/useActiveChain';
 import { exactAmountString } from '../lib/format';
 import { VPFI_DECIMALS } from '../data/vpfi';
@@ -181,10 +181,15 @@ export function ProtocolConsole() {
   // A snapshot older than a day means the refresh rail is wedged. Saying
   // so is the point of the console; quietly rendering day-old governance
   // parameters as current would be the failure this guard exists for.
-  const stale =
-    typeof snap?.updatedAt === 'number' &&
-    snap.updatedAt > 0 &&
-    !protocolConfigFresh(snap.updatedAt);
+  //
+  // BUT ONLY A REAL AGE EARNS THAT SENTENCE (review round 38 P2). This
+  // was `!protocolConfigFresh(...)`, which is equally false for a stamp
+  // in the FUTURE — so a skewed producer had the banner assert "more
+  // than a day old" beside a provenance line reporting the age as
+  // unknown. `resolveSnapshotAge` separates the two, off the same
+  // ticking clock the age sentence uses.
+  const ageState = snap === null ? null : resolveSnapshotAge(snap.updatedAt, nowSec);
+  const stale = ageState === 'stale';
   // UNDATED IS NOT FRESH (review round 3 P2). `fetchProtocolKnobs`
   // deliberately accepts a response with no `updatedAt`, and that case
   // was neither `stale` nor `unavailable` — so an old or malformed
@@ -212,10 +217,13 @@ export function ProtocolConsole() {
   // is". Folding it into `undated` had the page say the values "may be
   // current" about values it had been told are not.
   const knownStale = snap?.stale === true;
-  const undated =
-    !knownStale &&
-    snap !== null &&
-    (typeof snap.updatedAt !== 'number' || snap.updatedAt === 0);
+  //
+  // AND A FUTURE STAMP BELONGS HERE, NOT UNDER `stale` (round 38 P2).
+  // It is a capture time that cannot be one, so the age is unknown —
+  // the same thing a missing stamp means and the same advice. The copy
+  // says "no usable timestamp" rather than "no timestamp" precisely
+  // because it now speaks for both arrivals.
+  const undated = !knownStale && ageState === 'unusable-stamp';
 
   return (
     <div className="pc-page">
@@ -348,7 +356,7 @@ export function ProtocolConsole() {
             {/* The age rides in the provenance sentence, so it is read
                 whenever the source is — not only when a day-old
                 threshold trips a warning. */}
-            {typeof snap.updatedAt === 'number' && snap.updatedAt > 0
+            {ageState !== 'unusable-stamp' && typeof snap.updatedAt === 'number'
               ? copy.protocolConsole.provenanceAge(
                   ageText(snap.updatedAt, nowSec),
                 )

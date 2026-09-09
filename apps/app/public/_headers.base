@@ -249,6 +249,23 @@
   X-Robots-Tag: noindex
 /nft-rental/*
   X-Robots-Tag: noindex
+# The two aliases this PR added (round 38 P3). Both are single-segment,
+# and `/:locale/*` below needs a first segment followed by more path —
+# so neither is covered by it and both were served as an indexable 200
+# shell to a crawler that never runs `Navigate`. `/nft-verifier` would
+# then be indexed as a duplicate of `/nft`, and `/admin` as a duplicate
+# of `/protocol-console` — or, where the console is hidden, as a public
+# address for a page this deployment has chosen not to present.
+# The `/*` partners cover a locale-free deep bookmark like
+# `/admin/docs`, which the alias block above pairs for the same reason.
+/nft-verifier
+  X-Robots-Tag: noindex
+/nft-verifier/*
+  X-Robots-Tag: noindex
+/admin
+  X-Robots-Tag: noindex
+/admin/*
+  X-Robots-Tag: noindex
 
 # ── Locale-prefixed aliases from the retired deployment ──────────────
 #

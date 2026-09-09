@@ -4693,7 +4693,7 @@ const copySource = {
     knownStale:
       'The indexer has seen a governance change that came after this snapshot, so these values are known to be out of date — not merely of uncertain age. Treat them as historical and check the parameter reference or the contracts directly for what is in force now.',
     undated:
-      'This snapshot carries no timestamp, so there is no way to tell how old these values are. They may be current or they may be long superseded — read them as unverified rather than as the protocol’s present configuration.',
+      'This snapshot carries no usable timestamp, so there is no way to tell how old these values are. They may be current or they may be long superseded — read them as unverified rather than as the protocol’s present configuration.',
     stale:
       'This snapshot is more than a day old, so treat the values below as historical. Config changes normally reach the snapshot within one ingest scan.',
     notReported: 'not reported',
@@ -4745,7 +4745,7 @@ const copySource = {
     // "aufgenommen vor vor 12 s" everywhere.
     provenanceAge: tmpl(', taken {{age}}', ['age']),
     provenanceAgeUnknown:
-      ', with no timestamp on it — so how current these values are is unknown',
+      ', with no usable timestamp on it — so how current these values are is unknown',
     provenanceTail:
       '. The same endpoint is keyless and open-CORS, so you can verify any figure here independently rather than taking this page’s word for it.',
     bpsValue: tmpl('{{pct}}% ({{bps}} bps)', ['pct', 'bps']),

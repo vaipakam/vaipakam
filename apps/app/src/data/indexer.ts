@@ -716,6 +716,13 @@ export interface IndexerProtocolConfig {
  *  reading fresh while the other calls it unknown. */
 export const CLOCK_SKEW_ALLOWANCE_SEC = 120;
 
+/** How old a config snapshot may be before it is presented as
+ *  historical rather than current. Named rather than inlined because
+ *  `resolveSnapshotAge` decides the console's banner from the same
+ *  threshold, and two copies of it would let the guard and the warning
+ *  disagree about what "a day old" means. */
+export const CONFIG_MAX_AGE_SEC = 24 * 3600;
+
 /** Snapshot freshness guard: config flips reach the snapshot within
  *  ~one ingest scan (event-triggered), so a row older than a day means
  *  the refresh rail is wedged — refuse it and let the chain fallback
@@ -729,7 +736,7 @@ export const CLOCK_SKEW_ALLOWANCE_SEC = 120;
  *  a fresh one, and this was the exact inverse. */
 export function protocolConfigFresh(updatedAt: number): boolean {
   const age = Date.now() / 1000 - updatedAt;
-  return age >= -CLOCK_SKEW_ALLOWANCE_SEC && age < 24 * 3600;
+  return age >= -CLOCK_SKEW_ALLOWANCE_SEC && age < CONFIG_MAX_AGE_SEC;
 }
 
 export async function fetchProtocolConfig(
