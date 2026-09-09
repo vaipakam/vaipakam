@@ -558,10 +558,15 @@ reward reporter, all setter-accepts-and-emits with no numeric range:
     kill-switch; pausing the reward facets is. **That is the MIRROR's detach
     procedure.** A CANONICAL chain is not detached by zeroing its base —
     `Canonical` dominates a base, so `setBaseChainId(0)` on a canonical chain
-    leaves it `Canonical` (Codex #2070 r22); demote it with
-    `setIsCanonicalRewardChain(false)`, which stamps the role and, with no
-    base, resolves `Detached` on its own. Either procedure retires the
-    delivered residual on the way out. Do not call `setBaseChainId(0)` "to
+    leaves it `Canonical` (Codex #2070 r22/r23). Detaching a canonical chain
+    takes BOTH writes, in this order: `setBaseChainId(0)` first (still
+    `Canonical` — the flag dominates, so no mirror window opens), then
+    `setIsCanonicalRewardChain(false)`, which resolves `Detached` with the
+    base already zero. The reverse order resolves `Mirror` in between and
+    leaves delivered-fresh payouts enabled until the base is cleared; a
+    canonical deployment normally stores its own base, so the flag alone
+    never detaches it. Either procedure retires the delivered residual on the
+    way out. Do not call `setBaseChainId(0)` "to
     reset" a chain — a chain you mean to leave unconfigured needs no call at
     all. Note that
     `setIsCanonicalRewardChain(false)` on a never-configured chain is a

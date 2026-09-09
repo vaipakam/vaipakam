@@ -94,6 +94,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createPublicClient, http, toFunctionSelector, parseAbiItem } from 'viem';
 import { Agent as HttpsAgent, request as httpsRequest } from 'node:https';
+import { resolve as resolvePath } from 'node:path';
 import { Agent as HttpAgent, request as httpRequest } from 'node:http';
 
 /**
@@ -602,8 +603,20 @@ async function censusBlockFor(client, slug, who) {
  * artifact while present at the older one's state. Loaded once, in main().
  */
 const PRIOR_COMMITTED_HEIGHT = new Map();
+/** The committed artifact's block HASH at that height, per chain (for ancestry). */
+const PRIOR_COMMITTED_HASH = new Map();
+/**
+ * Ancestry evidence gathered when a chain's census block is resolved (Codex
+ * #2070 r23 P1): the hash THIS run's endpoint reports at the committed
+ * height. A higher height is progress only if the committed block is an
+ * ancestor of it; a block 101 whose ancestor at 100 differs from the committed
+ * block 100 is a fork (or an inconsistent endpoint) and must not replace it.
+ * Fetched here because the replacement guard runs synchronously under a lock.
+ */
+const ANCESTRY_SEEN = new Map();
 function loadPriorCommittedHeights(canonicalPath) {
   PRIOR_COMMITTED_HEIGHT.clear();
+  PRIOR_COMMITTED_HASH.clear();
   if (!existsSync(canonicalPath)) return;
   let prior;
   try {
@@ -627,7 +640,10 @@ function loadPriorCommittedHeights(canonicalPath) {
     if (!r?.chainSlug || r?.atBlock == null) continue;
     const h = BigInt(r.atBlock);
     const cur = PRIOR_COMMITTED_HEIGHT.get(r.chainSlug);
-    if (cur === undefined || h > cur) PRIOR_COMMITTED_HEIGHT.set(r.chainSlug, h);
+    if (cur === undefined || h > cur) {
+      PRIOR_COMMITTED_HEIGHT.set(r.chainSlug, h);
+      PRIOR_COMMITTED_HASH.set(r.chainSlug, r.atBlockHash ? String(r.atBlockHash).toLowerCase() : null);
+    }
   }
 }
 // A finality tag can be served STALE without any error: on run 15 the official
@@ -640,6 +656,33 @@ function loadPriorCommittedHeights(canonicalPath) {
 const STALE_FINALITY_RETRIES = 6;
 /** Fresh-connection samples of a finality tag per resolution; the LOWEST height wins (see resolveCensusBlock). */
 const FINALITY_SAMPLES = 6;
+/**
+ * Pick the census block from finality-tag samples: the LOWEST height, and only
+ * if every sample at any one height agrees on the hash (Codex #2070 r23 P1 —
+ * two replicas answering the same height with different hashes are on
+ * different forks, and every later state read is pinned by NUMBER only, so a
+ * read could come from the other fork while the end-of-run identity check
+ * happened to land on the chosen one). Pure; exported for tests.
+ */
+export function pickFinalitySample(samples, who = 'finality') {
+  const byHeight = new Map();
+  for (const x of samples) {
+    const k = x.number.toString();
+    const set = byHeight.get(k) ?? new Set();
+    set.add(String(x.hash).toLowerCase());
+    byHeight.set(k, set);
+  }
+  const conflicts = [...byHeight].filter(([, hs]) => hs.size > 1);
+  if (conflicts.length) {
+    throw new Error(
+      `${who}: replicas disagree on the block HASH at the same height (${conflicts.map(([h, hs]) => `${h}: ${[...hs].join(' vs ')}`).join('; ')}) — ` +
+        `the endpoint serves conflicting forks and no state read pinned by number can be attributed to one of them; use a consistent endpoint`,
+    );
+  }
+  const lowest = samples.reduce((a, b) => (b.number < a.number ? b : a));
+  const heights = [...byHeight.keys()].sort();
+  return { number: lowest.number, hash: lowest.hash, heights };
+}
 /**
  * Arbitrum Sepolia's public RPC keeps a MOVING state window, and its
  * `finalized` tag lags far enough behind head that the finalized block can
@@ -723,14 +766,13 @@ async function resolveCensusBlock(client, who, tags = ['finalized', 'safe'], cha
         if (i < FINALITY_SAMPLES - 1) rotateConnections(`sampling ${blockTag} ${i + 2}/${FINALITY_SAMPLES}`, true);
       }
       if (samples.length) {
-        const lowest = samples.reduce((a, b) => (b.number < a.number ? b : a));
-        const heights = [...new Set(samples.map((x) => x.number.toString()))].sort();
+        const picked = pickFinalitySample(samples, `${who} ${blockTag}`);
         finality = {
-          number: lowest.number,
-          hash: lowest.hash,
+          number: picked.number,
+          hash: picked.hash,
           tag:
             (tags.length === 1 && blockTag === 'safe' ? 'safe (finalized state pruned by endpoint)' : blockTag) +
-            (heights.length > 1 ? ` (lowest of ${samples.length} samples: ${heights.join(', ')})` : ''),
+            (picked.heights.length > 1 ? ` (lowest of ${samples.length} samples: ${picked.heights.join(', ')})` : ''),
         };
         break;
       }
@@ -770,6 +812,17 @@ async function resolveCensusBlock(client, who, tags = ['finalized', 'safe'], cha
     await sleep(1_000 * 2 ** attempt);
   }
 
+  // Ancestry evidence for the replacement guard (r23 P1): the hash this
+  // endpoint reports at the committed height. Same height ⇒ the identity is
+  // the finality hash itself; lower committed height ⇒ fetch by number.
+  if (chainSlug && prior !== undefined) {
+    try {
+      const pb = prior === finality.number ? { hash: finality.hash } : await client.getBlock({ blockNumber: prior });
+      if (pb?.hash) ANCESTRY_SEEN.set(chainSlug, { height: prior, hash: String(pb.hash).toLowerCase() });
+    } catch {
+      ANCESTRY_SEEN.delete(chainSlug); // unverifiable ⇒ the guard refuses a higher snapshot
+    }
+  }
   const forced = arg('--block');
   if (!forced) return finality;
 
@@ -1664,6 +1717,117 @@ async function censusDeployment(dep) {
   };
 }
 
+/**
+ * Decide whether THIS run's snapshot may replace the committed one. Pure;
+ * exported for tests. Returns `{ reason, identityChanges, fresh }`: a
+ * non-null `reason` refuses the replacement. Rules, in order (each from a
+ * Codex #2070 round): no chain may regress in height (r14); equal height
+ * must carry the same hash (r22); a HIGHER height must descend from the
+ * committed block — the committed block's hash must be what this run's
+ * endpoint reports at that height (r23); no covered identity
+ * (`slug|label|diamond|scope`) may be dropped except by an acknowledged,
+ * recorded change (r15–r17), and acknowledged changes are carried forward.
+ */
+export function snapshotRegression({ current, results, ancestry, acknowledged, now }) {
+  const lc = (v) => (v == null ? null : String(v).toLowerCase());
+  const mine = new Map();
+  const mineHash = new Map();
+  for (const r of results) {
+    const h = BigInt(r.atBlock);
+    if (!mine.has(r.chainSlug) || h > mine.get(r.chainSlug)) {
+      mine.set(r.chainSlug, h);
+      mineHash.set(r.chainSlug, lc(r.atBlockHash));
+    }
+  }
+  const theirs = new Map();
+  const theirsHash = new Map();
+  for (const r of current.results ?? []) {
+    if (!r?.chainSlug || r?.atBlock == null) continue;
+    const h = BigInt(r.atBlock);
+    if (!theirs.has(r.chainSlug) || h > theirs.get(r.chainSlug)) {
+      theirs.set(r.chainSlug, h);
+      theirsHash.set(r.chainSlug, lc(r.atBlockHash));
+    }
+  }
+  const regressed = [...mine].filter(([slug, h]) => theirs.has(slug) && theirs.get(slug) > h);
+  if (regressed.length) {
+    return {
+      reason:
+        `a newer census is already committed there (${regressed.map(([slug, h]) => `${slug}: committed ${theirs.get(slug)} > this run ${h}`).join('; ')}); ` +
+        `this run resolved an older finality height and would un-see state the committed one saw`,
+      identityChanges: [],
+      fresh: 0,
+    };
+  }
+  const hashConflicts = [...mine]
+    .filter(([slug, h]) => theirs.get(slug) === h && theirsHash.get(slug) && mineHash.get(slug) && theirsHash.get(slug) !== mineHash.get(slug))
+    .map(([slug, h]) => `${slug}@${h}: committed ${theirsHash.get(slug)} ≠ this run ${mineHash.get(slug)}`);
+  if (hashConflicts.length) {
+    return {
+      reason:
+        `the committed census read a DIFFERENT block hash at the same height (${hashConflicts.join('; ')}); the two snapshots describe ` +
+        `different chain states — an inconsistent endpoint or a reorg — and neither may silently replace the other; re-run against a consistent endpoint`,
+      identityChanges: [],
+      fresh: 0,
+    };
+  }
+  const notDescended = [...mine]
+    .filter(([slug, h]) => theirs.has(slug) && theirs.get(slug) < h)
+    .map(([slug]) => {
+      const seen = ancestry?.get?.(slug);
+      const committedH = theirs.get(slug);
+      const committedHash = theirsHash.get(slug);
+      if (!committedHash) return null; // a committed result without a hash cannot be verified either way; height rules already applied
+      if (!seen || seen.height !== committedH) return `${slug}: the committed block ${committedH} could not be verified as an ancestor (no evidence at that height from this run's endpoint)`;
+      if (lc(seen.hash) !== committedHash) return `${slug}: the committed block ${committedH} (${committedHash}) is NOT an ancestor of this run's block — this run's endpoint has ${seen.hash} at that height`;
+      return null;
+    })
+    .filter(Boolean);
+  if (notDescended.length) {
+    return {
+      reason:
+        `a higher snapshot is progress only if it descends from the committed one (${notDescended.join('; ')}); a fork or an inconsistent ` +
+        `endpoint would otherwise overwrite custody recorded on the prior branch — re-run against a consistent endpoint`,
+      identityChanges: [],
+      fresh: 0,
+    };
+  }
+  const scopeOf = (v) => (v ? String(v).toLowerCase() : 'none');
+  const identity = (r) => `${r.chainSlug}|${r.deployment}|${lc(r.diamond) ?? ''}|${scopeOf(r.vpfiToken)}`;
+  const mineIds = new Set(results.map(identity));
+  const changed = (current.results ?? [])
+    .filter((r) => r?.chainSlug && r?.deployment && !mineIds.has(identity(r)))
+    .map((r) => ({ chainSlug: r.chainSlug, deployment: r.deployment, previous: { diamond: r.diamond ?? null, vpfiToken: r.vpfiToken ?? null } }));
+  const unacknowledged = changed.filter((m) => !acknowledged.has(`${m.chainSlug}|${m.deployment}`));
+  if (unacknowledged.length) {
+    return {
+      reason:
+        `the committed census covers ${unacknowledged.length} deployment identit(y/ies) this run does not ` +
+        `(${unacknowledged.map((m) => `${m.chainSlug}|${m.deployment}|${m.previous.diamond}|${scopeOf(m.previous.vpfiToken)}`).join(', ')}); a snapshot may never ` +
+        `drop a deployment the committed one covers, and a changed Diamond or scoping token under the same label is an identity change — ` +
+        `re-run against the current inventory, or acknowledge a deliberate change with --acknowledge-identity-change <slug|label>`,
+      identityChanges: [],
+      fresh: 0,
+    };
+  }
+  const carried = [...(current.identityChanges ?? []), ...((current.displacedDiamonds ?? []).map((d) => ({
+    chainSlug: d.chainSlug, deployment: d.deployment, previous: { diamond: d.previousDiamond ?? null, vpfiToken: null },
+    replacedBy: { diamond: d.replacedBy ?? null, vpfiToken: null }, acknowledgedBy: d.acknowledgedBy ?? 'legacy displacedDiamonds',
+  })))];
+  const fresh = changed.map((m) => {
+    const cur = results.find((r) => r.chainSlug === m.chainSlug && r.deployment === m.deployment);
+    return { ...m, replacedBy: { diamond: cur?.diamond ?? null, vpfiToken: cur?.vpfiToken ?? null }, acknowledgedBy: '--acknowledge-identity-change', acknowledgedAt: now };
+  });
+  const seen = new Set();
+  const all = [...carried, ...fresh].filter((c) => {
+    const k = `${c.chainSlug}|${c.deployment}|${c.previous?.diamond ?? ''}|${scopeOf(c.previous?.vpfiToken)}`;
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+  return { reason: null, identityChanges: all, fresh: fresh.length };
+}
+
 async function main() {
   if (process.argv.includes('--write-archive-manifest')) {
     const m = writeArchiveManifest();
@@ -1843,11 +2007,6 @@ async function main() {
   // its own: two runs can both load it, and the slower one — which resolved an
   // earlier finality height — could otherwise rename an older, emptier
   // snapshot over a newer one that had seen a fresh row.
-  const mine = new Map();
-  for (const r of results) {
-    const h = BigInt(r.atBlock);
-    if (!mine.has(r.chainSlug) || h > mine.get(r.chainSlug)) mine.set(r.chainSlug, h);
-  }
   // The text is PRODUCED after the comparison so an acknowledged displacement
   // the comparison recorded is in the bytes written (r16).
   // Codex #2070 r18 P1 — the manifest lock is held from the inventory
@@ -1895,95 +2054,19 @@ async function main() {
     }
     process.stderr.write(`census: inventory re-validated at publication under the manifest lock — ${nowInv.size} deployment record(s) unchanged since the start snapshot (liveGeneration ${LIVE_GENERATION_SEEN})\n`);
     return writeSnapshotGuarded(outFile, () => `${JSON.stringify(report, null, 2)}\n`, {
-    regressedBy: (current) => {
-      const theirs = new Map();
-      for (const r of current.results ?? []) {
-        if (!r?.chainSlug || r?.atBlock == null) continue;
-        const h = BigInt(r.atBlock);
-        if (!theirs.has(r.chainSlug) || h > theirs.get(r.chainSlug)) theirs.set(r.chainSlug, h);
-      }
-      // Codex #2070 r22 P2 — at an EQUAL height, a different block hash means
-      // the two runs read different chain states (inconsistent replicas, or a
-      // reorg one of them caught); each run's own end-of-run identity re-read
-      // only proves internal consistency. Refuse rather than overwrite the
-      // evidence that the snapshots disagree.
-      const theirsHash = new Map();
-      for (const r of current.results ?? []) {
-        if (!r?.chainSlug || r?.atBlock == null || !r?.atBlockHash) continue;
-        theirsHash.set(`${r.chainSlug}|${r.atBlock}`, String(r.atBlockHash).toLowerCase());
-      }
-      const hashConflicts = results
-        .filter((r) => theirsHash.has(`${r.chainSlug}|${r.atBlock}`) && theirsHash.get(`${r.chainSlug}|${r.atBlock}`) !== String(r.atBlockHash).toLowerCase())
-        .map((r) => `${r.chainSlug}@${r.atBlock}: committed ${theirsHash.get(`${r.chainSlug}|${r.atBlock}`)} ≠ this run ${r.atBlockHash}`);
-      if (hashConflicts.length) {
-        return (
-          `the committed census read a DIFFERENT block hash at the same height (${[...new Set(hashConflicts)].join('; ')}); the two snapshots ` +
-          `describe different chain states — an inconsistent endpoint or a reorg — and neither may silently replace the other; re-run against a consistent endpoint`
-        );
-      }
-      const regressed = [...mine].filter(([slug, h]) => theirs.has(slug) && theirs.get(slug) > h);
-      if (regressed.length) {
-        return (
-          `a newer census is already committed there (${regressed.map(([slug, h]) => `${slug}: committed ${theirs.get(slug)} > this run ${h}`).join('; ')}); ` +
-          `this run resolved an older finality height and would un-see state the committed one saw`
-        );
-      }
-      // Codex #2070 r15 P1 — heights alone cannot see a POPULATION change. A
-      // --fresh between two census starts adds a retired Diamond to the
-      // inventory; both runs can resolve the same finalized heights, and the
-      // slower pre-deploy run would overwrite the newer, more complete
-      // artifact, dropping that Diamond (and possibly its custody) from the
-      // committed evidence. So a snapshot may never DROP a deployment the
-      // committed one covers.
-      //
-      // Codex #2070 r16/r17 P1 — the identity is `slug|label|diamond|scope`,
-      // where scope is the EFFECTIVE VPFI token the result was scoped by
-      // (on-chain where the getter is routed, the artifact's otherwise): an
-      // in-place correction of an archived artifact from X to Y under the same
-      // stamp, or a change of the artifact token that re-scopes which rows
-      // count, must not silently retire the earlier identity — and any custody
-      // it holds — from the evidence. Changing an identity is an audited act:
-      // `--acknowledge-identity-change <slug|label>[,...]` names the deployment,
-      // and the report records the previous and new identity under
-      // `identityChanges`, CARRIED FORWARD from the committed artifact on every
-      // replacement so an acknowledged change stays on record for good (r17).
-      const scopeOf = (v) => (v ? String(v).toLowerCase() : 'none');
-      const identity = (r) => `${r.chainSlug}|${r.deployment}|${String(r.diamond ?? '').toLowerCase()}|${scopeOf(r.vpfiToken)}`;
-      const mineIds = new Set(results.map(identity));
-      const acknowledged = new Set(
-        (arg('--acknowledge-identity-change', '') || '').split(',').map((a) => a.trim()).filter(Boolean),
-      );
-      const changed = (current.results ?? [])
-        .filter((r) => r?.chainSlug && r?.deployment && !mineIds.has(identity(r)))
-        .map((r) => ({ chainSlug: r.chainSlug, deployment: r.deployment, previous: { diamond: r.diamond ?? null, vpfiToken: r.vpfiToken ?? null } }));
-      const unacknowledged = changed.filter((m) => !acknowledged.has(`${m.chainSlug}|${m.deployment}`));
-      if (unacknowledged.length) {
-        return (
-          `the committed census covers ${unacknowledged.length} deployment identit(y/ies) this run does not ` +
-          `(${unacknowledged.map((m) => `${m.chainSlug}|${m.deployment}|${m.previous.diamond}|${scopeOf(m.previous.vpfiToken)}`).join(', ')}); a snapshot may never ` +
-          `drop a deployment the committed one covers, and a changed Diamond or scoping token under the same label is an identity change — ` +
-          `re-run against the current inventory, or acknowledge a deliberate change with --acknowledge-identity-change <slug|label>`
-        );
-      }
-      const carried = [...(current.identityChanges ?? []), ...((current.displacedDiamonds ?? []).map((d) => ({
-        chainSlug: d.chainSlug, deployment: d.deployment, previous: { diamond: d.previousDiamond ?? null, vpfiToken: null },
-        replacedBy: { diamond: d.replacedBy ?? null, vpfiToken: null }, acknowledgedBy: d.acknowledgedBy ?? 'legacy displacedDiamonds',
-      })))];
-      const fresh = changed.map((m) => {
-        const now = results.find((r) => r.chainSlug === m.chainSlug && r.deployment === m.deployment);
-        return { ...m, replacedBy: { diamond: now?.diamond ?? null, vpfiToken: now?.vpfiToken ?? null }, acknowledgedBy: '--acknowledge-identity-change', acknowledgedAt: new Date().toISOString() };
-      });
-      const seen = new Set();
-      const all = [...carried, ...fresh].filter((c) => {
-        const k = `${c.chainSlug}|${c.deployment}|${c.previous?.diamond ?? ''}|${scopeOf(c.previous?.vpfiToken)}`;
-        if (seen.has(k)) return false;
-        seen.add(k);
-        return true;
-      });
-      if (all.length) report.identityChanges = all;
-      if (fresh.length) process.stderr.write(`census: ${fresh.length} identity change(s) on explicit acknowledgement — recorded under identityChanges (${all.length} on record)\n`);
-      return null;
-    },
+      regressedBy: (current) => {
+        const verdict = snapshotRegression({
+          current,
+          results,
+          ancestry: ANCESTRY_SEEN,
+          acknowledged: new Set((arg('--acknowledge-identity-change', '') || '').split(',').map((a) => a.trim()).filter(Boolean)),
+          now: new Date().toISOString(),
+        });
+        if (verdict.reason) return verdict.reason;
+        if (verdict.identityChanges.length) report.identityChanges = verdict.identityChanges;
+        if (verdict.fresh) process.stderr.write(`census: ${verdict.fresh} identity change(s) on explicit acknowledgement — recorded under identityChanges (${verdict.identityChanges.length} on record)\n`);
+        return null;
+      },
     });
   });
 
@@ -2029,7 +2112,9 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  process.stderr.write(`census: ${err.stack || err.message}\n`);
-  process.exitCode = 1;
-});
+if (process.argv[1] && fileURLToPath(import.meta.url) === resolvePath(process.argv[1])) {
+  main().catch((err) => {
+    process.stderr.write(`census: ${err.stack || err.message}\n`);
+    process.exitCode = 1;
+  });
+}

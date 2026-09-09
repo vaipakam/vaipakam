@@ -467,9 +467,14 @@ surface stays inert.
    zero write records the `Detached` reward role and is the deliberate
    detach procedure FOR A MIRROR, whereas a chain that was simply never
    configured resolves `Unconfigured` and keeps single-chain semantics
-   without any call. To detach a CANONICAL chain use
-   `setIsCanonicalRewardChain(false)` — `Canonical` dominates a base, so
-   zeroing the base on a canonical chain leaves it `Canonical`. **What detaching stops is narrower than "all rewards"**: the
+   without any call. To detach a CANONICAL chain two writes are needed, in
+   this order: first `setBaseChainId(0)` (the chain stays `Canonical`, since
+   the flag dominates a base — no mirror window opens), then
+   `setIsCanonicalRewardChain(false)`, which resolves `Detached` now that
+   the base is zero. The reverse order is unsafe: clearing the flag while a
+   base is still stored resolves `Mirror` and leaves delivered-fresh payouts
+   enabled until the base is cleared. A canonical deployment normally stores
+   its own base, so the flag alone never detaches it. **What detaching stops is narrower than "all rewards"**: the
    `Detached` role sets the delivered-fresh bound to zero, so payouts that
    would be funded from delivered-fresh budget stop; schedule rewards paid
    before arming are not consulted against that bound, and recycled-funded

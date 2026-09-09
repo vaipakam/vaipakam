@@ -255,4 +255,12 @@ the chain as failed rather than guess, and that chain's default endpoint was
 moved to one that served every reading cleanly; each report names the endpoint
 that served each chain.
 
+Two further refusals were added to the rules that decide whether a new report
+may replace the committed one: machines that disagree about which block sits
+at a given height are refused as inconsistent, and a report read at a later
+block replaces an earlier one only when the earlier block is shown to be part
+of the later one's history, so a fork can never overwrite what was recorded on
+the other branch. Those rules now live in a small, self-contained piece of the
+tool with each one covered by a test.
+
 Refs #1566, #1349, #1956

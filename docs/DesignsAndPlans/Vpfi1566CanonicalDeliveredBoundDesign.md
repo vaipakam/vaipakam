@@ -5291,6 +5291,29 @@ reported a comfortable answer it had not earned:
   censused all four deployments at FINALIZED with no downgrade and no
   rotation; the official endpoint remains the documented alternative through
   the per-chain override, and every result records the host that served it.
+
+  **Round 23 made the replacement guard a pure function and gave it two more
+  rules.** Finality samples at one height with different hashes are now
+  refused outright — two replicas answering the same height with different
+  hashes are on different forks, and since every later state read is pinned
+  by number only, a read could come from the other fork while the end-of-run
+  identity check happened to land on the chosen one. And a HIGHER snapshot is
+  progress only if it descends from the committed one: when a chain's census
+  block is resolved, the run fetches the hash its endpoint reports at the
+  committed height, and the guard refuses the replacement unless that hash is
+  the committed block's — a block 101 whose ancestor at 100 differs from the
+  committed block 100 is a fork, and overwriting would un-see custody
+  recorded on the prior branch; unverifiable ancestry refuses too. The guard
+  (`snapshotRegression`) and the sample picker (`pickFinalitySample`) are now
+  pure, exported functions with every rule pinned by a unit test — height
+  regression, equal-height hash conflict, ancestry, dropped and acknowledged
+  identities with carry-forward — and the script's entry point runs only when
+  executed directly, so the module is importable for those tests. On the
+  operator side, detaching a CANONICAL chain takes both writes in a stated
+  order: zero the base first (the flag dominates, so no mirror window opens),
+  then clear the flag; the reverse resolves `Mirror` in between with
+  delivered-fresh payouts enabled. The runbook, handbook and setter NatSpec
+  say so.
   Hand-computed storage slots were never an option: they fail SILENTLY as
   zero, manufacturing the exact "empty" result the census exists to
   establish. The event reconstruction is retained behind `--corroborate` as

@@ -1254,11 +1254,15 @@ contract RewardReporterFacet is
     ///             still settle. It is not a payout kill-switch; pausing the
     ///             reward facets is. That is the mirror's detach procedure;
     ///             it also retires the delivered residual on the way out.
-    ///           - on a CANONICAL chain zero here does NOT detach:
+    ///           - on a CANONICAL chain zero here does NOT detach on its own:
     ///             {LibVaipakam.rewardRole} resolves `Canonical` whenever the
-    ///             canonical flag is set, whatever the base. Demote with
-    ///             {setIsCanonicalRewardChain}(false) instead, which stamps
-    ///             and — with no base — resolves `Detached` on its own.
+    ///             canonical flag is set, whatever the base. Detaching a
+    ///             canonical chain takes both writes, in this order: zero
+    ///             the base HERE first (still `Canonical` — no mirror window
+    ///             opens), then {setIsCanonicalRewardChain}(false), which
+    ///             resolves `Detached` with the base already zero. The
+    ///             reverse order resolves `Mirror` in between and leaves
+    ///             delivered-fresh payouts enabled (Codex #2070 r23).
     ///         So zero is a real configuration state with consequences,
     ///         not an absence — and calling this with zero to "reset" a
     ///         mirror stops its delivered-fresh-funded payouts.

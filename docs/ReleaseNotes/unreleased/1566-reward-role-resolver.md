@@ -80,3 +80,8 @@ One more correction from review: zeroing the base chain on a chain that is
 itself the canonical one does not detach it, because the canonical flag takes
 precedence; such a chain is detached by clearing that flag, and the operator
 documentation now says which write detaches which kind of chain.
+
+The operator procedure for detaching a canonical chain now states both writes
+and their order: clear the base first, then the canonical flag; the reverse
+leaves the chain acting as a mirror, with delivered-fresh payouts enabled, in
+between.
