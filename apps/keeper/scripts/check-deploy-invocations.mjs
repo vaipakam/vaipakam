@@ -3556,10 +3556,6 @@ function inTestExpression(idx, text, kind) {
 // Built once: `isCommandPayload` is called per write match, and compiling a
 // pattern per call to interpolate one character is the sort of cost this file
 // has already paid for twice.
-// The argv spelling of a copy command, as the direct scan matched it — used
-// to ask whether that particular match needs a process call around it.
-const ARGV_COMMAND = /^[([,]\s*(['"`])(?:cp|mv|install|rsync)\1\s*,/;
-
 const EVAL_C = {
   grouped: /(['"`])(?:-{1,2}(?:eval|command)|-[a-zA-Z]*c[a-zA-Z]*)\1\s*,\s*$/,
   attached: /-{1,2}(?:eval|command|c)=/,
@@ -3576,12 +3572,10 @@ const EVAL_CE = {
 /**
  * The call that owns the code at `idx`, if that call SPAWNS A PROCESS.
  *
- * Two questions in this file need it and they are not the same question: is a
- * string literal an evaluated payload, and is an argv list an executed command
- * (r29). Both start by walking out to the owning call and naming it. That walk
- * lived inside the payload test and the second question was about to grow its
- * own copy — so it is one function, asked twice, rather than two recognisers
- * drifting apart the way the three comment readers did.
+ * Extracted in r29 because a second reader needed the same walk, and kept in
+ * r30 after that reader was withdrawn: it has one caller again, and it names
+ * a question this file asks rather than hiding it inside the answer to a
+ * different one. Re-inlining it would only make the payload test longer.
  *
  * Returns the offset of the call's `(`, or -1.
  */
@@ -3624,7 +3618,11 @@ function spawnCallOwner(start, text, kind) {
   let e = q;
   while (e >= 0 && /[A-Za-z0-9_$]/.test(text[e])) e -= 1;
   const owner = text.slice(e + 1, q + 1);
-  if (!/^(?:eval|execSync|execFileSync|execFile|spawnSync|spawn|system|popen|check_output|check_call)$/.test(owner)) {
+  // `Function` builds and returns executable source the same way `eval` runs
+  // it, and `Function("…writeFileSync…")()` is a spelling of the same write
+  // (r30). Distinctive enough to admit on the name: nothing else is called
+  // `Function` with a source string.
+  if (!/^(?:eval|Function|execSync|execFileSync|execFile|spawnSync|spawn|system|popen|check_output|check_call)$/.test(owner)) {
     // The DISTINCTIVE names above are admitted on the name alone. `exec`,
     // `run` and `call` are not distinctive — `RegExp.prototype.exec` is one
     // of them — and matching on the final identifier read
@@ -3742,10 +3740,24 @@ function isInertAssignment(idx, text, kind) {
   if (text[s] !== "'" && /\$\(|`/.test(text.slice(s, e))) return false;
   let b = s;
   while (b > 0 && !'\n;&|('.includes(text[b - 1])) b -= 1;
+  // An ARRAY INITIALIZER stores just as an ordinary assignment does, and the
+  // scan above stops at its `(` — so `EXAMPLES=("…writeFileSync…")` lost the
+  // assignment it was standing in and the stored text read as executable
+  // (r30). Stepping back over that one paren, and only when an assignment
+  // opened it, keeps the boundary otherwise intact: a `(` that begins a
+  // SUBSHELL still ends the scan, because nothing assigns into it.
+  if (text[b - 1] === '(') {
+    let a2 = b - 1;
+    while (a2 > 0 && !'\n;&|('.includes(text[a2 - 1])) a2 -= 1;
+    if (/(?:^|\s)(?:export\s+|local\s+|declare\s+(?:-\S+\s+)*|readonly\s+|typeset\s+)?[A-Za-z_]\w*(?:\[[^\]]*\])?\+?=$/.test(
+        text.slice(a2, b - 1),
+      ))
+      b = a2;
+  }
   // The whole assignment WORD, not only a value that starts at the quote:
   // `EXAMPLE=prefix"fs.copy(a, b)"` concatenates chunks and still just stores
   // text (r23).
-  return /(?:^|\s)(?:export\s+|local\s+|declare\s+(?:-\S+\s+)*|readonly\s+|typeset\s+)?[A-Za-z_]\w*=[^\s'"]*$/.test(
+  return /(?:^|\s)(?:export\s+|local\s+|declare\s+(?:-\S+\s+)*|readonly\s+|typeset\s+)?[A-Za-z_]\w*(?:\[[^\]]*\])?\+?=(?:\(\s*)?[^\s'"]*$/.test(
     text.slice(b, s),
   );
 }
@@ -3827,20 +3839,24 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
   // touches no file — and the release note's guarantee that declaring `copy`
   // or `move` is not a write was, on this path, untrue (r27). A shell `cp` in
   // command position keeps its own qualifier, which is the command position.
-  // A COPY COMMAND MAY BE SPELLED AS ARGV. `subprocess.run(["cp", "generated
-  // .jsonc", "configs/custom.jsonc"])` runs the same `cp`, and the shell form
-  // below requires whitespace after the verb, which an argv list writes as a
-  // quote and a comma (r28). The same four verbs, in the other spelling —
-  // not a new list.
+  // AN ARGV-SPELLED COPY IS NOT RECOGNISED, and that is a withdrawal rather
+  // than an omission. `subprocess.run(["cp", src, cfg])` was matched from r28
+  // and produced a finding in every round afterwards: the anchor sat inside a
+  // string literal, then the span stopped at a newline, then a list nothing
+  // ran was reported, then the owner walk skipped the call's own paren — and
+  // finally the verb only has to be the PROGRAM, which `spawnSync("echo",
+  // ["cp", …])` shows it need not be. That last one cannot be answered from
+  // the list at all: whether argv[0] is the program depends on the calling
+  // convention of the API around it — `spawnSync(file, args)` and
+  // `subprocess.run(argv)` disagree — so fixing it means a table of process
+  // APIs and their shapes, which is a new open-ended predicate.
   //
-  // Anchored on the bracket BEFORE the quote, deliberately: the verb itself
-  // sits inside a string literal, which the classifier calls data — rightly,
-  // since `cp` is not an interpreter and the payload rule refuses it — so a
-  // match starting at the quote was discarded by the very filter that keeps
-  // quoted examples out. The bracket is code.
+  // Five findings across three rounds, with the fifth needing new machinery,
+  // is the signature this file deletes on. The miss is nameable: a copy run
+  // as a child process through an argument list is not seen. It is behind the
+  // `keep_vars: true` declaration, and the shell spelling below is unaffected.
   const COPY =
     String.raw`(?:^|[\s;&|(])(?:cp|mv|install|rsync)\s[^\n]*?` + esc +
-    String.raw`|[([,]\s*(['"\`])(?:cp|mv|install|rsync)\1\s*,[^)]*?` + esc +
     String.raw`|(?:copyFile|rename|cpSync|copyFileSync|renameSync)\s*\([^)]*` + esc +
     String.raw`|(?<![A-Za-z0-9_$.])(?:shutil|fs|fse|fsExtra|fsp)` +
     String.raw`(?:\s*\.\s*promises)?\s*\.\s*(?:copy|move)\s*\([^)]*` + esc;
@@ -3879,22 +3895,6 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
         return shellishDirect
           ? !isInertAssignment(m.index, text, directKind)
           : isCommandPayload(m.index, text, directKind);
-      // An ARGV LIST IS ONLY A COMMAND WHEN SOMETHING RUNS IT. `args = ["cp",
-      // "generated.jsonc", "configs/custom.jsonc"]` stores three strings and
-      // copies nothing, and the argv alternative added in r28 matched the list
-      // itself (r29). Asked with the walk-back the payload test already uses,
-      // rather than a second reader of the same shape: the question here is
-      // only whether a process call owns the list, not whether an interpreter
-      // evaluates it, which is why the two share the walk and not the verdict.
-      //
-      // From INSIDE the matched punctuation, not from it. The walk begins one
-      // character back, so handing it the anchor skipped the anchor itself —
-      // and when that anchor IS the call's parenthesis, as in `execFile("cp",
-      // ["generated.jsonc", "configs/custom.jsonc"])`, the walk went looking
-      // for an enclosing call, found none, and dropped a real copy. Found by
-      // self-review after r29, not by a round.
-      if (ARGV_COMMAND.test(m[0]) && spawnCallOwner(m.index + 1, text, directKind) === -1)
-        return false;
       // A `[[ … ]]` comparison is not a redirection on this path either. The
       // named scan exempted it and this one did not, so
       // `[[ "$left" > "configs/custom.jsonc" ]]` reported a rewrite (r24).
@@ -4090,7 +4090,20 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
         (shellish ? String.raw`|(?:^|[\s;&|)])[\d*]*>{1,2}[|&]?\s*["'$~/.]` : '') +
         // The mode literal must CLOSE. Accepting a prefix let
         // `webbrowser.open("welcome")` match `"w` (r11).
-        String.raw`|\.\s*open\s*\(\s*(?:mode\s*=\s*)?(["'\`])[rbt]*[wax+][rbt+]*\1` +
+        // …and the METHOD form is GONE (r30). `webbrowser.open("w")` opens a
+        // URL named `w` and touches no file, and closing the literal was not
+        // enough to tell them apart: what separates them is the TYPE of the
+        // receiver, and a bare name carries none. Qualifying it by receiver
+        // NAME was written and withdrawn in the same sitting — a list of
+        // plausible variable names is the unbounded predicate this file
+        // deletes on sight.
+        //
+        // What it caught was `p.open("w")` on a variable bound to a path,
+        // which is the same miss this reader already accepts for `.replace`
+        // on a bound path and for a process module under an alias: the
+        // receiver's type is not in the text. The constructor form
+        // `Path("…").open("w")` is syntax, and is still read.
+        String.raw`|Path\s*\([^()]*\)\s*\.\s*open\s*\(\s*(?:mode\s*=\s*)?(["'\`])[rbt]*[wax+][rbt+]*\1` +
         // `mode=` may come FIRST: Python accepts `open(mode="w", file=cfg)`,
         // and requiring it after a comma missed that ordering (r9).
         // Every open-mode branch requires the literal to CLOSE. r11 fixed

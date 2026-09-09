@@ -140,18 +140,36 @@ written with quotes in the middle of it — and the name is now recognised
 through that spelling, as the reader that selects the configuration already
 did.
 
-A copy can also be spelled as an argument list rather than as a command line —
-a wrapper handing the same four copy commands to a child process — and that
-spelling needed one thing the command line does not: something has to run the
-list. A list of the same strings stored in a variable copies nothing. The
-question of which call owns a piece of code was already answered here, for
-deciding whether a quoted string is an evaluated payload, so the walk that
-answers it is now shared rather than written twice. The two readers ask the
-same question and draw different conclusions from it: a payload additionally
-has to be evaluated by an interpreter, while a copy list only has to be run.
+A copy spelled as an argument list rather than a command line — a wrapper
+handing one of the same copy commands to a child process — was recognised for
+three rounds and is now **not**. Each round corrected it and exposed the next
+thing: the verb sits inside a quoted string, so the match had to be anchored
+outside it; the list may be formatted across lines; a list of the same strings
+merely stored in a variable runs nothing; the walk that finds the owning call
+began one character too early and missed the commonest spelling of all. The
+last correction is the one that ended it: the verb also has to be the program,
+and whether the first element of a list is the program depends on the calling
+convention of the interface around it — two widely used ones disagree — so
+answering it means keeping a table of process interfaces and their shapes. The
+recognition was withdrawn instead, and what is missed is nameable: a copy run
+as a child process through an argument list. The command-line spelling is
+unaffected, and the preservation declaration covers the gap.
 
-Two shapes are deliberately NOT recognised, and both are misses rather than
-noise. A command run through a module imported under an arbitrary alias is one:
+Which call owns a piece of code is still asked in one place rather than two.
+That walk was separated out while the argument-list reader existed, and has
+been kept: it names a question this checker asks, instead of hiding it inside
+the answer to a different one.
+
+A method call on a plain variable is not read as a file operation, in either
+of the two places that tried to. Telling `webbrowser.open("w")`, which opens a
+URL, from the same call on a path depends entirely on what the receiver IS, and
+a bare name does not say. Qualifying it by the receiver's NAME was written and
+withdrawn in the same sitting: a list of plausible variable names is precisely
+the open-ended predicate this work keeps removing. Where the path is
+constructed in place the shape is syntax rather than type, and is still read.
+
+Three shapes are deliberately NOT recognised, and all are misses rather than
+noise. A file operation reached through a variable is one, as just described. A command run through a module imported under an arbitrary alias is one:
 resolving that name means following a binding, which this reader declines
 everywhere and which is the subject of the open question above — the alternative
 of admitting any named receiver was measured against the common case of matching

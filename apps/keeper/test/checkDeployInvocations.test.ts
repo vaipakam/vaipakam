@@ -10588,62 +10588,7 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(r.ok).toBe(false);
   });
 
-  it('an argv copy command is a copy (#2066 r28)', () => {
-    // `subprocess.run(["cp", …])` runs the same cp; the shell form requires
-    // whitespace after the verb, which argv writes as a quote and a comma.
-    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
-    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
-    const r = runWith(
-      'dm.py',
-      'import subprocess\n' +
-        'subprocess.run(["cp", "generated.jsonc", "configs/custom.jsonc"])\n' +
-        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
-    );
-    expect(r.ok).toBe(false);
-  });
-
-  it('an argv element merely naming the config is not a copy (#2066 r28 bounds)', () => {
-    // The argv alternative must not match any list that contains the name.
-    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
-    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
-    const r = runWith(
-      'dn.py',
-      'import subprocess\n' +
-        'subprocess.run(["cat", "configs/custom.jsonc"])\n' +
-        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
-    );
-    expect(r.ok).toBe(true);
-  });
-
   // ---- Codex #2066 r29 ----
-
-  it('a multiline argv copy is a copy (#2066 r29)', () => {
-    // The span stopped at the newline after the executable, so ordinary
-    // formatting hid the destination.
-    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
-    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
-    const r = runWith(
-      'do.py',
-      'import subprocess\n' +
-        'subprocess.run([\n    "cp",\n    "generated.jsonc",\n    "configs/custom.jsonc",\n])\n' +
-        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
-    );
-    expect(r.ok).toBe(false);
-  });
-
-  it('a stored argv list copies nothing (#2066 r29)', () => {
-    // Three strings in a variable. The argv alternative matched the list
-    // itself, without asking whether anything runs it.
-    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
-    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
-    const r = runWith(
-      'dp.py',
-      'import subprocess\n' +
-        'args = ["cp", "generated.jsonc", "configs/custom.jsonc"]\n' +
-        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
-    );
-    expect(r.ok).toBe(true);
-  });
 
   it('a keyword argv program gates the evaluate letter (#2066 r29)', () => {
     // `subprocess.run(args=[…])` is the same call; the anchor could not cross
@@ -10671,30 +10616,100 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(r.ok).toBe(false);
   });
 
-  it('a program-and-args copy is a copy (#2066 r29 self-review)', () => {
-    // `execFile("cp", [src, dst])` is the ordinary Node spelling, and its
-    // match anchors on the call's OWN parenthesis. The owner walk starts one
-    // character back, so it skipped that parenthesis, looked for an enclosing
-    // call, found none, and dropped a real copy.
+  // ---- Codex #2066 r30 ----
+
+  it('an argv-spelled copy is a NAMED MISS (#2066 r30 withdrawal)', () => {
+    // Matched from r28 and corrected in every round since — anchor, span,
+    // ownership, walk start — and r30 showed the verb also has to be the
+    // PROGRAM, which depends on the calling convention of the API around the
+    // list. That needs a table of process APIs, so the alternative is
+    // withdrawn and the miss recorded here rather than patched again.
     seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
     seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
     const r = runWith(
-      'ds.mjs',
-      'execFile("cp", ["generated.jsonc", "configs/custom.jsonc"]);\n' +
+      'du.py',
+      'import subprocess\n' +
+        'subprocess.run(["cp", "generated.jsonc", "configs/custom.jsonc"])\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a shell copy command is unaffected by that withdrawal (#2066 r30 bounds)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'dv.sh',
+      'cp generated.jsonc configs/custom.jsonc\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('the Function constructor evaluates its source (#2066 r30)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'dw.mjs',
+      'Function("writeFileSync(\'configs/custom.jsonc\', \'{}\')")();\n' +
         'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
     );
     expect(r.ok).toBe(false);
   });
 
-  it('a non-process caller is still not a copy (#2066 r29 self-review bounds)', () => {
-    // Reaching the right parenthesis must not admit whatever owns it.
+  it('a browser open is not a file open (#2066 r30)', () => {
+    // What separates `webbrowser.open("w")` from `p.open("w")` is the TYPE of
+    // the receiver, and a bare name carries none. The method form is gone.
     seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
     seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
     const r = runWith(
-      'dt.mjs',
-      'describe("cp", ["generated.jsonc", "configs/custom.jsonc"]);\n' +
-        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+      'dx.py',
+      'import subprocess, webbrowser\n' +
+        'webbrowser.open("w")\n' +
+        'note = "configs/custom.jsonc"\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
     );
     expect(r.ok).toBe(true);
+  });
+
+  it('a constructed path open is still a write (#2066 r30 bounds)', () => {
+    // The constructor form is syntax, not a type, so it is still read.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'dy.py',
+      'import subprocess\n' +
+        'from pathlib import Path\n' +
+        'Path("configs/custom.jsonc").open("w").write("{}")\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a shell array initializer stores its text (#2066 r30)', () => {
+    // The assignment scan stopped at the initializer's `(`, so the stored
+    // string lost the assignment it stood in and read as executable.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'dz.sh',
+      'EXAMPLES=("writeFileSync(\'configs/custom.jsonc\', \'{}\')")\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a subshell is not an assignment (#2066 r30 bounds)', () => {
+    // Stepping back over the initializer paren must not step back over a
+    // subshell's — nothing assigns into that one.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'ea.sh',
+      'CFG=configs/custom.jsonc\n' +
+        '(printf new > "$CFG")\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
   });
 });
