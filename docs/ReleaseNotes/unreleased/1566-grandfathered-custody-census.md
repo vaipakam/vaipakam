@@ -7,11 +7,12 @@ already deployed — so this adds a read-only census that answers it, and commit
 its output as an artifact rather than a claim. "The set was empty" is something
 a later reader must be able to re-run, not take on trust.
 
-The result: across all nineteen retained deployments on the five chains —
-current contracts and the earlier ones a redeploy left behind — the census read
-202 loans and found no holding in any category anywhere it could actually read
-the records. Eight deployments are settled on that basis. Eleven are not, and
-the census says so rather than rounding them to empty: five because the one
+The result: across all twenty retained deployments on the five chains —
+current contracts and the earlier ones a redeploy left behind, including one
+the quick rehearsal deploy had set aside uncounted — the census read 215 loans
+and found no holding in any category anywhere it could actually read the
+records. Eight deployments are settled on that basis. Twelve are not, and the
+census says so rather than rounding them to empty: six because the one
 function that would read the intent records is not installed on those
 contracts, one because the contract no longer says which token it treats as
 VPFI and the record's token cannot be trusted to settle the two categories that
@@ -268,5 +269,16 @@ an endpoint that could answer for a different fork. And a deploy now announces
 that it is about to publish a new contract record before it does so, and
 withdraws the announcement afterwards, so a census that looks in between knows
 to wait rather than report an inventory that is about to change.
+
+Review then found the population itself was one short: the quick rehearsal
+deploy sets a retired contract's record aside under a different name that the
+census never looked at, and one such record — an earlier Optimism Sepolia
+deployment from May — was sitting on the operator's machine in no inventory.
+Those records are now counted, that deploy records them before setting them
+aside, and the inventory grew to fifteen archived contracts and twenty
+deployments in all. The deploy's announcement of a publication is now signed
+with a token only that deploy holds, so no other deploy can withdraw it, and
+the history proof is re-checked against the exact report being replaced and
+the exact block each chain was finally read at, just before writing.
 
 Refs #1566, #1349, #1956

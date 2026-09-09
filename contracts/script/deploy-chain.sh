@@ -600,10 +600,28 @@ fi
 
 if [ "$FRESH" = "1" ]; then
   echo "[0] --fresh cleanup"
+  # #1566 (Codex #2070 r25 P1) — the sidecar this step creates is a RETIRED
+  # DIAMOND: the redeploy cannot wipe its on-chain custody, and the sidecar is
+  # gitignored, so it must land in the committed archive inventory BEFORE the
+  # move (record first, then move — the same order deploy-testnet/mainnet use)
+  # or the census loses that Diamond from its population. Any sidecar an
+  # earlier run left unrecorded is reconciled first; a failure to record aborts
+  # before anything is moved.
+  MANIFEST_WRITER="$REPO_ROOT/packages/contracts/scripts/archive-manifest.mjs"
+  ARCHIVE_MANIFEST="$CONTRACTS_DIR/deployments/archive-manifest.json"
+  for prior in "$CONTRACTS_DIR/deployments/$CHAIN_SLUG"/addresses.prior-rehearsal.*.json; do
+    [ -f "$prior" ] || continue
+    ts="$(basename "$prior" .json)"; ts="${ts##*.}"
+    node "$MANIFEST_WRITER" append "$ARCHIVE_MANIFEST" "$CHAIN_SLUG" "prior-rehearsal-$ts" "$prior" \
+      || { echo "ERROR: could not reconcile the unrecorded sidecar $(basename "$prior") into archive-manifest.json; refusing --fresh" >&2; exit 1; }
+  done
   if [ -f "$CONTRACTS_DIR/deployments/$CHAIN_SLUG/addresses.json" ]; then
-    BACKUP="$CONTRACTS_DIR/deployments/$CHAIN_SLUG/addresses.prior-rehearsal.$(date +%s).json"
+    TS="$(date +%s)"
+    BACKUP="$CONTRACTS_DIR/deployments/$CHAIN_SLUG/addresses.prior-rehearsal.$TS.json"
+    node "$MANIFEST_WRITER" append "$ARCHIVE_MANIFEST" "$CHAIN_SLUG" "prior-rehearsal-$TS" "$CONTRACTS_DIR/deployments/$CHAIN_SLUG/addresses.json" \
+      || { echo "ERROR: could not record the prior deployment in archive-manifest.json; refusing --fresh (nothing moved)" >&2; exit 1; }
     mv "$CONTRACTS_DIR/deployments/$CHAIN_SLUG/addresses.json" "$BACKUP"
-    echo "  ✓ backed up prior addresses.json → $(basename "$BACKUP")"
+    echo "  ✓ backed up prior addresses.json → $(basename "$BACKUP") — recorded in archive-manifest.json; COMMIT IT"
   else
     echo "  (no prior addresses.json — already clean)"
   fi
@@ -667,7 +685,14 @@ if step_done "diamond"; then
 else
   echo
   echo "[2] DeployDiamond.s.sol"
+  # #1566 (Codex #2070 r24/r25) — two-phase live publication with a durable
+  # per-deploy token, the same protocol as deploy-testnet/mainnet.
+  LIVE_PUB_TOKEN="$$-$(date +%s)-$RANDOM"
+  node "$REPO_ROOT/packages/contracts/scripts/archive-manifest.mjs" live-begin "$CONTRACTS_DIR/deployments/archive-manifest.json" "$CHAIN_SLUG" "$LIVE_PUB_TOKEN" "$$" \
+    || { echo "ERROR: could not mark the live publication in archive-manifest.json (another deploy on $CHAIN_SLUG may be in progress)" >&2; exit 1; }
   forge script script/DeployDiamond.s.sol --rpc-url "$RPC" --broadcast --slow
+  node "$REPO_ROOT/packages/contracts/scripts/archive-manifest.mjs" live-end "$CONTRACTS_DIR/deployments/archive-manifest.json" "$CHAIN_SLUG" "$LIVE_PUB_TOKEN" "$CONTRACTS_DIR/deployments/$CHAIN_SLUG/addresses.json" \
+    || echo "WARNING: could not record the live artifact publication in archive-manifest.json — record it before committing (archive-manifest.mjs live-end ... $LIVE_PUB_TOKEN)" >&2
   snapshot_addresses "post-diamond"
   mark_done "diamond"
 fi

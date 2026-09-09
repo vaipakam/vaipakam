@@ -5329,11 +5329,19 @@ reported a comfortable answer it had not earned:
   uncensused for longer) and its batching is ADAPTIVE — public endpoints
   differ (measured with a user agent set: `sepolia.base.org` accepts 25 block
   reads per request, Tenderly's Arbitrum gateway 10, publicnode 100; single
-  reads run at about two per second everywhere), so every rate-limit answer
-  halves the batch down to single reads and doubles the pause, and a clean
-  batch keeps them. The fetch adapter now also sends a user agent, since
-  Cloudflare-fronted endpoints reject the empty signature outright. The
-  evidence is
+  reads run at about two per second everywhere), so ANY failure of a batched
+  request halves the batch down to single reads and doubles the pause — an
+  endpoint that rejects an oversized batch answers with a single error object
+  that viem's batch decoder reports as an unknown failure, not a rate limit —
+  and only a failure at single reads propagates; after twenty clean batches
+  the pause halves back toward its base and the batch grows by one, staying
+  below the smallest size the endpoint refused; and up to three batches are in
+  flight at once, the link check running over the concatenated blocks in
+  order so concurrency never weakens the proof (1,501 arb-sepolia blocks in 87
+  seconds through Tenderly). A walk that fails now prints its reason rather
+  than leaving it for the guard to surface at publication. The fetch adapter
+  also sends a user agent, since Cloudflare-fronted endpoints reject the empty
+  signature outright. The evidence is
   gathered for the snapshot this run actually replaces — the chain's partial
   file for a `--chain` run, whose heights also join the monotonic floor —
   rather than always for the canonical artifact, which had left a repeated
@@ -5346,6 +5354,32 @@ reported a comfortable answer it had not earned:
   publication — sees the marker and refuses. A second begin on a chain already
   publishing is refused unless the recording process is dead; a crashed deploy
   is cleared by running `live-end`.
+
+  **Round 25 found the population was still short by one, and closed three
+  more doors.** The quick-loop deploy (`deploy-chain.sh --fresh`) retires the
+  prior artifact to a gitignored sidecar, `addresses.prior-rehearsal.<ts>.json`,
+  and never recorded it anywhere; the census only collected `.archive/`, so a
+  Diamond retired that way vanished from the population — and one had:
+  op-sepolia's `0x933f99ae…`, retired on 2026-05-06, was on this machine and in
+  no inventory. Sidecars are now collected as archived deployments under the
+  stamp `prior-rehearsal-<ts>`, `deploy-chain.sh` records the prior artifact
+  before it moves it (reconciling any sidecar an earlier run left unrecorded,
+  and aborting rather than moving if it cannot record) and marks its broadcast
+  with the same two-phase protocol, and the manifest was regenerated to fifteen
+  entries — so the census population is twenty deployments from run 24. The
+  publication marker was bound to the short-lived `live-begin` process, dead
+  the moment the command returned, so a concurrent deploy could take it over
+  and the first deploy's `live-end` would then clear the second's marker mid-
+  broadcast; the marker now carries a durable per-deploy token and the deploy
+  SHELL's pid, `live-end` must present the same token (or `--force`, for a
+  crashed deploy), and a takeover needs the shell to be dead. And the ancestry
+  evidence was gathered once, for the first block a chain resolved, while the
+  lagging-head cap and a failed full run's partial output could both change
+  what was actually compared: evidence is now bound to the proposed block's
+  number and hash, the guard refuses evidence bound to any other block, a cap
+  walks again to the capped block, and before publication the run reloads the
+  file it will actually replace and walks again for any chain whose evidence
+  is missing or bound elsewhere.
   Hand-computed storage slots were never an option: they fail SILENTLY as
   zero, manufacturing the exact "empty" result the census exists to
   establish. The event reconstruction is retained behind `--corroborate` as
@@ -5368,42 +5402,48 @@ reported a comfortable answer it had not earned:
   latter as a failure on op-sepolia rather than silently counting it as an
   absent commit.
 
-**RESULT (2026-09-09, run 23 — all nineteen retained deployments across five
-chains, inventory from the committed manifest, the two unsound bounds
+**RESULT (2026-09-09, run 26 — all TWENTY retained deployments across five
+chains, inventory from the committed manifest (fifteen archived, one of them
+the quick-loop sidecar round 25 found uncounted), the two unsound bounds
 withdrawn, every chain read at or above the height the previous committed run
-certified, the serving endpoint, producer liveness and scope authority
-recorded on every result, a result shared between artifacts only when their
-scoping metadata is identical, and an artifact-sourced token never certifying
-a scope-dependent class): eight deployments are PROVEN EMPTY on every class;
-eleven are INDETERMINATE on at least one.** 202 loan reads were made across
-the nineteen artifacts (eighteen distinct Diamonds: arb-sepolia's 01-36-25Z
-archive names the live Diamond but records no VPFI token, and since that
-Diamond does not route the token getter it is scanned on its own and cannot be
-scoped); **zero rows were found in any class on any deployment where rows
-could be read**; every Diamond whose VPFI token resolves holds zero, and no
-backing shortfall exists anywhere rows were readable. The artifact records
-`migrationRetirable: false` — the population is not yet established empty,
-and fifteen of the nineteen deployments still route a custody surface, so
-even a fully proven run would report the migration half as not yet retirable
-until it follows a finalized producer freeze or an isolation deploy. The move
-from nine to eight is arb-sepolia's live Diamond: its token getter is
-unrouted, so its scope came from the artifact, and under the round-22 rule an
-artifact token reads and files rows but never certifies — classes 2 and 3
-there are indeterminate pending routing of the getter or a calibrated read of
-the token slot. Runs 15 to 22, made while closing the round-12 to round-22
+certified and proven to DESCEND from it by a parent-hash link walk, the
+serving endpoint, producer liveness and scope authority recorded on every
+result, a result shared between artifacts only when their scoping metadata is
+identical, and an artifact-sourced token never certifying a scope-dependent
+class): eight deployments are PROVEN EMPTY on every class; twelve are
+INDETERMINATE on at least one.** 215 loan reads were made across the twenty
+artifacts (nineteen distinct Diamonds: arb-sepolia's 01-36-25Z archive names
+the live Diamond but records no VPFI token, and since that Diamond does not
+route the token getter it is scanned on its own and cannot be scoped); **zero
+rows were found in any class on any deployment where rows could be read**;
+every Diamond whose VPFI token resolves holds zero, and no backing shortfall
+exists anywhere rows were readable. The artifact records `migrationRetirable:
+false` — the population is not yet established empty, and sixteen of the
+twenty deployments still route a custody surface, so even a fully proven run
+would report the migration half as not yet retirable until it follows a
+finalized producer freeze or an isolation deploy. The twentieth deployment is
+the op-sepolia Diamond the quick-loop deploy had retired to a sidecar on
+2026-05-06 (`0x933f99ae…`, 13 loans): classes 1, 2 and 4 read empty through
+routed getters and class 3 is indeterminate for the same reason as its
+siblings — the intent getter is unrouted. arb-sepolia's live Diamond stays
+indeterminate on classes 2 and 3: its token getter is unrouted, so its scope
+came from the artifact, and an artifact token reads and files rows but never
+certifies. Runs 15 to 25, made while closing the round-12 to round-25
 findings, reached the standing of their day for every deployment they
-completed; runs 15 and 16 were discarded for a stale finality height and a
-partial endpoint stamp, runs 17, 19 and 20 were superseded by later rules,
-and runs 18, 21 and 22 lost arb-sepolia to the official endpoint's lagging
-replicas, which is why that chain now reads through Tenderly's gateway. How
-each deployment stands:
+completed; the discarded ones fell to a stale finality height, a partial
+endpoint stamp, later rules, the official arb-sepolia endpoint's lagging
+replicas (which is why that chain now reads through Tenderly's gateway), and
+an ancestry walk that had not yet learned to shrink its batches. The walks in
+run 26: 34,082 arb-sepolia blocks in 1,354 s, 22,529 bnb-testnet blocks in
+1,071 s, 5,641 op-sepolia blocks in 224 s, 4,798 base-sepolia blocks in 442 s,
+928 sepolia blocks in 19 s. How each deployment stands:
 
 | Standing | Deployments | Basis |
 | --- | --- | --- |
 | proven — enumerated | 2 | every loan read through routed getters in all four classes, scope from the chain: 0 rows |
 | proven — `no-loans-ever-created` | 6 | loan counter is zero (state read) and every class is loan-keyed |
 | indeterminate on classes 2 and 3 | 1 | `arb-sepolia/live`: classes 1/4 enumerated empty and 0 rows read in 2/3 by the artifact's token, but the token getter is unrouted, so the scope is not authoritative — a rotation could postdate the artifact |
-| indeterminate on class 3 ONLY | 5 | classes 1/2/4 enumerated empty; the intent getter is unrouted, so `intentCommits` cannot be read (arb-sepolia ×2 archives, base-sepolia 06-30 archive, op-sepolia live, sepolia 05-10 archive) |
+| indeterminate on class 3 ONLY | 6 | classes 1/2/4 enumerated empty; the intent getter is unrouted, so `intentCommits` cannot be read (arb-sepolia ×2 archives, base-sepolia 06-30 archive, op-sepolia live, sepolia 05-10 archive) |
 | indeterminate on every class | 3 | bare shells: every custody selector unrouted TODAY, storage unreadable without a getter |
 | indeterminate on every class | 1 | `base-sepolia/.archive/2026-07-01T01-03-39Z`: the recorded address is not a Vaipakam Diamond |
 | indeterminate on every class | 1 | `arb-sepolia/.archive/2026-07-01T01-36-25Z`: names the live Diamond but records no VPFI token, and that Diamond does not route the token getter, so the rows cannot be scoped from this artifact (the live twin scopes from its own artifact's token) |

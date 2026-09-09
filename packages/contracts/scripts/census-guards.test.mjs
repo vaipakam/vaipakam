@@ -29,13 +29,16 @@ test('regression: a higher height must DESCEND from the committed block (r23)', 
   const cur = { results: [res('x', 'live', 100, H(1))] };
   const next = [res('x', 'live', 101, H(5))];
   assert.match(run(cur, next).reason, /could not be verified as an ancestor/);
-  assert.match(run(cur, next, { ancestry: new Map([['x', { height: 100n, hash: H(1), verified: false, reason: 'parent-hash link broken at 101' }]]) }).reason, /NOT proven an ancestor.*link broken/);
-  assert.match(run(cur, next, { ancestry: new Map([['x', { height: 99n, hash: H(1), verified: true }]]) }).reason, /could not be verified/);
-  assert.equal(run(cur, next, { ancestry: new Map([['x', { height: 100n, hash: H(1), verified: true, method: 'parent-hash-link-walk' }]]) }).reason, null);
+  const P = { number: 101n, hash: H(5) };
+  assert.match(run(cur, next, { ancestry: new Map([['x', { height: 100n, hash: H(1), proposed: P, verified: false, reason: 'parent-hash link broken at 101' }]]) }).reason, /NOT proven an ancestor.*link broken/);
+  assert.match(run(cur, next, { ancestry: new Map([['x', { height: 99n, hash: H(1), proposed: P, verified: true }]]) }).reason, /could not be verified/);
+  assert.match(run(cur, next, { ancestry: new Map([['x', { height: 100n, hash: H(1), proposed: { number: 105n, hash: H(9) }, verified: true }]]) }).reason, /bound to a different proposed block/);
+  assert.match(run(cur, next, { ancestry: new Map([['x', { height: 100n, hash: H(1), verified: true }]]) }).reason, /bound to a different proposed block/);
+  assert.equal(run(cur, next, { ancestry: new Map([['x', { height: 100n, hash: H(1), proposed: P, verified: true, method: 'parent-hash-link-walk' }]]) }).reason, null);
 });
 
 test('regression: a dropped identity is refused unless acknowledged, and acknowledged changes are recorded and carried forward', () => {
-  const anc = new Map([['x', { height: 100n, hash: H(1), verified: true }]]);
+  const anc = new Map([['x', { height: 100n, hash: H(1), proposed: { number: 101n, hash: H(5) }, verified: true }]]);
   const cur = { results: [res('x', 'live', 100, H(1), '0xold')], identityChanges: [{ chainSlug: 'x', deployment: 'live', previous: { diamond: '0xancient', vpfiToken: null }, replacedBy: { diamond: '0xold', vpfiToken: null }, acknowledgedBy: 'earlier' }] };
   const next = [res('x', 'live', 101, H(5), '0xnew')];
   assert.match(run(cur, next, { ancestry: anc }).reason, /identity change/);

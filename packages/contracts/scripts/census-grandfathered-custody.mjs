@@ -372,11 +372,18 @@ function deployedChains() {
 const ARCHIVE_MANIFEST = join(DEPLOYMENTS, 'archive-manifest.json');
 
 /** Every chain directory that has a local `.archive/`, live artifact or not. */
+/** `addresses.prior-rehearsal.<unix-ts>.json` — the quick-loop deploy's (deploy-chain.sh --fresh) retired artifact; gitignored like .archive/. */
+const SIDECAR_RE = /^addresses\.prior-rehearsal\.(\d+)\.json$/;
+function sidecarsOf(slug) {
+  const dir = join(DEPLOYMENTS, slug);
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir).filter((f) => SIDECAR_RE.test(f)).sort();
+}
 function chainsWithLocalArchives() {
   return readdirSync(DEPLOYMENTS, { withFileTypes: true })
     .filter((d) => d.isDirectory() && !NOT_A_DEPLOYMENT.has(d.name))
     .map((d) => d.name)
-    .filter((slug) => existsSync(join(DEPLOYMENTS, slug, '.archive')))
+    .filter((slug) => existsSync(join(DEPLOYMENTS, slug, '.archive')) || sidecarsOf(slug).length > 0)
     .sort();
 }
 
@@ -387,22 +394,27 @@ function localArchivedDiamonds() {
   // has no live artifact — and its local archives must still be reconciled
   // against the manifest, or the staleness check is blind exactly where the
   // inventory is most likely to be short.
+  const push = (slug, stamp, a) => {
+    if (!a.diamond) return; // an archive entry without a Diamond has nothing on-chain to census
+    out.push({ slug, stamp, chainId: a.chainId ?? null, diamond: a.diamond, deployBlock: a.deployBlock ?? null, vpfiToken: a.vpfiToken ?? a.vpfiMirror ?? null });
+  };
   for (const slug of chainsWithLocalArchives()) {
     const archiveDir = join(DEPLOYMENTS, slug, '.archive');
-    if (!existsSync(archiveDir)) continue;
-    for (const stamp of readdirSync(archiveDir).sort()) {
-      const f = join(archiveDir, stamp, 'addresses.json');
-      if (!existsSync(f)) continue;
-      const a = JSON.parse(readFileSync(f, 'utf8'));
-      if (!a.diamond) continue; // an archive entry without a Diamond has nothing on-chain to census
-      out.push({
-        slug,
-        stamp,
-        chainId: a.chainId ?? null,
-        diamond: a.diamond,
-        deployBlock: a.deployBlock ?? null,
-        vpfiToken: a.vpfiToken ?? a.vpfiMirror ?? null,
-      });
+    if (existsSync(archiveDir)) {
+      for (const stamp of readdirSync(archiveDir).sort()) {
+        const f = join(archiveDir, stamp, 'addresses.json');
+        if (existsSync(f)) push(slug, stamp, JSON.parse(readFileSync(f, 'utf8')));
+      }
+    }
+    // Codex #2070 r25 P1 — the quick-loop deploy (deploy-chain.sh --fresh)
+    // retires the prior artifact to a gitignored SIDECAR rather than .archive/,
+    // and never recorded it; the retired Diamond vanished from the census
+    // population. Sidecars are archived deployments and are collected under
+    // the stamp `prior-rehearsal-<ts>` — the same stamp deploy-chain.sh now
+    // appends before it moves the file.
+    for (const f of sidecarsOf(slug)) {
+      const ts = SIDECAR_RE.exec(f)[1];
+      push(slug, `prior-rehearsal-${ts}`, JSON.parse(readFileSync(join(DEPLOYMENTS, slug, f), 'utf8')));
     }
   }
   return out;
@@ -668,6 +680,10 @@ const ANCESTRY_WALK_MAX = BigInt(arg('--ancestry-walk-max', '250000'));
 const ANCESTRY_BATCH = Number(arg('--ancestry-batch', '25'));
 const ANCESTRY_BATCH_PAUSE_MS = Number(arg('--ancestry-batch-pause-ms', '100'));
 const ANCESTRY_RATE_HITS_MAX = 40;
+/** Batched requests in flight at once during the walk (links are checked in order afterwards); failures shrink the batch, never the concurrency. */
+const ANCESTRY_CONCURRENCY = Math.max(1, Number(arg('--ancestry-concurrency', '3')));
+/** After this many clean batches the pause halves back toward its base and the batch grows by one toward the last refused size. */
+const ANCESTRY_GROW_AFTER = 20;
 /**
  * Prove that `committed` is an ancestor of `proposed` by a PARENT-HASH LINK
  * WALK (Codex #2070 r24 P1): fetch every block in [committed.height,
@@ -678,7 +694,7 @@ const ANCESTRY_RATE_HITS_MAX = 40;
  * independent lookup of "which hash do you serve at height N" proved nothing
  * about the relationship, which is what an earlier revision relied on.
  */
-async function verifyAncestryByWalk(rpc, committed, proposed, who) {
+export async function verifyAncestryByWalk(rpc, committed, proposed, who) {
   if (committed.height === proposed.number) {
     return committed.hash === String(proposed.hash).toLowerCase()
       ? { verified: true, method: 'same-height', span: 1 }
@@ -692,6 +708,8 @@ async function verifyAncestryByWalk(rpc, committed, proposed, who) {
   let batchSize = Math.max(1, ANCESTRY_BATCH);
   let pauseMs = ANCESTRY_BATCH_PAUSE_MS;
   let rateHits = 0;
+  let refusedAt = Infinity; // the smallest batch size the endpoint has refused; growth stays below it
+  let cleanStreak = 0;
   const batcherFor = (n) => createPublicClient({ transport: http(rpc, { fetchFn: fetchViaNodeAgents, batch: { batchSize: n, wait: 0 } }) });
   let batcher = batcherFor(batchSize);
   let prevHash = null;
@@ -699,24 +717,53 @@ async function verifyAncestryByWalk(rpc, committed, proposed, who) {
   const started = Date.now();
   for (let from = committed.height; from <= proposed.number; ) {
     const size = BigInt(batchSize);
-    const to = from + size - 1n > proposed.number ? proposed.number : from + size - 1n;
-    const numbers = [];
-    for (let n = from; n <= to; n++) numbers.push(n);
+    // Up to ANCESTRY_CONCURRENCY consecutive batches in flight; the link check
+    // below runs over the concatenated blocks in order, so concurrency never
+    // weakens the proof — it only changes how many requests are outstanding.
+    const ranges = [];
+    let cursor = from;
+    for (let k = 0; k < ANCESTRY_CONCURRENCY && cursor <= proposed.number; k++) {
+      const end = cursor + size - 1n > proposed.number ? proposed.number : cursor + size - 1n;
+      const numbers = [];
+      for (let n = cursor; n <= end; n++) numbers.push(n);
+      ranges.push({ numbers, end });
+      cursor = end + 1n;
+    }
+    const to = ranges[ranges.length - 1].end;
     let blocks;
     try {
-      blocks = await withReplicaRetry(to, () => Promise.all(numbers.map((n) => batcher.getBlock({ blockNumber: n }))));
+      const groups = await Promise.all(ranges.map((r) => withReplicaRetry(r.end, () => Promise.all(r.numbers.map((n) => batcher.getBlock({ blockNumber: n }))))));
+      blocks = groups.flat();
     } catch (err) {
-      if (classifyRpcError(err) !== 'rate') throw err;
+      // ANY failure of a batched request shrinks the batch (an endpoint that
+      // rejects an oversized batch answers with a single error object, which
+      // viem's batch decoder reports as an unknown "reading 'error'" failure
+      // rather than a rate limit — Tenderly at 25/req); only a failure at
+      // single reads propagates, since nothing is left to shrink.
+      if (batchSize === 1 && classifyRpcError(err) !== 'rate') throw err;
       rateHits += 1;
       if (rateHits > ANCESTRY_RATE_HITS_MAX) throw err;
+      refusedAt = Math.min(refusedAt, batchSize);
+      cleanStreak = 0;
       batchSize = Math.max(1, Math.floor(batchSize / 2));
       pauseMs = Math.min(pauseMs * 2 || 200, 8_000);
       batcher = batcherFor(batchSize);
-      process.stderr.write(`census: ${who} — rate-limited during the ancestry walk; batch → ${batchSize}, pause → ${pauseMs} ms (${rateHits}/${ANCESTRY_RATE_HITS_MAX})\n`);
+      process.stderr.write(`census: ${who} — batched read refused (${classifyRpcError(err)}) during the ancestry walk; batch → ${batchSize}, pause → ${pauseMs} ms (${rateHits}/${ANCESTRY_RATE_HITS_MAX})\n`);
       await sleep(pauseMs);
       continue; // retry the same range at the smaller size
     }
     from = to + 1n;
+    // Grow back after a clean streak: the pause halves toward its base and the
+    // batch grows by one, staying below the smallest size the endpoint refused.
+    cleanStreak += 1;
+    if (cleanStreak >= ANCESTRY_GROW_AFTER) {
+      cleanStreak = 0;
+      pauseMs = Math.max(ANCESTRY_BATCH_PAUSE_MS, Math.floor(pauseMs / 2));
+      if (batchSize + 1 < refusedAt) {
+        batchSize += 1;
+        batcher = batcherFor(batchSize);
+      }
+    }
     if (pauseMs > 0 && to < proposed.number) await sleep(pauseMs);
     for (const b of blocks) {
       const h = String(b.hash).toLowerCase();
@@ -853,6 +900,9 @@ async function capChainAtLaggingHead(client, slug, who, head) {
   if (!b?.hash) return null;
   CHAIN_HEAD_CAPS.set(slug, caps + 1);
   CENSUS_BLOCK_BY_CHAIN.set(slug, { number: b.number, hash: b.hash, tag: `${current.tag} → capped at lagging replica head ${head} (finalized by construction; cap ${caps + 1}/${MAX_HEAD_CAPS_PER_CHAIN})` });
+  // Codex #2070 r25 P1 — the census block moved; evidence gathered for the
+  // original block proves nothing about this one. Walk to the capped block.
+  await gatherAncestry(slug, who, CENSUS_BLOCK_BY_CHAIN.get(slug));
   return CENSUS_BLOCK_BY_CHAIN.get(slug);
 }
 
@@ -971,12 +1021,53 @@ async function gatherAncestry(chainSlug, who, chosen) {
     ANCESTRY_SEEN.delete(chainSlug);
     return;
   }
+  const proposed = { number: chosen.number, hash: String(chosen.hash).toLowerCase() };
   try {
     const v = await verifyAncestryByWalk(rpcFor(chainSlug), { height: th, hash: thash }, chosen, who);
-    ANCESTRY_SEEN.set(chainSlug, { height: th, hash: thash, ...v });
+    ANCESTRY_SEEN.set(chainSlug, { height: th, hash: thash, proposed, ...v });
   } catch (err) {
-    ANCESTRY_SEEN.set(chainSlug, { height: th, hash: thash, verified: false, reason: `the ancestry walk failed: ${classifyRpcError(err)} — ${err.message?.split('\n')[0]}` });
+    const reason = `the ancestry walk failed: ${classifyRpcError(err)} — ${err.message?.split('\n')[0]}`;
+    process.stderr.write(`census: ${who} — ${reason}\n`);
+    ANCESTRY_SEEN.set(chainSlug, { height: th, hash: thash, proposed, verified: false, reason });
   }
+}
+/**
+ * Before publication (Codex #2070 r25 P1/P2): the snapshot actually being
+ * replaced is the OUTPUT FILE, which for a full run that lost a chain is a
+ * partial file the start-of-run load never saw; and a chain's census block can
+ * have moved after its evidence was gathered (the lagging-head cap). So the
+ * evidence is re-validated against the output file's blocks and the FINAL
+ * block each chain was read at, and any chain whose evidence is missing or
+ * bound to a different proposed block is walked again now.
+ */
+async function ensureAncestryFor(outFile, results, who = 'publication') {
+  const savedH = new Map(TARGET_HEIGHT);
+  const savedHash = new Map(TARGET_HASH);
+  try {
+    loadTargetSnapshot(outFile);
+  } catch (err) {
+    throw new Error(`${outFile} is the snapshot this run would replace, and it cannot be read: ${err.message}`);
+  }
+  const finalBlock = new Map();
+  for (const r of results) {
+    const h = BigInt(r.atBlock);
+    if (!finalBlock.has(r.chainSlug) || h > finalBlock.get(r.chainSlug).number) finalBlock.set(r.chainSlug, { number: h, hash: String(r.atBlockHash).toLowerCase() });
+  }
+  for (const [slug, chosen] of finalBlock) {
+    const th = TARGET_HEIGHT.get(slug);
+    const thash = TARGET_HASH.get(slug);
+    if (th === undefined || !thash || th >= chosen.number) {
+      ANCESTRY_SEEN.delete(slug); // nothing to prove (no target, or equal/lower height — the height/hash rules decide)
+      continue;
+    }
+    const seen = ANCESTRY_SEEN.get(slug);
+    const bound = seen && seen.height === th && seen.hash === thash && seen.proposed && seen.proposed.number === chosen.number && seen.proposed.hash === chosen.hash;
+    if (bound && seen.verified === true) continue;
+    process.stderr.write(`census: ${slug} — ancestry evidence ${seen ? 'is bound to a different block' : 'is missing'} for the snapshot being replaced (${th} → ${chosen.number}); walking now\n`);
+    await gatherAncestry(slug, `${slug} (${who})`, chosen);
+  }
+  // the monotonic floor keeps the higher of canonical and target; leave TARGET_* describing the output file
+  void savedH; void savedHash;
 }
 
 
@@ -1918,6 +2009,7 @@ export function snapshotRegression({ current, results, ancestry, acknowledged, n
       const committedHash = theirsHash.get(slug);
       if (!committedHash) return null; // a committed result without a hash cannot be verified either way; height rules already applied
       if (!seen || seen.height !== committedH || lc(seen.hash) !== committedHash) return `${slug}: the committed block ${committedH} could not be verified as an ancestor (no ancestry evidence gathered for that block by this run)`;
+      if (!seen.proposed || seen.proposed.number !== mine.get(slug) || lc(seen.proposed.hash) !== mineHash.get(slug)) return `${slug}: the ancestry evidence is bound to a different proposed block (${seen.proposed?.number ?? '?'} ${seen.proposed?.hash ?? ''}) than this run's ${mine.get(slug)} ${mineHash.get(slug)} — the census block moved after the walk`;
       if (seen.verified !== true) return `${slug}: the committed block ${committedH} (${committedHash}) is NOT proven an ancestor of this run's block — ${seen.reason ?? 'the parent-hash walk did not verify'}`;
       return null;
     })
@@ -2159,6 +2251,11 @@ async function main() {
   // snapshot over a newer one that had seen a fresh row.
   // The text is PRODUCED after the comparison so an acknowledged displacement
   // the comparison recorded is in the bytes written (r16).
+  // Codex #2070 r25 — ancestry is re-validated against the file ACTUALLY being
+  // replaced and the FINAL block of every chain (a full run that lost a chain
+  // publishes a partial the start-of-run load never saw; a cap moves a chain's
+  // block after its evidence was gathered). Async, so it runs BEFORE the locks.
+  await ensureAncestryFor(outFile, results);
   // Codex #2070 r18 P1 — the manifest lock is held from the inventory
   // re-check THROUGH the rename (manifest lock outside, artifact lock inside;
   // every path takes them in that order), so no --fresh can commit between

@@ -963,7 +963,8 @@ EOF
   # refuses, so the unlocked write can no longer slip past its snapshot. Failing
   # to mark aborts here — nothing has been broadcast yet.
   if command -v node >/dev/null 2>&1 && [ -f "$REPO_ROOT/packages/contracts/scripts/archive-manifest.mjs" ]; then
-    node "$REPO_ROOT/packages/contracts/scripts/archive-manifest.mjs" live-begin "$CONTRACTS_DIR/deployments/archive-manifest.json" "$CHAIN_SLUG" \
+    LIVE_PUB_TOKEN="$$-$(date +%s)-$RANDOM"   # durable per-deploy token: only THIS deploy can end what it began (Codex #2070 r25 P1)
+    node "$REPO_ROOT/packages/contracts/scripts/archive-manifest.mjs" live-begin "$CONTRACTS_DIR/deployments/archive-manifest.json" "$CHAIN_SLUG" "$LIVE_PUB_TOKEN" "$$" \
       || { echo "ERROR: could not mark the live publication in archive-manifest.json (another deploy on $CHAIN_SLUG may be in progress)" >&2; exit 1; }
   fi
   echo "[2] DeployDiamond.s.sol"
@@ -1020,7 +1021,7 @@ EOF
   # written; this only fails to RECORD it, which the operator must fix before
   # committing (the manifest must be committed with the deploy either way).
   if command -v node >/dev/null 2>&1 && [ -f "$REPO_ROOT/packages/contracts/scripts/archive-manifest.mjs" ]; then
-    node "$REPO_ROOT/packages/contracts/scripts/archive-manifest.mjs" live-end "$CONTRACTS_DIR/deployments/archive-manifest.json" "$CHAIN_SLUG" "$DEPLOY_DIR/addresses.json" \
+    node "$REPO_ROOT/packages/contracts/scripts/archive-manifest.mjs" live-end "$CONTRACTS_DIR/deployments/archive-manifest.json" "$CHAIN_SLUG" "${LIVE_PUB_TOKEN:-none}" "$DEPLOY_DIR/addresses.json" \
       || echo "WARNING: could not record the live artifact publication in archive-manifest.json — record it before committing (node packages/contracts/scripts/archive-manifest.mjs live-end ...)" >&2
   fi
   # Write deployment_source.json (commit + deployer + timestamp) —

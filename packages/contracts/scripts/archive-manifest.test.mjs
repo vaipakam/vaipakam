@@ -330,16 +330,22 @@ test('two-phase live publication: begin marks, end clears and bumps; a second be
   const { dir, manifest } = fixture();
   const e1 = entryFromArtifact({ slug: 'a', stamp: 's1', addrPath: artifact(dir, 1) });
   appendEntry(manifest, e1);
-  const mark = beginLivePublication(manifest, { slug: 'a' });
-  assert.equal(mark.pid, process.pid);
+  const mark = beginLivePublication(manifest, { slug: 'a', token: 'tok-1', pid: process.pid });
+  assert.equal(mark.pid, process.pid); assert.equal(mark.token, 'tok-1');
   assert.deepEqual(livePublicationsInProgress(readManifest(manifest)).map((x) => x.slug), ['a']);
-  assert.throws(() => beginLivePublication(manifest, { slug: 'a' }), /already publishing/);
+  assert.throws(() => beginLivePublication(manifest, { slug: 'a', token: 'tok-2', pid: process.pid }), /already publishing/);
+  assert.throws(() => beginLivePublication(manifest, { slug: 'a' }), /needs a per-deploy token/);
   regenerateEntries(manifest, () => [e1]);
   assert.deepEqual(livePublicationsInProgress(readManifest(manifest)).map((x) => x.slug), ['a'], 'regeneration carries the marker');
-  assert.equal(endLivePublication(manifest, { slug: 'a', diamond: '0xlive' }), 1);
+  // the WRONG token cannot end it (r25): the marker stays and nothing is bumped
+  assert.throws(() => endLivePublication(manifest, { slug: 'a', token: 'tok-2', diamond: '0x' }), /belongs to another deploy/);
+  assert.deepEqual(livePublicationsInProgress(readManifest(manifest)).map((x) => x.slug), ['a']);
+  assert.equal(readManifest(manifest).liveGeneration ?? 0, 0);
+  assert.equal(endLivePublication(manifest, { slug: 'a', token: 'tok-1', diamond: '0xlive' }), 1);
   assert.deepEqual(livePublicationsInProgress(readManifest(manifest)), []);
   assert.equal(readManifest(manifest).liveGeneration, 1);
-  // a marker whose recorder is dead can be taken over
-  writeFileSync(manifest, JSON.stringify({ ...readManifest(manifest), livePublicationsInProgress: { b: { pid: 2 ** 22 - 1, startedAt: 'x' } } }));
-  assert.equal(beginLivePublication(manifest, { slug: 'b' }).pid, process.pid);
+  // a marker whose deploy SHELL is dead can be taken over; --force clears any marker
+  writeFileSync(manifest, JSON.stringify({ ...readManifest(manifest), livePublicationsInProgress: { b: { token: 'old', pid: 2 ** 22 - 1, startedAt: 'x' } } }));
+  assert.equal(beginLivePublication(manifest, { slug: 'b', token: 'new', pid: process.pid }).token, 'new');
+  assert.equal(endLivePublication(manifest, { slug: 'b', token: 'wrong', force: true }), 2);
 });

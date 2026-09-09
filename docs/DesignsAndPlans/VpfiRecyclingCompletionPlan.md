@@ -26,10 +26,12 @@
 >
 > **#1566 is no longer owner-gated** (ratified 2026-09-07: census first, then
 > closure 3's resolver, then closure 2, slice 4 last). The census is DONE and
-> read 202 loans across all **nineteen retained deployments** (live plus
-> archived, five chains) and found **zero custody rows in any class anywhere
-> rows could be read**, with zero backing shortfall. **Eight deployments are
-> PROVEN empty on every class; eleven are indeterminate** — five on class 3
+> read 215 loans across all **twenty retained deployments** (live plus
+> archived, five chains — the twentieth an op-sepolia Diamond the quick-loop
+> deploy had retired to an uncounted sidecar) and found **zero custody rows in
+> any class anywhere rows could be read**, with zero backing shortfall.
+> **Eight deployments are PROVEN empty on every class; twelve are
+> indeterminate** — six on class 3
 > only (the intent getter is unrouted, so `intentCommits` cannot be read),
 > one on classes 2 and 3 (arb-sepolia live: its token getter is unrouted, so
 > the artifact's token reads rows but cannot certify them), three bare shells

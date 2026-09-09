@@ -474,21 +474,30 @@ export function bumpLiveGeneration(manifestPath, { slug, diamond } = {}, lockOpt
  * publishing is refused. `live-end` with no matching marker still bumps (a
  * crashed deploy is cleared by running it).
  */
-export function beginLivePublication(manifestPath, { slug } = {}, lockOpts) {
+export function beginLivePublication(manifestPath, { slug, token, pid } = {}, lockOpts) {
   if (!slug) throw new Error('archive-manifest: live-begin needs a slug');
+  // Codex #2070 r25 P1 — the marker is bound to a DURABLE per-deploy token and
+  // the long-lived deploy SHELL's pid, never to this short-lived node process:
+  // `live-begin` returns in milliseconds, so its own pid is dead by the time
+  // anyone checks it, and a concurrent deploy on the same slug could take the
+  // marker over and then have its own marker cleared by the first deploy's
+  // `live-end`. With a token, only the deploy that began can end (or an
+  // operator with --force), and a takeover needs the SHELL to be dead.
+  if (!token) throw new Error('archive-manifest: live-begin needs a per-deploy token (e.g. "$$-$(date +%s)-$RANDOM")');
+  const ownerPid = Number.isInteger(Number(pid)) && Number(pid) > 0 ? Number(pid) : process.pid;
   return withManifestLock(
     manifestPath,
     () => {
       const m = readManifest(manifestPath) ?? emptyManifest();
       const inProgress = { ...(m.livePublicationsInProgress ?? {}) };
       const existing = inProgress[slug];
-      if (existing && pidAlive(existing.pid)) {
+      if (existing && existing.token !== token && pidAlive(existing.pid)) {
         throw new Error(
-          `archive-manifest: ${slug} is already publishing a live artifact (pid ${existing.pid} since ${existing.startedAt}); ` +
+          `archive-manifest: ${slug} is already publishing a live artifact (deploy pid ${existing.pid}, token ${existing.token}, since ${existing.startedAt}); ` +
             `a second deploy on the same chain cannot begin until it ends`,
         );
       }
-      inProgress[slug] = { pid: process.pid, startedAt: new Date().toISOString() };
+      inProgress[slug] = { token, pid: ownerPid, startedAt: new Date().toISOString() };
       const next = { ...m, livePublicationsInProgress: inProgress };
       writeManifestAtomic(manifestPath, next);
       return inProgress[slug];
@@ -496,12 +505,19 @@ export function beginLivePublication(manifestPath, { slug } = {}, lockOpts) {
     lockOpts,
   );
 }
-export function endLivePublication(manifestPath, { slug, diamond } = {}, lockOpts) {
+export function endLivePublication(manifestPath, { slug, token, diamond, force = false } = {}, lockOpts) {
   return withManifestLock(
     manifestPath,
     () => {
       const m = readManifest(manifestPath) ?? emptyManifest();
       const inProgress = { ...(m.livePublicationsInProgress ?? {}) };
+      const existing = slug ? inProgress[slug] : undefined;
+      if (existing && !force && existing.token !== token) {
+        throw new Error(
+          `archive-manifest: ${slug}'s live publication belongs to another deploy (token ${existing.token}, pid ${existing.pid}); ` +
+            `this end (token ${token ?? 'none'}) does not match and the marker is left in place — pass --force only to clear a crashed deploy deliberately`,
+        );
+      }
       if (slug) delete inProgress[slug];
       const next = {
         ...m,
@@ -576,31 +592,34 @@ export function writeSnapshotGuarded(path, textOrProduce, { regressedBy, lockOpt
 function main(argv) {
   const [cmd, manifestPath, slug, stamp, addrPath] = argv;
   if (cmd === 'live-begin') {
-    if (!manifestPath || !slug) {
-      process.stderr.write('usage: archive-manifest.mjs live-begin <manifest> <slug>\n');
+    // live-begin <manifest> <slug> <token> [<shell-pid>]
+    if (!manifestPath || !slug || !stamp) {
+      process.stderr.write('usage: archive-manifest.mjs live-begin <manifest> <slug> <token> [<shell-pid>]\n');
       return 2;
     }
-    const mark = beginLivePublication(manifestPath, { slug });
-    process.stdout.write(`  ✓ live publication of ${slug} marked in progress (pid ${mark.pid}); the census refuses to read or publish until live-end\n`);
+    const mark = beginLivePublication(manifestPath, { slug, token: stamp, pid: addrPath });
+    process.stdout.write(`  ✓ live publication of ${slug} marked in progress (deploy pid ${mark.pid}, token ${mark.token}); the census refuses to read or publish until live-end\n`);
     return 0;
   }
   if (cmd === 'bump-live' || cmd === 'live-end') {
+    // live-end <manifest> <slug> <token> [<addresses.json>] [--force]
     if (!manifestPath || !slug) {
-      process.stderr.write('usage: archive-manifest.mjs live-end <manifest> <slug> [<addresses.json>]\n');
+      process.stderr.write('usage: archive-manifest.mjs live-end <manifest> <slug> <token> [<addresses.json>] [--force]\n');
       return 2;
     }
+    const force = argv.includes('--force');
     let diamond = null;
     try {
-      if (stamp) diamond = JSON.parse(readFileSync(stamp, 'utf8')).diamond ?? null; // third arg is the live artifact path here
+      if (addrPath && addrPath !== '--force') diamond = JSON.parse(readFileSync(addrPath, 'utf8')).diamond ?? null;
     } catch {
       diamond = null;
     }
-    const gen = endLivePublication(manifestPath, { slug, diamond });
+    const gen = endLivePublication(manifestPath, { slug, token: stamp, diamond, force });
     process.stdout.write(`  ✓ live artifact publication of ${slug} recorded and marker cleared (liveGeneration ${gen}) — COMMIT archive-manifest.json with the deploy\n`);
     return 0;
   }
   if (cmd !== 'append' || !manifestPath || !slug || !stamp || !addrPath) {
-    process.stderr.write('usage: archive-manifest.mjs append <manifest> <slug> <stamp> <addresses.json>\n       archive-manifest.mjs live-begin <manifest> <slug>\n       archive-manifest.mjs live-end <manifest> <slug> [<addresses.json>]\n');
+    process.stderr.write('usage: archive-manifest.mjs append <manifest> <slug> <stamp> <addresses.json>\n       archive-manifest.mjs live-begin <manifest> <slug> <token> [<shell-pid>]\n       archive-manifest.mjs live-end <manifest> <slug> <token> [<addresses.json>] [--force]\n');
     return 2;
   }
   const entry = entryFromArtifact({ slug, stamp, addrPath });

@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-09T12:26:33.121Z",
+  "generatedAt": "2026-09-09T15:37:56.751Z",
   "purpose": "#1566 grandfathered-custody census — decides whether slices 0-3 are live work or a certified no-op",
   "scope": "all-deployed-chains",
   "allClassesEmpty": false,
@@ -20,11 +20,12 @@
     "bnb-testnet|live",
     "bnb-testnet|archived 2026-07-01T01-54-09Z",
     "op-sepolia|live",
+    "op-sepolia|archived prior-rehearsal-1778076638",
     "sepolia|live",
     "sepolia|archived 2026-05-10T13-02-26Z",
     "sepolia|archived 2026-05-11T04-15-49Z"
   ],
-  "deploymentsCensused": 19,
+  "deploymentsCensused": 20,
   "chainsFailed": [],
   "deploymentsNotCensused": [],
   "indeterminateClasses": [
@@ -185,6 +186,12 @@
       "reason": "the intent getter is unrouted; a zero VPFI balance proves the rows would be UNBACKED, not that they are absent, and cut history can only refute — undetermined pending a calibrated storage read of intentCommits[loanId] or routing of the getter"
     },
     {
+      "chainSlug": "op-sepolia",
+      "deployment": "archived prior-rehearsal-1778076638",
+      "class": "liveIntentCommits",
+      "reason": "the intent getter is unrouted; a zero VPFI balance proves the rows would be UNBACKED, not that they are absent, and cut history can only refute — undetermined pending a calibrated storage read of intentCommits[loanId] or routing of the getter"
+    },
+    {
       "chainSlug": "sepolia",
       "deployment": "archived 2026-05-10T13-02-26Z",
       "class": "liveIntentCommits",
@@ -203,8 +210,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "307060126",
-      "atBlockHash": "0x5d6c3b23f33bd4a38bf33e9402491b7078c844707c14c8b1cf9fd017e54e7608",
+      "atBlock": "307094207",
+      "atBlockHash": "0x29de372097ef589b61a757db0052e20fc05deaa15e65b8b0248d1076f43daf07",
       "blockTag": "finalized",
       "rpcHost": "arbitrum-sepolia.gateway.tenderly.co",
       "scanned": {
@@ -265,8 +272,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "307060126",
-      "atBlockHash": "0x5d6c3b23f33bd4a38bf33e9402491b7078c844707c14c8b1cf9fd017e54e7608",
+      "atBlock": "307094207",
+      "atBlockHash": "0x29de372097ef589b61a757db0052e20fc05deaa15e65b8b0248d1076f43daf07",
       "blockTag": "finalized",
       "rpcHost": "arbitrum-sepolia.gateway.tenderly.co",
       "scanned": {
@@ -338,8 +345,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "307060126",
-      "atBlockHash": "0x5d6c3b23f33bd4a38bf33e9402491b7078c844707c14c8b1cf9fd017e54e7608",
+      "atBlock": "307094207",
+      "atBlockHash": "0x29de372097ef589b61a757db0052e20fc05deaa15e65b8b0248d1076f43daf07",
       "blockTag": "finalized",
       "rpcHost": "arbitrum-sepolia.gateway.tenderly.co",
       "scanned": {
@@ -411,8 +418,8 @@
       "diamondVpfiBacking": null,
       "vpfiRowsTotal": "0",
       "backingShortfall": null,
-      "atBlock": "307060126",
-      "atBlockHash": "0x5d6c3b23f33bd4a38bf33e9402491b7078c844707c14c8b1cf9fd017e54e7608",
+      "atBlock": "307094207",
+      "atBlockHash": "0x29de372097ef589b61a757db0052e20fc05deaa15e65b8b0248d1076f43daf07",
       "blockTag": "finalized",
       "rpcHost": "arbitrum-sepolia.gateway.tenderly.co",
       "scanned": {
@@ -475,8 +482,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "46593486",
-      "atBlockHash": "0x735274f33fd89517d66c2435e29fc68652f6bbf6362255a39398187b1493c562",
+      "atBlock": "46598283",
+      "atBlockHash": "0xd49a1a9bb24b0463ccb63f0d8f5af366d39a9a0150245a3440abce651957e8fe",
       "blockTag": "finalized",
       "rpcHost": "sepolia.base.org",
       "scanned": {
@@ -536,8 +543,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "46593486",
-      "atBlockHash": "0x735274f33fd89517d66c2435e29fc68652f6bbf6362255a39398187b1493c562",
+      "atBlock": "46598283",
+      "atBlockHash": "0xd49a1a9bb24b0463ccb63f0d8f5af366d39a9a0150245a3440abce651957e8fe",
       "blockTag": "finalized",
       "rpcHost": "sepolia.base.org",
       "scanned": {
@@ -601,8 +608,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "46593486",
-      "atBlockHash": "0x735274f33fd89517d66c2435e29fc68652f6bbf6362255a39398187b1493c562",
+      "atBlock": "46598283",
+      "atBlockHash": "0xd49a1a9bb24b0463ccb63f0d8f5af366d39a9a0150245a3440abce651957e8fe",
       "blockTag": "finalized",
       "rpcHost": "sepolia.base.org",
       "scanned": {
@@ -665,8 +672,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "46593486",
-      "atBlockHash": "0x735274f33fd89517d66c2435e29fc68652f6bbf6362255a39398187b1493c562",
+      "atBlock": "46598283",
+      "atBlockHash": "0xd49a1a9bb24b0463ccb63f0d8f5af366d39a9a0150245a3440abce651957e8fe",
       "blockTag": "finalized",
       "rpcHost": "sepolia.base.org",
       "scanned": {
@@ -736,8 +743,8 @@
       "diamondVpfiBacking": null,
       "vpfiRowsTotal": null,
       "backingShortfall": null,
-      "atBlock": "46593486",
-      "atBlockHash": "0x735274f33fd89517d66c2435e29fc68652f6bbf6362255a39398187b1493c562",
+      "atBlock": "46598283",
+      "atBlockHash": "0xd49a1a9bb24b0463ccb63f0d8f5af366d39a9a0150245a3440abce651957e8fe",
       "blockTag": "finalized",
       "rpcHost": "sepolia.base.org",
       "scanned": {
@@ -799,8 +806,8 @@
       "diamondVpfiBacking": null,
       "vpfiRowsTotal": null,
       "backingShortfall": null,
-      "atBlock": "46593486",
-      "atBlockHash": "0x735274f33fd89517d66c2435e29fc68652f6bbf6362255a39398187b1493c562",
+      "atBlock": "46598283",
+      "atBlockHash": "0xd49a1a9bb24b0463ccb63f0d8f5af366d39a9a0150245a3440abce651957e8fe",
       "blockTag": "finalized",
       "rpcHost": "sepolia.base.org",
       "scanned": {
@@ -862,8 +869,8 @@
       "diamondVpfiBacking": null,
       "vpfiRowsTotal": null,
       "backingShortfall": null,
-      "atBlock": "46593486",
-      "atBlockHash": "0x735274f33fd89517d66c2435e29fc68652f6bbf6362255a39398187b1493c562",
+      "atBlock": "46598283",
+      "atBlockHash": "0xd49a1a9bb24b0463ccb63f0d8f5af366d39a9a0150245a3440abce651957e8fe",
       "blockTag": "finalized",
       "rpcHost": "sepolia.base.org",
       "scanned": {
@@ -926,8 +933,8 @@
       "diamondVpfiBacking": null,
       "vpfiRowsTotal": "0",
       "backingShortfall": null,
-      "atBlock": "46593486",
-      "atBlockHash": "0x735274f33fd89517d66c2435e29fc68652f6bbf6362255a39398187b1493c562",
+      "atBlock": "46598283",
+      "atBlockHash": "0xd49a1a9bb24b0463ccb63f0d8f5af366d39a9a0150245a3440abce651957e8fe",
       "blockTag": "finalized",
       "rpcHost": "sepolia.base.org",
       "scanned": {
@@ -990,8 +997,8 @@
       "diamondVpfiBacking": null,
       "vpfiRowsTotal": null,
       "backingShortfall": null,
-      "atBlock": "46593486",
-      "atBlockHash": "0x735274f33fd89517d66c2435e29fc68652f6bbf6362255a39398187b1493c562",
+      "atBlock": "46598283",
+      "atBlockHash": "0xd49a1a9bb24b0463ccb63f0d8f5af366d39a9a0150245a3440abce651957e8fe",
       "blockTag": "finalized",
       "rpcHost": "sepolia.base.org",
       "scanned": {
@@ -1053,9 +1060,9 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "130022612",
-      "atBlockHash": "0x140a8dc7e1dc7110afa7a132dcb0300a51174c9ccecd270b6af0116836db7a18",
-      "blockTag": "finalized (lowest of 6 samples: 130022612, 130022615, 130022618, 130022620)",
+      "atBlock": "130045140",
+      "atBlockHash": "0x66f773a5b32b549f0a4b6579b96576c00008afd493ce37cbc86ea2e09b18cf9b",
+      "blockTag": "finalized (lowest of 6 samples: 130045140, 130045143, 130045144, 130045147)",
       "rpcHost": "bsc-testnet-rpc.publicnode.com",
       "scanned": {
         "loanIdsEnumerated": 4,
@@ -1114,9 +1121,9 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "130022612",
-      "atBlockHash": "0x140a8dc7e1dc7110afa7a132dcb0300a51174c9ccecd270b6af0116836db7a18",
-      "blockTag": "finalized (lowest of 6 samples: 130022612, 130022615, 130022618, 130022620)",
+      "atBlock": "130045140",
+      "atBlockHash": "0x66f773a5b32b549f0a4b6579b96576c00008afd493ce37cbc86ea2e09b18cf9b",
+      "blockTag": "finalized (lowest of 6 samples: 130045140, 130045143, 130045144, 130045147)",
       "rpcHost": "bsc-testnet-rpc.publicnode.com",
       "scanned": {
         "loanIdsEnumerated": 0,
@@ -1178,14 +1185,86 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "48576393",
-      "atBlockHash": "0x9557efa2da96c32c4c6f090817caf32eaada521cd4eea6653f09f164a6c468bb",
-      "blockTag": "finalized (lowest of 6 samples: 48576393, 48576621)",
+      "atBlock": "48582033",
+      "atBlockHash": "0x9e8bf1082ed93f95c5ab198df33a9c3634500c8a16d514b70f139b9c79afe8bb",
+      "blockTag": "finalized (lowest of 6 samples: 48582033, 48582153)",
       "rpcHost": "optimism-sepolia-rpc.publicnode.com",
       "scanned": {
         "loanIdsEnumerated": 33,
         "totalLoansEverCreated": "33",
         "loanIdRange": "1..33",
+        "enumerable": true,
+        "noCode": false,
+        "custodySurfaceUnrouted": false,
+        "loupeRouted": true,
+        "intentSource": "getter unrouted — intentCommits storage is NOT readable here; the class is indeterminate pending a calibrated storage read (cut history can only refute)",
+        "intentSurfaceRouted": false,
+        "intentProducerRouted": false,
+        "intentCorroboration": null,
+        "producersMayBeLive": true
+      },
+      "classes": {
+        "vpfiHeldCustody": {
+          "status": "proven",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "rebateRows": {
+          "status": "proven",
+          "count": 0,
+          "total": "0",
+          "rows": []
+        },
+        "fallbackSnapshotCustody": {
+          "status": "proven",
+          "count": 0,
+          "total": "0",
+          "rows": [],
+          "nonVpfiRowsExcluded": [],
+          "unknownAssetRows": []
+        },
+        "liveIntentCommits": {
+          "status": "indeterminate",
+          "unknownAssetRows": [],
+          "indeterminateReason": "the intent getter is unrouted; a zero VPFI balance proves the rows would be UNBACKED, not that they are absent, and cut history can only refute — undetermined pending a calibrated storage read of intentCommits[loanId] or routing of the getter",
+          "absenceProof": {
+            "proven": false,
+            "reason": "the intent getter is unrouted; a zero VPFI balance proves the rows would be UNBACKED, not that they are absent, and cut history can only refute — undetermined pending a calibrated storage read of intentCommits[loanId] or routing of the getter",
+            "diamondVpfiBacking": "0",
+            "cutHistoryRefutation": {
+              "refuted": false,
+              "verdict": "unreadable",
+              "reason": "the cut-history scan returned ZERO DiamondCut events, but every Diamond emits at least one at deploy — the history was not actually read (pruned endpoint, or a deployBlock that does not match this address), so absence is not established. Re-run against an archive endpoint.",
+              "cutsScanned": 0
+            }
+          },
+          "count": 0,
+          "total": "0",
+          "rows": [],
+          "nonVpfiRowsExcluded": []
+        }
+      }
+    },
+    {
+      "chainSlug": "op-sepolia",
+      "deployment": "archived prior-rehearsal-1778076638",
+      "chainId": 11155420,
+      "diamond": "0x933f99ae856509c2cF2f47709BD957AdF8477Ed0",
+      "vpfiToken": "0xf2a8E7Cb9e1207398ade20C8448b22879DC6890E",
+      "vpfiTokenSource": "on-chain getVPFIToken()",
+      "vpfiScopeAuthoritative": true,
+      "diamondVpfiBacking": "0",
+      "vpfiRowsTotal": "0",
+      "backingShortfall": "0",
+      "atBlock": "48582033",
+      "atBlockHash": "0x9e8bf1082ed93f95c5ab198df33a9c3634500c8a16d514b70f139b9c79afe8bb",
+      "blockTag": "finalized (lowest of 6 samples: 48582033, 48582153)",
+      "rpcHost": "optimism-sepolia-rpc.publicnode.com",
+      "scanned": {
+        "loanIdsEnumerated": 13,
+        "totalLoansEverCreated": "13",
+        "loanIdRange": "1..13",
         "enumerable": true,
         "noCode": false,
         "custodySurfaceUnrouted": false,
@@ -1251,8 +1330,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "11667866",
-      "atBlockHash": "0x79f2b74f771f0c13d922cbded079884f4a7abd25bb054aa9413ade9ae0c73138",
+      "atBlock": "11668793",
+      "atBlockHash": "0x31a3cb98f30afb6c4b10546694f9a5ddde91beab0b761b4b8f24fb94a045f625",
       "blockTag": "finalized",
       "rpcHost": "ethereum-sepolia-rpc.publicnode.com",
       "scanned": {
@@ -1315,8 +1394,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "11667866",
-      "atBlockHash": "0x79f2b74f771f0c13d922cbded079884f4a7abd25bb054aa9413ade9ae0c73138",
+      "atBlock": "11668793",
+      "atBlockHash": "0x31a3cb98f30afb6c4b10546694f9a5ddde91beab0b761b4b8f24fb94a045f625",
       "blockTag": "finalized",
       "rpcHost": "ethereum-sepolia-rpc.publicnode.com",
       "scanned": {
@@ -1389,8 +1468,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "11667866",
-      "atBlockHash": "0x79f2b74f771f0c13d922cbded079884f4a7abd25bb054aa9413ade9ae0c73138",
+      "atBlock": "11668793",
+      "atBlockHash": "0x31a3cb98f30afb6c4b10546694f9a5ddde91beab0b761b4b8f24fb94a045f625",
       "blockTag": "finalized",
       "rpcHost": "ethereum-sepolia-rpc.publicnode.com",
       "scanned": {
