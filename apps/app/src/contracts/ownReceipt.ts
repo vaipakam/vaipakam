@@ -60,9 +60,30 @@ export type SettledTx =
     }
   | { ok: false; reason: NotSettledReason; receipt: TransactionReceipt };
 
+export interface SettledOptions {
+  /** How long to keep waiting, in ms. Forwarded verbatim to viem, where
+   *  `0` means "no deadline" and omitting it takes viem's own default of
+   *  180 seconds.
+   *
+   *  WHY THIS IS EXPOSED AT ALL (round 54 P2). Replacement detection is
+   *  a property of a LIVE wait: viem identifies a repriced or cancelled
+   *  transaction by re-reading the original from the mempool, which it
+   *  can only do while that transaction is still pending. So a wait that
+   *  gives up and is restarted is not the same as a wait that continued
+   *  — the restarted one may find nothing to reconcile against and can
+   *  no longer classify what happened.
+   *
+   *  A caller that puts a deadline on the WAIT therefore buys a display
+   *  posture at the cost of the evidence. Callers who want to say "this
+   *  is taking a long time" while still watching should pass `0` here and
+   *  time the message separately, which is what `ForcedCloseCard` does. */
+  timeout?: number;
+}
+
 export async function settled(
   publicClient: PublicClient,
   hash: `0x${string}`,
+  options: SettledOptions = {},
 ): Promise<SettledTx> {
   // A box rather than a bare `let`: TypeScript's control-flow analysis
   // cannot see an assignment made from inside a callback, and narrows
@@ -73,6 +94,11 @@ export async function settled(
     onReplaced: (r) => {
       seen.reason = r.reason;
     },
+    // `undefined` here takes viem's own 180s default — its destructuring
+    // default applies to a present-but-undefined property — while `0`
+    // disables the deadline. The two are opposite intents and both reach
+    // viem unchanged.
+    timeout: options.timeout,
   });
   // Belt and braces. `onReplaced` is the authoritative signal, but a
   // receipt under a hash we did not submit and no reason to explain it

@@ -73,6 +73,19 @@ including people who never will.
   nothing has been indexed at all, that is stated instead of reporting
   zero for everything — an unread source is a fact about the source, not
   about the protocol.
+- A counter that arrives but cannot be a count of anything — negative,
+  fractional, or not a finite number — is withheld rather than published,
+  and is distinguished from one that was never reported. Both withhold
+  the figure; only one of them says the source sent something impossible,
+  and a reader auditing the source is owed that difference. The same rule
+  decides whether a figure may be shown and whether it may be used in a
+  subtotal, so the view cannot withhold a derived figure while printing
+  the invalid input it came from.
+- The console's values refresh while it is open. A reader who leaves it
+  open is shown parameters as they currently stand, not the snapshot the
+  page loaded with; reporting the snapshot's age correctly is not a
+  substitute for refreshing it, since a parameter superseded minutes ago
+  sits well inside any age the page would call current.
 - The analytics view names the protocol's contract address for the chain
   being read and offers a way to open it on a public explorer, so a
   reader can go to the primary source rather than accept the page's
@@ -580,9 +593,37 @@ Thin-market honesty rules apply.
   flagged wallet; this one is not, and the distinction is deliberate rather than
   an oversight in the gating.
 - The surface claims a loan is overdue only where the protocol has said so.
-  States reached before that question is answered — an unavailable sequencer, a
-  protocol-wide pause, checks still running — describe what is being waited on
-  instead, since those are reachable by a loan that is nowhere near its due date.
+  States reached before that question is answered — a protocol-wide pause, checks
+  still running — describe what is being waited on instead, since those are
+  reachable by a loan that is nowhere near its due date. An unavailable sequencer
+  is NOT one of them: the protocol settles the repayment window before it
+  considers sequencer health, so a loan withheld for an outage has already been
+  confirmed overdue and is described as such.
+- A close-out this app has broadcast is watched continuously until its outcome is
+  known, and the record of it survives leaving the page. Watching that stops and
+  restarts can no longer recognise a replaced or cancelled transaction, because
+  recognising one requires the original to still be in flight — so the wait is
+  never given a deadline. Elapsed time changes only what the surface SAYS: past a
+  few minutes it stops describing an ordinary pause and states that it can no
+  longer account for the transaction, while continuing to watch.
+- The action stays withheld for as long as the surface has not reconciled the
+  transaction, and the device-local record backing that is kept for exactly as
+  long as the withholding lasts — including after a success, whose figures the
+  surface has not yet caught up with.
+- Where the browser refuses to keep that record, the surface says so and names
+  the consequence: this page still withholds the action, a reload will not.
+- Before a close-out is sent, the surface re-reads that record so a confirmation
+  open in a second tab does not send a duplicate. It does not claim this is a
+  lock — two tabs acting in the same instant is a race the browser offers no way
+  to settle — and it says what it did rather than implying the position closed.
+- Erasing this browser's data does not reach a transaction already sent. The
+  erasure states that: what is removed is this app's note of it, the transaction
+  continues, and the app will no longer be following it.
+- Where the protocol has no path that could produce an outcome, the surface does
+  not warn about that outcome. A rental cannot be settled against an opposing
+  position — the protocol's search requires the rented asset to carry a market
+  price and its settlement moves fungible assets only — so a rental close-out is
+  described as ending the rental, with no competing-settlement caveat.
 
 ## Claims
 

@@ -602,3 +602,51 @@ it would have gone on offering the button over a transaction already on
 its way. Tabs now tell each other, in both directions — one that learns
 of a close-out stops offering the action, and one that learns the record
 has been cleared stops waiting.
+
+Telling tabs about each other closed most of that gap and not all of it.
+A confirmation already open in a second tab passes its check, then waits
+on a pending question and a final check with the protocol before the
+wallet opens — seconds during which the first tab can send. The app now
+re-reads its own record in the last moment before handing anything to the
+wallet, and stops there if a close-out has already gone out from this
+browser, saying so rather than implying the position is closed. Two tabs
+pressing in the same instant remains possible; the browser offers nothing
+that would settle that, and the app does not claim otherwise.
+
+The watch on a submitted close-out no longer stops at all. It had a
+three-minute limit, and recognising a transaction that was sped up or
+cancelled depends on the original still being in flight — so the limit
+was quietly the difference between telling a lender their close-out was
+cancelled and never being able to say. The limit now governs only what
+the card says: after a few minutes it stops describing an ordinary pause
+and states that it cannot account for the transaction, while the same
+watch carries on. The app's note of a submitted close-out is also kept
+until the position on screen has caught up with it, rather than being
+dropped the moment a receipt arrives — in that window a reload used to
+find nothing and offer the button again.
+
+Where the browser refuses to store that note at all — private mode, or
+storage switched off — the card now says so and names the consequence:
+this page still holds the action back, a reload will not. And erasing
+your data from the "Your data" page now says the thing it could not
+previously: a transaction already sent to the blockchain keeps going, so
+what the erasure removes is the app's note of it, after which the app
+stops following it and may offer the same action again.
+
+One claim has been withdrawn. An overdue NFT rental carried a warning
+that someone might settle it against an opposing position first. The
+protocol has no path that does that for a rental — its search for a
+counterparty requires the rented item to carry a market price, and its
+settlement moves fungible assets only — so the card was describing an
+outcome that cannot happen, on the one card whose job is being exact
+about what the lender receives.
+
+On the two public pages: a counter that arrives but cannot be a count —
+negative, fractional, or not a number at all — is no longer printed as
+though it were one. It is withheld like an absent figure, but labelled
+differently, because "the source sent something impossible" and "the
+source sent nothing" are different facts and a reader checking the source
+is owed the difference. The protocol console also refreshes while it is
+open; it used to keep whatever it loaded with, so a fee or a switch
+changed by governance could sit there superseded, with the page's own age
+line saying nothing was wrong.

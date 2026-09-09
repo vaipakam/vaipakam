@@ -371,8 +371,25 @@ const copySource = {
     eraseButton: 'Erase my data',
     eraseConfirm: 'Yes, erase it',
     eraseCancel: 'Cancel',
+    /* Round 54 P2 — the second sentence is new, and it is about the one
+       thing an erasure genuinely cannot reach.
+
+       "Anything you had part-way through will lose its local marker" is
+       true and, for a transaction already broadcast, badly incomplete.
+       Some of those markers record a close-out, a sale or a repayment
+       that is LIVE on the blockchain: erasing removes this browser's note
+       of it, the blockchain keeps running it, and the app — no longer
+       knowing — can offer the same action again. That second attempt can
+       spend a fee for nothing, or act on what is left of a position the
+       first one partly settled.
+
+       Deferring the erasure until such a transaction resolves was
+       considered and rejected: a right-to-erasure control that decides
+       for itself when to obey is not one. So the user is told the
+       consequence and left with the choice, which is the honest shape of
+       a control that cannot undo what has already left the browser. */
     eraseConfirmPrompt:
-      'This cannot be undone. Download a copy first if you want to keep one.',
+      'This cannot be undone. Download a copy first if you want to keep one. If you have sent something to the blockchain that has not finished yet, it keeps going — erasing removes only this browser’s note of it, so this app will stop following it and may offer you the same action again, which could cost you a fee.',
     /** Counts are shown rather than a bare "done" — see `eraseMyData`
      *  for why the three outcomes must stay distinguishable. */
     /* Review round 3 P2 — "from this browser" under-reported whenever
@@ -2378,6 +2395,22 @@ const copySource = {
     forgetSubmission: 'My wallet says this transaction is gone',
     forgetSubmissionNote:
       'We cannot check your wallet ourselves, so if your wallet no longer shows this transaction — not pending, not confirmed, simply gone — tell us and we will stop waiting for it and let you try again. Only do this if you have actually looked. If the transaction is still out there and later goes through, a second close-out could cost you a fee for nothing.',
+    /* Round 54 P2 — shown when this browser REFUSED to store the record
+       of a close-out (private mode, storage disabled, quota). The hold
+       still works on this page; what does not survive is a reload, which
+       is precisely the protection the stored record exists for. Saying
+       "reloading loses this" is a smaller and more useful statement than
+       either silence or a general warning about browser settings, so it
+       names the one action to avoid and why. */
+    submitRecordNotStored:
+      'This browser would not let us save a note of the close-out you just sent. Nothing is wrong with the transaction itself — but if you reload this page or come back to it later, we will have forgotten that you sent it, and you may be offered the button again while it is still going through. Until this position updates, please avoid reloading, and check the transaction in your wallet if you are unsure.',
+    /* Round 54 P1 — the second tab's refusal. Deliberately about the
+       RECORD rather than about the chain: this browser knows a close-out
+       for this loan was sent from it, and knows nothing about whether it
+       succeeded. Both halves are stated because a lender who is told only
+       "already sent" will reasonably assume the position is closed. */
+    alreadySubmittedElsewhere:
+      'A close-out for this loan has already been sent from this browser — most likely in another tab. We have not sent a second one. This page will follow that transaction and update when it settles; check your wallet if you want to see where it is.',
     // Round 28 P2 — names WHO is paid, not just who may act. The
     // proceeds follow the lender position NFT as it stands when the
     // transaction runs, and this card is reachable by a wallet whose
@@ -4740,6 +4773,15 @@ const copySource = {
       'The indexer answered, but has not read any blocks yet, so there are no figures to show. That is a fact about the indexer, not about the protocol — a database that has ingested nothing would report zero of everything, which is exactly why those zeros are withheld here rather than displayed.',
     contractLabel: 'Diamond contract',
     notReported: 'not reported',
+    /* Round 54 P2 — kept SEPARATE from "not reported", because they are
+       different facts about the indexer and this page's whole business
+       is not blurring those. "Not reported" means the field was absent.
+       This one means it arrived and could not be a count — negative,
+       fractional, or not a finite number — so the figure is withheld and
+       the reason is the producer's, not a gap. Telling a reader a value
+       was missing when it was in fact impossible would hide a defect in
+       the very system the page exists to let them audit. */
+    notUsable: 'reported, but not a usable count',
     loansHeading: 'Loans',
     offersHeading: 'Offers',
     offersScope:

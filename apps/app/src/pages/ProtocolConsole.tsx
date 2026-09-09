@@ -53,6 +53,7 @@ import { useActiveChain } from '../chain/useActiveChain';
 import { exactAmountString } from '../lib/format';
 import { VPFI_DECIMALS } from '../data/vpfi';
 import { useNowSec } from '../hooks/useNowSec';
+import { idleAware } from '../lib/idle';
 import { isProtocolConsolePublic } from '../lib/protocolConsoleVisibility';
 
 /** Where the prose lives. Kept as one constant so the link cannot drift
@@ -155,6 +156,23 @@ export function ProtocolConsole() {
   const knobs = useQuery({
     queryKey: ['protocol-knobs', chainId],
     enabled: isProtocolConsolePublic(),
+    // AUTO-REFRESH, at the same `cool` tier the transparency dashboard
+    // uses (review round 54 P2).
+    //
+    // This page had no interval at all, so a reader who left it open on
+    // a focused tab kept the snapshot it loaded with. The age sentence
+    // beneath it advances on its own clock and the stale banner arrives
+    // after a day, which covers the case of a WEDGED refresh rail — but
+    // not the ordinary one: governance retunes a fee or flips a flag,
+    // and the console goes on presenting the superseded value as
+    // current, with nothing on the page qualifying it, for as long as
+    // the tab stays open. Stating an age correctly is not the same as
+    // showing the current value, and this page's stated purpose is the
+    // second.
+    //
+    // `idleAware` is how every polling surface here honours "pause while
+    // hidden, back off while abandoned, catch up on focus".
+    refetchInterval: idleAware(180_000),
     queryFn: () => fetchProtocolKnobs(chainId),
   });
 

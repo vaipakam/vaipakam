@@ -48,7 +48,7 @@ import { useActiveChain } from '../chain/useActiveChain';
 import { useSanctionsCheck } from '../data/sanctions';
 import { ConfirmReceipt } from './ConfirmReceipt';
 import { settled } from '../contracts/ownReceipt';
-import { withTimeout } from '../lib/withTimeout';
+import { useNowSec } from '../hooks/useNowSec';
 import {
   forcedCloseSubmissionKey,
   isHoldingAfterSubmit,
@@ -63,10 +63,10 @@ import {
   type ForcedCloseReadiness,
 } from '../data/forcedClose';
 
-/** How long one wait for a disposition runs before it is restarted.
+/** How long a close-out may go unaccounted for before the card SAYS SO.
  *
- *  ROUND 50 P1 — this is a RETRY interval, not a deadline, and the
- *  difference is the finding. It used to be a give-up: three minutes
+ *  ROUND 50 P1 — this is not a deadline on the action, and that
+ *  distinction is the finding. It used to be a give-up: three minutes
  *  elapsed and the card released the hold and re-offered the button.
  *  Elapsed time is not evidence about a transaction. A transaction
  *  pending past this bound has not been dropped — it is pending, and it
@@ -76,18 +76,23 @@ import {
  *  spending a fee on a terminal loan or acting on a partially settled
  *  residual.
  *
- *  So nothing is concluded here. The wait restarts, and only a receipt
- *  — the original's, or a replacement's, which `settled` follows — ends
- *  the hold. The one thing the bound still buys is the chance to TELL
- *  the lender the transaction is unaccounted for, which is a better
- *  answer than either a silent latch or a button that implies a retry is
- *  safe.
+ *  ROUND 54 P2 — and it is no longer a deadline on the WAIT either,
+ *  which is where the last of its authority went. Rounds 50 and 53 had
+ *  it bound one `settled` call, with the next starting a second later.
+ *  Both of those understated the cost, because viem's own default
+ *  deadline is the same three minutes: the wait did not merely pause, it
+ *  ENDED, and replacement detection ends with it. viem classifies a
+ *  reprice or a cancel by re-reading the original transaction from the
+ *  mempool, so a wait started after that transaction stopped being
+ *  pending has nothing left to reconcile against — it polls a hash that
+ *  will never have a receipt and reports `undetermined` for good, on a
+ *  close-out that was in fact cancelled or sped up.
  *
- *  ROUND 53 P2 — it bounds ONE wait and no longer sets the gap between
- *  waits, which is a second job it used to carry silently and got wrong.
- *  See the `refetchInterval` below: the restart is immediate, because a
- *  window with no waiter alive loses the pending transaction that
- *  replacement detection needs. */
+ *  So the wait now runs continuously (`timeout: 0`) and this constant
+ *  drives PRESENTATION only: after it, the card stops saying "give the
+ *  page a moment" and says plainly that it can no longer account for the
+ *  transaction, while the same single wait keeps watching. Nothing about
+ *  the hold, the evidence, or the action depends on it. */
 const RECEIPT_WAIT_TIMEOUT_MS = 3 * 60_000;
 
 export function ForcedCloseCard({
@@ -209,6 +214,14 @@ export function ForcedCloseCard({
     Record<string, ForcedCloseSubmission>
   >({});
 
+  /** Whether the device-local record of this browser's submission
+   *  actually landed (round 54 P2).
+   *
+   *  False only after a write this card KNOWS was refused — private
+   *  mode, quota, storage disabled. It starts true because no write has
+   *  been attempted, and an unattempted write is not a failure. */
+  const [submitRecordStored, setSubmitRecordStored] = useState(true);
+
   /** Identity of the position this card is currently showing.
    *
    *  `undefined` chain is folded into the key rather than special-cased:
@@ -280,42 +293,98 @@ export function ForcedCloseCard({
     queryKey: ['forcedClose', 'disposition', submissionKey, submitted?.hash],
     enabled: submitted !== null && Boolean(publicClient),
     retry: false,
-    // ROUND 53 P2 — restarted IMMEDIATELY, not after another full
-    // timeout. `waitForTransactionReceipt` identifies a replacement from
-    // the original pending transaction's sender and nonce, which it has
-    // to fetch; leaving a three-minute gap with no waiter alive meant a
-    // wallet could reprice or cancel inside it and the next waiter, by
-    // then unable to fetch a transaction that is no longer pending, had
-    // nothing to reconcile against. It would then poll an orphaned hash
-    // and return `undetermined` forever, holding the action shut while
-    // the card said it was still watching. A 1-second restart keeps a
-    // waiter effectively continuous.
+    // ROUND 54 P2 — ONE CONTINUOUS WAIT. Rounds 50 and 53 both bounded
+    // the wait and restarted it, first after three minutes and then
+    // after one second, and the second was an improvement on the first
+    // without being a fix: any gap at all can contain the reprice or
+    // cancel whose detection needs the original transaction to still be
+    // pending, and the restarted wait then has nothing to reconcile
+    // against. Passing `timeout: 0` removes the gap rather than
+    // shortening it — the wait viem started keeps running until it has
+    // an answer.
     //
-    // Only an UNDETERMINED wait is worth restarting at all. The others
-    // are final facts about a transaction, and nothing later changes
-    // them.
+    // The interval is retained ONLY to restart a wait that FAILED (an
+    // RPC drop surfaces as `undetermined`). A final disposition stops
+    // it, because nothing later changes one.
+    //
+    // THE COST, stated rather than glossed: viem's poller for a hash
+    // lives until that wait settles, and nothing here can cancel it —
+    // `waitForTransactionReceipt` takes no abort signal, so leaving this
+    // page keeps one receipt poll per block alive for a transaction that
+    // never resolves. That is the price of the property above, and it is
+    // the right way round: a poll costs an RPC call, while the bounded
+    // version cost the ability to tell a lender their close-out was
+    // cancelled, and re-offered a funds-moving button on the strength of
+    // not knowing.
     refetchInterval: (query) =>
       query.state.data === undefined || query.state.data === 'undetermined'
         ? 1_000
         : false,
     queryFn: async (): Promise<ForcedCloseDisposition> => {
       try {
-        const r = await withTimeout(
-          settled(publicClient!, submitted!.hash),
-          RECEIPT_WAIT_TIMEOUT_MS,
-        );
+        const r = await settled(publicClient!, submitted!.hash, {
+          timeout: 0,
+        });
         // `reason` is already the vocabulary this card holds on:
         // 'reverted' | 'cancelled' | 'replaced'.
         return r.ok ? 'success' : r.reason;
       } catch {
-        // A timeout, or a read that failed. Neither says anything about
-        // the transaction, so neither is allowed to say anything here.
+        // A read that failed. It says nothing about the transaction, so
+        // it is not allowed to say anything here.
         return 'undetermined';
       }
     },
   });
 
   const disposition = watch.data ?? null;
+
+  /** Ticks, so the "we have lost track of this" posture below arrives on
+   *  its own rather than waiting for something unrelated to re-render the
+   *  card. Coarse (30s) against a three-minute threshold. */
+  const nowSec = useNowSec();
+
+  /** Whether the card is still holding its action, computed HERE rather
+   *  than beside the render.
+   *
+   *  ROUND 54 P2 — it moved up because an effect below needs it: the
+   *  device-local record may not be cleared while a success is still
+   *  holding. It is a pure call over values already in hand, so its
+   *  position is free; every reason for it lives at
+   *  `data/forcedCloseHold`, which is where the case table is.
+   *
+   *  The one thing worth repeating here is why the arms differ, because
+   *  it is the part four consecutive rounds got wrong: SUCCESS holds
+   *  until a read postdates the disposition (round 28 — otherwise the
+   *  button is re-offered against pre-close figures), an unknown or
+   *  failed wait holds because nothing has been established (round 50),
+   *  and `reverted` / `cancelled` / `replaced` release at once because
+   *  the chain has said the close-out did not execute and a retry is
+   *  legitimate (round 49). */
+  const holdingAfterSubmit = isHoldingAfterSubmit({
+    submittedAt: submitted?.at ?? null,
+    disposition,
+    // ROUND 52 P2 — when the disposition was ESTABLISHED, which is what
+    // the reads must postdate. `dataUpdatedAt` freezes once the wait
+    // resolves, because a final disposition stops the refetch interval.
+    disposedAt: disposition === null ? null : watch.dataUpdatedAt,
+    readsUpdatedAt,
+  });
+
+  /** The transaction has been outstanding long enough that "give the page
+   *  a moment" would be a misdescription.
+   *
+   *  ROUND 54 P2 — this used to BE the disposition: a three-minute wait
+   *  timed out, reported `undetermined`, and that value drove both the
+   *  copy and the way out. Splitting them lets the wait run continuously
+   *  (see `refetchInterval` above) while the card still says something
+   *  after three minutes. A failed wait is included because it is the
+   *  same thing from the reader's side — the app cannot account for the
+   *  transaction — even though its cause is ours rather than the
+   *  chain's. */
+  const unaccounted =
+    submitted !== null &&
+    (disposition === null || disposition === 'undetermined') &&
+    nowSec * 1000 - submitted.at > RECEIPT_WAIT_TIMEOUT_MS;
 
   /** ROUND 53 P2 — the invalidation must follow the WATCHER, not only
    *  the write.
@@ -394,77 +463,44 @@ export function ForcedCloseCard({
    *  transaction is DISPOSED of, not when the card unmounts. Leaving it
    *  would make every later visit to this position re-watch a settled
    *  transaction, and on a partial match that means holding the residual
-   *  shut behind a disposition that was already acted on. */
+   *  shut behind a disposition that was already acted on.
+   *
+   *  ROUND 54 P2 — but a SUCCESS is not disposed of the moment its
+   *  receipt arrives. The hold deliberately continues until one readiness
+   *  read postdates it (round 28), and this effect was deleting the
+   *  record at the start of that window rather than the end. Inside it,
+   *  navigating away and back — or simply reloading — found no record,
+   *  stopped watching, and re-offered the action against readiness values
+   *  computed before the close. That is the round-53 hole with a smaller
+   *  mouth: the persistence fixed losing the record across a reload and
+   *  then threw it away early on the one path where the hold outlives the
+   *  receipt.
+   *
+   *  So the record now survives exactly as long as the hold it backs. The
+   *  three non-success dispositions still clear immediately — the chain
+   *  has said the close-out did not execute, `isHoldingAfterSubmit`
+   *  releases at once, and keeping a record of a transaction that did
+   *  nothing would only re-watch it on the next visit. */
   useEffect(() => {
     if (disposition === null || disposition === 'undetermined') return;
     if (submitted === null) return;
+    if (disposition === 'success' && holdingAfterSubmit) return;
     writeForcedCloseSubmission(walletChain?.chainId, loanId, null);
-  }, [disposition, submitted, walletChain?.chainId, loanId]);
+  }, [
+    disposition,
+    submitted,
+    holdingAfterSubmit,
+    walletChain?.chainId,
+    loanId,
+  ]);
 
   if (!shouldRenderForcedClose(readiness)) return null;
 
-  /** ROUND 48 P1 — read timestamps are not evidence about a transaction.
-   *
-   *  The previous rule was `readsUpdatedAt <= submitted.at`, and it fails
-   *  in BOTH directions once the stamp is laid down on the hash rather
-   *  than the receipt:
-   *
-   *  - `readsUpdatedAt` is the MIN across the card's reads, and `consent`
-   *    carries `staleTime: 10 * 60_000` with NO `refetchInterval`. On the
-   *    receipt-timeout path `invalidateQueries` never runs (it sits after
-   *    the await), so nothing refetches consent and the min stays below
-   *    the stamp — the action is disabled indefinitely for a transaction
-   *    that may simply have been dropped. That is the round-29 latch,
-   *    reintroduced by fixing the round-47 one.
-   *  - And if anything else does refetch those queries while the
-   *    transaction is still pending, every timestamp passes the stamp and
-   *    the hold releases with the transaction unresolved — which is the
-   *    duplicate submit the round-47 fix existed to prevent.
-   *
-   *  So the hold now reconciles against the TRANSACTION rather than
-   *  against how recently unrelated reads settled.
-   *
-   *  The read-freshness condition is kept as an ADDITIONAL hold on the
-   *  success path only — once a receipt exists we still wait for one
-   *  post-stamp read before re-offering a button, which is the round-28
-   *  reason the hold was introduced. It can no longer hold on its own. */
-  //
-  // ROUND 49 P1 + ROUND 50 P1 — the dispositions are NOT interchangeable,
-  // and the two findings pull in opposite directions on one of them. Both
-  // are right, about different arms:
-  //
-  // - SUCCESS: the loan has changed. Hold until one post-stamp read, so
-  //   a button is not re-offered against figures from before the close
-  //   (the round-28 reason this hold exists at all).
-  // - REVERTED: nothing changed on-chain. A retry is legitimate, and the
-  //   hold must end at once — round 49's finding, because neither this
-  //   path nor the next reaches `invalidateQueries` (success-only, after
-  //   the await) and `consent` does not poll, so a freshness arm here
-  //   latches the action shut indefinitely.
-  // - CANCELLED: the wallet replaced the send with a no-op. That is
-  //   positive evidence the close-out did not execute, so it releases for
-  //   the same reason a revert does.
-  // - UNDETERMINED: round 50's finding, and the correction to round 49.
-  //   Nothing has been established, so nothing may be concluded — least
-  //   of all "it was dropped, go ahead and retry". A transaction still
-  //   pending past the wait can mine, and re-offering the button here
-  //   queues a second close-out behind a live first one. The hold STAYS,
-  //   the wait restarts, and the card says plainly that it has lost track
-  //   rather than presenting a dead button with no explanation.
-  //
-  // The predicate itself lives in `data/forcedCloseHold` with a case
-  // table, because four consecutive rounds each fixed it here and broke
-  // it again, and every one of those was a question about a small set of
-  // discrete cases arguing from a comment instead of from cases.
-  const holdingAfterSubmit = isHoldingAfterSubmit({
-    submittedAt: submitted?.at ?? null,
-    disposition,
-    // ROUND 52 P2 — when the disposition was ESTABLISHED, which is what
-    // the reads must postdate. `dataUpdatedAt` freezes once the wait
-    // resolves, because a final disposition stops the refetch interval.
-    disposedAt: disposition === null ? null : watch.dataUpdatedAt,
-    readsUpdatedAt,
-  });
+  // The hold, and every reason its arms differ, is computed above and
+  // documented in `data/forcedCloseHold` — the whole round-28-to-54
+  // history lives with the case table rather than beside the render,
+  // because arguing this predicate from a comment instead of from cases
+  // is what broke it four rounds running.
   const submittable = canSubmitFromApp(readiness) && !holdingAfterSubmit;
 
   async function closeOut() {
@@ -548,6 +584,37 @@ export function ForcedCloseCard({
       // point when the promise resolves.
       const key = submissionKey;
       const chainAtSend = walletChain?.chainId;
+
+      // ROUND 54 P1 — THE LAST THING BEFORE THE WALLET: re-read the
+      // device-local record, synchronously.
+      //
+      // Round 53's `storage` listener adopts another tab's submission,
+      // and adoption is event-driven, which leaves two windows it cannot
+      // close. Everything above this line is awaited — the sale
+      // interlock, then a simulation — so a second tab that passed the
+      // guard at the top of this function can sit here for seconds while
+      // the first tab sends; and a marker written between this tab's
+      // render and the listener being installed is never delivered at
+      // all. In both, the guard was answered by state that had already
+      // gone stale.
+      //
+      // Storage is the one record BOTH tabs see, and reading it costs a
+      // synchronous string read. There is no window between this check
+      // and the send for an event to be missed in.
+      //
+      // What this does NOT claim to be is an atomic reservation. Two
+      // tabs reaching this line in the same tick both read null and both
+      // send. That race is intrinsic to Web Storage, which offers no
+      // compare-and-set; narrowing it from seconds to a tick is the
+      // whole of what is available here, and saying so is better than
+      // implying a lock.
+      const alreadySent = readForcedCloseSubmission(chainAtSend, loanId);
+      if (alreadySent !== null) {
+        setSubmissions((prev) => ({ ...prev, [key]: alreadySent }));
+        setError(copy.forcedClose.alreadySubmittedElsewhere);
+        return;
+      }
+
       await write('triggerDefault', [BigInt(loanId), []], {
         onSubmitted: (hash) => {
           const record = { at: Date.now(), hash };
@@ -558,7 +625,18 @@ export function ForcedCloseCard({
           // that refuses storage (private mode, quota, storage disabled)
           // must still get the within-session hold, which is the larger
           // half of the protection.
-          writeForcedCloseSubmission(chainAtSend, loanId, record);
+          //
+          // ROUND 54 P2 — and when storage refuses, SAY SO. The store
+          // returns false precisely so a caller on a funds path can care,
+          // and discarding that made the card's posture a guess: this
+          // mount is protected by state, a reload is not, and the lender
+          // is the only one who can act on that difference. The note it
+          // raises is the honest version of what round 53 fixed —
+          // "reloading loses track of this" is true again in this
+          // browser, so it is stated rather than assumed away.
+          if (!writeForcedCloseSubmission(chainAtSend, loanId, record)) {
+            setSubmitRecordStored(false);
+          }
         },
       });
       onClosedOut();
@@ -679,10 +757,28 @@ export function ForcedCloseCard({
     'ready-rental': {
       body: copy.forcedClose.readyRental,
       overdue: true,
-      // `LibMetricsHooks` indexes every loan into
+      // ROUND 54 P2 — FALSE, and the reasoning that made it true stopped
+      // one step short. `LibMetricsHooks` does index every loan into
       // `assetPairActiveLoanIds` with no asset-type filter, so a rental
-      // can be matched — and a match settles instead of ending it.
-      matchRace: true,
+      // is in the table. Being in the table is not being matchable:
+      //
+      //  - `hasInternalMatchCandidate` scans the REVERSED pair,
+      //    `assetPairActiveLoanIds[collateralAsset][principalAsset]`. A
+      //    rental's principal IS the NFT, so every candidate in that
+      //    bucket holds that NFT as its COLLATERAL.
+      //  - Each candidate must then price both of its own assets through
+      //    `tryGetAssetPrice`. An NFT collection has no feed, so the
+      //    collateral leg returns `ok=false` and the candidate is
+      //    skipped — every time, for every candidate in the bucket.
+      //  - And `_settleLeg` moves both matched legs with
+      //    `IERC20.safeTransfer` / `vaultWithdrawERC20`, so even a
+      //    candidate that somehow passed could not be settled.
+      //
+      // So the race this flag warns about cannot be lost here: a rental
+      // ends as a rental. Warning anyway asserted a settlement route and
+      // a funds flow the protocol has no path to, on the card that is
+      // meant to be exact about what the lender receives.
+      matchRace: false,
       actionBlock: true,
       outcomeNote: copy.forcedClose.outcomeNoteRental,
       claimNote: copy.forcedClose.claimNote,
@@ -790,7 +886,7 @@ export function ForcedCloseCard({
    *  button as an ordinary pause, which is the shape of a hang. */
   const body = !holdingAfterSubmit
     ? view.body
-    : disposition === 'undetermined'
+    : unaccounted
       ? copy.forcedClose.submittedUnaccounted
       : copy.forcedClose.submitted;
 
@@ -840,7 +936,18 @@ export function ForcedCloseCard({
           wallet rather than as a reset control, and it carries the cost
           of being wrong, because that is the honest shape of a question
           the app is not able to answer. */}
-      {holdingAfterSubmit && disposition === 'undetermined' ? (
+      {/* This browser could not record the submission, so a reload will
+          lose it. The hold on this mount is unaffected; what is lost is
+          everything after a reload, which is exactly the protection
+          round 53 added — so the lender is told rather than left to find
+          out by being offered the button again. */}
+      {holdingAfterSubmit && !submitRecordStored ? (
+        <p className="field-hint" data-testid="forced-close-not-stored">
+          {copy.forcedClose.submitRecordNotStored}
+        </p>
+      ) : null}
+
+      {holdingAfterSubmit && unaccounted ? (
         <div data-testid="forced-close-forget">
           <p className="field-hint">{copy.forcedClose.forgetSubmissionNote}</p>
           <button

@@ -30,6 +30,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { copy } from '../content/copy';
 import { resolveActiveSplit } from '../data/activeSplit';
+import { isReportedCount } from '../data/reportedCount';
 import { olderCursor } from '../data/olderCursor';
 import {
   BarChart3,
@@ -51,16 +52,35 @@ import { useNowSec } from '../hooks/useNowSec';
 import { idleAware } from '../lib/idle';
 import { useEffect, useRef } from 'react';
 
-/** Renders a counter, keeping "not reported" distinct from zero. */
+/** Renders a counter, keeping "not reported" distinct from zero.
+ *
+ *  ROUND 54 P2 — "reported" is `isReportedCount`, not `typeof value ===
+ *  'number'`. The weaker test published whatever the endpoint sent,
+ *  including a negative or fractional count, on the one page whose claim
+ *  is that its figures can be trusted — and it did so while
+ *  `resolveActiveSplit` was already refusing to compute anything from
+ *  that same value. A figure this page cannot substantiate reads as
+ *  "not reported", which is the rule it applies to an absent one and for
+ *  the same reason. */
 function Stat({ label, value }: { label: string; value: number | undefined }) {
-  const reported = typeof value === 'number';
+  const reported = isReportedCount(value);
   return (
     <div className="an-stat">
       <div className="an-stat-value" data-reported={reported}>
         {reported ? value.toLocaleString() : '—'}
       </div>
       <div className="an-stat-label">{label}</div>
-      {!reported && <div className="an-stat-note">{copy.analytics.notReported}</div>}
+      {/* Absent and impossible are different facts about the indexer, and
+          a page that exists to be audited must not present one as the
+          other. `value === undefined` is a gap; anything else reaching
+          here arrived and failed `isReportedCount`. */}
+      {!reported && (
+        <div className="an-stat-note">
+          {value === undefined
+            ? copy.analytics.notReported
+            : copy.analytics.notUsable}
+        </div>
+      )}
     </div>
   );
 }

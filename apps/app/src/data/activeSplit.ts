@@ -32,6 +32,8 @@
  * trustworthy about numbers.
  */
 
+import { isReportedCount } from './reportedCount';
+
 export type ActiveSplit =
   /** At least one counter was absent. A residual computed against a
    *  missing input would be a figure this page invented. */
@@ -50,24 +52,18 @@ export function resolveActiveSplit(input: {
   nftRentalsActive: number | undefined;
 }): ActiveSplit {
   const { active, erc20ActiveLoans, nftRentalsActive } = input;
+  // ROUND 54 P2 — the same predicate the TILES use. This function had
+  // its own copy of "is this a real count", which is how the page came
+  // to withhold the residual derived from a negative counter while
+  // printing that counter beside it. An absent, non-finite, negative or
+  // fractional input is not a number to do arithmetic with: NaN in
+  // particular would propagate through the subtraction and compare
+  // false against every bound, landing in `reconciled` carrying a NaN
+  // residual for the page to render as a count.
   if (
-    typeof active !== 'number' ||
-    typeof erc20ActiveLoans !== 'number' ||
-    typeof nftRentalsActive !== 'number'
-  ) {
-    return { kind: 'unknown' };
-  }
-  // A non-finite or negative counter is itself a contradiction rather
-  // than a number to do arithmetic with — NaN would propagate silently
-  // through the subtraction and compare false against every bound,
-  // landing in `reconciled` with a NaN residual.
-  if (
-    !Number.isFinite(active) ||
-    !Number.isFinite(erc20ActiveLoans) ||
-    !Number.isFinite(nftRentalsActive) ||
-    active < 0 ||
-    erc20ActiveLoans < 0 ||
-    nftRentalsActive < 0
+    !isReportedCount(active) ||
+    !isReportedCount(erc20ActiveLoans) ||
+    !isReportedCount(nftRentalsActive)
   ) {
     return { kind: 'unknown' };
   }

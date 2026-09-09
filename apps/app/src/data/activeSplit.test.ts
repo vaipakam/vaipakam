@@ -148,4 +148,19 @@ describe('resolveActiveSplit — unknown', () => {
       }),
     ).toEqual({ kind: 'unknown' });
   });
+
+  // Round 54 P2 — this resolver now shares `isReportedCount` with the
+  // tiles, so it inherits the fractional case too. It matters here for
+  // its own reason: a fractional input yields a fractional residual, and
+  // "0.5 active loans could not be typed" is not a sentence about
+  // anything.
+  it('is unknown when a counter is fractional', () => {
+    expect(
+      resolveActiveSplit({
+        active: 10.5,
+        erc20ActiveLoans: 6,
+        nftRentalsActive: 3,
+      }),
+    ).toEqual({ kind: 'unknown' });
+  });
 });
