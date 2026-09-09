@@ -220,11 +220,34 @@ export function ForcedCloseCard({
           account: address,
         });
       }
-      await write('triggerDefault', [BigInt(loanId), []]);
-      setSubmitted({
-        at: Date.now(),
-        chainId: walletChain?.chainId,
-        loanId: String(loanId),
+      // STAMP ON THE HASH, NOT ON THE RECEIPT (round 47 P1).
+      //
+      // `write` resolves only after the receipt wait, and that wait can
+      // time out or lose its RPC on a transaction that mined perfectly
+      // well — `useDiamondWrite` says so in its own `onSubmitted` doc,
+      // which is the hook this call was not using. Stamping after the
+      // await meant that on any such failure `submitted` stayed null,
+      // `finally` cleared the busy flag, and the confirmation came back
+      // live under the lender with the same button.
+      //
+      // A retry then re-simulates against a chain where the first
+      // close-out may not have landed YET, so the simulation passes and
+      // a second `triggerDefault` is queued. That second call either
+      // burns a network fee reverting on a now-terminal loan, or — after
+      // a PARTIAL first settlement — runs for real against the residual.
+      // Neither is something to risk because a receipt wait timed out.
+      //
+      // So the stamp goes down the moment a hash exists. The hold it
+      // starts is still released by evidence (`readsUpdatedAt` passing
+      // it), so a transaction that genuinely failed to mine unblocks on
+      // the next read rather than latching.
+      await write('triggerDefault', [BigInt(loanId), []], {
+        onSubmitted: () =>
+          setSubmitted({
+            at: Date.now(),
+            chainId: walletChain?.chainId,
+            loanId: String(loanId),
+          }),
       });
       onClosedOut();
       onCloseConfirm();

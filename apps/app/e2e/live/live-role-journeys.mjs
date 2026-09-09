@@ -60,6 +60,16 @@
  * posture is keyless and needs no credential at all. No key is ever used
  * to sign here — `readOnly` denies write RPCs outright.
  */
+/** Routes `src/contracts/tosExitRoutes.ts` exempts from the Terms gate.
+ *
+ *  Duplicated rather than imported because this driver is plain ESM and
+ *  the source of truth is TypeScript compiled into the app bundle. The
+ *  duplication is deliberate and narrow: a route dropped from the real
+ *  list and left here makes this driver fail LOUDLY on a route that is
+ *  now legitimately gated, which is the safe direction for a check whose
+ *  whole purpose is refusing to accept a gate on an exit. */
+const TOS_EXEMPT_ROUTES = new Set(['/claims', '/vault', '/recover', '/desk']);
+
 import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import {
@@ -1093,9 +1103,31 @@ for (const roleKey of wanted) {
       // The URL can be right and the surface still absent: see
       // `gateMasked`. Neither pass nor fail — the journey did not run.
       if (posture.preAuthorized && (await gateMasked(page))) {
-        unverifiable = true;
-        actual = 'the Terms gate replaced this route — the surface never mounted';
-        note = 'legitimate posture, but this scenario verified nothing. Accept the current Terms with the dev wallet and re-run.';
+        if (TOS_EXEMPT_ROUTES.has(s.route)) {
+          // ROUND 47 P2 — a gate HERE is a product regression, not a
+          // posture. `src/contracts/tosExitRoutes.ts` exempts these
+          // routes on purpose: claims, the vault, stuck-token recovery
+          // and the desk are how a user gets their money OUT, and the
+          // functional spec requires them to stay reachable for someone
+          // who has not accepted a pending Terms revision. Paperwork
+          // must not stand between somebody and funds they are owed.
+          //
+          // Reporting it as unverified was worse than not checking:
+          // the note told the operator to accept the Terms and re-run,
+          // which makes the run pass and the regression vanish — while
+          // every real user who has not accepted stays locked out. A
+          // check that instructs you to perform the action that hides
+          // the bug is not a lenient check, it is an actively
+          // misleading one.
+          ok = false;
+          actual = `the Terms gate replaced ${s.route}, which is an exempt exit route`;
+          note =
+            'REGRESSION: this route must remain reachable without accepting a pending Terms revision. Do NOT accept the Terms to make this pass — that hides it.';
+        } else {
+          unverifiable = true;
+          actual = 'the Terms gate replaced this route — the surface never mounted';
+          note = 'legitimate posture, but this scenario verified nothing. Accept the current Terms with the dev wallet and re-run.';
+        }
       } else {
         const r = await s.check(page);
         ok = r.ok;

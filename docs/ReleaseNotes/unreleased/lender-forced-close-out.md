@@ -419,3 +419,25 @@ where the settled portion is specifically not claimable yet. That
 sentence is gone rather than qualified: the note directly beneath it
 already explains the timing, and saying it twice at two different levels
 of precision is how they came to disagree in the first place.
+
+The most serious thing found in this whole review came late, and it was
+about the transaction rather than the words around it. The card marked a
+close-out as submitted only once the network had confirmed it. That
+sounds right and is not: confirming can time out, or lose its connection,
+on a transaction that has already been accepted and will mine perfectly
+well. When that happened the card concluded nothing had been sent, gave
+the button back, and a lender pressing it again could have a second
+close-out queued behind the first — which either wastes a network fee
+arriving at a loan that has just closed, or, where the first settled only
+part, runs for real against what is left. The card now records the
+attempt the moment the transaction has an identifier, which is the point
+at which it stops being safe to assume nothing happened.
+
+Two smaller items alongside it. A live check on the deployed site treated
+the Terms notice appearing over a claims, vault, recovery or desk page as
+an inconclusive result and told whoever ran it to accept the Terms and try
+again. Those four pages are deliberately exempt from that notice, because
+they are how somebody gets their money out and paperwork must not stand
+in the way. So the notice appearing there is a fault, and the check was
+both failing to report it and recommending the exact step that makes it
+disappear from the next run. It now fails, and says not to do that.
