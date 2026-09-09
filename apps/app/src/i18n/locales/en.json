@@ -1114,7 +1114,7 @@
       "blockedPaused": "The protocol is paused right now, so nothing can be closed out until governance lifts it. Your position and the collateral behind it are unaffected by the pause.",
       "blockedNoConsent": "This loan is past its grace period, but it was opened without both sides recording the risk-and-terms acknowledgement the protocol requires before it will hand over collateral that has no market price. The close-out is refused for everyone, not just for you — contact support.",
       "submitted": "Close-out submitted. The loan is ending; give the page a moment to catch up, then check the Claims page for what is now yours to claim.",
-      "readyInternalMatch": "The grace period has passed and this loan can be closed out now. The protocol has an opposing position it can settle this one against, so instead of the collateral being sold you are repaid in the asset you lent, at the oracle price when the transaction runs. You claim it afterwards from the Claims page.",
+      "readyInternalMatch": "The grace period has passed and this loan can be closed out now. The protocol has an opposing position it can settle this one against, so instead of the collateral being sold you are repaid in the asset you lent, at the oracle price when the transaction runs. You claim it afterwards from the Claims page. If someone settles against that opposing position first, this attempt will fail and cost you only the network fee — the loan stays open and you can try again.",
       "readyRental": "The grace period has passed, so you can end this rental now. Your NFT stays where it is and the renter’s access is removed. What becomes claimable is the rent that was paid up front, less fees — you claim it from the Claims page."
     },
     "lenderExit": {

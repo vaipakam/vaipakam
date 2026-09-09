@@ -161,10 +161,27 @@
 # SPA fallback still answers 200 with the index shell, and a crawler
 # that does not execute `SeoMeta` would index that soft 404 — the same
 # reason every route above is listed.
-/analytics/*
-  X-Robots-Tag: noindex
-/protocol-console/*
-  X-Robots-Tag: noindex
+# REMOVED, not narrowed (round 37 P3). These two child splats existed to
+# noindex soft 404s like `/analytics/foo`, but `*` also matches an empty
+# remainder — so `/analytics/` picked up `noindex` while `SeoMeta` strips
+# the trailing slash and correctly chooses `index: true`. A header cannot
+# be undone after hydration, so the response won that disagreement and a
+# valid form of a public URL was withheld from the index.
+#
+# Deleting them rather than rewriting the pattern, because the `/:locale/*`
+# rule below already covers every path with a non-empty child segment —
+# `/analytics/foo` matches it with first segment `analytics` — so these
+# were redundant for the case they were written for. Narrowing with a
+# `:placeholder` would have worked too; deletion needs no assumption
+# about how the matcher treats an empty segment, which is the assumption
+# that produced this bug.
+#
+# RESIDUAL, stated rather than assumed away: whether `/:locale/*` itself
+# matches a bare `/analytics/` depends on that same empty-remainder
+# question, which I cannot settle from here. If it does, the
+# trailing-slash form stays noindexed and only its canonical — which
+# `SeoMeta` emits pointing at the slashless URL — consolidates it. That
+# is strictly better than before, where BOTH rules withheld it.
 
 # SPA aliases (App.tsx Navigate routes). The redirect only happens
 # after JS runs, so a non-executing crawler fetching an alias gets

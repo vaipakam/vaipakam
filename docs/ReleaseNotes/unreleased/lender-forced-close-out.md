@@ -23,13 +23,20 @@ card asks the protocol the question directly and renders the answer.
 The grace figure is still read, but only to explain the wait; it never
 decides it.
 
-**The action is not one button, because the protocol has two routes and
-only one of them can be driven from a browser.** Where the collateral
-is an NFT rental, or has no reliable market price, or has fallen far
-enough in value that selling it is pointless, closing out hands it over
-as-is and the app can do that in a single transaction. Where the
-collateral is ordinary and liquid, the protocol insists it be sold on
-an exchange, and insists further that whoever submits the transaction
+**The action is not one button, because the protocol settles these
+positions in several different ways and only some of them can be driven
+from a browser.** Where the collateral has no reliable market price, or
+has fallen far enough in value that selling it is pointless, closing out
+hands it over as-is and the app can do that in a single transaction. An
+overdue NFT rental can also be ended in one transaction, but it is a
+different thing entirely and the card no longer describes it as a
+collateral transfer: ending a rental removes the renter's access, leaves
+the lender's own asset exactly where it is, and makes the rent that was
+paid up front claimable, less fees. Nothing belonging to the borrower
+moves.
+
+Where the collateral is ordinary and liquid, the protocol insists it be
+sold on an exchange, and insists further that whoever submits the transaction
 supply the route for that sale — deliberately, so that nobody can
 shortcut an eligible loan into a worse settlement by simply not trying
 to sell. The app cannot build such a route yet. It would have been easy
@@ -46,8 +53,12 @@ runs and no figure exists beforehand. It never suggests the lender is
 the only one who can act, because they are not, and a lender who
 returns to find the position already closed by someone else should read
 that as normal rather than as loss. And it never implies the money
-arrives by itself — closing ends the loan, and what is owed becomes
-claimable after.
+arrives by itself — what is owed becomes claimable afterwards rather
+than landing in a wallet. It does not promise the loan is finished
+either: closing out usually ends it, but where the protocol settles only
+part of the position, or the sale of the collateral cannot go through,
+the loan stays open and the borrower can still repay or add to their
+collateral.
 
 The card also appears before it is usable, which was a deliberate
 choice rather than an oversight. It shows while the checks are still
