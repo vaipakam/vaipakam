@@ -253,6 +253,20 @@ through the descriptor was passed as safe. The truncating open is what is
 recognised — the write that follows it names neither a file nor a mode, and the
 verb it uses is exactly the kind of generic name this work keeps out.
 
+The same question turned out to have a second half, in the other direction. The
+plainest spelling of opening a file is excluded in JavaScript, where it is the
+browser's window opener rather than a file operation — but a wrapper handing
+source to an interpreter is running that interpreter's language, so the
+exclusion was silencing a real overwrite written in the language being executed.
+That form is now recognised wherever something runs the text, and stays excluded
+where the text is the wrapper's own code, which is the rule the shell spellings
+now follow. The three ways an open can carry its mode are written once and asked
+of both spellings of the call, so the two cannot drift apart the way the deleted
+duplicate did. And the shared statement of what counts as a call — which covers
+the optional form that runs only when the member exists — had been written down
+but not applied to the open patterns, so the rule the checker states about
+itself was not true of every write it recognises. It is now.
+
 An executable helper with no file extension is classified by its shebang, which
 had been true for one interpreter and not the other. A Node helper was read as
 a language with no string literals, so an inert example inside one was taken

@@ -11805,4 +11805,50 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     );
     expect(r.ok).toBe(false);
   });
+
+  // ---- Codex #2066 r41 ----
+
+  it('an executed Python payload opens files (#2066 r41)', () => {
+    // The bare `open` is excluded in JavaScript because `open(url, "w")` is the
+    // window opener there — but a wrapper handing Python source to an
+    // interpreter is executing Python, whatever the outer file is spelled in.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'un.mjs',
+      'spawnSync("python3", ["-c", "open(\'configs/custom.jsonc\',\'w\').write(\'{}\')"]);\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a bare open in JavaScript code is still not one (#2066 r41 bounds)', () => {
+    // The r39 exclusion survives: nothing runs this text, so it is the window
+    // opener and not a file write.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'uo.mjs',
+      'const cfg="configs/custom.jsonc";\nopen("https://example.com", "w");\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('an optional call opens a file too (#2066 r41)', () => {
+    // The optional-call fragment was shared in r39 and the open patterns kept
+    // their own `(`, so the rule that fragment states did not reach them.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'up.mjs',
+      // Spelled through the module rather than through Codex's `const io =
+      // fs.promises` alias: `io` is itself a recognised qualifier, so that
+      // spelling would have passed on the qualifier list and not on the
+      // optional call, and following the alias is what this reader declines.
+      'const cfg="configs/custom.jsonc";\nawait fs.promises.open?.(cfg, "w");\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
 });

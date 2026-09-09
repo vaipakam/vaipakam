@@ -3644,6 +3644,51 @@ const fsOpen = (lang) =>
 // The ATTACHED forms take the source with or without an `=`: `bun -esource`
 // runs it exactly as `bun --eval=source` does, and requiring the equals left
 // the executed literal read as inert (r35).
+
+// THE MODE-STRING SPELLINGS OF AN OPEN, given the expression that names the
+// open itself. Shared rather than written twice: the bare form below is the
+// same three alternatives asked of a different name, and a second copy of a
+// pattern is what `SHELL_SYNTAX_WRITE` was — a duplicate that stopped tracking
+// the original and produced a false green (r40).
+//
+// WHERE THE MODE CAN SIT DEPENDS ON THE RECEIVER, which is Python's rule and
+// not a preference. For the builtin and for a module's `open`, the FIRST
+// argument is the FILE — so a lone `open("w")` reads a file named `w` and the
+// mode defaults to reading, and accepting an optional keyword there reported it
+// as a write (r34). A mode in first position is therefore admitted only as a
+// KEYWORD.
+//
+// `mode=` may also come FIRST among several arguments: Python accepts
+// `open(mode="w", file=cfg)`, and requiring it after a comma missed that
+// ordering (r9). `open(Path(cfg), "w")` wraps the path, and stopping at the
+// first `)` never reached the positional mode (r10).
+//
+// Every branch requires the mode literal to CLOSE. r11 fixed only the method
+// form, so `webbrowser.open("https://x", "welcome")` still matched the prefix
+// `"w` in the positional one (r12).
+//
+// Each alternative closes with its OWN quote, BY NAME. These were numbered
+// backreferences, and inserting two alternatives in r34 shifted the numbering
+// under the two below them: they went on referring to a group belonging to an
+// EARLIER alternative, which in an unmatched alternative is empty — so
+// JavaScript accepted the backreference against nothing and the mode matched on
+// its first letter alone, reporting `open(path, "welcome")` as a write (r37).
+const openModeAlts = (open) =>
+  String.raw`|` + open + CALL + String.raw`\s*mode\s*=\s*(?<mk>["'\`])[rbt]*[wax+][rbt+]*\k<mk>` +
+  String.raw`|` + open + CALL +
+  String.raw`\s*(?:(?:[^()]|\([^()]*\))*,\s*)?mode\s*=\s*(?<ma>["'\`])[rbt]*[wax+][rbt+]*\k<ma>` +
+  String.raw`|` + open + CALL +
+  String.raw`(?:[^()]|\([^()]*\))*,\s*(?<mo>["'\`])[rbt]*[wax+][rbt+]*\k<mo>`;
+
+// …and the BARE spelling, which in JavaScript only counts where something RUNS
+// the text. `open('cfg','w')` is Python's builtin, and a JavaScript wrapper
+// handing Python source to an interpreter is executing Python however the outer
+// file is spelled — gating the bare form on the OUTER file's language passed
+// that overwrite as safe (r41). The same correction r40 made for the shell
+// spellings, in the other direction: what decides the language is what runs the
+// text, not the file holding it.
+const BARE_OPEN = String.raw`(?<![A-Za-z0-9_$.])open(?:Sync)?`;
+
 const EVAL_C = {
   grouped: /(['"`])(?:-{1,2}(?:eval|command)|-[a-zA-Z]*c[a-zA-Z]*)\1\s*,\s*$/,
   attached: /-{1,2}(?:eval|command)=|-c(?:=|(?=\S))/,
@@ -4083,13 +4128,13 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
   // receiver needs the receiver to be a constructed path, which is syntax
   // rather than the type this reader declines to infer.
   const OPEN_WRITE =
-    fsOpen(lang) + String.raw`\s*\([^)]*` +
+    fsOpen(lang) + CALL + String.raw`[^)]*` +
     esc + String.raw`[^)]*` + Q + String.raw`[rbt]*[wax+]`;
   const RECEIVER_WRITE =
-    Q + String.raw`[^"'\`]*` + esc + Q + String.raw`\s*\)?\s*\.\s*(?:write_text|write_bytes)\s*\(`;
+    Q + String.raw`[^"'\`]*` + esc + Q + String.raw`\s*\)?\s*\.\s*(?:write_text|write_bytes)` + CALL;
   const RECEIVER_OPEN =
     Q + String.raw`[^"'\`]*` + esc + Q +
-    String.raw`\s*\)?\s*\.\s*open\s*\(\s*` + Q + String.raw`[rbt]*[wax+]`;
+    String.raw`\s*\)?\s*\.\s*open` + CALL + String.raw`\s*` + Q + String.raw`[rbt]*[wax+]`;
   const REDIRECT = String.raw`>\s*\S*` + esc;
   // A COPY IS A WRITE. `cp generated.jsonc configs/custom.jsonc` replaces the
   // file wrangler will load just as surely as writing it does, and a scan for
@@ -4484,18 +4529,11 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
         // rather than the type resolution this reader declines: a bare
         // `.replace(` on an unknown value stays out (r25).
         String.raw`|(?<![A-Za-z0-9_$.])Path\s*\((?:[^()]|\([^()]*\))*\)\s*\.\s*replace` + CALL +
-        // …AND EACH ALTERNATIVE CLOSES WITH ITS OWN QUOTE, by NAME. These
-        // were numbered backreferences, and inserting two alternatives in r34
-        // shifted the numbering under the two below them: they went on
-        // referring to a group belonging to an EARLIER alternative, which in
-        // an unmatched alternative is empty — so JavaScript accepted the
-        // backreference against nothing and the mode matched on its first
-        // letter alone, reporting `open(path, "welcome")` as a write (r37).
+        // THE MODE-STRING SPELLINGS live in `openModeAlts` above, with the
+        // reasoning for where a mode may sit and why each alternative closes
+        // its own quote by name. They are shared because the payload pass
+        // below asks the same three questions of a bare `open`.
         //
-        // Named, so the coupling is to the group and not to a position, and
-        // the next inserted alternative cannot repeat this.
-        // The mode literal must CLOSE. Accepting a prefix let
-        // `webbrowser.open("welcome")` match `"w` (r11).
         // …and the METHOD form is GONE (r30). `webbrowser.open("w")` opens a
         // URL named `w` and touches no file, and closing the literal was not
         // enough to tell them apart: what separates them is the TYPE of the
@@ -4509,17 +4547,11 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
         // on a bound path and for a process module under an alias: the
         // receiver's type is not in the text. The constructor form
         // `Path("…").open("w")` is syntax, and is still read.
-        // WHERE THE MODE CAN SIT DEPENDS ON THE RECEIVER, which is Python's
-        // rule and not a preference. For the builtin and for a module's
-        // `open`, the FIRST argument is the FILE — so a lone `open("w")`
-        // reads a file named `w` and the mode defaults to reading, and
-        // accepting an optional keyword there reported it as a write (r34).
-        // A mode in first position is therefore admitted only as a KEYWORD.
-        String.raw`|` + fsOpen(lang) + String.raw`\s*\(\s*mode\s*=\s*(?<mk>["'\`])[rbt]*[wax+][rbt+]*\k<mk>` +
+        openModeAlts(fsOpen(lang)) +
         // …and on a CONSTRUCTED PATH the first argument IS the mode, so both
         // spellings are read there. Splitting these apart is what lets the
         // builtin tighten without losing `Path("…").open("w")`.
-        String.raw`|Path\s*\([^()]*\)\s*\.\s*open\s*\(\s*(?:mode\s*=\s*)?(?<mp>["'\`])[rbt]*[wax+][rbt+]*\k<mp>` +
+        String.raw`|Path\s*\([^()]*\)\s*\.\s*open` + CALL + String.raw`\s*(?:mode\s*=\s*)?(?<mp>["'\`])[rbt]*[wax+][rbt+]*\k<mp>` +
         // `os.open` DOES NOT TAKE A MODE STRING AT ALL. Its second argument is
         // an integer flag set, so the only way to see its intent is to read
         // the flags — and `os.open(cfg, os.O_WRONLY | os.O_TRUNC)` truncates
@@ -4540,21 +4572,9 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
         // three times, which I did not apply when adding it.
         String.raw`|(?<![A-Za-z0-9_$.])(?:fs|fsp|fse|fsExtra|os)` +
         String.raw`(?:\s*\.\s*promises)?\s*\.\s*truncate(?:Sync)?` + CALL +
-        String.raw`|(?<![A-Za-z0-9_$.])os\s*\.\s*open\s*\(` +
+        String.raw`|(?<![A-Za-z0-9_$.])os\s*\.\s*open` + CALL +
         String.raw`(?:[^(),]|\([^()]*\))*,\s*(?:flags\s*=\s*)?` +
-        String.raw`(?:[^(),]|\([^()]*\))*O_(?:WRONLY|RDWR|TRUNC|CREAT|APPEND)` +
-        // `mode=` may come FIRST: Python accepts `open(mode="w", file=cfg)`,
-        // and requiring it after a comma missed that ordering (r9).
-        // Every open-mode branch requires the literal to CLOSE. r11 fixed
-        // only the method form, so `webbrowser.open("https://x", "welcome")`
-        // still matched the prefix `"w` in the positional one (r12).
-        String.raw`|` + fsOpen(lang) + String.raw`\s*\(\s*(?:(?:[^()]|\([^()]*\))*,\s*)?mode\s*=\s*(?<ma>["'\`])[rbt]*[wax+][rbt+]*\k<ma>` +
-        // `open(Path(cfg), "w")` wraps the path, and stopping at the first
-        // `)` never reached the positional mode (r10).
-        // …and the POSITIONAL form needs an `open` that is Python's builtin or a
-        // filesystem one. Any member method whose second argument looks like a
-        // mode matched — `browser.open(url, "w")` opens a window named `w` (r23).
-        String.raw`|` + fsOpen(lang) + String.raw`\s*\((?:[^()]|\([^()]*\))*,\s*(?<mo>["'\`])[rbt]*[wax+][rbt+]*\k<mo>`,
+        String.raw`(?:[^(),]|\([^()]*\))*O_(?:WRONLY|RDWR|TRUNC|CREAT|APPEND)`,
       'gm',
     );
     // NO ORDERING BETWEEN THE NAME AND THE WRITE. Requiring the write to come
@@ -4580,11 +4600,22 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
     // spans, which also answers the quadratic path r12 measured at 32k/64k/128k
     // commented lines.
     const kind = classifyText(text, lang);
-    const ANY_WRITE_SHELL = new RegExp(
-      [SHELL_COPY_CMD, SHELL_INPLACE_EDIT, SHELL_REDIRECT_BOUND].join('|'),
+    // THE SPELLINGS WHOSE LANGUAGE IS NOT THE FILE'S. The shell ones always,
+    // and in JavaScript the bare `open` too: `spawnSync("python3", ["-c",
+    // "open('cfg','w')…"])` executes PYTHON, and gating that form on the outer
+    // file's language passed the overwrite as safe (r41). One pass, because it
+    // is one question — does something run this text — and answering it per
+    // spelling is how the file-wide gate came back the second time.
+    const ANY_WRITE_EXECUTED = new RegExp(
+      [
+        SHELL_COPY_CMD,
+        SHELL_INPLACE_EDIT,
+        SHELL_REDIRECT_BOUND,
+        ...(lang === 'js' ? [openModeAlts(BARE_OPEN).slice(1)] : []),
+      ].join('|'),
       'gm',
     );
-    for (const w of text.matchAll(ANY_WRITE_SHELL)) {
+    for (const w of text.matchAll(ANY_WRITE_EXECUTED)) {
       // A SHELL SPELLING EXECUTES WHERE A SHELL READS IT. In a shell file that
       // is the file's own syntax, judged exactly as the calls below are; in
       // JavaScript or Python the same characters are an arrow function, a
