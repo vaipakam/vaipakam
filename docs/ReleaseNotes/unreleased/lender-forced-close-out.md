@@ -465,3 +465,23 @@ they are how somebody gets their money out and paperwork must not stand
 in the way. So the notice appearing there is a fault, and the check was
 both failing to report it and recommending the exact step that makes it
 disappear from the next run. It now fails, and says not to do that.
+
+Following the transaction brought its own correction. Waiting for one
+fresh reading of the loan before offering the button again is right when
+the transaction succeeded — the position has changed, and a button
+offered against the figures from before the close-out would be offering
+something that no longer exists. It is wrong for the other two endings. A
+transaction the network rejected changed nothing, and one that never
+arrived changed nothing either; in both cases a lender should be able to
+try again immediately, and the readings that gate the card have their own
+say regardless. Worse, neither of those endings triggers the refresh, so
+the wait had nothing to end it and the button could stay away for good.
+The three endings are now treated as the three different things they are.
+
+A separate correction to the live checks: when the address of the site to
+review was not supplied, every one of them stopped with an unhandled
+error, which the batch runner reads as "this check found a defect in the
+product". Nothing had been reviewed at all. They now report that the
+review could not be started, which is a different verdict with a
+different remedy — supply the address and run it again, rather than go
+hunting for a bug that was never found.

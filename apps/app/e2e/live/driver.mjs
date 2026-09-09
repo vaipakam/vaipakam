@@ -522,10 +522,25 @@ export const CHAINS = {
 // `app.vaipakam.com` once you have confirmed it serves the same build
 // (compare the `/assets/index-*.js` hash — every path on both hosts
 // returns the same 200 SPA shell, so a status code proves nothing).
+//
+// ROUND 49 P2 — it exits BLOCKED, it does not throw. Every caller is an
+// entry-point guard in a three-verdict driver, and a bare throw from one
+// of those is an uncaught exception, which Node reports as exit 1. Exit 1
+// is the batch runner's code for FAIL: "this drive found a defect". An
+// unset environment variable is the opposite kind of event — the drive
+// never reached a served page, so it verified nothing and asserted
+// nothing. That is precisely what BLOCKED (exit 2) is defined to mean
+// above, and it is the classification `loadWallets` and `walletFor`
+// already take for the same reason.
+//
+// Fixed here rather than at the twelve call sites: each of them is one
+// unguarded `requireSiteUrl()` line, so a per-driver try/catch is twelve
+// copies of one decision, and a thirteenth driver would silently start
+// out with the wrong one.
 export function requireSiteUrl() {
   const url = process.env.SITE_URL;
   if (!url) {
-    throw new Error(
+    blockedSync(
       'SITE_URL is required. There is no safe default: the review must ' +
         'target the deployment you just made, and only you know which ' +
         'URL that is. alpha02.vaipakam.com serves the frozen ' +

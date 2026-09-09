@@ -81,6 +81,12 @@ import {
   requireSiteUrl,
 } from './driver.mjs';
 
+// Entry-point guard: this driver reads `SITE` directly, before any guarded
+// driver function runs, so without this an omitted SITE_URL surfaces as an
+// opaque URL-parse error mid-scenario. It exits BLOCKED (2), never 1 — see
+// `requireSiteUrl`; a configuration mistake must not be reported as a
+// product regression, which is the same precedence the JOURNEY_ROLES and
+// unknown-role guards below apply.
 requireSiteUrl();
 
 /** Text that means the app rendered its own not-found, not a blank shell. */

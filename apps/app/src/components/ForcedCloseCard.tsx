@@ -251,12 +251,31 @@ export function ForcedCloseCard({
    *  success path only — once a receipt exists we still wait for one
    *  post-stamp read before re-offering a button, which is the round-28
    *  reason the hold was introduced. It can no longer hold on its own. */
-  const receiptSettled =
+  //
+  // ROUND 49 P1 — the three dispositions are NOT the same, and the
+  // previous predicate treated them alike while its own comment claimed
+  // otherwise. Applying the freshness arm to a revert or a give-up
+  // reinstated the latch exactly where it hurts: neither path reaches
+  // `invalidateQueries` (success-only, after the await), and `consent`
+  // does not poll, so the minimum timestamp can sit below the stamp
+  // indefinitely and the action never comes back.
+  //
+  // - SUCCESS: the loan has changed. Hold until one post-stamp read, so
+  //   a button is not re-offered against figures from before the close
+  //   (the round-28 reason this hold exists at all).
+  // - REVERTED: nothing changed on-chain. A retry is legitimate and the
+  //   hold must end at once.
+  // - GAVE UP with no receipt: the network never accepted it, as far as
+  //   anything here can tell. Same answer — release, and let the
+  //   readiness reads be the binding judgement they always were.
+  const txReceipt = receiptWatch.data ?? null;
+  const succeeded = txReceipt !== null && txReceipt.status === 'success';
+  const disposed =
     submitted !== null &&
-    (receiptWatch.data != null || gaveUpOn === submitted.hash);
+    (txReceipt !== null || gaveUpOn === submitted.hash);
   const holdingAfterSubmit =
     submitted !== null &&
-    (!receiptSettled || readsUpdatedAt <= submitted.at);
+    (!disposed || (succeeded && readsUpdatedAt <= submitted.at));
   const submittable = canSubmitFromApp(readiness) && !holdingAfterSubmit;
 
   async function closeOut() {
