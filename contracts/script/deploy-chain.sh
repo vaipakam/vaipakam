@@ -636,15 +636,35 @@ fi
 # is a COMMITTED deployment. Without --fresh nothing above archived it into
 # archive-manifest.json, so re-running DeployDiamond would publish a new address
 # over it and the retired Diamond would never enter the census inventory. Same
-# refusal as deploy-testnet/mainnet: --fresh (archive, then replace) or --resume
-# (continue this very deployment) are the only ways past an existing Diamond.
-if [ "$FRESH" != "1" ] && [ "$RESUME" != "1" ]; then
+# refusal as deploy-testnet/mainnet: --fresh (archive, then replace) is the way
+# past an existing Diamond.
+# r32 P1 — --resume is exempt ONLY when it provably continues THIS deployment:
+# `.markers/` and `.history/` are gitignored, so a resume from a fresh checkout
+# (or after marker loss) has no `diamond.done`, `step_done` is false, and [2]
+# would broadcast a new Diamond over the committed one. The exemption therefore
+# needs the marker AND the post-[2] snapshot naming the very Diamond the
+# artifact names now; anything less is --fresh's job.
+if [ "$FRESH" != "1" ]; then
   EXISTING_DIAMOND_HERE=$(jq -r '.diamond // empty' "$DEPLOY_DIR/addresses.json" 2>/dev/null || echo "")
   if [ -n "$EXISTING_DIAMOND_HERE" ] && [ "$EXISTING_DIAMOND_HERE" != "null" ]; then
-    echo "ERROR: deployments/$CHAIN_SLUG/addresses.json already names a deployed Diamond ($EXISTING_DIAMOND_HERE)." >&2
-    echo "       Pass --fresh to archive it into archive-manifest.json and replace it, or --resume to continue that deployment." >&2
-    echo "       A plain re-run would overwrite the committed artifact and drop the retired Diamond from the census inventory." >&2
-    exit 1
+    RESUMING_THIS_DIAMOND=0
+    if [ "$RESUME" = "1" ] && [ -f "$MARKERS_DIR/diamond.done" ]; then
+      LAST_POST_DIAMOND=$(ls -1t "$HISTORY_DIR"/post-diamond-*.json 2>/dev/null | head -n 1 || true)
+      if [ -n "$LAST_POST_DIAMOND" ] && [ "$(jq -r '.diamond // empty' "$LAST_POST_DIAMOND" 2>/dev/null)" = "$EXISTING_DIAMOND_HERE" ]; then
+        RESUMING_THIS_DIAMOND=1
+      fi
+    fi
+    if [ "$RESUMING_THIS_DIAMOND" != "1" ]; then
+      echo "ERROR: deployments/$CHAIN_SLUG/addresses.json already names a deployed Diamond ($EXISTING_DIAMOND_HERE)." >&2
+      if [ "$RESUME" = "1" ]; then
+        echo "       --resume was passed, but nothing here shows that Diamond was deployed by the run being resumed:" >&2
+        echo "       it needs $MARKERS_DIR/diamond.done AND a post-diamond snapshot in $HISTORY_DIR naming $EXISTING_DIAMOND_HERE" >&2
+        echo "       (both are gitignored — absent on a fresh checkout or after marker loss). Step [2] would broadcast a new Diamond over it." >&2
+      fi
+      echo "       Pass --fresh to archive it into archive-manifest.json and replace it." >&2
+      echo "       A plain re-run would overwrite the committed artifact and drop the retired Diamond from the census inventory." >&2
+      exit 1
+    fi
   fi
 fi
 

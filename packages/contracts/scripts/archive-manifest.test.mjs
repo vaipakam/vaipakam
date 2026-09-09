@@ -345,7 +345,7 @@ test('two-phase live publication: begin marks, end clears and bumps; a second be
   assert.deepEqual(livePublicationsInProgress(readManifest(manifest)), []);
   assert.equal(readManifest(manifest).liveGeneration, 1);
   // a marker whose deploy SHELL is dead is NOT taken over automatically (r26: the forge child may outlive the shell); --force is the operator's deliberate act
-  writeFileSync(manifest, JSON.stringify({ ...readManifest(manifest), livePublicationsInProgress: { b: { token: 'old', pid: 2 ** 22 - 1, startedAt: 'x' } } }));
+  writeFileSync(manifest, JSON.stringify({ ...readManifest(manifest), livePublicationsInProgress: { b: { token: 'old', pid: 2 ** 22 - 1, pgid: 2 ** 22 - 1, startedAt: 'x' } } }));
   assert.throws(() => beginLivePublication(manifest, { slug: 'b', token: 'new', pid: process.pid }), /shell gone.*--force/s);
   assert.equal(beginLivePublication(manifest, { slug: 'b', token: 'new', pid: process.pid, force: true }).token, 'new');
   // r31: a forced clear is held to the proof of death too. This marker was recorded in THIS process's group, where
@@ -397,4 +397,19 @@ test('liveGroupMembers excludes the caller lineage and nothing else (r27)', () =
   assert.deepEqual(liveGroupMembers(100, { exclude: [200, 300], table }), []);
   assert.deepEqual(liveGroupMembers(400, { exclude: [200], table }).map((r) => r.pid), [400]);
   assert.equal(liveGroupMembers(100, { exclude: [200], table: null }), null, 'an unreadable table is unknown, not empty');
+});
+
+test('no process group, no marker and no --force: live-begin refuses a pid it cannot place, and a legacy marker is not clearable (r32)', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'am-nopgid-'));
+  const manifest = join(dir, 'archive-manifest.json');
+  // a pid that is not in the process table has no group to record
+  assert.throws(() => beginLivePublication(manifest, { slug: 'n', token: 'tok', pid: 2 ** 22 - 1 }), /process group of deploy pid .* cannot be read/);
+  assert.deepEqual(livePublicationsInProgress(readManifest(manifest) ?? {}), [], 'nothing was recorded');
+  // a legacy marker (no pgid) fails CLOSED on both forced doors, dead shell or not
+  writeFileSync(manifest, JSON.stringify({ schema: 1, entries: [], livePublicationsInProgress: { n: { token: 'old', pid: 2 ** 22 - 1, startedAt: 'x' } } }));
+  assert.throws(() => beginLivePublication(manifest, { slug: 'n', token: 'new', pid: process.pid, force: true }), /records no process group/);
+  assert.throws(() => endLivePublication(manifest, { slug: 'n', token: 'other', diamond: '0x', force: true }), /records no process group/);
+  assert.deepEqual(livePublicationsInProgress(readManifest(manifest)).map((x) => x.slug), ['n'], 'the legacy marker survived both');
+  // the matching token still ends it normally: the protocol's own path needs no proof of death
+  assert.equal(endLivePublication(manifest, { slug: 'n', token: 'old', diamond: '0x' }) > 0, true);
 });

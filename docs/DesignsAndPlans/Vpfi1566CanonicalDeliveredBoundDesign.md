@@ -5501,6 +5501,19 @@ reported a comfortable answer it had not earned:
   alongside the new one and now states only the new one, and the lens
   NatSpec separates a Mirror's satisfiable zero bound from Detached's
   role-enforced zero, whose recovery is re-attachment rather than funding.
+
+  **Round 32 removed two remaining ways to reach a write without proof.**
+  The wrapper's `--resume` was exempt from the existing-Diamond refusal
+  outright, yet its step markers and snapshots are gitignored, so a resume
+  from a fresh checkout had no marker, treated the Diamond step as not done,
+  and would broadcast a new Diamond over the committed one; the exemption
+  now requires the Diamond step marker and the post-broadcast snapshot
+  naming the very Diamond the artifact names, and anything less is
+  `--fresh`'s job. And the marker protocol could record a marker with no
+  process group when the shell's pid could not be placed, after which a
+  forced door fell back to the shell's own liveness, which proves nothing
+  about its forge child; `live-begin` now refuses to record such a marker,
+  and both forced doors fail closed on one, with no fallback.
   Hand-computed storage slots were never an option: they fail SILENTLY as
   zero, manufacturing the exact "empty" result the census exists to
   establish. The event reconstruction is retained behind `--corroborate` as

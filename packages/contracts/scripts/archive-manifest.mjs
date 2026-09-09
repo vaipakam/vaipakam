@@ -163,11 +163,18 @@ export function liveGroupMembers(pgid, { exclude = [], table = processTable() } 
  * addresses.json after a census had published against the cleared marker.
  */
 function assertRecordedDeployDead(existing, { slug, ownerPid, table = processTable(), door }) {
-  const survivors = Number.isInteger(existing.pgid)
-    ? liveGroupMembers(existing.pgid, { exclude: [process.pid, ownerPid], table })
-    : pidAlive(existing.pid)
-      ? [{ pid: existing.pid, comm: 'recorded deploy shell' }]
-      : [];
+  // r32 P1 — fail CLOSED on a marker without a process group: the shell's own
+  // liveness says nothing about its forge child, so there is no proof to give.
+  // `live-begin` refuses to write such a marker (below), so one can only be a
+  // legacy or hand-made record — and it stays until its deploy is shown dead
+  // by other means and the marker is re-recorded under the protocol.
+  if (!Number.isInteger(existing.pgid) || existing.pgid <= 0) {
+    throw new Error(
+      `archive-manifest: --force refused — ${slug}'s marker records no process group (token ${existing.token}, pid ${existing.pid}), so its deploy cannot be proven dead: ` +
+        `a dead shell does not prove its forge child stopped. Such a marker predates process-group recording or was written by hand; it is not clearable by --force`,
+    );
+  }
+  const survivors = liveGroupMembers(existing.pgid, { exclude: [process.pid, ownerPid], table });
   if (survivors === null) {
     throw new Error(
       `archive-manifest: --force refused — the process table cannot be read, so ${slug}'s recorded deploy ${existing.pid} (process group ${existing.pgid}) cannot be proven dead`,
@@ -566,6 +573,7 @@ export function beginLivePublication(manifestPath, { slug, token, pid, force = f
       const m = readManifest(manifestPath) ?? emptyManifest();
       const inProgress = { ...(m.livePublicationsInProgress ?? {}) };
       const existing = inProgress[slug];
+      const table = processTable();
       // Codex #2070 r26 P1 — a dead deploy SHELL does not prove the broadcast
       // stopped: its forge child can outlive it and still write addresses.json.
       // So an existing marker is NEVER taken over automatically. r27 P1 — and
@@ -573,7 +581,6 @@ export function beginLivePublication(manifestPath, { slug, token, pid, force = f
       // child keeps it, so a group with a live member outside the caller's own
       // lineage is a broadcast that may still be running.
       if (existing && existing.token !== token) {
-        const table = processTable();
         const groupCheck = Number.isInteger(existing.pgid)
           ? `ps -A -o pid=,pgid=,comm= | awk '$2==${existing.pgid}'`
           : `ps -p ${existing.pid}`;
@@ -585,7 +592,16 @@ export function beginLivePublication(manifestPath, { slug, token, pid, force = f
         }
         assertRecordedDeployDead(existing, { slug, ownerPid, table, door: 'begin' });
       }
-      inProgress[slug] = { token, pid: ownerPid, pgid: pgidOf(ownerPid), startedAt: new Date().toISOString() };
+      // r32 P1 — a marker is only worth writing with the identity --force will
+      // later be verified against; refuse to record one without it.
+      const pgid = pgidOf(ownerPid, table ?? processTable());
+      if (!Number.isInteger(pgid) || pgid <= 0) {
+        throw new Error(
+          `archive-manifest: live-begin refused — the process group of deploy pid ${ownerPid} cannot be read (pid not in the process table, or the table is unreadable); ` +
+            `a marker without one could never be proven dead. Pass the live deploy shell's pid (\$\$)`,
+        );
+      }
+      inProgress[slug] = { token, pid: ownerPid, pgid, startedAt: new Date().toISOString() };
       const next = { ...m, livePublicationsInProgress: inProgress };
       writeManifestAtomic(manifestPath, next);
       return inProgress[slug];
