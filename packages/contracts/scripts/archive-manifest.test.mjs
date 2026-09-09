@@ -12,7 +12,7 @@ import { mkdtempSync, writeFileSync, readFileSync, mkdirSync, readdirSync, exist
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { appendEntry, readManifest, withManifestLock, entryFromArtifact, regenerateEntries, writeSnapshotGuarded, bumpLiveGeneration } from './archive-manifest.mjs';
+import { appendEntry, readManifest, withManifestLock, entryFromArtifact, regenerateEntries, writeSnapshotGuarded, bumpLiveGeneration, beginLivePublication, endLivePublication, livePublicationsInProgress } from './archive-manifest.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const WRITER = join(HERE, 'archive-manifest.mjs');
@@ -324,4 +324,22 @@ test('bump-live increments liveGeneration under the lock and regeneration preser
   assert.equal(m.liveGeneration, 2, 'regeneration carries the counter');
   assert.equal(m.lastLivePublished.slug, 'a');
   assert.equal(readManifest(manifest).entries.length, 1);
+});
+
+test('two-phase live publication: begin marks, end clears and bumps; a second begin on a live slug is refused; regeneration keeps the marker (r24)', () => {
+  const { dir, manifest } = fixture();
+  const e1 = entryFromArtifact({ slug: 'a', stamp: 's1', addrPath: artifact(dir, 1) });
+  appendEntry(manifest, e1);
+  const mark = beginLivePublication(manifest, { slug: 'a' });
+  assert.equal(mark.pid, process.pid);
+  assert.deepEqual(livePublicationsInProgress(readManifest(manifest)).map((x) => x.slug), ['a']);
+  assert.throws(() => beginLivePublication(manifest, { slug: 'a' }), /already publishing/);
+  regenerateEntries(manifest, () => [e1]);
+  assert.deepEqual(livePublicationsInProgress(readManifest(manifest)).map((x) => x.slug), ['a'], 'regeneration carries the marker');
+  assert.equal(endLivePublication(manifest, { slug: 'a', diamond: '0xlive' }), 1);
+  assert.deepEqual(livePublicationsInProgress(readManifest(manifest)), []);
+  assert.equal(readManifest(manifest).liveGeneration, 1);
+  // a marker whose recorder is dead can be taken over
+  writeFileSync(manifest, JSON.stringify({ ...readManifest(manifest), livePublicationsInProgress: { b: { pid: 2 ** 22 - 1, startedAt: 'x' } } }));
+  assert.equal(beginLivePublication(manifest, { slug: 'b' }).pid, process.pid);
 });

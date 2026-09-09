@@ -89,7 +89,7 @@
  */
 
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync, renameSync, rmSync } from 'node:fs';
-import { readManifest, regenerateEntries, withManifestLock, writeSnapshotGuarded } from './archive-manifest.mjs';
+import { readManifest, regenerateEntries, withManifestLock, writeSnapshotGuarded, livePublicationsInProgress } from './archive-manifest.mjs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createPublicClient, http, toFunctionSelector, parseAbiItem } from 'viem';
@@ -267,7 +267,9 @@ function fetchViaNodeAgents(url, init = {}) {
     const doRequest = isHttps ? httpsRequest : httpRequest;
     const req = doRequest(
       u,
-      { method: init.method ?? 'POST', headers: init.headers ?? {}, agent: isHttps ? connectionAgents.https : connectionAgents.http, signal: init.signal },
+      // A User-Agent is sent on purpose: Cloudflare-fronted public endpoints
+      // reject the empty/default signature with a 403 "error code: 1010".
+      { method: init.method ?? 'POST', headers: { 'user-agent': 'vaipakam-census/1', ...(init.headers ?? {}) }, agent: isHttps ? connectionAgents.https : connectionAgents.http, signal: init.signal },
       (res) => {
         const chunks = [];
         res.on('data', (c) => chunks.push(c));
@@ -447,6 +449,18 @@ function deployedDiamondsUnderLock() {
   const out = [];
   const manifest = readArchiveManifest();
   LIVE_GENERATION_SEEN = manifest ? Number(manifest.liveGeneration) || 0 : 0;
+  // Codex #2070 r24 P1 — a deploy marks its live publication BEFORE it
+  // broadcasts and clears it AFTER the artifact lands; while the marker is
+  // set the live artifact may be rewritten at any moment outside this lock,
+  // so no inventory taken now can be trusted. Refuse, at start and at
+  // publication alike (both call this under the lock).
+  const publishing = livePublicationsInProgress(manifest);
+  if (publishing.length) {
+    throw new Error(
+      `a deployment is publishing a live artifact right now (${publishing.map((x) => `${x.slug} since ${x.startedAt}, pid ${x.pid}`).join('; ')}); ` +
+        `the inventory cannot be trusted until it ends — re-run after it completes (a crashed deploy is cleared with archive-manifest.mjs live-end <manifest> <slug>)`,
+    );
+  }
   if (!manifest) {
     throw new Error(
       `${ARCHIVE_MANIFEST} is missing. The archived-deployment inventory must be committed, because .archive/ is gitignored ` +
@@ -614,6 +628,115 @@ const PRIOR_COMMITTED_HASH = new Map();
  * Fetched here because the replacement guard runs synchronously under a lock.
  */
 const ANCESTRY_SEEN = new Map();
+/**
+ * The snapshot this run will REPLACE — the canonical artifact for a full run,
+ * the chain's partial file for a `--chain` run (Codex #2070 r24 P2: the
+ * guard compares against that file, so ancestry must be proven against ITS
+ * block, while the canonical artifact's heights remain the monotonic floor).
+ */
+const TARGET_HEIGHT = new Map();
+const TARGET_HASH = new Map();
+function loadTargetSnapshot(targetPath) {
+  TARGET_HEIGHT.clear();
+  TARGET_HASH.clear();
+  if (!existsSync(targetPath)) return;
+  let t;
+  try {
+    t = JSON.parse(readFileSync(targetPath, 'utf8'));
+  } catch (err) {
+    throw new Error(`${targetPath} exists but cannot be parsed (${err.message}); it is the snapshot this run would replace — restore or remove it deliberately`);
+  }
+  for (const r of t.results ?? []) {
+    if (!r?.chainSlug || r?.atBlock == null) continue;
+    const h = BigInt(r.atBlock);
+    if (!TARGET_HEIGHT.has(r.chainSlug) || h > TARGET_HEIGHT.get(r.chainSlug)) {
+      TARGET_HEIGHT.set(r.chainSlug, h);
+      TARGET_HASH.set(r.chainSlug, r.atBlockHash ? String(r.atBlockHash).toLowerCase() : null);
+    }
+  }
+}
+/** Longest numbered range the ancestry walk will fetch; beyond it ancestry is unverifiable and a higher snapshot is refused. */
+const ANCESTRY_WALK_MAX = BigInt(arg('--ancestry-walk-max', '250000'));
+/**
+ * Blocks per batched request in the walk — the STARTING size; the walk is
+ * ADAPTIVE: every rate-limit answer halves the batch (down to single reads)
+ * and doubles the pause, every clean batch keeps them. Measured 2026-09-09
+ * with a user agent set: sepolia.base.org accepts 25/req, Tenderly's
+ * arb-sepolia gateway 10/req (25 → 429), publicnode 100/req; single reads run
+ * at ~2/s everywhere, so batching is what makes a long walk feasible.
+ */
+const ANCESTRY_BATCH = Number(arg('--ancestry-batch', '25'));
+const ANCESTRY_BATCH_PAUSE_MS = Number(arg('--ancestry-batch-pause-ms', '100'));
+const ANCESTRY_RATE_HITS_MAX = 40;
+/**
+ * Prove that `committed` is an ancestor of `proposed` by a PARENT-HASH LINK
+ * WALK (Codex #2070 r24 P1): fetch every block in [committed.height,
+ * proposed.height] by number, in batches, and require the chain of links —
+ * the first block's hash is the committed hash, the last block's hash is the
+ * proposed hash, and every block's `parentHash` is the previous block's hash.
+ * A replica serving a different fork for any height breaks a link. An
+ * independent lookup of "which hash do you serve at height N" proved nothing
+ * about the relationship, which is what an earlier revision relied on.
+ */
+async function verifyAncestryByWalk(rpc, committed, proposed, who) {
+  if (committed.height === proposed.number) {
+    return committed.hash === String(proposed.hash).toLowerCase()
+      ? { verified: true, method: 'same-height', span: 1 }
+      : { verified: false, reason: `same height ${committed.height} but a different hash (${committed.hash} vs ${proposed.hash})` };
+  }
+  if (committed.height > proposed.number) return { verified: false, reason: 'the committed block is higher than the proposed one' };
+  const span = proposed.number - committed.height + 1n;
+  if (span > ANCESTRY_WALK_MAX) {
+    return { verified: false, reason: `the ${span}-block range from ${committed.height} to ${proposed.number} exceeds --ancestry-walk-max ${ANCESTRY_WALK_MAX}; raise it deliberately to walk it` };
+  }
+  let batchSize = Math.max(1, ANCESTRY_BATCH);
+  let pauseMs = ANCESTRY_BATCH_PAUSE_MS;
+  let rateHits = 0;
+  const batcherFor = (n) => createPublicClient({ transport: http(rpc, { fetchFn: fetchViaNodeAgents, batch: { batchSize: n, wait: 0 } }) });
+  let batcher = batcherFor(batchSize);
+  let prevHash = null;
+  let fetched = 0n;
+  const started = Date.now();
+  for (let from = committed.height; from <= proposed.number; ) {
+    const size = BigInt(batchSize);
+    const to = from + size - 1n > proposed.number ? proposed.number : from + size - 1n;
+    const numbers = [];
+    for (let n = from; n <= to; n++) numbers.push(n);
+    let blocks;
+    try {
+      blocks = await withReplicaRetry(to, () => Promise.all(numbers.map((n) => batcher.getBlock({ blockNumber: n }))));
+    } catch (err) {
+      if (classifyRpcError(err) !== 'rate') throw err;
+      rateHits += 1;
+      if (rateHits > ANCESTRY_RATE_HITS_MAX) throw err;
+      batchSize = Math.max(1, Math.floor(batchSize / 2));
+      pauseMs = Math.min(pauseMs * 2 || 200, 8_000);
+      batcher = batcherFor(batchSize);
+      process.stderr.write(`census: ${who} — rate-limited during the ancestry walk; batch → ${batchSize}, pause → ${pauseMs} ms (${rateHits}/${ANCESTRY_RATE_HITS_MAX})\n`);
+      await sleep(pauseMs);
+      continue; // retry the same range at the smaller size
+    }
+    from = to + 1n;
+    if (pauseMs > 0 && to < proposed.number) await sleep(pauseMs);
+    for (const b of blocks) {
+      const h = String(b.hash).toLowerCase();
+      const parent = String(b.parentHash).toLowerCase();
+      if (b.number === committed.height && h !== committed.hash) {
+        return { verified: false, reason: `this run's endpoint has ${h} at the committed height ${committed.height}, not the committed ${committed.hash}` };
+      }
+      if (prevHash !== null && parent !== prevHash) {
+        return { verified: false, reason: `parent-hash link broken at ${b.number}: parentHash ${parent} ≠ previous block hash ${prevHash} — a fork or an inconsistent endpoint` };
+      }
+      prevHash = h;
+      fetched += 1n;
+    }
+  }
+  if (prevHash !== String(proposed.hash).toLowerCase()) {
+    return { verified: false, reason: `the walk ended at ${prevHash}, not at the proposed block ${proposed.hash}` };
+  }
+  process.stderr.write(`census: ${who} — ancestry verified by parent-hash link walk over ${fetched} block(s) in ${Math.round((Date.now() - started) / 1000)}s\n`);
+  return { verified: true, method: 'parent-hash-link-walk', span: fetched };
+}
 function loadPriorCommittedHeights(canonicalPath) {
   PRIOR_COMMITTED_HEIGHT.clear();
   PRIOR_COMMITTED_HASH.clear();
@@ -812,19 +935,12 @@ async function resolveCensusBlock(client, who, tags = ['finalized', 'safe'], cha
     await sleep(1_000 * 2 ** attempt);
   }
 
-  // Ancestry evidence for the replacement guard (r23 P1): the hash this
-  // endpoint reports at the committed height. Same height ⇒ the identity is
-  // the finality hash itself; lower committed height ⇒ fetch by number.
-  if (chainSlug && prior !== undefined) {
-    try {
-      const pb = prior === finality.number ? { hash: finality.hash } : await client.getBlock({ blockNumber: prior });
-      if (pb?.hash) ANCESTRY_SEEN.set(chainSlug, { height: prior, hash: String(pb.hash).toLowerCase() });
-    } catch {
-      ANCESTRY_SEEN.delete(chainSlug); // unverifiable ⇒ the guard refuses a higher snapshot
-    }
-  }
   const forced = arg('--block');
-  if (!forced) return finality;
+  const chosen = forced ? null : finality;
+  if (!forced) {
+    await gatherAncestry(chainSlug, who, chosen);
+    return finality;
+  }
 
   const requested = BigInt(forced);
   // An explicit --block is the operator's deliberate choice (bounded by
@@ -837,7 +953,30 @@ async function resolveCensusBlock(client, who, tags = ['finalized', 'safe'], cha
     );
   }
   const b = await client.getBlock({ blockNumber: requested });
-  return { number: b.number, hash: b.hash, tag: `explicit (<= ${finality.tag} ${finality.number})` };
+  const explicit = { number: b.number, hash: b.hash, tag: `explicit (<= ${finality.tag} ${finality.number})` };
+  await gatherAncestry(chainSlug, who, explicit);
+  return explicit;
+}
+/**
+ * Ancestry evidence for the replacement guard, gathered when a chain's census
+ * block is chosen: the TARGET snapshot's block (the file this run replaces)
+ * must be an ancestor of the chosen block, proven by the link walk. Unproven
+ * ⇒ the guard refuses a higher snapshot with the reason recorded here.
+ */
+async function gatherAncestry(chainSlug, who, chosen) {
+  if (!chainSlug || !chosen) return;
+  const th = TARGET_HEIGHT.get(chainSlug);
+  const thash = TARGET_HASH.get(chainSlug);
+  if (th === undefined || !thash) {
+    ANCESTRY_SEEN.delete(chainSlug);
+    return;
+  }
+  try {
+    const v = await verifyAncestryByWalk(rpcFor(chainSlug), { height: th, hash: thash }, chosen, who);
+    ANCESTRY_SEEN.set(chainSlug, { height: th, hash: thash, ...v });
+  } catch (err) {
+    ANCESTRY_SEEN.set(chainSlug, { height: th, hash: thash, verified: false, reason: `the ancestry walk failed: ${classifyRpcError(err)} — ${err.message?.split('\n')[0]}` });
+  }
 }
 
 
@@ -1778,8 +1917,8 @@ export function snapshotRegression({ current, results, ancestry, acknowledged, n
       const committedH = theirs.get(slug);
       const committedHash = theirsHash.get(slug);
       if (!committedHash) return null; // a committed result without a hash cannot be verified either way; height rules already applied
-      if (!seen || seen.height !== committedH) return `${slug}: the committed block ${committedH} could not be verified as an ancestor (no evidence at that height from this run's endpoint)`;
-      if (lc(seen.hash) !== committedHash) return `${slug}: the committed block ${committedH} (${committedHash}) is NOT an ancestor of this run's block — this run's endpoint has ${seen.hash} at that height`;
+      if (!seen || seen.height !== committedH || lc(seen.hash) !== committedHash) return `${slug}: the committed block ${committedH} could not be verified as an ancestor (no ancestry evidence gathered for that block by this run)`;
+      if (seen.verified !== true) return `${slug}: the committed block ${committedH} (${committedHash}) is NOT proven an ancestor of this run's block — ${seen.reason ?? 'the parent-hash walk did not verify'}`;
       return null;
     })
     .filter(Boolean);
@@ -1840,6 +1979,17 @@ async function main() {
   if (which !== 'all' && deployments.length === 0) throw new Error(`no deployment directory for chain '${which}'`);
   const outDir = arg('--out', join(REPO, 'docs/DesignsAndPlans/census'));
   loadPriorCommittedHeights(join(outDir, 'grandfathered-custody-census.json'));
+  // The snapshot this run will replace (r24 P2): the canonical for a full run,
+  // the chain's partial file for a --chain run. Its heights join the floor,
+  // and ancestry is proven against ITS blocks.
+  const targetPath = which === 'all' ? join(outDir, 'grandfathered-custody-census.json') : join(outDir, `grandfathered-custody-census.partial-${which}.json`);
+  loadTargetSnapshot(targetPath);
+  for (const [slug, h] of TARGET_HEIGHT) {
+    if (!PRIOR_COMMITTED_HEIGHT.has(slug) || h > PRIOR_COMMITTED_HEIGHT.get(slug)) {
+      PRIOR_COMMITTED_HEIGHT.set(slug, h);
+      PRIOR_COMMITTED_HASH.set(slug, TARGET_HASH.get(slug));
+    }
+  }
   if (PRIOR_COMMITTED_HEIGHT.size) {
     process.stderr.write(
       `census: committed heights this run must not fall below — ${[...PRIOR_COMMITTED_HEIGHT].map(([k, v]) => `${k}:${v}`).join(', ')}\n`,

@@ -5314,6 +5314,38 @@ reported a comfortable answer it had not earned:
   then clear the flag; the reverse resolves `Mirror` in between with
   delivered-fresh payouts enabled. The runbook, handbook and setter NatSpec
   say so.
+
+  **Round 24 replaced the ancestry evidence with a proof, and made the live
+  publication observable.** Asking a load-balanced endpoint which hash it
+  serves by number at the committed height linked nothing to the proposed
+  block: one replica could supply the committed fork at 100 and another a
+  conflicting finalized fork at 101, and the guard would accept. Ancestry is
+  now proven by a PARENT-HASH LINK WALK: every block from the committed height
+  to the proposed one is fetched by number in batches, the first must carry the
+  committed hash, the last the proposed hash, and every block's `parentHash`
+  must be the previous block's hash — a replica serving a different fork for
+  any height breaks a link. The walk is bounded by `--ancestry-walk-max`
+  (default 250,000 blocks, raised deliberately when a chain has gone
+  uncensused for longer) and its batching is ADAPTIVE — public endpoints
+  differ (measured with a user agent set: `sepolia.base.org` accepts 25 block
+  reads per request, Tenderly's Arbitrum gateway 10, publicnode 100; single
+  reads run at about two per second everywhere), so every rate-limit answer
+  halves the batch down to single reads and doubles the pause, and a clean
+  batch keeps them. The fetch adapter now also sends a user agent, since
+  Cloudflare-fronted endpoints reject the empty signature outright. The
+  evidence is
+  gathered for the snapshot this run actually replaces — the chain's partial
+  file for a `--chain` run, whose heights also join the monotonic floor —
+  rather than always for the canonical artifact, which had left a repeated
+  partial run permanently unverifiable. And the deploy scripts' single
+  generation bump after the forge write left a window a census holding the
+  lock could not see; publication is now two-phase: `live-begin` marks the
+  chain as publishing under the lock before the broadcast, `live-end` clears
+  the marker and bumps the generation after the artifact lands, and a census
+  that takes the lock in between — at its start snapshot or at its
+  publication — sees the marker and refuses. A second begin on a chain already
+  publishing is refused unless the recording process is dead; a crashed deploy
+  is cleared by running `live-end`.
   Hand-computed storage slots were never an option: they fail SILENTLY as
   zero, manufacturing the exact "empty" result the census exists to
   establish. The event reconstruction is retained behind `--corroborate` as

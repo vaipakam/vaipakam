@@ -455,12 +455,57 @@ export function regenerateEntries(manifestPath, collect, policy = {}, lockOpts) 
  * counter makes the "inventory unchanged" claim precise, not the verdict.)
  */
 export function bumpLiveGeneration(manifestPath, { slug, diamond } = {}, lockOpts) {
+  return endLivePublication(manifestPath, { slug, diamond }, lockOpts);
+}
+
+/**
+ * TWO-PHASE live publication (Codex #2070 r24 P1). A single bump AFTER the
+ * forge write left a window: a census holding the manifest lock through its
+ * own publication could capture the inventory, the deploy could overwrite the
+ * live artifact right after, and the bump would then wait behind the census's
+ * lock until the stale snapshot was already renamed. So the deploy now marks
+ * the publication BEFORE it broadcasts (`live-begin`, under the lock) and
+ * clears the marker and bumps the generation AFTER the artifact lands
+ * (`live-end`, under the lock). Any census that takes the lock in between —
+ * at its start snapshot or at its publication — sees the marker and refuses:
+ * the write it cannot see coming is now observable as an in-progress state.
+ * A marker whose recording process is dead can be taken over by a new
+ * `live-begin` for the same slug; otherwise a second begin on a slug already
+ * publishing is refused. `live-end` with no matching marker still bumps (a
+ * crashed deploy is cleared by running it).
+ */
+export function beginLivePublication(manifestPath, { slug } = {}, lockOpts) {
+  if (!slug) throw new Error('archive-manifest: live-begin needs a slug');
   return withManifestLock(
     manifestPath,
     () => {
       const m = readManifest(manifestPath) ?? emptyManifest();
+      const inProgress = { ...(m.livePublicationsInProgress ?? {}) };
+      const existing = inProgress[slug];
+      if (existing && pidAlive(existing.pid)) {
+        throw new Error(
+          `archive-manifest: ${slug} is already publishing a live artifact (pid ${existing.pid} since ${existing.startedAt}); ` +
+            `a second deploy on the same chain cannot begin until it ends`,
+        );
+      }
+      inProgress[slug] = { pid: process.pid, startedAt: new Date().toISOString() };
+      const next = { ...m, livePublicationsInProgress: inProgress };
+      writeManifestAtomic(manifestPath, next);
+      return inProgress[slug];
+    },
+    lockOpts,
+  );
+}
+export function endLivePublication(manifestPath, { slug, diamond } = {}, lockOpts) {
+  return withManifestLock(
+    manifestPath,
+    () => {
+      const m = readManifest(manifestPath) ?? emptyManifest();
+      const inProgress = { ...(m.livePublicationsInProgress ?? {}) };
+      if (slug) delete inProgress[slug];
       const next = {
         ...m,
+        livePublicationsInProgress: inProgress,
         liveGeneration: (Number(m.liveGeneration) || 0) + 1,
         lastLivePublished: { slug: slug ?? null, diamond: diamond ?? null, at: new Date().toISOString() },
       };
@@ -469,6 +514,10 @@ export function bumpLiveGeneration(manifestPath, { slug, diamond } = {}, lockOpt
     },
     lockOpts,
   );
+}
+/** Slugs with a live publication in progress (the marker set by `live-begin` and not yet cleared by `live-end`). */
+export function livePublicationsInProgress(manifest) {
+  return Object.entries(manifest?.livePublicationsInProgress ?? {}).map(([slug, v]) => ({ slug, ...v }));
 }
 
 /**
@@ -526,9 +575,18 @@ export function writeSnapshotGuarded(path, textOrProduce, { regressedBy, lockOpt
 // ── CLI ──────────────────────────────────────────────────────────────────────
 function main(argv) {
   const [cmd, manifestPath, slug, stamp, addrPath] = argv;
-  if (cmd === 'bump-live') {
+  if (cmd === 'live-begin') {
     if (!manifestPath || !slug) {
-      process.stderr.write('usage: archive-manifest.mjs bump-live <manifest> <slug> [<addresses.json>]\n');
+      process.stderr.write('usage: archive-manifest.mjs live-begin <manifest> <slug>\n');
+      return 2;
+    }
+    const mark = beginLivePublication(manifestPath, { slug });
+    process.stdout.write(`  ✓ live publication of ${slug} marked in progress (pid ${mark.pid}); the census refuses to read or publish until live-end\n`);
+    return 0;
+  }
+  if (cmd === 'bump-live' || cmd === 'live-end') {
+    if (!manifestPath || !slug) {
+      process.stderr.write('usage: archive-manifest.mjs live-end <manifest> <slug> [<addresses.json>]\n');
       return 2;
     }
     let diamond = null;
@@ -537,12 +595,12 @@ function main(argv) {
     } catch {
       diamond = null;
     }
-    const gen = bumpLiveGeneration(manifestPath, { slug, diamond });
-    process.stdout.write(`  ✓ live artifact publication recorded (liveGeneration ${gen}) — COMMIT archive-manifest.json with the deploy\n`);
+    const gen = endLivePublication(manifestPath, { slug, diamond });
+    process.stdout.write(`  ✓ live artifact publication of ${slug} recorded and marker cleared (liveGeneration ${gen}) — COMMIT archive-manifest.json with the deploy\n`);
     return 0;
   }
   if (cmd !== 'append' || !manifestPath || !slug || !stamp || !addrPath) {
-    process.stderr.write('usage: archive-manifest.mjs append <manifest> <slug> <stamp> <addresses.json>\n       archive-manifest.mjs bump-live <manifest> <slug> [<addresses.json>]\n');
+    process.stderr.write('usage: archive-manifest.mjs append <manifest> <slug> <stamp> <addresses.json>\n       archive-manifest.mjs live-begin <manifest> <slug>\n       archive-manifest.mjs live-end <manifest> <slug> [<addresses.json>]\n');
     return 2;
   }
   const entry = entryFromArtifact({ slug, stamp, addrPath });

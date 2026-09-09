@@ -956,6 +956,16 @@ EOF
   fi
 
   echo
+  # #1566 (Codex #2070 r24 P1) — mark the live publication IN PROGRESS under the
+  # manifest lock BEFORE the broadcast writes addresses.json outside it; the
+  # matching live-end after the artifact lands clears the marker and bumps the
+  # generation. A census that takes the lock in between sees the marker and
+  # refuses, so the unlocked write can no longer slip past its snapshot. Failing
+  # to mark aborts here — nothing has been broadcast yet.
+  if command -v node >/dev/null 2>&1 && [ -f "$REPO_ROOT/packages/contracts/scripts/archive-manifest.mjs" ]; then
+    node "$REPO_ROOT/packages/contracts/scripts/archive-manifest.mjs" live-begin "$CONTRACTS_DIR/deployments/archive-manifest.json" "$CHAIN_SLUG" \
+      || { echo "ERROR: could not mark the live publication in archive-manifest.json (another deploy on $CHAIN_SLUG may be in progress)" >&2; exit 1; }
+  fi
   echo "[2] DeployDiamond.s.sol"
   forge script script/DeployDiamond.s.sol --rpc-url "$RPC" --broadcast --slow
 
@@ -1010,8 +1020,8 @@ EOF
   # written; this only fails to RECORD it, which the operator must fix before
   # committing (the manifest must be committed with the deploy either way).
   if command -v node >/dev/null 2>&1 && [ -f "$REPO_ROOT/packages/contracts/scripts/archive-manifest.mjs" ]; then
-    node "$REPO_ROOT/packages/contracts/scripts/archive-manifest.mjs" bump-live "$CONTRACTS_DIR/deployments/archive-manifest.json" "$CHAIN_SLUG" "$DEPLOY_DIR/addresses.json" \
-      || echo "WARNING: could not record the live artifact publication in archive-manifest.json — record it before committing (node packages/contracts/scripts/archive-manifest.mjs bump-live ...)" >&2
+    node "$REPO_ROOT/packages/contracts/scripts/archive-manifest.mjs" live-end "$CONTRACTS_DIR/deployments/archive-manifest.json" "$CHAIN_SLUG" "$DEPLOY_DIR/addresses.json" \
+      || echo "WARNING: could not record the live artifact publication in archive-manifest.json — record it before committing (node packages/contracts/scripts/archive-manifest.mjs live-end ...)" >&2
   fi
   # Write deployment_source.json (commit + deployer + timestamp) —
   # same shape as deploy-chain.sh writes, so the operator can see

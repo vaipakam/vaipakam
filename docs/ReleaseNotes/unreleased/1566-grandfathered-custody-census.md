@@ -261,6 +261,12 @@ at a given height are refused as inconsistent, and a report read at a later
 block replaces an earlier one only when the earlier block is shown to be part
 of the later one's history, so a fork can never overwrite what was recorded on
 the other branch. Those rules now live in a small, self-contained piece of the
-tool with each one covered by a test.
+tool with each one covered by a test. The "part of its history" check is now a
+real proof — the tool walks the chain of blocks between the two reports and
+checks that each links to the one before it — rather than a single question to
+an endpoint that could answer for a different fork. And a deploy now announces
+that it is about to publish a new contract record before it does so, and
+withdraws the announcement afterwards, so a census that looks in between knows
+to wait rather than report an inventory that is about to change.
 
 Refs #1566, #1349, #1956
