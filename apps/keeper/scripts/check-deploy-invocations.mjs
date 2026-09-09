@@ -1165,6 +1165,13 @@ function splitCommands(line) {
  * for a default-deny guard.
  */
 function normalizeFlagEquals(line) {
+  // ONE GROUP, and the `\2` below counts on it. r37 is what happens when a
+  // numbered backreference outlives the numbering it was written against: two
+  // open-mode alternatives kept referring to a group that an insertion had
+  // shifted out from under them, matched against an empty capture, and
+  // reported a write that was not one. Adding a group here would do the same
+  // to the quote reference on the next line but one — name them if it ever
+  // needs more than this.
   const FLAG = '(--?[A-Za-z0-9][A-Za-z0-9-]*)';
   return line
     .replace(new RegExp(`${FLAG}\\\\=`, 'g'), '$1=')
