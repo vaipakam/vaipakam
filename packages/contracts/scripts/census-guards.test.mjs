@@ -2,7 +2,7 @@
 // are PURE functions (Codex #2070 r23); every rule they carry is pinned here.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { pickFinalitySample, snapshotRegression } from './census-grandfathered-custody.mjs';
+import { pickFinalitySample, snapshotRegression, blockRef, assertSampledHashesAgree } from './census-grandfathered-custody.mjs';
 
 const H = (n) => `0x${String(n).padStart(64, 'a')}`;
 const res = (chainSlug, deployment, atBlock, atBlockHash, diamond = '0xd1', vpfiToken = '0xt1') => ({ chainSlug, deployment, atBlock: String(atBlock), atBlockHash, diamond, vpfiToken });
@@ -52,4 +52,19 @@ test('regression: a dropped identity is refused unless acknowledged, and acknowl
 test('regression: a deployment the committed artifact never had is fine; a clean re-run passes', () => {
   const cur = { results: [res('x', 'live', 100, H(1))] };
   assert.equal(run(cur, [res('x', 'live', 100, H(1)), res('y', 'live', 5, H(3))]).reason, null);
+});
+
+test('blockRef pins a state read to the block HASH and requires it canonical (r28)', () => {
+  assert.deepEqual(blockRef({ number: 5n, hash: H(1).toUpperCase().replace('0X', '0x') }), { blockHash: H(1), requireCanonical: true });
+  assert.throws(() => blockRef({ number: 5n }), /must be pinned to the census block's HASH/);
+  assert.throws(() => blockRef({ number: 5n, hash: '0x12' }), /must be pinned to the census block's HASH/);
+});
+
+test('assertSampledHashesAgree: every sampled replica must serve the pinned hash at the chosen height (r28)', () => {
+  assert.equal(assertSampledHashesAgree([H(1), H(1).toUpperCase().replace('0X', '0x'), H(1)], H(1), 100n, 't'), 3);
+  // A at 100/A100 and B at 101/B101: what B serves at 100 decides — a different hash is a conflicting fork
+  assert.throws(() => assertSampledHashesAgree([H(1), H(2)], H(1), 100n, 't'), /disagree on the block HASH at height 100/);
+  // unanimous but not the pinned hash: the chain moved under the census
+  assert.throws(() => assertSampledHashesAgree([H(2), H(2)], H(1), 100n, 't'), /pinned .* sampled/);
+  assert.throws(() => assertSampledHashesAgree([], H(1), 100n, 't'), /disagree/);
 });

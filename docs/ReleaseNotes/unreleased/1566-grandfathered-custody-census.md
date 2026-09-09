@@ -298,4 +298,10 @@ keep even after the shell that started them is gone. And when the census must
 step back to a block a lagging replica can serve, it first proves that block is
 an ancestor of the finalized one, rather than assuming a lower number is safe.
 
+Every state the census reads is now tied to one specific block by its
+fingerprint rather than by its height, so two servers that disagree about
+what happened at a height can no longer contribute pieces of one snapshot;
+the fingerprint is also checked across several fresh connections before any
+verdict is written.
+
 Refs #1566, #1349, #1956

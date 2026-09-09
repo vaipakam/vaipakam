@@ -92,7 +92,7 @@ import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync, rename
 import { readManifest, regenerateEntries, withManifestLock, writeSnapshotGuarded, livePublicationsInProgress } from './archive-manifest.mjs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createPublicClient, http, toFunctionSelector, parseAbiItem } from 'viem';
+import { createPublicClient, http, toFunctionSelector, parseAbiItem, encodeFunctionData, decodeFunctionResult, decodeErrorResult } from 'viem';
 import { Agent as HttpsAgent, request as httpsRequest } from 'node:https';
 import { resolve as resolvePath } from 'node:path';
 import { Agent as HttpAgent, request as httpRequest } from 'node:http';
@@ -182,22 +182,104 @@ function classifyRpcError(err) {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /**
+ * Codex #2070 r28 P1 — every STATE read is pinned by BLOCK HASH (EIP-1898),
+ * never by number. A number names a height; two replicas on competing forks
+ * serve two different blocks at it, so a snapshot of number-pinned reads can
+ * mix forks while an identity check that happens to land on the "right"
+ * replica passes. A hash names one block: a replica that lacks it errors
+ * (`block not found` / `header not found`, which withReplicaRetry rotates
+ * away), and `requireCanonical` makes one that holds it on a side fork refuse
+ * as well. Every census endpoint honours the block-object form for eth_call,
+ * eth_getCode and eth_getStorageAt (probed 2026-09-09). viem's `call` action
+ * has no blockHash parameter, so the request goes through the raw transport,
+ * and a revert is decoded here the way readContract would decode it so the
+ * census's detectors (IntentNoCommit, FunctionDoesNotExist, "returned no
+ * data") keep matching on the same fields.
+ */
+export function blockRef(block) {
+  const hash = String(block?.hash ?? '').toLowerCase();
+  if (!/^0x[0-9a-f]{64}$/.test(hash)) throw new Error(`blockRef: a state read must be pinned to the census block's HASH, got ${JSON.stringify(block?.hash)}`);
+  return { blockHash: hash, requireCanonical: true };
+}
+function decodeRevertLikeViem(err, abi, functionName) {
+  const pick = (v) => (typeof v === 'string' && /^0x[0-9a-f]{8,}$/i.test(v) ? v : null);
+  const data = pick(err?.data) ?? pick(err?.cause?.data) ?? pick(err?.data?.data);
+  if (!data) return null;
+  try {
+    const d = decodeErrorResult({ abi, data });
+    const sig = `${d.errorName}(${(d.args ?? []).map(String).join(', ')})`;
+    const e = new Error(`The contract function "${functionName}" reverted with the following reason:\n${sig}`);
+    e.shortMessage = `The contract function "${functionName}" reverted.`;
+    e.metaMessages = [`Error: ${sig}`];
+    e.details = err?.details ?? err?.message;
+    e.errorName = d.errorName;
+    e.cause = err;
+    return e;
+  } catch {
+    return null;
+  }
+}
+async function callAtHash(client, block, { address, abi, functionName, args = [] }) {
+  const data = encodeFunctionData({ abi, functionName, args });
+  let raw;
+  try {
+    raw = await client.request({ method: 'eth_call', params: [{ to: address, data }, blockRef(block)] });
+  } catch (err) {
+    throw decodeRevertLikeViem(err, abi, functionName) ?? err;
+  }
+  if (!raw || raw === '0x') {
+    const e = new Error(`The contract function "${functionName}" returned no data ("0x").`);
+    e.shortMessage = e.message;
+    throw e;
+  }
+  return decodeFunctionResult({ abi, functionName, data: raw });
+}
+async function codeAtHash(client, block, address) {
+  return client.request({ method: 'eth_getCode', params: [address, blockRef(block)] });
+}
+/**
+ * r28 P1 — the hash the census pins must be what EVERY replica serves at that
+ * height: the sampler refused conflicting hashes only among samples that
+ * shared a height, so with A at 100/A100 and B at 101/B101 it chose A100
+ * without asking what B holds at 100. Pure, so the rule is pinned by test;
+ * `sampleHashesAt` feeds it fresh-connection reads.
+ */
+export function assertSampledHashesAgree(hashes, expected, number, who) {
+  const distinct = [...new Set(hashes.map((h) => String(h).toLowerCase()))];
+  const exp = String(expected).toLowerCase();
+  if (distinct.length === 1 && distinct[0] === exp) return hashes.length;
+  throw new Error(
+    `${who}: replicas disagree on the block HASH at height ${number} — pinned ${exp}, sampled ${distinct.join(' vs ')} — ` +
+      `the endpoint serves conflicting forks, or the chain reorganized under the census; refusing to certify a mixed snapshot`,
+  );
+}
+async function sampleHashesAt(client, number, who) {
+  const hashes = [];
+  for (let i = 0; i < FINALITY_SAMPLES; i++) {
+    try {
+      const b = await client.getBlock({ blockNumber: number });
+      if (b?.hash) hashes.push(b.hash);
+    } catch {
+      // a replica that lacks the block contributes no sample
+    }
+    if (i < FINALITY_SAMPLES - 1) rotateConnections(`sampling the hash at ${number} ${i + 2}/${FINALITY_SAMPLES}`, true);
+  }
+  if (!hashes.length) throw new Error(`${who}: no sampled replica served block ${number}`);
+  return hashes;
+}
+/**
  * Re-read the census block and confirm it still carries the hash pinned when
  * the chain's identity was resolved (Codex #2070 P1; applied before EVERY
  * return that can emit a proven verdict per r13 P2 — the early returns for
  * a bounded deployment used to skip it, so a no-code read served by a replica
  * at a different block could have been certified under the recorded hash).
  * On a finalized block this can only fail catastrophically, which is exactly
- * why it is worth asserting.
+ * why it is worth asserting. r28: SAMPLED over fresh connections, so one
+ * replica that happens to agree cannot vouch for the set — and with every
+ * state read now hash-pinned, this is the cross-replica guard, not the proof.
  */
 async function assertBlockIdentity(client, censusBlock, who) {
-  const blockNow = await client.getBlock({ blockNumber: censusBlock.number });
-  if (blockNow.hash !== censusBlock.hash) {
-    throw new Error(
-      `${who}: block ${censusBlock.number} was ${censusBlock.hash} when the scan began and is ${blockNow.hash} now — ` +
-        `the chain reorganized under the census; refusing to certify a mixed snapshot`,
-    );
-  }
+  assertSampledHashesAgree(await sampleHashesAt(client, censusBlock.number, who), censusBlock.hash, censusBlock.number, who);
 }
 
 /**
@@ -219,22 +301,46 @@ async function assertBlockIdentity(client, censusBlock, who) {
 // read at the same height had just succeeded — the lag is real but bounded.
 const LAGGING_REPLICA_RETRIES = 8;
 function laggingReplicaHeight(err) {
+  if (typeof err?.laggingHead === 'bigint') return err.laggingHead; // learned by withReplicaRetry from a hash-pinned read (r28)
   const m = /metadata is not found,\s*(\d+)/i.exec(`${err?.details ?? ''} ${err?.message ?? ''}`);
   return m ? BigInt(m[1]) : null;
 }
-async function withReplicaRetry(requestedBlock, fn) {
+/** A hash-pinned read on a replica that does not hold that block (r28). */
+function replicaLacksBlock(err) {
+  return /block not found|header not found|unknown block|hash not found|could not find block|not found: hash/i.test(`${err?.details ?? ''} ${err?.shortMessage ?? ''} ${err?.message ?? ''}`);
+}
+async function withReplicaRetry(requestedBlock, fn, { client } = {}) {
   for (let i = 0; ; i++) {
     try {
       return await fn();
     } catch (err) {
-      const h = laggingReplicaHeight(err);
-      const lagging = h !== null && requestedBlock !== undefined && h < requestedBlock;
+      let h = laggingReplicaHeight(err);
+      const lacks = h === null && replicaLacksBlock(err);
+      // r28 — a hash-pinned read carries no height in its error, so ask the
+      // same connection pool (hence, very likely, the same replica) for its
+      // head: below the requested block it is the lagging head the cap needs;
+      // at or above it the replica holds the height on a COMPETING FORK, which
+      // is rotated away but never capped at.
+      if (lacks && client) {
+        try {
+          const head = await client.getBlockNumber();
+          if (requestedBlock !== undefined && head < requestedBlock) {
+            h = head;
+            err.laggingHead = head;
+          } else {
+            err.forkedReplicaHead = head;
+          }
+        } catch {
+          // its head is simply unknown; still rotate
+        }
+      }
+      const lagging = (h !== null && requestedBlock !== undefined && h < requestedBlock) || lacks;
       if (!lagging || i >= LAGGING_REPLICA_RETRIES) throw err;
       // A retry on the SAME keep-alive connection lands on the SAME lagging
       // replica (runs 18 and 21 lost arb-sepolia this way while fresh
       // connections read fine); rotate the connection pool so the retry is
       // balanced anew.
-      rotateConnections(`lagging replica at ${h} < ${requestedBlock}, attempt ${i + 1}/${LAGGING_REPLICA_RETRIES}`);
+      rotateConnections(`${h !== null ? `lagging replica at ${h} < ${requestedBlock}` : `replica lacks the pinned block ${requestedBlock}${err.forkedReplicaHead !== undefined ? ` (its head ${err.forkedReplicaHead} is not below it — a competing fork)` : ''}`}, attempt ${i + 1}/${LAGGING_REPLICA_RETRIES}`);
       await sleep(400 * 2 ** i); // 0.4s, 0.8s, 1.6s, 3.2s, 6.4s — a different replica usually answers within this
     }
   }
@@ -960,6 +1066,10 @@ async function resolveCensusBlock(client, who, tags = ['finalized', 'safe'], cha
       }
       if (samples.length) {
         const picked = pickFinalitySample(samples, `${who} ${blockTag}`);
+        // r28 P1 — the lowest height was chosen from replicas that may sit on
+        // different forks; what they serve AT that height decides whether it
+        // can be pinned at all.
+        assertSampledHashesAgree(await sampleHashesAt(client, picked.number, `${who} ${blockTag}`), picked.hash, picked.number, `${who} ${blockTag}`);
         finality = {
           number: picked.number,
           hash: picked.hash,
@@ -1298,14 +1408,16 @@ async function censusDeployment(dep) {
   const atBlock = censusBlock.number;
 
   const read = (functionName, args = []) =>
-    withReplicaRetry(atBlock, () =>
-      client.readContract({
-        address: diamond,
-        abi: [...claim, ...metrics, ...intentView, ...loupe, ...loanView, ...vpfiView],
-        functionName,
-        args,
-        blockNumber: atBlock,
-      }),
+    withReplicaRetry(
+      atBlock,
+      () =>
+        callAtHash(client, censusBlock, {
+          address: diamond,
+          abi: [...claim, ...metrics, ...intentView, ...loupe, ...loanView, ...vpfiView],
+          functionName,
+          args,
+        }),
+      { client },
     );
 
   // ── Three history-free bounds, taken BEFORE any enumeration ──────────────
@@ -1328,7 +1440,7 @@ async function censusDeployment(dep) {
         `at that height, so nothing read there describes its storage. Use a later block.`,
     );
   }
-  const code = await withReplicaRetry(atBlock, () => client.getCode({ address: diamond, blockNumber: atBlock }));
+  const code = await withReplicaRetry(atBlock, () => codeAtHash(client, censusBlock, diamond), { client });
   const codeAbsent = !code || code === '0x';
   // Codex #2070 r17 P1 — a known deploy height only orders the read after the
   // deployment; it does not show that code was EVER at this address. An
@@ -1341,8 +1453,12 @@ async function censusDeployment(dep) {
   let codeAtDeployBlock = null; // true | false | 'unreadable' | null (not needed)
   if (codeAbsent && deployBlockKnown) {
     try {
-      const then = await withReplicaRetry(BigInt(addresses.deployBlock), () =>
-        client.getCode({ address: diamond, blockNumber: BigInt(addresses.deployBlock) }),
+      // Pinned to the deploy block's HASH too: the height is resolved to one
+      // block first, so the creation evidence names the block it was read at.
+      const then = await withReplicaRetry(
+        BigInt(addresses.deployBlock),
+        async () => codeAtHash(client, await client.getBlock({ blockNumber: BigInt(addresses.deployBlock) }), diamond),
+        { client },
       );
       codeAtDeployBlock = Boolean(then && then !== '0x');
     } catch (err) {
@@ -1486,9 +1602,7 @@ async function censusDeployment(dep) {
     'the VPFI token getter is unrouted, so the effective token cannot be read; the artifact token may predate a rotation via setVPFIToken, ' +
     'and a row denominated in the live token would be filed as non-VPFI — undetermined pending routing of the getter or a calibrated read of the token slot';
   const diamondVpfiBalance = vpfiToken && !noCode
-    ? await withReplicaRetry(atBlock, () =>
-        client.readContract({ address: vpfiToken, abi: [ERC20_BALANCE_OF], functionName: 'balanceOf', args: [diamond], blockNumber: atBlock }),
-      )
+    ? await withReplicaRetry(atBlock, () => callAtHash(client, censusBlock, { address: vpfiToken, abi: [ERC20_BALANCE_OF], functionName: 'balanceOf', args: [diamond] }), { client })
     : null;
   // Codex #2070 r6 P1 ×2 — TWO of the earlier bounds were NOT proofs of
   // absence and are withdrawn as such:

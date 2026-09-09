@@ -5423,6 +5423,27 @@ reported a comfortable answer it had not earned:
   is not. The cap now stands only after a parent-hash walk from the resolved
   block down to the head proves the descent, and the committed-floor walk
   runs after it as before.
+
+  **Round 28 moved the attribution of every state read from a height to a
+  block.** The finality sampler refused conflicting hashes only among samples
+  that shared a height: with one replica at 100 on hash A and another at 101
+  on hash B it chose A's block without asking what B held at 100, and every
+  state read was then pinned by NUMBER — so a replica on a competing fork
+  could serve another block's state at that height while an identity check
+  that happened to land on the agreeing replica passed, and a mixed snapshot
+  could certify custody empty. Every state read (the Diamond calls, the
+  code-presence read, the creation evidence at the deploy block, the VPFI
+  balance) is now pinned by BLOCK HASH under EIP-1898 with the canonical
+  requirement set, which all five census endpoints honour: a replica that
+  lacks the block errors and is rotated away, one that holds it on a side
+  fork refuses, and the read that answers is attributable to exactly one
+  block. The hash the run pins is sampled across fresh connections both after
+  the lowest height is chosen and at every identity check before a proven
+  verdict, and any disagreement refuses the certification. A hash-pinned
+  error no longer carries the lagging replica's head, so the retry asks the
+  same connection pool for it: below the pinned height it feeds the cap, at or
+  above it the replica is on a competing fork and is rotated away, never
+  capped at.
   Hand-computed storage slots were never an option: they fail SILENTLY as
   zero, manufacturing the exact "empty" result the census exists to
   establish. The event reconstruction is retained behind `--corroborate` as
