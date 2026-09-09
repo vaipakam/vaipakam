@@ -132,7 +132,40 @@ export interface ForcedCloseHoldInput {
    *  It also preserves round 52's anchor BY CONSTRUCTION rather than by
    *  comparison: the refresh is fired when the disposition is
    *  established, so its completion cannot predate the mine. There is no
-   *  longer a way to express the wrong anchor here. */
+   *  longer a way to express the wrong anchor here.
+   *
+   *  TWO PROPERTIES OF `invalidateQueries` THIS RELIES ON, both read
+   *  from query-core rather than assumed, because the failure mode of
+   *  being wrong about them is the round-29 latch:
+   *
+   *  1. A FAILING read cannot latch it. `refetchQueries` attaches
+   *     `.catch(noop)` to every fetch unless `throwOnError` is set, so
+   *     the promise settles on an errored refetch as readily as on a
+   *     successful one. That is the property a timestamp comparison did
+   *     not have — an errored read advances `errorUpdatedAt`, but only
+   *     if the error arrives.
+   *  2. A DISABLED query is excluded rather than awaited. The
+   *     `liquidity` read is not issued for NFT collateral, and
+   *     `oldestSettledAt` omitted it for the same reason; here it is
+   *     filtered by `!query.isDisabled()`, so the two agree about the
+   *     set without either restating it.
+   *
+   *  AND ONE LIMITATION, stated rather than discovered later. A query
+   *  whose `fetchStatus` is `paused` — the browser offline, under the
+   *  default `networkMode` — contributes `Promise.resolve()` instead of
+   *  a fetch. So a close-out that succeeds and is then invalidated while
+   *  offline resolves this signal without the reads having refreshed,
+   *  and the hold releases against pre-close figures: round 28's defect,
+   *  in a narrow window.
+   *
+   *  It is left as is deliberately. The window requires being offline at
+   *  the instant of invalidation, having been online moments earlier for
+   *  the disposition to be established at all; the action it re-offers
+   *  cannot be sent while offline, so the cost is a button that fails
+   *  rather than a duplicate close-out; and TanStack refetches paused
+   *  queries on reconnect, so the card corrects itself. Machinery to
+   *  close it would run on every success to defend a case that cannot
+   *  spend a fee. */
   readsRefreshedSinceDisposition: boolean;
 }
 
