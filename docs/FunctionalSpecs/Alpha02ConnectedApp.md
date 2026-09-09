@@ -671,6 +671,13 @@ Thin-market honesty rules apply.
   nothing left in it to wait for. So a reading that will not be refreshed is
   dropped rather than kept: the check resumes from nothing, says it is running,
   and asserts no route until it has an answer of its own.
+- Dropping a reading has to reach whatever is displaying it. Discarding it
+  somewhere the surface no longer consults, while the part of the app that
+  renders it still holds its own copy, leaves the stale figure on screen and
+  makes its disappearance depend on something unrelated happening to redraw the
+  page. The discard tells the reader of that value, directly, that there is no
+  longer a value — which is what makes the surface fall back to saying a check
+  is running.
 - Where a transaction is never resolved, the lender's own statement that their
   wallet no longer shows it is the only route back to the action. Because it is
   the only one, when the surface offers it must not depend on the device's clock

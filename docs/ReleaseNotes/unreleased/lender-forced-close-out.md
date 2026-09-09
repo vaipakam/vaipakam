@@ -765,7 +765,9 @@ they last held, which is a picture of the loan from before the close-out
 ran. Skipping them was right; leaving them where they could come back
 was not. They are now discarded, so a resumed check starts from nothing,
 says it is still running, and offers no action until it has an answer of
-its own.
+its own — and the discard reaches whatever is displaying the value, so
+the old figure leaves the screen at that moment rather than whenever
+something else happens to redraw the page.
 
 The second is a promise the console was making and not keeping. When a
 reading arrives with no parameter values in it, the page says the

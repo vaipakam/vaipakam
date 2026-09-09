@@ -653,18 +653,50 @@ export function ForcedCloseCard({
           .findAll({ ...READINESS_READS, type: 'active' })
           .filter((q) => !q.isDisabled() && !q.isStatic()),
       );
+      // Two ways to drop a stale reading, and the difference matters.
+      //
+      // `cache.remove` deletes the entry, but nothing tells an OBSERVER
+      // its query is gone: `QueryObserver` holds `#currentQuery`
+      // directly and only rebuilds on the next render, when
+      // `setOptions` re-runs `build()`. A disabled read with a live
+      // observer would therefore keep serving its pre-close value until
+      // some unrelated re-render happened to clear it — the correctness
+      // of this card resting on whether the PAGE re-rendered.
+      //
+      // `query.reset()` dispatches `setState`, which calls
+      // `onQueryUpdate()` on every observer and notifies the cache
+      // (`query.js:405-411`). The reader is told, synchronously, that
+      // it has no reading — which is what makes the resumed check
+      // resolve to `unknown` rather than to a route.
+      //
+      // So: reset what someone is reading, remove what no one is. The
+      // second is not merely tidier — `reset()` clears the gc timeout
+      // (`removable.js:7-9`), so an observerless entry reset instead of
+      // removed would sit in the cache with nothing scheduled to
+      // collect it.
       for (const q of cache.findAll(READINESS_READS)) {
-        if (!willRefetch.has(q)) cache.remove(q);
+        if (willRefetch.has(q)) continue;
+        if (q.getObserversCount() > 0) q.reset();
+        else cache.remove(q);
       }
-      refreshTargets.current.set(
-        submittedHash,
-        new Map(
-          [...willRefetch].map((q) => [
-            q.queryHash,
-            q.state.dataUpdateCount + q.state.errorUpdateCount,
-          ]),
-        ),
-      );
+      if (willRefetch.size === 0) {
+        // Nothing will refetch, and nothing stale survives to be
+        // served — so there is genuinely nothing to wait for. Said
+        // outright rather than left to an empty target completing on
+        // the next cache tick, which would make the release depend on
+        // some other query happening to move.
+        setRefreshedFor((prev) => ({ ...prev, [submittedHash]: true }));
+      } else {
+        refreshTargets.current.set(
+          submittedHash,
+          new Map(
+            [...willRefetch].map((q) => [
+              q.queryHash,
+              q.state.dataUpdateCount + q.state.errorUpdateCount,
+            ]),
+          ),
+        );
+      }
       void queryClient.invalidateQueries(READINESS_READS);
     });
   }, [disposition, submittedHash, queryClient]);
