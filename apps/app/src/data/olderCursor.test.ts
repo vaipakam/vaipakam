@@ -8,7 +8,7 @@
  * only the LAGGING one is true of the whole.
  */
 import { describe, expect, it } from 'vitest';
-import { olderCursor } from '../pages/Analytics';
+import { olderCursor } from './olderCursor';
 
 const A = { lastBlock: 100, updatedAt: 1000 };
 const B = { lastBlock: 200, updatedAt: 2000 };

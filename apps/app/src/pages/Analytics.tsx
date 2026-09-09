@@ -29,6 +29,7 @@
  */
 import { useQuery } from '@tanstack/react-query';
 import { copy } from '../content/copy';
+import { olderCursor } from '../data/olderCursor';
 import {
   BarChart3,
   RefreshCw,
@@ -50,28 +51,6 @@ import { idleAware } from '../lib/idle';
 import { useEffect, useRef } from 'react';
 
 /** Renders a counter, keeping "not reported" distinct from zero. */
-/** The lagging of two indexer cursors, or whichever one exists.
- *
- *  Compared on `lastBlock` when both report one, since that is what the
- *  provenance line actually claims coverage through; `updatedAt` breaks
- *  the tie only when the blocks match, and a cursor missing `lastBlock`
- *  cannot be compared at all so the other one stands. */
-export function olderCursor<T extends { lastBlock?: number; updatedAt?: number }>(
-  a: T | null,
-  b: T | null,
-): T | null {
-  if (a === null) return b;
-  if (b === null) return a;
-  const ab = a.lastBlock;
-  const bb = b.lastBlock;
-  if (typeof ab !== 'number') return typeof bb === 'number' ? b : a;
-  if (typeof bb !== 'number') return a;
-  if (ab !== bb) return ab < bb ? a : b;
-  const au = a.updatedAt ?? Number.POSITIVE_INFINITY;
-  const bu = b.updatedAt ?? Number.POSITIVE_INFINITY;
-  return au <= bu ? a : b;
-}
-
 function Stat({ label, value }: { label: string; value: number | undefined }) {
   const reported = typeof value === 'number';
   return (
