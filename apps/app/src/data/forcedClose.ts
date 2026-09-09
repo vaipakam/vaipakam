@@ -300,6 +300,42 @@ export function decideForcedClose(input: ForcedCloseInput): ForcedCloseReadiness
   return 'ready-needs-route';
 }
 
+/**
+ * What a close-out lands on if the internal-match candidate is gone by
+ * the time the transaction mines.
+ *
+ * WHY THIS EXISTS (review round 39 P2). `ready-internal-match` is
+ * returned BEFORE this module looks at the asset type, the collateral
+ * shape or an LTV collapse — correctly, because the contract dispatches
+ * a match before reaching any of them. But that means one state hides
+ * four different fallbacks, and the card's race sentence promised the
+ * one that happens to be commonest: that losing the race merely costs a
+ * network fee. It does not. If the collateral is an NFT, is illiquid
+ * with consent recorded, or sits past the LTV-collapse threshold, the
+ * contract falls through to the in-kind branch and the close-out
+ * SUCCEEDS — handing over the borrower's collateral instead of the
+ * asset the lender expected to be repaid in. Telling a lender the only
+ * downside is a fee, when the transaction can complete and deliver a
+ * materially different asset, is exactly the kind of confident-but-wrong
+ * claim this card exists to avoid.
+ *
+ * WHY IT IS DERIVED RATHER THAN RE-STATED. The fallback is, by
+ * definition, what this same resolver decides when there is no
+ * candidate — so it asks that question instead of re-encoding the
+ * contract's ordering a second time. A hand-written copy of the
+ * ordering would be correct today and would drift the first time the
+ * contract's branch order changes, which is the failure mode the
+ * ordering comment above spent three review rounds on.
+ *
+ * Returns `ready-internal-match` only if the caller passes an input
+ * that still resolves to it, which cannot happen through this function.
+ */
+export function forcedCloseWithoutMatch(
+  input: ForcedCloseInput,
+): ForcedCloseReadiness {
+  return decideForcedClose({ ...input, internalMatchCandidate: false });
+}
+
 /** The illiquid in-kind branch, which the contract gates on consent. */
 function inKindIfConsented(
   consentFromBoth: boolean | undefined,

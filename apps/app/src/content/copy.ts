@@ -2308,7 +2308,7 @@ const copySource = {
     // copy names the LENT asset, because an internal match settles at
     // oracle price rather than handing over collateral.
     readyInternalMatch:
-      'The grace period has passed and this loan can be closed out now. The protocol has an opposing position it can settle this one against, so instead of the collateral being sold you are repaid in the asset you lent, at the oracle price when the transaction runs. You claim it afterwards from the Claims page. If someone settles against that opposing position first, this attempt will fail and cost you only the network fee — the loan stays open and you can try again.',
+      'The grace period has passed and this loan can be closed out now. The protocol has an opposing position it can settle this one against, so instead of the collateral being sold you are repaid in the asset you lent, at the oracle price when the transaction runs. You claim it afterwards from the Claims page.',
     // Round 34 P2 — a rental default recovers something else entirely.
     // `DefaultedFacet` clears the renter, leaves the lender's NFT where
     // it already is, and records a claim for the PREPAID rental asset
@@ -2317,6 +2317,25 @@ const copySource = {
     // neither is true here.
     readyRental:
       'The grace period has passed, so you can end this rental now. Your NFT stays where it is and the renter’s access is removed. What becomes claimable is the rent that was paid up front, less fees — you claim it from the Claims page.',
+    // Round 39 P2 — the race sentence used to live inside
+    // `readyInternalMatch` and promised that losing the race merely
+    // costs a network fee. That is true only when the fallthrough
+    // reaches the swap branch with no route. Where the collateral is an
+    // NFT, is illiquid with consent recorded, or has collapsed past the
+    // LTV threshold, the contract falls through to the IN-KIND branch
+    // and the close-out SUCCEEDS with a different asset. So the outcome
+    // is named per fallback, chosen by `forcedCloseWithoutMatch` — which
+    // derives it from the resolver rather than restating the ordering.
+    raceIntro:
+      'Someone else may settle against that opposing position first. If that happens this close-out does not simply stop — it carries on down whatever route the protocol finds next.',
+    raceFallbackFails:
+      'Here that route cannot complete, so the attempt would fail and cost you only the network fee. The loan stays open and you can try again.',
+    raceFallbackInKind:
+      'Here that route hands you the borrower’s collateral as it stands instead of the asset you lent. The close-out still succeeds — you would simply be recovering something different from what this card describes above.',
+    raceFallbackRental:
+      'Here that route ends the rental instead: the renter’s access is removed, your NFT stays where it is, and the rent paid up front becomes claimable less fees.',
+    raceFallbackUnknown:
+      'Which route that is cannot be worked out in advance from what the app has read, so this attempt may either complete with a different recovery or fail costing only the network fee.',
     blockedPaused:
       'The protocol is paused right now, so nothing can be closed out until governance lifts it. Your position and the collateral behind it are unaffected by the pause.',
     // Not "the app cannot" — nobody can. Worth saying plainly, because
@@ -2371,6 +2390,27 @@ const copySource = {
       // Active, and a failed sale leaves it curable in fallback.
       whenThisEnds:
         'Usually straight away — this transaction normally ends the loan. If the protocol can only settle part of it, or the sale of the collateral cannot go through, the loan stays open and you can close it again later.',
+    },
+    // Round 39 P2 — the shared receipt above describes collateral-sale
+    // economics, and a rental default has none of them. `DefaultedFacet`
+    // removes the renter's access, leaves the lender's own NFT exactly
+    // where it is, and records a claim for the PREPAID rent after fees.
+    // Nothing of the borrower's moves, there is no sale, and there is no
+    // shortfall to absorb — so every row needed its own answer rather
+    // than a reworded one. This is the fourth surface to carry the wrong
+    // rental description (card body, functional spec, release note, and
+    // now the confirmation); the receipt was missed each time because it
+    // is state-independent and reads correctly for the majority route.
+    rentalReceipt: {
+      youReceive:
+        'The rent that was paid up front, less fees, in the asset it was paid in. Your NFT is not part of this — it stays where it already is. You claim the rent afterwards from the Claims page.',
+      youLock: 'Nothing.',
+      youMayOwe: 'Nothing beyond the network fee.',
+      youCanLose:
+        'The rest of the rental term. Ending it now removes the renter’s access, so any rent that would have accrued after this point does not. Nothing belonging to the renter transfers to you, and there is no shortfall for you to absorb.',
+      fees: 'The network fee, plus the protocol’s share of the prepaid rent.',
+      whenThisEnds:
+        'The rental ends when this transaction settles. Your NFT does not move, and what was prepaid becomes claimable.',
     },
   },
   lenderExit: {

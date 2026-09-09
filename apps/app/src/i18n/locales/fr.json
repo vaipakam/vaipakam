@@ -2480,8 +2480,21 @@
       "blockedPaused": "Le protocole est actuellement en pause : rien ne peut être clôturé tant que la gouvernance ne l’a pas levée. Votre position et la garantie qui la couvre ne sont pas affectées par cette pause.",
       "blockedNoConsent": "Ce prêt a dépassé son délai de grâce, mais il a été ouvert sans que les deux parties aient enregistré la reconnaissance des risques et conditions que le protocole exige avant de remettre une garantie sans prix de marché. La clôture est refusée à tout le monde, pas seulement à vous : contactez le support.",
       "submitted": "Clôture envoyée. Le prêt se termine ; laissez à la page un instant pour se mettre à jour, puis consultez la page Réclamations pour voir ce que vous pouvez réclamer.",
-      "readyInternalMatch": "Le délai de grâce est écoulé et ce prêt peut être clôturé maintenant. Le protocole dispose d’une position opposée contre laquelle il peut régler celle-ci : plutôt que de vendre la garantie, vous êtes remboursé dans l’actif que vous avez prêté, au prix de l’oracle au moment de la transaction. Vous le réclamez ensuite sur la page Réclamations. Si quelqu’un règle d’abord contre cette position opposée, cette tentative échouera et ne vous coûtera que les frais de réseau : le prêt reste ouvert et vous pouvez réessayer.",
-      "readyRental": "Le délai de grâce est écoulé : vous pouvez mettre fin à cette location. Votre NFT reste où il est et l’accès du locataire est retiré. Ce qui devient réclamable est le loyer payé d’avance, moins les frais — vous le réclamez sur la page Réclamations."
+      "readyInternalMatch": "Le délai de grâce est écoulé et ce prêt peut être clôturé maintenant. Le protocole dispose d’une position opposée contre laquelle il peut régler celle-ci : plutôt que de vendre la garantie, vous êtes remboursé dans l’actif que vous avez prêté, au prix de l’oracle au moment de la transaction. Vous le réclamez ensuite sur la page Réclamations.",
+      "readyRental": "Le délai de grâce est écoulé : vous pouvez mettre fin à cette location. Votre NFT reste où il est et l’accès du locataire est retiré. Ce qui devient réclamable est le loyer payé d’avance, moins les frais — vous le réclamez sur la page Réclamations.",
+      "raceIntro": "Quelqu’un d’autre peut régler en premier contre cette position opposée. Dans ce cas, cette clôture ne s’arrête pas : elle se poursuit par la voie que le protocole trouve ensuite.",
+      "raceFallbackFails": "Ici cette voie ne peut pas aboutir : la tentative échouerait et ne vous coûterait que les frais de réseau. Le prêt reste ouvert et vous pouvez réessayer.",
+      "raceFallbackInKind": "Ici cette voie vous remet la garantie de l’emprunteur telle quelle, au lieu de l’actif que vous avez prêté. La clôture réussit tout de même — vous récupéreriez simplement autre chose que ce que décrit cette carte ci-dessus.",
+      "raceFallbackRental": "Ici cette voie met fin à la location : l’accès du locataire est retiré, votre NFT reste où il est, et le loyer payé d’avance devient réclamable, frais déduits.",
+      "raceFallbackUnknown": "Laquelle de ces voies sera empruntée ne peut être déterminée à l’avance à partir de ce que l’application a lu : cette tentative peut donc aboutir à une récupération différente ou échouer en ne coûtant que les frais de réseau.",
+      "rentalReceipt": {
+        "youReceive": "Le loyer payé d’avance, frais déduits, dans l’actif dans lequel il a été payé. Votre NFT n’est pas concerné : il reste où il est déjà. Vous réclamez le loyer ensuite depuis la page Réclamations.",
+        "youLock": "Rien.",
+        "youMayOwe": "Rien au-delà des frais de réseau.",
+        "youCanLose": "Le reste de la durée de location. Y mettre fin maintenant retire l’accès du locataire, si bien que le loyer qui aurait couru ensuite ne courra pas. Rien appartenant au locataire ne vous est transféré, et il n’y a aucun déficit à absorber.",
+        "fees": "Les frais de réseau, plus la part du protocole sur le loyer payé d’avance.",
+        "whenThisEnds": "La location prend fin au règlement de cette transaction. Votre NFT ne bouge pas, et ce qui a été payé d’avance devient réclamable."
+      }
     }
   },
   "contractError": {

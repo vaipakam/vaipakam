@@ -55,6 +55,7 @@ import {
 export function ForcedCloseCard({
   loanId,
   readiness,
+  matchFallback,
   confirmOpen,
   onOpenConfirm,
   onCloseConfirm,
@@ -69,6 +70,11 @@ export function ForcedCloseCard({
    *  in this component. The card renders the decision; it does not
    *  make it. */
   readiness: ForcedCloseReadiness;
+  /** Where the close-out lands if the internal-match candidate is gone
+   *  by the time the transaction mines. Read ONLY on
+   *  `ready-internal-match`. Resolved on the page by
+   *  `forcedCloseWithoutMatch` — like `readiness`, never derived here. */
+  matchFallback: ForcedCloseReadiness;
   /** The page's single confirmation slot — opening this receipt closes
    *  any other, matching every other write card on the page. */
   confirmOpen: boolean;
@@ -221,6 +227,34 @@ export function ForcedCloseCard({
     }
   }
 
+  /** Round 39 P2 — losing the match race does not always mean the
+   *  close-out fails. `forcedCloseWithoutMatch` says which branch the
+   *  contract reaches instead, and each one is a materially different
+   *  outcome for the lender, so each gets named rather than folded into
+   *  the commonest. `blocked-no-consent` groups with the failures on
+   *  purpose: the in-kind branch reverts `LiquidationFailed` without
+   *  both parties' consent, so nothing is recovered and only the fee is
+   *  spent — the same thing that happens with no swap route. */
+  const raceOutcome =
+    matchFallback === 'ready-in-kind'
+      ? copy.forcedClose.raceFallbackInKind
+      : matchFallback === 'ready-rental'
+        ? copy.forcedClose.raceFallbackRental
+        : matchFallback === 'ready-needs-route' ||
+            matchFallback === 'blocked-no-consent'
+          ? copy.forcedClose.raceFallbackFails
+          : copy.forcedClose.raceFallbackUnknown;
+
+  /** Round 39 P2 — a rental default has no sale, no borrower
+   *  collateral and no shortfall, so the shared receipt's every row was
+   *  wrong for it. The receipt is state-independent, which is why it
+   *  survived three earlier corrections to the rental description
+   *  elsewhere: it reads correctly for the majority route. */
+  const receipt =
+    readiness === 'ready-rental'
+      ? copy.forcedClose.rentalReceipt
+      : copy.forcedClose.receipt;
+
   const body = holdingAfterSubmit
     ? copy.forcedClose.submitted
     : readiness === 'not-yet'
@@ -236,7 +270,7 @@ export function ForcedCloseCard({
               : readiness === 'ready-needs-route'
                 ? copy.forcedClose.readyNeedsRoute
                 : readiness === 'ready-internal-match'
-                  ? copy.forcedClose.readyInternalMatch
+                  ? `${copy.forcedClose.readyInternalMatch} ${copy.forcedClose.raceIntro} ${raceOutcome}`
                   : readiness === 'ready-rental'
                     ? copy.forcedClose.readyRental
                     : copy.forcedClose.readyInKind;
@@ -317,12 +351,12 @@ export function ForcedCloseCard({
                 onBack={onCloseConfirm}
                 onConfirm={closeOut}
                 data={{
-                  youReceive: copy.forcedClose.receipt.youReceive,
-                  youLock: copy.forcedClose.receipt.youLock,
-                  youMayOwe: copy.forcedClose.receipt.youMayOwe,
-                  youCanLose: copy.forcedClose.receipt.youCanLose,
-                  fees: copy.forcedClose.receipt.fees,
-                  whenThisEnds: copy.forcedClose.receipt.whenThisEnds,
+                  youReceive: receipt.youReceive,
+                  youLock: receipt.youLock,
+                  youMayOwe: receipt.youMayOwe,
+                  youCanLose: receipt.youCanLose,
+                  fees: receipt.fees,
+                  whenThisEnds: receipt.whenThisEnds,
                 }}
               />
             </div>

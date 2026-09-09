@@ -2480,8 +2480,21 @@
       "blockedPaused": "Das Protokoll ist derzeit pausiert, daher kann nichts geschlossen werden, bis die Governance die Pause aufhebt. Ihre Position und die dahinterliegende Sicherheit sind davon nicht betroffen.",
       "blockedNoConsent": "Dieser Kredit ist über seine Nachfrist hinaus, wurde aber eröffnet, ohne dass beide Seiten die Risiko- und Bedingungsbestätigung erfasst haben, die das Protokoll verlangt, bevor es eine Sicherheit ohne Marktpreis herausgibt. Der Abschluss wird für alle verweigert, nicht nur für Sie – wenden Sie sich an den Support.",
       "submitted": "Abschluss gesendet. Der Kredit wird beendet; geben Sie der Seite einen Moment zum Aktualisieren und sehen Sie dann auf der Ansprüche-Seite nach, was Sie nun beanspruchen können.",
-      "readyInternalMatch": "Die Nachfrist ist abgelaufen und dieser Kredit kann jetzt geschlossen werden. Das Protokoll hat eine Gegenposition, gegen die es diese abwickeln kann — statt die Sicherheit zu verkaufen, werden Sie in dem von Ihnen verliehenen Vermögenswert zurückgezahlt, zum Orakelpreis zum Zeitpunkt der Transaktion. Sie beanspruchen ihn danach auf der Ansprüche-Seite. Wickelt jemand zuerst gegen diese Gegenposition ab, schlägt dieser Versuch fehl und kostet Sie nur die Netzwerkgebühr — der Kredit bleibt offen und Sie können es erneut versuchen.",
-      "readyRental": "Die Nachfrist ist abgelaufen, Sie können diese Vermietung jetzt beenden. Ihr NFT bleibt, wo es ist, und der Zugang des Mieters wird entfernt. Beanspruchbar wird die im Voraus gezahlte Miete abzüglich Gebühren — Sie beanspruchen sie auf der Ansprüche-Seite."
+      "readyInternalMatch": "Die Nachfrist ist abgelaufen und dieser Kredit kann jetzt geschlossen werden. Das Protokoll hat eine Gegenposition, gegen die es diese abwickeln kann — statt die Sicherheit zu verkaufen, werden Sie in dem von Ihnen verliehenen Vermögenswert zurückgezahlt, zum Orakelpreis zum Zeitpunkt der Transaktion. Sie beanspruchen ihn danach auf der Ansprüche-Seite.",
+      "readyRental": "Die Nachfrist ist abgelaufen, Sie können diese Vermietung jetzt beenden. Ihr NFT bleibt, wo es ist, und der Zugang des Mieters wird entfernt. Beanspruchbar wird die im Voraus gezahlte Miete abzüglich Gebühren — Sie beanspruchen sie auf der Ansprüche-Seite.",
+      "raceIntro": "Jemand anderes könnte zuerst gegen diese Gegenposition abrechnen. Dann bricht dieser Abschluss nicht einfach ab — er läuft über den Weg weiter, den das Protokoll als Nächstes findet.",
+      "raceFallbackFails": "Hier kann dieser Weg nicht abgeschlossen werden, der Versuch würde also fehlschlagen und dich nur die Netzwerkgebühr kosten. Das Darlehen bleibt offen und du kannst es erneut versuchen.",
+      "raceFallbackInKind": "Hier übergibt dieser Weg dir die Sicherheit des Kreditnehmers so, wie sie ist, statt des von dir verliehenen Vermögenswerts. Der Abschluss gelingt trotzdem — du erhältst nur etwas anderes zurück als oben auf dieser Karte beschrieben.",
+      "raceFallbackRental": "Hier beendet dieser Weg stattdessen die Vermietung: Der Zugriff des Mieters wird entfernt, dein NFT bleibt, wo es ist, und die im Voraus gezahlte Miete wird abzüglich Gebühren beanspruchbar.",
+      "raceFallbackUnknown": "Welcher Weg das ist, lässt sich aus dem, was die App gelesen hat, nicht im Voraus bestimmen — dieser Versuch kann also entweder mit einer anderen Rückgewinnung abschließen oder fehlschlagen und nur die Netzwerkgebühr kosten.",
+      "rentalReceipt": {
+        "youReceive": "Die im Voraus gezahlte Miete, abzüglich Gebühren, in dem Vermögenswert, in dem sie gezahlt wurde. Dein NFT ist davon nicht betroffen — es bleibt, wo es bereits ist. Die Miete beanspruchst du anschließend auf der Ansprüche-Seite.",
+        "youLock": "Nichts.",
+        "youMayOwe": "Nichts über die Netzwerkgebühr hinaus.",
+        "youCanLose": "Den Rest der Mietlaufzeit. Wenn du sie jetzt beendest, wird der Zugriff des Mieters entfernt, sodass danach keine Miete mehr anfällt. Nichts, was dem Mieter gehört, geht an dich über, und es gibt keine Unterdeckung, die du tragen müsstest.",
+        "fees": "Die Netzwerkgebühr sowie der Anteil des Protokolls an der im Voraus gezahlten Miete.",
+        "whenThisEnds": "Die Vermietung endet, sobald diese Transaktion abgerechnet ist. Dein NFT bewegt sich nicht, und das im Voraus Gezahlte wird beanspruchbar."
+      }
     }
   },
   "contractError": {

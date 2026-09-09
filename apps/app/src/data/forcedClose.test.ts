@@ -14,6 +14,7 @@ import { describe, expect, it } from 'vitest';
 import {
   canSubmitFromApp,
   decideForcedClose,
+  forcedCloseWithoutMatch,
   shouldRenderForcedClose,
   type ForcedCloseInput,
 } from './forcedClose';
@@ -377,5 +378,108 @@ describe('shouldRenderForcedClose', () => {
 
   it('hides it only for a loan that is no longer Active', () => {
     expect(shouldRenderForcedClose('not-applicable')).toBe(false);
+  });
+});
+
+/**
+ * `forcedCloseWithoutMatch` — round 39 P2.
+ *
+ * The card's race sentence used to promise that losing the
+ * internal-match race merely costs a network fee. It does not: where the
+ * fallthrough reaches the in-kind branch the close-out SUCCEEDS and
+ * hands over the borrower's collateral instead of the lent asset. These
+ * cases pin which fallback each collateral shape resolves to, so a
+ * regression restores a false promise about somebody's money rather than
+ * only changing a label.
+ */
+describe('forcedCloseWithoutMatch', () => {
+  const withMatch = {
+    ...base,
+    active: true,
+    defaultable: true,
+    internalMatchCandidate: true,
+  } as const;
+
+  it('is not itself an internal match, whatever the input said', () => {
+    expect(forcedCloseWithoutMatch(withMatch)).not.toBe('ready-internal-match');
+  });
+
+  // THE REGRESSION. Each of these three completes in kind, so "the
+  // attempt will fail and costs only the network fee" is false for all
+  // of them.
+  it('falls through to in-kind for NFT collateral with consent', () => {
+    expect(
+      forcedCloseWithoutMatch({
+        ...withMatch,
+        collateralIsNft: true,
+        consentFromBoth: true,
+      }),
+    ).toBe('ready-in-kind');
+  });
+
+  it('falls through to in-kind for illiquid collateral with consent', () => {
+    expect(
+      forcedCloseWithoutMatch({
+        ...withMatch,
+        collateralIsNft: false,
+        collateralIlliquid: true,
+        consentFromBoth: true,
+      }),
+    ).toBe('ready-in-kind');
+  });
+
+  it('falls through to in-kind on an LTV collapse, consent or not', () => {
+    for (const consentFromBoth of [true, false, undefined]) {
+      expect(
+        forcedCloseWithoutMatch({
+          ...withMatch,
+          collateralIsNft: false,
+          collateralIlliquid: false,
+          ltvCollapsed: true,
+          consentFromBoth,
+        }),
+      ).toBe('ready-in-kind');
+    }
+  });
+
+  // The one arm where the old promise was true.
+  it('falls through to needs-route for liquid, non-collapsed collateral', () => {
+    expect(
+      forcedCloseWithoutMatch({
+        ...withMatch,
+        collateralIsNft: false,
+        collateralIlliquid: false,
+        ltvCollapsed: false,
+      }),
+    ).toBe('ready-needs-route');
+  });
+
+  it('falls through to blocked-no-consent for illiquid collateral without it', () => {
+    expect(
+      forcedCloseWithoutMatch({
+        ...withMatch,
+        collateralIsNft: true,
+        consentFromBoth: false,
+      }),
+    ).toBe('blocked-no-consent');
+  });
+
+  it('falls through to the rental route for a rental', () => {
+    expect(forcedCloseWithoutMatch({ ...withMatch, assetType: 'rental' })).toBe(
+      'ready-rental',
+    );
+  });
+
+  // An unread probe must not resolve to a confident outcome here either
+  // — the card renders an explicitly-uncertain sentence for `unknown`.
+  it('stays unknown when the deciding probe was never read', () => {
+    expect(
+      forcedCloseWithoutMatch({
+        ...withMatch,
+        collateralIsNft: false,
+        collateralIlliquid: false,
+        ltvCollapsed: undefined,
+      }),
+    ).toBe('unknown');
   });
 });

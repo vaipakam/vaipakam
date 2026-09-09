@@ -1114,8 +1114,21 @@
       "blockedPaused": "The protocol is paused right now, so nothing can be closed out until governance lifts it. Your position and the collateral behind it are unaffected by the pause.",
       "blockedNoConsent": "This loan is past its grace period, but it was opened without both sides recording the risk-and-terms acknowledgement the protocol requires before it will hand over collateral that has no market price. The close-out is refused for everyone, not just for you — contact support.",
       "submitted": "Close-out submitted. The loan is ending; give the page a moment to catch up, then check the Claims page for what is now yours to claim.",
-      "readyInternalMatch": "The grace period has passed and this loan can be closed out now. The protocol has an opposing position it can settle this one against, so instead of the collateral being sold you are repaid in the asset you lent, at the oracle price when the transaction runs. You claim it afterwards from the Claims page. If someone settles against that opposing position first, this attempt will fail and cost you only the network fee — the loan stays open and you can try again.",
-      "readyRental": "The grace period has passed, so you can end this rental now. Your NFT stays where it is and the renter’s access is removed. What becomes claimable is the rent that was paid up front, less fees — you claim it from the Claims page."
+      "readyInternalMatch": "The grace period has passed and this loan can be closed out now. The protocol has an opposing position it can settle this one against, so instead of the collateral being sold you are repaid in the asset you lent, at the oracle price when the transaction runs. You claim it afterwards from the Claims page.",
+      "readyRental": "The grace period has passed, so you can end this rental now. Your NFT stays where it is and the renter’s access is removed. What becomes claimable is the rent that was paid up front, less fees — you claim it from the Claims page.",
+      "raceIntro": "Someone else may settle against that opposing position first. If that happens this close-out does not simply stop — it carries on down whatever route the protocol finds next.",
+      "raceFallbackFails": "Here that route cannot complete, so the attempt would fail and cost you only the network fee. The loan stays open and you can try again.",
+      "raceFallbackInKind": "Here that route hands you the borrower’s collateral as it stands instead of the asset you lent. The close-out still succeeds — you would simply be recovering something different from what this card describes above.",
+      "raceFallbackRental": "Here that route ends the rental instead: the renter’s access is removed, your NFT stays where it is, and the rent paid up front becomes claimable less fees.",
+      "raceFallbackUnknown": "Which route that is cannot be worked out in advance from what the app has read, so this attempt may either complete with a different recovery or fail costing only the network fee.",
+      "rentalReceipt": {
+        "youReceive": "The rent that was paid up front, less fees, in the asset it was paid in. Your NFT is not part of this — it stays where it already is. You claim the rent afterwards from the Claims page.",
+        "youLock": "Nothing.",
+        "youMayOwe": "Nothing beyond the network fee.",
+        "youCanLose": "The rest of the rental term. Ending it now removes the renter’s access, so any rent that would have accrued after this point does not. Nothing belonging to the renter transfers to you, and there is no shortfall for you to absorb.",
+        "fees": "The network fee, plus the protocol’s share of the prepaid rent.",
+        "whenThisEnds": "The rental ends when this transaction settles. Your NFT does not move, and what was prepaid becomes claimable."
+      }
     },
     "lenderExit": {
       "title": "Your options as the lender",

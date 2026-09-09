@@ -162,3 +162,45 @@ That case now has its own message and its own button, and it says
 plainly that what comes back is the asset lent rather than the
 borrower's collateral, because for this route that is what the protocol
 returns.
+
+Two more corrections to the card, and both are the same mistake in
+different clothes: a sentence that was true of the commonest outcome and
+was being shown for all of them.
+
+The first is about the route that settles against an opposing position.
+That message warns, correctly, that somebody else may settle against
+that position first — and then told the lender the attempt would simply
+fail, costing a network fee, with the loan left open to try again. That
+is true only when the collateral is ordinary and liquid. Where it is an
+NFT, or has no reliable price and both parties recorded their consent,
+or has fallen far enough in value, the close-out does not fail at all:
+it carries on and hands over the borrower's collateral instead of the
+asset that was lent. A lender was being told the worst case was a wasted
+fee, on a transaction that could complete and return something entirely
+different from what the card had just described. The card now works out
+which route the close-out would actually fall to and says that — the
+collateral as it stands, the end of a rental, a refusal costing only the
+fee, or, where the app could not read enough to tell, plainly that it
+cannot tell.
+
+Worth recording how that is decided, because it is the part most likely
+to rot. The fallback is not a second copy of the protocol's ordering
+written out by hand; it is the same decision this card already makes,
+asked again with the opposing position removed. There is one description
+of the order things happen in, so the warning cannot drift away from the
+behaviour it describes.
+
+The second is the confirmation screen shown before a lender signs. It
+described selling collateral and absorbing a shortfall — for every
+close-out, including an overdue rental, where none of that happens.
+Ending a rental sells nothing, moves nothing belonging to anybody else,
+and leaves no shortfall to absorb; what it does is remove the renter's
+access and make the prepaid rent claimable. The rental case now has its
+own confirmation that says so line by line.
+
+That is the fourth surface to have carried the wrong description of a
+rental close-out — the card body, the specification, the change record,
+and now the confirmation. The confirmation outlasted the other three
+because it does not vary by route: it reads correctly for the majority
+case, so each earlier correction went past it. The lesson is that a
+screen which does not change is not thereby a screen that is right.

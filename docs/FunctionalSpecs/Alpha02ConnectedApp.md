@@ -371,6 +371,28 @@ Thin-market honesty rules apply.
   receives, so choosing one of them on an unread answer is a claim, and
   the wrong one whenever the protocol settles the position against an
   opposing one instead.
+- Where that opposing position exists, the surface must not describe the
+  consequence of losing it as a single outcome. Another party may settle
+  against the same position first, and what happens then is decided by the
+  route the protocol reaches next — which may hand over the collateral as it
+  stands, end a rental, or refuse the close-out for the cost of the network
+  fee alone. Telling a lender the only downside is a wasted fee, on a
+  transaction that can instead complete and return a materially different
+  asset, is a false statement about what they recover. The surface states the
+  route it would actually fall to, and where it cannot read enough to know,
+  says that rather than choosing the likeliest.
+- That fallback is the surface's own routing decision asked again with the
+  opposing position absent — never a second, hand-written account of the order
+  the protocol tries things in. One description of that order is a
+  requirement, not a convenience: two will diverge, and the divergence surfaces
+  as a confident sentence about somebody's money that no longer matches what
+  the protocol does.
+- The confirmation shown before the lender signs is part of this surface and
+  carries the same obligation. It must describe the route being confirmed
+  rather than the commonest one: an overdue rental sells nothing, transfers
+  nothing belonging to the renter, and leaves no shortfall for the lender to
+  absorb, so a confirmation written around collateral sale economics misstates
+  every one of its own lines for that route.
 - The in-kind route also covers collateral that is itself a non-fungible asset
   held against an ordinary loan. That is a supported shape and a distinct one
   from a rental: the leg being lent and the leg securing it are separate

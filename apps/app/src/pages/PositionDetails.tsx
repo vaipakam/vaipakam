@@ -70,7 +70,11 @@ import { RefinancePendingCard } from '../components/RefinancePendingCard';
 import { EarlyRepayOptionsCard } from '../components/EarlyRepayOptionsCard';
 import { LenderExitOptionsCard } from '../components/LenderExitOptionsCard';
 import { ForcedCloseCard } from '../components/ForcedCloseCard';
-import { decideForcedClose } from '../data/forcedClose';
+import {
+  decideForcedClose,
+  forcedCloseWithoutMatch,
+  type ForcedCloseInput,
+} from '../data/forcedClose';
 import { useForcedCloseReads } from '../data/useForcedClose';
 import { ObligationTransferFlow } from '../components/ObligationTransferFlow';
 import { OffsetFlow } from '../components/OffsetFlow';
@@ -1408,7 +1412,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
    *  close-out card onto loans that turn out to be repaid. */
   const forcedCloseActive =
     isLenderHolder && resolvedLoanStatus === LoanStatus.Active;
-  const forcedCloseReadiness = decideForcedClose({
+  const forcedCloseInput: ForcedCloseInput = {
     active: forcedCloseActive,
     defaultable: forcedCloseReads.defaultable,
     sequencerHealthy: forcedCloseReads.sequencerHealthy,
@@ -1432,7 +1436,14 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         : collateralIsNft,
     collateralIlliquid: forcedCloseReads.collateralIlliquid,
     ltvCollapsed: forcedCloseReads.ltvCollapsed,
-  });
+  };
+  const forcedCloseReadiness = decideForcedClose(forcedCloseInput);
+  /** Where a close-out lands if the internal-match candidate is gone by
+   *  the time the transaction mines (round 39 P2). Only meaningful on
+   *  `ready-internal-match`; the card ignores it otherwise. Derived from
+   *  the same resolver rather than restated, so it cannot drift from the
+   *  contract's branch order. */
+  const forcedCloseMatchFallback = forcedCloseWithoutMatch(forcedCloseInput);
 
   /** `loanLive`'s chain clock, ADVANCED by local elapsed time.
    *
@@ -3362,6 +3373,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         <ForcedCloseCard
           loanId={row.loanId}
           readiness={forcedCloseReadiness}
+          matchFallback={forcedCloseMatchFallback}
           confirmOpen={confirmingSurface === 'forced-close'}
           onOpenConfirm={() => setConfirmingSurface('forced-close')}
           onCloseConfirm={() => setConfirmingSurface(null)}
