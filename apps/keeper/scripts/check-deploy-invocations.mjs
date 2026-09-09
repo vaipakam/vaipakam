@@ -3295,7 +3295,7 @@ function classifyText(text, lang) {
       if (!/[A-Za-z0-9_$]/.test(ch)) return false;
       let s = p;
       while (s >= 0 && /[A-Za-z0-9_$]/.test(text[s])) s -= 1;
-      return /^(?:return|typeof|case|in|of|new|delete|void|instanceof|do|else|yield|await)$/.test(
+      return /^(?:return|throw|typeof|case|in|of|new|delete|void|instanceof|do|else|yield|await)$/.test(
         text.slice(s + 1, p + 1),
       );
     };
@@ -3522,6 +3522,18 @@ function classifyText(text, lang) {
 function isInertAssignment(idx, text, kind) {
   let s = idx;
   while (s > 0 && kind[s - 1] === 1) s -= 1;
+  let e = idx;
+  while (e < text.length && kind[e] === 1) e += 1;
+  // A COMMAND SUBSTITUTION RUNS BEFORE THE ASSIGNMENT BINDS. The assignment
+  // itself is inert, but `OUT="$(node -e '…writeFileSync…')"` executes its
+  // substitution first and the write lands — so the value is only inert when
+  // nothing inside it is evaluated (r16, a false GREEN I introduced in r15).
+  // Asked of the whole quoted run rather than of the offset: deciding which
+  // substitution a given offset falls inside means matching nested `$( )`,
+  // and the conservative answer — treat the value as live — costs a report on
+  // a config that names itself, which is the direction this reader already
+  // prefers everywhere else.
+  if (/\$\(|`/.test(text.slice(s, e))) return false;
   let b = s;
   while (b > 0 && !'\n;&|('.includes(text[b - 1])) b -= 1;
   return /(?:^|\s)(?:export\s+|local\s+|declare\s+(?:-\S+\s+)*|readonly\s+|typeset\s+)?[A-Za-z_]\w*=$/.test(
@@ -3628,6 +3640,20 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
   // scan entirely, so a bound write BEFORE it went unseen (Codex #2066 r7).
   const named = new RegExp(esc).test(text);
   if (named) {
+    // THE NAMED-WRITE SCAN IS CONFIG-INDEPENDENT, so it is cached on the file
+    // and the language alone. The r15 cache keyed the whole result on the
+    // config too, which a file selecting a DIFFERENT config on every line
+    // misses every time — Codex measured 500/1,000/2,000/4,000 such deploys at
+    // 0.66/1.49/3.90/15.16 s, still superlinear (r16). Only the `esc`-bearing
+    // patterns above genuinely depend on the config; this scan does not, and
+    // it is the source-sized one.
+    if (anyWriteCache.text === text && anyWriteCache.lang === lang) {
+      writes.push(...anyWriteCache.writes);
+      writes.sort((a, b) => a - b);
+      writesCache = { text, key: wkey, writes };
+      return finishRewrite(writes, text, cfgPath, at, esc);
+    }
+    const anyWrites = [];
     // Copies are writes here too: `copyFileSync("gen.jsonc", cfg)` puts no
     // name in the call, so the name-bearing COPY pattern above cannot see it
     // either (r7) — including the `shutil` spellings, which are the ordinary
@@ -3650,8 +3676,17 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
       String.raw`(?<![A-Za-z0-9_$])` +
         String.raw`(?:writeFile(?:Sync)?|appendFile(?:Sync)?|createWriteStream` +
         String.raw`|outputFile(?:Sync)?|write_text|write_bytes` +
-        String.raw`|copyFile(?:Sync)?|cpSync|cp|rename(?:Sync)?|copy|move` +
-        String.raw`|copyfile|copy2|copytree)\s*\(` +
+        String.raw`|copyFile(?:Sync)?|cpSync|cp|rename(?:Sync)?)\s*\(` +
+        // A GENERIC COPY NAME NEEDS A FILESYSTEM QUALIFIER, or none at all.
+        // The lookbehind above admits member access on purpose — it is what
+        // lets `require("fs").writeFileSync(…)` and `fs.promises.cp(…)` match
+        // — but it also let `clone = copy.copy(value)` and any object's
+        // `.copy()` match an in-memory copy that writes no file (r15).
+        // `shutil.copy`, `shutil.move` and `fs.copy` stay; `copy.copy` and
+        // `arr.copy()` do not.
+        String.raw`|(?<![A-Za-z0-9_$.])(?:copy|move|copyfile|copy2|copytree)\s*\(` +
+        String.raw`|(?<![A-Za-z0-9_$.])(?:shutil|fs|fse|fsExtra|fsp|promises)\s*\.\s*` +
+        String.raw`(?:copy|move|copyfile|copy2|copytree)\s*\(` +
         // `os.replace` renames ONTO an existing path — an overwrite by
         // definition — and no spelling of it was in the set (r13). Written
         // QUALIFIED, unlike its neighbours: the lookbehind above admits member
@@ -3794,10 +3829,55 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
       // `: { x: 1 }` has no type text before its brace, so neither is mistaken
       // for a declaration. That direction matters: reading a ternary as a
       // declaration would drop a real write.
+      // A structured return type has braces of its own — `copy(): { ok:
+      // boolean } { … }` and `copy(): () => void { … }` — so a character class
+      // that stops at the first `{` never reaches the body (r16). The type is
+      // consumed by BALANCING instead, and the declaration is recognised by
+      // what is left: a body is the last balanced `{…}` with nothing after it.
+      // A ternary's `: { x: 1 };` has a `;` after its group and stays a call,
+      // which is the direction that matters — reading one as a declaration
+      // would drop a real write.
       if (text[n] === ':') {
         let t = n + 1;
-        while (t < text.length && /[A-Za-z0-9_$<>[\]|&,.\s]/.test(text[t]) && t - n < 200) t += 1;
-        if (text[t] === '{' && /[A-Za-z0-9_$]/.test(text.slice(n + 1, t))) return true;
+        let lastEnd = -1;
+        const stop = Math.min(text.length, n + 400);
+        while (t < stop) {
+          const ch = text[t];
+          if (/\s/.test(ch)) {
+            t += 1;
+            continue;
+          }
+          if (ch === '{' || ch === '(' || ch === '[') {
+            const close = { '{': '}', '(': ')', '[': ']' }[ch];
+            let d = 0;
+            let u = t;
+            for (; u < stop; u += 1) {
+              if (text[u] === ch) d += 1;
+              else if (text[u] === close) {
+                d -= 1;
+                if (d === 0) break;
+              }
+            }
+            if (d !== 0) break;
+            t = u + 1;
+            lastEnd = ch === '{' ? t : -1;
+            continue;
+          }
+          if (!/[A-Za-z0-9_$<>|&,.=?!'"]/.test(ch)) break;
+          lastEnd = -1;
+          t += 1;
+        }
+        // The last thing consumed must be a brace group, and what STOPPED the
+        // scan decides whether that group was a body or a value: a `;` or a
+        // `,` means the braces were an object in an expression (a ternary
+        // arm), while running out of window or reaching the end of the file
+        // means they were the body.
+        if (
+          lastEnd !== -1 &&
+          /^\s*$/.test(text.slice(lastEnd, t)) &&
+          !';,)]'.includes(text[t] ?? '')
+        )
+          return true;
       }
       return text[n] === '{';
     };
@@ -3813,8 +3893,10 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
       const insideData = shellish
         ? kind[at0] === 2 || (kind[at0] === 1 && isInertAssignment(at0, text, kind))
         : kind[at0] !== 0;
-      if (!insideData && !isDeclaration(at0)) writes.push(w.index);
+      if (!insideData && !isDeclaration(at0)) anyWrites.push(w.index);
     }
+    anyWriteCache = { text, lang, writes: anyWrites };
+    writes.push(...anyWrites);
     writes.sort((a, b) => a - b);
   }
   writesCache = { text, key: wkey, writes };
@@ -3822,6 +3904,7 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
 }
 
 let writesCache = { text: null, key: null, writes: null };
+let anyWriteCache = { text: null, lang: null, writes: null };
 
 /**
  * Decide the rewrite question from an already-collected list of write offsets.

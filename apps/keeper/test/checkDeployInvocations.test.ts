@@ -9804,6 +9804,73 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(r.ok).toBe(false);
   });
 
+  // ---- Codex #2066 r16 ----
+
+  it('an in-memory copy is not a file copy (#2066 r15/r16)', () => {
+    // `copy.copy(value)` clones an object. The lookbehind admits member access
+    // on purpose, which is what let this match.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'af.py',
+      'import copy, subprocess\n' +
+        'clone = copy.copy(value)\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a shutil copy is still a file copy (#2066 r16 bounds)', () => {
+    // The qualifier list is what separates the two; this pins that narrowing
+    // it did not lose the real one.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'ag.py',
+      'import shutil, subprocess\n' +
+        'cfg = "configs/custom.jsonc"\n' +
+        'shutil.copy("generated.jsonc", cfg)\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a command substitution inside an assignment still runs (#2066 r16)', () => {
+    // The assignment is inert; the substitution is not, and it runs first.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'ah.sh',
+      'export CFG=configs/custom.jsonc\n' +
+        'OUT="$(node -e \'require(`fs`).writeFileSync(process.env.CFG,`{}`)\')"\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a structured TypeScript return type still reads as a declaration (#2066 r16)', () => {
+    // The type has braces of its own, so the body is the LAST balanced group.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'ai.ts',
+      'class Mover {\n  copy(source: string): { ok: boolean } {\n    return { ok: true };\n  }\n}\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a regex literal after throw is data (#2066 r16)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'aj.mjs',
+      'function boom() {\n  throw /copy(source, destination)/;\n}\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
   it('the PROSE path invalidates a rewritten config too', () => {
     // That path passed the rewrite context to the safety reader and not to the
     // identity reader, so the identity half trusted the stale copy and sent the
