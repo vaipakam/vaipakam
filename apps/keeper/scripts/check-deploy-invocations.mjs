@@ -4219,11 +4219,7 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
       // lookbehind rejects only an identifier character, so `.cp(` is a call
       // and `remove(` is not.
       String.raw`(?<![A-Za-z0-9_$])` +
-        // `truncate` empties a file, and belongs in BOTH write lists: the
-        // named one catches `truncateSync("configs/custom.jsonc", 0)`, this
-        // generic one catches `truncateSync(CFG, 0)` where the name is bound
-        // elsewhere — which is the shape #2052 is about (r38).
-        String.raw`(?:truncate(?:Sync)?|writeFile(?:Sync)?|appendFile(?:Sync)?|createWriteStream` +
+        String.raw`(?:writeFile(?:Sync)?|appendFile(?:Sync)?|createWriteStream` +
         String.raw`|outputFile(?:Sync)?|write_text|write_bytes` +
         // `cp` moved behind the qualifier with `copy` and `move`: it has the
         // same ambiguity (`function cp(source, destination)`), and leaving it
@@ -4473,6 +4469,15 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
         // `os.open(cfg, os.O_RDONLY, mode=os.O_TRUNC)` — which opens for
         // reading — reported a truncation (r36). Bounded to the one argument
         // that carries them, or to a `flags=` keyword.
+        // `truncate` EMPTIES a file — and is a generic name, not a
+        // distinctive one. Admitted to this list unqualified in r38, it
+        // reported `db.truncate()` and a plain `truncate(text, 80)` helper in
+        // any file that names the config (found by probing r38 afterwards).
+        // So it carries a filesystem module, exactly as the copy verbs and
+        // the process-execution names do — the rule this file already applies
+        // three times, which I did not apply when adding it.
+        String.raw`|(?<![A-Za-z0-9_$.])(?:fs|fsp|fse|fsExtra|os)` +
+        String.raw`(?:\s*\.\s*promises)?\s*\.\s*truncate(?:Sync)?\s*\(` +
         String.raw`|(?<![A-Za-z0-9_$.])os\s*\.\s*open\s*\(` +
         String.raw`(?:[^(),]|\([^()]*\))*,\s*(?:flags\s*=\s*)?` +
         String.raw`(?:[^(),]|\([^()]*\))*O_(?:WRONLY|RDWR|TRUNC|CREAT|APPEND)` +

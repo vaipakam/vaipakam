@@ -11571,4 +11571,44 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     );
     expect(r.ok).toBe(false);
   });
+
+  it('a generic truncate is not a filesystem write (#2066 r38 self-review)', () => {
+    // `truncate` is a string, table and log method as often as a filesystem
+    // one. Admitted unqualified in r38, it reported `db.truncate()` and a
+    // plain helper in any file naming the config — the qualifier rule this
+    // file already applies to the copy verbs and the execution names, which I
+    // did not apply when adding it.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'ra.mjs',
+      'const cfg="configs/custom.jsonc";\nawait db.truncate();\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a qualified truncate is still a write (#2066 r38 self-review bounds)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'rc.mjs',
+      'const cfg="configs/custom.jsonc";\nfs.truncateSync(cfg, 0);\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('two backslashes leave a substitution live (#2066 r38 self-review bounds)', () => {
+    // The parity rule, from the other side: one backslash escapes the marker,
+    // two escape each other and the substitution runs.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'rd.sh',
+      'CFG=configs/custom.jsonc\nEXAMPLE="\\\\$(printf new > "$CFG")"\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
 });
