@@ -78,11 +78,22 @@ export function slotsFromLayout(layout, position, fields = FIELDS, rowStructs = 
   return { fields: out, rows };
 }
 
-function eraCommits(walk, commitsAsc) {
+/**
+ * One commit per era: the first walked commit, every change event, and every
+ * commit at which a TARGET FIELD's index changed — the latter covers an
+ * APPEND, which is append-only and therefore no change event, yet opens an
+ * era of its own for that field (intentCommits appeared on 2026-06-08 at an
+ * index the 2026-06-23 removals later shifted; neither neighbouring event
+ * commit carries that slot). Sorted by date; HEAD is added by the caller.
+ */
+export function eraCommits(walk, commitsAsc) {
   const set = new Map();
-  if (commitsAsc.length) set.set(commitsAsc[0].sha, commitsAsc[0]);
+  if (commitsAsc.length) set.set(commitsAsc[0].sha, { ...commitsAsc[0], event: 'walk start' });
   for (const e of walk.changeEvents) set.set(e.commit, { sha: e.commit, date: e.date, event: `${e.struct} ${e.kind} @${e.firstDifferentIndex}` });
-  return [...set.values()];
+  for (const [f, eras] of Object.entries(walk.indexEras ?? {})) {
+    for (const era of eras) if (!set.has(era.fromCommit)) set.set(era.fromCommit, { sha: era.fromCommit, date: era.from, event: `${f} → index ${era.index}` });
+  }
+  return [...set.values()].sort((a, b) => a.date.localeCompare(b.date));
 }
 
 export function buildEra(sha, { repo = REPO_ROOT, keep = false, log = () => {} } = {}) {
@@ -123,6 +134,12 @@ export function main(argv = process.argv.slice(2)) {
   const out = arg('--out', OUT_DEFAULT);
   const onlyHead = argv.includes('--only-head');
   const keep = argv.includes('--keep-worktrees');
+  // --reuse <path>: eras already built (same commit) in a previous output are copied, not rebuilt
+  const reusePath = arg('--reuse', null);
+  const reusable = new Map();
+  if (reusePath && existsSync(reusePath)) {
+    for (const e of JSON.parse(readFileSync(reusePath, 'utf8')).eras ?? []) reusable.set(e.commit, e);
+  }
   const log = (m) => process.stderr.write(m + '\n');
   const walk = walkProvenance({ since, fields: FIELDS });
   const commitsAsc = sh('git', ['log', '--format=%H %cI', `--since=${since}`, '--', LIB_PATH], REPO_ROOT).trim().split('\n').filter(Boolean).map((l) => { const [sha, date] = l.split(' '); return { sha, date }; }).reverse();
@@ -134,6 +151,11 @@ export function main(argv = process.argv.slice(2)) {
   const unavailable = [];
   for (const e of eras) {
     const t0 = Date.now();
+    if (reusable.has(e.sha)) {
+      built.push({ ...reusable.get(e.sha), event: e.event ?? reusable.get(e.sha).event ?? null });
+      log(`  ${e.sha.slice(0, 9)} ${e.date.slice(0, 10)} ${(e.event ?? '').padEnd(34)} reused`);
+      continue;
+    }
     try {
       const r = buildEra(e.sha, { keep, log });
       built.push({ commit: e.sha, date: e.date, event: e.event ?? null, ...r });

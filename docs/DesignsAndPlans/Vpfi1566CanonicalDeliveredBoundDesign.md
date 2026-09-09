@@ -5874,13 +5874,18 @@ an artifact correction, operator-gated.
 3. *Whether the read agrees with the code's own view.* The plan called for a
    live intent commit on anvil, because no deployed chain has one. The
    calibration is a forge test instead, which is the same evidence run in
-   CI rather than as a ceremony: it drives the production write paths — an
-   intent commit through the intent facet on a live loan, a rebate row and a
-   fallback snapshot through theirs or through the compiler-equivalent test
-   mutator — and requires the raw storage at the derived slots to equal what
-   the routed getters return, on rows that are non-zero. The census's own
-   row-slot arithmetic is pinned against a forge-computed example, so the
-   script computes the slot the compiler computes.
+   CI rather than as a ceremony. For each of the three rows it writes a
+   non-zero row through the test mutator — compiled against the same
+   library, so the compiler chooses the very slot the production writers
+   use — reads it back through the ROUTED getter, which is the production
+   read path, and requires the raw storage at the derived slot to equal
+   both. (The intent facet's own suite has no successful commit: a valid
+   commit needs Fusion's canonical extension and a priced loan for the
+   health-factor gate, which the unit harness does not provide, so the
+   production write path is not driven here; the slot is the compiler's
+   either way.) The census's own row-slot arithmetic is pinned against a
+   forge-computed example, so the script computes the slot the compiler
+   computes.
 
 4. *Which block.* The read is `eth_getStorageAt` under EIP-1898, pinned by the
    census block's hash with the canonical requirement, exactly like every

@@ -90,6 +90,22 @@
 
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync, renameSync, rmSync } from 'node:fs';
 import { readManifest, regenerateEntries, withManifestLock, writeSnapshotGuarded, livePublicationsInProgress } from './archive-manifest.mjs';
+import { loadSlots, loadEras } from './storage-slots.mjs';
+import { prepareStorageRead, readCountersByStorage, scanRowsByStorage, MAX_STORAGE_LOAN_SCAN } from './census-storage-read.mjs';
+
+/**
+ * #1566 design §7/§7a — the ERA-COMPLETE storage read, prepared once from the
+ * two compiler-generated tables. `ok: false` carries the reason and every
+ * cell that would have needed it stays indeterminate with that reason
+ * recorded; the read is never attempted on a half-validated table.
+ */
+const STORAGE_READ = (() => {
+  try {
+    return prepareStorageRead({ slots: loadSlots(), eras: loadEras() });
+  } catch (err) {
+    return { ok: false, reason: `slot tables unreadable: ${String(err.message).split('\n')[0]}` };
+  }
+})();
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createPublicClient, http, toFunctionSelector, parseAbiItem, encodeFunctionData, decodeFunctionResult, decodeErrorResult } from 'viem';
@@ -296,6 +312,10 @@ async function callAtHash(client, block, { address, abi, functionName, args = []
 }
 async function codeAtHash(client, block, address) {
   return client.request({ method: 'eth_getCode', params: [address, blockRef(block)] });
+}
+/** A raw storage slot at the census block, hash-pinned like every other state read (design §7 question 4). */
+async function storageAtHash(client, block, address, slot) {
+  return BigInt(await client.request({ method: 'eth_getStorageAt', params: [address, slot, blockRef(block)] }));
 }
 /**
  * r28 P1 — the hash the census pins must be what EVERY replica serves at that
@@ -1703,14 +1723,68 @@ async function censusDeployment(dep) {
     }
   }
   if (!enumerable) {
+    // #1566 §7a — a Diamond that routes no loan enumeration can still be READ:
+    // the loan counter's slot never moved, so zero there (with the other
+    // counters zero at every era slot) is the storage twin of the routed
+    // zero-loans proof; a non-zero counter gives the id range, and every class
+    // is then scanned at every era's slot. A non-Diamond is never read.
+    let storage = null;
+    if (!notADiamond && STORAGE_READ.ok) {
+      const readSlot = (slot) => withReplicaRetry(atBlock, () => storageAtHash(client, censusBlock, diamond, slot), { client });
+      const counters = await readCountersByStorage({ readSlot, eraSlots: STORAGE_READ.eraSlots });
+      if (counters.allZero) {
+        storage = { kind: 'no-loans-ever-created-by-storage', counters, scan: null, truncated: false };
+      } else {
+        const cap = BigInt(MAX_STORAGE_LOAN_SCAN);
+        const n = counters.nextLoanId > cap ? cap : counters.nextLoanId;
+        const ids = Array.from({ length: Number(n) }, (_, i) => BigInt(i + 1));
+        const scan = await scanRowsByStorage({ readSlot, loanIds: ids, eraSlots: STORAGE_READ.eraSlots });
+        storage = { kind: 'storage-read-calibrated', counters, scan, truncated: counters.nextLoanId > n };
+      }
+      process.stderr.write(`census: ${who} — storage read (${storage.kind}): nextLoanId=${counters.nextLoanId}${storage.scan ? `, ${storage.scan.loansScanned} id(s) scanned over ${storage.scan.slotsRead} slot(s)` : ''}\n`);
+    }
     const status = 'indeterminate';
     const reason = notADiamond
-        ? 'the contract at the recorded address is NOT a Vaipakam Diamond (every custody selector reverts without the Diamond fallback\'s FunctionDoesNotExist signature) — it cannot be scoped, and its artifact should be checked'
-        : custodySurfaceUnrouted
-          ? 'every custody selector is UNROUTED on this Diamond today, which says nothing about rows written before they were removed — storage is unreadable without a getter, so absence cannot be established without a calibrated storage read'
-          : `this Diamond routes no loan-enumeration surface (getProtocolStats unrouted) — nothing here can be read per loan, and no sound bound proves it empty`;
-    const cls = (extra = {}) => ({ status, indeterminateReason: reason, provenBy: undefined, count: 0, total: '0', rows: [], ...extra });
+        ? 'the contract at the recorded address is NOT a Vaipakam Diamond (every custody selector reverts without the Diamond fallback\'s FunctionDoesNotExist signature) — it cannot be scoped, and its rows, if any, are not this protocol\'s; undetermined until the artifact is corrected'
+        : STORAGE_READ.ok
+          ? storage?.truncated
+            ? `the storage read found nextLoanId=${storage.counters.nextLoanId}, above the ${MAX_STORAGE_LOAN_SCAN}-id scan cap — undetermined until scanned in full`
+            : undefined
+          : `${custodySurfaceUnrouted ? 'every custody selector is UNROUTED on this Diamond today' : 'this Diamond routes no loan-enumeration surface'}, and the calibrated storage read is unavailable: ${STORAGE_READ.reason}`;
+    const storageEvidence = storage
+      ? {
+          ...STORAGE_READ.evidence,
+          kind: storage.kind,
+          counters: {
+            nextLoanId: storage.counters.nextLoanId.toString(),
+            totalLoansEverCreated: storage.counters.totalLoansEverCreated.map((x) => ({ slot: x.slot, value: x.value.toString(), eras: x.eras })),
+            intentLiveCommitCount: storage.counters.intentLiveCommitCount.map((x) => ({ slot: x.slot, value: x.value.toString(), eras: x.eras })),
+          },
+          slotsRead: storage.counters.slotsRead + (storage.scan?.slotsRead ?? 0),
+          loansScanned: storage.scan?.loansScanned ?? 0,
+          truncated: storage.truncated,
+        }
+      : undefined;
+    // one verdict per class from the storage read; the routed-path conventions apply:
+    // a rebate/held row is VPFI by definition, a fallback/intent row's asset is unreadable here
+    const cls = (name, extra = {}) => {
+      if (!storage || storage.truncated) return { status, indeterminateReason: reason, provenBy: undefined, count: 0, total: '0', rows: [], ...extra };
+      if (storage.kind === 'no-loans-ever-created-by-storage') return { status: 'proven', provenBy: storage.kind, count: 0, total: '0', rows: [], ...extra };
+      const rows = storage.scan.rows[name];
+      const assetUnreadable = name === 'fallbackSnapshotCustody' || name === 'liveIntentCommits';
+      if (rows.length && assetUnreadable) {
+        return { status: 'indeterminate', indeterminateReason: `${rows.length} row(s) exist at era slots for this class; their asset cannot be read without the getter, so they are not provably VPFI or non-VPFI`, provenBy: undefined, count: rows.length, total: sum(rows, name === 'fallbackSnapshotCustody' ? 'collateralTotal' : 'custodialCollateral'), rows: [], unknownAssetRows: rows, ...extra };
+      }
+      return { status: 'proven', provenBy: storage.kind, count: rows.length, total: name === 'vpfiHeldCustody' ? sum(rows, 'vpfiHeld') : name === 'rebateRows' ? sum(rows, 'rebateAmount') : '0', rows, ...extra };
+    };
     await assertBlockIdentity(client, censusBlock, who); // before EVERY proven-capable return (r13 P2)
+    const classes = {
+      vpfiHeldCustody: cls('vpfiHeldCustody'),
+      rebateRows: cls('rebateRows'),
+      fallbackSnapshotCustody: cls('fallbackSnapshotCustody', { nonVpfiRowsExcluded: [] }),
+      liveIntentCommits: cls('liveIntentCommits', { nonVpfiRowsExcluded: [] }),
+    };
+    const everyClassProven = Object.values(classes).every((c) => c.status === 'proven');
     return {
       chainSlug: slug,
       deployment: label,
@@ -1719,7 +1793,7 @@ async function censusDeployment(dep) {
       vpfiToken,
       vpfiTokenSource,
       vpfiScopeAuthoritative: vpfiTokenSource === 'on-chain getVPFIToken()',
-      provenBy: undefined,
+      provenBy: everyClassProven ? storage.kind : undefined,
       diamondVpfiBacking: diamondVpfiBalance === null ? null : diamondVpfiBalance.toString(),
       vpfiRowsTotal: null,
       backingShortfall: null,
@@ -1727,8 +1801,8 @@ async function censusDeployment(dep) {
       atBlockHash: censusBlock.hash,
       blockTag: censusBlock.tag,
       rpcHost: rpcHostOf(rpc),
-      scanned: { loanIdsEnumerated: 0, totalLoansEverCreated: 'n/a', loanIdRange: 'none', enumerable: false, noCode: false, custodySurfaceUnrouted, notADiamond, loupeRouted, intentSurfaceRouted: false, intentProducerRouted: false, intentCorroboration: null, producersMayBeLive: !notADiamond && !custodySurfaceUnrouted },
-      classes: { vpfiHeldCustody: cls(), rebateRows: cls(), fallbackSnapshotCustody: cls({ nonVpfiRowsExcluded: [] }), liveIntentCommits: cls({ nonVpfiRowsExcluded: [] }) },
+      scanned: { loanIdsEnumerated: storage?.scan?.loansScanned ?? 0, totalLoansEverCreated: storage ? storage.counters.totalLoansEverCreated.map((x) => x.value.toString()).join('|') : 'n/a', loanIdRange: storage?.scan?.loansScanned ? `1..${storage.scan.loansScanned}` : 'none', enumerable: false, noCode: false, custodySurfaceUnrouted, notADiamond, loupeRouted, storageRead: storageEvidence, storageReadUnavailable: STORAGE_READ.ok ? undefined : STORAGE_READ.reason },
+      classes,
     };
   }
 
@@ -1815,6 +1889,17 @@ async function censusDeployment(dep) {
 
   // Only needed when the getter is unrouted; when it IS routed we read live
   // state directly, which subsumes the history question entirely.
+  // #1566 §7a — with the intent getter unrouted and loans enumerable, the rows
+  // are read at EVERY era's slot; the live-commit counter at every era slot is
+  // recorded as corroboration and is never sufficient alone.
+  let intentStorage = null;
+  if (!intentSurfaceRouted && !provenByEnumerable && STORAGE_READ.ok) {
+    const readSlot = (slot) => withReplicaRetry(atBlock, () => storageAtHash(client, censusBlock, diamond, slot), { client });
+    const scan = await scanRowsByStorage({ readSlot, loanIds, eraSlots: STORAGE_READ.eraSlots, classes: ['liveIntentCommits'] });
+    const counters = await readCountersByStorage({ readSlot, eraSlots: STORAGE_READ.eraSlots });
+    intentStorage = { rows: scan.rows.liveIntentCommits, slotsRead: scan.slotsRead + counters.slotsRead, loansScanned: scan.loansScanned, liveCommitCounts: counters.intentLiveCommitCount.map((x) => ({ slot: x.slot, value: x.value.toString(), eras: x.eras })) };
+    process.stderr.write(`census: ${who} — intent rows read from storage at ${STORAGE_READ.eraSlots.intentCommits.length} era slot(s) for ${loanIds.length} loan(s): ${intentStorage.rows.length} row(s)\n`);
+  }
   let intentAbsenceProof = null;
   if (!intentSurfaceRouted) {
     // PROOF: the VPFI balance bound (above). REFUTATION ONLY: the cut history.
@@ -2028,7 +2113,11 @@ async function censusDeployment(dep) {
       loupeRouted,
       intentSource: intentSurfaceRouted
         ? 'getIntentCommit view (live state, history-independent)'
-        : 'getter unrouted — intentCommits storage is NOT readable here; the class is indeterminate pending a calibrated storage read (cut history can only refute)',
+        : intentStorage
+          ? `getter unrouted — intentCommits rows read from storage at every layout era's slot (${STORAGE_READ.eraSlots.intentCommits.length} era slot(s)), hash-pinned`
+          : `getter unrouted — intentCommits storage NOT read: ${STORAGE_READ.ok ? 'the no-loans bound already settles the class' : STORAGE_READ.reason}`,
+      storageRead: intentStorage ? { ...STORAGE_READ.evidence, kind: 'storage-read-calibrated', slotsRead: intentStorage.slotsRead, loansScanned: intentStorage.loansScanned, liveCommitCounts: intentStorage.liveCommitCounts } : undefined,
+      storageReadUnavailable: STORAGE_READ.ok ? undefined : STORAGE_READ.reason,
       intentSurfaceRouted,
       intentProducerRouted: producerRouted,
       intentCorroboration: corroboration,
@@ -2088,11 +2177,15 @@ async function censusDeployment(dep) {
               ? corroboration?.contradictsPrimaryProof || !vpfiToken || !vpfiScopeAuthoritative
                 ? 'indeterminate'
                 : 'proven'
-              : intentAbsenceProof?.proven
-                ? 'proven'
-                : 'indeterminate',
-        provenBy: provenByEnumerable ?? undefined,
-        unknownAssetRows: unknownAssetIntentRows,
+              : intentStorage
+                ? intentStorage.rows.length
+                  ? 'indeterminate'
+                  : 'proven'
+                : intentAbsenceProof?.proven
+                  ? 'proven'
+                  : 'indeterminate',
+        provenBy: provenByEnumerable ?? (intentStorage && !intentStorage.rows.length ? 'storage-read-calibrated' : undefined),
+        unknownAssetRows: intentSurfaceRouted ? unknownAssetIntentRows : intentStorage ? intentStorage.rows : unknownAssetIntentRows,
         // Codex #2070 r8 P2 — every field below derives from ONE verdict. When
         // the no-loans bound proves the class, no indeterminate reason and no
         // failed absence proof may ride along, or a consumer reads "proven"
@@ -2108,9 +2201,13 @@ async function censusDeployment(dep) {
                   : !vpfiScopeAuthoritative
                     ? scopeNotAuthoritativeReason
                     : undefined
-              : intentAbsenceProof?.reason,
+              : intentStorage
+                ? intentStorage.rows.length
+                  ? `${intentStorage.rows.length} live intent row(s) exist at era slots (read from storage); their asset cannot be read without the getter, so they are not provably VPFI or non-VPFI`
+                  : undefined
+                : intentAbsenceProof?.reason,
         absenceProof:
-          provenByEnumerable && !corroboration?.contradictsPrimaryProof ? undefined : intentSurfaceRouted ? undefined : intentAbsenceProof,
+          provenByEnumerable && !corroboration?.contradictsPrimaryProof ? undefined : intentSurfaceRouted || intentStorage ? undefined : intentAbsenceProof,
         count: intentRows.length,
         total: sum(intentRows, 'custodialCollateral'),
         rows: intentRows,

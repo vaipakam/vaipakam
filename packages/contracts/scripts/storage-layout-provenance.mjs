@@ -264,6 +264,14 @@ function main() {
     fields = ['nextLoanId', 'totalLoansEverCreated', 'intentLiveCommitCount', 'intentCommits', 'borrowerLifRebate', 'fallbackSnapshot'];
   }
   const v = walkProvenance({ since: arg('--since', DEFAULT_SINCE), fields });
+  // A walk that saw no history proves nothing and must not print OK: a shallow
+  // clone (CI's fetch-depth 1) has no commits to walk. Run this on a full
+  // checkout; the tables it feeds are pinned in CI by StorageSlotPinTest and
+  // by prepareStorageRead's cross-checks instead.
+  if (v.commitsWalked < 2) {
+    process.stderr.write(`storage-layout-provenance: refusing to report — only ${v.commitsWalked} commit(s) of ${v.libPath} visible since ${v.since} (shallow clone?); a walk over no history is not a verdict\n`);
+    process.exit(2);
+  }
   if (argv.includes('--json')) {
     process.stdout.write(JSON.stringify(v, null, 2) + '\n');
   } else {

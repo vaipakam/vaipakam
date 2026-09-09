@@ -32,7 +32,12 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
  *         deploy-sanity SelectorCoverageTest + the compile pass; the
  *         runtime tests follow once the Fusion mock router is built.
  */
-contract SwapToRepayIntentFacetTest is SetupTest {
+/// @dev The fixture — a scaffolded loan, allow-listed assets, a mock Fusion LOP,
+///      and the params of a valid commit — as an ABSTRACT harness so other suites
+///      can drive the production intent path without re-running these tests
+///      (StorageSlotCalibrationTest, #1566 §7 calibrates storage slots on the
+///      live commit it makes here).
+abstract contract SwapToRepayIntentHarness is SetupTest {
     // ── Tokens + parties ──────────────────────────────────────────
     ERC20Mock internal principalAsset;
     ERC20Mock internal collateralAsset;
@@ -95,6 +100,65 @@ contract SwapToRepayIntentFacetTest is SetupTest {
     //  Config surface — happy-path reads
     // ══════════════════════════════════════════════════════════════
 
+    function _scaffoldLoan(uint256 loanId) internal {
+        TestMutatorFacet(address(diamond)).mintNFTRaw(
+            lenderEoa, /* tokenId */ loanId * 2 - 1
+        );
+        TestMutatorFacet(address(diamond)).mintNFTRaw(
+            borrowerEoa, /* tokenId */ loanId * 2
+        );
+
+        LibVaipakam.Loan memory loan;
+        loan.principal = LOAN_PRINCIPAL;
+        loan.principalAsset = address(principalAsset);
+        loan.collateralAmount = LOAN_COLLATERAL;
+        loan.collateralAsset = address(collateralAsset);
+        loan.lender = lenderEoa;
+        loan.borrower = borrowerEoa;
+        loan.startTime = uint64(block.timestamp - 1 days);
+        loan.durationDays = uint16(LOAN_DURATION_DAYS);
+        loan.interestRateBps = uint16(LOAN_INTEREST_BPS);
+        loan.lenderTokenId = uint128(loanId * 2 - 1);
+        loan.borrowerTokenId = uint128(loanId * 2);
+        loan.status = LibVaipakam.LoanStatus.Active;
+        loan.assetType = LibVaipakam.AssetType.ERC20;
+        loan.collateralAssetType = LibVaipakam.AssetType.ERC20;
+        loan.principalLiquidity = LibVaipakam.LiquidityStatus.Liquid;
+        loan.collateralLiquidity = LibVaipakam.LiquidityStatus.Liquid;
+        TestMutatorFacet(address(diamond)).setLoan(loanId, loan);
+    }
+
+    /// @dev Builds a `FusionOrderParams` that passes every field +
+    ///      bit check the facet enforces at commit. Tests mutate
+    ///      individual fields to exercise specific reverts.
+    function _validParams()
+        internal
+        view
+        returns (SwapToRepayIntentFacet.FusionOrderParams memory params)
+    {
+        uint64 deadline = uint64(block.timestamp + 300);
+        bytes memory extension = abi.encodePacked(address(diamond));
+        bytes32 extHash = keccak256(extension);
+        uint256 salt = uint256(uint160(uint256(extHash)));
+        uint256 mt = (1 << 249)   // HAS_EXTENSION
+            | (1 << 252)          // PRE_INTERACTION_CALL
+            | (1 << 251)          // POST_INTERACTION_CALL
+            | (1 << 255);         // NO_PARTIAL_FILLS
+        mt |= (uint256(deadline) << 80); // expiration sub-field
+
+        uint256 takerAmount = (LOAN_PRINCIPAL * 12_000) / 10_000;
+
+        params = SwapToRepayIntentFacet.FusionOrderParams({
+            takerAmount: takerAmount,
+            deadline: deadline,
+            salt: salt,
+            makerTraits: mt,
+            extension: extension
+        });
+    }
+}
+
+contract SwapToRepayIntentFacetTest is SwapToRepayIntentHarness {
     function test_Config_MasterSwitchPersisted() public view {
         assertTrue(
             IntentConfigFacet(address(diamond)).getIntentSwapToRepayEnabled(),
@@ -284,64 +348,8 @@ contract SwapToRepayIntentFacetTest is SetupTest {
     // ══════════════════════════════════════════════════════════════
     //  Setup helper (mirrors v1 SwapToRepayFacetTest pattern)
     // ══════════════════════════════════════════════════════════════
-
-    function _scaffoldLoan(uint256 loanId) internal {
-        TestMutatorFacet(address(diamond)).mintNFTRaw(
-            lenderEoa, /* tokenId */ loanId * 2 - 1
-        );
-        TestMutatorFacet(address(diamond)).mintNFTRaw(
-            borrowerEoa, /* tokenId */ loanId * 2
-        );
-
-        LibVaipakam.Loan memory loan;
-        loan.principal = LOAN_PRINCIPAL;
-        loan.principalAsset = address(principalAsset);
-        loan.collateralAmount = LOAN_COLLATERAL;
-        loan.collateralAsset = address(collateralAsset);
-        loan.lender = lenderEoa;
-        loan.borrower = borrowerEoa;
-        loan.startTime = uint64(block.timestamp - 1 days);
-        loan.durationDays = uint16(LOAN_DURATION_DAYS);
-        loan.interestRateBps = uint16(LOAN_INTEREST_BPS);
-        loan.lenderTokenId = uint128(loanId * 2 - 1);
-        loan.borrowerTokenId = uint128(loanId * 2);
-        loan.status = LibVaipakam.LoanStatus.Active;
-        loan.assetType = LibVaipakam.AssetType.ERC20;
-        loan.collateralAssetType = LibVaipakam.AssetType.ERC20;
-        loan.principalLiquidity = LibVaipakam.LiquidityStatus.Liquid;
-        loan.collateralLiquidity = LibVaipakam.LiquidityStatus.Liquid;
-        TestMutatorFacet(address(diamond)).setLoan(loanId, loan);
-    }
-
-    /// @dev Builds a `FusionOrderParams` that passes every field +
-    ///      bit check the facet enforces at commit. Tests mutate
-    ///      individual fields to exercise specific reverts.
-    function _validParams()
-        internal
-        view
-        returns (SwapToRepayIntentFacet.FusionOrderParams memory params)
-    {
-        uint64 deadline = uint64(block.timestamp + 300);
-        bytes memory extension = abi.encodePacked(address(diamond));
-        bytes32 extHash = keccak256(extension);
-        uint256 salt = uint256(uint160(uint256(extHash)));
-        uint256 mt = (1 << 249)   // HAS_EXTENSION
-            | (1 << 252)          // PRE_INTERACTION_CALL
-            | (1 << 251)          // POST_INTERACTION_CALL
-            | (1 << 255);         // NO_PARTIAL_FILLS
-        mt |= (uint256(deadline) << 80); // expiration sub-field
-
-        uint256 takerAmount = (LOAN_PRINCIPAL * 12_000) / 10_000;
-
-        params = SwapToRepayIntentFacet.FusionOrderParams({
-            takerAmount: takerAmount,
-            deadline: deadline,
-            salt: salt,
-            makerTraits: mt,
-            extension: extension
-        });
-    }
 }
+
 
 // ══════════════════════════════════════════════════════════════════
 //  Minimal Fusion LOP mock — answers the calls the facet makes
