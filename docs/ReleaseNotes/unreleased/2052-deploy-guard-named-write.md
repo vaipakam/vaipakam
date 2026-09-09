@@ -65,6 +65,31 @@ declaring a function named for one of the distinctive APIs still reads as one.
 That is a deliberate, nameable gap rather than an open-ended list of shapes to
 keep recognising.
 
+A here-document body was treated as inert input for the same reason, and was
+withdrawn on stronger evidence. Recognising where one ends means reading a
+delimiter word that a shell accepts in more spellings than this reader could
+keep up with — indented terminators, backslash quoting, quotes in the middle of
+the word, punctuation the reader then read as pattern syntax — and a delimiter
+read wrongly did not cost one line: it marked everything from the opener to the
+end of the file as data, concealing every write below it. Review then disproved
+what the rule was for. A here-document is input when it is handed to a command
+that prints it and is *source* when it is handed to an interpreter, which is a
+shape deployment scripts genuinely use, so the exemption was at its most
+confident exactly where the writes run. It is gone. A body that both names the
+selected configuration and spells a write now reports even under a printing
+command, which is a report on a contrived line rather than silence on a real
+one.
+
+The shell comparison operator settled the same way. Inside a double-bracket
+test a greater-than is a string comparison and not a redirection, and the
+checker now asks only whether a substitution appears before it — not whether
+the operator sits inside one that is still open. The sharper question was
+attempted across six rounds and never answered: closed substitutions,
+backticks, escaped backticks, an apostrophe inside double quotes, nested
+subshells, literal parentheses in arguments. Every miss exempted a live
+redirection. The blunt question errs the other way, over-reporting a comparison
+that happens to follow a substitution, and it is bounded.
+
 Following a package script into another script was tried on the same reasoning
 and withdrawn for the same reason: it is inter-procedural analysis, the checker
 declines that elsewhere, and doing it in one place and not the others produced
@@ -79,7 +104,11 @@ truncate a target — the no-clobber override, the combined output form, and the
 all-streams form — are recognised alongside the plain one; and the Python call
 that renames over an existing path is treated as the overwrite it is. Where a
 method name is too common to admit unqualified, it is spelled with its module,
-so the guard does not start reporting ordinary string manipulation.
+so the guard does not start reporting ordinary string manipulation. A path may
+also be spelled in adjacent quoted and unquoted chunks — a single shell word
+written with quotes in the middle of it — and the name is now recognised
+through that spelling, as the reader that selects the configuration already
+did.
 
 The boundary this reader works to is stated in it: it is defence in depth
 behind the configuration declaration that actually preserves operator-managed

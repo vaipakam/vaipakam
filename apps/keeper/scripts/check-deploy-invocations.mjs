@@ -3405,54 +3405,20 @@ function classifyText(text, lang) {
           }
         }
       }
-      // A QUOTED HEREDOC BODY IS INPUT, not code. `cat <<'EOF'` … `EOF` feeds
-      // text to a command, and leaving it eligible reported a config named
-      // only inside the document (r21). Marked non-executable rather than as a
-      // string, because a shell string IS executable here. Only the quoted
-      // form: an unquoted delimiter still expands, so its body is unchanged.
-      if (lang === 'shell' && c === '<' && text[i + 1] === '<') {
-        // Bash quote-removes the delimiter word, so `<<\\EOF` is as quoted as
-        // `<<'EOF'` and its body is literal input too (r23).
-        // The WHOLE delimiter word, quote-removed the way Bash does it:
-        // `<<'E'OF` is the delimiter `EOF`, and reading only the first quoted
-        // chunk searched for `E`, found no terminator, and marked the rest of
-        // the FILE as heredoc data — suppressing every real write after the
-        // actual `EOF` (r24). Quoted anywhere in the word means the body is
-        // literal.
-        const hw = /^<<(-?)\s*((?:'[^']*'|"[^"]*"|\\.|[A-Za-z0-9_])+)/.exec(text.slice(i, i + 200));
-        // QUOTE REMOVAL PER SEGMENT, the way the shell does it: `<<'E\\OF'` is
-        // the delimiter `E\\OF`, and stripping every quote and backslash byte
-        // derived `EOF` instead (r25).
-        const delim = hw
-          ? hw[2].replace(/'([^']*)'|"([^"]*)"|\\(.)/g, (_m, a, b, c) => a ?? b ?? c)
-          : null;
-        const quoted = hw ? /['"\\]/.test(hw[2]) : false;
-        const nl = hw && quoted ? text.indexOf('\n', i) : -1;
-        if (delim !== null && quoted && nl !== -1) {
-          // `<<` wants the delimiter at column zero; only `<<-` strips leading
-          // TABS (not spaces). Accepting either for both let an indented
-          // `  EOF` terminate the document early, so the text after it read as
-          // code (r22).
-          const lead = hw[1] === '-' ? '\\t*' : '';
-          // ESCAPED. A delimiter may contain regex metacharacters — `<<'$'` is
-          // terminated by a line containing `$`, and interpolating it made an
-          // anchor that never matched (r25).
-          const esc = delim.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-          const end = new RegExp(`\\n${lead}${esc}[ \\t]*(?:\\n|$)`).exec(text.slice(nl));
-          // NO TERMINATOR MEANS NO CLAIM. Marking to end-of-file was the
-          // catastrophic direction: any delimiter this reader got wrong turned
-          // the whole remainder of the file into data and swallowed every real
-          // write in it (r24, r25). An unterminated document is left as it was
-          // — at worst a false red inside the body, never a silent miss after
-          // it.
-          if (end) {
-            const stop = nl + end.index + end[0].length;
-            kind.fill(2, nl, stop);
-            i = stop - 1;
-          }
-          continue;
-        }
-      }
+      // A HEREDOC BODY IS NOT CLASSIFIED, deliberately. Treating a quoted
+      // body as inert input was added in r21 and produced findings in SIX
+      // rounds (r22-r26): indented terminators, backslash-quoted delimiters,
+      // mixed-quote words, regex metacharacters in the delimiter, punctuation
+      // in the word, here-strings misread as openers.
+      //
+      // r26 also disproved the premise. `bash <<'EOF'` executes its body — a
+      // heredoc is data for `cat` and SOURCE for an interpreter — so the rule
+      // was wrong even when the delimiter parsing was right, and its failure
+      // mode was hiding writes rather than reporting them.
+      //
+      // What it bought was silence when a heredoc body happens to contain a
+      // write verb naming the selected config. That is a false RED, the cheap
+      // direction, and it is now accepted.
       if (c === '"' || c === "'" || (jsLike && c === '`')) {
         q = c;
         triple = pyLike && text[i + 1] === c && text[i + 2] === c;
@@ -3556,47 +3522,20 @@ function inTestExpression(idx, text, kind) {
   // …and only the COMPARISON is exempt. `[[ "$(printf new > "$CFG")" == new ]]`
   // runs a command inside the test, and blanket containment suppressed the
   // write it performs — a false green this exemption introduced (r21).
-  // Asked as "is the operator inside a substitution that is still OPEN", not
-  // "did one appear earlier": in `[[ "$(echo x)" > "$CFG" ]]` the substitution
-  // has already closed and the `>` is still a comparison (r22).
-  let sub = 0;
-  let tick = false;
-  let sq = false;
-  let dq = false;
-  const depth = [];
-  for (let i = open; i < idx; i += 1) {
-    // SINGLE quotes are what make a substitution literal: inside DOUBLE quotes
-    // `$(…)` and backticks still expand. So this tracks the quote CHARACTER
-    // rather than asking whether the offset is quoted at all — r23 added
-    // backticks, and r24 showed a literal one flipping the state so that a
-    // real substitution read as already closed.
-    const ch = text[i];
-    if (sq) {
-      if (ch === "'") sq = false;
-      continue;
-    }
-    // A `'` inside DOUBLE quotes is an apostrophe, not a quote — leaving it to
-    // open single-quote state made a real substitution invisible (r25).
-    if (ch === '"') dq = !dq;
-    else if (ch === "'" && !dq) sq = true;
-    else if (ch === '`') tick = !tick;
-    else if (ch === '$' && text[i + 1] === '(') {
-      sub += 1;
-      depth.push(0);
-      i += 1;
-    } else if (ch === '(' && sub > 0) depth[depth.length - 1] += 1;
-    else if (ch === ')' && sub > 0) {
-      // A NESTED subshell's paren must not close the substitution: in
-      // `$( (true); printf new > "$CFG")` the inner `)` dropped the counter to
-      // zero and exempted the redirection after it (r25).
-      if (depth[depth.length - 1] > 0) depth[depth.length - 1] -= 1;
-      else {
-        depth.pop();
-        sub -= 1;
-      }
-    }
-  }
-  return sub === 0 && !tick;
+  // NO SUBSTITUTION BEFORE THE OPERATOR, asked as simply as that.
+  //
+  // r21 through r26 tried to answer the sharper question — is the operator
+  // inside a substitution that is still OPEN — and every refinement produced
+  // the next finding: closed substitutions, backticks, escaped backticks,
+  // apostrophes inside double quotes, nested subshells, literal parens in
+  // arguments. EIGHT findings over six rounds, and the errors were false
+  // GREENS: a substitution mis-read as closed exempts a live redirection.
+  //
+  // The simple rule errs the other way. `[[ "$(echo x)" > "$CFG" ]]` — a
+  // closed substitution before a genuine comparison — is now reported. That
+  // is a false red on a contrived line, which this reader is allowed; the
+  // accounting it replaces was not bounded at all.
+  return !/\$\(|`/.test(text.slice(open, idx));
 }
 
 /**
@@ -3639,6 +3578,12 @@ function isCommandPayload(idx, text, kind) {
   if (open === -1) return false;
   let q = open - 1;
   while (q >= 0 && (/\s/.test(text[q]) || kind[q] === 2)) q -= 1;
+  // An OPTIONAL call still calls: `eval?.(…)` executes, and the identifier
+  // scan stopped at the `?` (r26).
+  if (text[q] === '.' && text[q - 1] === '?') {
+    q -= 2;
+    while (q >= 0 && (/\s/.test(text[q]) || kind[q] === 2)) q -= 1;
+  }
   let e = q;
   while (e >= 0 && /[A-Za-z0-9_$]/.test(text[e])) e -= 1;
   if (
@@ -3654,7 +3599,13 @@ function isCommandPayload(idx, text, kind) {
   // such test, which is why this only applies when the literal came through a
   // bracket.
   if (text[start - 1] === undefined) return true;
-  const args = text.slice(open, start);
+  // Comments are not argv. Trivia between the flag and its payload —
+  // `["-e", /* payload */ "…"]` — left the end-anchored match failing and
+  // the executed source read as inert (r26).
+  const args = text
+    .slice(open, start)
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/\/\/[^\n]*/g, ' ');
   if (!args.includes('[')) return true;
   // The EVALUATE flags by name, long and short. `--eval` does not end in
   // `e`-after-dashes the way a grouped short option does, so a suffix test
@@ -3666,7 +3617,10 @@ function isCommandPayload(idx, text, kind) {
   const prog = /\(\s*(['"`])([^'"`]*)\1/.exec(args);
   const INTERP = /(?:^|\/)(?:node|deno|bun|python[\d.]*|perl|ruby|sh|bash|zsh|dash|ksh|env)$/;
   if (prog && !INTERP.test(prog[2])) return false;
-  if (/(['"`])(?:-{1,2}(?:eval|command|c)|-[a-zA-Z]*e)\1\s*,\s*$/.test(args)) return true;
+  // A GROUPED short option counts when it contains the evaluate letter:
+  // `bash -ec '…'` runs the payload, and requiring the group to END in `e`
+  // missed it (r26).
+  if (/(['"`])(?:-{1,2}(?:eval|command)|-[a-zA-Z]*[ce][a-zA-Z]*)\1\s*,\s*$/.test(args)) return true;
   // …or the flag and its source share ONE literal: `["--eval=…"]` (r24). The
   // payload is then the literal this offset already sits in.
   return /-{1,2}(?:eval|command|e|c)=/.test(text.slice(start, idx));
@@ -3720,7 +3674,19 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
   const shellish = lang === 'shell';
   const base = cfgPath.slice(cfgPath.lastIndexOf('/') + 1);
   if (!base) return false;
-  const esc = base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  // ONE SHELL WORD MAY BE SPELLED IN CHUNKS. `configs/cus"tom".jsonc` is the
+  // single word `configs/custom.jsonc`, and the selector reader already
+  // normalises it — this scan did not, so the name went unrecognised, `named`
+  // stayed false and the write scan behind it never ran (r26). A false green.
+  //
+  // Answered where every spelling question here is answered: in the pattern,
+  // by letting quoting punctuation sit BETWEEN the characters of the name,
+  // rather than by normalising the file text. Normalising would move every
+  // offset, and every offset in this function is an index into the classifier's
+  // array for the ORIGINAL text.
+  const esc = [...base]
+    .map((c) => c.replace(/[.*+?^${}()|[\]\\]/, '\\$&'))
+    .join(String.raw`["'\`\\]*`);
   const Q = String.raw`["'\`]`;
   // THE PATH IS NOT ALWAYS AN ARGUMENT. `Path("configs/custom.jsonc")
   // .write_text(…)` — the ordinary pathlib spelling — puts the name BEFORE the
@@ -3933,7 +3899,12 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
             // …and after a RESERVED WORD. `if true; then cp gen.jsonc "$CFG"; fi`
             // starts a command at `then`, which is neither a line start nor a
             // separator, so the copy was invisible (r24).
-            String.raw`|(?:^|[;&|(]|\b(?:if|elif|then|else|while|until|do)\b|[!{])\s*(?:(?:[A-Za-z_]\w*=(?:"[^"]*"|'[^']*'|\S)*` +
+            // …and a `case` arm opens with `)`. The boundary may NOT cross a
+            // newline: `\\s*` did, so a comment ending in a reserved word absorbed
+            // the next real command into a match anchored in comment text, and
+            // `matchAll` resumed past it — the command was never reconsidered
+            // (r26).
+            String.raw`|(?:^|[;&|()]|\b(?:if|elif|then|else|while|until|do)\b|[!{])[^\S\n]*(?:(?:[A-Za-z_]\w*=(?:"[^"]*"|'[^']*'|\S)*` +
             // A long option can take its argument SEPARATED — `sudo --user
             // root cp …` — and the generic branch consumed `--user` while
             // leaving `root` to be read as the command (r14). The long forms

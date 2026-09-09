@@ -9907,30 +9907,7 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(r.ok).toBe(false);
   });
 
-  it('a quoted heredoc body is input, not code (#2066 r21)', () => {
-    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
-    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
-    const r = runWith(
-      'bk.sh',
-      "cat <<'EOF'\nshutil.copy(source, destination)\nEOF\n" +
-        'wrangler deploy --config configs/custom.jsonc\n',
-    );
-    expect(r.ok).toBe(true);
-  });
-
   // ---- Codex #2066 r22 ----
-
-  it('a closed substitution leaves the comparison a comparison (#2066 r22)', () => {
-    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
-    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
-    const r = runWith(
-      'bl.sh',
-      'CFG=configs/custom.jsonc\n' +
-        'if [[ "$(echo x)" > "$CFG" ]]; then echo bigger; fi\n' +
-        'wrangler deploy --config configs/custom.jsonc\n',
-    );
-    expect(r.ok).toBe(true);
-  });
 
   it('an argv string is not an evaluated payload (#2066 r22)', () => {
     // `spawnSync("echo", ["fs.copy(a, b)"])` prints its argument.
@@ -9940,18 +9917,6 @@ describe('check-deploy-invocations — #1996 config identity', () => {
       'bm.mjs',
       'spawnSync("echo", ["fs.copy(source, destination)"]);\n' +
         'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
-    );
-    expect(r.ok).toBe(true);
-  });
-
-  it('an indented delimiter does not end a plain heredoc (#2066 r22)', () => {
-    // `<<` wants the delimiter at column zero; only `<<-` strips leading tabs.
-    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
-    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
-    const r = runWith(
-      'bn.sh',
-      "cat <<'EOF'\n  EOF\nshutil.copy(source, destination)\nEOF\n" +
-        'wrangler deploy --config configs/custom.jsonc\n',
     );
     expect(r.ok).toBe(true);
   });
@@ -10008,17 +9973,6 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(r.ok).toBe(false);
   });
 
-  it('a backslash-quoted heredoc body is input (#2066 r23)', () => {
-    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
-    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
-    const r = runWith(
-      'bs.sh',
-      'cat <<\\EOF\nshutil.copy(source, destination)\nEOF\n' +
-        'wrangler deploy --config configs/custom.jsonc\n',
-    );
-    expect(r.ok).toBe(true);
-  });
-
   it('a mixed-word assignment is still inert (#2066 r23)', () => {
     seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
     seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
@@ -10069,9 +10023,11 @@ describe('check-deploy-invocations — #1996 config identity', () => {
 
   // ---- Codex #2066 r24 ----
 
-  it('a mixed-quote heredoc word is one delimiter (#2066 r24)', () => {
-    // `<<'E'OF` is the delimiter `EOF`. Reading only `'E'` found no terminator
-    // and marked the rest of the FILE as heredoc data.
+  it('an odd heredoc word hides no later write (#2066 r24, r26)', () => {
+    // `<<'E'OF` is the delimiter `EOF`, and reading only `'E'` found no
+    // terminator and marked the rest of the FILE as heredoc data. The reader
+    // that got this wrong is gone (r26); what is pinned now is the outcome —
+    // a heredoc opener of any spelling cannot swallow the write below it.
     seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
     seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
     const r = runWith(
@@ -10146,10 +10102,11 @@ describe('check-deploy-invocations — #1996 config identity', () => {
 
   // ---- Codex #2066 r25 ----
 
-  it('an unterminated heredoc claims nothing (#2066 r25)', () => {
-    // The catastrophic direction: a delimiter this reader gets wrong used to
-    // turn the whole rest of the file into data. `<<'$'` is terminated by a
-    // line containing `$`; interpolating it made an anchor that never matched.
+  it('an unterminated heredoc claims nothing (#2066 r25, r26)', () => {
+    // The catastrophic direction, and the reason heredoc classification was
+    // deleted rather than corrected once more: a delimiter the reader got
+    // wrong turned the whole rest of the file into data. Restoring that rule
+    // in any form fails this.
     seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
     seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
     const r = runWith(
@@ -10259,6 +10216,158 @@ describe('check-deploy-invocations — #1996 config identity', () => {
       'deploy.mjs',
       'writeFileSync("configs/custom.jsonc", JSON.stringify({name: "vaipakam-agent", keep_vars: false}));\n' +
         'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  // ---- Codex #2066 r26 ----
+
+  it('a write inside an interpreter heredoc is reported (#2066 r26)', () => {
+    // The premise the deleted rule rested on: that a heredoc body is input.
+    // `bash <<'EOF'` EXECUTES its body — data for `cat`, source for an
+    // interpreter — so exempting the body hid writes on the one shape where
+    // they run.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'cl.sh',
+      'CFG=configs/custom.jsonc\n' +
+        "bash <<'EOF'\nprintf new > \"$CFG\"\nEOF\n" +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a cat heredoc body is now read as code (#2066 r26 accepted)', () => {
+    // The cost of the deletion, pinned so it is a decision and not a surprise:
+    // a body that both names the selected config and spells a write reports,
+    // even under `cat`. A false RED, which this reader may have; the rule it
+    // replaces produced false greens and could not be bounded in six rounds.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'cm.sh',
+      "cat <<'EOF'\ncp generated.jsonc configs/custom.jsonc\nEOF\n" +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a comparison after a substitution is reported (#2066 r26 accepted)', () => {
+    // Likewise for the `[[ ]]` exemption: asking only whether a substitution
+    // appears before the operator over-reports a genuine string comparison
+    // that follows one. Eight findings said the sharper question could not be
+    // answered, and every error there was a false green.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'cn.sh',
+      'CFG=configs/custom.jsonc\n' +
+        'if [[ "$(echo x)" > "$CFG" ]]; then echo bigger; fi\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a plain comparison is still exempt (#2066 r26 bounds)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'co.sh',
+      'CFG=configs/custom.jsonc\n' +
+        'if [[ "$left" > "$CFG" ]]; then echo bigger; fi\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a grouped short option still evaluates (#2066 r26)', () => {
+    // `bash -ec '…'` runs the payload; requiring the group to END in `e`
+    // missed it and the executed source read as inert.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'cp.mjs',
+      'spawnSync("bash", ["-ec", "printf new > configs/custom.jsonc"]);\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a comment between flag and payload is not argv (#2066 r26)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'cq.mjs',
+      'spawnSync("node", ["-e", /* payload */ "writeFileSync(\'configs/custom.jsonc\', \'{}\')"]);\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('an optional call still calls (#2066 r26)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'cr.mjs',
+      'eval?.("fs.writeFileSync(\'configs/custom.jsonc\', \'{}\')");\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a case arm opens command position (#2066 r26)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'cs.sh',
+      'CFG=configs/custom.jsonc\n' +
+        'case "$1" in\n  build) cp generated.jsonc "$CFG" ;;\nesac\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a chunked shell word still names the config (#2066 r26)', () => {
+    // `configs/cus"tom".jsonc` is ONE word. The selector reader normalises it
+    // and this scan read raw bytes, so the name went unseen and the write
+    // behind it was never looked for.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'cu.sh',
+      'CFG=configs/cus"tom".jsonc\n' +
+        'printf new > "$CFG"\n' +
+        'wrangler deploy --config configs/cus"tom".jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a different config is still a different config (#2066 r26 bounds)', () => {
+    // Letting quotes sit between the characters must not let OTHER characters
+    // in: a write to a neighbouring file is not a write to this one.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'cv.sh',
+      'printf new > configs/custom.backup.jsonc\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a comment ending in a keyword does not absorb the next line (#2066 r26)', () => {
+    // The boundary before a command may not cross a newline. When it could,
+    // the match anchored inside the comment, was discarded as comment text,
+    // and the scan resumed PAST the real command — which was therefore never
+    // considered. A false green produced by an exemption, the worst shape.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'ct.sh',
+      'CFG=configs/custom.jsonc\n' +
+        '# regenerate, then\ncp generated.jsonc "$CFG"\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
     );
     expect(r.ok).toBe(false);
   });
