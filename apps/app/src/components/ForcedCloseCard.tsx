@@ -551,10 +551,26 @@ export function ForcedCloseCard({
     // the hold on the current one, since the consumer compares the two.
     // Correctness here comes from what is written, not from whether the
     // writer is still current.
+    // ORDER IS LOAD-BEARING (round 62 P1). `onClosedOut` invalidates the
+    // SAME queries from the page, and TanStack's `refetchQueries`
+    // defaults to `cancelRefetch: true` — a second invalidation cancels
+    // the first refetch and RESOLVES its promise against the cached
+    // data. So with ours started first, our `.then` fired on a
+    // cancellation rather than on a completion: the hold released while
+    // the reads were still pre-close, restoring stale
+    // `ready-internal-match` copy that describes the next close-out as
+    // repayment in the lent asset when it will take the in-kind branch.
+    //
+    // Calling the page's callback FIRST makes ours the last invalidation
+    // for this event, so the refetch ours awaits is the one that
+    // actually runs to completion. Do not "tidy" these two lines back
+    // into their old order: a promise that resolves on being cancelled
+    // is indistinguishable from one that resolves on success, which is
+    // why this needed a review round to find rather than a test.
+    onClosedOutRef.current();
     void queryClient
       .invalidateQueries(READINESS_READS)
       .then(() => setRefreshedFor(submittedHash));
-    onClosedOutRef.current();
   }, [disposition, submittedHash, queryClient]);
 
   /** Another tab's submission, adopted here.
