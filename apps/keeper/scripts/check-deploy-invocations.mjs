@@ -3290,6 +3290,7 @@ function classifyText(text, lang) {
     // String frames suspended by an interpolation, innermost last.
     const stack = [];
     let q = null;
+    let ansiC = false;
     let triple = false;
     let fstr = false;
     let braces = 0;
@@ -3309,7 +3310,12 @@ function classifyText(text, lang) {
         // so `X='x\\'` closes there. Skipping the next character kept the rest
         // of the line inside the string, and a redirection after it was
         // suppressed as part of an inert assignment (r24).
-        if (c === '\\' && !(lang === 'shell' && q === "'")) {
+        // …unless the run is ANSI-C quoted. `$'it\\'s'` DOES process the escape,
+        // so the apostrophe does not close the string, and treating every
+        // shell single-quoted run as literal ended it early and read the rest
+        // as code (r32). `logicalLines` has drawn this distinction since r28
+        // of the previous loop; this is the same rule, not a new one.
+        if (c === '\\' && !(lang === 'shell' && q === "'" && !ansiC)) {
           if (i + 1 < text.length) kind[i + 1] = 1;
           i += 1;
           continue;
@@ -3435,6 +3441,9 @@ function classifyText(text, lang) {
       // direction, and it is now accepted.
       if (c === '"' || c === "'" || (jsLike && c === '`')) {
         q = c;
+        // `$'…'` is ANSI-C quoted and DOES process escapes, so the escape
+        // branch above must not treat it as a literal run (r32).
+        ansiC = lang === 'shell' && c === "'" && text[i - 1] === '$';
         triple = pyLike && text[i + 1] === c && text[i + 2] === c;
         fstr = pyLike && pyPrefix(i);
         kind[i] = 1;
@@ -3628,9 +3637,21 @@ function spawnCallOwner(start, text, kind) {
         continue;
       }
       depth -= 1;
-    } else if (c === ';' || c === '\n') {
+    } else if (c === ';') {
       if (depth === 0) return -1;
     }
+    // A NEWLINE DOES NOT END THE WALK. Walking out of an argument list, the
+    // list's own opener has not been reached yet, so every newline inside it
+    // is at depth zero — and bailing there lost the owning call for every
+    // call formatted across lines. r32 found it through a Python comment
+    // between a flag and its payload, but the comment was incidental: the
+    // same call written across two lines with no comment at all was already
+    // invisible, and the write inside it went unreported.
+    //
+    // Safe to drop because the DEPTH ACCOUNTING already does this job: a
+    // complete call before this point contributes a closer before its opener,
+    // so its `(` decrements rather than being taken as the owner. `;` stays,
+    // because a statement separator at depth zero is never inside a list.
   }
   if (open === -1) return -1;
   let q = open - 1;
@@ -3734,10 +3755,15 @@ function isCommandPayload(idx, text, kind) {
   // Comments are not argv. Trivia between the flag and its payload —
   // `["-e", /* payload */ "…"]` — left the end-anchored match failing and
   // the executed source read as inert (r26).
-  const args = text
-    .slice(open, start)
-    .replace(/\/\*[\s\S]*?\*\//g, ' ')
-    .replace(/\/\/[^\n]*/g, ' ');
+  //
+  // …THROUGH THE CLASSIFIER, which is what this file does everywhere else and
+  // what this line should have done at r26. Stripping the two JavaScript
+  // comment forms by pattern left Python's `#` standing, so the same hole
+  // reopened one language over (r32). The classifier already knows which
+  // offsets are comments in the language being read; blanking those needs no
+  // second opinion about how a comment is spelled.
+  let args = '';
+  for (let i = open; i < start; i += 1) args += kind[i] === 2 ? ' ' : text[i];
   if (!args.includes('[')) return true;
   // The EVALUATE flags by name, long and short. `--eval` does not end in
   // `e`-after-dashes the way a grouped short option does, so a suffix test
@@ -3918,8 +3944,15 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
   const WRITE_CALL =
     String.raw`(?:writeFile(?:Sync)?|appendFile(?:Sync)?|createWriteStream` +
     String.raw`|outputFile(?:Sync)?|write_text|write_bytes)\s*\([^)]*` + esc;
+  // …and it must be a FILESYSTEM open. `webbrowser.open("configs/custom.jsonc",
+  // "w")` opens a browser, and this alternative admitted any receiver — the
+  // same gap r30 closed on the other scan, left open on this one (r32). The
+  // bare function `open(…)` is Python's builtin and stays; a method on a
+  // receiver needs the receiver to be a constructed path, which is syntax
+  // rather than the type this reader declines to infer.
   const OPEN_WRITE =
-    String.raw`open\s*\([^)]*` + esc + String.raw`[^)]*` + Q + String.raw`[rbt]*[wax+]`;
+    String.raw`(?<![.\w$])(?:Path\s*\([^()]*\)\s*\.\s*)?open\s*\([^)]*` +
+    esc + String.raw`[^)]*` + Q + String.raw`[rbt]*[wax+]`;
   const RECEIVER_WRITE =
     Q + String.raw`[^"'\`]*` + esc + Q + String.raw`\s*\)?\s*\.\s*(?:write_text|write_bytes)\s*\(`;
   const RECEIVER_OPEN =
@@ -4173,7 +4206,17 @@ function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
             // `cp --help` swallowed the line break and took the next line's
             // first word as its operand — the same mistake the command
             // boundary made in r26, in a pattern written after it.
-            String.raw`)\s+)*(?:[\w./-]*/)?(?:cp|mv|install|rsync|tee)[^\S\n]+(?:-\S+[^\S\n]+)*[^\s<>|&;-]`
+            // …AND NOT IN A MODE THAT MAKES NO CHANGES. `--dry-run`,
+            // `--no-clobber` and the short `-n` they share all mean the same
+            // thing across these commands — perform no write — and requiring
+            // an operand did not exclude them, because they take one (r32).
+            // ONE meaning in three spellings, applied uniformly, rather than a
+            // per-command table of flags: if a fourth spelling arrives, the
+            // command comes out of this list instead.
+            String.raw`)\s+)*(?:[\w./-]*/)?(?:cp|mv|install|rsync|tee)` +
+            String.raw`(?![^\n]*(?:[^\S\n]--(?:dry-run|no-clobber)\b` +
+            String.raw`|[^\S\n]-[a-zA-Z]*n[a-zA-Z]*(?=[^\S\n]|$)))` +
+            String.raw`[^\S\n]+(?:-\S+[^\S\n]+)*[^\s<>|&;-]`
           : '') +
         // A REDIRECTION, not every `>`. The bare alternative also matched the
         // arrow in `=>` and the comparison in `2 > 1`, and since the deploy's

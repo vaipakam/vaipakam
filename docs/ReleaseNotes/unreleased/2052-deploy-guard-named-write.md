@@ -168,14 +168,40 @@ withdrawn in the same sitting: a list of plausible variable names is precisely
 the open-ended predicate this work keeps removing. Where the path is
 constructed in place the shape is syntax rather than type, and is still read.
 
-Two further shapes are deliberately NOT recognised, and both are misses — the
+Two of the checker's own limits proved to reach further than the case that
+exposed them, and both were found the same way — by running the checker rather
+than reading it. The walk that finds which call owns a piece of code stopped at
+a line break, and since that walk runs outwards from inside an argument list,
+every line break inside such a list stops it: any call written across more than
+one line lost its payload entirely, and the write inside it went unreported.
+And the routine that decides whether a shell string is merely being stored read
+characters without asking the classifier which of them were code, so a
+separator inside a quoted word ended it. Both are now answered the way the rest
+of this checker answers everything: through the classifier, and with the reason
+recorded where the mistake was.
+
+Three further shapes are deliberately NOT recognised, and all are misses — the
 checker stays quiet where a more determined reader would speak. A file
 operation reached through a variable is the first, as just described. The
-second is a command run through a module imported under an arbitrary alias:
+second is a regular expression whose braces fall inside a string template: the
+checker deliberately does not tell a regular expression from a division, so
+such a brace is counted when the template's own braces are matched, and an
+expression after it reads as ordinary text. Correcting that means asking the
+question the checker removed for good reason, and its own record is that
+guessing wrong there loses writes more often than this shape does. The third is
+a command run through a module imported under an arbitrary alias:
 resolving that name means following a binding, which this reader declines
 everywhere and which is the subject of the open question above. The alternative
 of admitting any named receiver was measured against the common case of
 matching a pattern held in a variable, and would report that.
+
+A write registered to run later — handed to an exit handler, a timer or a
+promise — is read in the position it is written, not the position it runs. The
+checker is lexical by design: knowing that a callback cannot run before the
+deployment means modelling control flow, which is the same class of reasoning
+as following a binding, and the alternative is a list of every way a language
+defers work. The cost is a report on a script that defers its write until after
+the deployment, which is unusual in the scripts this reads.
 
 One shape is deliberately recognised too eagerly, and it is the opposite trade
 — noise rather than a miss, so it is set out separately. A script that quotes
