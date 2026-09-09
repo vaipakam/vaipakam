@@ -309,6 +309,53 @@ export function regenerateEntries(manifestPath, collect, policy = {}, lockOpts) 
   );
 }
 
+/**
+ * Replace a committed JSON snapshot under its lock, refusing a regression.
+ *
+ * Codex #2070 r14 P1 — two full censuses writing the same canonical artifact
+ * both loaded the old committed-height floor before scanning, and the SLOWER
+ * run, having resolved an EARLIER finality height, could rename its file over
+ * a newer run's: an empty block-100 result replacing a block-101 result that
+ * had seen a freshly created row. Atomic rename prevents truncation, not a
+ * lost update. So the replacement is a read → compare → write lifecycle under
+ * `<path>.lock`: the file as it stands is re-read INSIDE the lock, immediately
+ * before the rename, and `regressedBy(current)` decides — a non-null reason
+ * refuses the write and leaves the file untouched. An unparsable current file
+ * is refused too (r13 P2: unreadable is not absent).
+ *
+ * @param {string} path
+ * @param {string} text the exact bytes to write
+ * @param {{regressedBy: (current: object) => string|null, lockOpts?: object}} opts
+ */
+export function writeSnapshotGuarded(path, text, { regressedBy, lockOpts } = {}) {
+  if (typeof regressedBy !== 'function') throw new Error('writeSnapshotGuarded: regressedBy is required');
+  return withManifestLock(
+    path,
+    () => {
+      if (existsSync(path)) {
+        let current;
+        try {
+          current = JSON.parse(readFileSync(path, 'utf8'));
+        } catch (err) {
+          throw new Error(`${path} exists but cannot be parsed (${err.message}); refusing to replace what cannot be compared`);
+        }
+        const reason = regressedBy(current);
+        if (reason) throw new Error(`refusing to replace ${path}: ${reason}`);
+      }
+      const tmp = `${path}.tmp-${process.pid}-${Date.now()}`;
+      try {
+        writeFileSync(tmp, text);
+        renameSync(tmp, path);
+      } finally {
+        rmSync(tmp, { force: true });
+      }
+      if (readFileSync(path, 'utf8') !== text) throw new Error(`${path} does not read back as written — refusing to report success`);
+      return true;
+    },
+    lockOpts,
+  );
+}
+
 // ── CLI ──────────────────────────────────────────────────────────────────────
 function main(argv) {
   const [cmd, manifestPath, slug, stamp, addrPath] = argv;

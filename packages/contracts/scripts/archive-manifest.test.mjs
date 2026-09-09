@@ -12,7 +12,7 @@ import { mkdtempSync, writeFileSync, readFileSync, mkdirSync, readdirSync, exist
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { appendEntry, readManifest, withManifestLock, entryFromArtifact, regenerateEntries } from './archive-manifest.mjs';
+import { appendEntry, readManifest, withManifestLock, entryFromArtifact, regenerateEntries, writeSnapshotGuarded } from './archive-manifest.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const WRITER = join(HERE, 'archive-manifest.mjs');
@@ -143,4 +143,26 @@ test('regenerate may CORRECT the content of an existing key (an in-place artifac
   appendEntry(manifest, e1);
   regenerateEntries(manifest, () => [{ ...e1, diamond: '0xcorrected' }]);
   assert.equal(readManifest(manifest).entries[0].diamond, '0xcorrected');
+});
+
+test('a guarded snapshot write compares under the lock and refuses a regression (the r14 lost update)', () => {
+  const { dir } = fixture();
+  const p = join(dir, 'census.json');
+  const heights = (h) => JSON.stringify({ results: [{ chainSlug: 'x', atBlock: String(h) }] }) + '\n';
+  const byHeight = (mine) => (current) => {
+    const theirs = Number(current.results[0].atBlock);
+    return theirs > mine ? `a newer snapshot (block ${theirs}) is already committed for x; this run read block ${mine}` : null;
+  };
+  let lockedDuringCompare = null;
+  assert.equal(writeSnapshotGuarded(p, heights(100), { regressedBy: () => { lockedDuringCompare = 'not called: no current'; return null; } }), true);
+  assert.equal(lockedDuringCompare, null, 'no current file → nothing to compare');
+  assert.equal(writeSnapshotGuarded(p, heights(101), { regressedBy: (c) => { lockedDuringCompare = existsSync(`${p}.lock`); return byHeight(101)(c); } }), true);
+  assert.equal(lockedDuringCompare, true, 'the comparison runs while the lock is held');
+  const before = readFileSync(p, 'utf8');
+  assert.throws(() => writeSnapshotGuarded(p, heights(100), { regressedBy: byHeight(100) }), /newer snapshot \(block 101\)/);
+  assert.equal(readFileSync(p, 'utf8'), before, 'a refused replacement leaves the newer file untouched');
+  writeFileSync(p, '{ truncated');
+  assert.throws(() => writeSnapshotGuarded(p, heights(200), { regressedBy: byHeight(200) }), /cannot be parsed/);
+  assert.equal(existsSync(`${p}.lock`), false);
+  assert.deepEqual(readdirSync(dir).filter((f) => f.startsWith('census.json')), ['census.json'], 'no temp file survives');
 });

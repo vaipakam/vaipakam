@@ -28,11 +28,14 @@ proves. Three of those checks changed the outcome rather than merely
 documenting it.
 
 The first: the census reads live state where it can, and where the relevant
-view is not present on a chain it falls back to proving the *producer* was
-never reachable, using the chain's own record of every routing change it has
-ever made. An earlier version treated "the view is missing" as proof by itself,
-which is wrong — a component can be added, write state, and later be removed,
-leaving records nothing can read. The second: that history scan came back
+view is not present on a chain it consults the chain's own record of routing
+changes — a reading that can only rule a record *in* (the producer was
+reachable at some point, so records may exist that nothing can read) or
+declare itself incomplete; it can never prove the producer was never
+reachable, since a public endpoint may omit an addition and its matching
+removal with no visible trace. An earlier version treated "the view is
+missing" as proof by itself, which is wrong — a component can be added, write
+state, and later be removed, leaving records nothing can read. The second: that history scan came back
 reporting *no routing changes at all* on two chains, which cannot be true of a
 contract that exists, since every one records at least one when it is deployed.
 That is now a hard refusal, and it is what turned one chain's result from
@@ -172,5 +175,13 @@ one step so an interruption cannot leave a half-written one. The check that the
 block being read is still the block that was pinned now runs before every
 early "proven" result, not only after a full enumeration. And one more comment
 describing the routing-history reading as a proof was retired.
+
+The next round closed two races in the census itself. Its inventory of
+deployments is now taken in one step while holding the same lock the deploy
+scripts take, so a redeploy recording and retiring a contract at that moment
+cannot fall between the two lists and go uncounted. And the committed report is
+replaced under a lock that re-reads the existing file first and refuses to
+overwrite a report that was read at a later block on any chain — two censuses
+finishing out of order can no longer have the older, emptier one win.
 
 Refs #1566, #1349, #1956

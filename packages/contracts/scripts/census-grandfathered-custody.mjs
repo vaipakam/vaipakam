@@ -11,12 +11,16 @@
  * The owner ratified (2026-09-07) that this census runs BEFORE any migration
  * machinery is written. Its output decides scope:
  *
- *   - every class empty on every deployment      → the MIGRATION half of slices
- *     0–3 is a certified no-op, and slice 0's shortfall disposition never
- *     reaches the owner, because there is nothing to be short of. It retires
- *     the MOVING only: slices 2–3's prospective producer/consumer isolation
- *     still ships, because the fallback and intent producers are live and can
- *     write a qualifying row the moment after this read-only snapshot;
+ *   - every class empty on every deployment      → nothing to move AT THE
+ *     CENSUS BLOCK. That retires the MIGRATION half of slices 0–3 (and slice
+ *     0's shortfall disposition) ONLY when no qualifying row can be written
+ *     after that block and before the isolation lands — i.e. the scan follows
+ *     a producer freeze that has finalized, or isolation is already deployed
+ *     (Codex #2070 r13/r14). A row written in that window would sit in shared
+ *     custody with no migration path once the movers are gone, so the report
+ *     carries `migrationRetirable` (false while any deployment may have a
+ *     live producer) and names the re-run that would earn it. It never
+ *     retires slices 2–3's prospective producer/consumer isolation;
  *   - any class non-empty                        → that slice is live work, and
  *     the figures here are what carry the owner the shortfall question.
  *
@@ -85,7 +89,7 @@
  */
 
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync, renameSync, rmSync } from 'node:fs';
-import { readManifest, regenerateEntries } from './archive-manifest.mjs';
+import { readManifest, regenerateEntries, withManifestLock, writeSnapshotGuarded } from './archive-manifest.mjs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createPublicClient, http, toFunctionSelector, parseAbiItem } from 'viem';
@@ -160,18 +164,6 @@ function classifyRpcError(err) {
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-/** Write a JSON text atomically (temp + rename) and read it back. */
-function writeJsonAtomic(path, text) {
-  const tmp = `${path}.tmp-${process.pid}-${Date.now()}`;
-  try {
-    writeFileSync(tmp, text);
-    renameSync(tmp, path);
-  } finally {
-    rmSync(tmp, { force: true });
-  }
-  if (readFileSync(path, 'utf8') !== text) throw new Error(`${path} does not read back as written`);
-}
 
 /**
  * Re-read the census block and confirm it still carries the hash pinned when
@@ -364,6 +356,19 @@ function writeArchiveManifest() {
 }
 
 function deployedDiamonds() {
+  // Codex #2070 r14 P1 — the inventory is ONE snapshot taken under the
+  // manifest lock, not three reads with windows between them. A `--fresh`
+  // running concurrently appends its retiring Diamond to the manifest (under
+  // this same lock) and only THEN moves the live artifact; so with the manifest
+  // read first, inside the lock, and the live artifacts read before the lock
+  // is released, a retiring Diamond is on at least one side of the snapshot:
+  // append not yet done ⇒ the artifact is still live; append done ⇒ it is in
+  // the manifest we read. An unlocked sequence could miss it on both sides and
+  // the coverage check — computed from the same reduced list — would agree.
+  return withManifestLock(ARCHIVE_MANIFEST, deployedDiamondsUnderLock);
+}
+
+function deployedDiamondsUnderLock() {
   const out = [];
   const manifest = readArchiveManifest();
   if (!manifest) {
@@ -1622,9 +1627,33 @@ async function main() {
       : `grandfathered-custody-census.partial-${[...new Set(results.map((r) => r.chainSlug))].join('-') || 'none'}.json`,
   );
   // Codex #2070 r13 P2 — temp + rename, so an interrupted run can never leave
-  // a truncated canonical artifact behind for the next run's height floor to
-  // choke on (or, before that fix, to silently ignore).
-  writeJsonAtomic(outFile, `${JSON.stringify(report, null, 2)}\n`);
+  // a truncated artifact behind; r14 P1 — and under the artifact's lock, with
+  // the file as it stands re-read immediately before the rename and the
+  // replacement REFUSED if any chain's committed height exceeds this run's.
+  // The floor loaded at start (`loadPriorCommittedHeights`) is not enough on
+  // its own: two runs can both load it, and the slower one — which resolved an
+  // earlier finality height — could otherwise rename an older, emptier
+  // snapshot over a newer one that had seen a fresh row.
+  const mine = new Map();
+  for (const r of results) {
+    const h = BigInt(r.atBlock);
+    if (!mine.has(r.chainSlug) || h > mine.get(r.chainSlug)) mine.set(r.chainSlug, h);
+  }
+  writeSnapshotGuarded(outFile, `${JSON.stringify(report, null, 2)}\n`, {
+    regressedBy: (current) => {
+      const theirs = new Map();
+      for (const r of current.results ?? []) {
+        if (!r?.chainSlug || r?.atBlock == null) continue;
+        const h = BigInt(r.atBlock);
+        if (!theirs.has(r.chainSlug) || h > theirs.get(r.chainSlug)) theirs.set(r.chainSlug, h);
+      }
+      const regressed = [...mine].filter(([slug, h]) => theirs.has(slug) && theirs.get(slug) > h);
+      return regressed.length
+        ? `a newer census is already committed there (${regressed.map(([slug, h]) => `${slug}: committed ${theirs.get(slug)} > this run ${h}`).join('; ')}); ` +
+            `this run resolved an older finality height and would un-see state the committed one saw`
+        : null;
+    },
+  });
 
   for (const r of results) {
     const c = r.classes;

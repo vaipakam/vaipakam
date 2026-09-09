@@ -5086,6 +5086,24 @@ reported a comfortable answer it had not earned:
   a bounded deployment could emit a proven verdict without it, so it now runs
   before every proven-capable return. And one more comment calling the cut
   history "a complete proof" was retired.
+
+  **Round 14 closed two races inside the census itself.** The inventory was
+  three reads with windows between them — manifest, local archives, live
+  artifacts — and a `--fresh` landing in a window could append its retiring
+  Diamond to the manifest after the census had read it and move the live
+  artifact before the census looked for it, leaving the Diamond on neither
+  side while the coverage check, computed from the same reduced list, agreed.
+  The inventory is now one snapshot under the manifest lock, manifest first:
+  because the deploy appends under that lock before it moves anything, a
+  retiring Diamond is always on at least one side. And the canonical artifact
+  was replaced by an unconditional rename: two full runs that both loaded the
+  same floor could finish out of order, and the slower one, having resolved an
+  earlier finality height, would overwrite a newer snapshot that had seen a
+  fresh row. The replacement now runs under the artifact's own lock, re-reads
+  the file immediately before the rename, and refuses if any chain's committed
+  height exceeds this run's — the start-of-run floor and this end-of-run check
+  together close the window. Both are unit-tested with the lock observed held
+  during the comparison.
   Hand-computed storage slots were never an option: they fail SILENTLY as
   zero, manufacturing the exact "empty" result the census exists to
   establish. The event reconstruction is retained behind `--corroborate` as
