@@ -1,3 +1,11 @@
+# Release Notes — 2026-09-07
+
+One entry. The connected app's own hostname had been live for some time while
+seven places in the tree still said it was not, and that stale premise was the
+stated reason three link surfaces kept advertising the legacy host. The claims
+are corrected and the links that could move have moved; the recovery links
+stayed where they were, for a reason the entry explains.
+
 ## Thread — the links that could move, moved; the claims that had gone stale, went
 
 `app.vaipakam.com` is bound and serving the connected app. Seven places
@@ -68,3 +76,4 @@ names any of them — they are dashboard git integrations pointed at
 directories deleted in #1854/#1958, so no repository change can turn them
 green. Disconnecting those four build integrations is safe and
 independent of retiring the hosts they are named for.
+<!-- assembled-fragment: 1854-repoint-served-links-to-app-host.md sha256=f79d4f5679f2ccba18721264d415e99776d612fd817f267d3302615d3c4676d5 -->
