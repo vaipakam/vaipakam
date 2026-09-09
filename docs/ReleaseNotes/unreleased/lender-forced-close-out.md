@@ -706,3 +706,19 @@ way indistinguishable from a successful one. The card now watches for
 the readings themselves to change, which nothing else can fake, and it
 tracks each close-out separately so a late answer about an earlier one
 cannot lock the action on a position that is live now.
+
+Two smaller corrections. The protocol console, when it knows its figures
+have been superseded by a governance change, used to send readers to the
+parameter reference for what is in force now. That reference reads the
+same superseded snapshot and otherwise falls back to the values the
+protocol launched with, so it could state the original numbers with
+confidence at exactly the moment the console had established they were
+wrong. It now points at the chain itself for current values, and
+describes the reference as what it is: the place to learn what each
+setting means and where it started.
+
+And the forced-close card's newly rebuilt "have my figures caught up"
+check was watching some readings that were never going to be refreshed —
+including one the app deliberately switches off until it knows what the
+collateral is. Waiting on those would have kept the action withheld for
+several minutes after everything relevant had finished.

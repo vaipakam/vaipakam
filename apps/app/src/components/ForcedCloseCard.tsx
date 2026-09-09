@@ -587,12 +587,30 @@ export function ForcedCloseCard({
     // refetch counts once, when it finally lands, and no number of
     // competing invalidations can fake it. It is also clock-free, which
     // is what round 59 was about.
+    // ROUND 64 P2 — snapshot ONLY what the invalidation will actually
+    // refetch, which is not the same set `findAll` returns.
+    //
+    // `refetchQueries` acts on ACTIVE queries and skips
+    // `isDisabled()`/`isStatic()` ones. `useForcedCloseReads` creates a
+    // disabled `liquidity` query while collateral metadata is still
+    // unknown, and a cached entry for another position can be inactive —
+    // neither will refetch, so neither counter ever advances, so the
+    // completion never fires. That is the round-29 latch again, lasting
+    // until the entry is garbage-collected (five minutes by default) with
+    // every current readiness read long since finished.
+    //
+    // Matching the filter to the one `refetchQueries` uses makes the
+    // snapshot a description of the work being awaited rather than of the
+    // cache. An empty result then means nothing will refetch — so there
+    // is nothing to wait for, and the target completes rather than
+    // waiting for an event that cannot arrive.
     const cache = queryClient.getQueryCache();
     refreshTargets.current.set(
       submittedHash,
       new Map(
         cache
-          .findAll(READINESS_READS)
+          .findAll({ ...READINESS_READS, type: 'active' })
+          .filter((q) => !q.isDisabled() && !q.isStatic())
           .map((q) => [
             q.queryHash,
             q.state.dataUpdateCount + q.state.errorUpdateCount,

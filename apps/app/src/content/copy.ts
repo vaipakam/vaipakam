@@ -4892,8 +4892,21 @@ const copySource = {
       'No configuration snapshot is available for this chain. Nothing is inferred from that — it means the value is unknown here, not that it is unset on-chain.',
     // Distinct from `undated` on purpose: this is the indexer telling us
     // the values ARE behind, not that their age is unknown.
+    /* Round 64 P2 — this used to send readers to the parameter reference
+       "for what is in force now", and that reference cannot answer the
+       question. Its live-value pipeline reads THIS SAME `/config/:chainId`
+       snapshot, rejects the zero-timestamp stale row, and falls back to
+       the compile-time defaults — so it can display the original starting
+       values at precisely the moment this console knows governance has
+       moved them. Sending someone there for current values hands them a
+       confident wrong answer instead of an admitted unknown, which is the
+       one thing this page exists not to do.
+
+       The reference is still the right place to understand what each knob
+       MEANS and where it started. For what is in force right now, only
+       the chain can say. */
     knownStale:
-      'The indexer has seen a governance change that came after this snapshot, so these values are known to be out of date — not merely of uncertain age. Treat them as historical and check the parameter reference or the contracts directly for what is in force now.',
+      'The indexer has seen a governance change that came after this snapshot, so these values are known to be out of date — not merely of uncertain age. Treat them as historical. For what is in force right now, read the parameters from the contracts on this chain, or on a public explorer; the parameter reference explains what each setting means and where it started, but it cannot tell you the current value.',
     undated:
       'This snapshot carries no usable timestamp, so there is no way to tell how old these values are. They may be current or they may be long superseded — read them as unverified rather than as the protocol’s present configuration.',
     stale:

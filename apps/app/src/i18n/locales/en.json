@@ -2469,7 +2469,7 @@
       "reference": "Parameter reference",
       "hiddenBody": "Parameter visibility is turned off on this deployment, so the live values are not shown here. This is a display setting only — the parameters themselves are on-chain and readable by anyone directly from the contracts.",
       "unavailable": "No configuration snapshot is available for this chain. Nothing is inferred from that — it means the value is unknown here, not that it is unset on-chain.",
-      "knownStale": "The indexer has seen a governance change that came after this snapshot, so these values are known to be out of date — not merely of uncertain age. Treat them as historical and check the parameter reference or the contracts directly for what is in force now.",
+      "knownStale": "The indexer has seen a governance change that came after this snapshot, so these values are known to be out of date — not merely of uncertain age. Treat them as historical. For what is in force right now, read the parameters from the contracts on this chain, or on a public explorer; the parameter reference explains what each setting means and where it started, but it cannot tell you the current value.",
       "undated": "This snapshot carries no usable timestamp, so there is no way to tell how old these values are. They may be current or they may be long superseded — read them as unverified rather than as the protocol’s present configuration.",
       "stale": "This snapshot is more than a day old, so treat the values below as historical. Config changes normally reach the snapshot within one ingest scan.",
       "notReported": "not reported",

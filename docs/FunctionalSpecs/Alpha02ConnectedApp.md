@@ -87,6 +87,12 @@ including people who never will.
   decides whether a figure may be shown and whether it may be used in a
   subtotal, so the view cannot withhold a derived figure while printing
   the invalid input it came from.
+- Where the console knows its values are superseded, it points the reader at the
+  chain itself for what is in force — not at documentation that derives from the
+  same superseded source. A reference that would answer from the same snapshot,
+  or fall back to starting defaults, gives a confident wrong answer exactly when
+  the console has established that the values moved; the documentation is still
+  the right place to learn what a setting means and where it began.
 - The console's values refresh while it is open. A reader who leaves it
   open is shown parameters as they currently stand, not the snapshot the
   page loaded with; reporting the snapshot's age correctly is not a
