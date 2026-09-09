@@ -37,8 +37,8 @@
  * does not support, on the one card whose whole job is telling somebody
  * how they get paid.
  */
-import { useState } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
+import { useEffect, useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { usePublicClient } from 'wagmi';
 import { AlertTriangle } from 'lucide-react';
 import { copy } from '../content/copy';
@@ -51,6 +51,14 @@ import {
   shouldRenderForcedClose,
   type ForcedCloseReadiness,
 } from '../data/forcedClose';
+
+/** How long to watch for a receipt before concluding the transaction
+ *  never made it. Generous enough to cover a slow L2 inclusion, short
+ *  enough that a lender whose transaction was dropped is not locked out
+ *  of retrying. Releasing here is safe: the readiness reads are still
+ *  the binding judgement, and a close-out that DID land leaves the loan
+ *  terminal, which unmounts this card entirely. */
+const RECEIPT_GIVE_UP_MS = 3 * 60_000;
 
 export function ForcedCloseCard({
   loanId,
@@ -154,7 +162,51 @@ export function ForcedCloseCard({
     at: number;
     chainId: number | undefined;
     loanId: string;
+    /** The transaction this hold is about. The hold is reconciled
+     *  against THIS, not against how recently unrelated reads settled. */
+    hash: `0x${string}`;
   } | null>(null);
+
+  /** The give-up deadline as a TIMER, not a `Date.now()` read in render.
+   *
+   *  Computing it during render is impure — eslint's react-hooks rule
+   *  catches it — and it is also wrong on its own terms: the comparison
+   *  would only take effect on whatever unrelated re-render happened to
+   *  come next, so the hold could outlive the deadline indefinitely on a
+   *  quiet card. A timer fires on its own. */
+  const [gaveUpOn, setGaveUpOn] = useState<string | null>(null);
+  useEffect(() => {
+    if (submitted === null) return;
+    // Keyed by HASH rather than reset to false on entry: a synchronous
+    // setState in an effect body is the cascading-render pattern eslint
+    // rejects, and it is unnecessary here — a new submission carries a
+    // different hash, so a stale give-up simply stops matching.
+    const h = submitted.hash;
+    const t = setTimeout(() => setGaveUpOn(h), RECEIPT_GIVE_UP_MS);
+    return () => clearTimeout(t);
+  }, [submitted]);
+
+  /** Watches the submitted transaction until its disposition is known.
+   *  Any receipt — success or revert — ends the hold; the card's own
+   *  readiness reads then say what the chain now looks like. Bounded by
+   *  `RECEIPT_GIVE_UP_MS` so a dropped transaction cannot latch the
+   *  action shut, which is what the previous timestamp rule did. */
+  const receiptWatch = useQuery({
+    queryKey: ['forcedClose', 'receipt', submitted?.chainId, submitted?.hash],
+    enabled: submitted !== null && Boolean(publicClient),
+    refetchInterval: 4_000,
+    retry: false,
+    queryFn: async () => {
+      try {
+        return await publicClient!.getTransactionReceipt({
+          hash: submitted!.hash,
+        });
+      } catch {
+        // Not mined yet is the normal answer here, not an error.
+        return null;
+      }
+    },
+  });
 
   // A render-phase adjustment, matching how the page resets its own
   // chain-scoped state: no frame is committed carrying the previous
@@ -169,8 +221,42 @@ export function ForcedCloseCard({
 
   if (!shouldRenderForcedClose(readiness)) return null;
 
+  /** ROUND 48 P1 — read timestamps are not evidence about a transaction.
+   *
+   *  The previous rule was `readsUpdatedAt <= submitted.at`, and it fails
+   *  in BOTH directions once the stamp is laid down on the hash rather
+   *  than the receipt:
+   *
+   *  - `readsUpdatedAt` is the MIN across the card's reads, and `consent`
+   *    carries `staleTime: 10 * 60_000` with NO `refetchInterval`. On the
+   *    receipt-timeout path `invalidateQueries` never runs (it sits after
+   *    the await), so nothing refetches consent and the min stays below
+   *    the stamp — the action is disabled indefinitely for a transaction
+   *    that may simply have been dropped. That is the round-29 latch,
+   *    reintroduced by fixing the round-47 one.
+   *  - And if anything else does refetch those queries while the
+   *    transaction is still pending, every timestamp passes the stamp and
+   *    the hold releases with the transaction unresolved — which is the
+   *    duplicate submit the round-47 fix existed to prevent.
+   *
+   *  So the hold now reconciles against the TRANSACTION. `submitted.hash`
+   *  is watched with `getTransactionReceipt`; the moment a receipt exists
+   *  the disposition is known and the hold ends, whatever the reads are
+   *  doing. A dropped transaction is bounded rather than latched: after
+   *  `RECEIPT_GIVE_UP_MS` with no receipt the hold releases and the
+   *  lender may try again, which is the correct outcome for a
+   *  transaction the network never accepted.
+   *
+   *  The read-freshness condition is kept as an ADDITIONAL hold on the
+   *  success path only — once a receipt exists we still wait for one
+   *  post-stamp read before re-offering a button, which is the round-28
+   *  reason the hold was introduced. It can no longer hold on its own. */
+  const receiptSettled =
+    submitted !== null &&
+    (receiptWatch.data != null || gaveUpOn === submitted.hash);
   const holdingAfterSubmit =
-    submitted !== null && readsUpdatedAt <= submitted.at;
+    submitted !== null &&
+    (!receiptSettled || readsUpdatedAt <= submitted.at);
   const submittable = canSubmitFromApp(readiness) && !holdingAfterSubmit;
 
   async function closeOut() {
@@ -247,11 +333,12 @@ export function ForcedCloseCard({
       // it), so a transaction that genuinely failed to mine unblocks on
       // the next read rather than latching.
       await write('triggerDefault', [BigInt(loanId), []], {
-        onSubmitted: () =>
+        onSubmitted: (hash) =>
           setSubmitted({
             at: Date.now(),
             chainId: walletChain?.chainId,
             loanId: String(loanId),
+            hash,
           }),
       });
       onClosedOut();

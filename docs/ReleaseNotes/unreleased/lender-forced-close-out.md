@@ -442,6 +442,21 @@ different route. Both are closed now, and the close-out additionally
 refuses to start a second time while a first is unaccounted for,
 regardless of what the screen is showing.
 
+It took a third pass to get the underlying idea right. The card was
+deciding whether a close-out was still outstanding by looking at how
+recently it had re-read the loan — which is a fact about the app, not
+about the transaction. That reading fails in both directions. One of the
+readings behind the card is deliberately slow to refresh, so on a failed
+confirmation nothing would refresh it and the action stayed disabled for
+a transaction that may simply have been dropped; and if anything did
+refresh those readings while the transaction was still in flight, the
+action came back with the transaction unresolved, which is the thing
+being prevented. The card now follows the transaction itself, and stops
+following it after a few minutes if the network never accepted it —
+because a lender whose transaction vanished should be able to try again,
+and one whose transaction landed no longer has a position for this card
+to offer anything about.
+
 Two smaller items alongside it. A live check on the deployed site treated
 the Terms notice appearing over a claims, vault, recovery or desk page as
 an inconclusive result and told whoever ran it to accept the Terms and try
