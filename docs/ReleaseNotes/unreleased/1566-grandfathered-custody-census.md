@@ -210,4 +210,13 @@ began and finished during a census cannot leave a verdict about a population
 that has since changed. And a writer that stalled long enough to be mistaken
 for dead can no longer wake up and write alongside the writer that took over.
 
+The lock's recovery rules were then rewritten rather than patched again: the
+record of who holds the lock is the lock, only its holder ever clears it, and
+taking over an abandoned one replaces that record in place — so no two writers
+can ever both believe they hold it, and none can strand it. The inventory check
+made at the moment a report is written now stays under the inventory's lock
+until the report is in place, compares every field of every record, and a
+deliberate change of which contract an archived record names is acknowledged
+one record at a time rather than by a blanket override.
+
 Refs #1566, #1349, #1956

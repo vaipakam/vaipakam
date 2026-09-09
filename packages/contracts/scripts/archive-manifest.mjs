@@ -124,6 +124,34 @@ function pidAlive(pid) {
 /**
  * Run `fn` while holding the manifest's exclusive lock.
  *
+ * THE LOCK IS THE OWNER FILE, NOT THE DIRECTORY (Codex #2070 r15–r18). The
+ * directory is only the atomic create that lets one process publish first;
+ * whoever holds `owner.json` holds the lock, and ONLY the holder ever removes
+ * the directory (at release). A takeover therefore never deletes anything:
+ *
+ *   - acquire: `mkdir` the directory, then publish `owner.json` with an
+ *     EXCLUSIVE create. If the exclusive create fails, someone else published
+ *     into the directory first (a breaker taking over an ownerless directory,
+ *     or a rival that resumed) and we go back to waiting. There is no
+ *     check-then-withdraw step — the exclusive create IS the decision.
+ *   - ownerless stale directory (its creator died, or is suspended, between
+ *     mkdir and publishing): a breaker takes it over by the same exclusive
+ *     owner create — exactly one wins, and a creator that resumes finds the
+ *     owner file already there and waits.
+ *   - dead-owner stale directory: a breaker wins an exclusive `claim` file
+ *     (one claimant), re-reads the owner and confirms it is still the dead one
+ *     it observed (same pid and timestamp, same directory inode), then
+ *     atomically RENAMES its own owner file over the dead one and drops the
+ *     claim. A live owner is never replaced; a claimant that sees one
+ *     withdraws its claim and waits.
+ *
+ * Earlier shapes removed and re-created the directory during a takeover; each
+ * revision closed one interleaving and opened the next (a claimant deleting a
+ * freshly acquired directory; a resumed creator publishing after a claimant's
+ * revalidation; a check-then-withdraw handoff that orphaned an ownerless
+ * directory). Never removing a directory except at release is what makes the
+ * protocol single-winner by construction.
+ *
  * @param {string} manifestPath
  * @param {() => T} fn
  * @param {{timeoutMs?: number, staleMs?: number, pollMs?: number}} [opts]
@@ -136,73 +164,50 @@ export function withManifestLock(manifestPath, fn, opts = {}) {
   const pollMs = opts.pollMs ?? 50;
   const lockDir = `${manifestPath}.lock`;
   const ownerFile = join(lockDir, 'owner.json');
+  const claimFile = join(lockDir, 'claim');
   mkdirSync(dirname(manifestPath), { recursive: true });
+  const myOwner = () => JSON.stringify({ pid: process.pid, at: new Date().toISOString() });
+  const publishExclusive = () => {
+    try {
+      writeFileSync(ownerFile, myOwner(), { flag: 'wx' });
+      return true;
+    } catch (err) {
+      if (err.code === 'EEXIST' || err.code === 'ENOENT') return false;
+      throw err;
+    }
+  };
+  const readOwner = () => {
+    try {
+      return JSON.parse(readFileSync(ownerFile, 'utf8'));
+    } catch {
+      return null;
+    }
+  };
 
   const started = Date.now();
   let waited = 0;
-  const claimFile = join(lockDir, 'claim');
   for (;;) {
-    let acquiredDir = false;
+    let createdDir = false;
     try {
-      mkdirSync(lockDir); // atomic: exactly one process succeeds
-      acquiredDir = true;
+      mkdirSync(lockDir); // atomic: exactly one process creates it
+      createdDir = true;
     } catch (err) {
       if (err.code !== 'EEXIST') throw err;
     }
-    if (acquiredDir) {
-      if (typeof opts._testAfterMkdir === 'function') opts._testAfterMkdir(lockDir); // test hook: interleave a breaker here
-      // Codex #2070 r17 P1 — publishing ownership is itself guarded. A process
-      // suspended for longer than `staleMs` between this mkdir and its owner
-      // write looks, to a breaker, like an ownerless stale lock; the breaker
-      // claims it and re-validates, and if the suspended process then wrote its
-      // owner and entered the critical section, two writers would be inside.
-      // So the owner is written with an EXCLUSIVE create — a breaker or a
-      // resumed rival that published first wins, and we go back to waiting —
-      // and it is published only if no `claim` exists: a claim means a breaker
-      // is about to remove this directory, so we withdraw our owner file (only
-      // ever our own file, never the directory) and wait. A claimant, for its
-      // part, removes the directory only if the owner it re-reads is still the
-      // one it observed, so the withdrawn owner can never be mistaken for it.
-      try {
-        writeFileSync(ownerFile, JSON.stringify({ pid: process.pid, at: new Date().toISOString() }), { flag: 'wx' });
-      } catch (err) {
-        if (err.code === 'EEXIST' || err.code === 'ENOENT') {
-          sleepSync(pollMs);
-          continue; // someone else published first, or the directory was claimed away
-        }
-        throw err;
-      }
-      if (existsSync(claimFile)) {
-        rmSync(ownerFile, { force: true });
-        sleepSync(pollMs);
-        continue;
-      }
-      break;
-    }
-    // Held. Every path below either breaks the lock or waits, and a wait must
-    // be bounded — the timeout is checked HERE, before any of them, so no
-    // branch can `continue` past it (a persistent claim file did exactly that
-    // and spun forever).
+    if (createdDir && typeof opts._testAfterMkdir === 'function') opts._testAfterMkdir(lockDir); // test hook: interleave a rival here
+    if (createdDir && publishExclusive()) break; // we created it AND published first: we hold it
+
+    // The directory exists (ours or another's). Every wait path below is
+    // bounded by this check, so nothing can `continue` past the timeout.
     if (Date.now() - started >= timeoutMs) {
-      let held = null;
-      try {
-        held = JSON.parse(readFileSync(ownerFile, 'utf8'));
-      } catch {
-        held = null;
-      }
+      const held = readOwner();
       throw new Error(
         `archive-manifest: could not lock ${manifestPath} within ${timeoutMs} ms — held by pid ${held?.pid ?? '?'} ` +
           `(${held && pidAlive(held.pid) ? 'alive' : 'unknown'}). Another --fresh or census writer may be running; if not, ` +
           `inspect and remove ${lockDir} yourself (a leftover 'claim' file inside it means a breaker died mid-recovery). Nothing was written.`,
       );
     }
-    // Break it only when its owner is provably gone AND it is old.
-    let owner = null;
-    try {
-      owner = JSON.parse(readFileSync(ownerFile, 'utf8'));
-    } catch {
-      owner = null;
-    }
+    const owner = readOwner();
     let ageMs = 0;
     let inoObserved = null;
     try {
@@ -212,23 +217,21 @@ export function withManifestLock(manifestPath, fn, opts = {}) {
     } catch {
       continue; // released between our mkdir and stat — retry immediately
     }
-    const ownerAlive = owner ? pidAlive(owner.pid) : false;
-    if (!ownerAlive && ageMs > staleMs) {
-      // Codex #2070 r15 P1 — an unconditional removal here was itself a race:
-      // two waiters could both observe the same dead lock, the first remove
-      // and re-create it with a LIVE owner, and the second — acting on its
-      // earlier observation — delete that fresh lock and enter concurrently,
-      // re-opening the lost-update race during crash recovery. So the break
-      // is CLAIMED and REVALIDATED: exactly one claimant wins an exclusive
-      // `claim` file inside the observed directory (`wx` create is atomic, so
-      // a second claimant gets EEXIST and waits, or ENOENT when the dir is
-      // already gone); the winner then re-reads the owner IMMEDIATELY before
-      // deleting and removes the directory only if it is still the same dead
-      // owner it observed — a fresh live owner means someone re-acquired in
-      // between, and the claimant withdraws its claim and waits instead.
-      const claim = join(lockDir, 'claim');
+    if (owner === null && ageMs > staleMs) {
+      // Ownerless and old: its creator died or is suspended before publishing.
+      // Take it over by publishing first — exactly one process can.
+      if (publishExclusive()) {
+        process.stderr.write(`archive-manifest: took over an ownerless stale lock on ${manifestPath} (${Math.round(ageMs / 1000)}s old)\n`);
+        break;
+      }
+      sleepSync(pollMs);
+      continue;
+    }
+    if (owner !== null && !pidAlive(owner.pid) && ageMs > staleMs) {
+      // Dead owner: win the single claim, re-verify, then replace the owner
+      // file ATOMICALLY (rename) — never the directory.
       try {
-        closeSync(openSync(claim, 'wx'));
+        closeSync(openSync(claimFile, 'wx'));
       } catch (err) {
         if (err.code === 'EEXIST' || err.code === 'ENOENT') {
           sleepSync(pollMs);
@@ -236,39 +239,26 @@ export function withManifestLock(manifestPath, fn, opts = {}) {
         }
         throw err;
       }
-      let ownerNow = null;
-      try {
-        ownerNow = JSON.parse(readFileSync(ownerFile, 'utf8'));
-      } catch {
-        ownerNow = null;
-      }
-      // Codex #2070 r16 P2 — creating the claim file bumps the directory's
-      // mtime, so an age re-measured here is never stale and an OWNERLESS lock
-      // (a writer that died between mkdir and writing owner.json) could never
-      // be recovered. Identity is the directory's INODE captured before the
-      // claim: the same inode means the same directory object we observed
-      // dead and old; a different one means it was released and re-created
-      // by someone else in between.
+      const ownerNow = readOwner();
       let inoNow = null;
       try {
         inoNow = statSync(lockDir).ino;
       } catch {
-        continue; // gone underneath us — retry the acquire
-      }
-      const sameDirectory = inoObserved !== null && inoNow === inoObserved;
-      const sameIdentity =
-        sameDirectory &&
-        (owner === null && ownerNow === null
-          ? true
-          : Boolean(owner && ownerNow && owner.pid === ownerNow.pid && owner.at === ownerNow.at && !pidAlive(ownerNow.pid)));
-      if (sameIdentity) {
-        process.stderr.write(
-          `archive-manifest: breaking a stale lock on ${manifestPath} (owner pid ${owner?.pid ?? '?'} is gone, ${Math.round(ageMs / 1000)}s old)\n`,
-        );
-        rmSync(lockDir, { recursive: true, force: true });
         continue;
       }
-      rmSync(claim, { force: true }); // not the lock we observed — withdraw and wait
+      const stillTheDeadOne =
+        inoNow === inoObserved && ownerNow !== null && ownerNow.pid === owner.pid && ownerNow.at === owner.at && !pidAlive(ownerNow.pid);
+      if (stillTheDeadOne) {
+        const tmp = join(lockDir, `owner.${process.pid}.tmp`);
+        writeFileSync(tmp, myOwner());
+        renameSync(tmp, ownerFile); // atomic replacement of the dead owner by us
+        rmSync(claimFile, { force: true });
+        process.stderr.write(
+          `archive-manifest: took over a stale lock on ${manifestPath} (owner pid ${owner.pid} is gone, ${Math.round(ageMs / 1000)}s old)\n`,
+        );
+        break;
+      }
+      rmSync(claimFile, { force: true }); // not the owner we observed — withdraw and wait
       sleepSync(pollMs);
       continue;
     }
@@ -279,7 +269,7 @@ export function withManifestLock(manifestPath, fn, opts = {}) {
   try {
     return fn();
   } finally {
-    rmSync(lockDir, { recursive: true, force: true });
+    rmSync(lockDir, { recursive: true, force: true }); // only the holder removes the directory
   }
 }
 
@@ -376,6 +366,7 @@ export function appendEntry(manifestPath, entry, lockOpts) {
  */
 export function regenerateEntries(manifestPath, collect, policy = {}, lockOpts) {
   const { allowDrop = false, allowEmpty = false, allowDisplace = false } = policy;
+  const displaceAllowed = (key) => allowDisplace === true || (Array.isArray(allowDisplace) && allowDisplace.includes(key));
   return withManifestLock(
     manifestPath,
     () => {
@@ -404,11 +395,12 @@ export function regenerateEntries(manifestPath, collect, policy = {}, lockOpts) 
       const displaced = collected
         .filter((e) => byKey.has(entryKey(e)) && String(byKey.get(entryKey(e)).diamond).toLowerCase() !== String(e.diamond).toLowerCase())
         .map((e) => ({ key: entryKey(e), from: byKey.get(entryKey(e)).diamond, to: e.diamond }));
-      if (displaced.length && !allowDisplace) {
+      const unacknowledged = displaced.filter((d) => !displaceAllowed(d.key));
+      if (unacknowledged.length) {
         throw new Error(
-          `archive-manifest: refusing to rewrite ${manifestPath}: ${displaced.length} archived label(s) would change the DIAMOND they name ` +
-            `(${displaced.map((d) => `${d.key}: ${d.from} → ${d.to}`).join(', ')}). That retires the displaced Diamond — and any custody it ` +
-            `holds — from the committed inventory; do it deliberately with the explicit override, and keep the displaced address on record.`,
+          `archive-manifest: refusing to rewrite ${manifestPath}: ${unacknowledged.length} archived label(s) would change the DIAMOND they name ` +
+            `(${unacknowledged.map((d) => `${d.key}: ${d.from} → ${d.to}`).join(', ')}). That retires the displaced Diamond — and any custody it ` +
+            `holds — from the committed inventory; acknowledge each deliberately by key, and keep the displaced address on record.`,
         );
       }
       if (displaced.length) process.stderr.write(`archive-manifest: DISPLACING ${displaced.length} diamond(s) on explicit override: ${displaced.map((d) => `${d.key} ${d.from} → ${d.to}`).join(', ')}\n`);

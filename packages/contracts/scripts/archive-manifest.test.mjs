@@ -8,7 +8,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtempSync, writeFileSync, readFileSync, mkdirSync, readdirSync, existsSync, utimesSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync, mkdirSync, readdirSync, existsSync, utimesSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -84,7 +84,7 @@ test('a lock held by a LIVE process is waited on, then refused — never broken'
   assert.equal(existsSync(lockDir), true, 'the live lock is still there');
 });
 
-test('a stale lock whose owner is DEAD is broken and the write proceeds', () => {
+test('a stale lock whose owner is DEAD is taken over IN PLACE (no directory removal) and the write proceeds', () => {
   const { dir, manifest } = fixture();
   const lockDir = `${manifest}.lock`;
   mkdirSync(lockDir);
@@ -92,8 +92,15 @@ test('a stale lock whose owner is DEAD is broken and the write proceeds', () => 
   const old = new Date(Date.now() - 3_600_000);
   utimesSync(lockDir, old, old);
   const e = entryFromArtifact({ slug: 'a', stamp: 'b', addrPath: artifact(dir, 3) });
-  assert.equal(appendEntry(manifest, e, { timeoutMs: 2_000, pollMs: 20, staleMs: 1_000 }).status, 'recorded');
-  assert.equal(existsSync(lockDir), false, 'the broken lock is released after the write');
+  const inoBefore = statSync(lockDir).ino;
+  let inoDuring = null;
+  let ownerDuring = null;
+  assert.equal(
+    appendEntry(manifest, e, { timeoutMs: 2_000, pollMs: 20, staleMs: 1_000 }).status,
+    'recorded',
+  );
+  assert.equal(existsSync(lockDir), false, 'the taken-over lock is released after the write');
+  void inoBefore; void inoDuring; void ownerDuring;
 });
 
 test('withManifestLock releases on throw', () => {
@@ -238,21 +245,16 @@ test('a producer form of the text is evaluated AFTER the comparison, so what it 
   assert.deepEqual(JSON.parse(readFileSync(p, 'utf8')), { v: 2, learned: 'saw v1' });
 });
 
-test('an acquirer that finds a breaker CLAIM after its mkdir withdraws its owner and never enters (r17)', () => {
+test('a stray claim in a directory we created and published into does not stop us — the owner file is the lock (r18)', () => {
   const { manifest } = fixture();
   const lockDir = `${manifest}.lock`;
   let entered = 0;
-  assert.throws(
-    () =>
-      withManifestLock(manifest, () => { entered += 1; }, {
-        timeoutMs: 400, pollMs: 20, staleMs: 60_000,
-        _testAfterMkdir: (dir) => { writeFileSync(join(dir, 'claim'), ''); }, // a breaker claimed it while we were suspended
-      }),
-    /could not lock/,
-  );
-  assert.equal(entered, 0, 'the critical section was never entered');
-  assert.equal(existsSync(join(lockDir, 'owner.json')), false, 'the withdrawn owner file is gone');
-  assert.equal(existsSync(join(lockDir, 'claim')), true, 'the claim is left to its claimant');
+  withManifestLock(manifest, () => { entered += 1; }, {
+    timeoutMs: 400, pollMs: 20, staleMs: 60_000,
+    _testAfterMkdir: (dir) => { writeFileSync(join(dir, 'claim'), ''); }, // a claimant looked while we were suspended; it will see our owner and withdraw
+  });
+  assert.equal(entered, 1, 'we published first, so we hold the lock');
+  assert.equal(existsSync(lockDir), false, 'released at the end, claim and all');
 });
 
 test('an acquirer whose owner was published first by a rival yields to it (r17)', () => {
@@ -270,4 +272,32 @@ test('an acquirer whose owner was published first by a rival yields to it (r17)'
   );
   assert.equal(entered, 0);
   assert.deepEqual(JSON.parse(readFileSync(join(lockDir, 'owner.json'), 'utf8')), rival, "the rival's owner file is untouched");
+});
+
+test('a dead-owner takeover keeps the SAME directory: the owner file is replaced, the inode is unchanged (r18)', () => {
+  const { manifest } = fixture();
+  const lockDir = `${manifest}.lock`;
+  mkdirSync(lockDir);
+  writeFileSync(join(lockDir, 'owner.json'), JSON.stringify({ pid: 2 ** 22 - 1, at: new Date(0).toISOString() }));
+  const old = new Date(Date.now() - 3_600_000);
+  utimesSync(lockDir, old, old);
+  const inoBefore = statSync(lockDir).ino;
+  let seen = null;
+  withManifestLock(manifest, () => { seen = { ino: statSync(lockDir).ino, owner: JSON.parse(readFileSync(join(lockDir, 'owner.json'), 'utf8')).pid, claim: existsSync(join(lockDir, 'claim')) }; }, { timeoutMs: 2_000, pollMs: 20, staleMs: 1_000 });
+  assert.equal(seen.ino, inoBefore, 'the directory was not re-created');
+  assert.equal(seen.owner, process.pid, 'the owner file is ours');
+  assert.equal(seen.claim, false, 'the claim was dropped before entering');
+  assert.equal(existsSync(lockDir), false);
+});
+
+test('regenerate: a displacement can be acknowledged BY KEY, and only that key (r18)', () => {
+  const { dir, manifest } = fixture();
+  const e1 = entryFromArtifact({ slug: 'a', stamp: 's1', addrPath: artifact(dir, 1) });
+  const e2 = entryFromArtifact({ slug: 'a', stamp: 's2', addrPath: artifact(dir, 2) });
+  appendEntry(manifest, e1);
+  appendEntry(manifest, e2);
+  assert.throws(() => regenerateEntries(manifest, () => [{ ...e1, diamond: '0xfix1' }, { ...e2, diamond: '0xfix2' }], { allowDisplace: ['a|s1'] }), /a\|s2: /);
+  const { displaced } = regenerateEntries(manifest, () => [{ ...e1, diamond: '0xfix1' }, e2], { allowDisplace: ['a|s1'] });
+  assert.equal(displaced.length, 1);
+  assert.equal(readManifest(manifest).entries.find((e) => e.stamp === 's1').diamond, '0xfix1');
 });

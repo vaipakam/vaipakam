@@ -5168,6 +5168,31 @@ reported a comfortable answer it had not earned:
   revalidated the directory; now the first to publish wins and the other goes
   back to waiting, and a claim seen after publishing makes the acquirer
   withdraw its own owner file (never the directory) and wait. Seventeen tests.
+
+  **Round 18 replaced the lock's takeover protocol rather than patch it a
+  fourth time.** The check-then-withdraw handoff of round 17 could orphan an
+  ownerless directory (acquirer publishes and sees a claim; claimant sees the
+  live owner and withdraws; acquirer withdraws too; everyone waits). The rule
+  now is that the OWNER FILE is the lock and the directory is only the atomic
+  create that lets one process publish first; only the holder ever removes the
+  directory, at release. Acquisition publishes the owner with an exclusive
+  create, and that create is the whole decision — no check, no withdrawal. An
+  ownerless stale directory is taken over by the same exclusive create, so a
+  creator that resumes late finds the owner already there and waits. A
+  dead-owner directory is taken over in place: one claimant wins the claim
+  file, re-verifies the dead owner and the directory's inode, and atomically
+  renames its own owner file over the dead one — the directory is never
+  re-created, which a test asserts by inode. In the census, the manifest lock
+  is now held from the publication-time inventory re-check through the
+  artifact rename (manifest lock outside, artifact lock inside, always in that
+  order), so a `--fresh` cannot commit between the comparison and the
+  publication; and that comparison covers the complete inventory record,
+  including `chainId` and `deployBlock`, since a permitted deploy-block
+  correction changes the no-code creation evidence this run read. Finally the
+  manifest regeneration acknowledges a displacement BY KEY —
+  `--acknowledge-manifest-displacement <slug|stamp>` — rather than through the
+  blanket force flag, which had never forwarded it at all; the scheduled
+  correction of the non-Diamond archive is exactly this flow. Nineteen tests.
   Hand-computed storage slots were never an option: they fail SILENTLY as
   zero, manufacturing the exact "empty" result the census exists to
   establish. The event reconstruction is retained behind `--corroborate` as

@@ -351,8 +351,13 @@ function writeArchiveManifest() {
   // has both. This function only states the policy: dropping and writing an
   // empty inventory need the explicit override, and the dropped entries are
   // named either way.
+  // Codex #2070 r18 P2 — a displacement (an archived label now naming a
+  // different Diamond, the scheduled correction of the non-Diamond archive
+  // being exactly this) is acknowledged BY KEY, never by the blanket force:
+  //   --write-archive-manifest --acknowledge-manifest-displacement <slug|stamp>[,...]
   const force = process.argv.includes('--force-archive-manifest-rewrite');
-  return regenerateEntries(ARCHIVE_MANIFEST, () => localArchivedDiamonds(), { allowDrop: force, allowEmpty: force }).manifest;
+  const displaceKeys = (arg('--acknowledge-manifest-displacement', '') || '').split(',').map((k) => k.trim()).filter(Boolean);
+  return regenerateEntries(ARCHIVE_MANIFEST, () => localArchivedDiamonds(), { allowDrop: force, allowEmpty: force, allowDisplace: displaceKeys }).manifest;
 }
 
 function deployedDiamonds() {
@@ -1674,7 +1679,11 @@ async function main() {
   }
   // The text is PRODUCED after the comparison so an acknowledged displacement
   // the comparison recorded is in the bytes written (r16).
-  writeSnapshotGuarded(outFile, () => `${JSON.stringify(report, null, 2)}\n`, {
+  // Codex #2070 r18 P1 — the manifest lock is held from the inventory
+  // re-check THROUGH the rename (manifest lock outside, artifact lock inside;
+  // every path takes them in that order), so no --fresh can commit between
+  // the comparison and the publication.
+  withManifestLock(ARCHIVE_MANIFEST, () => writeSnapshotGuarded(outFile, () => `${JSON.stringify(report, null, 2)}\n`, {
     regressedBy: (current) => {
       const theirs = new Map();
       for (const r of current.results ?? []) {
@@ -1732,9 +1741,15 @@ async function main() {
       // describing a population this run never scanned (a new Diamond with
       // live producers, a retired one now archived). Re-take the inventory
       // under the manifest lock NOW and refuse the write if it differs at all.
-      const inventoryKey = (d) => `${d.slug}|${d.label}|${String(d.addresses.diamond ?? '').toLowerCase()}|${scopeOf(d.addresses.vpfiToken ?? d.addresses.vpfiMirror)}`;
+      // The COMPLETE record is compared (r18 P1), not only the protected
+      // identity: a concurrent regeneration may correct `deployBlock` — a
+      // permitted correction — and this run's no-code creation evidence was
+      // read at the OLD block.
+      const inventoryKey = (d) =>
+        `${d.slug}|${d.label}|${String(d.addresses.diamond ?? '').toLowerCase()}|${scopeOf(d.addresses.vpfiToken ?? d.addresses.vpfiMirror)}|` +
+        `${d.addresses.chainId ?? 'null'}|${d.addresses.deployBlock ?? 'null'}`;
       const scannedInv = new Set(everything.map(inventoryKey)); // the FULL snapshot taken at start — a --chain run scans a subset of it
-      const nowInv = new Set(withManifestLock(ARCHIVE_MANIFEST, deployedDiamondsUnderLock).map(inventoryKey));
+      const nowInv = new Set(deployedDiamondsUnderLock().map(inventoryKey)); // already under the manifest lock (held through the rename)
       const added = [...nowInv].filter((k) => !scannedInv.has(k));
       const removed = [...scannedInv].filter((k) => !nowInv.has(k));
       if (added.length || removed.length) {
@@ -1762,7 +1777,7 @@ async function main() {
       if (fresh.length) process.stderr.write(`census: ${fresh.length} identity change(s) on explicit acknowledgement — recorded under identityChanges (${all.length} on record)\n`);
       return null;
     },
-  });
+  }));
 
   for (const r of results) {
     const c = r.classes;
