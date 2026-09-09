@@ -482,25 +482,44 @@ export function ForcedCloseCard({
   //  version — a setState here would schedule a second render for a
   //  bookkeeping flag nothing displays.
   const invalidatedFor = useRef<string | null>(null);
+  /** ROUND 60 P1 — the parent's callback held through a ref so its
+   *  IDENTITY is not a dependency of the effect below.
+   *
+   *  `PositionDetails` passes an inline arrow, so every parent render
+   *  produces a new function. Depending on it meant `onClosedOut()` —
+   *  which starts parent refetches — re-rendered the parent, changed the
+   *  identity, and tore this effect down while its own invalidation was
+   *  still in flight. The replacement effect then found `invalidatedFor`
+   *  already holding the hash and declined to retry, so nothing ever
+   *  recorded the refresh: the round-29 LATCH, on a residual a partial
+   *  internal match had left live. The effect triggered the teardown that
+   *  cancelled its own completion. */
+  const onClosedOutRef = useRef(onClosedOut);
+  useEffect(() => {
+    onClosedOutRef.current = onClosedOut;
+  });
   useEffect(() => {
     if (disposition !== 'success' || submittedHash === null) return;
     if (invalidatedFor.current === submittedHash) return;
     invalidatedFor.current = submittedHash;
-    let live = true;
     // ROUND 59 P2 — AWAITED, and its completion is what releases the
     // hold. `invalidateQueries` settles once the refetches it triggered
     // have settled, errors included, so this cannot latch on a failing
     // read the way a timestamp comparison could latch on a clock.
+    //
+    // ROUND 60 P1 — and NOT guarded by a mounted flag. The flag looked
+    // like hygiene and was the latch: it cancelled a completion this
+    // effect's own `onClosedOut()` had caused to be interrupted. It is
+    // not needed, because the value written is KEYED BY HASH — a
+    // resolution arriving for a superseded transaction cannot release
+    // the hold on the current one, since the consumer compares the two.
+    // Correctness here comes from what is written, not from whether the
+    // writer is still current.
     void queryClient
       .invalidateQueries({ queryKey: ['forcedClose'] })
-      .then(() => {
-        if (live) setRefreshedFor(submittedHash);
-      });
-    onClosedOut();
-    return () => {
-      live = false;
-    };
-  }, [disposition, submittedHash, queryClient, onClosedOut]);
+      .then(() => setRefreshedFor(submittedHash));
+    onClosedOutRef.current();
+  }, [disposition, submittedHash, queryClient]);
 
   /** Another tab's submission, adopted here.
    *
