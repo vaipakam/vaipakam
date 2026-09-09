@@ -11626,4 +11626,35 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     );
     expect(r.ok).toBe(false);
   });
+
+  it('a distinctive name on any receiver is read (#2066 accepted breadth)', () => {
+    // Found by auditing the release note against the guard rather than
+    // reading it: the distinctive write names are admitted on the NAME, so a
+    // method of the same name on an unrelated receiver reports too. That is
+    // the r22 trade — these are very often destructured out of their module
+    // and called bare, so requiring one would lose the ordinary spelling —
+    // but the note had described it as covering DECLARATIONS, which is
+    // narrower than what happens. Pinned so the breadth is a decision.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'ta.mjs',
+      'const cfg="configs/custom.jsonc";\nlogger.createWriteStream();\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a bare destructured write is still read (#2066 accepted breadth bounds)', () => {
+    // The miss that breadth buys: requiring a module would lose this.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'tb.mjs',
+      'const { writeFileSync } = require("fs");\nconst cfg="configs/custom.jsonc";\n' +
+        'writeFileSync(cfg, "{}");\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
 });

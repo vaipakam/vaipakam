@@ -60,10 +60,17 @@ write. It was removed. In its place, the generic copy verbs are recognised only
 when they carry a filesystem qualifier, because a declaration named for a
 module's copy function is not something anyone writes; the distinctive names
 never needed the distinction at all. The narrower guarantee is therefore about
-the generic names only: declaring `copy`, `move` or `cp` is not a write, while
-declaring a function named for one of the distinctive APIs still reads as one.
-That is a deliberate, nameable gap rather than an open-ended list of shapes to
-keep recognising.
+the generic names only: declaring `copy`, `move` or `cp` is not a write. The
+distinctive names are read wherever they appear, and that is broader than a
+declaration — a method of the same name on an unrelated receiver is reported
+too, so a table being renamed or a logger opening a write stream will be
+reported in a file that also names the configuration.
+
+That is deliberate and it is the cost of a different miss: these functions are
+very often destructured out of their module and called bare, so requiring a
+module here would lose the ordinary spelling to catch an unusual one. It is
+recorded this way round because the earlier wording said "declaring", which
+described something narrower than what the checker does.
 
 The same rule now covers every generic name the checker reads, because it was
 being applied in one place and not the others. The names for running a command
