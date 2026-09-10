@@ -41,8 +41,9 @@ what a name denotes — which is the real test, and not whether a transformation
 adds or removes characters.
 
 Two smaller corrections outlived all three designs above and were withdrawn in
-the last behaviour-changing round. Each looked obviously safe, and — the part worth keeping — they regressed in
-OPPOSITE directions, so neither is a template for judging the next one:
+the last behaviour-changing round. Each looked obviously safe, and — the part
+worth keeping — they regressed in OPPOSITE directions, so neither is a template
+for judging the next one:
 
 - Treating the build tool's **escaped currency symbol** as inert. It is inert to
   the build tool — and the build tool then hands a single symbol to the shell,
@@ -66,8 +67,8 @@ No behaviour change. The check's logic is what it was.
 - Tests that **assert three current wrong verdicts** — two misses and one false
   report — so a later fix fails them and comes back to the question rather than
   passing silently: a build file variable holding a write is not seen when its
-  assignment sits below the deployment; a recipe
-  marked by something other than a tab is not read as a recipe; and, in the
+  assignment sits below the deployment; a recipe marked by something other than
+  a tab is not read as a recipe; and, in the
   other direction, a runbook sentence naming a write **reports** the deployment
   below it. That third one's test asserts the report, not a miss.
 - Two tests pinning that a bare command line and an inline command span in a
@@ -77,7 +78,8 @@ No behaviour change. The check's logic is what it was.
 ### What is deferred
 
 Every symptom this work set out to fix, plus the limitations found while proving
-them, is recorded as its own issue with a reproduction and what a fix would have
+them — including two false greens surfaced while correcting this record itself —
+is recorded as its own issue with a reproduction and what a fix would have
 to be true of. All are behaviour the check already had, so nothing is made
 worse. Three are additionally pinned by tests that assert the current verdict —
 two of them a miss, one a false report:
@@ -92,6 +94,8 @@ two of them a miss, one a false report:
 | **#2106** | a build file's prerequisites are ordered as written, not as they run |
 | **#2108** | a step naming another interpreter has its body read as shell |
 | **#2104** | a deployment written as a single-line workflow step whose configuration cannot be read is not reported |
+| **#2115** | a Windows helper spelling the command in any casing but title case is not seen |
+| **#2116** | a manifest script that invokes a sibling does not see that sibling's config write |
 | **#2085** | whether this detection should be a declaration rather than an inference — the three withdrawals are the strongest evidence yet that it should |
 
 This PR closes none of them.

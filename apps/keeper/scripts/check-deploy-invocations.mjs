@@ -8940,18 +8940,26 @@ for (const file of walk(REPO_ROOT)) {
   //
   //   - a Windows helper, which `forInterpreter` has already normalised above
   //     into the same form its workflow-body equivalent takes. Both dialects
-  //     get separators and command casing; beyond that they DIFFER — `cmd`
-  //     folds caret continuations, `pwsh` rewrites `$x = 'v'` into `x=v` so the
-  //     shared variable model resolves it, and neither gets the other's rule.
+  //     get separators, and the TITLE-CASE spelling of the command lowered —
+  //     only that one, so `WRANGLER deploy` is still missed although Windows
+  //     runs it (a false green on main too, #2115). Beyond that they DIFFER:
+  //     `cmd` folds caret continuations, `pwsh` rewrites `$x = 'v'` into `x=v`
+  //     so the shared variable model resolves it, and neither gets the other's
+  //     rule.
   //     A SEMANTICS-PRESERVING NORMALISATION: a total, deterministic rewriting
   //     of one spelling into another, deciding nothing about what runs. (It
   //     removes and replaces characters, so "only additive transformations are
   //     safe" is NOT the rule — see the spec.)
   //   - a manifest script, where `rewriteCtx`'s `valueScoped` branch asks the
-  //     question of the DECLARED VALUE rather than the whole file, because a
-  //     sibling script's write is not part of the script being judged. A
-  //     selection — but of a boundary the FORMAT draws, not of "the parts that
-  //     look executable", which is the selection that failed.
+  //     question of the DECLARED VALUE rather than the whole file, because an
+  //     UNRELATED sibling script's write is not part of the script being
+  //     judged. A selection — but of a boundary the FORMAT draws, not of "the
+  //     parts that look executable", which is the selection that failed.
+  //
+  //     Not every sibling is unrelated, and this scope misses the ones that
+  //     are not: `release: pnpm run generate && wrangler deploy` really does
+  //     run `generate`'s write first, and the scan never sees it. A false
+  //     GREEN, present on main too. #2116.
   //
   // Three transformations
   // were tried here and all three withdrawn; this is the record, so the next
@@ -9191,10 +9199,13 @@ for (const file of walk(REPO_ROOT)) {
     // are unaffected.
     // Positions are taken in `text`, the same text the write scan reads, so
     // both ends of the ordering comparison are measured in one coordinate
-    // system. That is the whole requirement, and it is why the #2084
-    // transformations were required to preserve line count while they existed;
-    // all three were withdrawn (#2105), so the only adjustment left here is the
-    // fold compensation above.
+    // system. That is the whole requirement, and it is why the LATER TWO #2084
+    // transformations — Make expansion and Markdown blanking — had to preserve
+    // line count while they existed. The first, the collected executable image,
+    // did not: it translated coordinates through `containerImage.at(...)`
+    // instead, which is a different way to satisfy the same requirement and one
+    // reason it was harder to reason about. All three were withdrawn (#2105),
+    // so the only adjustment left here is the fold compensation above.
     const rawAt = (within) =>
       lineStartOffset(
         text,
