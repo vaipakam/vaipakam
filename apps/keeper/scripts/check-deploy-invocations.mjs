@@ -8946,6 +8946,13 @@ for (const file of walk(REPO_ROOT)) {
   //     `cmd` folds caret continuations, `pwsh` rewrites `$x = 'v'` into `x=v`
   //     so the shared variable model resolves it, and neither gets the other's
   //     rule.
+  //
+  //     THE PWSH REWRITE IS NOT PURELY SEMANTICS-PRESERVING, and an earlier
+  //     version of this note claimed it was. It has no string state, so an
+  //     assignment inside a here-string is rewritten as if it ran — which can
+  //     INVENT a deploy (#2117, a false red on main too). Recognising an
+  //     assignment needs a model of PowerShell's quoting, so it does not
+  //     actually clear the bar the rest of this note sets.
   //     A SEMANTICS-PRESERVING NORMALISATION: a total, deterministic rewriting
   //     of one spelling into another, deciding nothing about what runs. (It
   //     removes and replaces characters, so "only additive transformations are
@@ -8960,6 +8967,11 @@ for (const file of walk(REPO_ROOT)) {
   //     are not: `release: pnpm run generate && wrangler deploy` really does
   //     run `generate`'s write first, and the scan never sees it. A false
   //     GREEN, present on main too. #2116.
+  //
+  //     DO NOT "JUST FOLLOW THE INVOCATION" — see the note below, which
+  //     records that exact traversal being tried in #2066 r17 and withdrawn
+  //     after NINE findings over five rounds. #2116 records the miss; #2085
+  //     (a declaration) is the remedy that does not need the call graph.
   //
   // Three transformations
   // were tried here and all three withdrawn; this is the record, so the next

@@ -11932,9 +11932,16 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     //
     // So #2084 is narrower than "a variable's value is invisible": it is that
     // a Make assignment's POSITION does not constrain when its value is used,
-    // because `=` resolves at use. That also means a fix need not model Make's
-    // variables — relaxing the ordering comparison for Makefiles might do it —
-    // which is worth knowing before anyone rebuilds the expansion.
+    // because `=` resolves at use.
+    //
+    // THAT DOES NOT MAKE IT CHEAP TO FIX, and an earlier version of this
+    // comment suggested it did — "just relax the ordering comparison for
+    // Makefiles". It would trade this miss for false reports: an `UNUSED =
+    // printf '{}' > configs/custom.jsonc` that no recipe references would then
+    // invalidate an earlier deploy, though Make never expands it. Knowing the
+    // later write belongs BEFORE this deploy means relating the recipe's
+    // reference to the assignment — the variable model withdrawn above. #2105
+    // r19.
     //
     // Expanding the recipe was implemented and withdrawn over four review
     // rounds and fifteen findings (see the note at the rewrite question's call
@@ -11959,8 +11966,14 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     // which are misses. Asserted so a future fix announces itself.
     //
     // Nothing in this file performs a write — the sentence DESCRIBES one — but
-    // the guard reads prose as shell and reports the deploy below it. A false
-    // RED, in a check that runs inside typecheck, so it blocks correct work.
+    // the guard reports the deploy below it anyway. A false RED, in a check
+    // that runs inside typecheck, so it blocks correct work.
+    //
+    // NOT because prose is read as SHELL: a `.md` is not a shell file, and
+    // this line classifies as `other`. The report comes from the GENERIC write
+    // matcher recognising the JavaScript-shaped `writeFileSync(...)` in prose.
+    // Worth stating precisely — attributing it to shell parsing sends a future
+    // fix to the wrong classifier (#2105 r19).
     //
     // Blanking the prose was tried three times and withdrawn (#2105 r4-r6).
     // The rule cannot exist: this guard treats a bare, unindented line as an

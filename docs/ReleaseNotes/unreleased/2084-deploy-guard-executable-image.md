@@ -94,7 +94,8 @@ two of them a miss, one a false report:
 | **#2106** | a build file's prerequisites are ordered as written, not as they run |
 | **#2108** | a step naming another interpreter has its body read as shell |
 | **#2104** | a deployment written as a single-line workflow step whose configuration cannot be read is not reported |
-| **#2115** | a Windows helper spelling the command in any casing but title case is not seen |
+| **#2115** | a Windows helper spelling the command in upper or mixed case is not seen (lowercase and title case are) |
+| **#2117** | the PowerShell assignment rewrite has no string state, so an assignment inside a here-string can invent a deployment |
 | **#2116** | a manifest script that invokes a sibling does not see that sibling's config write |
 | **#2085** | whether this detection should be a declaration rather than an inference — the three withdrawals are the strongest evidence yet that it should |
 
