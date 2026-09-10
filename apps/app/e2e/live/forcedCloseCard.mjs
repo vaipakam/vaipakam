@@ -714,7 +714,27 @@ export function forcedCloseVerdict(obs, copy) {
     // can update in between and the body can positively carry a figure
     // the card text does not. Scanning only `text` and `confirmText`
     // ignored a value this drive had actually read.
-    const scanned = [obs.text, obs.bodyText, obs.confirmText]
+    // ROUND 31 P2 — INCLUDING the renders the readiness poll superseded.
+    //
+    // `obs.text` / `obs.bodyText` are the SETTLED render. A card that
+    // stated an amount while its readiness reads were outstanding, and
+    // then settled into clean copy, was positively observed stating it —
+    // and scanning only the final text turned that observation into a
+    // pass. The amount rule is this drive's one absolute claim, so
+    // "clean at the moment we stopped looking" is not a substitute for
+    // it. `seenTexts` carries every render the drive actually read.
+    //
+    // Absent on records that predate the field, and on every path that
+    // never polls, so it is spread defensively rather than assumed —
+    // the same `typeof` discipline the duplicate-control arm uses, and
+    // for the same reason: a record without the field must not change
+    // the verdict.
+    const scanned = [
+      obs.text,
+      obs.bodyText,
+      obs.confirmText,
+      ...(Array.isArray(obs.seenTexts) ? obs.seenTexts : []),
+    ]
       .filter((part) => typeof part === 'string' && part !== '')
       .join('\n');
     const amounts = monetaryAmountsIn(scanned);

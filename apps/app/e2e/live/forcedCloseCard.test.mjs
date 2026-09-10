@@ -1810,3 +1810,59 @@ describe('round 27 review findings', () => {
     expect(v.visibleSubmits).toBeUndefined();
   });
 });
+
+describe('round 31 review findings', () => {
+  const copy = { unknownCopy: FORCED_CLOSE.unknown };
+  const held = {
+    lenderHoldsActive: true,
+    mounted: true,
+    attached: true,
+    saleLocked: false,
+    settled: true,
+    visibleCards: 1,
+    visibleSubmits: 1,
+    bodyPresent: true,
+    bodyVisible: true,
+    bodyText: 'an explanation',
+    text: FORCED_CLOSE.unknown,
+    confirmText: null,
+    confirmExpected: false,
+    submitPresent: true,
+    submitVisible: true,
+    submitDisabled: true,
+  };
+
+  it('FAILS on an amount seen only in a render the readiness poll superseded', () => {
+    // The settled copy is clean. The card nonetheless stated a figure
+    // while its readiness reads were outstanding, and a lender loading
+    // the page in that window saw it. Scanning only the final render
+    // reported this as a pass.
+    const v = forcedCloseVerdict(
+      { ...held, seenTexts: ['You receive 1.5 WETH', FORCED_CLOSE.unknown] },
+      copy,
+    );
+    expect(v.verdict).toBe('fail');
+  });
+
+  it('still passes when every remembered render is clean', () => {
+    const v = forcedCloseVerdict(
+      { ...held, seenTexts: [FORCED_CLOSE.unknown, 'an explanation'] },
+      copy,
+    );
+    expect(v.verdict).toBe('pass');
+  });
+
+  it('ignores the field entirely when it is absent or not an array', () => {
+    // Records predating the field, and every path that never polls,
+    // must not change verdict — the same rule the control-count arm
+    // follows.
+    expect(forcedCloseVerdict({ ...held }, copy).verdict).toBe('pass');
+    expect(
+      forcedCloseVerdict({ ...held, seenTexts: null }, copy).verdict,
+    ).toBe('pass');
+    expect(
+      forcedCloseVerdict({ ...held, seenTexts: 'You receive 1 USDC' }, copy)
+        .verdict,
+    ).toBe('pass');
+  });
+});

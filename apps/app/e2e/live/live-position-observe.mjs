@@ -868,6 +868,57 @@ function revertNameOf(err) {
   return null;
 }
 
+/**
+ * Is this failure the CHAIN failing to answer, rather than this file
+ * being wrong?
+ *
+ * ROUND 31 P2 — an ALLOWLIST, because the denylist I wrote last round
+ * was the same mistake this file argues against thirty lines further
+ * down. `classifyRpcFailure`'s note says it outright: a denylist has to
+ * enumerate every operational code a provider might return, and the ones
+ * it misses are waved through. My `err instanceof ReferenceError ||
+ * TypeError` had to enumerate every way this drive can be wrong about
+ * itself, and it missed most of them — a malformed `account` surfaces as
+ * `ContractFunctionExecutionError`, bad ABI arguments as
+ * `AbiEncodingLengthMismatchError`, and neither would have been
+ * reported. The inert-ordering failure could have recurred exactly as
+ * before, with the same silence.
+ *
+ * The chain is WALKED rather than the outer error inspected, because
+ * viem wraps: `simulateContract` reports a dead endpoint as a
+ * `ContractFunctionExecutionError` whose `cause` is the
+ * `HttpRequestError`. Testing only the outer name would classify every
+ * transport failure as a bug and make the drive throw on a flaky RPC,
+ * which is the opposite error and a far noisier one.
+ *
+ * An undecodable revert counts as transport on purpose. `saleLockedOn`
+ * resolves the reverts it recognises and rethrows only what it could not
+ * read, and "the EVM answered something I cannot parse" is a failure to
+ * determine, not a defect to report.
+ */
+const TRANSPORT_ERROR_NAMES = new Set([
+  'HttpRequestError',
+  'TimeoutError',
+  'WebSocketRequestError',
+  'SocketClosedError',
+  'LimitExceededRpcError',
+  'ResourceUnavailableRpcError',
+  'InternalRpcError',
+  'UnknownRpcError',
+  'RpcRequestError',
+]);
+
+function isTransportFailure(err) {
+  const seen = new Set();
+  let cur = err;
+  while (cur && typeof cur === 'object' && !seen.has(cur)) {
+    seen.add(cur);
+    if (typeof cur.name === 'string' && TRANSPORT_ERROR_NAMES.has(cur.name)) return true;
+    cur = cur.cause;
+  }
+  return false;
+}
+
 async function offsetLockedOn(borrowerTokenId) {
   try {
     const lock = await pub.readContract({
@@ -1160,11 +1211,13 @@ if (ROLE === 'lender') {
       // cannot tell a dead endpoint from a programming error will keep
       // reporting the programming error as a chain condition.
       //
-      // The two are now separated. A transport failure leaves the loan
-      // applicable — the deliberate fail-soft. A `ReferenceError` or
-      // `TypeError` is this drive being wrong about itself, and is
-      // rethrown so the run reports it instead of quietly degrading.
-      if (err instanceof ReferenceError || err instanceof TypeError) throw err;
+      // The two are now separated, and by an ALLOWLIST: a failure is
+      // swallowed only when the error chain positively names a transport
+      // fault. Everything else — this drive being wrong about itself, in
+      // any of the ways it can be — is rethrown so the run reports it
+      // instead of quietly degrading. Round 31 corrected an earlier
+      // denylist here that named two error classes and missed the rest.
+      if (!isTransportFailure(err)) throw err;
       // Unreadable, so unknown, so still a candidate. Ranking a loan
       // down on a read that failed would be a decision made on no
       // evidence, in the direction that costs the run its coverage.
@@ -3421,10 +3474,40 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
     FORCED_CLOSE_COPY.readyCopy.some((sentence) => (v.text ?? '').includes(sentence));
 
   let settled = !saysCheckRunning(snap.text ?? '', FORCED_CLOSE_COPY.unknownCopy);
+  // ROUND 31 P2 — EVERY RENDER THIS DRIVE READ, not just the last one.
+  //
+  // The poll below overwrites `snap` each tick, so only the FINAL text
+  // ever reached the verdict. A card that briefly states an amount while
+  // its readiness reads are outstanding — and then settles into ordinary
+  // ready copy — was positively OBSERVED stating it, and the observation
+  // was thrown away one second later.
+  //
+  // That matters more here than anywhere else in this file because the
+  // amount rule is the one ABSOLUTE claim it makes: nothing on this
+  // surface states a figure it cannot substantiate. "Not at the moment we
+  // stopped looking" is a different and much weaker claim, and it is the
+  // one the code was actually checking. A lender who happens to load the
+  // page during that window sees the figure; the drive is supposed to be
+  // the reason nobody has to find out that way.
+  //
+  // Accumulated rather than scanned in place so the poll keeps its
+  // existing job — deciding when the card has settled — while the
+  // verdict keeps its own, which is judging what was seen. Only the
+  // texts are kept; the flags are deliberately still read from the
+  // settled render, since a transiently disabled control is a legitimate
+  // intermediate state (round 10) and must not be reported as a defect.
+  const seenTexts = [];
+  const remember = (v) => {
+    for (const part of [v?.text, v?.bodyText]) {
+      if (typeof part === 'string' && part !== '') seenTexts.push(part);
+    }
+  };
+  remember(snap);
   const deadline = Date.now() + timeoutMs;
   while ((!settled || readyPending(snap)) && Date.now() < deadline) {
     await page.waitForTimeout(1_000);
     const again = await readCard();
+    remember(again);
     if (again?.hiddenNow) {
       return {
         mounted: false,
@@ -3719,6 +3802,9 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
     confirmText,
     confirmExpected,
     settled,
+    // Every render read during the readiness wait, including the ones
+    // the poll superseded (round 31 P2).
+    seenTexts,
   };
 }
 
