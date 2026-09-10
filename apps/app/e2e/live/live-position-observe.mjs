@@ -2517,11 +2517,17 @@ async function observeForcedClose(page, loan) {
   // Pinning to one block number makes the three facts a snapshot rather
   // than three samples. It also makes them consistent with each other
   // by construction, which no amount of re-reading can achieve.
-  const [live, authorityNow, pinnedSale] = await discovery(
+  const [pinnedBlock, live, authorityNow, pinnedSale] = await discovery(
     `re-reading loan ${loan.id} beside the forced-close scrape`,
     async () => {
-      const blockNumber = await pub.getBlockNumber();
+      // `cacheTime: 0` — the block this snapshot pins itself to must be
+      // the chain's, not one viem answered from a 4-second cache filled
+      // by an earlier visit (round 13 P2). The confirming read below
+      // compares against it, and a comparison between two cached copies
+      // of the same number establishes nothing.
+      const blockNumber = await pub.getBlockNumber({ cacheTime: 0 });
       return Promise.all([
+        blockNumber,
         pub.readContract({
           address: DIAMOND,
           abi: DIAMOND_ABI_VIEM,
@@ -2569,7 +2575,28 @@ async function observeForcedClose(page, loan) {
     const confirmed = await discovery(
       `confirming loan ${loan.id} is still eligible before reporting a missing card`,
       async () => {
-        const head = await pub.getBlockNumber();
+        // ROUND 13 P2 — A GENUINELY NEWER HEAD, OR NO CONFIRMATION.
+        //
+        // Two defects in one line. `getBlockNumber()` is served from
+        // viem's cache (`cacheTime` defaults to `pollingInterval`, 4s,
+        // and this client sets neither), so a call milliseconds after
+        // the pinned one returned THE SAME BLOCK — the confirmation
+        // re-read the identical state and could only ever agree with
+        // itself, which let the false missing-card FAIL through
+        // untouched. And even uncached, the chain need not have moved
+        // yet, so the same reads at the same height prove nothing.
+        //
+        // So: poll uncached for a strictly greater head, briefly. If it
+        // never arrives, the confirmation DID NOT HAPPEN, and the honest
+        // report is that the absence could not be judged — not an
+        // accusation resting on a re-read that never re-read anything.
+        let head = await pub.getBlockNumber({ cacheTime: 0 });
+        const until = Date.now() + 20_000;
+        while (head <= pinnedBlock && Date.now() < until) {
+          await new Promise((r) => setTimeout(r, 1_000));
+          head = await pub.getBlockNumber({ cacheTime: 0 });
+        }
+        if (head <= pinnedBlock) return { unconfirmed: true };
         const [status, holder, sale] = await Promise.all([
           pub.readContract({
             address: DIAMOND,
@@ -2594,20 +2621,22 @@ async function observeForcedClose(page, loan) {
     // walked straight into it: an unclassifiable `'unknown'` marked the
     // position ineligible, which reports "nothing is wrong" for a
     // missing card on the strength of a sale never established.
-    later = {
-      active: Number(confirmed.status.status) === STATUS_ACTIVE,
-      stillHeld:
-        typeof confirmed.holder === 'string' &&
-        confirmed.holder.toLowerCase() === String(observed).toLowerCase(),
-      sale: confirmed.sale,
-    };
+    later = confirmed.unconfirmed
+      ? { unconfirmed: true }
+      : {
+          active: Number(confirmed.status.status) === STATUS_ACTIVE,
+          stillHeld:
+            typeof confirmed.holder === 'string' &&
+            confirmed.holder.toLowerCase() === String(observed).toLowerCase(),
+          sale: confirmed.sale,
+        };
   }
 
-  const { lenderHoldsActive, saleLocked } = reconcileEligibility(
+  const { lenderHoldsActive, saleLocked, absenceUnconfirmed } = reconcileEligibility(
     { lenderHoldsActive: pinnedHoldsActive, saleLocked: pinnedSale },
     later,
   );
-  return { ...card, lenderHoldsActive, saleLocked };
+  return { ...card, lenderHoldsActive, saleLocked, absenceUnconfirmed };
 }
 
 async function readForcedCloseCard(page, timeoutMs = 30_000) {
@@ -2750,7 +2779,33 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
   while ((!settled || readyPending(snap)) && Date.now() < deadline) {
     await page.waitForTimeout(1_000);
     const again = await readCard();
-    if (again === null) break;
+    // ROUND 13 P2 — A CARD THAT VANISHES MID-POLL IS THE VANISHED CASE,
+    // not a reason to keep the last snapshot.
+    //
+    // `break` retained a `mounted: true` reading from a render the page
+    // has since discarded — and the one it most likely retained is the
+    // transient ready-but-disabled pair this loop exists to wait out,
+    // because that pair is why the loop was still running. Downstream,
+    // `mounted` stays true, so the absent-card confirmation is skipped,
+    // and the drive accuses a page that had correctly removed a card it
+    // no longer had grounds to show.
+    //
+    // The SAME shape the initial null returns, deliberately: one event,
+    // one classification. Two spellings of the vanished card were how it
+    // came to be handled two different ways.
+    if (again === null) {
+      return {
+        mounted: true,
+        attached: true,
+        text: null,
+        bodyText: null,
+        bodyPresent: undefined,
+        confirmText: null,
+        confirmExpected: false,
+        submitDisabled: true,
+        settled: false,
+      };
+    }
     snap = again;
     settled = !saysCheckRunning(snap.text ?? '', FORCED_CLOSE_COPY.unknownCopy);
   }

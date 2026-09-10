@@ -1122,3 +1122,149 @@ describe('reconcileEligibility — folding the confirming re-read', () => {
     expect(out.saleLocked).toBe('unknown');
   });
 });
+
+describe('round 13 review findings', () => {
+  const copy = { unknownCopy: FORCED_CLOSE.unknown };
+
+  // ── Proximity is not government ────────────────────────────────────
+  // The old rule accepted any negation within 40 non-period characters,
+  // so a `not` belonging to a DIFFERENT clause vouched for an
+  // affirmative refusal claim — discarding the contradiction the check
+  // exists to catch.
+  it('still exempts the shipped negated refusal', () => {
+    const v = forcedCloseVerdict(
+      {
+        lenderHoldsActive: true,
+        mounted: true,
+        attached: true,
+        saleLocked: false,
+        settled: false,
+        submitDisabled: true,
+        bodyPresent: true,
+        bodyText: FORCED_CLOSE.unknown,
+        text: FORCED_CLOSE.unknown,
+        confirmText: null,
+        confirmExpected: false,
+      },
+      copy,
+    );
+    // Unsettled, not a refusal contradiction — the shipped sentence is
+    // the surface being CORRECT about the distinction.
+    expect(v.verdict).toBe('blocked');
+    expect(v.why).not.toMatch(/refus/i);
+  });
+
+  it('catches an affirmative refusal whose nearest negation is another clause', () => {
+    const text = `${FORCED_CLOSE.unknown} The check is not complete, but the protocol has refused this.`;
+    const v = forcedCloseVerdict(
+      {
+        lenderHoldsActive: true,
+        mounted: true,
+        attached: true,
+        saleLocked: false,
+        settled: false,
+        submitDisabled: true,
+        bodyPresent: true,
+        bodyText: text,
+        text,
+        confirmText: null,
+        confirmExpected: false,
+      },
+      copy,
+    );
+    expect(v.verdict).toBe('fail');
+    expect(v.why).toMatch(/refused/i);
+  });
+
+  // ── Locale-native digits ───────────────────────────────────────────
+  // `\d` is ASCII-only without the `u` flag, so these produced NO
+  // numeric run and the scanner returned clean. Arabic and Hindi are
+  // shipped locales, which made the all-locale calibration green for a
+  // reason that was not coverage.
+  it('finds an amount written in locale-native numerals', () => {
+    expect(monetaryAmountsIn('١٫٥ USDC')).toHaveLength(1); // Arabic-Indic
+    expect(monetaryAmountsIn('१.५ USDC')).toHaveLength(1); // Devanagari
+    expect(monetaryAmountsIn('１２ USDC')).toHaveLength(1); // full-width
+  });
+
+  it('does not fire on a locale-native DURATION', () => {
+    // The exemptions must survive the widened digit class, or the
+    // scanner starts crying wolf in exactly the locales it just learned
+    // to read.
+    expect(monetaryAmountsIn('٣ days')).toEqual([]);
+    expect(monetaryAmountsIn('३ days')).toEqual([]);
+  });
+
+  // ── An absence the confirmation never reached ──────────────────────
+  it('does not accuse the product when no newer block ever arrived', () => {
+    const out = reconcileEligibility(
+      { lenderHoldsActive: true, saleLocked: false },
+      { unconfirmed: true },
+    );
+    expect(out.absenceUnconfirmed).toBe(true);
+    const v = forcedCloseVerdict(
+      {
+        ...out,
+        mounted: false,
+        attached: false,
+        text: null,
+        bodyPresent: false,
+        bodyText: null,
+        confirmText: null,
+        confirmExpected: false,
+        submitDisabled: true,
+        settled: true,
+      },
+      copy,
+    );
+    expect(v.verdict).toBe('blocked');
+    expect(v.blockedKind).toBe('incomplete');
+    expect(v.why).toMatch(/never advanced/);
+  });
+
+  it('outranks the hidden-card arm, which reads from the same unconfirmed DOM pass', () => {
+    const v = forcedCloseVerdict(
+      {
+        ...reconcileEligibility(
+          { lenderHoldsActive: true, saleLocked: false },
+          { unconfirmed: true },
+        ),
+        mounted: false,
+        attached: true,
+        text: null,
+        bodyPresent: false,
+        bodyText: null,
+        confirmText: null,
+        confirmExpected: false,
+        submitDisabled: true,
+        settled: true,
+      },
+      copy,
+    );
+    expect(v.verdict).toBe('blocked');
+    expect(v.why).not.toMatch(/not visible/);
+  });
+
+  it('a confirmed absence is still a FAIL — the gate did not become a mute', () => {
+    const v = forcedCloseVerdict(
+      {
+        ...reconcileEligibility(
+          { lenderHoldsActive: true, saleLocked: false },
+          { active: true, stillHeld: true, sale: false },
+        ),
+        mounted: false,
+        attached: false,
+        text: null,
+        bodyPresent: false,
+        bodyText: null,
+        confirmText: null,
+        confirmExpected: false,
+        submitDisabled: true,
+        settled: true,
+      },
+      copy,
+    );
+    expect(v.verdict).toBe('fail');
+    expect(v.why).toMatch(/absent/);
+  });
+});

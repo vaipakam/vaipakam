@@ -84,18 +84,54 @@ const REFUSAL_CLAIM =
  * matcher above without excluding it would fire on the very copy the
  * rule exists to protect (round 11 P2).
  *
- * So a hit is discarded when a negation governs it within a short
- * window. Deliberately narrow: it only rescues the negated form, and an
- * affirmative "the protocol has refused this" still fails.
+ * So a hit is discarded when a negation GOVERNS it. Deliberately
+ * narrow: it only rescues the negated form, and an affirmative "the
+ * protocol has refused this" still fails.
+ *
+ * ROUND 13 P2 — PROXIMITY IS NOT GOVERNMENT.
+ *
+ * The first version accepted any negation within 40 non-period
+ * characters, which is a distance test wearing a grammar test's
+ * clothes. `The check is not complete, but the protocol has refused
+ * this` puts a `not` inside that window belonging to a DIFFERENT
+ * clause, so an affirmative refusal claim — the contradiction this
+ * check exists to catch — was discarded and the card reported as merely
+ * unsettled.
+ *
+ * A negation governs a refusal when nothing separates them but the
+ * words in between: no clause boundary, no coordinating conjunction.
+ * The shipped copy satisfies that (`not what the protocol has refused`
+ * → ` what the protocol `), and the counterexample does not
+ * (`complete, but the protocol ` → a comma AND a `but`).
  */
-const NEGATED_REFUSAL = /\b(not|never|isn't|is not|nothing)\b[^.]{0,40}$/i;
+const NEGATION = /\b(not|never|isn't|isn’t|no|nothing)\b/gi;
+/** A comma, a dash, a semicolon or a conjunction — a new clause starts. */
+const CLAUSE_BREAK = /[,;:—–]|\b(but|however|yet|although|though|whereas|and)\b/i;
+
+/** Does a negation in `prefix` govern a refusal beginning right after it? */
+function refusalIsNegated(prefix) {
+  const scan = new RegExp(NEGATION.source, 'gi');
+  let m;
+  let lastEnd = -1;
+  while ((m = scan.exec(prefix)) !== null) lastEnd = m.index + m[0].length;
+  if (lastEnd < 0) return false;
+  const between = prefix.slice(lastEnd);
+  // Still bounded — a negation forty characters back is not governing
+  // anything either, clause break or no clause break.
+  return between.length <= 40 && !CLAUSE_BREAK.test(between);
+}
 
 /** The first refusal claim in `text` that no negation governs, or null. */
 function firstUnnegatedRefusal(text) {
   const scan = new RegExp(REFUSAL_CLAIM.source, 'gi');
   let m;
   while ((m = scan.exec(text)) !== null) {
-    if (!NEGATED_REFUSAL.test(text.slice(0, m.index))) return m[0];
+    // Sentence-scoped: a negation in an EARLIER sentence never governs
+    // this one, which the old `[^.]{0,40}` encoded as a side effect of
+    // its character class and is stated directly here.
+    const prefix = text.slice(0, m.index);
+    const sentence = prefix.slice(prefix.lastIndexOf('.') + 1);
+    if (!refusalIsNegated(sentence)) return m[0];
   }
   return null;
 }
@@ -150,7 +186,20 @@ export function monetaryAmountsIn(text) {
   // Numbers with optional grouping and decimals. The separators are
   // locale-dependent — the console formats for the reader's language —
   // so both `,` and `.` are accepted as either role.
-  const NUMBER = /\d[\d.,  ']*\d|\d/g;
+  // ROUND 13 P2 — UNICODE DECIMAL DIGITS, NOT ASCII.
+  //
+  // `\d` without the `u` flag is `[0-9]`, so `١٫٥ USDC`, `१.५ USDC` and
+  // full-width `１２ USDC` produced NO numeric run at all and the scanner
+  // returned clean. Arabic and Hindi are SHIPPED locales, so the
+  // all-locale calibration was passing for those bundles because it
+  // could not tokenize them — the worst way for a guard on funds copy to
+  // be green, since it looks exactly like coverage.
+  //
+  // `\p{Nd}` covers every decimal-digit script. The separator class gains
+  // the Arabic decimal and thousands marks for the same reason: a figure
+  // written with them would otherwise split into two runs, and each half
+  // would then be judged on its own neighbours rather than as one number.
+  const NUMBER = /\p{Nd}[\p{Nd}.,٫٬  ']*\p{Nd}|\p{Nd}/gu;
   let m;
   while ((m = NUMBER.exec(text)) !== null) {
     const start = m.index;
@@ -359,6 +408,24 @@ export function reconcileEligibility(pinned, later) {
   const saleLocked = pinned?.saleLocked ?? false;
   if (!later) return { lenderHoldsActive, saleLocked };
 
+  // ROUND 13 P2 — THE CONFIRMATION CAN FAIL TO HAPPEN.
+  //
+  // The confirming read only means something if it observed a STRICTLY
+  // NEWER block than the snapshot: its whole job is to catch a page
+  // whose provider is ahead of this observer. viem served the head from
+  // a 4-second cache, so the "later" read was routinely the SAME block —
+  // a re-read that could only agree with itself, waving through the
+  // false missing-card FAIL it was added to prevent.
+  //
+  // When no newer head arrives, nothing was confirmed, and the absence
+  // must not be reported as a product defect on evidence never
+  // obtained. Eligibility is left as the snapshot found it and the
+  // absence is flagged unconfirmed, which the verdict reports as an
+  // incomplete observation.
+  if (later.unconfirmed) {
+    return { lenderHoldsActive, saleLocked, absenceUnconfirmed: true };
+  }
+
   if (!later.active || !later.stillHeld) {
     return { lenderHoldsActive: false, saleLocked };
   }
@@ -551,6 +618,24 @@ export function forcedCloseVerdict(obs, copy) {
 
   // ---- 3. The ABSENCE claim, which eligibility legitimately gates. --
   if (!obs.mounted) {
+    // ROUND 13 P2 — AN ABSENCE THE CONFIRMATION NEVER REACHED.
+    //
+    // The missing-card FAIL is the one verdict here whose cost is a
+    // wrongly accused product, which is why it is gated on a re-read at
+    // a LATER block: a page whose provider is a block ahead can be
+    // correctly showing nothing. When that later block never arrived,
+    // the gate did not run, and reporting the FAIL anyway would rest it
+    // on evidence the drive did not obtain.
+    //
+    // Above the hidden-card arm deliberately: `attached` is read from
+    // the same DOM pass, so it is equally unconfirmed.
+    if (obs.absenceUnconfirmed) {
+      return {
+        verdict: 'blocked',
+        blockedKind: 'incomplete',
+        why: "the card was absent, but this observer's chain view never advanced past the block it scraped at, so a page reading ahead of it could not be ruled out",
+      };
+    }
     // The accepted-sale case already returned above, for mounted and
     // absent alike — one rule rather than two.
     if (obs.attached) {
