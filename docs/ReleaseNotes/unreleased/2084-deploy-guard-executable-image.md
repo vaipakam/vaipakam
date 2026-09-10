@@ -59,3 +59,21 @@ folded in: a deployment written as a single-line workflow step, whose selected
 configuration cannot be read at all, is not reported. That is independent of
 everything above — it reproduces with the configuration simply absent — and
 belongs to its own change.
+
+Review of the change found the executable text still incomplete in three ways,
+each of which would have let a rewritten configuration pass as trustworthy. A
+step written in another language — a Python step that writes the file — was
+kept out, because the test that admits a step asks whether reading it as shell
+would invent a deployment, which is the right question for finding deployments
+and the wrong one for finding writes. A build file that runs each recipe in a
+single shell took an earlier path that never consulted the all-recipes mode, so
+a prerequisite recipe expanding to a write was absent although it runs first.
+And where one step body expands into several variants, all of them keep the
+source line they came from, so locating a command by line alone could answer
+with the wrong variant. The first was a regression against the previous
+behaviour and the second a gap that predates this change; the third is a real
+imprecision for which no failing case could be constructed, and the guard
+against it says so rather than claiming a fix.
+
+A step that does not run is still excluded. Admitting more executable text must
+not admit text that never executes, and a disabled step remains out.

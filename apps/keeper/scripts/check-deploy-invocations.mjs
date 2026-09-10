@@ -6605,7 +6605,7 @@ function stripConsolePrompts(blockLines) {
  * The common indent is stripped so `logicalLines` sees ordinary commands, and
  * each line keeps the number of the physical line it came from.
  */
-function indentedBlocks(lines, indentRe, startAt = 0) {
+function indentedBlocks(lines, indentRe, startAt = 0, all = false) {
   const out = [];
   let i = startAt;
   let blockId = 0;
@@ -6625,7 +6625,11 @@ function indentedBlocks(lines, indentRe, startAt = 0) {
     // composition defect the prefilter had, in the newer reader. Found by
     // mutation: widening the filter changed a verdict, which a filter that was
     // only a blast-radius bound could not have done.
+    // …or unconditionally, for the executable image: a block that carries no
+    // deploy still RUNS, and under `.ONESHELL:` it is how a prerequisite recipe
+    // reaches the config (#2105 r1).
     if (
+      all ||
       body.some(
         (l) => new RegExp(ANY_DEPLOY_RE).test(l) || new RegExp(ANY_DEPLOY_RE).test(dequote(l)),
       )
@@ -6690,11 +6694,20 @@ function buildExecutableImage(entries) {
   const image = sorted.map((e) => e.text).join('\n');
   return {
     text: image,
-    at(line, within) {
+    at(line, body, within) {
       // The LINE, then the offset within it — the same two-part answer
       // `lineStartOffset` gives, in image space. A rewrite and a deploy often
       // share one line, so the within-line part is not optional.
-      const i = sorted.findIndex((e) => e.line === line);
+      //
+      // …and the line ALONE does not identify a region. One `run:` body expands
+      // into a block per matrix variant, and every variant keeps the source
+      // line it came from, so a line-only lookup answers with the FIRST variant
+      // and a later variant's deploy is positioned before its own rewrite
+      // (#2105 r1). The entry's own text disambiguates them, and is stable
+      // where a block id is not: the image is a separate derivation from the
+      // scan's, so their block numbering does not correspond.
+      const exact = sorted.findIndex((e) => e.line === line && e.text === body);
+      const i = exact !== -1 ? exact : sorted.findIndex((e) => e.line === line);
       if (i !== -1) {
         return starts[i] + (typeof within === 'number' && within >= 0 ? within : 0);
       }
@@ -6728,7 +6741,12 @@ function makefileBlocks(text, all = false) {
   const lines = text
     .split('\n')
     .map((l) => (/^\t/.test(l) ? expandMk(l.replace(/^(\t+)[@+-]+\s*/, '$1')) : l));
-  if (oneshell) return indentedBlocks(lines, /^\t/);
+  // `.ONESHELL:` runs a whole recipe in one shell, so the recipes are indented
+  // blocks rather than per-line commands — and this returned BEFORE `all` was
+  // consulted, so the image lost every recipe that carries no deploy of its
+  // own. A prerequisite recipe expanding to a write is exactly that shape, and
+  // `make deploy` runs it first (#2105 r1).
+  if (oneshell) return indentedBlocks(lines, /^\t/, 0, all);
   // One block per PHYSICAL recipe line, so nothing carries between them. A
   // backslash continuation is still one command and `logicalLines` folds it,
   // which is why the run is walked rather than each line taken alone.
@@ -6989,9 +7007,16 @@ function embeddedShellLines(text, isYaml = false, isMarkdown = false, all = fals
       // an argv call names its own executable and arguments, and what the guard
       // needs from the step is WHERE it runs.
       const launchesDeploy = launchesDeployText(body);
+      // …and the EXECUTABLE IMAGE takes a non-shell step too. The shell test
+      // above asks "would scanning this body as shell invent a deploy" — right
+      // for the scan, wrong for the image, which is asked what the workflow
+      // RUNS before the deploy. A `shell: python` step that writes the config
+      // and a later shell step that deploys it is a real sequence, and omitting
+      // the writer made the guard bless it (#2105 r1). A disabled step still
+      // does not run, so that half of the test stands.
       if (
         !isYaml ||
-        ((stepIsShell(lines, i) || launchesDeploy) && !stepIsDisabled(lines, i))
+        ((all || stepIsShell(lines, i) || launchesDeploy) && !stepIsDisabled(lines, i))
       ) {
         const interp = isYaml ? stepShellName(lines, i) : null;
         const env = isYaml ? stepEnvVars(lines, i) : null;
@@ -9180,7 +9205,7 @@ for (const file of walk(REPO_ROOT)) {
     // executable text.
     const rawAt = (within) =>
       containerImage
-        ? containerImage.at(lineNo, within)
+        ? containerImage.at(lineNo, line, within)
         : lineStartOffset(
             text,
             lineNo,

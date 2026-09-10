@@ -11968,4 +11968,81 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     );
     expect(r.ok).toBe(false);
   });
+
+  // ---- Codex #2105 r1: the image was missing executable text ----
+
+  it('a non-shell step that writes still counts (#2105 r1)', () => {
+    // A `shell: python` step is kept out of the SCAN unless it launches a
+    // deploy — right there, wrong for the image, which is asked what the
+    // workflow RUNS before deploying. Omitting the writer made the guard bless
+    // a deploy of a config that step had rewritten: a REGRESSION against main,
+    // which reported this shape.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      '.github/workflows/py.yml',
+      'name: deploy\non: push\njobs:\n  d:\n    runs-on: ubuntu-latest\n    steps:\n' +
+        '      - shell: python\n        run: |\n          from pathlib import Path\n' +
+        '          Path("configs/custom.jsonc").write_text("{}")\n' +
+        '      - run: |\n          wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a disabled step is still not executable (#2105 r1 bounds)', () => {
+    // BOUNDS GUARD — admitting non-shell steps to the image must not admit
+    // steps that do not run at all. `if: false` keeps its half of the test.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      '.github/workflows/off.yml',
+      'name: deploy\non: push\njobs:\n  d:\n    runs-on: ubuntu-latest\n    steps:\n' +
+        '      - if: false\n        shell: python\n        run: |\n' +
+        '          from pathlib import Path\n' +
+        '          Path("configs/custom.jsonc").write_text("{}")\n' +
+        '      - run: |\n          wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a ONESHELL prerequisite recipe writes too (#2105 r1)', () => {
+    // `.ONESHELL:` routes recipes through `indentedBlocks`, which returned
+    // before the all-recipes mode was consulted — so a prerequisite recipe
+    // carrying no deploy of its own was absent from the image, although
+    // `make deploy` runs it first.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'Makefile',
+      '.ONESHELL:\n\ngen:\n\t$(GENERATE)\n\ndeploy: gen\n' +
+        '\twrangler deploy --config configs/custom.jsonc\n\n' +
+        "GENERATE = printf '{}' > configs/custom.jsonc\n",
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('one matrix variant does not borrow another position (#2105 r1 bounds)', () => {
+    // BOUNDS GUARD, and stated as one because I could not build a failing case.
+    // Every matrix expansion of one `run:` body keeps the SOURCE line it came
+    // from, so a line-only lookup answers with the first variant — a real
+    // imprecision, and the locator now keys on the entry's own text as well.
+    // But this fixture passes with that change REVERTED, so it demonstrates no
+    // defect: it pins the behaviour rather than the fix.
+    //
+    // Both configs are seeded deliberately: with one missing, this reports for
+    // the unrelated reason that its identity cannot be read, which is how the
+    // first attempt at this fixture passed for the wrong reason.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    seed('configs/other.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      '.github/workflows/matrix.yml',
+      'name: deploy\non: push\njobs:\n  d:\n    runs-on: ubuntu-latest\n' +
+        '    strategy:\n      matrix:\n        cfg: [other, custom]\n    steps:\n' +
+        '      - run: |\n' +
+        "          printf '{}' > configs/${{ matrix.cfg }}.jsonc\n" +
+        '          wrangler deploy --config configs/${{ matrix.cfg }}.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
 });
