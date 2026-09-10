@@ -293,3 +293,21 @@ export function getterAgreement({ headRows, routed }) {
   }
   return out;
 }
+
+/**
+ * #2095 r5 P1 — without the era-complete read there is no proof on the
+ * enumerable path. A routed getter reads only the layout its facet was
+ * compiled from, so a row written under another era's layout is invisible to
+ * it; the era-complete read is what excludes that. When that read is
+ * unavailable (no table, a rejected table, a HEAD mismatch) every class the
+ * getters called proven is downgraded to indeterminate. Pure; exported for
+ * the test.
+ */
+export function downgradeWithoutEraRead(classes, reason) {
+  const out = {};
+  for (const [name, c] of Object.entries(classes)) {
+    if (c.status !== 'proven') { out[name] = c; continue; }
+    out[name] = { ...c, status: 'indeterminate', provenBy: undefined, indeterminateReason: `the era-complete storage read is unavailable (${reason}) — a routed getter reads only its facet's layout, so a row at another era's slot cannot be excluded; refusing to certify` };
+  }
+  return out;
+}

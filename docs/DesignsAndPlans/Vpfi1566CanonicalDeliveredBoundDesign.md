@@ -6066,6 +6066,23 @@ rows, zero getter disagreements over 215 loans, twenty-four earlier-era
 readings attributed to current fields and ignored, 10,380 hash-pinned slot
 reads in all; it is the canonical artifact.
 
+**Review round 5 closed two doors the read had left on its own frame.** The
+walker discovered the inline structs that precede a target only from HEAD's
+source, so a struct that preceded a target at an earlier revision and was
+later renamed or removed would have shifted every field after it while it
+lived — and a member added to it then would have opened an era the table
+never built. The walker now discovers those structs at every revision it
+walks, compares each while it exists, and reports the ones HEAD no longer
+embeds; a struct HEAD lacks is not held to the prefix property, because its
+removal from `Storage` is already `Storage`'s own event. On the real history
+the set is unchanged — the two inline structs HEAD embeds are the only ones
+that ever preceded a target — so the table stands. And the enumerable path
+had recorded an unavailable era-complete read as a note while leaving every
+getter-derived class proven, which is exactly the case where a routed getter
+reading its own facet's layout can be wrong: without the read there is no
+proof, and every such class is now indeterminate with the reason the read
+was refused.
+
 ### 7a. What the provenance walk found, and how the design changes (2026-09-09)
 
 The walk in question 2 was built first, and it answered before a single slot

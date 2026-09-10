@@ -91,7 +91,7 @@
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync, renameSync, rmSync } from 'node:fs';
 import { readManifest, regenerateEntries, withManifestLock, writeSnapshotGuarded, livePublicationsInProgress } from './archive-manifest.mjs';
 import { loadSlots, loadEras } from './storage-slots.mjs';
-import { prepareStorageRead, readCountersByStorage, scanRowsByStorage, intentVerdictFromStorage, mergeHistoricalRows, classifyEarlierCounters, markAliasedRows, splitByHeadSlot, getterAgreement, MAX_STORAGE_LOAN_SCAN } from './census-storage-read.mjs';
+import { prepareStorageRead, readCountersByStorage, scanRowsByStorage, intentVerdictFromStorage, mergeHistoricalRows, classifyEarlierCounters, markAliasedRows, splitByHeadSlot, getterAgreement, downgradeWithoutEraRead, MAX_STORAGE_LOAN_SCAN } from './census-storage-read.mjs';
 
 /** Sum a row field as a decimal string. A function declaration, so it is hoisted above every branch that returns early (#2095 r1 P2). */
 function sum(rows, field) {
@@ -2333,7 +2333,11 @@ async function censusDeployment(dep) {
       }
     }
   } else {
-    result.scanned.earlierEraReadUnavailable = STORAGE_READ.ok ? undefined : STORAGE_READ.reason;
+    // #2095 r5 P1 — no era-complete read, no getter-derived proof: the routed
+    // getters alone cannot exclude a row written under another era's layout
+    result.scanned.earlierEraReadUnavailable = STORAGE_READ.reason;
+    result.provenBy = undefined;
+    result.classes = downgradeWithoutEraRead(result.classes, STORAGE_READ.reason);
   }
   return result;
 }

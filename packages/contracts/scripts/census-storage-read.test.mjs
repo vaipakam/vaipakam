@@ -1,7 +1,7 @@
 // census-storage-read.test.mjs — the era-complete storage read's rules (#1566 §7/§7a), over fake readers.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { prepareStorageRead, readCountersByStorage, scanRowsByStorage, intentVerdictFromStorage, eraSlotsExcept, mergeHistoricalRows, aliasOf, classifyEarlierCounters, markAliasedRows, splitByHeadSlot, getterAgreement, ROW } from './census-storage-read.mjs';
+import { prepareStorageRead, readCountersByStorage, scanRowsByStorage, intentVerdictFromStorage, eraSlotsExcept, mergeHistoricalRows, aliasOf, classifyEarlierCounters, markAliasedRows, splitByHeadSlot, getterAgreement, downgradeWithoutEraRead, ROW } from './census-storage-read.mjs';
 import { memberSlot, rowSlot } from './storage-slots.mjs';
 
 const H = (n) => '0x' + n.toString(16).padStart(64, '0');
@@ -172,4 +172,20 @@ test('HEAD-slot rows are reconciled with the routed getter both ways, never merg
   const amt = getterAgreement({ headRows: head, routed: { vpfiHeldCustody: [{ loanId: '1', vpfiHeld: '6' }], rebateRows: [{ loanId: '3', rebateAmount: '4' }], fallbackSnapshotCustody: [], liveIntentCommits: [{ loanId: '7' }] } });
   assert.deepEqual(amt.vpfiHeldCustody, [{ loanId: '1', storage: '5', getter: '6' }]);
   assert.deepEqual(amt.liveIntentCommits, []);
+});
+
+test('without the era-complete read no getter-derived class stays proven (#2095 r5 P1)', () => {
+  const classes = {
+    vpfiHeldCustody: { status: 'proven', provenBy: undefined, count: 0, total: '0', rows: [] },
+    rebateRows: { status: 'proven', provenBy: 'no-loans-ever-created', count: 0, total: '0', rows: [] },
+    fallbackSnapshotCustody: { status: 'indeterminate', indeterminateReason: 'already undetermined', count: 0, total: '0', rows: [] },
+    liveIntentCommits: { status: 'non-empty', count: 1, total: '5', rows: [{ loanId: '1' }] },
+  };
+  const out = downgradeWithoutEraRead(classes, 'HEAD mismatch');
+  assert.equal(out.vpfiHeldCustody.status, 'indeterminate');
+  assert.equal(out.rebateRows.status, 'indeterminate');
+  assert.equal(out.rebateRows.provenBy, undefined, 'the routed zero-loans proof is withdrawn too');
+  assert.match(out.rebateRows.indeterminateReason, /HEAD mismatch/);
+  assert.equal(out.fallbackSnapshotCustody.indeterminateReason, 'already undetermined', 'an already-indeterminate class keeps its reason');
+  assert.equal(out.liveIntentCommits.status, 'non-empty', 'a found row is not hidden by the downgrade');
 });

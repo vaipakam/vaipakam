@@ -111,7 +111,7 @@ library LibVaipakam {
   commit(src(''), 'v1', '2026-05-02T00:00:00Z');
   commit(src('uint256 b;'), 'v2 config grows', '2026-06-01T00:00:00Z');
   const w = walkProvenance({ repo, libPath: lib, since: '2026-05-01', structs: ['Storage', 'Row'], fields: ['intentCommits'] });
-  assert.deepEqual(w.inlineStructs, { local: ['Config'], external: [] });
+  assert.deepEqual(w.inlineStructs, { local: ['Config'], external: [], historical: [] });
   assert.equal(w.changeEvents.length, 1);
   assert.equal(w.changeEvents[0].struct, 'Config');
   assert.equal(w.changeEvents[0].kind, 'append', 'an append inside an inline struct grows its footprint');
@@ -137,4 +137,33 @@ test('a storage-position change is an era for every field, and the fingerprint i
   assert.equal(layoutFingerprint(src(B), ['Storage', 'Row'], ['intentCommits']), w.headFingerprint);
   assert.notEqual(layoutFingerprint(src(A), ['Storage', 'Row'], ['intentCommits']), w.headFingerprint);
   assert.equal(storagePositionOf(src(B)).position, B);
+});
+
+test('an inline struct that preceded a target at an earlier revision is tracked while it lived, even when HEAD no longer embeds it (#2095 r5 P1)', () => {
+  const src = (oldMembers, embedOld) => `
+library LibVaipakam {
+    struct Old { uint256 x; ${oldMembers} }
+    struct Row { bytes32 orderHash; }
+    struct Storage {
+        uint256 nextLoanId;
+        ${embedOld ? 'Old old;' : ''}
+        mapping(uint256 => Row) intentCommits;
+    }
+}`;
+  const repo = mkdtempSync(join(tmpdir(), 'prov-hist-inline-'));
+  const lib = 'contracts/src/libraries/LibVaipakam.sol';
+  mkdirSync(join(repo, 'contracts/src/libraries'), { recursive: true });
+  const g = (...a) => execFileSync('git', a, { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  g('init', '-q'); g('config', 'user.email', 't@t'); g('config', 'user.name', 't');
+  const commit = (s, msg, date) => { writeFileSync(join(repo, lib), s); g('add', lib); execFileSync('git', ['commit', '-q', '-m', msg, '--date', date], { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, GIT_COMMITTER_DATE: date, GIT_AUTHOR_DATE: date } }); };
+  commit(src('', true), 'v1 Old precedes the target', '2026-05-02T00:00:00Z');
+  commit(src('uint256 y;', true), 'v2 Old grows — shifts intentCommits', '2026-06-01T00:00:00Z');
+  commit(src('uint256 y;', false), 'v3 Old removed from Storage', '2026-07-01T00:00:00Z');
+  const w = walkProvenance({ repo, libPath: lib, since: '2026-05-01', structs: ['Storage', 'Row'], fields: ['intentCommits'] });
+  assert.deepEqual(w.inlineStructs.local, [], 'HEAD embeds no inline struct before the target');
+  assert.deepEqual(w.inlineStructs.historical, ['Old'], 'but an earlier revision did');
+  const kinds = w.changeEvents.map((e) => `${e.struct} ${e.kind}`);
+  assert.ok(kinds.includes('Old append'), `the growth of Old while it lived is an era: ${kinds.join(' | ')}`);
+  assert.ok(kinds.includes('Storage removal'), `its removal from Storage is Storage's own era: ${kinds.join(' | ')}`);
+  assert.deepEqual(w.violations.map((v) => v.struct), ['Storage', 'Storage'], 'the two revisions that embedded Old are Storage prefix violations; Old itself is not compared against a HEAD that lacks it');
 });

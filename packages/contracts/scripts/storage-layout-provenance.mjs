@@ -258,6 +258,8 @@ export function walkProvenance({ repo = REPO_ROOT, libPath = LIB_PATH, since = D
   const prevSeq = {};
   /** The storage position at every commit: a change is an era for EVERY field (#2095 r2 P1). */
   const positionEras = [];
+  /** Inline structs that preceded a target at SOME revision but not at HEAD (#2095 r5 P1): tracked while they existed. */
+  const historicalInline = new Set();
   for (const f of fields) introducedAt[f] = null;
   for (const c of commits) {
     let src;
@@ -266,22 +268,40 @@ export function walkProvenance({ repo = REPO_ROOT, libPath = LIB_PATH, since = D
     } catch {
       continue; // the file did not exist at this commit — nothing was deployable from it
     }
+    // The inline structs before a target are discovered at EVERY revision, not
+    // only at HEAD (#2095 r5 P1): one that was later renamed or removed still
+    // shifted every field after it while it lived, and a member added to it
+    // then is a layout era of its own.
+    let tracked = structs;
+    if (fields.length) {
+      try {
+        const here = inlineStructsBefore(src, fields).local;
+        for (const n of here) if (!inline.local.includes(n)) historicalInline.add(n);
+        tracked = [...new Set([...structs, ...here])];
+      } catch {
+        // no parseable Storage at this revision — the row structs are still compared
+      }
+    }
     const pos = storagePositionOf(src)?.position ?? null;
     const lastPos = positionEras[positionEras.length - 1];
     if (!lastPos || lastPos.position !== pos) {
       if (lastPos) changeEvents.push({ commit: c.sha, date: c.date, struct: '(storage position)', firstDifferentIndex: 0, before: lastPos.position ?? '(none)', after: pos ?? '(none)', lengthDelta: 0, kind: 'namespace-change' });
       positionEras.push({ position: pos, from: c.date, fromCommit: c.sha, to: c.date });
     } else lastPos.to = c.date;
-    for (const s of structs) {
+    for (const s of tracked) {
       let seq;
       try {
         seq = extractDeclarations(src, s);
       } catch {
         continue; // the struct did not exist yet
       }
-      const v = isPrefix(seq, today[s]);
-      if (!v.ok) violations.push({ commit: c.sha, date: c.date, struct: s, index: v.at, reason: v.reason });
-      for (const r of v.renames) renames.add(`${s}@${r.index}: ${r.was} → ${r.now}`);
+      // the prefix property is against HEAD; a struct HEAD no longer embeds has
+      // nothing to be a prefix of — its removal from Storage is Storage's own event
+      if (today[s]) {
+        const v = isPrefix(seq, today[s]);
+        if (!v.ok) violations.push({ commit: c.sha, date: c.date, struct: s, index: v.at, reason: v.reason });
+        for (const r of v.renames) renames.add(`${s}@${r.index}: ${r.was} → ${r.now}`);
+      }
       const prev = prevSeq[s];
       if (prev) {
         const a = prev.map(layoutType);
@@ -327,7 +347,7 @@ export function walkProvenance({ repo = REPO_ROOT, libPath = LIB_PATH, since = D
     libPath,
     commitsWalked: commits.length,
     structs: Object.fromEntries(structs.map((s) => [s, today[s].length])),
-    inlineStructs: inline,
+    inlineStructs: { ...inline, historical: [...historicalInline] },
     fields: Object.fromEntries(fields.map((f) => [f, { todayIndex: todayIndex[f], introducedAt: introducedAt[f] }])),
     renames: [...renames],
     violations,
@@ -363,7 +383,7 @@ function main() {
     for (const [f, info] of Object.entries(v.fields)) {
       process.stdout.write(`  ${f.padEnd(24)} today index ${String(info.todayIndex).padStart(4)}  introduced ${info.introducedAt ? `${info.introducedAt.commit.slice(0, 9)} (${info.introducedAt.date.slice(0, 10)}, index ${info.introducedAt.index})` : 'before the walk began'}\n`);
     }
-    process.stdout.write(`  inline structs before the targets: ${v.inlineStructs.local.join(', ') || 'none'}${v.inlineStructs.external.length ? ` (external, assumed stable: ${v.inlineStructs.external.join(', ')})` : ''}\n`);
+    process.stdout.write(`  inline structs before the targets: ${v.inlineStructs.local.join(', ') || 'none'}${v.inlineStructs.external.length ? ` (external, assumed stable: ${v.inlineStructs.external.join(', ')})` : ''}${v.inlineStructs.historical.length ? ` (at earlier revisions only: ${v.inlineStructs.historical.join(', ')})` : ''}\n`);
     for (const r of v.renames) process.stdout.write(`  note: rename (slot unchanged) ${r}\n`);
     for (const e of v.changeEvents) process.stdout.write(`  CHANGE ${e.commit.slice(0, 9)} (${e.date.slice(0, 10)}) ${e.struct} ${e.kind} at index ${e.firstDifferentIndex} (length ${e.lengthDelta >= 0 ? '+' : ''}${e.lengthDelta}): "${e.before.slice(0, 60)}" → "${e.after.slice(0, 60)}"\n`);
     for (const [f, eras] of Object.entries(v.indexEras)) if (eras.length > 1) process.stdout.write(`  eras ${f}: ${eras.map((e) => `index ${e.index} ${e.from.slice(0, 10)}..${e.to.slice(0, 10)}`).join(' | ')}\n`);

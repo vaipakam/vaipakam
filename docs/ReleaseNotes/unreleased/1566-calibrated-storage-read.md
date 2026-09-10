@@ -21,6 +21,7 @@ every layout era used, and a row counts as absent only when it is zero at all
 of them. What storage shows at today's slot is checked against what the
 getter reported, loan by loan and in both directions, so a getter cut from
 an older layout than the one the census assumes cannot certify a row away.
+Where that era table cannot be read at all, no getter-based proof is issued.
 A bare shell is settled the same way from its loan counter, whose slot never
 moved.
 
