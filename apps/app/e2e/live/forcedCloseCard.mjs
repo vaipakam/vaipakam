@@ -305,9 +305,75 @@ export function saysCheckRunning(text, unknownCopy) {
  * @property {boolean} settled   the readiness reads finished
  * @property {boolean} lenderHoldsActive  chain says: this wallet holds
  *   the lender position AND the loan is Active
- * @property {boolean} saleLocked  the lender position token carries the
- *   early-withdrawal sale lock, which correctly unmounts the card
+ * @property {boolean|'unknown'} saleLocked  does an ACCEPTED sale
+ *   awaiting completion explain this card's absence? TRI-STATE since
+ *   round 12: `false` no, `true` yes, `'unknown'` the probe could not
+ *   classify. `'unknown'` is not a weak `true` — it is the absence of
+ *   an answer, and the verdict reports the two differently
  */
+
+/**
+ * Fold the CONFIRMING re-read into the pinned snapshot's eligibility.
+ *
+ * The driver pins status / ownership / sale to one block beside the DOM
+ * scrape, and then — only when the card was ABSENT on a position that
+ * snapshot calls eligible — re-reads all three at a later head, because
+ * the deployed bundle can be a block ahead of this observer and the
+ * card may be correctly absent. This decides what that second read did
+ * to the first one's verdict.
+ *
+ * IT IS HERE, AND NOT IN THE DRIVER, FOR THE REASON `visitVerdict.mjs`
+ * IS: as an inline predicate it could only be exercised by driving a
+ * live chain into each state, and the live chain does not carry them —
+ * so every defect in it has had to be found by reading. It was written
+ * inline, and the first thing that happened was a defect:
+ * `later.sale` was consulted with a TRUTHINESS test after round 12 made
+ * the probe tri-state, so `'unknown'` marked the position ineligible.
+ * That reports `inapplicable` — nothing is wrong — for a missing card
+ * on the strength of an accepted sale that was never established. It is
+ * precisely the finding round 12 raised, surviving in the one branch
+ * whose job is deciding whether an absent card is a FAIL.
+ *
+ * ORDER IS THE WHOLE CONTENT of this function, and it runs
+ * established-facts-first:
+ *
+ *   1. Terminal, or transferred away — ESTABLISHED. The position has
+ *      left the eligible set, which explains the absent card exactly,
+ *      so this outranks an unresolved sale probe: a known reason beats
+ *      an unknown one.
+ *   2. An accepted sale — ESTABLISHED. Also explains it, and naming the
+ *      sale is a better reason than the generic ineligibility the old
+ *      code reported for this case.
+ *   3. The probe could not classify — NOT ESTABLISHED. Nothing is
+ *      concluded; the caller's verdict reports an incomplete
+ *      observation, which trips coverage rather than passing quietly.
+ *
+ * @param {object} pinned      `{lenderHoldsActive, saleLocked}` from the
+ *   snapshot taken beside the DOM scrape
+ * @param {object|null} later  `{active, stillHeld, sale}` from the
+ *   confirming head read, or null when no confirmation was needed
+ * @returns {{lenderHoldsActive: boolean, saleLocked: boolean|'unknown'}}
+ */
+export function reconcileEligibility(pinned, later) {
+  const lenderHoldsActive = Boolean(pinned?.lenderHoldsActive);
+  const saleLocked = pinned?.saleLocked ?? false;
+  if (!later) return { lenderHoldsActive, saleLocked };
+
+  if (!later.active || !later.stillHeld) {
+    return { lenderHoldsActive: false, saleLocked };
+  }
+  if (later.sale === true) {
+    return { lenderHoldsActive, saleLocked: true };
+  }
+  if (later.sale === 'unknown') {
+    return { lenderHoldsActive, saleLocked: 'unknown' };
+  }
+  // The head agrees the position is still eligible and carries no sale.
+  // The pinned reading stands — INCLUDING a pinned `'unknown'`, which a
+  // later `false` does not retroactively resolve: the two probes ran at
+  // different blocks and the earlier one still did not answer.
+  return { lenderHoldsActive, saleLocked };
+}
 
 /**
  * The verdict: `pass`, `fail` (a defect observed in the product), or

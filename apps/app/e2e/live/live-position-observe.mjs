@@ -98,6 +98,7 @@ import {
 import {
   forcedCloseCoverage,
   forcedCloseVerdict,
+  reconcileEligibility,
   saysCheckRunning,
 } from './forcedCloseCard.mjs';
 import { requireSiteUrl } from './driver.mjs';
@@ -2516,7 +2517,7 @@ async function observeForcedClose(page, loan) {
   // Pinning to one block number makes the three facts a snapshot rather
   // than three samples. It also makes them consistent with each other
   // by construction, which no amount of re-reading can achieve.
-  const [live, authorityNow, saleLocked] = await discovery(
+  const [live, authorityNow, pinnedSale] = await discovery(
     `re-reading loan ${loan.id} beside the forced-close scrape`,
     async () => {
       const blockNumber = await pub.getBlockNumber();
@@ -2533,7 +2534,7 @@ async function observeForcedClose(page, loan) {
       ]);
     },
   );
-  let lenderHoldsActive =
+  const pinnedHoldsActive =
     Number(live.status) === STATUS_ACTIVE &&
     typeof authorityNow === 'string' &&
     authorityNow.toLowerCase() === String(observed).toLowerCase();
@@ -2553,7 +2554,8 @@ async function observeForcedClose(page, loan) {
   // absent: if the position has left the eligible set by a later block,
   // the page was ahead of us and the observation is `blocked` instead.
   // A confirmation step on the accusing path, rather than a wider net.
-  if (lenderHoldsActive && !card.mounted) {
+  let later = null;
+  if (pinnedHoldsActive && !card.mounted) {
     // ROUND 8 P2 — RECONFIRM EVERY FACT THE DOM COULD BE REFLECTING,
     // not only the status.
     //
@@ -2564,7 +2566,7 @@ async function observeForcedClose(page, loan) {
     // the confirmation. Ownership and the sale state can each explain
     // an absent card exactly as well as status can, so all three are
     // re-read at the confirming head.
-    const later = await discovery(
+    const confirmed = await discovery(
       `confirming loan ${loan.id} is still eligible before reporting a missing card`,
       async () => {
         const head = await pub.getBlockNumber();
@@ -2582,14 +2584,29 @@ async function observeForcedClose(page, loan) {
         return { status, holder, sale };
       },
     );
-    const stillHeld =
-      typeof later.holder === 'string' &&
-      later.holder.toLowerCase() === String(observed).toLowerCase();
-    if (Number(later.status.status) !== STATUS_ACTIVE || !stillHeld || later.sale) {
-      lenderHoldsActive = false;
-    }
+    // THE THREE FACTS, NOT A VERDICT. What they mean for eligibility is
+    // decided by `reconcileEligibility`, which lives in the verdict
+    // module because it is a pure function with three ordered cases and
+    // no way to exercise it from a live chain — the same argument that
+    // moved `visitVerdict` out of this file.
+    //
+    // It was a truthiness test here, and round 12's tri-state probe
+    // walked straight into it: an unclassifiable `'unknown'` marked the
+    // position ineligible, which reports "nothing is wrong" for a
+    // missing card on the strength of a sale never established.
+    later = {
+      active: Number(confirmed.status.status) === STATUS_ACTIVE,
+      stillHeld:
+        typeof confirmed.holder === 'string' &&
+        confirmed.holder.toLowerCase() === String(observed).toLowerCase(),
+      sale: confirmed.sale,
+    };
   }
 
+  const { lenderHoldsActive, saleLocked } = reconcileEligibility(
+    { lenderHoldsActive: pinnedHoldsActive, saleLocked: pinnedSale },
+    later,
+  );
   return { ...card, lenderHoldsActive, saleLocked };
 }
 

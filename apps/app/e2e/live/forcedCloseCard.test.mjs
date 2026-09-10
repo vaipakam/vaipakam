@@ -8,6 +8,7 @@ import {
   forcedCloseCoverage,
   forcedCloseVerdict,
   monetaryAmountsIn,
+  reconcileEligibility,
   saysCheckRunning,
 } from './forcedCloseCard.mjs';
 
@@ -1023,5 +1024,101 @@ describe('round 12 review findings', () => {
     const v = forcedCloseVerdict({ ...base, saleLocked: true }, copy);
     expect(v.verdict).toBe('blocked');
     expect(v.blockedKind).toBe('inapplicable');
+  });
+});
+
+describe('reconcileEligibility — folding the confirming re-read', () => {
+  const eligible = { lenderHoldsActive: true, saleLocked: false };
+
+  it('leaves the pinned snapshot alone when no confirmation was needed', () => {
+    expect(reconcileEligibility(eligible, null)).toEqual(eligible);
+  });
+
+  // THE DEFECT THIS FUNCTION WAS EXTRACTED FOR. As an inline truthiness
+  // test in the driver, `'unknown'` marked the position INELIGIBLE,
+  // which the verdict reports as `inapplicable` — "nothing is wrong" —
+  // for a card that was missing, on the strength of an accepted sale
+  // that was never established. Round 12's finding, surviving in the
+  // one branch whose job is deciding whether an absence is a FAIL.
+  it('does not conclude ineligibility from a sale probe that could not classify', () => {
+    const out = reconcileEligibility(eligible, {
+      active: true,
+      stillHeld: true,
+      sale: 'unknown',
+    });
+    expect(out.lenderHoldsActive).toBe(true);
+    expect(out.saleLocked).toBe('unknown');
+  });
+
+  it('reports an unclassifiable probe as an INCOMPLETE observation, which trips coverage', () => {
+    const obs = {
+      mounted: false,
+      attached: false,
+      text: null,
+      bodyPresent: false,
+      bodyText: null,
+      confirmText: null,
+      confirmExpected: false,
+      submitDisabled: true,
+      settled: true,
+      ...reconcileEligibility(eligible, { active: true, stillHeld: true, sale: 'unknown' }),
+    };
+    const v = forcedCloseVerdict(obs, { unknownCopy: FORCED_CLOSE.unknown });
+    expect(v.verdict).toBe('blocked');
+    expect(v.blockedKind).toBe('incomplete');
+    // The point of the kind: an incomplete observation is NOT allowed to
+    // ride out on a neighbour's pass.
+    expect(
+      forcedCloseCoverage([
+        { path: '/positions/1', forcedCloseVerdict: { verdict: 'pass' } },
+        { path: '/positions/2', forcedCloseVerdict: v },
+      ]),
+    ).toMatch(/INCOMPLETE/);
+  });
+
+  it('an ESTABLISHED terminal or transfer outranks an unresolved sale probe', () => {
+    // A known reason beats an unknown one: the position having left the
+    // eligible set explains the absent card exactly, so it is reported
+    // rather than the sale probe's silence.
+    for (const later of [
+      { active: false, stillHeld: true, sale: 'unknown' },
+      { active: true, stillHeld: false, sale: 'unknown' },
+    ]) {
+      expect(reconcileEligibility(eligible, later).lenderHoldsActive).toBe(false);
+    }
+  });
+
+  it('names an established accepted sale rather than generic ineligibility', () => {
+    const out = reconcileEligibility(eligible, { active: true, stillHeld: true, sale: true });
+    expect(out.lenderHoldsActive).toBe(true);
+    expect(out.saleLocked).toBe(true);
+    const v = forcedCloseVerdict(
+      {
+        mounted: false,
+        attached: false,
+        text: null,
+        bodyPresent: false,
+        bodyText: null,
+        confirmText: null,
+        confirmExpected: false,
+        submitDisabled: true,
+        settled: true,
+        ...out,
+      },
+      { unknownCopy: FORCED_CLOSE.unknown },
+    );
+    expect(v.blockedKind).toBe('inapplicable');
+    expect(v.why).toMatch(/accepted sale/);
+  });
+
+  it('a later clean probe does not retroactively resolve a pinned unknown', () => {
+    // Different blocks. The head answering `false` says nothing about
+    // whether the earlier probe answered, and silently upgrading it
+    // would bank a pass on a reading that never happened.
+    const out = reconcileEligibility(
+      { lenderHoldsActive: true, saleLocked: 'unknown' },
+      { active: true, stillHeld: true, sale: false },
+    );
+    expect(out.saleLocked).toBe('unknown');
   });
 });
