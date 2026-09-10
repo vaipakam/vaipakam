@@ -763,8 +763,35 @@ function isRevert(err) {
  * treats one as locked: a read that could not answer must not be turned
  * into a product finding.
  */
-async function saleLockedOn(lenderTokenId, loanId, blockNumber) {
+/**
+ * ROUND 30 P2 — the simulating ACCOUNT is a parameter, not a module
+ * global.
+ *
+ * This read used `observed`, the module-scoped authority, which is
+ * declared far below it. That was harmless while every caller ran after
+ * the declaration, and stopped being harmless the moment round 29 hoisted
+ * an applicability probe ABOVE it to rank authorities: `observed` was
+ * then in its temporal dead zone, the simulate threw a `ReferenceError`,
+ * and the probe's own `catch` — written for transport failures — swallowed
+ * it as "unreadable, still a candidate". So every locked position stayed
+ * unclassified and the ordering fix did nothing.
+ *
+ * Two lessons, and the second is the one worth keeping. A catch that
+ * cannot tell a dead endpoint from a programming error will report the
+ * programming error as a chain condition, and this file has now been
+ * caught doing exactly that. And a cross-authority probe had no business
+ * simulating as `observed` even once that variable existed — the question
+ * is whether THIS loan's lender has an accepted sale, so the account has
+ * to be that loan's authority. Passing it explicitly fixes a latent
+ * correctness bug as well as the crash.
+ */
+async function saleLockedOn(lenderTokenId, loanId, blockNumber, account) {
   if (lenderTokenId === undefined || lenderTokenId === null) return 'unknown';
+  // A missing account is a WIRING error, not a chain condition, so it
+  // throws rather than returning `'unknown'` — the latter reads as "the
+  // chain could not answer" and is precisely the laundering this change
+  // is about.
+  if (!account) throw new TypeError('saleLockedOn: account is required');
   let locked;
   try {
     const lock = await pub.readContract({
@@ -803,7 +830,7 @@ async function saleLockedOn(lenderTokenId, loanId, blockNumber) {
       abi: DIAMOND_ABI_VIEM,
       functionName: 'teardownStaleSaleListing',
       args: [BigInt(loanId)],
-      account: observed,
+      account,
       ...(blockNumber === undefined ? {} : { blockNumber }),
     });
     return false; // 'clearable' — a stale listing, not an accepted sale
@@ -1119,10 +1146,25 @@ const acceptedSale = new Set();
 if (ROLE === 'lender') {
   for (const l of eligible.filter((x) => x.status === STATUS_ACTIVE)) {
     try {
-      if ((await saleLockedOn(l.lenderTokenId, l.id, undefined)) === true) {
+      if ((await saleLockedOn(l.lenderTokenId, l.id, undefined, l.authority)) === true) {
         acceptedSale.add(l.id);
       }
-    } catch {
+    } catch (err) {
+      // ROUND 30 P2 — a chain that could not answer, NOT a bug in this
+      // file.
+      //
+      // This catch was written for transport failures and silently ate a
+      // `ReferenceError` for a whole round: every locked position came
+      // back "unreadable, still a candidate", so the ordering fix above
+      // did nothing while reading as though it worked. A catch that
+      // cannot tell a dead endpoint from a programming error will keep
+      // reporting the programming error as a chain condition.
+      //
+      // The two are now separated. A transport failure leaves the loan
+      // applicable — the deliberate fail-soft. A `ReferenceError` or
+      // `TypeError` is this drive being wrong about itself, and is
+      // rethrown so the run reports it instead of quietly degrading.
+      if (err instanceof ReferenceError || err instanceof TypeError) throw err;
       // Unreadable, so unknown, so still a candidate. Ranking a loan
       // down on a read that failed would be a decision made on no
       // evidence, in the direction that costs the run its coverage.
@@ -2840,7 +2882,7 @@ async function observeForcedClose(page, loan) {
           blockNumber,
         }),
         tokenOwnerOf(loan.lenderTokenId, blockNumber),
-        saleLockedOn(loan.lenderTokenId, loan.id, blockNumber),
+        saleLockedOn(loan.lenderTokenId, loan.id, blockNumber, loan.authority),
       ]);
     },
   );
@@ -2935,7 +2977,7 @@ async function observeForcedClose(page, loan) {
             blockNumber: head,
           }),
           tokenOwnerOf(loan.lenderTokenId, head),
-          saleLockedOn(loan.lenderTokenId, loan.id, head),
+          saleLockedOn(loan.lenderTokenId, loan.id, head, loan.authority),
         ]);
         return { status, holder, sale };
       },
