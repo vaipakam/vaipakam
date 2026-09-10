@@ -5965,9 +5965,15 @@ the intent fields — and an inline struct's members occupy slots in place, so
 a member appended to `ProtocolConfig` shifts every field after it with no
 `Storage` declaration changing at all. `ProtocolConfig` changed nineteen
 times since May, five of them between 2026-06-11 and 2026-06-19 while the
-intent mapping already existed: the intent rows had more slots in that
-window than the three eras run 27 read, and a Diamond alive then could hold
-a row the read never reached. The walker now discovers every inline struct
+intent mapping already existed — so the walker had to assume the intent rows
+had more slots in that window than the three eras run 27 read. The compiler
+then answered what the walker cannot: those five appends were small types
+that packed into partly filled slots of `ProtocolConfig`, so `intentCommits`
+kept one slot across the whole window and run 27's three intent slots were
+complete; the rebate mapping gained three May-era slots that no deployment's
+read had needed. The verdicts of run 27 therefore stand, and run 28 re-reads
+every deployment only so the evidence each result records names the
+complete 32-era table. The walker now discovers every inline struct
 that precedes a target (external ones — OpenZeppelin's sets, all after the
 targets — are reported and assumed stable under the pinned submodule),
 counts any length change in an inline or row struct as a change event, and
