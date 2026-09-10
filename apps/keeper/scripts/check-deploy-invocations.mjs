@@ -6680,6 +6680,38 @@ function indentedBlocks(lines, indentRe, startAt = 0) {
  * "all the paths" both turned out to be incomplete. Expanding in place cannot
  * lose anything, because it removes nothing.
  */
+// GNU Make's DEFAULT BUILD-FILE NAMES are `GNUmakefile`, `makefile` and
+// `Makefile` — it looks for them in that order — plus the `.mk` files those
+// include. `GNUmakefile` was missing, so a Makefile under its canonical GNU
+// name had its recipes read unexpanded and a write through a variable went
+// unseen (#2105 r7). Named once and shared by both Make-specific gates, since
+// the two disagreeing about what a Makefile IS is the same class of defect as
+// two variable models.
+const MAKEFILE_NAME_RE = /(^|\/)(GNUmakefile|[Mm]akefile|.*\.mk)$/;
+
+/**
+ * WHICH LINES ARE RECIPE LINES.
+ *
+ * Not simply `^\t`. Make's recipe prefix is settable — `.RECIPEPREFIX := >`
+ * makes `>`-prefixed lines recipes and an empty value restores the tab — and a
+ * recipe line ending in a backslash CONTINUES onto the next physical line,
+ * which need not be indented at all. Testing each physical line for a tab on
+ * its own missed both, leaving `$(WRITE)` unexpanded where Make expands it
+ * (#2105 r7).
+ *
+ * Shared so the variable collector and the expander agree on which lines are
+ * recipes; disagreeing there is the same defect as having two variable models.
+ */
+function makeRecipeLines(lines, prefix) {
+  const isRecipe = new Array(lines.length).fill(false);
+  let cont = false;
+  for (let i = 0; i < lines.length; i += 1) {
+    isRecipe[i] = cont || lines[i].startsWith(prefix);
+    cont = isRecipe[i] && /\\\s*$/.test(lines[i]);
+  }
+  return isRecipe;
+}
+
 /**
  * THE Make variable model. One collector, one expander, both consumers.
  *
@@ -6687,54 +6719,75 @@ function indentedBlocks(lines, indentRe, startAt = 0) {
  * rewrite question's (which finds writes). They were textually identical and
  * intended to model the same thing — the text Make hands the shell — so every
  * correction to Make's semantics had to be made twice or the two would answer
- * in different models (#2105 r6). The `$$` rule below is exactly such a
- * correction, and it is why the duplication had to go first: fixed in one copy
- * it would have left the scanner still inventing a write the shell never sees.
+ * in different models (#2105 r6). Every rule below is such a correction, and
+ * that is why the duplication had to go first.
  *
  * Rules: literal values only, last assignment wins, `?=` yields to an existing
- * one, and a computed value CLEARS the name — the same rules the shell-variable
- * model follows. Collected over the whole file because recursive `=` variables
- * resolve at use, not at definition.
+ * one, `undefine` removes the name, and a computed value CLEARS it — the same
+ * rules the shell-variable model follows. Collected over the whole file because
+ * recursive `=` variables resolve at use, not at definition.
+ *
+ * THE TWO CONSUMERS DO NOT HAVE THE SAME BASELINE, which is why the expander
+ * comes in two strengths rather than one. On `main` the scanner already expands
+ * and the rewrite question does not expand at all. So for the scanner, refusing
+ * to substitute LOSES a deploy it finds today; for the rewrite question,
+ * refusing to substitute merely leaves the miss `main` already has. Uncertainty
+ * therefore has to resolve differently in each, and `certain` is what carries
+ * it. One model, two stated policies — not two models.
  */
 function makeVarModel(text) {
+  const lines = text.split('\n');
+  // `.RECIPEPREFIX := >` replaces the tab; an empty value restores it. Only the
+  // first character counts, and the last assignment in the file wins.
+  let prefix = '\t';
+  for (const l of lines) {
+    const m = l.match(/^\s*\.RECIPEPREFIX\s*(?::?=|\+=)\s*(.*?)\s*$/);
+    if (m) prefix = m[1] === '' ? '\t' : m[1][0];
+  }
+  const recipe = makeRecipeLines(lines, prefix);
   const mkVars = new Map();
-  // AN ASSIGNMENT INSIDE A CONDITIONAL IS NOT NECESSARILY IN EFFECT. Whether
-  // `ifeq`/`ifdef` fires depends on the environment and command-line overrides
-  // this guard cannot evaluate, and taking every textual assignment as executed
-  // Make state let a DEAD branch win: `WRITE = echo no rewrite` followed by an
-  // `ifeq (1,0)` reassigning it to a redirection expanded to the redirection
-  // and invented a rewrite, where `make -n` prints `echo no rewrite` (#2105 r6).
+  // AN ASSIGNMENT INSIDE A CONDITIONAL IS NOT NECESSARILY IN EFFECT, and this
+  // guard cannot tell which way one fires — `ifeq`/`ifdef` read an environment
+  // and command-line overrides it does not have. Review found BOTH horns:
+  // taking a dead branch's value invented a write (r6), and preferring the
+  // unconditional value hid a live branch's write (r7). Neither can be fixed
+  // without evaluating the conditional.
   //
-  // The rule is the narrowest one that removes that: a guarded assignment never
-  // OVERRIDES an unguarded one, but is still used when it is all we have. That
-  // keeps expansion working for the many Makefiles whose only definition of a
-  // variable sits inside a conditional — dropping those instead would lose
-  // deploys the scanner finds today (#1995 r17) — while making the always-in-
-  // effect value win whenever there is one. It is not full evaluation, and does
-  // not claim to be: where an active conditional really does override, this
-  // resolves to the unconditional value, which is the answer when no condition
-  // fires.
+  // So the value is not chosen, it is marked UNCERTAIN, and each consumer
+  // applies its own baseline (see above). The rewrite question declines to
+  // substitute — no invented write, and the missed one is `main`'s existing
+  // miss. The scanner substitutes anyway, because not substituting there would
+  // lose a deploy it finds today (#1995 r17).
   let depth = 0;
-  for (const l of text.split('\n')) {
-    if (/^\t/.test(l)) continue;
+  lines.forEach((l, i) => {
+    if (recipe[i]) return;
     if (/^\s*(?:ifeq|ifneq|ifdef|ifndef)\b/.test(l)) {
       depth += 1;
-      continue;
+      return;
     }
     if (/^\s*endif\b/.test(l)) {
       depth = Math.max(0, depth - 1);
-      continue;
+      return;
     }
     // `else` and `else ifeq (...)` stay at the depth they are already in.
-    if (/^\s*else\b/.test(l)) continue;
+    if (/^\s*else\b/.test(l)) return;
+    // `undefine NAME` removes the variable. Keeping the obsolete value expanded
+    // it into a recipe Make runs with nothing there, inventing a write (r7).
+    const u = l.match(/^\s*(?:override\s+)?undefine\s+([A-Za-z_]\w*)\s*$/);
+    if (u) {
+      mkVars.delete(u[1]);
+      return;
+    }
     const m = l.match(/^([A-Za-z_]\w*)\s*(\?=|:{1,2}=|=)\s*(.*?)\s*$/);
-    if (!m) continue;
+    if (!m) return;
     const prev = mkVars.get(m[1]);
-    if (m[2] === '?=' && prev) continue;
-    if (depth > 0 && prev && !prev.conditional) continue;
+    if (m[2] === '?=' && prev) return;
     if (/\$/.test(m[3])) mkVars.delete(m[1]);
-    else mkVars.set(m[1], { value: m[3], conditional: depth > 0 });
-  }
+    // Once any assignment to a name is guarded, the name's value is uncertain —
+    // including for an earlier unguarded assignment, which the guarded one may
+    // override at runtime.
+    else mkVars.set(m[1], { value: m[3], certain: depth === 0 && !(prev && !prev.certain) });
+  });
   // `$$` IS AN ESCAPED DOLLAR, NOT THE START OF A REFERENCE. Make reduces it to
   // a literal `$` and expands nothing, so `echo '$$(WRITE)'` is inert text —
   // but a matcher looking only for `$(NAME)` finds one starting at the SECOND
@@ -6746,17 +6799,34 @@ function makeVarModel(text) {
   // rather than reduced to a single `$`: reducing it is what Make does, but
   // neither spelling is a write, and emitting a bare `$(` would hand the shell
   // reader a command-substitution shape that was never in the source.
-  return (l) =>
-    l.replace(/\$\$|\$[({]([A-Za-z_]\w*)[)}]/g, (m0, n) =>
-      m0 === '$$' ? m0 : (mkVars.get(n)?.value ?? m0),
-    );
+  const sub = (l, certainOnly) =>
+    l.replace(/\$\$|\$[({]([A-Za-z_]\w*)[)}]/g, (m0, n) => {
+      if (m0 === '$$') return m0;
+      const v = mkVars.get(n);
+      if (!v || (certainOnly && !v.certain)) return m0;
+      return v.value;
+    });
+  return {
+    recipe,
+    // MAKE REMOVES THE RECIPE PREFIX BEFORE THE SHELL SEES THE LINE, so it is
+    // not part of the command. A tab is harmless to leave in — it is just
+    // whitespace — but `.RECIPEPREFIX := >` leaves a `>` at the start, which
+    // shell reads as a redirection into a file named after the next word. That
+    // was enough to hide a real redirection later on the same line (#2105 r7).
+    //
+    // Replaced with a SPACE rather than deleted, so the line keeps its length
+    // and every offset in the file still means what it meant.
+    stripPrefix: (l) => (l.startsWith(prefix) ? ' ' + l.slice(prefix.length) : l),
+    expand: (l) => sub(l, false),
+    expandCertain: (l) => sub(l, true),
+  };
 }
 
 function expandMakeVars(text) {
-  const expandMk = makeVarModel(text);
+  const model = makeVarModel(text);
   return text
     .split('\n')
-    .map((l) => (/^\t/.test(l) ? expandMk(l) : l))
+    .map((l, i) => (model.recipe[i] ? model.expandCertain(model.stripPrefix(l)) : l))
     .join('\n');
 }
 
@@ -6770,11 +6840,22 @@ function makefileBlocks(text) {
   // CLEARS the name — the same rules the shell-variable model follows.
   // Collected over the whole file because recursive `=` variables resolve at
   // use, not at definition.
-  const expandMk = makeVarModel(text);
+  // RECIPE MEMBERSHIP COMES FROM THE MODEL, not from a `^\t` test here. Make's
+  // prefix is settable (`.RECIPEPREFIX := >`) and a `\\`-continued recipe line
+  // need not be indented at all. This used to test each physical line for a tab,
+  // which meant that under a custom prefix the scanner found no recipes while
+  // the rewrite question — already prefix-aware — did. The two consumers
+  // disagreeing about which lines are recipes is the same defect as their having
+  // had two variable models (#2105 r6, r7).
+  const model = makeVarModel(text);
+  const expandMk = model.expand;
+  const isRecipe = model.recipe;
   const lines = text
     .split('\n')
-    .map((l) => (/^\t/.test(l) ? expandMk(l.replace(/^(\t+)[@+-]+\s*/, '$1')) : l));
-  if (oneshell) return indentedBlocks(lines, /^\t/);
+    .map((l, i) =>
+      isRecipe[i] ? expandMk(model.stripPrefix(l).replace(/^( +)[@+-]+\s*/, '$1')) : l,
+    );
+  if (oneshell) return indentedBlocks(lines, /^ /);
   // One block per PHYSICAL recipe line, so nothing carries between them. A
   // backslash continuation is still one command and `logicalLines` folds it,
   // which is why the run is walked rather than each line taken alone.
@@ -6782,7 +6863,7 @@ function makefileBlocks(text) {
   let i = 0;
   let blockId = 0;
   while (i < lines.length) {
-    if (!/^\t/.test(lines[i])) {
+    if (!isRecipe[i]) {
       i += 1;
       continue;
     }
@@ -6791,7 +6872,7 @@ function makefileBlocks(text) {
     const body = lines.slice(i, j + 1);
     if (body.some((l) => new RegExp(ANY_DEPLOY_RE).test(l) || new RegExp(ANY_DEPLOY_RE).test(dequote(l)))) {
       out.push(
-        ...offset(logicalLines(body.map((l) => l.replace(/^\t+/, '')).join('\n')), i, `mk${blockId}`),
+        ...offset(logicalLines(body.map((l) => l.replace(/^ +/, '')).join('\n')), i, `mk${blockId}`),
       );
       blockId += 1;
     }
@@ -9009,7 +9090,7 @@ for (const file of walk(REPO_ROOT)) {
   // false red in the first place. So `.md` keeps its raw text, the false red
   // stays until it is fixed by a means that cannot go silent (#2112), and the
   // one transformation left here can only ever cost noise.
-  const rewriteText = /(^|\/)([Mm]akefile|.*\.mk)$/.test(rel) ? expandMakeVars(text) : text;
+  const rewriteText = MAKEFILE_NAME_RE.test(rel) ? expandMakeVars(text) : text;
   // AN EXTENSIONLESS HELPER HAS A SHEBANG, NOT A SUFFIX. `walk` yields
   // extensionless executables deliberately, and keying the language on `.py`
   // alone classified `#!/usr/bin/env python3` as `other` — where an f-string
@@ -9035,7 +9116,7 @@ for (const file of walk(REPO_ROOT)) {
         // Makefile recipes are tab-indented and are shell, whatever the file
         // extension says. Kept out of `embeddedShellLines` because the trigger
         // is the FILE, not a construct inside it.
-        ...(/(^|\/)([Mm]akefile|.*\.mk)$/.test(rel) ? makefileBlocks(text) : []),
+        ...(MAKEFILE_NAME_RE.test(rel) ? makefileBlocks(text) : []),
       ];
   if (
     !folded.some(

@@ -11952,13 +11952,23 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(r.ok).toBe(true);
   });
 
-  it('a dead conditional branch does not win the assignment (#2105 r6)', () => {
+  it('a dead conditional branch does not invent a write (#2105 r6)', () => {
     // `ifeq (1,0)` never fires, so `make -n` prints `echo no rewrite`. Taking
     // every textual assignment as executed Make state let the dead branch
     // override the live one and invented a rewrite — a false red.
     //
-    // A guarded assignment no longer overrides an unguarded one. It is still
-    // USED when it is the only definition, which the bounds guard below pins.
+    // THE REASON THIS PASSES CHANGED IN r7, so the comment is rewritten rather
+    // than left describing a rule that is gone. r6 made a guarded assignment
+    // lose to an unguarded one — and r7 produced the mirror case, where the
+    // guarded branch is LIVE and preferring the unconditional value hid its
+    // write instead. Neither horn can be fixed without evaluating the
+    // conditional, which this guard cannot do.
+    //
+    // So the value is no longer chosen: a name with any guarded assignment is
+    // UNCERTAIN, and the rewrite question declines to substitute it at all.
+    // Here that means `$(WRITE)` stays literal — no invented write, same
+    // verdict as before, different mechanism. The live-branch write it now
+    // misses is `main`'s existing miss, not a regression (#2113).
     seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
     seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
     const r = runWith(
@@ -11989,20 +11999,89 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(r.ok).toBe(true);
   });
 
-  it('a conditional-only assignment is still expanded (#2105 r6)', () => {
-    // NOT a bounds guard — it discriminates, and that is the point. Replacing
-    // "does not override" with "is discarded" fails THIS fixture and no other,
-    // so it pins the choice between the two, which is the reason the rule is
-    // "does not override". Many Makefiles define a variable ONLY inside a
-    // conditional; dropping those would stop expanding them and lose writes —
-    // and deploys — the scanner finds today (#1995 r17). With no unguarded
-    // assignment to defer to, the guarded one is used and the write is found.
+  it('the scanner still expands a conditional-only deploy (#2105 r7)', () => {
+    // WHY UNCERTAINTY RESOLVES DIFFERENTLY IN THE TWO CONSUMERS, which is the
+    // whole reason the model exposes `certain` instead of picking a value.
+    //
+    // On `main` the scanner ALREADY expands and the rewrite question does not
+    // expand at all. So declining to substitute costs the two sides different
+    // things: for the rewrite question it leaves the miss `main` already has,
+    // but for the scanner it would LOSE A DEPLOY that is found today (#1995
+    // r17). Many Makefiles define a variable only inside a conditional.
+    //
+    // This was written in r6 as "a conditional-only assignment is still
+    // expanded" and asserted the WRITE was found. r7 made the rewrite question
+    // decline uncertain values, so that assertion no longer held — and the
+    // honest replacement is not to delete the fixture but to move it to the
+    // consumer whose behaviour the argument was always about.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith(
+      'Makefile',
+      'noop:\n\tcd apps/agent && $(DEP)\n\nifeq (1,1)\nDEP = wrangler deploy\nendif\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('undefine clears the variable (#2105 r7)', () => {
+    // `undefine WRITE` removes the name. The collector only recognised
+    // assignment lines, so it kept the obsolete value and expanded it into a
+    // recipe that Make runs with nothing there — inventing a write and
+    // rejecting a safe file. `make -n` prints only the deploy.
     seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
     seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
     const r = runWith(
       'Makefile',
       'deploy:\n\t$(WRITE)\n\twrangler deploy --config configs/custom.jsonc\n\n' +
-        "ifeq (1,1)\nWRITE = printf '{}' > configs/custom.jsonc\nendif\n",
+        "WRITE = printf '{}' > configs/custom.jsonc\nundefine WRITE\n",
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('GNUmakefile is a Makefile (#2105 r7)', () => {
+    // GNU Make's default build-file names are `GNUmakefile`, `makefile` and
+    // `Makefile`. The canonical GNU one was missing from the filename gate, so
+    // its recipes were never expanded and a write through a variable went
+    // unseen while the deploy itself was still detected.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'GNUmakefile',
+      'deploy:\n\t$(WRITE)\n\twrangler deploy --config configs/custom.jsonc\n\n' +
+        "WRITE = printf '{}' > configs/custom.jsonc\n",
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a custom recipe prefix is still a recipe (#2105 r7)', () => {
+    // `.RECIPEPREFIX := >` makes `>`-prefixed lines recipes. A `^\t` test saw
+    // no recipes at all, so nothing was expanded.
+    //
+    // The prefix is also STRIPPED, replaced by a space to keep every offset in
+    // the file meaning what it meant. Leaving it in was not cosmetic: a leading
+    // `>` reads as a shell redirection into a file named after the next word,
+    // which hid the real redirection later on the same line.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'Makefile',
+      '.RECIPEPREFIX := >\ndeploy:\n>$(WRITE)\n>wrangler deploy --config configs/custom.jsonc\n\n' +
+        "WRITE = printf '{}' > configs/custom.jsonc\n",
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('an unindented continuation line is still a recipe (#2105 r7)', () => {
+    // A recipe line ending in a backslash continues onto the next PHYSICAL
+    // line, which need not be indented. Testing each line independently for a
+    // tab classified the continuation as ordinary text and left `$(WRITE)`
+    // unexpanded, so the write Make performs before the deploy went unseen.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'Makefile',
+      'deploy:\n\techo one \\\n$(WRITE)\n\twrangler deploy --config configs/custom.jsonc\n\n' +
+        "WRITE = printf '{}' > configs/custom.jsonc\n",
     );
     expect(r.ok).toBe(false);
   });
