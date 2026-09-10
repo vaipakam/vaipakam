@@ -113,24 +113,34 @@ export function monetaryAmountsIn(text) {
     const before = text.slice(Math.max(0, start - 16), start);
     const after = text.slice(end, end + 10);
 
-    // An IDENTIFIER, never an amount. The `#` form and the spelled-out
-    // form both, because the comment here used to claim `loan 21` was
-    // covered when only `#21` was — harmless while the scanner needed a
-    // ticker to fire, and a false positive the moment round 2 made it
-    // absolute. A comment that outlived its code, which is the failure
-    // this file keeps finding elsewhere.
-    if (/[#]\s*$/.test(before)) continue;
-    if (IDENTIFIER_LEAD.test(before)) continue;
+    // A unit word immediately after. `2%` and `3 days` are fine; a
+    // ticker is not. Parsed BEFORE the exemptions below, because every
+    // exemption has to be able to consult it.
+    const trailing = after.match(/^\s*([A-Za-z%][A-Za-z0-9]*)\s*([A-Za-z][A-Za-z0-9]*)?/);
+    const trailingTicker = Boolean(
+      trailing && (isTicker(trailing[1]) || (trailing[2] && isTicker(trailing[2]))),
+    );
+    const hugsCurrency =
+      CURRENCY_MARK.test(before.slice(-2)) || CURRENCY_MARK.test(after.slice(0, 2));
+
+    // An IDENTIFIER, never an amount — UNLESS a symbol follows it.
+    //
+    // ROUND 5 P2, and the second instance of one mistake: an exemption
+    // that `continue`s before inspecting what comes next. Round 3 had
+    // it with `1m USDC`, where `m` was read as minutes; this is `Loan
+    // 100 USDC principal`, where `Loan` made the figure an identifier
+    // and the ticker behind it was never reached. Both exemptions now
+    // look before they leave.
+    if (!trailingTicker && !hugsCurrency) {
+      if (/[#]\s*$/.test(before)) continue;
+      if (IDENTIFIER_LEAD.test(before)) continue;
+    }
 
     // A currency mark hugging the number on either side.
-    if (CURRENCY_MARK.test(before.slice(-2)) || CURRENCY_MARK.test(after.slice(0, 2))) {
+    if (hugsCurrency) {
       hits.push(fragment(text, start, end));
       continue;
     }
-
-    // A unit word immediately after. `2%` and `3 days` are fine; a
-    // ticker is not.
-    const trailing = after.match(/^\s*([A-Za-z%][A-Za-z0-9]*)\s*([A-Za-z][A-Za-z0-9]*)?/);
     if (trailing) {
       const unit = trailing[1];
       const next = trailing[2];
@@ -215,9 +225,12 @@ export function saysCheckRunning(text, unknownCopy) {
  *   apart from `mounted` so the failure can say WHICH of the two
  *   happened rather than reporting a hidden card as an absent one.
  * @property {string|null} text  its rendered text, null when absent
- * @property {boolean} bodyRead  did the body scrape actually happen —
- *   round 4 P2, because `bodyText: null` conflated "read and empty"
- *   (the defect) with "could not read" (an incomplete observation)
+ * @property {boolean|undefined} bodyPresent  did a `forced-close-body`
+ *   element exist at all. Round 5 P2: with `bodyText`, this gives the
+ *   three states that matter — no element (the heading-only shell, a
+ *   defect), element but unreadable (incomplete), element read and
+ *   blank (a defect). Round 4's single `bodyRead` flag collapsed the
+ *   middle two by treating existence as a successful read.
  * @property {string|null} bodyText  the `forced-close-body` paragraph
  *   ALONE. Round 1 P2 — checking only whether the whole card is empty
  *   passes a rendered shell: a heading with no body is precisely the
@@ -287,11 +300,31 @@ export function forcedCloseVerdict(obs, copy) {
     // have explained the unmount. `bodyRead === false` is therefore
     // incomplete, and only a body genuinely read and blank is the
     // defect.
-    if (obs.bodyRead === false) {
+    // ROUND 5 P2 — THREE STATES, NOT TWO.
+    //
+    // Round 4 split "read and blank" from "could not read", then
+    // implemented the split as `bodyText !== null || count() > 0`,
+    // which sets read=true because an element EXISTS even though the
+    // read failed. Existence is not a successful read, and conflating
+    // them put the false-FAIL straight back.
+    //
+    //   bodyPresent false           → no body element rendered at all.
+    //                                 That IS the heading-only shell,
+    //                                 and it is the defect.
+    //   present, bodyText null      → the element is there and the read
+    //                                 did not land. Nothing observed.
+    //   present, bodyText blank     → read, and genuinely empty.
+    if (obs.bodyPresent === false) {
+      return {
+        verdict: 'fail',
+        why: 'card mounted with no explanatory body element — the withheld-action-without-explanation state',
+      };
+    }
+    if (obs.bodyPresent === true && obs.bodyText === null) {
       return {
         verdict: 'blocked',
         blockedKind: 'incomplete',
-        why: 'the card was scraped but its explanatory body could not be read — most likely it unmounted mid-scrape',
+        why: 'the body element is present but its text could not be read — nothing was observed about the explanation',
       };
     }
     if ((obs.bodyText ?? '').trim() === '') {

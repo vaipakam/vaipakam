@@ -429,32 +429,58 @@ describe('round 4 review findings', () => {
     saleLocked: false,
     settled: true,
     bodyText: 'an explanation',
-    bodyRead: true,
+    bodyPresent: true,
     confirmText: null,
     confirmExpected: false,
     text: FORCED_CLOSE.readyInKind,
   };
 
-  it('BLOCKS on an UNREAD body rather than failing', () => {
+  it('BLOCKS when the body element is present but unreadable', () => {
     // The card can unmount between its own text read and the body read.
     // Coercing that null to "" reported a product defect over a scrape
     // that never happened.
-    const v = forcedCloseVerdict({ ...base, bodyRead: false, bodyText: null }, copy);
+    const v = forcedCloseVerdict({ ...base, bodyPresent: true, bodyText: null }, copy);
     expect(v.verdict).toBe('blocked');
     expect(v.blockedKind).toBe('incomplete');
+  });
+
+  it('FAILS when no body element rendered at all', () => {
+    // ROUND 5 P2 — the third state. Round 4 collapsed this into the
+    // one above by treating element-existence as a successful read, so
+    // a genuine heading-only shell blocked instead of failing.
+    const v = forcedCloseVerdict({ ...base, bodyPresent: false, bodyText: null }, copy);
+    expect(v.verdict).toBe('fail');
+    expect(v.why).toMatch(/no explanatory body element/);
   });
 
   it('still FAILS a body that was read and is genuinely blank', () => {
     // The other half — this is the state the check exists for, and it
     // must survive the fix for its neighbour.
-    const v = forcedCloseVerdict({ ...base, bodyRead: true, bodyText: '   ' }, copy);
+    const v = forcedCloseVerdict({ ...base, bodyPresent: true, bodyText: '   ' }, copy);
     expect(v.verdict).toBe('fail');
     expect(v.why).toMatch(/explanatory body/);
   });
 
-  it('treats a legacy observation with no bodyRead field as read', () => {
-    // Only an explicit `false` means unread, so a record that predates
-    // the field is judged as before rather than silently blocking.
-    expect(forcedCloseVerdict({ ...base, bodyRead: undefined }, copy).verdict).toBe('pass');
+  it('treats a legacy observation with no bodyPresent field as before', () => {
+    // Neither new arm fires on `undefined`, so a record predating the
+    // field is judged exactly as it used to be.
+    expect(forcedCloseVerdict({ ...base, bodyPresent: undefined }, copy).verdict).toBe('pass');
+  });
+});
+
+describe('round 5 review findings', () => {
+  it('catches a ticker behind an identifier word', () => {
+    // Second instance of one mistake: an exemption that `continue`s
+    // before inspecting what follows. Round 3 was `1m USDC` (unit);
+    // this is `Loan 100 USDC` (identifier).
+    expect(monetaryAmountsIn('Loan 100 USDC principal')).toHaveLength(1);
+    expect(monetaryAmountsIn('token 5 WETH')).toHaveLength(1);
+    expect(monetaryAmountsIn('#250 USDC')).toHaveLength(1);
+  });
+
+  it('still exempts a genuine identifier with nothing token-shaped after it', () => {
+    expect(monetaryAmountsIn('Loan 21 is overdue.')).toEqual([]);
+    expect(monetaryAmountsIn('position 4')).toEqual([]);
+    expect(monetaryAmountsIn('Loan #21 is overdue.')).toEqual([]);
   });
 });

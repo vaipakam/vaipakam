@@ -954,11 +954,27 @@ if (dropped > 0) {
   // a second discovery path and is tracked separately; until then the
   // honest thing is for the run to state the gap rather than let a
   // green tally imply the rental surface was covered.
-  if (ROLE === 'lender' && loans.some((l) => l.assetType !== ASSET_ERC20)) {
-    console.log(
-      '          NOTE: rentals are outside this pool, so the forced-close ' +
-        "card's rental route is NOT covered by this run.",
-    );
+  if (ROLE === 'lender') {
+    if (loans.some((l) => l.assetType !== ASSET_ERC20)) {
+      console.log(
+        '          NOTE: rentals are outside this pool, so the forced-close ' +
+          "card's rental route is NOT covered by this run.",
+      );
+    }
+    // ROUND 5 P2 — the SAME pool also drops a sanctions-flagged holder,
+    // and that exclusion is right for the chooser (the card is
+    // correctly suppressed there) while being wrong for forced close:
+    // the spec deliberately keeps this card available to a flagged
+    // lender, because closing out an already-defaulted loan is a
+    // wind-down the protocol keeps open to every caller. A regression
+    // hiding it in exactly that supported state is undetectable here.
+    if (loans.some((l) => l.authoritySanctioned === true)) {
+      console.log(
+        '          NOTE: sanctions-flagged holders are outside this pool, so the ' +
+          'forced-close card is NOT verified for the flagged lender the spec ' +
+          'requires it to stay available to.',
+      );
+    }
   }
 }
 
@@ -2402,7 +2418,7 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
       attached,
       text: null,
       bodyText: null,
-      bodyRead: false,
+      bodyPresent: undefined,
       confirmText: null,
       confirmExpected: false,
       submitDisabled: false,
@@ -2443,9 +2459,20 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
   // "withheld the explanation" — over a scrape that simply did not
   // happen. `bodyRead` records which it was; an unread body is
   // incomplete, an empty one is the defect.
+  // ROUND 5 P2 — PRESENCE AND READABILITY ARE SEPARATE FACTS, and
+  // presence is asked FIRST.
+  //
+  // Round 4's `bodyText !== null || count() > 0` set "read" true
+  // because an element existed even when the read had failed, putting
+  // the false-FAIL straight back. Asking `count()` first and keeping it
+  // apart from the text gives the verdict the three states it needs: no
+  // element (the heading-only shell — a defect), element but no text
+  // (nothing observed), element read and blank (a defect).
   const bodyLocator = card.getByTestId('forced-close-body').first();
-  const bodyText = await bodyLocator.innerText({ timeout: 2_000 }).catch(() => null);
-  const bodyRead = bodyText !== null || (await bodyLocator.count().catch(() => 0)) > 0;
+  const bodyPresent = (await bodyLocator.count().catch(() => 0)) > 0;
+  const bodyText = bodyPresent
+    ? await bodyLocator.innerText({ timeout: 2_000 }).catch(() => null)
+    : null;
   const submit = card.getByTestId('forced-close-submit').first();
   // A card in a withheld state renders no submit control at all, which
   // reads the same way as a disabled one for this verdict: the action
@@ -2514,7 +2541,7 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
     attached: true,
     text,
     bodyText,
-    bodyRead,
+    bodyPresent,
     confirmText,
     confirmExpected,
     submitDisabled,
