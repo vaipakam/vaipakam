@@ -21,54 +21,58 @@ report, while failing to expand costs nothing the check did not already miss.
 The variable model existed twice — once for finding deployments, once for
 finding writes — as two identical copies that were meant to describe the same
 thing. Every correction to the build tool's semantics therefore had to be made
-in both, or the two halves of the check would answer in different models. Every
-correction below is exactly such a correction, and that is why the duplication
-had to go first. One of them turns out to fix a long-standing false report on
-the deployment-finding side as a side effect. Another — deciding which lines are
-recipes at all — showed the same split a second time: fixing it on one side only
-would have left the two halves disagreeing about what a recipe even is, which is
-the same defect wearing different clothes.
+in both, or the two halves of the check would answer in different models. That
+is why the duplication had to go first — and it turned out to be worth more than
+tidiness, because the two halves needing to answer *differently* about an
+uncertain name is only expressible once there is a single model to disagree
+over.
 
-Several ways the expansion did not match the build tool, every one confirmed by
-running the tool rather than argued from its manual:
+Two rules survive, and one of them is the whole story.
 
-- **An escaped currency symbol is not a variable reference.** The build tool
-  reduces the doubled form to a literal character and expands nothing, so a
-  recipe echoing it is inert text. A matcher looking only for the single form
-  found one starting at the second character and substituted, inventing a
-  rewrite in a recipe that performs none.
-- **A name that has been explicitly removed is no longer defined.** The
-  collector recognised only assignments, so a variable removed later in the file
-  kept its obsolete value and expanded into a recipe the build tool runs with
-  nothing there.
-- **The recipe marker is settable, and a recipe can continue onto an unindented
-  line.** Deciding recipe membership by testing each physical line for a tab
-  missed both, leaving variables unexpanded exactly where the tool expands them.
-  The marker is also removed before expansion, replaced by a space so every
-  position in the file still means what it meant: left in place, a marker
-  character that the shell reads as a redirection concealed the real redirection
-  later on the same line.
-- **The build tool's canonical GNU-prefixed default filename** was missing from
-  the list of files treated as build files at all.
-- **An assignment inside a conditional may or may not be in effect.** Whether a
-  conditional fires depends on the environment and on command-line overrides,
-  which this check cannot evaluate.
+The first is lexical and small: an **escaped currency symbol is not a variable
+reference**. The build tool reduces the doubled form to a literal and expands
+nothing, so a recipe echoing it is inert text — but a matcher looking only for
+the single form finds one starting at the second character and substitutes,
+inventing a rewrite in a recipe that performs none. This one also fixed a
+long-standing false report on the deployment-finding side, as soon as both sides
+read the same model.
 
-The last one is the only one without a clean answer, and review found both of
-its horns: taking a dead branch's value invented a rewrite, and then preferring
-the always-in-effect value concealed a live branch's rewrite. They are textually
-identical apart from the condition, so no rule that picks a value without
-evaluating gets both right.
+The second replaced a chase. Review found **eleven** ways the expansion did not
+match the build tool across three rounds — conditionals in both directions, a
+name explicitly removed, that removal itself sitting inside a dead branch, a
+settable recipe marker, that marker changing partway down the file, a
+certainty that never came back. Each correction was more faithful than the last,
+and each introduced a fresh defect; by the third round every finding was an edge
+of the previous round's fix, which is the signature of a rule with no end rather
+than one nearly finished.
 
-So the value is not picked. A name assigned under any conditional is marked
-**uncertain**, and the two consumers apply their own answer to that — which is
-possible only because they now share one model instead of holding two copies of
-it. The rewrite question declines to substitute an uncertain name, so it invents
-nothing and the rewrite it then misses is the one the check missed before this
-work anyway. The deployment scanner substitutes regardless, because it already
-expanded before this change and declining there would lose deployments it finds
-today. One model, two stated policies, each matched to what that side would
-otherwise lose. The remaining miss is recorded as its own work.
+So the question changed. Instead of *what value does the tool give this name* —
+which needs an interpreter — the model asks the one thing about a name it can
+decide by reading:
+
+> **Does this file give the name exactly one answer?**
+
+A name is **ambiguous** if it is assigned more than once, assigned anywhere
+inside a conditional, or named by a removal directive. No evaluation, no
+ordering, no branch analysis — only whether the file is unanimous. That single
+rule replaces every conditional-related correction from all three rounds, and it
+cannot grow an edge list, because it never tries to decide which value wins.
+
+The two consumers then resolve ambiguity differently, which is possible only
+because they share one model. Their starting points differ: the deployment scan
+already expanded before this work and the rewrite question did not expand at
+all. So the rewrite question substitutes only unambiguous names — it cannot
+invent a rewrite, since the value it uses is the file's sole answer, and what it
+declines to substitute is a miss the check already had. The deployment scan
+substitutes regardless, because declining there would lose deployments it finds
+today.
+
+Two corrections were withdrawn rather than kept. Following the settable recipe
+marker was implemented and then removed: read over the whole file it applied a
+late declaration retroactively and dropped an *earlier* recipe entirely, turning
+a stated miss into a silent one. Doing it properly means tracking that state per
+line, which is the chase this model stopped. That shape is recorded separately,
+along with a test that asserts the miss so a future fix announces itself.
 
 ## Two approaches withdrawn, and what they cost
 
@@ -139,6 +143,9 @@ so a future attempt cannot quietly reintroduce the erasure.
   withdrawn approaches' failures.
 - A **write assigned by a conditional branch that is genuinely live** is not
   seen, for the reason above. Unchanged from before this work.
+- A **recipe marked by something other than a tab**, or continuing onto an
+  unindented line, is not read as a recipe. Also unchanged, and now pinned by a
+  test that asserts the miss.
 - A **build file's prerequisites** are ordered as they are written rather than
   as they run.
 - A **step naming another interpreter** still has its body read as shell, so
