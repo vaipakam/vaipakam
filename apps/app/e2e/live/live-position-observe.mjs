@@ -3342,16 +3342,29 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
     settled = !saysCheckRunning(snap.text ?? '', FORCED_CLOSE_COPY.unknownCopy);
   }
 
-  const {
-    visibleCards,
-    text,
-    bodyPresent,
-    bodyVisible,
-    bodyText,
-    submitPresent,
-    submitVisible,
-    submitDisabled,
-  } = snap;
+  // ROUND 27 P2 — the field list is GONE, not lengthened.
+  //
+  // This hand-written destructure, and the matching object literal at the
+  // end of this function, were a second copy of the DOM pass's field set
+  // that had to be edited in lockstep with it. It has now silently
+  // dropped a field TWICE: round 23 produced `absenceUnconfirmedWhy` and
+  // this shape lost it, and last round I added `visibleSubmits`, wrote a
+  // reply about that exact seam being uncovered, and dropped the new
+  // field through it in the same commit.
+  //
+  // Fixing the instance a second time would have left the mechanism
+  // intact for the third. A unit test cannot cover it either — the
+  // verdict's tests pass constructed records straight to
+  // `forcedCloseVerdict`, so they are satisfied by a field this
+  // projection never forwards, which is exactly why both drops were
+  // invisible to a green suite.
+  //
+  // So the projection no longer enumerates anything: the snapshot is
+  // spread whole and only the values computed OUTSIDE the DOM pass are
+  // layered on top. A field added to the evaluate now reaches the
+  // verdict because there is no longer a list that can fail to mention
+  // it. `snap.hiddenNow` cannot leak in — that case returns above.
+  const text = snap.text;
 
   // ROUND 2 P2 — a submittable card whose confirmation could NOT be read
   // is `confirmExpected` with `confirmText === null`, which the verdict
@@ -3364,7 +3377,8 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
   // A hidden control cannot be clicked, so no confirmation is expected
   // from one — the verdict reports the missing usable action instead
   // (round 18 P2).
-  const confirmExpected = submitPresent && submitVisible && !submitDisabled;
+  const confirmExpected =
+    snap.submitPresent && snap.submitVisible && !snap.submitDisabled;
   let confirmText = null;
   if (confirmExpected) {
     const opened = await card
@@ -3494,7 +3508,36 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
             // "the confirmation was not read" rather than inventing a
             // diagnosis. The generic block reason is a known limitation
             // and is not fixed here.
-            return rows.length === 6 && rows.every(visible);
+            // ROUND 27 P2 — THE LABEL AND THE VALUE, which is where this
+            // stops.
+            //
+            // A `.receipt-row` is itself a wrapper: it holds a `dt` and a
+            // `dd`, and hiding only the `dd`s leaves every row laid out
+            // at full height on the strength of its labels. So the
+            // lender would read six row headings — "Fees", "You can
+            // lose" — with no figure beside any of them, while
+            // `innerText` handed the hidden values to the amount scan
+            // and this predicate reported six visible rows.
+            //
+            // That is the same wrapper-is-not-its-contents argument that
+            // took the `<dl>`, then the rows, and it terminates here on
+            // purpose rather than by exhaustion: `ReviewReceipt` renders
+            // `<dt>{label}</dt><dd>{value}</dd>` with plain strings, so
+            // `dt` and `dd` are the text-bearing LEAVES — there is no
+            // further container beneath them to be fooled by. Checking
+            // the leaves is the level at which the content actually
+            // lives, and the recursion has a bottom.
+            //
+            // Emptiness needs no separate test: `visible` requires a
+            // non-zero rect, and a `dd` with no content collapses to
+            // zero height, so a blank value fails on geometry.
+            const rowShown = (row) => {
+              if (!visible(row)) return false;
+              const dt = row.querySelector('dt');
+              const dd = row.querySelector('dd');
+              return dt !== null && dd !== null && visible(dt) && visible(dd);
+            };
+            return rows.length === 6 && rows.every(rowShown);
           })
           .catch(() => false);
         confirmText = receiptShown
@@ -3507,18 +3550,13 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
     }
   }
   return {
+    // Everything the DOM pass observed, whatever it observed — see the
+    // note above the spread's twin at the top of this block.
+    ...snap,
     mounted: true,
     attached: true,
-    text,
-    bodyText,
-    bodyPresent,
     confirmText,
     confirmExpected,
-    visibleCards,
-    bodyVisible,
-    submitPresent,
-    submitVisible,
-    submitDisabled,
     settled,
   };
 }
@@ -4680,7 +4718,20 @@ for (const v of visited) {
                   // scanned. Printed because the no-amount claim covers
                   // that panel too, and a reader has no other way to
                   // tell a card-only scan from a full one.
-                  ` confirmScanned=${v.forcedCloseVerdict.confirmScanned}`
+                  ` confirmScanned=${v.forcedCloseVerdict.confirmScanned}` +
+                  // ROUND 27 — the CONTROL COUNT, printed on every pass.
+                  //
+                  // Not decoration. This field has now been dropped in
+                  // the projection between the DOM pass and the verdict
+                  // twice, and both times a green unit suite and a clean
+                  // live run said nothing, because the verdict's tests
+                  // feed it constructed records and the drive never
+                  // showed what it actually carried. The spread above
+                  // stops the drop; this makes the carriage OBSERVABLE,
+                  // so a future silent regression to `undefined` is
+                  // visible in the run output instead of waiting for a
+                  // reviewer to read the projection.
+                  ` submits=${v.forcedCloseVerdict.visibleSubmits}`
                 : '') +
               // ROUND 14 — WHETHER THE ABSENCE GATE COULD HAVE FIRED.
               //

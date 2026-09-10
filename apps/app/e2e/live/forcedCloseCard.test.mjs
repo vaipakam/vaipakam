@@ -1768,3 +1768,45 @@ describe('round 26 review findings', () => {
     expect(v.verdict).toBe('fail');
   });
 });
+
+describe('round 27 review findings', () => {
+  const copy = { unknownCopy: FORCED_CLOSE.unknown };
+  const held = {
+    lenderHoldsActive: true,
+    mounted: true,
+    attached: true,
+    saleLocked: false,
+    settled: true,
+    visibleCards: 1,
+    bodyPresent: true,
+    bodyVisible: true,
+    bodyText: 'an explanation',
+    text: FORCED_CLOSE.unknown,
+    confirmText: null,
+    confirmExpected: false,
+    submitPresent: true,
+    submitVisible: true,
+    submitDisabled: true,
+  };
+
+  it('reports the control count on a pass, so a dropped field is visible', () => {
+    // The point of this assertion is NOT the number. Twice now the
+    // count has failed to survive the projection from the DOM pass and
+    // arrived here as `undefined`, which silently disarms the duplicate
+    // arm for every input. Surfacing it on the pass verdict is what
+    // makes that state legible in a run instead of invisible until
+    // someone reads the projection.
+    const v = forcedCloseVerdict({ ...held, visibleSubmits: 1 }, copy);
+    expect(v.verdict).toBe('pass');
+    expect(v.visibleSubmits).toBe(1);
+  });
+
+  it('passes the missing count through as undefined rather than inventing 0', () => {
+    // `0` would read as "observed, none visible" — a different and
+    // stronger claim than "never observed". The drive prints whichever
+    // it got, so the two must not be conflated here.
+    const v = forcedCloseVerdict({ ...held }, copy);
+    expect(v.verdict).toBe('pass');
+    expect(v.visibleSubmits).toBeUndefined();
+  });
+});

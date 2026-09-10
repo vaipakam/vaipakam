@@ -1061,6 +1061,15 @@ export function forcedCloseVerdict(obs, copy) {
       : 'card present and submittable',
     checkRunning,
     confirmScanned: Boolean(obs.confirmText),
+    // ROUND 27 P2 — reported on the PASS, where it is least expected
+    // and most needed. A duplicate control FAILS above, so on this path
+    // the count is always 0 or 1 and looks redundant; what it actually
+    // documents is that the count REACHED the verdict at all. The two
+    // times this field went missing it arrived here as `undefined`, and
+    // the duplicate arm then could not fire on any input — a check
+    // switched off with nothing to show for it. Now the run prints
+    // `submits=undefined` in that state instead of a confident pass.
+    visibleSubmits: obs.visibleSubmits,
   };
 }
 
