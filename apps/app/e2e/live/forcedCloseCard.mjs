@@ -399,7 +399,7 @@ export function saysCheckRunning(text, unknownCopy) {
  * the card to publish the block its readiness resolved at, the way the
  * chooser publishes its readiness (#1855); this drive would then compare
  * two stated facts instead of racing an unobservable one. Tracked in
- * #2090.
+ * #2098.
  *
  * `pageHead === 0n` means the page's head was never observed, and that
  * is NOT treated as satisfied. Nothing is known about the relationship
