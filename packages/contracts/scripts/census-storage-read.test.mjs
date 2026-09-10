@@ -1,7 +1,7 @@
 // census-storage-read.test.mjs — the era-complete storage read's rules (#1566 §7/§7a), over fake readers.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { prepareStorageRead, readCountersByStorage, scanRowsByStorage, intentVerdictFromStorage, eraSlotsExcept, mergeHistoricalRows, ROW } from './census-storage-read.mjs';
+import { prepareStorageRead, readCountersByStorage, scanRowsByStorage, intentVerdictFromStorage, eraSlotsExcept, mergeHistoricalRows, aliasOf, classifyEarlierCounters, markAliasedRows, ROW } from './census-storage-read.mjs';
 import { memberSlot, rowSlot } from './storage-slots.mjs';
 
 const H = (n) => '0x' + n.toString(16).padStart(64, '0');
@@ -9,6 +9,7 @@ const base = 0x1000n;
 const slotOf = (rel) => H(base + BigInt(rel));
 const era = (commit, date, rel, withRows = true) => ({
   commit, date, storagePosition: H(base),
+  ...(commit === 'headhead1' ? { occupied: OCCUPIED_FOR_HEAD } : {}),
   fields: Object.fromEntries(Object.entries(rel).map(([f, r]) => [f, r === null ? null : { slot: slotOf(r), relative: r, offset: 0 }])),
   rows: withRows ? {
     SwapToRepayIntentCommit: rel.intentCommits === null ? null : { orderHash: { slot: 0, offset: 0 }, deadline: { slot: 1, offset: 0 } },
@@ -17,8 +18,17 @@ const era = (commit, date, rel, withRows = true) => ({
   } : {},
 });
 const HEADREL = { nextLoanId: 1, totalLoansEverCreated: 86, intentLiveCommitCount: 193, intentCommits: 194, borrowerLifRebate: 137, fallbackSnapshot: 45 };
+let OCCUPIED_FOR_HEAD = [];
 const OLDREL = { nextLoanId: 1, totalLoansEverCreated: 90, intentLiveCommitCount: 200, intentCommits: 201, borrowerLifRebate: 140, fallbackSnapshot: 45 };
 const slots = { storagePosition: H(base), fields: Object.fromEntries(Object.entries(HEADREL).map(([f, r]) => [f, slotOf(r)])) };
+const OCCUPIED = [
+  { label: 'nextLoanId', type: 't_uint256', from: slotOf(1), to: slotOf(1) },
+  { label: 'someCounterToday', type: 't_uint256', from: slotOf(OLDREL.totalLoansEverCreated), to: slotOf(OLDREL.totalLoansEverCreated) }, // today's field at the OLD counter slot
+  { label: 'totalLoansEverCreated', type: 't_uint256', from: slotOf(HEADREL.totalLoansEverCreated), to: slotOf(HEADREL.totalLoansEverCreated) },
+  { label: 'otherMapping', type: 't_mapping(t_uint256,t_uint256)', from: slotOf(OLDREL.intentCommits), to: slotOf(OLDREL.intentCommits), isMapping: true }, // today's mapping at the OLD intent head
+  { label: 'intentCommits', type: 't_mapping(...)', from: slotOf(HEADREL.intentCommits), to: slotOf(HEADREL.intentCommits), isMapping: true },
+];
+OCCUPIED_FOR_HEAD = OCCUPIED;
 const eras = { head: 'headhead1', since: '2026-05-01', generatedAt: 'now', complete: true, unavailable: [], eras: [era('oldold001', '2026-05-10T00:00:00Z', OLDREL), era('headhead1', '2026-09-09T00:00:00Z', HEADREL)] };
 
 test('prepareStorageRead: validates the tables and derives distinct slots per field', () => {
@@ -112,4 +122,31 @@ test('eraSlotsExcept drops exactly the slot HEAD uses; mergeHistoricalRows count
   const same = mergeHistoricalRows({ status: 'proven', provenBy: 'x', count: 0, total: '0', rows: [] }, { rows: { rebateRows: [] } }, 'rebateRows');
   assert.equal(same.status, 'proven');
   assert.equal(same.historicalRows, 0);
+});
+
+test('aliasing: an earlier-era slot that is a current field today is that field, not an old counter or row (#2095 r3 follow-up)', () => {
+  const p = prepareStorageRead({ slots, eras });
+  assert.equal(p.ok, true, p.reason);
+  assert.equal(aliasOf(slotOf(OLDREL.totalLoansEverCreated), p.occupied), 'someCounterToday');
+  assert.equal(aliasOf(slotOf(OLDREL.borrowerLifRebate), p.occupied), null, 'no current field lives at the old rebate head');
+  const { contradictions, aliased } = classifyEarlierCounters([
+    { which: 'totalLoansEverCreated', slot: slotOf(OLDREL.totalLoansEverCreated), value: '5', eras: [] },
+    { which: 'intentLiveCommitCount', slot: slotOf(OLDREL.intentLiveCommitCount), value: '2', eras: [] },
+    { which: 'intentLiveCommitCount', slot: slotOf(OLDREL.intentLiveCommitCount + 50), value: '0', eras: [] },
+  ], p.occupied);
+  assert.deepEqual(aliased.map((a) => a.aliases), ['someCounterToday'], 'the aliased reading is ignored as a counter');
+  assert.equal(contradictions.length, 1, 'a non-zero at a slot no field occupies is a contradiction');
+  assert.equal(contradictions[0].which, 'intentLiveCommitCount');
+  // a row candidate under an old mapping head that is today another mapping's head is ambiguous, and still reported
+  const rows = markAliasedRows([{ loanId: '7', orderHash: '0xab', mappingSlot: slotOf(OLDREL.intentCommits) }, { loanId: '8', vpfiHeld: '1', mappingSlot: slotOf(OLDREL.borrowerLifRebate) }], p.occupied);
+  assert.equal(rows[0].ambiguous, true);
+  assert.equal(rows[0].aliasesCurrentField, 'otherMapping');
+  assert.equal(rows[1].ambiguous, undefined);
+  // the merge names the ambiguity
+  const merged = mergeHistoricalRows({ status: 'proven', count: 0, total: '0', rows: [] }, { rows: { liveIntentCommits: [rows[0]] } }, 'liveIntentCommits');
+  assert.match(merged.indeterminateReason, /alias a current field's rows \(otherMapping\)/);
+  // without occupied ranges the read is refused
+  const bare = { ...era('headhead1', '2026-09-09T00:00:00Z', HEADREL) }; delete bare.occupied;
+  const noOcc = { ...eras, eras: [era('oldold001', '2026-05-10T00:00:00Z', OLDREL), bare] };
+  assert.match(prepareStorageRead({ slots, eras: noOcc }).reason, /no occupied-range map/);
 });

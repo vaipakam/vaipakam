@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { loadSlots, rowSlot, memberSlot } from './storage-slots.mjs';
-import { slotsFromLayout } from './storage-layout-eras.mjs';
+import { slotsFromLayout, occupiedRangesFromLayout } from './storage-layout-eras.mjs';
 import { storagePositionOf } from './storage-layout-provenance.mjs';
 
 test('rowSlot/memberSlot reproduce the compiler-loaded example rows in storage-slots.json', () => {
@@ -39,4 +39,19 @@ test('storagePositionOf: the ERC-7201 constant when declared, the plain hash for
   assert.equal(plain.derivation, 'keccak256("vaipakam.storage") (pre-ERC-7201 source)');
   assert.match(plain.position, /^0x[0-9a-f]{64}$/);
   assert.equal(storagePositionOf('nothing here'), null);
+});
+
+test('occupiedRangesFromLayout: one head slot per mapping, numberOfBytes-wide spans for value and inline types', () => {
+  const layout = {
+    storage: [{ label: 's', slot: '0', offset: 0, type: 't_struct(Storage)1_storage' }],
+    types: {
+      't_struct(Storage)1_storage': { members: [{ label: 'nextLoanId', slot: '1', offset: 0, type: 't_uint256' }, { label: 'cfg', slot: '2', offset: 0, type: 't_struct(Config)9_storage' }, { label: 'intentCommits', slot: '5', offset: 0, type: 't_mapping(t_uint256,t_struct(X)2_storage)' }] },
+      't_uint256': { numberOfBytes: '32' },
+      't_struct(Config)9_storage': { numberOfBytes: '96' },
+      't_mapping(t_uint256,t_struct(X)2_storage)': { numberOfBytes: '32' },
+    },
+  };
+  const r = occupiedRangesFromLayout(layout, '0x' + '00'.repeat(31) + '10');
+  const hex = (n) => '0x' + n.toString(16).padStart(64, '0');
+  assert.deepEqual(r.map((x) => [x.label, x.from, x.to, x.isMapping]), [['nextLoanId', hex(0x11n), hex(0x11n), false], ['cfg', hex(0x12n), hex(0x14n), false], ['intentCommits', hex(0x15n), hex(0x15n), true]]);
 });

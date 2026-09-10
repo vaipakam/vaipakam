@@ -91,7 +91,7 @@
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync, renameSync, rmSync } from 'node:fs';
 import { readManifest, regenerateEntries, withManifestLock, writeSnapshotGuarded, livePublicationsInProgress } from './archive-manifest.mjs';
 import { loadSlots, loadEras } from './storage-slots.mjs';
-import { prepareStorageRead, readCountersByStorage, scanRowsByStorage, intentVerdictFromStorage, eraSlotsExcept, mergeHistoricalRows, MAX_STORAGE_LOAN_SCAN } from './census-storage-read.mjs';
+import { prepareStorageRead, readCountersByStorage, scanRowsByStorage, intentVerdictFromStorage, eraSlotsExcept, mergeHistoricalRows, classifyEarlierCounters, markAliasedRows, MAX_STORAGE_LOAN_SCAN } from './census-storage-read.mjs';
 
 /** Sum a row field as a decimal string. A function declaration, so it is hoisted above every branch that returns early (#2095 r1 P2). */
 function sum(rows, field) {
@@ -1938,19 +1938,24 @@ async function censusDeployment(dep) {
     const n = counters.nextLoanId > cap ? cap : counters.nextLoanId;
     const ids = Array.from({ length: Number(n) }, (_, i) => BigInt(i + 1));
     const scan = await scanRowsByStorage({ readSlot, loanIds: ids, eraSlots: nonHead });
-    const earlierCounters = counters.totalLoansEverCreated.filter((x) => x.slot !== headSlots.totalLoansEverCreated && x.value > 0n)
-      .concat(counters.intentLiveCommitCount.filter((x) => x.slot !== headSlots.intentLiveCommitCount && x.value > 0n).map((x) => ({ ...x, which: 'intentLiveCommitCount' })));
+    // an earlier-era slot may be a CURRENT field's slot today: such a read is that field's value, not an old counter or row
+    const readings = counters.totalLoansEverCreated.filter((x) => x.slot !== headSlots.totalLoansEverCreated).map((x) => ({ ...x, which: 'totalLoansEverCreated' }))
+      .concat(counters.intentLiveCommitCount.filter((x) => x.slot !== headSlots.intentLiveCommitCount).map((x) => ({ ...x, which: 'intentLiveCommitCount' })))
+      .map((x) => ({ ...x, value: x.value.toString() }));
+    const { contradictions: earlierCounters, aliased } = classifyEarlierCounters(readings, STORAGE_READ.occupied);
+    for (const k of Object.keys(scan.rows)) scan.rows[k] = markAliasedRows(scan.rows[k], STORAGE_READ.occupied);
     historical = {
       rows: scan.rows,
+      aliasedCountersIgnored: aliased.map((x) => ({ which: x.which, slot: x.slot, value: x.value, aliases: x.aliases })),
       slotsRead: scan.slotsRead + counters.slotsRead,
       loansScanned: ids.length,
       truncated: counters.nextLoanId > n,
       nextLoanIdFromStorage: counters.nextLoanId.toString(),
-      earlierEraCounters: earlierCounters.map((x) => ({ which: x.which ?? 'totalLoansEverCreated', slot: x.slot, value: x.value.toString(), eras: x.eras })),
+      earlierEraCounters: earlierCounters.map((x) => ({ which: x.which, slot: x.slot, value: String(x.value), eras: x.eras })),
       erasPerField: scan.erasPerField,
     };
     const found = Object.values(scan.rows).reduce((a, r) => a + r.length, 0);
-    process.stderr.write(`census: ${who} — earlier-era storage read: ${ids.length} id(s) × ${Object.values(scan.erasPerField).reduce((a, b) => a + b, 0)} earlier slot set(s), ${scan.slotsRead} slot(s), ${found} row(s)${earlierCounters.length ? `, ${earlierCounters.length} non-zero earlier-era counter(s)` : ''}\n`);
+    process.stderr.write(`census: ${who} — earlier-era storage read: ${ids.length} id(s) × ${Object.values(scan.erasPerField).reduce((a, b) => a + b, 0)} earlier slot set(s), ${scan.slotsRead} slot(s), ${found} row(s)${earlierCounters.length ? `, ${earlierCounters.length} unexplained non-zero earlier-era counter(s)` : ''}${aliased.length ? `, ${aliased.length} aliased reading(s) ignored` : ''}\n`);
   }
   let intentAbsenceProof = null;
   if (!intentSurfaceRouted) {
@@ -2163,7 +2168,7 @@ async function censusDeployment(dep) {
       custodySurfaceUnrouted: false,
       loupeRouted,
       // r3 P1 — what no routed getter can see: every class at every earlier era slot over 1..nextLoanId
-      earlierEraRead: historical ? { ...STORAGE_READ.evidence, slotsRead: historical.slotsRead, loansScanned: historical.loansScanned, truncated: historical.truncated, nextLoanIdFromStorage: historical.nextLoanIdFromStorage, erasPerField: historical.erasPerField, rowsFound: Object.fromEntries(Object.entries(historical.rows).map(([k, v]) => [k, v.length])), earlierEraCounters: historical.earlierEraCounters } : undefined,
+      earlierEraRead: historical ? { ...STORAGE_READ.evidence, slotsRead: historical.slotsRead, loansScanned: historical.loansScanned, truncated: historical.truncated, nextLoanIdFromStorage: historical.nextLoanIdFromStorage, erasPerField: historical.erasPerField, rowsFound: Object.fromEntries(Object.entries(historical.rows).map(([k, v]) => [k, v.length])), earlierEraCounters: historical.earlierEraCounters, aliasedCountersIgnored: historical.aliasedCountersIgnored } : undefined,
       intentSource: intentSurfaceRouted
         ? 'getIntentCommit view (live state, history-independent)'
         : intentStorage

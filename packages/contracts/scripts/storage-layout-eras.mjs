@@ -50,6 +50,27 @@ function sh(cmd, args, cwd, opts = {}) {
   return execFileSync(cmd, args, { cwd, encoding: 'utf8', maxBuffer: 256 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'], ...opts });
 }
 
+/**
+ * Every top-level `Storage` member's occupied slot span at a given position —
+ * what a slot from an EARLIER era may alias today (#2095 r3 follow-up). A
+ * mapping or dynamic array occupies one head slot; a value type or inline
+ * struct occupies `numberOfBytes` from its slot. Pure; exported for the test.
+ */
+export function occupiedRangesFromLayout(layout, position) {
+  const s = (layout.storage ?? []).find((v) => v.label === 's');
+  const struct = layout.types[s.type];
+  const base = BigInt(position);
+  const out = [];
+  for (const m of struct.members) {
+    const t = layout.types[m.type];
+    const bytes = BigInt(t?.numberOfBytes ?? 32);
+    const from = base + BigInt(m.slot);
+    const slots = bytes <= 32n ? 1n : (bytes + 31n) / 32n;
+    out.push({ label: m.label, type: m.type, from: '0x' + from.toString(16).padStart(64, '0'), to: '0x' + (from + slots - 1n).toString(16).padStart(64, '0'), isMapping: /^t_mapping/.test(m.type) });
+  }
+  return out;
+}
+
 /** Pull the members we need out of a forge storageLayout artifact. Pure; exported for the test. */
 export function slotsFromLayout(layout, position, fields = FIELDS, rowStructs = ROW_STRUCTS) {
   const s = (layout.storage ?? []).find((v) => v.label === 's');
@@ -112,7 +133,7 @@ export function buildEra(sha, { repo = REPO_ROOT, keep = false, log = () => {} }
     sh('forge', ['build', '--skip', 'test', '--skip', 'script', '--extra-output', 'storageLayout', '--silent'], c, { env: { ...process.env, FOUNDRY_PROFILE: profile } });
     const art = JSON.parse(readFileSync(join(c, 'out', 'StorageLayoutEraProbe.sol', 'StorageLayoutEraProbe.json'), 'utf8'));
     if (!art.storageLayout) throw new Error('artifact carries no storageLayout');
-    return { ...slotsFromLayout(art.storageLayout, pos.position), storagePosition: pos.position, positionDerivation: pos.derivation, profile };
+    return { ...slotsFromLayout(art.storageLayout, pos.position), occupied: occupiedRangesFromLayout(art.storageLayout, pos.position), storagePosition: pos.position, positionDerivation: pos.derivation, profile };
   } finally {
     if (!keep) {
       try { sh('git', ['worktree', 'remove', '--force', dir], repo); } catch { /* leave it; `git worktree prune` cleans up */ }
@@ -181,7 +202,7 @@ export function main(argv = process.argv.slice(2)) {
   for (const e of eras) {
     const t0 = Date.now();
     const fingerprint = layoutFingerprint(sh('git', ['show', `${e.sha}:${LIB_PATH}`], REPO_ROOT), STRUCTS, FIELDS);
-    if (reusable.has(e.sha)) {
+    if (reusable.has(e.sha) && !(e.sha === head && !reusable.get(e.sha).occupied)) {
       built.push({ ...reusable.get(e.sha), event: e.event ?? reusable.get(e.sha).event ?? null, fingerprint });
       log(`  ${e.sha.slice(0, 9)} ${e.date.slice(0, 10)} ${(e.event ?? '').padEnd(34)} reused`);
       continue;

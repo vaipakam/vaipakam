@@ -6021,8 +6021,18 @@ proof. A rebate or held row found under an earlier layout is VPFI custody
 and counts; a fallback or intent row found there has no readable asset and
 leaves the class indeterminate. Era identity, finally, is a layout
 fingerprint per era rather than a commit, so a table regenerated on a branch
-still matches after the squash merge. Run 29 re-reads every deployment with
-the earlier-era read.
+still matches after the squash merge. The first live smoke of that read on
+base-sepolia showed the trap in it: an earlier era's slot for one field is
+today's slot for another, so three "non-zero earlier-era counters" on the
+live Diamond were current fields living where the old counters once did. A
+zero at every era slot is still a sound proof of absence, but a non-zero
+must be attributed before it may count. The era table's HEAD era now carries
+every top-level member's occupied slot span, and each earlier-era reading is
+classified against it: a non-zero at a slot a current field occupies is that
+field's value and is ignored as a counter, a non-zero at a slot no field
+occupies is a genuine contradiction, and a row candidate whose old mapping
+head is a current mapping's head is reported as ambiguous with the field it
+aliases. Run 29 re-reads every deployment with the earlier-era read.
 
 ### 7a. What the provenance walk found, and how the design changes (2026-09-09)
 

@@ -70,9 +70,16 @@ export function prepareStorageRead({ slots, eras }) {
     eraSlots[f] = [...set.entries()].map(([slot, inEras]) => ({ slot, eras: inEras }));
   }
   if (eraSlots.nextLoanId.length !== 1) return refuse(`nextLoanId occupied ${eraSlots.nextLoanId.length} different slots across eras; the loan-id range would be ambiguous`);
+  // HEAD's occupied ranges: what an EARLIER era's slot may alias today. Without
+  // them a non-zero read at an old slot cannot be attributed, so the read is
+  // refused (a sound proof of absence never needs them, but the census also
+  // reports candidates, and a candidate must be attributable).
+  if (!Array.isArray(head.occupied) || !head.occupied.length) return refuse('the HEAD era carries no occupied-range map — regenerate the era table');
+  const occupied = head.occupied.map((r) => ({ ...r, fromN: BigInt(r.from), toN: BigInt(r.to) }));
   return {
     ok: true,
     head: eras.head,
+    occupied,
     erasBuilt: eras.eras.length,
     generatedAt: eras.generatedAt,
     eraSlots,
@@ -194,9 +201,52 @@ export function mergeHistoricalRows(cls, historical, className) {
     ...cls,
     status: 'indeterminate',
     provenBy: undefined,
-    indeterminateReason: `${hist.length} row(s) exist at an EARLIER layout era's slot (written by facets before a layout change; no getter reads them); their asset cannot be read without a getter for that era`,
+    indeterminateReason: `${hist.length} row candidate(s) at an EARLIER layout era's slot (no getter reads them)${hist.some((r) => r.ambiguous) ? `; ${hist.filter((r) => r.ambiguous).length} of them alias a current field's rows (${[...new Set(hist.filter((r) => r.ambiguous).map((r) => r.aliasesCurrentField))].join(', ')}) and may be today's rows of that field for the same key` : ''}; their asset cannot be read without a getter for that era`,
     unknownAssetRows: [...(cls.unknownAssetRows ?? []), ...hist],
     count: (cls.count ?? 0) + hist.length,
     historicalRows: hist.length,
   };
+}
+
+/**
+ * What a slot means in TODAY's layout: the top-level Storage member whose
+ * span covers it, or null when no current field lives there. An earlier
+ * era's slot that aliases a current field reads that field's current value,
+ * which is neither a stale counter nor a stale row (#2095 r3 follow-up:
+ * base-sepolia live showed three "non-zero earlier-era counters" that were
+ * exactly this).
+ */
+export function aliasOf(slot, occupied) {
+  const n = BigInt(slot);
+  const hit = (occupied ?? []).find((r) => n >= (r.fromN ?? BigInt(r.from)) && n <= (r.toN ?? BigInt(r.to)));
+  return hit ? hit.label : null;
+}
+
+/**
+ * Split earlier-era counter readings into contradictions (a non-zero value
+ * at a slot no current field occupies — an old counter left behind) and
+ * aliased readings (a current field's value, ignored as a counter). Pure.
+ */
+export function classifyEarlierCounters(readings, occupied) {
+  const contradictions = [];
+  const aliased = [];
+  for (const r of readings) {
+    if (BigInt(r.value) === 0n) continue;
+    const alias = aliasOf(r.slot, occupied);
+    if (alias) aliased.push({ ...r, aliases: alias });
+    else contradictions.push(r);
+  }
+  return { contradictions, aliased };
+}
+
+/**
+ * A row candidate found at an earlier era's mapping slot is AMBIGUOUS when
+ * that head slot is a current mapping's head: today's row for the same key
+ * lives at the very same derived slot. Marks each candidate; never drops it.
+ */
+export function markAliasedRows(rows, occupied) {
+  return rows.map((r) => {
+    const alias = aliasOf(r.mappingSlot, occupied);
+    return alias ? { ...r, aliasesCurrentField: alias, ambiguous: true } : r;
+  });
 }
