@@ -8954,11 +8954,20 @@ for (const file of walk(REPO_ROOT)) {
   //
   //     "AND NO CONTINUATION FOLDING HAPPENS FOR PWSH" WAS WRONG — it was
   //     true of `forInterpreter` and false of the pipeline. `logicalLines`
-  //     runs AFTER this for every language and folds a trailing backslash,
-  //     which pwsh does not treat as a continuation at all, so an unrelated
-  //     line ending in one merges with the deploy below it and lends it a
-  //     `--keep-vars` it never had. A false GREEN on main too (#2118) — the
-  //     direction this check must not fail in.
+  //     runs AFTER this and folds a trailing backslash, which pwsh does not
+  //     treat as a continuation at all, so an unrelated line ending in one
+  //     merges with the deploy below it and lends it a `--keep-vars` it never
+  //     had. A false GREEN on main too (#2118) — the direction this check must
+  //     not fail in.
+  //
+  //     NOT "for every language", which overstated it (r21). `logicalLines`
+  //     reads SHELL-derived entries — shell files, Windows helpers, and the
+  //     shell/Make blocks lifted out of other files; a `.md`, `.js` or `.py`
+  //     line goes through `plainLines` and is not folded. Verified: the same
+  //     shape in a runbook reports, in a `.sh` it is blessed. It also needs
+  //     the line to END at the backslash — with CRLF the retained `\r` breaks
+  //     `buf.endsWith('\\')`, so the defect is LF-only. Both limits matter for
+  //     the blast radius of a fix, not just for accuracy here.
   //
   //     THE PWSH REWRITE IS NOT PURELY SEMANTICS-PRESERVING, and an earlier
   //     version of this note claimed it was. It has no string state, so an
@@ -8976,12 +8985,28 @@ for (const file of walk(REPO_ROOT)) {
   //     judged. A selection — but of a boundary the FORMAT draws, not of "the
   //     parts that look executable", which is the selection that failed.
   //
-  //     THE REASON IS NARROWER THAN THE CODE, and this note claimed the two
-  //     matched. `jsonValueLines` turns EVERY `: "…"` string in a JSON/JSONC
-  //     file into its own scanned command line — a `description`, a
-  //     `wrangler.jsonc` var — not just the `scripts` map. So a manifest whose
-  //     description merely NAMES the command is reported as deploying it. A
-  //     false RED on main too (#2119).
+  //     THE REASON DOES NOT MATCH THE CODE'S SHAPE, and this note claimed it
+  //     did. `jsonValueLines` runs for EVERY `.json`/`.jsonc` file and turns
+  //     each colon-introduced SCALAR string into its own scanned command line
+  //     — a `description`, a `wrangler.jsonc` var, an unrelated data file —
+  //     not the `scripts` map. So a manifest whose description merely NAMES
+  //     the command is reported as deploying it. A false RED on main too
+  //     (#2119).
+  //
+  //     Neither "manifests" nor "every string": the regex is
+  //     `:\s*"…"`, so a value written as an ARRAY is passed over —
+  //     `"keywords":["wrangler deploy"]` does NOT report (r21, verified both
+  //     ways). A fix scoped to "every string" would change that case, which
+  //     behaves correctly today.
+  //
+  //     AND THE FALSE REPORT HAS TWO ROUTES, which bounds what fixing this
+  //     buys. Only the MANIFEST case is coupled to the extraction — bypass it
+  //     and the inert `description` stops reporting. An inert value in any
+  //     other `.json`/`.jsonc` reports anyway, through the ordinary line scan
+  //     (the #2112 shape), with the extraction bypassed OR scoped to
+  //     manifests. So narrowing extraction removes one route and leaves the
+  //     other; both fixtures are pinned so a partial fix cannot read as a
+  //     whole one.
   //
   //     It is the EXTRACTION's breadth, not the `lang: 'shell'` label and not
   //     `valueScoped`. Worth stating because the obvious reading blames the

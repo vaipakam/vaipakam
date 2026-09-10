@@ -12044,11 +12044,17 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     // backslash is an ordinary argument, so these are TWO commands and the
     // deploy carries no flag — it really would delete every dashboard-managed
     // var. `forInterpreter` applies no folding for pwsh, but `logicalLines`
-    // runs afterwards for every language alike and folds backslash-newline,
-    // so `--keep-vars` from the unrelated `Write-Output` attaches to the
-    // deploy beside it.
+    // runs afterwards and folds backslash-newline, so `--keep-vars` from the
+    // unrelated `Write-Output` attaches to the deploy beside it.
     //
-    // The backslash is the ONLY difference from the control below. Asserting
+    // TWO CONDITIONS BOUND THIS, and both are pinned rather than described
+    // (r21). It is not "every language": `logicalLines` reads shell-derived
+    // entries, so a runbook line ending in a backslash does NOT fold. And it
+    // needs LF — the CRLF control below is byte-identical but for the line
+    // endings and comes out the other way, because the retained `\r` defeats
+    // the `endsWith('\\')` test.
+    //
+    // The backslash is the ONLY difference from the first control. Asserting
     // the pass means a fix fails here and comes back to #2118 — and a fix is
     // a behaviour change with a blast radius, since every deploy currently
     // blessed this way starts reporting.
@@ -12068,6 +12074,42 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     expect(r.ok).toBe(false);
   });
 
+  it('the same helper with CRLF endings IS reported (#2118 bound)', () => {
+    // THE DEFECT IS LF-ONLY, and this pins the boundary rather than leaving
+    // the record to imply every checkout is affected. Byte-identical to the
+    // fixture above but for the line endings: the `\r` survives into the
+    // buffer, `buf.endsWith('\\')` is false, no fold happens, and the deploy
+    // is correctly reported — even though both shells treat the backslash as
+    // an ordinary character either way.
+    //
+    // So a Windows checkout storing helpers with CRLF never saw #2118, which
+    // bounds who a fix affects. Worth pinning because it is the sort of
+    // condition a later fix would silently widen.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith(
+      'apps/agent/d.ps1',
+      "cd apps/agent\r\nWrite-Output '--keep-vars' \\\r\nwrangler deploy\r\n",
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a runbook line ending in a backslash does NOT fold (#2118 bound)', () => {
+    // THE FOLD IS FOR SHELL-DERIVED TEXT, not for every file. `logicalLines`
+    // reads shell files, Windows helpers and the shell blocks lifted out of
+    // other files; a document's own lines go through `plainLines` and are
+    // read whole. So the shape that is blessed in a `.ps1` is still reported
+    // here, and "for every language" — which this record said until r21 —
+    // would have sent a fix into readers that never fold.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith(
+      'docs/rb-fold.md',
+      "# Runbook\n\necho '--keep-vars' \\\nwrangler deploy --config apps/agent/wrangler.jsonc\n",
+    );
+    expect(r.ok).toBe(false);
+  });
+
   it('an inert manifest description is read as a deploy (#2119, stated false report)', () => {
     // A STATED FALSE REPORT, in the opposite direction to #2118 above.
     //
@@ -12075,14 +12117,18 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     // block comes from `description`, which nothing executes.
     //
     // THE MECHANISM IS THE EXTRACTION, NOT THE LABEL, and the mutation check
-    // is what settled it: `jsonValueLines` turns EVERY `: "…"` string in a
-    // `.json`/`.jsonc` file into its own scanned command line, so any value
-    // naming the command is read as one. Relabelling those entries away from
-    // `shell` leaves this fixture passing unchanged; bypassing
-    // `jsonValueLines` altogether is what flips it. So the `lang: 'shell'`
-    // label — which is right, and load-bearing for redirections inside script
-    // values (r13) — is NOT what produces this, and neither is the
-    // value-scoped rewrite coordinate. The breadth of the extraction is.
+    // is what settled it: `jsonValueLines` turns each colon-introduced SCALAR
+    // string in a `.json`/`.jsonc` file into its own scanned command line, so
+    // any such value naming the command is read as one. Relabelling those
+    // entries away from `shell` leaves this fixture passing unchanged;
+    // bypassing `jsonValueLines` altogether is what flips it. So the
+    // `lang: 'shell'` label — which is right, and load-bearing for
+    // redirections inside script values (r13) — is NOT what produces this,
+    // and neither is the value-scoped rewrite coordinate.
+    //
+    // Not "manifests" and not "every string" (r21): it applies to ANY file of
+    // that format, and an ARRAY value is passed over — the sibling fixture
+    // below pins that half, so a fix scoped either way fails one of them.
     //
     // This is the guard's own restraint inverted: it would rather miss an
     // exotic spelling than report text that performs no write, and here it
@@ -12093,6 +12139,49 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
       '{"name":"@vaipakam/agent","description":"wrangler deploy",' +
         '"scripts":{"deploy":"wrangler deploy --keep-vars"}}\n',
     );
+    expect(r.ok).toBe(false);
+  });
+
+  it('the same words inside an ARRAY value are not read at all (#2119 bound)', () => {
+    // THE OTHER HALF OF #2119's SCOPE. The extraction matches a colon
+    // followed by a quoted scalar, so a list value is passed over entirely
+    // and `keywords` naming the command reports nothing — while the scalar
+    // `description` beside it in the fixture above does.
+    //
+    // Pinned because the record said "every string value" until r21, and a
+    // fix written against that sentence would change this case, which behaves
+    // correctly today.
+    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith(
+      'apps/agent/package.json',
+      '{"name":"@vaipakam/agent","keywords":["wrangler deploy"],' +
+        '"scripts":{"deploy":"wrangler deploy --keep-vars"}}\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('an inert value in a NON-manifest JSON file reports by a SECOND route (#2119)', () => {
+    // A SECOND, INDEPENDENT ROUTE TO THE SAME WRONG VERDICT — and the
+    // mutation check is what established that, after an earlier version of
+    // this fixture claimed something it did not show.
+    //
+    // The manifest fixture above is COUPLED to the extraction: bypass
+    // `jsonValueLines` and it stops reporting. This one is NOT. An inert value
+    // in a data file of the same format reports with the extraction bypassed,
+    // with it scoped to manifests, and normally — the ordinary line scan
+    // reaches it either way, the same shape as #2112.
+    //
+    // So it is evidence about the FIX and not about the extraction's scope: a
+    // change that narrows extraction removes the manifest report and leaves
+    // this one standing. The first draft of this test asserted it would fail
+    // under a script-key-scoped fix; the mutant passed, and the claim was
+    // wrong.
+    //
+    // It still asserts a WRONG VERDICT rather than a bound, which is why it
+    // does not say "bound" — the siblings around it pass either way and do.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent","scripts":{"deploy":"wrangler deploy --keep-vars"}}\n');
+    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith('apps/agent/metadata.json', '{"note":"wrangler deploy"}\n');
     expect(r.ok).toBe(false);
   });
 

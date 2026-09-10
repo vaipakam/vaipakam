@@ -77,12 +77,20 @@ No behaviour change. The check's logic is what it was.
 - Two tests pinning that a bare command line and an inline command span in a
   document **are** read as commands — the two shapes that defeated the withdrawn
   designs, so a future attempt cannot quietly reintroduce the erasure.
-- Controls beside the last two, so neither can pass for an unrelated reason.
+- Controls beside the last two, so neither can pass for an unrelated reason,
+  and — for the two found while correcting this record — tests pinning the
+  BOUNDS of each as well as the defect. Both turned out to be narrower than
+  first written: one applies only to text read as a shell and only where the
+  line ends immediately at the offending character, and the other reads
+  single-text values in any file of that format while passing over values
+  written as a list. Those bounds are pinned because a fix aimed at the
+  overstated version would change cases that behave correctly today.
 
 ### What is deferred
 
 Every symptom this work set out to fix, plus the limitations found while proving
-them — including two false greens surfaced while correcting this record itself —
+them — including five defects surfaced while correcting this record itself,
+three of them silent passes and two false reports —
 is recorded as its own issue with a reproduction and what a fix would have
 to be true of. All are behaviour the check already had, so nothing is made
 worse. Five are additionally pinned by tests that assert the current verdict —
@@ -93,8 +101,8 @@ three of them a silent pass, two a false report:
 | **#2084** | a build file variable holding a write is not seen, when the assignment sits below the deployment — *pinned (miss)* |
 | **#2112** | a runbook sentence naming a write reports the deployment below it — *pinned (false report)* |
 | **#2114** | a recipe marked by something other than a tab is not read as a recipe — *pinned (miss)* |
-| **#2118** | a Windows-shell helper's deployment is lent a safety flag by the unrelated line above it, when that line ends in a character that shell does not treat as a continuation — *pinned (silent pass)* |
-| **#2119** | every string value in a manifest is read as a command, so a description naming the deployment is reported as performing it — *pinned (false report)* |
+| **#2118** | a Windows-shell helper's deployment is lent a safety flag by the unrelated line above it, when that line ends in a character that shell does not treat as a continuation — *pinned (silent pass), with both of its bounds pinned too: it applies only to text read as a shell, and only where the line ends immediately at that character* |
+| **#2119** | a single-text property value in any file of the manifest's format is read as a command, so a description naming the deployment is reported as performing it — *pinned (false report), with its bounds: unrelated files of that format behave the same way, and a value written as a list is not read at all* |
 | **#2110** | a folded workflow scalar's positions are not comparable with the file's |
 | **#2113** | a write assigned by a live conditional branch is not seen |
 | **#2106** | a build file's prerequisites are ordered as written, not as they run |
