@@ -1727,6 +1727,21 @@ function watchPageHead(page) {
   //
   // A socket is its own endpoint: keyed by the socket object, and marked
   // as deployment-serving by what the PAGE sends over it.
+  //
+  // The obvious worry is that a socket carrying ONLY subscriptions would
+  // never be marked, so its `newHeads` would go uncounted. Checked
+  // rather than assumed: `wagmi.ts` builds `fallback([webSocket(...),
+  // http(...)])`, and viem's fallback sends EVERY request to the first
+  // working transport — so while the socket is healthy the Diamond reads
+  // travel over it too, and it marks itself. Should that ever stop being
+  // true, the failure is the mild one: heads still come from the HTTP
+  // endpoint of the same chain, so the bound is staler rather than
+  // wrong, which the documented lower-bound residual already covers.
+  //
+  // Linking a socket to an HTTP endpoint by HOST was considered and
+  // rejected: providers routinely serve several chains from one host on
+  // different paths or keys, so host-matching would re-introduce exactly
+  // the cross-chain pooling this scoping exists to remove.
   page.on('websocket', (ws) => {
     const key = ws;
     ws.on('framesent', ({ payload }) => markDiamond(key, payload));
