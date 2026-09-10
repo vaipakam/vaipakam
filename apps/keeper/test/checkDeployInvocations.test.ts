@@ -8883,6 +8883,1329 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(r.ok).toBe(false);
   });
 
+  it('a config named then written via a bound path is a rewrite (#2052)', () => {
+    // Every other pattern here needs the name AT the write, which a binding
+    // removes: the ordinary pathlib spelling names the file once and writes
+    // through `p`.
+    //
+    // One assertion per test, deliberately. `runWith` scans the whole
+    // temporary root and `beforeEach` resets it once per `it`, so a second
+    // failing case in the same test keeps the guard failing and the later
+    // assertion passes even if its own detection is broken (#2066 r10) — a
+    // trap this PR fell into twice before it was named.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'r.py',
+      'from pathlib import Path\n' +
+        'import subprocess\n' +
+        'p = Path("configs/custom.jsonc")\n' +
+        'p.write_text("{}")\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a config named then passed to writeFileSync is a rewrite (#2052)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'r.mjs',
+      'const cfg = "configs/custom.jsonc";\n' +
+        'writeFileSync(cfg, "{}");\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a config named then opened for writing is a rewrite (#2052)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'r2.py',
+      'import subprocess\n' +
+        'cfg = "configs/custom.jsonc"\n' +
+        'open(cfg, "w").write("{}")\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('naming the config and only READING it is not a rewrite (#2052)', () => {
+    // The rule is "names it AND writes"; inspecting a config a deploy is
+    // about to use stays ordinary.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'q.py',
+      'from pathlib import Path\n' +
+        'import subprocess\n' +
+        'p = Path("configs/custom.jsonc")\n' +
+        'print(p.read_text())\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('the named rule does not order the name against the write (#2066 r8)', () => {
+    // This asserted the opposite until r8. Requiring the write to come after
+    // the name discarded a real rewrite whose CALL begins before it —
+    // `writeFileSync(path.join(process.cwd(), "configs/custom.jsonc"), …)` —
+    // and deciding whether a name sits inside a given call means finding that
+    // call's extent, which is the parsing this reader stopped doing. So a file
+    // that names the config and writes before the deploy reports, whatever the
+    // order of the two. Ordering against the DEPLOY is still enforced, which
+    // is the one that protects a legitimate command.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'b.mjs',
+      'writeFileSync("/tmp/other.json", "{}");\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a write only AFTER the deploy still does not invalidate it (#2066 r8)', () => {
+    // The ordering that matters is against the deploy: maintenance below a
+    // command cannot invalidate the config that command already read.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'a.mjs',
+      'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n' +
+        'writeFileSync("configs/custom.jsonc", "{}");\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a COMPOUND copy destination needs no destination reading (#2052)', () => {
+    // PR #2066 spent a review round teaching a resolver about
+    // `backup ? "/tmp/o.jsonc" : "configs/custom.jsonc"`. Asked by NAME the
+    // question does not arise: the file names the config and then writes.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'c.mjs',
+      'copyFileSync("gen.jsonc", backup ? "/tmp/o.jsonc" : "configs/custom.jsonc");\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a COPY through a bound name is a rewrite (#2066 r7)', () => {
+    // The name-bearing copy pattern cannot see a basename that is not in the
+    // call, so copies belong in the named-write set too.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'c.mjs',
+      'const cfg = "configs/custom.jsonc";\n' +
+        'copyFileSync("gen.jsonc", cfg);\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a later direct write does not suppress the named scan (#2066 r7)', () => {
+    // Gating the scan on "nothing else matched" let a write AFTER the deploy
+    // hide a bound write BEFORE it.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'd.mjs',
+      'const cfg = "configs/custom.jsonc";\n' +
+        'writeFileSync(cfg, "{}");\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n' +
+        'writeFileSync("configs/custom.jsonc", "{}");\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('an UNQUOTED shell binding names the config too (#2066 r7)', () => {
+    // Shell assignments routinely leave constant paths unquoted.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'w.sh',
+      'export CFG=configs/custom.jsonc\n' +
+        'node -e "require(\'fs\').writeFileSync(process.env.CFG,\'{}\')"\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a bound shell redirection is a named write (#2066 r8)', () => {
+    // The direct form is already a write; this is the same write through a
+    // binding.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'w.sh',
+      'CFG=configs/custom.jsonc\n' +
+        'printf "{}" > "$CFG"\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a name INSIDE the write call still counts (#2066 r8)', () => {
+    // `writeFileSync(path.join(process.cwd(), "configs/custom.jsonc"), …)`
+    // names the config within its own arguments.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'j.mjs',
+      'writeFileSync(path.join(process.cwd(), "configs/custom.jsonc"), "{}");\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('shutil copy variants are named writes (#2066 r8)', () => {
+    // The ordinary Python spellings; the destination is the bound name, so
+    // the name-bearing copy pattern cannot see it.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      's.py',
+      'import shutil, subprocess\n' +
+        'cfg = "configs/custom.jsonc"\n' +
+        'shutil.copyfile("gen.jsonc", cfg)\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a write mode BEFORE the file keyword still counts (#2066 r9)', () => {
+    // Python accepts `open(mode="w", file=cfg)`.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'm.py',
+      'import subprocess\n' +
+        'cfg = "configs/custom.jsonc"\n' +
+        'open(mode="w", file=cfg).write("{}")\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it("Node's async cp is a named write (#2066 r9)", () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'cp.mjs',
+      'import * as fs from "node:fs/promises";\n' +
+        'const cfg = "configs/custom.jsonc";\n' +
+        'await fs.cp("generated.jsonc", cfg);\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('shell tee is a named write (#2066 r9)', () => {
+    // Its own test: sharing one with the async-cp case left that fixture's
+    // failing file in the root, so this assertion held even with `tee`
+    // detection removed entirely (#2066 r11).
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'w.sh',
+      'CFG=configs/custom.jsonc\n' +
+        'printf "{}" | tee "$CFG"\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('an arrow is not a redirection (#2066 r9)', () => {
+    // The deploy's own `--config` satisfies the name test, so a bare `>`
+    // alternative reported a config nothing had touched.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'arrow.mjs',
+      'const pick = (a) => a;\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a comparison is not a redirection (#2066 r9)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'cmp.mjs',
+      'if (2 > 1) { log("x"); }\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a JavaScript comparison with a quoted target is not a redirection (#2066 r10)', () => {
+    // Whitespace is not a command boundary outside shell text.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'q.mjs',
+      'if (value > "$CFG") { log(1); }\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a dotted qualifier still reaches the write verb (#2066 r10)', () => {
+    // `fs.promises.cp(...)` and `require("fs").writeFileSync(...)` are both
+    // member calls; the boundary must admit `.` while still refusing a
+    // suffix.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'a.mjs',
+      'const cfg = "configs/custom.jsonc";\n' +
+        'await fs.promises.cp("generated.jsonc", cfg);\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a suffix is not a write verb (#2066 r10)', () => {
+    // `os.remove(` ends in `move` and `copy.deepcopy(` in `copy`; neither
+    // touches a file this guard cares about.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'g.py',
+      'import copy, os, subprocess\n' +
+        'v = copy.deepcopy({})\n' +
+        'os.remove("/tmp/x")\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a descriptor-prefixed redirection is a write (#2066 r10)', () => {
+    // `printf ignored 2>"$CFG"` truncates the bound path.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'b.sh',
+      'CFG=configs/custom.jsonc\n' +
+        'printf ignored 2>"$CFG"\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a path-qualified shell write command is a write (#2066 r10)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'd.sh',
+      'CFG=configs/custom.jsonc\n' +
+        'printf "{}" | /usr/bin/tee "$CFG"\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a nested expression in open() still reaches the mode (#2066 r10)', () => {
+    // `open(Path(cfg), "w")` — the first `)` is not the call's.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'c.py',
+      'from pathlib import Path\n' +
+        'import subprocess\n' +
+        'cfg = "configs/custom.jsonc"\n' +
+        'open(Path(cfg), "w").write("{}")\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a shell wrapper without a shebang is still shell (#2066 r11)', () => {
+    // The shell-ness flag was computed from the resolved CONFIG path, so it
+    // asked whether a `.jsonc` is a shell script — always false — and the
+    // shell alternatives switched off for every real `.sh` wrapper.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'w.sh',
+      'CFG=configs/custom.jsonc\n' +
+        'printf "{}" > "$CFG"\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a JavaScript division is not a copy command (#2066 r11)', () => {
+    // `const ratio = cp / total;` matched the whitespace-delimited `cp`
+    // branch; shell commands are shell-gated now.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'r.mjs',
+      'const ratio = cp / total;\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('an unrelated open() is not a write mode (#2066 r11)', () => {
+    // `webbrowser.open("welcome")` matched the mode prefix `"w`; the literal
+    // has to close.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'b.py',
+      'import webbrowser, subprocess\n' +
+        'webbrowser.open("welcome")\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a commented-out copy is not a named write (#2066 r11)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'c.sh',
+      '# cp generated elsewhere\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('Python floor division is not a line comment (#2066 r12)', () => {
+    // The language-blind `//` recogniser blanked everything after `10 // 2`
+    // to end of line, so a copy on THAT line went unseen — a false green.
+    // The write has to share the line with the operator or the fixture proves
+    // nothing, which is how the first version of it passed either way.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'a.py',
+      'import shutil, subprocess\n' +
+        'cfg = "configs/custom.jsonc"\n' +
+        'chunks = 10 // 2; shutil.copyfile("generated.jsonc", cfg)\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a JavaScript string describing a write is not one (#2066 r12)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'b.mjs',
+      'const example = "shutil.copy(source, destination)";\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it("a SHELL quoted payload is still executed code (#2066 r12)", () => {
+    // The mirror of the case above: excluding string content is right for
+    // JavaScript and Python, where a literal is data, and wrong for shell,
+    // where `node -e "…"` runs its payload. This guard already pins that for
+    // `-c`; the first cut of the string rule broke it immediately.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'e.sh',
+      'export CFG=configs/custom.jsonc\n' +
+        'node -e "require(\'fs\').writeFileSync(process.env.CFG,\'{}\')"\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a positional open mode must close too (#2066 r12)', () => {
+    // r11 fixed only the method form.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'c.py',
+      'import webbrowser, subprocess\n' +
+        'webbrowser.open("https://example.com", "welcome")\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a shell write word must be in command position (#2066 r12)', () => {
+    // `command -v cp` tests whether `cp` exists; it copies nothing.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'd.sh',
+      'command -v cp && echo found\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a wrapper still puts cp in command position (#2066 r12)', () => {
+    // The narrowing must not lose `sudo cp …`.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'h.sh',
+      'sudo cp generated.jsonc configs/custom.jsonc\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  // ---- Codex #2066 r13 ----
+
+  it('a manifest script value is shell, not JSON data (#2066 r13)', () => {
+    // `physical` was answering two questions at once — "can this line set a
+    // working directory for a later one" (no) and "is this shell text" (yes,
+    // it is a command) — so the redirection was classified as JSON data.
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'apps/agent/package.json',
+      '{\n' +
+        '  "name": "@vaipakam/agent",\n' +
+        '  "scripts": {\n' +
+        '    "release": "CFG=configs/custom.jsonc; printf \'{}\' > $CFG; wrangler deploy --config configs/custom.jsonc"\n' +
+        '  }\n' +
+        '}\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('the same manifest without the rewrite is blessed (#2066 r13 control)', () => {
+    // The control for the fixture above: it must report because of the
+    // REDIRECTION, not because a manifest deploy is unnameable.
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'apps/agent/package.json',
+      '{\n' +
+        '  "name": "@vaipakam/agent",\n' +
+        '  "scripts": {\n' +
+        '    "release": "wrangler deploy --config configs/custom.jsonc"\n' +
+        '  }\n' +
+        '}\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a template-literal interpolation performs its write (#2066 r13)', () => {
+    // The braces belong to the literal; what they enclose is code.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'b.mjs',
+      'const cfg = "configs/custom.jsonc";\n' +
+        'const out = `${writeFileSync(cfg, "{}")}`;\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('an f-string interpolation performs its write (#2066 r13)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'c.py',
+      'import subprocess\n' +
+        'from pathlib import Path\n' +
+        'cfg = "configs/custom.jsonc"\n' +
+        'msg = f\'{Path(cfg).write_text("{}")}\'\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('an assignment prefix keeps cp in command position (#2066 r13)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'd.sh',
+      'CFG=configs/custom.jsonc\n' +
+        'MODE=copy cp generated.jsonc "$CFG"\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a sudo option with an argument keeps cp in command position (#2066 r13)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'e.sh',
+      'CFG=configs/custom.jsonc\n' +
+        'sudo -u root cp generated.jsonc "$CFG"\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('the noclobber override is still a redirection (#2066 r13)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'f.sh',
+      'CFG=configs/custom.jsonc\n' +
+        'printf new >| "$CFG"\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a combined stdout+stderr redirection is a write (#2066 r13)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'g.sh',
+      'CFG=configs/custom.jsonc\n' +
+        'printf new >& "$CFG"\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('fd duplication is not a write (#2066 r13 bounds)', () => {
+    // A bounds guard: `2>&1` has a DIGIT for a target, which the target class
+    // does not accept, so admitting `>&` must not admit this. It passes with
+    // or without the r13 change; it exists so a later widening of the target
+    // class fails here.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'h.sh',
+      'echo hello 2>&1\n' + 'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('os.replace overwrites its destination (#2066 r13)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'i.py',
+      'import os, subprocess\n' +
+        'cfg = "configs/custom.jsonc"\n' +
+        'os.replace("generated.jsonc", cfg)\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a bare .replace is not a write (#2066 r13 bounds)', () => {
+    // Why `os.replace` is spelled qualified: the lookbehind admits member
+    // access, so an unqualified `replace` would take every `str.replace` in
+    // any file that names a config. Passes either way today; it pins the
+    // qualifier against a later "simplification" into the bare list.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'j.py',
+      'import subprocess\n' +
+        'name = "configs/custom.jsonc".replace("custom", "custom")\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a Python comment needs no leading whitespace (#2066 r13)', () => {
+    // `#` starts a comment mid-token in Python; the word-boundary rule is
+    // shell's, where `${VAR#pre}` is ordinary text.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'k.py',
+      'import subprocess\n' +
+        'x = 1# shutil.copy(source, destination)\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a Python triple-quoted literal spans lines (#2066 r13)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'l.py',
+      'import subprocess\n' +
+        '"""\nshutil.copy(source, destination)\n"""\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  // ---- Codex #2066 r14 ----
+
+  it('a separated long option keeps cp in command position (#2066 r14)', () => {
+    // The r13 generic option branch consumed `--user` and left `root` to be
+    // read as the command.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      't.sh',
+      'CFG=configs/custom.jsonc\n' +
+        'sudo --user root cp generated.jsonc "$CFG"\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('an all-stream redirection is a write (#2066 r14)', () => {
+    // `*>` in PowerShell; a glob and a redirection in POSIX shell. A write
+    // either way. The OPERATOR only — PowerShell write cmdlets stay out of
+    // scope, as recorded at r11.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'u.sh',
+      'CFG=configs/custom.jsonc\n' +
+        "printf '{}' *> \"$CFG\"\n" +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('an f-string format spec is data, not code (#2066 r14)', () => {
+    // Only the replacement expression is Python; what follows the top-level
+    // `:` is handed to `__format__`.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'w.py',
+      'import subprocess\n' +
+        "msg = f'{X():shutil.copy(source, destination)}'\n" +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a nested replacement field inside a format spec is still code (#2066 r14 bounds)', () => {
+    // The spec is data, but `{...}` within it reopens a replacement field, so
+    // a write there must still count. A bounds guard: before the spec rule
+    // existed the whole field was code and this passed anyway. It exists to
+    // fail if the spec is ever made data all the way to the closing brace.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'x.py',
+      'import subprocess\n' +
+        'from pathlib import Path\n' +
+        'cfg = "configs/custom.jsonc"\n' +
+        "msg = f'{value:>{Path(cfg).write_text(\"{}\")}}'\n" +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a lambda colon does not start a format spec (#2066 r14 bounds)', () => {
+    // The colon is "top-level" only at paren depth zero, so a lambda's colon
+    // and a dict literal's leave the field as code. Bounds guard against a
+    // widening of the spec rule turning real writes into data.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'y.py',
+      'import subprocess\n' +
+        'from pathlib import Path\n' +
+        'cfg = "configs/custom.jsonc"\n' +
+        "msg = f'{(lambda: Path(cfg).write_text(\"{}\"))()}'\n" +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  // ---- Codex #2066 r15 ----
+
+  it('a nested f-string format spec is data too (#2066 r15)', () => {
+    // A nested replacement field is still inside an f-string, so its own
+    // top-level colon opens a spec of its own.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'ac.py',
+      'import subprocess\n' +
+        "msg = f'{X:{width:shutil.copy(source, destination)}}'\n" +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a shell assignment stores inert text (#2066 r15)', () => {
+    // `EXAMPLE='copy(a, b)'` binds a word and runs nothing.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'ad.sh',
+      "EXAMPLE='shutil.copy(source, destination)'\n" +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it("a shell -c payload is still executed code (#2066 r15 bounds)", () => {
+    // The reason the assignment rule is written as an assignment rule and not
+    // as "shell strings are inert": an interpreter payload runs.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'ae.sh',
+      'export CFG=configs/custom.jsonc\n' +
+        'sh -c \'printf "{}" > "$CFG"\'\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  // ---- Codex #2066 r16 ----
+
+  it('an in-memory copy is not a file copy (#2066 r15/r16)', () => {
+    // `copy.copy(value)` clones an object. The lookbehind admits member access
+    // on purpose, which is what let this match.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'af.py',
+      'import copy, subprocess\n' +
+        'clone = copy.copy(value)\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a shutil copy is still a file copy (#2066 r16 bounds)', () => {
+    // The qualifier list is what separates the two; this pins that narrowing
+    // it did not lose the real one.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'ag.py',
+      'import shutil, subprocess\n' +
+        'cfg = "configs/custom.jsonc"\n' +
+        'shutil.copy("generated.jsonc", cfg)\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a command substitution inside an assignment still runs (#2066 r16)', () => {
+    // The assignment is inert; the substitution is not, and it runs first.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'ah.sh',
+      'export CFG=configs/custom.jsonc\n' +
+        'OUT="$(node -e \'require(`fs`).writeFileSync(process.env.CFG,`{}`)\')"\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  // ---- Codex #2066 r17 ----
+
+  it('command runs its argument (#2066 r17)', () => {
+    // r12 excluded `command` wholesale to stop `command -v cp` counting; the
+    // executing form copies.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'ak.sh',
+      'CFG=configs/custom.jsonc\n' +
+        'command cp generated.jsonc "$CFG"\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('command -v still only inspects (#2066 r17 bounds)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'al.sh',
+      'command -v cp && echo found\n' + 'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a quoted assignment prefix is still one word (#2066 r17)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'am.sh',
+      'CFG=configs/custom.jsonc\n' +
+        'LABEL="two words" cp generated.jsonc "$CFG"\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a python shebang types an extensionless helper (#2066 r17)', () => {
+    // `walk` yields extensionless executables; keying on `.py` alone made the
+    // f-string inert data and dropped the write inside it.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'deploy-helper',
+      '#!/usr/bin/env python3\n' +
+        'import subprocess\n' +
+        'from pathlib import Path\n' +
+        'cfg = "configs/custom.jsonc"\n' +
+        'payload = f\'{Path(cfg).write_text("{}")}\'\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  // ---- Codex #2066 r18 ----
+
+  it('a brace inside a literal does not balance (#2066 r18)', () => {
+    // Counting a `}` inside a string made a real copy plus a ternary arm look
+    // like a method declaration.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'ar.mjs',
+      'const cfg = "configs/custom.jsonc";\n' +
+        'const out = enabled ? copyFileSync("generated.jsonc", cfg) : { value: "}" };\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  // ---- Codex #2066 r19 ----
+
+  it('a substitution inside single quotes is literal (#2066 r19)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'ax.sh',
+      "OUT='$(shutil.copy(source, destination))'\n" +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('the expanded safety read keeps the source language (#2066 r19 bounds)', () => {
+    // A bounds guard, and stated as one: the reported false red did NOT
+    // reproduce for me on the parent, with this shape or the reporter's. The
+    // fix stands on consistency — the safety call directly above this one has
+    // always passed the language, and omitting it here defaults the reader to
+    // shell, where a JavaScript comparison looks like a redirection. This
+    // pins that a comparison beside a variable-resolved deploy stays safe.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'ay.mjs',
+      'const CFG = "configs/custom.jsonc";\n' +
+        'if (value > "/tmp/x") report();\n' +
+        'spawnSync("wrangler", ["deploy", "--config", `${CFG}`]);\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  // ---- Codex #2066 r20 ----
+
+  it('a comment may follow a shell separator (#2066 r20)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'bb.sh',
+      ':;# shutil.copy(source, destination)\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a [[ ]] comparison is not a redirection (#2066 r20)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'bc.sh',
+      'CFG=configs/custom.jsonc\n' +
+        'if [[ "$left" > "$right" ]]; then echo bigger; fi\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a real redirection outside [[ ]] still counts (#2066 r20 bounds)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'bd.sh',
+      'CFG=configs/custom.jsonc\n' +
+        'printf new > "$CFG"\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('an execSync command string is executable (#2066 r20)', () => {
+    // A JavaScript literal is data — except when it is the command.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'be.mjs',
+      'const cfg = "configs/custom.jsonc";\n' +
+        'execSync("node -e \'require(\\"fs\\").writeFileSync(process.env.CFG, \\"{}\\")\'");\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  // ---- Codex #2066 r21 ----
+
+  it('a bare cp declaration is not a copy (#2066 r21)', () => {
+    // `cp` has the same ambiguity as `copy` and `move`; leaving it in the
+    // distinctive branch was the r20 refactor left half-done.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'bf.mjs',
+      'function cp(source, destination) {\n  return source;\n}\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a comment may follow a closing paren (#2066 r21)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'bg.sh',
+      '( :)# shutil.copy(source, destination)\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a command inside a test expression still runs (#2066 r21)', () => {
+    // The `[[ ]]` exemption covers the COMPARISON, not commands run inside it.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'bi.sh',
+      'CFG=configs/custom.jsonc\n' +
+        'if [[ "$(printf new > "$CFG")" == new ]]; then echo done; fi\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a spawn payload in an array is executable (#2066 r21)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'bj.mjs',
+      'const cfg = "configs/custom.jsonc";\n' +
+        'spawnSync("node", ["-e", "require(\'fs\').writeFileSync(cfg, \'{}\')"]);\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  // ---- Codex #2066 r22 ----
+
+  it('an argv string is not an evaluated payload (#2066 r22)', () => {
+    // `spawnSync("echo", ["fs.copy(a, b)"])` prints its argument.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'bm.mjs',
+      'spawnSync("echo", ["fs.copy(source, destination)"]);\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a filesystem qualifier must be rooted (#2066 r22)', () => {
+    // `archive.fs.copy(…)` may be an in-memory method.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'bo.mjs',
+      'const cfg = "configs/custom.jsonc";\n' +
+        'archive.fs.copy(source, destination);\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a wrapper option consumes its operand (#2066 r22)', () => {
+    // `env -u cp echo harmless` unsets the variable named cp and runs echo.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'bp.sh',
+      'CFG=configs/custom.jsonc\n' +
+        'env -u cp echo harmless\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  // ---- Codex #2066 r23 ----
+
+  it('a long-form eval flag still marks a payload (#2066 r23)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'bq.mjs',
+      'const cfg = "configs/custom.jsonc";\n' +
+        'spawnSync("node", ["--eval", "require(\'fs\').writeFileSync(cfg, \'{}\')"]);\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a backtick substitution in a test still runs (#2066 r23)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'br.sh',
+      'CFG=configs/custom.jsonc\n' +
+        'if [[ `printf new > "$CFG"` == new ]]; then echo done; fi\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a mixed-word assignment is still inert (#2066 r23)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'bt.sh',
+      'EXAMPLE=prefix"shutil.copy(source, destination)"\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a string DESCRIBING a named write is not one (#2066 r23)', () => {
+    // The directly-named patterns bypassed the classifier entirely.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'bu.mjs',
+      'const example = \'writeFileSync("configs/custom.jsonc", "{}")\';\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a real named write still counts (#2066 r23 bounds)', () => {
+    // Routing the direct patterns through the classifier must not lose them.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'bv.mjs',
+      'writeFileSync("configs/custom.jsonc", "{}");\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a positional open mode needs a filesystem context (#2066 r23)', () => {
+    // `browser.open(url, "w")` opens a window named `w`.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'bw.py',
+      'import subprocess\n' +
+        'browser.open("https://example.test", "w")\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  // ---- Codex #2066 r24 ----
+
+  it('an odd heredoc word hides no later write (#2066 r24, r26)', () => {
+    // `<<'E'OF` is the delimiter `EOF`, and reading only `'E'` found no
+    // terminator and marked the rest of the FILE as heredoc data. The reader
+    // that got this wrong is gone (r26); what is pinned now is the outcome —
+    // a heredoc opener of any spelling cannot swallow the write below it.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'bx.sh',
+      "CFG=configs/custom.jsonc\n" +
+        "cat <<'E'OF\nnothing here\nEOF\n" +
+        'printf new > "$CFG"\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a literal backtick does not open a substitution (#2066 r24)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'by.sh',
+      'CFG=configs/custom.jsonc\n' +
+        'if [[ \'`\' == x && `printf new > "$CFG"` == new ]]; then echo done; fi\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('an attached eval payload is executable (#2066 r24)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'bz.mjs',
+      'spawnSync("node", ["--eval=require(\'fs\').writeFileSync(\'configs/custom.jsonc\',\'{}\')"]);\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a named comparison in a test is not a redirection (#2066 r24)', () => {
+    // The direct-path scan lacked the exemption the named scan already had.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'ca.sh',
+      'if [[ "$left" > "configs/custom.jsonc" ]]; then echo bigger; fi\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a shell single quote processes no escapes (#2066 r24)', () => {
+    // `X='x\'` closes at that quote; the redirection after it runs.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'cb.sh',
+      'CFG=configs/custom.jsonc\n' +
+        "X='x\\'; printf new > \"$CFG\"\n" +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a command after a reserved word is in command position (#2066 r24)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'cc.sh',
+      'CFG=configs/custom.jsonc\n' +
+        'if true; then cp generated.jsonc "$CFG"; fi\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  // ---- Codex #2066 r25 ----
+
+  it('an unterminated heredoc claims nothing (#2066 r25, r26)', () => {
+    // The catastrophic direction, and the reason heredoc classification was
+    // deleted rather than corrected once more: a delimiter the reader got
+    // wrong turned the whole rest of the file into data. Restoring that rule
+    // in any form fails this.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'cd.sh',
+      'CFG=configs/custom.jsonc\n' +
+        "cat <<'$'\nbody\n$\n" +
+        'printf new > "$CFG"\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('an apostrophe in double quotes is not a quote (#2066 r25)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'ce.sh',
+      'CFG=configs/custom.jsonc\n' +
+        'if [[ "\'" == x && "$(printf new > "$CFG")" == new ]]; then echo done; fi\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a nested subshell does not close the substitution (#2066 r25)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'cf.sh',
+      'CFG=configs/custom.jsonc\n' +
+        'if [[ "$( (true); printf new > "$CFG")" == new ]]; then echo done; fi\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a command after if is in command position (#2066 r25)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'cg.sh',
+      'CFG=configs/custom.jsonc\n' +
+        'if cp generated.jsonc "$CFG"; then :; fi\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('echo -e prints its argument (#2066 r25)', () => {
+    // The payload rule gates on the EXECUTABLE, not only the flag.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'ch.mjs',
+      'spawnSync("echo", ["-e", "require(\'fs\').writeFileSync(\'configs/custom.jsonc\', \'{}\')"]);\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a JavaScript eval runs its argument (#2066 r25)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'ci.mjs',
+      'eval("fs.writeFileSync(\'configs/custom.jsonc\', \'{}\')");\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a Path constructor replace overwrites (#2066 r25)', () => {
+    // Admitted because the RECEIVER is a literal constructor call — syntax,
+    // not the type resolution this reader declines.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'cj.py',
+      'import subprocess\n' +
+        'from pathlib import Path\n' +
+        'cfg = Path("configs/custom.jsonc")\n' +
+        'Path("generated.jsonc").replace(cfg)\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a bare replace is still not a write (#2066 r25 bounds)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'ck.py',
+      'import subprocess\n' +
+        'name = "configs/custom.jsonc".replace("custom", "custom")\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
   it('the PROSE path invalidates a rewritten config too', () => {
     // That path passed the rewrite context to the safety reader and not to the
     // identity reader, so the identity half trusted the stale copy and sent the
@@ -8892,6 +10215,1638 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     const r = runWith(
       'deploy.mjs',
       'writeFileSync("configs/custom.jsonc", JSON.stringify({name: "vaipakam-agent", keep_vars: false}));\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  // ---- Codex #2066 r26 ----
+
+  it('a write inside an interpreter heredoc is reported (#2066 r26)', () => {
+    // The premise the deleted rule rested on: that a heredoc body is input.
+    // `bash <<'EOF'` EXECUTES its body — data for `cat`, source for an
+    // interpreter — so exempting the body hid writes on the one shape where
+    // they run.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'cl.sh',
+      'CFG=configs/custom.jsonc\n' +
+        "bash <<'EOF'\nprintf new > \"$CFG\"\nEOF\n" +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a cat heredoc body is now read as code (#2066 r26 accepted)', () => {
+    // The cost of the deletion, pinned so it is a decision and not a surprise:
+    // a body that both names the selected config and spells a write reports,
+    // even under `cat`. A false RED, which this reader may have; the rule it
+    // replaces produced false greens and could not be bounded in six rounds.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'cm.sh',
+      "cat <<'EOF'\ncp generated.jsonc configs/custom.jsonc\nEOF\n" +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a comparison after a substitution is reported (#2066 r26 accepted)', () => {
+    // Likewise for the `[[ ]]` exemption: asking only whether a substitution
+    // appears before the operator over-reports a genuine string comparison
+    // that follows one. Eight findings said the sharper question could not be
+    // answered, and every error there was a false green.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'cn.sh',
+      'CFG=configs/custom.jsonc\n' +
+        'if [[ "$(echo x)" > "$CFG" ]]; then echo bigger; fi\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a plain comparison is still exempt (#2066 r26 bounds)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'co.sh',
+      'CFG=configs/custom.jsonc\n' +
+        'if [[ "$left" > "$CFG" ]]; then echo bigger; fi\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a grouped short option still evaluates (#2066 r26)', () => {
+    // `bash -ec '…'` runs the payload; requiring the group to END in `e`
+    // missed it and the executed source read as inert.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'cp.mjs',
+      'spawnSync("bash", ["-ec", "printf new > configs/custom.jsonc"]);\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a comment between flag and payload is not argv (#2066 r26)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'cq.mjs',
+      'spawnSync("node", ["-e", /* payload */ "writeFileSync(\'configs/custom.jsonc\', \'{}\')"]);\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('an optional call still calls (#2066 r26)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'cr.mjs',
+      'eval?.("fs.writeFileSync(\'configs/custom.jsonc\', \'{}\')");\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a case arm opens command position (#2066 r26)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'cs.sh',
+      'CFG=configs/custom.jsonc\n' +
+        'case "$1" in\n  build) cp generated.jsonc "$CFG" ;;\nesac\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a chunked shell word still names the config (#2066 r26)', () => {
+    // `configs/cus"tom".jsonc` is ONE word. The selector reader normalises it
+    // and this scan read raw bytes, so the name went unseen and the write
+    // behind it was never looked for.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'cu.sh',
+      'CFG=configs/cus"tom".jsonc\n' +
+        'printf new > "$CFG"\n' +
+        'wrangler deploy --config configs/cus"tom".jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a different config is still a different config (#2066 r26 bounds)', () => {
+    // Letting quotes sit between the characters must not let OTHER characters
+    // in: a write to a neighbouring file is not a write to this one.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'cv.sh',
+      'printf new > configs/custom.backup.jsonc\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a comment ending in a keyword does not absorb the next line (#2066 r26)', () => {
+    // The boundary before a command may not cross a newline. When it could,
+    // the match anchored inside the comment, was discarded as comment text,
+    // and the scan resumed PAST the real command — which was therefore never
+    // considered. A false green produced by an exemption, the worst shape.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'ct.sh',
+      'CFG=configs/custom.jsonc\n' +
+        '# regenerate, then\ncp generated.jsonc "$CFG"\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  // ---- Codex #2066 r27 ----
+
+  it('node -c checks rather than evaluates (#2066 r27)', () => {
+    // The letter is per-interpreter: `bash -c` runs its argument, `node -c`
+    // is `--check` and parses without executing. Accepting both everywhere
+    // reported a write that cannot happen.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'cw.mjs',
+      'spawnSync("node", ["-c", "writeFileSync(\'configs/custom.jsonc\', \'{}\')"]);\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('bash -c still evaluates (#2066 r27 bounds)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'cx.mjs',
+      'spawnSync("bash", ["-c", "printf new > configs/custom.jsonc"]);\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('node -e still evaluates (#2066 r27 bounds)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'cy.mjs',
+      'spawnSync("node", ["-e", "writeFileSync(\'configs/custom.jsonc\', \'{}\')"]);\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a regex exec is not a child process (#2066 r27)', () => {
+    // `RegExp.prototype.exec` shares a name with the spawn API, and matching
+    // on the final identifier alone reclassified its inert argument as
+    // executed source.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'cz.mjs',
+      'const m = /writeFileSync/.exec("writeFileSync(\'configs/custom.jsonc\', \'{}\')");\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a qualified exec is still a child process (#2066 r27 bounds)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'da.mjs',
+      'child_process.exec("printf new > configs/custom.jsonc");\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('an unqualified exec is still a child process (#2066 r27 bounds)', () => {
+    // A destructured `const { exec } = require("child_process")` is ordinary,
+    // so a bare generic name stays admitted; only a receiver that is not a
+    // process module disqualifies it.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'db.mjs',
+      'exec("printf new > configs/custom.jsonc");\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a local copy function is not a filesystem copy (#2066 r27)', () => {
+    // The direct matcher accepted the generic call names unqualified, while
+    // the named scan required a module and the release note promised as much.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'dc.py',
+      'import subprocess\n' +
+        'def copy(p):\n    return dict(path=p)\n' +
+        'value = copy("configs/custom.jsonc")\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a qualified copy is still a write (#2066 r27 bounds)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'dd.py',
+      'import subprocess, shutil\n' +
+        'shutil.copy("generated.jsonc", "configs/custom.jsonc")\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a continued line compares in file coordinates (#2066 r27)', () => {
+    // `logicalLines` folds each backslash-newline into ONE space, so an
+    // offset into the folded line runs short of the file by one per fold —
+    // while the write scan indexes the raw file. Enough continuations and a
+    // write physically BEFORE the deploy compared as after it, which blessed
+    // the rewrite. A false green produced purely by two coordinate spaces.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'de.sh',
+      'C=configs/custom.jsonc\n' +
+        'true \\\n \\\n \\\n \\\n \\\n \\\n \\\n' +
+        ';>"$C";wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a write after the deploy is still after it (#2066 r27 bounds)', () => {
+    // The correction must not push every write in front of the deploy.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'df.sh',
+      'C=configs/custom.jsonc\n' +
+        'true \\\n \\\n \\\n \\\n \\\n \\\n \\\n' +
+        ';wrangler deploy --config configs/custom.jsonc;>"$C"\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('trivia after the dot does not unqualify a receiver (#2066 r27 self-review)', () => {
+    // Testing the single character before the member name found a SPACE, read
+    // the call as unqualified — which the generic names admit — and reported
+    // an inert regex match. The walk-back has to be on the receiver side of
+    // the dot, which is where a formatter puts the break.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'dg.mjs',
+      'const m = /writeFileSync/.\n  exec("writeFileSync(\'configs/custom.jsonc\', \'{}\')");\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('trivia after the dot keeps a module qualified (#2066 r27 self-review)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'dh.mjs',
+      'child_process.\n  exec("printf new > configs/custom.jsonc");\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('an optional module exec is still a child process (#2066 r27 self-review)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'di.mjs',
+      'child_process?.exec("printf new > configs/custom.jsonc");\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a continued line inside a workflow step keeps its folds (#2066 r27 self-review)', () => {
+    // `offset` rebuilt each entry field by field and dropped `folds`, so the
+    // coordinate correction reached plain shell files and none of the blocks
+    // this guard actually reads most of its shell from.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      '.github/workflows/dj.yml',
+      'jobs:\n  go:\n    steps:\n      - run: |\n' +
+        '          C=configs/custom.jsonc\n' +
+        '          true \\\n           \\\n           \\\n           \\\n           \\\n           \\\n           \\\n' +
+        '          ;>"$C";wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  // ---- Codex #2066 r28 ----
+
+  it('an argv program gates the evaluate letter (#2066 r28)', () => {
+    // Python puts the program inside the list, so anchoring on the
+    // parenthesis found none — and with no program the reader accepted both
+    // letters, making `echo -e` an evaluation again.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'dk.py',
+      'import subprocess\n' +
+        'subprocess.run(["echo", "-e", "shutil.copy(src, \'configs/custom.jsonc\')"])\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('an argv interpreter still evaluates (#2066 r28 bounds)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'dl.py',
+      'import subprocess\n' +
+        'subprocess.run(["bash", "-c", "printf new > configs/custom.jsonc"])\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  // ---- Codex #2066 r29 ----
+
+  it('a keyword argv program gates the evaluate letter (#2066 r29)', () => {
+    // `subprocess.run(args=[…])` is the same call; the anchor could not cross
+    // the keyword, so no program was found and both letters were accepted.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'dq.py',
+      'import subprocess\n' +
+        'subprocess.run(args=["echo", "-e", "shutil.copy(src, \'configs/custom.jsonc\')"])\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a keyword argv interpreter still evaluates (#2066 r29 bounds)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'dr.py',
+      'import subprocess\n' +
+        'subprocess.run(args=["bash", "-c", "printf new > configs/custom.jsonc"])\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  // ---- Codex #2066 r30 ----
+
+  it('an argv-spelled copy is a NAMED MISS (#2066 r30 withdrawal)', () => {
+    // Matched from r28 and corrected in every round since — anchor, span,
+    // ownership, walk start — and r30 showed the verb also has to be the
+    // PROGRAM, which depends on the calling convention of the API around the
+    // list. That needs a table of process APIs, so the alternative is
+    // withdrawn and the miss recorded here rather than patched again.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'du.py',
+      'import subprocess\n' +
+        'subprocess.run(["cp", "generated.jsonc", "configs/custom.jsonc"])\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a shell copy command is unaffected by that withdrawal (#2066 r30 bounds)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'dv.sh',
+      'cp generated.jsonc configs/custom.jsonc\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('the Function constructor evaluates its source (#2066 r30)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'dw.mjs',
+      'Function("writeFileSync(\'configs/custom.jsonc\', \'{}\')")();\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a browser open is not a file open (#2066 r30)', () => {
+    // What separates `webbrowser.open("w")` from `p.open("w")` is the TYPE of
+    // the receiver, and a bare name carries none. The method form is gone.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'dx.py',
+      'import subprocess, webbrowser\n' +
+        'webbrowser.open("w")\n' +
+        'note = "configs/custom.jsonc"\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a constructed path open is still a write (#2066 r30 bounds)', () => {
+    // The constructor form is syntax, not a type, so it is still read.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'dy.py',
+      'import subprocess\n' +
+        'from pathlib import Path\n' +
+        'Path("configs/custom.jsonc").open("w").write("{}")\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a shell array initializer stores its text (#2066 r30)', () => {
+    // The assignment scan stopped at the initializer's `(`, so the stored
+    // string lost the assignment it stood in and read as executable.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'dz.sh',
+      'EXAMPLES=("writeFileSync(\'configs/custom.jsonc\', \'{}\')")\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a subshell is not an assignment (#2066 r30 bounds)', () => {
+    // Stepping back over the initializer paren must not step back over a
+    // subshell's — nothing assigns into that one.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'ea.sh',
+      'CFG=configs/custom.jsonc\n' +
+        '(printf new > "$CFG")\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  // ---- Codex #2066 r31 ----
+
+  it('an uninvoked Function constructs and runs nothing (#2066 r31)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'eb.mjs',
+      'Function("writeFileSync(\'configs/custom.jsonc\', \'{}\')");\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a later array element is stored too (#2066 r31)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'ec.sh',
+      'EXAMPLES=("harmless" "writeFileSync(\'configs/custom.jsonc\', \'{}\')")\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a copy command with no operand copies nothing (#2066 r31)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'ed.sh',
+      'cp --help\n' +
+        'CFG=configs/custom.jsonc\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a copy command with an operand still counts (#2066 r31 bounds)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'ee.sh',
+      'CFG=configs/custom.jsonc\n' +
+        'cp -r generated.jsonc "$CFG"\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('an arithmetic comparison is not a redirection (#2066 r31)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'ef.sh',
+      'CFG=configs/custom.jsonc\n' +
+        'if (( 2 > $limit )); then echo big; fi\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a named descriptor redirection truncates (#2066 r31)', () => {
+    // `exec {out}>"$CFG"` allocates a descriptor and empties the target
+    // exactly as `3>` does; the prefix admitted only digits.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'eg.sh',
+      'CFG=configs/custom.jsonc\n' +
+        'exec {out}>"$CFG"\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('nested subshells opening with (( are not arithmetic (#2066 r31 self-review)', () => {
+    // `((` also opens a subshell inside a subshell, and the arithmetic
+    // exemption hid a real redirection there. Told apart by the one thing
+    // bash does not allow in arithmetic — a command separator — with the
+    // C-style `for` as the single exception.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'eh.sh',
+      'CFG=configs/custom.jsonc\n' +
+        '((cd /tmp); printf new > "$CFG"))\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a C-style for loop is still arithmetic (#2066 r31 self-review bounds)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'ei.sh',
+      'CFG=configs/custom.jsonc\n' +
+        'for ((i=3; i>0; i--)); do echo $i; done\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a paren inside a quoted element does not end the assignment (#2066 r31 self-review)', () => {
+    // The backward walk read characters without their kind, so a parenthesis
+    // inside an earlier element ended it and the assignment was never found.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'ej.sh',
+      'EXAMPLES=("f(x)" "writeFileSync(\'configs/custom.jsonc\', \'{}\')")\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  // ---- Codex #2066 r32 ----
+
+  it('a call formatted across lines still owns its payload (#2066 r32)', () => {
+    // The owner walk bailed at a depth-zero newline — and walking OUT of an
+    // argument list, every newline inside it is at depth zero. A Python
+    // comment between the flag and the payload made it visible; the same call
+    // across two lines was already invisible.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'ek.py',
+      'import subprocess\n' +
+        'subprocess.run(["python3", "-c",  # payload\n' +
+        ' "open(\'configs/custom.jsonc\', \'w\').write(\'{}\')"])\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a statement separator still ends the owner walk (#2066 r32 bounds)', () => {
+    // Dropping the newline must not drop `;`, which at depth zero is never
+    // inside an argument list.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'el.mjs',
+      'spawnSync("node", ["-e", "harmless"]);\n' +
+        'const note = "writeFileSync(\'configs/custom.jsonc\', \'{}\')";\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('an ANSI-C quoted assignment stores its text (#2066 r32)', () => {
+    // `$'…'` processes escapes, so an escaped apostrophe does NOT close the
+    // string; treating every shell single-quoted run as literal ended it
+    // early and read the rest as code.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'em.sh',
+      "EXAMPLE=$'it\\'s writeFileSync(\"configs/custom.jsonc\", \"{}\")'\n" +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a plain single-quoted run is still literal (#2066 r32 bounds)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'en.sh',
+      "CFG=configs/custom.jsonc\n" +
+        "EXAMPLE='a backslash \\' \n" +
+        'printf new > "$CFG"\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a dry run makes no changes (#2066 r32)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'eo.sh',
+      'CFG=configs/custom.jsonc\n' +
+        'rsync --dry-run generated.jsonc "$CFG"\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a real rsync still writes (#2066 r32 bounds)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'ep.sh',
+      'CFG=configs/custom.jsonc\n' +
+        'rsync -a generated.jsonc "$CFG"\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a browser open naming the config is not a file open (#2066 r32)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'eq.py',
+      'import subprocess, webbrowser\n' +
+        'webbrowser.open("configs/custom.jsonc", "w")\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a builtin open in write mode is still a write (#2066 r32 bounds)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'er.py',
+      'import subprocess\n' +
+        'open("configs/custom.jsonc", "w").write("{}")\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('an unrelated option does not excuse a copy (#2066 r32 self-review)', () => {
+    // The "makes no changes" look-ahead scanned the rest of the LINE, so
+    // `echo -n` beside a real copy disabled it. A false green introduced by
+    // the fix for a false red, in the same round.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'es.sh',
+      'CFG=configs/custom.jsonc\n' +
+        'cp generated.jsonc "$CFG" && echo -n done\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('an inert list after a process call is still inert (#2066 r32 bounds)', () => {
+    // Dropping the newline from the owner walk must not let a standalone
+    // string be attributed to an earlier call. The depth accounting is what
+    // prevents it, and this pins that.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'et.py',
+      'import subprocess\n' +
+        'subprocess.run(["ls"])\n' +
+        'NOTES = [\n  "open(\'configs/custom.jsonc\', \'w\')",\n]\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  // ---- Codex #2066 r33 ----
+
+  it('node -p evaluates its source (#2066 r33)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'ga.mjs',
+      'const cfg = "configs/custom.jsonc";\n' +
+        'spawnSync("node", ["-p", "require(\'fs\').writeFileSync(cfg, \'{}\')"]);\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('an overridden no-clobber still overwrites (#2066 r33)', () => {
+    // GNU: of `-i`, `-f` and `-n`, only the LAST takes effect. Excluding the
+    // command on sight of an earlier `--no-clobber` was a false green, and
+    // reading the ordering means a per-command option table — so the two
+    // order-dependent spellings are dropped rather than ordered.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'gb.sh',
+      'CFG=configs/custom.jsonc\n' +
+        'mv --no-clobber -f generated.jsonc "$CFG"\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a dry run still makes no changes (#2066 r33 bounds)', () => {
+    // `--dry-run` is the one spelling nothing reverses, so it is the one kept.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'gc.sh',
+      'CFG=configs/custom.jsonc\n' +
+        'rsync --dry-run generated.jsonc "$CFG"\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a keyword-mode open needs a filesystem receiver (#2066 r33)', () => {
+    // The third alternative reading an open mode, and the third round to
+    // report the same thing. All of them now share one qualified `open`.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'gd.py',
+      'import subprocess, browser\n' +
+        'browser.open(mode="w")\n' +
+        'note = "configs/custom.jsonc"\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a module keyword-mode open is still a write (#2066 r33 bounds)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'ge.py',
+      'import subprocess, io\n' +
+        'io.open("configs/custom.jsonc", mode="w").write("{}")\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a module open in positional mode is a write (#2066 r33 consolidation)', () => {
+    // One qualified `open` now serves several alternatives. These pin the
+    // sites the consolidation touched that had no fixture of their own, so a
+    // later refactor cannot quietly drop one of them.
+    //
+    // Written against `os.open` at r33, which does NOT take a mode string —
+    // its second argument is an integer flag set, so that fixture pinned code
+    // Python refuses to run. `io.open` is the module form that takes one
+    // (r34).
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'ha.py',
+      'import subprocess, io\n' +
+        'io.open("configs/custom.jsonc", "w")\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a compression module open is a write (#2066 r33 consolidation)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'hc.py',
+      'import subprocess, gzip\n' +
+        'gzip.open("configs/custom.jsonc", mode="w")\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a constructed path open is a write (#2066 r33 consolidation)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'hd.py',
+      'import subprocess\n' +
+        'from pathlib import Path\n' +
+        'Path("configs/custom.jsonc").open("w")\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('an unknown option is not an evaluate flag (#2066 r33 bounds)', () => {
+    // Adding `p` for Node must not admit every option containing one.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'hg.mjs',
+      'spawnSync("node", ["--prof", "writeFileSync(\'configs/custom.jsonc\',\'{}\')"]);\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  // ---- Codex #2066 r34 ----
+
+  it('os.open truncates through integer flags (#2066 r34)', () => {
+    // The real `os.open` API. Every mode-string pattern walks past it.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'ia.py',
+      'import subprocess, os\n' +
+        'cfg = "configs/custom.jsonc"\n' +
+        'os.open(cfg, os.O_WRONLY | os.O_TRUNC)\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('os.open for reading is not a write (#2066 r34 bounds)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'ib.py',
+      'import subprocess, os\n' +
+        'cfg = "configs/custom.jsonc"\n' +
+        'os.open(cfg, os.O_RDONLY)\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a lone open argument is a filename, not a mode (#2066 r34)', () => {
+    // `open("w")` reads a file named `w`; the mode defaults to reading. For
+    // the builtin and for a module, the FIRST argument is the file.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'ic.py',
+      'import subprocess\n' +
+        'data = open("w").read()\n' +
+        'cfg = "configs/custom.jsonc"\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a keyword mode in first position is still a write (#2066 r34 bounds)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'id.py',
+      'import subprocess\n' +
+        'open(mode="w", file="configs/custom.jsonc").write("{}")\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a constructed path open keeps its positional mode (#2066 r34 bounds)', () => {
+    // Tightening the builtin must not lose the receiver whose first argument
+    // really is the mode.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'ie.py',
+      'import subprocess\n' +
+        'from pathlib import Path\n' +
+        'Path("configs/custom.jsonc").open("w")\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('an in-place edit is a write (#2066 r34)', () => {
+    // `sed -i` rewrites the file with no redirection and no copy verb, so
+    // nothing else in the write set saw it.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'ja.sh',
+      'CFG=configs/custom.jsonc\n' +
+        "sed -i 's/old/new/' \"$CFG\"\n" +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a filtering sed is not a write (#2066 r34 bounds)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'ka.sh',
+      'CFG=configs/custom.jsonc\n' +
+        "sed 's/old/new/' \"$CFG\"\n" +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('the letter alone is not in-place (#2066 r34 bounds)', () => {
+    // `-i` means case-insensitive to grep and interactive to cp, which is why
+    // this is asked of two named commands rather than of the option.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'jc.sh',
+      'CFG=configs/custom.jsonc\n' +
+        'grep -i name "$CFG"\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  // ---- Codex #2066 r35 ----
+
+  it('an arrow function is not a redirection (#2066 r35)', () => {
+    // `>` is a redirection in a shell and an arrow, or a comparison, in
+    // JavaScript. The direct scan applied the shell reading everywhere.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'la.mjs',
+      'const pick = x => "configs/custom.jsonc";\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a copy verb as an identifier is not a command (#2066 r35)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'lc.py',
+      'import subprocess\n' +
+        'if cp and target == "configs/custom.jsonc":\n    pass\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a shell payload inside a JS wrapper is still shell (#2066 r35 bounds)', () => {
+    // The correction that matters: gating those alternatives on the FILE's
+    // language is the obvious reading of the finding and it is wrong. A
+    // payload handed to `sh -c` inside a `.mjs` wrapper is shell, and eight
+    // pinned payload fixtures went red on that reading.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'le.mjs',
+      'spawnSync("sh", ["-c", "printf new > configs/custom.jsonc"]);\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('an optional call of a constructed function invokes (#2066 r35)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'lf.mjs',
+      'Function("writeFileSync(\'configs/custom.jsonc\',\'{}\')")?.();\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('an attached short option carries its source (#2066 r35)', () => {
+    // `bun -esource` runs it exactly as `--eval=source` does.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'lg.mjs',
+      'spawnSync("bun", ["-erequire(\'fs\').writeFileSync(\'configs/custom.jsonc\',\'{}\')"]);\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a suffixed interpreter is the same interpreter (#2066 r35)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'lh.mjs',
+      'spawnSync("node.exe", ["-e", "require(\'fs\').writeFileSync(\'configs/custom.jsonc\',\'{}\')"]);\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('perl -p prints rather than evaluates (#2066 r35)', () => {
+    // r33 said `-p` was "Node's letter set, not everyone's" and then put it
+    // in the table perl and ruby read from. The claim and the code disagreed.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'li.mjs',
+      'spawnSync("perl", ["-p", "require(\'fs\').writeFileSync(\'configs/custom.jsonc\',\'{}\')"]);\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('node -p still evaluates (#2066 r35 bounds)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'lj.mjs',
+      'spawnSync("node", ["-p", "require(\'fs\').writeFileSync(\'configs/custom.jsonc\',\'{}\')"]);\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  // ---- Codex #2066 r36 ----
+
+  it('an in-place edit with a backup suffix is a write (#2066 r36)', () => {
+    // `-i.bak` attaches the suffix to the option, which the first spelling of
+    // this rule could not see.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'ma.sh',
+      'CFG=configs/custom.jsonc\n' +
+        "sed -i.bak 's/old/new/' \"$CFG\"\n" +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('an in-place option after other options is a write (#2066 r36)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'mb.sh',
+      'CFG=configs/custom.jsonc\n' +
+        "sed -E -i 's/old/new/' \"$CFG\"\n" +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('an editor that only prints help edits nothing (#2066 r36)', () => {
+    // Excluded by the OPERAND requirement the copy commands already use, not
+    // by naming the informational flags.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'mc.sh',
+      'CFG=configs/custom.jsonc\n' +
+        'sed -i --help\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a permission mode is not an access flag (#2066 r36)', () => {
+    // `os.open(cfg, os.O_RDONLY, mode=os.O_TRUNC)` opens for reading; the
+    // third argument is a permission mode. Scanning the whole call read it as
+    // a truncation.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'mg.py',
+      'import subprocess, os\n' +
+        'cfg = "configs/custom.jsonc"\n' +
+        'os.open(cfg, os.O_RDONLY, mode=os.O_TRUNC)\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a keyword flags argument still truncates (#2066 r36 bounds)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'mi.py',
+      'import subprocess, os\n' +
+        'cfg = "configs/custom.jsonc"\n' +
+        'os.open(cfg, flags=os.O_TRUNC)\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('an include-directory option is not an in-place edit (#2066 r36 self-review)', () => {
+    // A short option that takes a value takes the REST of its token, so the
+    // in-place letter is either first (carrying a suffix) or last in an
+    // all-letter cluster. Accepting it anywhere read Perl's `-Ilib` as one.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'na.sh',
+      'CFG=configs/custom.jsonc\n' +
+        "perl -Ilib -e 'print' \"$CFG\"\n" +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a trailing in-place letter is still in place (#2066 r36 self-review bounds)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'nb.sh',
+      'CFG=configs/custom.jsonc\n' +
+        "perl -pi -e 's/a/b/' \"$CFG\"\n" +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  // ---- Codex #2066 r37 ----
+
+  it('an invalid positional mode is not a write (#2066 r37)', () => {
+    // These alternatives closed on NUMBERED backreferences, and inserting two
+    // alternatives in r34 shifted the numbering under them — so they referred
+    // to a group belonging to an earlier, unmatched alternative, which is
+    // empty, and the mode matched on its first letter alone. Named now.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'oa.py',
+      'import subprocess\n' +
+        'try:\n    open("other.jsonc", "welcome")\nexcept ValueError:\n    pass\n' +
+        'cfg = "configs/custom.jsonc"\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('an invalid keyword mode is not a write (#2066 r37)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'ob.py',
+      'import subprocess\n' +
+        'try:\n    open("other.jsonc", mode="welcome")\nexcept ValueError:\n    pass\n' +
+        'cfg = "configs/custom.jsonc"\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a real positional write mode still counts (#2066 r37 bounds)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'oc.py',
+      'import subprocess\n' +
+        'open("configs/custom.jsonc", "w").write("{}")\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a real keyword write mode still counts (#2066 r37 bounds)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'od.py',
+      'import subprocess\n' +
+        'open("configs/custom.jsonc", mode="w").write("{}")\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  // ---- Codex #2066 r38 ----
+
+  it('a read-write descriptor open is a write (#2066 r38)', () => {
+    // `exec 3<>"$CFG"` takes a descriptor that can write; a pattern beginning
+    // at `>` never saw the operator.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'pa.sh',
+      'CFG=configs/custom.jsonc\nexec 3<>"$CFG"\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('the end-of-options marker still runs the command (#2066 r38)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'pb.sh',
+      'CFG=configs/custom.jsonc\ncommand -- cp generated.jsonc "$CFG"\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a query mode is not a command (#2066 r38 bounds)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'pc.sh',
+      'CFG=configs/custom.jsonc\ncommand -v cp\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('the word cp on its own line copies nothing (#2066 r38 probe)', () => {
+    // Found while probing r38, not reported: the direct copy matcher's space
+    // after the verb was `\s`, which matches a NEWLINE — so it ran on into the
+    // next line and found the config name in the deploy command itself. Any
+    // mention of `cp` in a script that deploys reported a copy. The third
+    // pattern in this file to make this mistake, after r26 and r31.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'pz.sh',
+      'echo cp\nwrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a same-line copy is unaffected by that (#2066 r38 bounds)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'py.sh',
+      'cp generated.jsonc configs/custom.jsonc\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('truncating through a bound name is a write (#2066 r38)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'pd.mjs',
+      'const CFG="configs/custom.jsonc";\nfs.truncateSync(CFG, 0);\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('an escaped substitution marker is stored text (#2066 r38)', () => {
+    // Inside double quotes `\$(` is a dollar sign. Asked by PARITY of the
+    // backslashes, because `\\$(` is a literal backslash and a real
+    // substitution — testing for "is there one" would turn this false red
+    // into a false green.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'pe.sh',
+      'EXAMPLE="\\$(writeFileSync(\'configs/custom.jsonc\',\'{}\'))"\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('an unescaped substitution still runs (#2066 r38 bounds)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'pf.sh',
+      'CFG=configs/custom.jsonc\nOUT="$(printf new > "$CFG")"\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a shell tagged template runs its body (#2066 r38)', () => {
+    // Bun's `$` tag makes the template a command rather than a string. The
+    // owner walk only looked for a CALL.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'pg.mjs',
+      'await $`printf new > configs/custom.jsonc`;\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a generic truncate is not a filesystem write (#2066 r38 self-review)', () => {
+    // `truncate` is a string, table and log method as often as a filesystem
+    // one. Admitted unqualified in r38, it reported `db.truncate()` and a
+    // plain helper in any file naming the config — the qualifier rule this
+    // file already applies to the copy verbs and the execution names, which I
+    // did not apply when adding it.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'ra.mjs',
+      'const cfg="configs/custom.jsonc";\nawait db.truncate();\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a qualified truncate is still a write (#2066 r38 self-review bounds)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'rc.mjs',
+      'const cfg="configs/custom.jsonc";\nfs.truncateSync(cfg, 0);\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('two backslashes leave a substitution live (#2066 r38 self-review bounds)', () => {
+    // The parity rule, from the other side: one backslash escapes the marker,
+    // two escape each other and the substitution runs.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'rd.sh',
+      'CFG=configs/custom.jsonc\nEXAMPLE="\\\\$(printf new > "$CFG")"\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a named truncate needs no module (#2066 r38 self-review bounds)', () => {
+    // The other half of qualifying `truncate`: the NAMED scan keeps the
+    // unqualified spelling, because the config's literal path in the call is
+    // the evidence a module would otherwise supply. Claimed in the commit
+    // that made the change, and pinned here afterwards.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'sa.mjs',
+      'truncateSync("configs/custom.jsonc", 0);\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a distinctive name on any receiver is read (#2066 accepted breadth)', () => {
+    // Found by auditing the release note against the guard rather than
+    // reading it: the distinctive write names are admitted on the NAME, so a
+    // method of the same name on an unrelated receiver reports too. That is
+    // the r22 trade — these are very often destructured out of their module
+    // and called bare, so requiring one would lose the ordinary spelling —
+    // but the note had described it as covering DECLARATIONS, which is
+    // narrower than what happens. Pinned so the breadth is a decision.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'ta.mjs',
+      'const cfg="configs/custom.jsonc";\nlogger.createWriteStream();\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a bare destructured write is still read (#2066 accepted breadth bounds)', () => {
+    // The miss that breadth buys: requiring a module would lose this.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'tb.mjs',
+      'const { writeFileSync } = require("fs");\nconst cfg="configs/custom.jsonc";\n' +
+        'writeFileSync(cfg, "{}");\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  // ---- Codex #2066 r39 ----
+
+  it('an optional call still writes (#2066 r39)', () => {
+    // Third place this reader has been told that `?.(` executes — the owner
+    // walk in r26, the constructed-function invocation in r35, the write
+    // calls themselves here. Spelled once now, so a fourth cannot be missed.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'ua.mjs',
+      'const cfg="configs/custom.jsonc";\nfs.writeFileSync?.(cfg, "{}");\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a bare open in JavaScript is not a file open (#2066 r39)', () => {
+    // `open(url, "w")` is the browser's window opener. Excluded in JavaScript
+    // specifically rather than admitted only for Python — the narrower
+    // correction, and the one two fixtures older than this loop required.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'uc.mjs',
+      'const cfg="configs/custom.jsonc";\nopen("https://example.com", "w");\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a qualified open in JavaScript is still a write (#2066 r39 bounds)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'ue.mjs',
+      'const cfg="configs/custom.jsonc";\nio.open(cfg, "w");\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a Popen payload is executable (#2066 r39)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'uf.py',
+      'import subprocess\n' +
+        'subprocess.Popen(["python3","-c","open(\'configs/custom.jsonc\',\'w\').write(\'{}\')"]).wait()\n' +
+        'subprocess.run(["wrangler","deploy","--config","configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  // ---- Codex #2066 r40 ----
+
+  it('a descriptor open in write mode is a write (#2066 r40)', () => {
+    // The truncating OPEN is the write: `fs.openSync(cfg, "w")` empties the
+    // file before anything is written through the descriptor, which is why no
+    // descriptor-writing verb joined the vocabulary with it.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'ug.mjs',
+      'const cfg="configs/custom.jsonc";\nconst fd = fs.openSync(cfg, "w");\n' +
+        'fs.writeSync(fd, generated);\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a descriptor open for reading is not (#2066 r40 bounds)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'uh.mjs',
+      'const cfg="configs/custom.jsonc";\nconst fd = fs.openSync(cfg, "r");\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('an executed redirection is a write in JavaScript (#2066 r40)', () => {
+    // The redirection is compiled into the scan whatever the file is, and
+    // judged by whether something RUNS the text. `execSync` does, and the
+    // binding is why the directly-named matcher cannot see the basename.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'ui.mjs',
+      'const cfg="configs/custom.jsonc";\nexecSync(`printf \'{}\' > ${cfg}`);\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('an unexecuted redirection in JavaScript is not (#2066 r40 bounds)', () => {
+    // The same characters in CODE position are a comparison, and in a string
+    // nothing runs they are prose. Both stay green — this is the false red the
+    // file-wide gate was protecting against, kept without it.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'uj.mjs',
+      'const cfg="configs/custom.jsonc";\nconst pick = (x) => x > cfg;\n' +
+        'const help = `printf \'{}\' > ${cfg}`;\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('an executed copy command is a write in JavaScript (#2066 r40 bounds)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'uk.mjs',
+      'const cfg="configs/custom.jsonc";\nexecSync(`cp gen.jsonc ${cfg}`);\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('an extensionless node helper reads its shebang (#2066 r40)', () => {
+    // Classified `other` on its filename, a template literal was not a string
+    // and the inert example inside it was read as the file's own code — a
+    // false RED, which blocks CI.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'ul',
+      '#!/usr/bin/env node\nconst cfg="configs/custom.jsonc";\n' +
+        'const usage = `writeFileSync(cfg, "{}")`;\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('an extensionless node helper still reports a real write (#2066 r40 bounds)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'um',
+      '#!/usr/bin/env node\nconst cfg="configs/custom.jsonc";\n' +
+        'fs.writeFileSync(cfg, "{}");\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  // ---- Codex #2066 r41 ----
+
+  it('an executed Python payload opens files (#2066 r41)', () => {
+    // The bare `open` is excluded in JavaScript because `open(url, "w")` is the
+    // window opener there — but a wrapper handing Python source to an
+    // interpreter is executing Python, whatever the outer file is spelled in.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'un.mjs',
+      'spawnSync("python3", ["-c", "open(\'configs/custom.jsonc\',\'w\').write(\'{}\')"]);\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a bare open in JavaScript code is still not one (#2066 r41 bounds)', () => {
+    // The r39 exclusion survives: nothing runs this text, so it is the window
+    // opener and not a file write.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'uo.mjs',
+      'const cfg="configs/custom.jsonc";\nopen("https://example.com", "w");\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('an optional call opens a file too (#2066 r41)', () => {
+    // The optional-call fragment was shared in r39 and the open patterns kept
+    // their own `(`, so the rule that fragment states did not reach them.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'up.mjs',
+      // Spelled through the module rather than through Codex's `const io =
+      // fs.promises` alias: `io` is itself a recognised qualifier, so that
+      // spelling would have passed on the qualifier list and not on the
+      // optional call, and following the alias is what this reader declines.
+      'const cfg="configs/custom.jsonc";\nawait fs.promises.open?.(cfg, "w");\n' +
         'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
     );
     expect(r.ok).toBe(false);

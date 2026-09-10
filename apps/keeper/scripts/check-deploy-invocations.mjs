@@ -51,6 +51,12 @@
  * allowlisted SENTENCE verbatim in executable shell — and the entries are
  * long, specific strings.
  *
+ * #2066 r26 settled that slice the other way and for good: a heredoc reader
+ * was written for the write scan, produced delimiter findings in six
+ * consecutive rounds, and was deleted. So the limit recorded here is now the
+ * whole reader's position rather than one function's — this scanner does not
+ * know where a heredoc body begins or ends anywhere.
+ *
  * THIRD KNOWN LIMIT, recorded after being tried and reverted: a `cd` that
  * FAILS at runtime leaves the shell where it was, so
  * `cd apps/keeper && cd missing; wrangler deploy` really does deploy from the
@@ -973,10 +979,17 @@ function logicalLines(text) {
   let line = 1;
   let pendingStart = true;
   let prev = '';
+  // Where a continuation was FOLDED, as offsets into `buf`. A backslash and
+  // its newline are two raw characters and become one space here, so an
+  // offset into the folded line runs short of the file by one per fold, and
+  // the two are compared against each other downstream (r27). Recorded rather
+  // than recomputed: the fold happens here and nowhere else knows it did.
+  let folds = [];
 
   const flush = () => {
-    if (buf.trim() !== '') out.push({ text: buf, line: startLine });
+    if (buf.trim() !== '') out.push({ text: buf, line: startLine, folds });
     buf = '';
+    folds = [];
     pendingStart = true;
   };
 
@@ -1000,6 +1013,7 @@ function logicalLines(text) {
       }
       if (buf.endsWith('\\')) {
         buf = `${buf.slice(0, -1)} `; // a real continuation
+        folds.push(buf.length - 1);
         prev = ' ';
         continue;
       }
@@ -1151,6 +1165,13 @@ function splitCommands(line) {
  * for a default-deny guard.
  */
 function normalizeFlagEquals(line) {
+  // ONE GROUP, and the `\2` below counts on it. r37 is what happens when a
+  // numbered backreference outlives the numbering it was written against: two
+  // open-mode alternatives kept referring to a group that an insertion had
+  // shifted out from under them, matched against an empty capture, and
+  // reported a write that was not one. Adding a group here would do the same
+  // to the quote reference on the next line but one — name them if it ever
+  // needs more than this.
   const FLAG = '(--?[A-Za-z0-9][A-Za-z0-9-]*)';
   return line
     .replace(new RegExp(`${FLAG}\\\\=`, 'g'), '$1=')
@@ -1333,7 +1354,7 @@ function isHelpInvocation(cmd) {
  * Worker's directory could bless an upload through a DIFFERENT file than the
  * one selected (#1995 r22).
  */
-function commandIsSafe(cmd, scopeHint = null, cmdCwd = '', fileText = '', fileAt = null) {
+function commandIsSafe(cmd, scopeHint = null, cmdCwd = '', fileText = '', fileAt = null, lang = 'shell') {
   if (isHelpInvocation(cmd)) return true;
   // `run deploy` gets the same option-value strip the flags do: it was a raw
   // substring test, so `--message="run deploy"` blessed a bare deploy that
@@ -1656,7 +1677,7 @@ function commandIsSafe(cmd, scopeHint = null, cmdCwd = '', fileText = '', fileAt
         // stands, which this one does not.
         if (
           cfgName !== null &&
-          configIsRewritten(fileText, cfgName, fileAt)
+          configIsRewritten(fileText, cfgName, fileAt, lang)
         ) {
           continue;
         }
@@ -3246,6 +3267,799 @@ function lineStartOffset(text, lineNo, within = null) {
 }
 
 /**
+ * Classify every offset of `text` as code (0), string (1) or comment (2), for
+ * the language named by `lang`.
+ *
+ * CACHED, single entry. One scanned file asks this once per deploy it
+ * contains, and the array is source-sized — a file with many explicitly
+ * selected deploys rebuilt it for each one, which Codex measured at 1.4 s /
+ * 3.4 s / 9.8 s for 500 / 1,000 / 2,000 deploy lines against 0.9 / 2.0 / 5.6 s
+ * before the classifier existed (r15). The calls for one file are consecutive,
+ * so a single entry keyed on the text and the language catches all of them
+ * without holding a map of every file the walk has seen.
+ */
+let classifyCache = { text: null, lang: null, kind: null };
+function classifyText(text, lang) {
+  if (classifyCache.text === text && classifyCache.lang === lang) return classifyCache.kind;
+  const kind = new Uint8Array(text.length); // 0 code, 1 string, 2 comment
+    const jsLike = lang === 'js';
+    const pyLike = lang === 'py';
+    const hashComments = !jsLike;
+    // A Python string PREFIX, and whether it makes the literal an f-string.
+    const pyPrefix = (idx) => {
+      let p = idx;
+      while (p > 0 && idx - p < 2 && /[A-Za-z]/.test(text[p - 1])) p -= 1;
+      const pre = text.slice(p, idx);
+      if (!/^[rbuf]{1,2}$/i.test(pre)) return false;
+      if (p > 0 && /[A-Za-z0-9_$]/.test(text[p - 1])) return false;
+      return /f/i.test(pre);
+    };
+    // String frames suspended by an interpolation, innermost last.
+    const stack = [];
+    let q = null;
+    let ansiC = false;
+    let triple = false;
+    let fstr = false;
+    let braces = 0;
+    // Parenthesis depth inside the current replacement field, and whether we
+    // have passed its top-level `:` into the FORMAT SPECIFICATION. Only the
+    // expression before that colon is Python; what follows is text handed to
+    // `__format__`, so `f'{X():copy(source, destination)}'` invokes nothing
+    // (r14). Depth is what makes the colon "top-level": a lambda's colon and
+    // a dict literal's sit inside `(`/`{`, and those keep the field code.
+    let parens = 0;
+    let spec = false;
+    for (let i = 0; i < text.length; i += 1) {
+      const c = text[i];
+      if (q) {
+        kind[i] = 1;
+        // In SHELL single quotes a backslash is literal and escapes nothing,
+        // so `X='x\\'` closes there. Skipping the next character kept the rest
+        // of the line inside the string, and a redirection after it was
+        // suppressed as part of an inert assignment (r24).
+        // …unless the run is ANSI-C quoted. `$'it\\'s'` DOES process the escape,
+        // so the apostrophe does not close the string, and treating every
+        // shell single-quoted run as literal ended it early and read the rest
+        // as code (r32). `logicalLines` has drawn this distinction since r28
+        // of the previous loop; this is the same rule, not a new one.
+        if (c === '\\' && !(lang === 'shell' && q === "'" && !ansiC)) {
+          if (i + 1 < text.length) kind[i + 1] = 1;
+          i += 1;
+          continue;
+        }
+        // INTERPOLATION IS CODE. `` `${writeFileSync(cfg, "{}")}` `` and
+        // `f'{Path(cfg).write_text("{}")}'` perform the write they name, and
+        // marking the whole literal as data dropped both (r13). The braces
+        // themselves stay with the literal; what they enclose is scanned as
+        // ordinary code, so a write inside one counts.
+        const opensInterp =
+          (jsLike && q === '`' && c === '$' && text[i + 1] === '{') || (pyLike && fstr && c === '{');
+        if (opensInterp) {
+          // `{{` is an escaped brace in an f-string, not an expression.
+          if (pyLike && text[i + 1] === '{') {
+            kind[i + 1] = 1;
+            i += 1;
+            continue;
+          }
+          if (jsLike) kind[i + 1] = 1;
+          stack.push({ q, triple, fstr, braces, parens, spec });
+          q = null;
+          triple = false;
+          fstr = false;
+          braces = 1;
+          parens = 0;
+          spec = false;
+          if (jsLike) i += 1;
+          continue;
+        }
+        // A Python TRIPLE-quoted literal spans lines. Closing string state
+        // at the first newline classified a docstring's later lines as code,
+        // so `"""\ncopy(source, destination)\n"""` reported a config nothing
+        // had touched (r13).
+        if (triple) {
+          if (c === q && text[i + 1] === q && text[i + 2] === q) {
+            kind[i + 1] = 1;
+            kind[i + 2] = 1;
+            i += 2;
+            q = null;
+            triple = false;
+            fstr = false;
+          }
+          continue;
+        }
+        if (c === q || (c === '\n' && !jsLike)) {
+          q = null;
+          fstr = false;
+        }
+        continue;
+      }
+      // A format specification is DATA — except for the nested replacement
+      // fields it may contain, which are code again (`f'{x:{width}}'`).
+      if (spec) {
+        kind[i] = 1;
+        if (c === '{') {
+          // `fstr: true` on the frame, not the current (false) value: a
+          // nested replacement field is still inside an f-string, so its own
+          // top-level colon opens a spec of its own — `f'{X:{width:copy(a,
+          // b)}}'` is format text throughout (r15). The frame's flag is what
+          // the colon rule consults.
+          stack.push({ q, triple, fstr: true, braces, parens, spec });
+          q = null;
+          triple = false;
+          fstr = false;
+          braces = 1;
+          parens = 0;
+          spec = false;
+        } else if (c === '}') {
+          const f = stack.pop();
+          q = f.q;
+          triple = f.triple;
+          fstr = f.fstr;
+          braces = f.braces;
+          parens = f.parens;
+          spec = f.spec;
+        }
+        continue;
+      }
+      // Inside an interpolation, the brace that balances it ends the code
+      // region and returns to the literal.
+      if (stack.length > 0) {
+        if (c === '(' || c === '[') parens += 1;
+        else if (c === ')' || c === ']') parens -= 1;
+        else if (c === '{') braces += 1;
+        else if (
+          c === ':' &&
+          pyLike &&
+          braces === 1 &&
+          parens === 0 &&
+          stack[stack.length - 1].fstr
+        ) {
+          kind[i] = 1;
+          spec = true;
+          continue;
+        } else if (c === '}') {
+          braces -= 1;
+          if (braces === 0) {
+            const f = stack.pop();
+            kind[i] = 1;
+            q = f.q;
+            triple = f.triple;
+            fstr = f.fstr;
+            braces = f.braces;
+            parens = f.parens;
+            spec = f.spec;
+            continue;
+          }
+        }
+      }
+      // A HEREDOC BODY IS NOT CLASSIFIED, deliberately. Treating a quoted
+      // body as inert input was added in r21 and produced findings in SIX
+      // rounds (r22-r26): indented terminators, backslash-quoted delimiters,
+      // mixed-quote words, regex metacharacters in the delimiter, punctuation
+      // in the word, here-strings misread as openers.
+      //
+      // r26 also disproved the premise. `bash <<'EOF'` executes its body — a
+      // heredoc is data for `cat` and SOURCE for an interpreter — so the rule
+      // was wrong even when the delimiter parsing was right, and its failure
+      // mode was hiding writes rather than reporting them.
+      //
+      // What it bought was silence when a heredoc body happens to contain a
+      // write verb naming the selected config. That is a false RED, the cheap
+      // direction, and it is now accepted.
+      if (c === '"' || c === "'" || (jsLike && c === '`')) {
+        q = c;
+        // `$'…'` is ANSI-C quoted and DOES process escapes, so the escape
+        // branch above must not treat it as a literal run (r32).
+        ansiC = lang === 'shell' && c === "'" && text[i - 1] === '$';
+        triple = pyLike && text[i + 1] === c && text[i + 2] === c;
+        fstr = pyLike && pyPrefix(i);
+        kind[i] = 1;
+        if (triple) {
+          kind[i + 1] = 1;
+          kind[i + 2] = 1;
+          i += 2;
+        }
+        continue;
+      }
+      // `//` is a comment in JavaScript and FLOOR DIVISION in Python; `#`
+      // is a comment in shell and Python and not in JavaScript.
+      // …and `#` needs a token boundary only in SHELL, where `${VAR#pre}`
+      // and `foo#bar` are ordinary text. Python has no such rule, so
+      // `x = 1# copy(source, destination)` left the comment classified as
+      // code (r13).
+      const lineComment =
+        (hashComments &&
+          c === '#' &&
+          // `#` starts a comment at the start of a WORD, and a control
+          // operator ends a word just as whitespace does — `:;# note` is a
+          // comment (r20).
+          (pyLike || i === 0 || /[\s;&|()]/.test(text[i - 1]))) ||
+        (jsLike && c === '/' && text[i + 1] === '/');
+      if (lineComment) {
+        const nl = text.indexOf('\n', i);
+        const stop = nl === -1 ? text.length : nl;
+        kind.fill(2, i, stop);
+        i = stop - 1;
+        continue;
+      }
+      if (jsLike && c === '/' && text[i + 1] === '*') {
+        const e = text.indexOf('*/', i + 2);
+        const stop = e === -1 ? text.length : e + 2;
+        kind.fill(2, i, stop);
+        i = stop - 1;
+        continue;
+      }
+      // A JAVASCRIPT REGEX LITERAL IS NOT CLASSIFIED, deliberately. Telling one
+      // from division needs the preceding token, and that predicate produced
+      // findings in SEVEN rounds (r15-r19, r21, r24) — arrow bodies, postfix
+      // `++`, control-condition parens, keyword-named properties, trivia,
+      // parens inside literals, TypeScript's postfix `!` — of which FIVE were
+      // false GREENS: a mis-read opener swallows the code between two slashes,
+      // including any real write in it.
+      //
+      // It existed only to stop a regex CONTAINING a write verb reading as a
+      // write. Since r20 the generic verbs need a filesystem qualifier, so
+      // that means a literal like `/fs.copy(a, b)/` in a file that also
+      // deploys — contrived, and a false RED if it ever appears, which is the
+      // cheap direction. A heuristic that trades five misses for one
+      // hypothetical report is not worth keeping.
+    }
+  classifyCache = { text, lang, kind };
+  return kind;
+}
+
+/**
+ * Is the quoted run containing `idx` the value of a shell ASSIGNMENT?
+ *
+ * `EXAMPLE='copy(source, destination)'` stores text and copies nothing, and
+ * treating it as executable reported a config the file never touched (r15).
+ *
+ * NARROWER THAN THE FINDING ASKED FOR, deliberately. The finding proposed the
+ * inverse rule — a shell string is inert UNLESS it is handed to `eval`,
+ * `sh -c` or another interpreter — which is the cleaner statement and is what
+ * I implemented first. It loses real detections: a file is scanned under more
+ * than one language, and a `.py` wrapper's lines also reach this reader with
+ * `lang: 'shell'`, where a write inside an f-string is a quoted run introduced
+ * by nothing an interpreter list would recognise. That cut broke three pinned
+ * f-string fixtures, which is a false GREEN on a real write.
+ *
+ * An assignment is the shape actually reported and the shape that is provably
+ * inert: the shell binds the word and runs nothing. `NAME=value` is a single
+ * token with no spaces, so `msg = f'…'` — a command called `msg` in shell
+ * grammar — is not one, and keeps its existing reading.
+ */
+/**
+ * Is `idx` inside a `[[ … ]]` conditional or a `(( … ))` arithmetic expression?
+ *
+ * `[[ "$left" > "$right" ]]` compares lexicographically; it does not redirect,
+ * and reading the `>` as a write reported a script that only compares (r20).
+ * `(( 2 > $limit ))` is the same `>` meaning the same thing in arithmetic, and
+ * was reported for the same reason (r31) — so it is the same reader with one
+ * more delimiter pair, not a second one.
+ */
+function inTestExpression(idx, text, kind) {
+  if (inDelimitedExpression(idx, text, kind, '[', ']') !== -1) return true;
+  const open = inDelimitedExpression(idx, text, kind, '(', ')');
+  if (open === -1) return false;
+  // `((` IS NOT ALWAYS ARITHMETIC. It also opens a subshell inside a subshell,
+  // and `((cd /tmp); printf new > "$CFG"))` is then a real redirection this
+  // exemption hid — a false green I introduced with the exemption itself and
+  // found by probing it rather than by review (r31 self-review).
+  //
+  // Told apart by the one thing bash does not allow in arithmetic: a COMMAND
+  // SEPARATOR. `(( a, b ))` sequences with commas, and the single construct
+  // that puts a `;` inside the parentheses is the C-style `for`. So a `;`
+  // before the operator disqualifies the exemption unless `for` opened it.
+  // Closed, because that list of one is the whole of bash's grammar here.
+  //
+  // A nested subshell joined by `&&` instead of `;` is still exempted, and
+  // stays a miss: `&&` is legal arithmetic, so excluding it would report
+  // `(( a && b > c ))`, which is noise — the direction this reader refuses.
+  if (/;/.test(text.slice(open, idx)) && !/\bfor\s*$/.test(text.slice(Math.max(0, open - 12), open)))
+    return false;
+  return true;
+}
+
+function inDelimitedExpression(idx, text, kind, L, R) {
+  let open = -1;
+  for (let i = idx; i >= 0 && idx - i < 400; i -= 1) {
+    if (kind[i] !== 0) continue;
+    if (text[i] === '\n') break;
+    if (text[i] === L && text[i - 1] === L) {
+      open = i - 1;
+      break;
+    }
+    if (text[i] === R && text[i + 1] === R) return -1;
+  }
+  if (open === -1) return -1;
+  const close = text.indexOf(R + R, idx);
+  const nl = text.indexOf('\n', idx);
+  if (close === -1 || (nl !== -1 && close < nl) === false) return -1;
+  // …and only the COMPARISON is exempt. `[[ "$(printf new > "$CFG")" == new ]]`
+  // runs a command inside the test, and blanket containment suppressed the
+  // write it performs — a false green this exemption introduced (r21).
+  // NO SUBSTITUTION BEFORE THE OPERATOR, asked as simply as that.
+  //
+  // r21 through r26 tried to answer the sharper question — is the operator
+  // inside a substitution that is still OPEN — and every refinement produced
+  // the next finding: closed substitutions, backticks, escaped backticks,
+  // apostrophes inside double quotes, nested subshells, literal parens in
+  // arguments. EIGHT findings over six rounds, and the errors were false
+  // GREENS: a substitution mis-read as closed exempts a live redirection.
+  //
+  // The simple rule errs the other way. `[[ "$(echo x)" > "$CFG" ]]` — a
+  // closed substitution before a genuine comparison — is now reported. That
+  // is a false red on a contrived line, which this reader is allowed; the
+  // accounting it replaces was not bounded at all.
+  return /\$\(|`/.test(text.slice(open, idx)) ? -1 : open;
+}
+
+// A FILESYSTEM `open`, spelled once. Three alternatives read an open-mode
+// argument and each qualified its receiver differently — or not at all — and
+// that difference produced a finding in THREE consecutive rounds: the method
+// form in r30, the directly-named form in r32, the keyword-mode form in r33,
+// each time `browser.open(…, "w")` reported as a file write. The shape of the
+// bug was never the mode; it was that the same question had three answers.
+//
+// Python's builtin is bare; a member is admitted only after a filesystem
+// module or a constructed path, which are syntax rather than the receiver
+// TYPE this reader declines to infer.
+// A CALL OPENS WITH `(`, OR WITH `?.(`. Optional-call syntax executes when
+// the member exists, and this reader has now been told so three times in three
+// places — the owner walk (r26), the constructed-function invocation (r35), and
+// the write calls themselves (r39). Spelled once here so the fourth place
+// cannot be missed the same way.
+const CALL = String.raw`\s*(?:\?\.)?\s*\(`;
+
+// …and the BARE spelling needs a QUALIFIER IN JAVASCRIPT, where `open(url,
+// "w")` is the browser's window opener or an ordinary local function — a
+// helper doing exactly that was reported as a file write (r39).
+//
+// Excluded THERE rather than admitted only for Python, which is the narrower
+// correction and the one the evidence supports: `open` is a builtin in Python,
+// and in shell text it is neither a builtin nor valid, so a bare one there is
+// already only reachable through a payload. Gating on Python alone also broke
+// two fixtures older than this loop, which is what surfaced the distinction.
+//
+// …and NODE OPENS FILES TOO. `fs.openSync(cfg, 'w')` truncates the file on the
+// spot and hands back a descriptor, and neither the qualifier list nor the
+// `open` spelling reached it — so a helper that opened the config and wrote
+// through the descriptor was a false GREEN before a config-selected deploy
+// (r40). The TRUNCATING OPEN is the write here, which is why no
+// descriptor-writing verb joins the vocabulary with it: `fs.writeSync(fd, …)`
+// names neither a file nor a mode, and `write` is the generic name this file
+// keeps out. Same reasoning as `os.open(cfg, os.O_TRUNC)` below — the open
+// carries the intent, the subsequent write does not.
+const fsOpen = (lang) =>
+  String.raw`(?<![A-Za-z0-9_$.])(?:(?:io|codecs|pathlib|gzip|bz2|lzma)\s*\.\s*` +
+  String.raw`|(?:fs|fsp|fse|fsExtra)(?:\s*\.\s*promises)?\s*\.\s*` +
+  String.raw`|Path\s*\([^()]*\)\s*\.\s*)` +
+  (lang === 'js' ? '' : '?') +
+  String.raw`open(?:Sync)?`;
+
+// The evaluate-option tests, by which letter the interpreter runs source with.
+// Built once: `isCommandPayload` is called per write match, and compiling a
+// pattern per call to interpolate one character is the sort of cost this file
+// has already paid for twice.
+// The ATTACHED forms take the source with or without an `=`: `bun -esource`
+// runs it exactly as `bun --eval=source` does, and requiring the equals left
+// the executed literal read as inert (r35).
+
+// THE MODE-STRING SPELLINGS OF AN OPEN, given the expression that names the
+// open itself. Shared rather than written twice: the bare form below is the
+// same three alternatives asked of a different name, and a second copy of a
+// pattern is what `SHELL_SYNTAX_WRITE` was — a duplicate that stopped tracking
+// the original and produced a false green (r40).
+//
+// WHERE THE MODE CAN SIT DEPENDS ON THE RECEIVER, which is Python's rule and
+// not a preference. For the builtin and for a module's `open`, the FIRST
+// argument is the FILE — so a lone `open("w")` reads a file named `w` and the
+// mode defaults to reading, and accepting an optional keyword there reported it
+// as a write (r34). A mode in first position is therefore admitted only as a
+// KEYWORD.
+//
+// `mode=` may also come FIRST among several arguments: Python accepts
+// `open(mode="w", file=cfg)`, and requiring it after a comma missed that
+// ordering (r9). `open(Path(cfg), "w")` wraps the path, and stopping at the
+// first `)` never reached the positional mode (r10).
+//
+// Every branch requires the mode literal to CLOSE. r11 fixed only the method
+// form, so `webbrowser.open("https://x", "welcome")` still matched the prefix
+// `"w` in the positional one (r12).
+//
+// Each alternative closes with its OWN quote, BY NAME. These were numbered
+// backreferences, and inserting two alternatives in r34 shifted the numbering
+// under the two below them: they went on referring to a group belonging to an
+// EARLIER alternative, which in an unmatched alternative is empty — so
+// JavaScript accepted the backreference against nothing and the mode matched on
+// its first letter alone, reporting `open(path, "welcome")` as a write (r37).
+const openModeAlts = (open) =>
+  String.raw`|` + open + CALL + String.raw`\s*mode\s*=\s*(?<mk>["'\`])[rbt]*[wax+][rbt+]*\k<mk>` +
+  String.raw`|` + open + CALL +
+  String.raw`\s*(?:(?:[^()]|\([^()]*\))*,\s*)?mode\s*=\s*(?<ma>["'\`])[rbt]*[wax+][rbt+]*\k<ma>` +
+  String.raw`|` + open + CALL +
+  String.raw`(?:[^()]|\([^()]*\))*,\s*(?<mo>["'\`])[rbt]*[wax+][rbt+]*\k<mo>`;
+
+// …and the BARE spelling, which in JavaScript only counts where something RUNS
+// the text. `open('cfg','w')` is Python's builtin, and a JavaScript wrapper
+// handing Python source to an interpreter is executing Python however the outer
+// file is spelled — gating the bare form on the OUTER file's language passed
+// that overwrite as safe (r41). The same correction r40 made for the shell
+// spellings, in the other direction: what decides the language is what runs the
+// text, not the file holding it.
+const BARE_OPEN = String.raw`(?<![A-Za-z0-9_$.])open(?:Sync)?`;
+
+const EVAL_C = {
+  grouped: /(['"`])(?:-{1,2}(?:eval|command)|-[a-zA-Z]*c[a-zA-Z]*)\1\s*,\s*$/,
+  attached: /-{1,2}(?:eval|command)=|-c(?:=|(?=\S))/,
+};
+// `-e` alone, for the runtimes where `-p` means something else. r33 said in
+// as many words that `-p` was "Node's letter set, not everyone's" and then
+// put it in the table PERL and RUBY read from, where `-p` is a printing loop
+// and not an evaluator — so the claim and the code disagreed and a harmless
+// `perl -p` reported (r35). Two tables now, which is what the sentence
+// described.
+const EVAL_E = {
+  grouped: /(['"`])(?:-{1,2}(?:eval|command)|-[a-zA-Z]*e[a-zA-Z]*)\1\s*,\s*$/,
+  attached: /-{1,2}(?:eval|command)=|-e(?:=|(?=\S))/,
+};
+
+// …and `-e` or `-p` for the runtimes where BOTH evaluate.
+const EVAL_EP = {
+  grouped: /(['"`])(?:-{1,2}(?:eval|command|print)|-[a-zA-Z]*[ep][a-zA-Z]*)\1\s*,\s*$/,
+  attached: /-{1,2}(?:eval|command|print)=|-[ep](?:=|(?=\S))/,
+};
+const EVAL_CE = {
+  grouped: /(['"`])(?:-{1,2}(?:eval|command)|-[a-zA-Z]*[ce][a-zA-Z]*)\1\s*,\s*$/,
+  attached: /-{1,2}(?:eval|command)=|-[ce](?:=|(?=\S))/,
+};
+
+/**
+ * The call that owns the code at `idx`, if that call SPAWNS A PROCESS.
+ *
+ * Extracted in r29 because a second reader needed the same walk, and kept in
+ * r30 after that reader was withdrawn: it has one caller again, and it names
+ * a question this file asks rather than hiding it inside the answer to a
+ * different one. Re-inlining it would only make the payload test longer.
+ *
+ * Returns the offset of the call's `(`, or -1.
+ */
+function spawnCallOwner(start, text, kind) {
+  // Back to the CALL that owns this literal, past any earlier arguments and
+  // past an array wrapper: `spawnSync("node", ["-e", "…"])` puts the payload
+  // two levels in, and testing only the character immediately before it saw a
+  // comma and gave up (r21).
+  let depth = 0;
+  let p = start - 1;
+  let open = -1;
+  for (; p >= 0 && start - p < 4000; p -= 1) {
+    if (kind[p] !== 0) continue;
+    const c = text[p];
+    if (c === ')' || c === ']' || c === '}') depth += 1;
+    else if (c === '(' || c === '[' || c === '{') {
+      if (depth === 0) {
+        if (c === '{') return -1;
+        if (c === '(') {
+          open = p;
+          break;
+        }
+        // An array wrapper: keep walking out to the call itself.
+        continue;
+      }
+      depth -= 1;
+    } else if (c === ';') {
+      if (depth === 0) return -1;
+    }
+    // A NEWLINE DOES NOT END THE WALK. Walking out of an argument list, the
+    // list's own opener has not been reached yet, so every newline inside it
+    // is at depth zero — and bailing there lost the owning call for every
+    // call formatted across lines. r32 found it through a Python comment
+    // between a flag and its payload, but the comment was incidental: the
+    // same call written across two lines with no comment at all was already
+    // invisible, and the write inside it went unreported.
+    //
+    // Safe to drop because the DEPTH ACCOUNTING already does this job: a
+    // complete call before this point contributes a closer before its opener,
+    // so its `(` decrements rather than being taken as the owner. `;` stays,
+    // because a statement separator at depth zero is never inside a list.
+  }
+  if (open === -1) return -1;
+  let q = open - 1;
+  while (q >= 0 && (/\s/.test(text[q]) || kind[q] === 2)) q -= 1;
+  // An OPTIONAL call still calls: `eval?.(…)` executes, and the identifier
+  // scan stopped at the `?` (r26).
+  if (text[q] === '.' && text[q - 1] === '?') {
+    q -= 2;
+    while (q >= 0 && (/\s/.test(text[q]) || kind[q] === 2)) q -= 1;
+  }
+  let e = q;
+  while (e >= 0 && /[A-Za-z0-9_$]/.test(text[e])) e -= 1;
+  const owner = text.slice(e + 1, q + 1);
+  // `Function` builds and returns executable source the same way `eval` runs
+  // it, and `Function("…writeFileSync…")()` is a spelling of the same write
+  // (r30). Distinctive enough to admit on the name: nothing else is called
+  // `Function` with a source string.
+  //
+  // …but only when the function it returns is CALLED. Constructing one and
+  // dropping it runs nothing, and admitting the name alone reported a write
+  // that cannot happen (r31). Asked by balancing the call's own parentheses
+  // and looking at what follows — a closed question about syntax, not a
+  // judgement about what the value is later used for. Anything less direct
+  // than `Function(…)()` — bound to a name and called on the next line — is
+  // deliberately NOT followed: that is the binding resolution this reader
+  // declines everywhere, and the miss is the same nameable one.
+  if (!/^(?:eval|Function|execSync|execFileSync|execFile|spawnSync|spawn|system|popen|Popen|check_output|check_call)$/.test(owner)) {
+    // The DISTINCTIVE names above are admitted on the name alone. `exec`,
+    // `run` and `call` are not distinctive — `RegExp.prototype.exec` is one
+    // of them — and matching on the final identifier read
+    // `/fs\.copy/.exec("fs.copy(a, b)")` as a child process, reporting a
+    // rewrite that cannot happen (r27).
+    //
+    // Same rule the generic COPY verbs take (r22): a generic name is admitted
+    // UNQUALIFIED — `const { exec } = require('child_process')` is ordinary —
+    // or qualified by a process module, and by nothing else. A receiver that
+    // is not a rooted module identifier (a regex literal, a string, a call
+    // result) is not one.
+    if (!/^(?:exec|run|call)$/.test(owner)) return -1;
+    // The dot need not be adjacent — `child_process\n  .exec(…)` and
+    // `/re/ .exec(s)` both put trivia between receiver and member — so the
+    // scan walks back over whitespace and comments the way the callee scan
+    // above does, rather than testing one character.
+    let d = e;
+    while (d >= 0 && (/\s/.test(text[d]) || kind[d] === 2)) d -= 1;
+    if (text[d] === '.') {
+      const recv = text.slice(Math.max(0, d - 60), d + 1);
+      // `?.` reaches the same member, so the receiver is read through it.
+      if (!/(?:^|[^\w$.])(?:child_process|childProcess|subprocess|cp|proc)\s*\??\s*\.$/.test(recv))
+        return -1;
+    }
+  }
+  if (owner === 'Function' && !immediatelyInvoked(open, text, kind)) return -1;
+  return open;
+}
+
+/**
+ * Does the call opening at `open` have its result called straight away?
+ *
+ * Balances the call's own parentheses through the classifier — so a `)` inside
+ * a string or a comment does not close it — and asks whether the next thing is
+ * another `(`.
+ */
+function immediatelyInvoked(open, text, kind) {
+  let depth = 0;
+  for (let i = open; i < text.length && i - open < 8000; i += 1) {
+    if (kind[i] !== 0) continue;
+    if (text[i] === '(') depth += 1;
+    else if (text[i] === ')') {
+      depth -= 1;
+      if (depth === 0) {
+        let j = i + 1;
+        while (j < text.length && (/\s/.test(text[j]) || kind[j] === 2)) j += 1;
+        // `Function(…)?.()` invokes too, which the owner walk already reads
+        // one level up and this did not (r35).
+        if (text[j] === '?' && text[j + 1] === '.') j += 2;
+        while (j < text.length && (/\s/.test(text[j]) || kind[j] === 2)) j += 1;
+        return text[j] === '(';
+      }
+    }
+  }
+  return false;
+}
+
+/**
+ * Is the string literal containing `idx` handed to something that RUNS it?
+ *
+ * In JavaScript a literal is data — except when it is the command given to
+ * `execSync` and friends, which is a shell script by another route (r20). The
+ * shell reader has had this rule since r12; this is the same rule on the other
+ * side of the language split.
+ */
+function isCommandPayload(idx, text, kind) {
+  let start = idx;
+  while (start > 0 && kind[start - 1] !== 0) start -= 1;
+  // A TAGGED TEMPLATE CAN RUN ITS BODY. Bun's shell tag spells it `$`, so
+  // ``await $`cp gen.jsonc ${CFG}` `` is a command and not a string — and a
+  // reader that only walks out to a CALL saw no owner at all (r38). The tag
+  // sits immediately before the backtick, which is syntax rather than a
+  // binding, so this needs nothing the reader declines to do.
+  if (text[start] === '`') {
+    let t = start - 1;
+    while (t >= 0 && (/\s/.test(text[t]) || kind[t] === 2)) t -= 1;
+    if (text[t] === '$' && !/[A-Za-z0-9_$]/.test(text[t - 1] ?? '')) return true;
+  }
+  const open = spawnCallOwner(start, text, kind);
+  if (open === -1) return false;
+  // …and for the ARGV forms, only the argument an interpreter EVALUATES.
+  // `spawnSync("echo", ["fs.copy(a, b)"])` prints its argument; marking every
+  // array element as code reported a copy that never happens (r22). The
+  // single-string forms (`execSync("…")`) are the command itself and need no
+  // such test, which is why this only applies when the literal came through a
+  // bracket.
+  if (text[start - 1] === undefined) return true;
+  // Comments are not argv. Trivia between the flag and its payload —
+  // `["-e", /* payload */ "…"]` — left the end-anchored match failing and
+  // the executed source read as inert (r26).
+  //
+  // …THROUGH THE CLASSIFIER, which is what this file does everywhere else and
+  // what this line should have done at r26. Stripping the two JavaScript
+  // comment forms by pattern left Python's `#` standing, so the same hole
+  // reopened one language over (r32). The classifier already knows which
+  // offsets are comments in the language being read; blanking those needs no
+  // second opinion about how a comment is spelled.
+  //
+  // …and only REBUILT when there is trivia to blank. This runs per write
+  // match, and concatenating a character at a time made the common case —
+  // no comment between the call and the payload — pay for the rare one.
+  // Measured, and modest: 500 deploys against one config went 0.47 s to
+  // 0.28 s, 4,000 went 1.78 s to 1.61 s. It is not where the time goes.
+  let args = text.slice(open, start);
+  if (args.length > 0) {
+    let hasComment = false;
+    for (let i = open; i < start; i += 1)
+      if (kind[i] === 2) {
+        hasComment = true;
+        break;
+      }
+    if (hasComment) {
+      const out = [];
+      for (let i = open; i < start; i += 1) out.push(kind[i] === 2 ? ' ' : text[i]);
+      args = out.join('');
+    }
+  }
+  if (!args.includes('[')) return true;
+  // The EVALUATE flags by name, long and short. `--eval` does not end in
+  // `e`-after-dashes the way a grouped short option does, so a suffix test
+  // missed it (r23); matching any option ending in c/e would take `--trace`.
+  // …and the EXECUTABLE has to be an interpreter. `echo -e "…"` prints its
+  // argument — `-e` there enables backslash escapes — so gating on the option
+  // alone reported a write that never happens (r25). The first argument of a
+  // spawn-style call is the program.
+  // …and the program may be the first element of an ARGV LIST rather than a
+  // separate first argument. Python spells it `subprocess.run(["echo", …])`,
+  // so anchoring on the parenthesis alone found no program at all, and with
+  // none the reader fell back to accepting both evaluate letters — which made
+  // `echo -e "…"` an evaluation again, the very thing the gate was added in
+  // r25 to stop (r28).
+  // …and Python may name it: `subprocess.run(args=["echo", …])` is the same
+  // call with a keyword, and the anchor could not cross `args=` — so `prog`
+  // was null again and the fallback accepted both letters (r29).
+  const prog = /\(\s*(?:[A-Za-z_]\w*\s*=\s*)?\[?\s*(['"`])([^'"`]*)\1/.exec(args);
+  // A Windows wrapper spawns `node.exe`, which is the same interpreter with a
+  // suffix — and an exact-name test rejected it before the flag was read
+  // (r35). Stripped once, so every test below sees the same name.
+  const progName = prog ? prog[2].replace(/\.(?:exe|cmd|bat)$/i, '') : null;
+  const INTERP = /(?:^|\/)(?:node|deno|bun|python[\d.]*|perl|ruby|sh|bash|zsh|dash|ksh|env)$/;
+  if (prog && !INTERP.test(progName)) return false;
+  // A GROUPED short option counts when it contains the evaluate letter:
+  // `bash -ec '…'` runs the payload, and requiring the group to END in `e`
+  // missed it (r26).
+  //
+  // …and WHICH letter evaluates depends on the interpreter. `bash -c` runs
+  // its argument; `node -c` is `--check`, which parses and does NOT run, so
+  // accepting both letters everywhere reported a write that cannot happen
+  // (r27). This is a mapping over the closed list just above, not a new
+  // open-ended one: an unrecognised program — `env`, which wraps something
+  // this reader cannot see — keeps both letters, the reporting direction.
+  const letters = !prog
+    ? EVAL_CE
+    : /(?:^|\/)(?:sh|bash|zsh|dash|ksh|python[\d.]*)$/.test(progName)
+      ? EVAL_C
+      : /(?:^|\/)(?:node|deno|bun)$/.test(progName)
+        ? EVAL_EP
+        : /(?:^|\/)(?:perl|ruby)$/.test(progName)
+          ? EVAL_E
+          : EVAL_CE;
+  if (letters.grouped.test(args)) return true;
+  // …or the flag and its source share ONE literal: `["--eval=…"]` (r24). The
+  // payload is then the literal this offset already sits in.
+  return letters.attached.test(text.slice(start, idx));
+}
+
+/**
+ * Does this quoted run contain a substitution the shell will actually perform?
+ *
+ * A marker preceded by an ODD number of backslashes is escaped and inert; an
+ * even number leaves the marker live (the backslashes escape each other).
+ */
+function hasLiveSubstitution(run) {
+  for (let i = 0; i < run.length; i += 1) {
+    const two = run[i] === '$' && run[i + 1] === '(';
+    if (!two && run[i] !== '`') continue;
+    let back = 0;
+    for (let j = i - 1; j >= 0 && run[j] === '\\'; j -= 1) back += 1;
+    if (back % 2 === 0) return true;
+  }
+  return false;
+}
+
+function isInertAssignment(idx, text, kind) {
+  let s = idx;
+  while (s > 0 && kind[s - 1] === 1) s -= 1;
+  let e = idx;
+  while (e < text.length && kind[e] === 1) e += 1;
+  // A COMMAND SUBSTITUTION RUNS BEFORE THE ASSIGNMENT BINDS. The assignment
+  // itself is inert, but `OUT="$(node -e '…writeFileSync…')"` executes its
+  // substitution first and the write lands — so the value is only inert when
+  // nothing inside it is evaluated (r16, a false GREEN I introduced in r15).
+  // Asked of the whole quoted run rather than of the offset: deciding which
+  // substitution a given offset falls inside means matching nested `$( )`,
+  // and the conservative answer — treat the value as live — costs a report on
+  // a config that names itself, which is the direction this reader already
+  // prefers everywhere else.
+  // …in a form that EXPANDS. Inside single quotes a `$(` or a backtick is
+  // ordinary text, so `OUT='$(copy(a, b))'` performs nothing (r19).
+  // …and an ESCAPED marker is literal text. Inside double quotes `\$(` is a
+  // dollar sign, so `EXAMPLE="\$(cmd)"` stores it and runs nothing, while a
+  // blanket search read it as live (r38).
+  //
+  // By PARITY of the backslashes before it, not by "is there one": `\\$(cmd)`
+  // is a literal backslash followed by a REAL substitution, so testing for a
+  // single preceding backslash would have turned this false red into a false
+  // green — the direction that matters more here.
+  if (text[s] !== "'" && hasLiveSubstitution(text.slice(s, e))) return false;
+  // THROUGH THE CLASSIFIER, like every other reader here. This walk looked at
+  // characters and not at their kind, so a parenthesis inside a quoted
+  // element — `EXAMPLES=("f(x)" "…")` — ended it, and the assignment it was
+  // standing in was never found (r31 self-review). A separator only separates
+  // when it is code.
+  let b = s;
+  while (b > 0 && !(kind[b - 1] === 0 && '\n;&|('.includes(text[b - 1]))) b -= 1;
+  // An ARRAY INITIALIZER stores just as an ordinary assignment does, and the
+  // scan above stops at its `(` — so `EXAMPLES=("…writeFileSync…")` lost the
+  // assignment it was standing in and the stored text read as executable
+  // (r30). Stepping back over that one paren, and only when an assignment
+  // opened it, keeps the boundary otherwise intact: a `(` that begins a
+  // SUBSHELL still ends the scan, because nothing assigns into it.
+  //
+  // …and the stored literal may be a LATER element. `EXAMPLES=("harmless"
+  // "…writeFileSync…")` puts an earlier quoted word between the `=(` and this
+  // one, so a pattern anchored on the opener alone rejected it (r31). The
+  // question is whether the literal is anywhere INSIDE the initializer, which
+  // is what `inArrayInitializer` records.
+  let inArrayInitializer = false;
+  const openParen = b - 1;
+  if (text[b - 1] === '(') {
+    let a2 = b - 1;
+    while (a2 > 0 && !'\n;&|('.includes(text[a2 - 1])) a2 -= 1;
+    if (/(?:^|\s)(?:export\s+|local\s+|declare\s+(?:-\S+\s+)*|readonly\s+|typeset\s+)?[A-Za-z_]\w*(?:\[[^\]]*\])?\+?=$/.test(
+        text.slice(a2, b - 1),
+      )) {
+      b = a2;
+      inArrayInitializer = true;
+    }
+  }
+  // Inside an initializer, everything from the opener to here is stored: the
+  // elements before this one are words, not commands, so they do not have to
+  // look like the tail of an assignment. What has to be true is that the
+  // initializer is still OPEN here — asked by balancing its parentheses
+  // through the classifier, so a paren inside a quoted element does not close
+  // it. A pattern that simply forbade parentheses in between reported
+  // `EXAMPLES=("f(x)" "…")`, which stores both words (r31 self-review).
+  //
+  // NO FIXTURE REACHES THE CLOSED CASE, and that is stated rather than
+  // implied: every spelling tried puts a newline or a `;` after the closing
+  // paren, which ends the backward walk before it gets here. The balance is
+  // kept because its answer when it does fire is "not inert", which reports —
+  // the direction this reader prefers — but it is NOT covered, and a mutation
+  // that disables it fails nothing.
+  if (inArrayInitializer) {
+    let depth = 0;
+    for (let i = openParen; i < s; i += 1) {
+      if (kind[i] !== 0) continue;
+      if (text[i] === '(') depth += 1;
+      else if (text[i] === ')' && --depth === 0) return false;
+    }
+    return true;
+  }
+  // The whole assignment WORD, not only a value that starts at the quote:
+  // `EXAMPLE=prefix"fs.copy(a, b)"` concatenates chunks and still just stores
+  // text (r23).
+  return /(?:^|\s)(?:export\s+|local\s+|declare\s+(?:-\S+\s+)*|readonly\s+|typeset\s+)?[A-Za-z_]\w*(?:\[[^\]]*\])?\+?=(?:\(\s*)?[^\s'"]*$/.test(
+    text.slice(b, s),
+  );
+}
+
+/**
  * Is this config REWRITTEN by the same file before the deploy runs? (#2036 r13)
  *
  * The identity read trusts the checkout's copy, which is right for a config
@@ -3260,10 +4074,30 @@ function lineStartOffset(text, lineNo, within = null) {
  * the identity goes UNREAD — the inversion's case, which reports — so the
  * conservative direction is the cheap one.
  */
-function configIsRewritten(text, cfgPath, at = null) {
+function configIsRewritten(text, cfgPath, at = null, lang = 'shell') {
+  // `shellish` was a boolean until r12. What the readers below actually need
+  // is WHICH language, because `//` and `#` mean different things in each.
+  const shellish = lang === 'shell';
   const base = cfgPath.slice(cfgPath.lastIndexOf('/') + 1);
   if (!base) return false;
-  const esc = base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  // ONE SHELL WORD MAY BE SPELLED IN CHUNKS. `configs/cus"tom".jsonc` is the
+  // single word `configs/custom.jsonc`, and the selector reader already
+  // normalises it — this scan did not, so the name went unrecognised, `named`
+  // stayed false and the write scan behind it never ran (r26). A false green.
+  //
+  // Answered where every spelling question here is answered: in the pattern,
+  // by letting quoting punctuation sit BETWEEN the characters of the name,
+  // rather than by normalising the file text. Normalising would move every
+  // offset, and every offset in this function is an index into the classifier's
+  // array for the ORIGINAL text.
+  //
+  // The per-character escape keeps the `g` flag even though each element is
+  // one character and can match at most once: a partial-escape reader cannot
+  // see that, and a suppression here would be a claim about the split rather
+  // than about the escape (CodeQL 1975).
+  const esc = [...base]
+    .map((c) => c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    .join(String.raw`["'\`\\]*`);
   const Q = String.raw`["'\`]`;
   // THE PATH IS NOT ALWAYS AN ARGUMENT. `Path("configs/custom.jsonc")
   // .write_text(…)` — the ordinary pathlib spelling — puts the name BEFORE the
@@ -3275,37 +4109,562 @@ function configIsRewritten(text, cfgPath, at = null) {
   // refused the checked-in identity and reported a legitimate deploy (#2036
   // r20). The default mode is read, so a bare `open(path)` is a read too.
   //
-  // A path bound to a VARIABLE first (`p = Path(…)` then `p.write_text(…)`) is
-  // still missed, and is left so deliberately: chasing the binding is
-  // constant-folding the host language, and the write forms that name the file
-  // outright are what a config-generating script actually looks like.
+  // A path bound to a VARIABLE first (`p = Path(…)` then `p.write_text(…)`)
+  // puts no name at the write, so every pattern above walks past it and the
+  // rewrite is BLESSED — a false green on the hazard this whole reader exists
+  // for (#2052). It is answered below in the same currency as everything else
+  // here, by NAME, rather than by following the binding: see `NAMED_THEN_WRITE`.
   const WRITE_CALL =
     String.raw`(?:writeFile(?:Sync)?|appendFile(?:Sync)?|createWriteStream` +
-    String.raw`|outputFile(?:Sync)?|write_text|write_bytes)\s*\([^)]*` + esc;
+    // `truncate` EMPTIES a file, which is a rewrite by the shortest route.
+    // Distinctive enough to admit on the name, and absent from this list
+    // until r38.
+    String.raw`|truncate(?:Sync)?` +
+    String.raw`|outputFile(?:Sync)?|write_text|write_bytes)` + CALL + String.raw`[^)]*` + esc;
+  // …and it must be a FILESYSTEM open. `webbrowser.open("configs/custom.jsonc",
+  // "w")` opens a browser, and this alternative admitted any receiver — the
+  // same gap r30 closed on the other scan, left open on this one (r32). The
+  // bare function `open(…)` is Python's builtin and stays; a method on a
+  // receiver needs the receiver to be a constructed path, which is syntax
+  // rather than the type this reader declines to infer.
   const OPEN_WRITE =
-    String.raw`open\s*\([^)]*` + esc + String.raw`[^)]*` + Q + String.raw`[rbt]*[wax+]`;
+    fsOpen(lang) + CALL + String.raw`[^)]*` +
+    esc + String.raw`[^)]*` + Q + String.raw`[rbt]*[wax+]`;
   const RECEIVER_WRITE =
-    Q + String.raw`[^"'\`]*` + esc + Q + String.raw`\s*\)?\s*\.\s*(?:write_text|write_bytes)\s*\(`;
+    Q + String.raw`[^"'\`]*` + esc + Q + String.raw`\s*\)?\s*\.\s*(?:write_text|write_bytes)` + CALL;
   const RECEIVER_OPEN =
     Q + String.raw`[^"'\`]*` + esc + Q +
-    String.raw`\s*\)?\s*\.\s*open\s*\(\s*` + Q + String.raw`[rbt]*[wax+]`;
+    String.raw`\s*\)?\s*\.\s*open` + CALL + String.raw`\s*` + Q + String.raw`[rbt]*[wax+]`;
   const REDIRECT = String.raw`>\s*\S*` + esc;
   // A COPY IS A WRITE. `cp generated.jsonc configs/custom.jsonc` replaces the
   // file wrangler will load just as surely as writing it does, and a scan for
   // write CALLS saw none (#2036 r28). Matched as "a copy/move command
   // mentioning this basename", not by parsing the destination: the conservative
   // direction here is to treat the config as unreadable, which reports.
-  const COPY =
-    String.raw`(?:^|[\s;&|(])(?:cp|mv|install|rsync)\s[^\n]*?` + esc +
-    String.raw`|(?:copyFile|rename|cpSync|copyFileSync|renameSync|copy|move)\s*\([^)]*` + esc;
+  // The GENERIC call names carry the same filesystem qualifier the named scan
+  // requires of them (r22). They did not, so this matcher reported a local
+  // Python `copy("configs/custom.jsonc")` that returns an in-memory value and
+  // touches no file — and the release note's guarantee that declaring `copy`
+  // or `move` is not a write was, on this path, untrue (r27). A shell `cp` in
+  // command position keeps its own qualifier, which is the command position.
+  // AN ARGV-SPELLED COPY IS NOT RECOGNISED, and that is a withdrawal rather
+  // than an omission. `subprocess.run(["cp", src, cfg])` was matched from r28
+  // and produced a finding in every round afterwards: the anchor sat inside a
+  // string literal, then the span stopped at a newline, then a list nothing
+  // ran was reported, then the owner walk skipped the call's own paren — and
+  // finally the verb only has to be the PROGRAM, which `spawnSync("echo",
+  // ["cp", …])` shows it need not be. That last one cannot be answered from
+  // the list at all: whether argv[0] is the program depends on the calling
+  // convention of the API around it — `spawnSync(file, args)` and
+  // `subprocess.run(argv)` disagree — so fixing it means a table of process
+  // APIs and their shapes, which is a new open-ended predicate.
+  //
+  // Five findings across three rounds, with the fifth needing new machinery,
+  // is the signature this file deletes on. The miss is nameable: a copy run
+  // as a child process through an argument list is not seen. It is behind the
+  // `keep_vars: true` declaration, and the shell spelling below is unaffected.
+  const COPY_SHELL =
+    // …and the space after the verb may NOT be a NEWLINE. `\s` matches one,
+    // so `echo cp` on its own line ran on into the NEXT line and found the
+    // config name in the deploy command itself — any mention of the word `cp`
+    // in a script that deploys reported a copy (found while probing r38, and
+    // the third pattern in this file to make the same mistake after r26 and
+    // r31).
+    String.raw`(?:^|[\s;&|("'\`])(?:cp|mv|install|rsync)[^\S\n][^\n]*?` + esc;
+  const COPY_CALL =
+    String.raw`(?:copyFile|rename|cpSync|copyFileSync|renameSync)` + CALL + String.raw`[^)]*` + esc +
+    String.raw`|(?<![A-Za-z0-9_$.])(?:shutil|fs|fse|fsExtra|fsp)` +
+    String.raw`(?:\s*\.\s*promises)?\s*\.\s*(?:copy|move)` + CALL + String.raw`[^)]*` + esc;
+  // …AND THE WHOLE SCAN IS CACHED PER (file, config, language). Everything from
+  // here to the sort reads only those three, and a file with many explicitly
+  // selected deploys ran it once per deploy: caching the classifier alone took
+  // 2,000 deploy lines from 7.6 s to 5.3 s, which is better and still
+  // superlinear, because the write scan itself was the rest of it. The calls
+  // for one file are consecutive, so one entry serves them all (r15).
+  const wkey = `${lang}\u0000${cfgPath}`;
+  if (writesCache.text === text && writesCache.key === wkey) {
+    return finishRewrite(writesCache.writes, text, cfgPath, at, esc);
+  }
+  // THROUGH THE CLASSIFIER, like the named-write scan below. These directly
+  // named patterns were exempt, so `const example =
+  // 'writeFileSync("configs/custom.jsonc", "{}")'` — a string DESCRIBING a
+  // write — reported a config nothing had touched (r23). One classifier, and
+  // now every reader of write offsets consults it; the release note said as
+  // much before it was true.
+  const directKind = classifyText(text, lang);
+  const shellishDirect = lang === 'shell';
   const writes = [
-    ...text.matchAll(
-      new RegExp(
-        [WRITE_CALL, OPEN_WRITE, RECEIVER_WRITE, RECEIVER_OPEN, REDIRECT, COPY].join('|'),
-        'g',
+    ...[
+      ...text.matchAll(
+        new RegExp(
+          [WRITE_CALL, OPEN_WRITE, RECEIVER_WRITE, RECEIVER_OPEN, COPY_CALL].join('|'),
+          'g',
+        ),
       ),
-    ),
-  ].map((m) => m.index);
+    ].filter((m) => {
+      const k = directKind[m.index];
+      if (k === 2) return false;
+      // In shell a quoted payload still executes, so only an inert assignment
+      // is data there — the same split the named scan makes.
+      if (k === 1)
+        return shellishDirect
+          ? !isInertAssignment(m.index, text, directKind)
+          : isCommandPayload(m.index, text, directKind);
+      return true;
+    }),
+    // SHELL SPELLINGS ARE A SEPARATE PASS, not an alternative inside the one
+    // above. A redirection and a bare copy command are shell syntax, and in
+    // JavaScript the same characters are an arrow function, a comparison, or
+    // an ordinary identifier — `const pick = x => "configs/custom.jsonc"` and
+    // `if cp and target == "…"` both reported a config nothing touched (r35).
+    //
+    // Asked of the POSITION and not of the FILE, which is the correction that
+    // matters here. Gating these alternatives on the file's language was the
+    // obvious reading of that finding and it is wrong: a payload handed to
+    // `sh -c` inside a `.mjs` wrapper IS shell, and eight pinned payload
+    // fixtures went red on it.
+    //
+    // r35 answered it by re-reading the MATCHED TEXT (`SHELL_SYNTAX_WRITE`) to
+    // ask which alternative had produced it. That predicate is deleted here:
+    // which alternative matched is a fact the regex already knows, and
+    // re-deriving it from the text meant a second, drifting spelling of every
+    // shell alternative — one that never learned about `tee`, the in-place
+    // editors, or the `{name}>` and `<>` redirections added after it (r40).
+    // Two passes instead, so the answer is structural. Separate passes also
+    // stop one family consuming the other's matches: sharing a regex, a
+    // `mv`-flavoured expression earlier on a line could swallow a real
+    // `writeFileSync` after it and never report the write.
+    ...[...text.matchAll(new RegExp([REDIRECT, COPY_SHELL].join('|'), 'g'))].filter((m) => {
+      const k = directKind[m.index];
+      if (k === 2) return false;
+      // OUTSIDE A SHELL, shell syntax only executes if something RUNS it. A
+      // match in code position is claiming to be the file's own syntax, which
+      // in JavaScript or Python it is not; a quoted one is judged by whether
+      // it is a payload, exactly as the calls above are.
+      if (!shellishDirect) return k === 1 && isCommandPayload(m.index, text, directKind);
+      if (k === 1) return !isInertAssignment(m.index, text, directKind);
+      // A `[[ … ]]` comparison is not a redirection on this path either. The
+      // named scan exempted it and this one did not, so
+      // `[[ "$left" > "configs/custom.jsonc" ]]` reported a rewrite (r24).
+      return !inTestExpression(m.index, text, directKind);
+    }),
+  ]
+    .map((m) => m.index)
+    .sort((a, b) => a - b);
+  // THE NAME, THEN ANY WRITE. Every pattern above requires the config's name
+  // AT the write, which a binding removes: `p = Path("…/custom.jsonc")`
+  // followed by `p.write_text(…)` names the file once and writes through a
+  // variable (#2052).
+  //
+  // Answered by NAME, deliberately, and NOT by following the binding. Resolving
+  // what a name holds is constant-folding the host language, and this reader's
+  // own rule — set out above — is that a wrong resolution silences a real
+  // config while a false positive merely leaves the identity unread, which
+  // reports. PR #2066 tested that rule to destruction by trying to resolve
+  // copy destinations instead: six review rounds and 48 findings, of which the
+  // false greens were every spelling the resolver got wrong (`-t`,
+  // `--parents`, a `//` in a path, a compound destination, a bound one). The
+  // bounded question is not "what does this name hold" but "does this file
+  // name the config and then write at all", and that is what is asked here.
+  //
+  // Over-reports a file that names the config and writes something else. That
+  // is the cheap direction by construction, and the remedy at the call site is
+  // one flag.
+  // Collected UNCONDITIONALLY, not only when nothing else matched. Gating this
+  // on an empty list let a directly-named write AFTER the deploy suppress the
+  // scan entirely, so a bound write BEFORE it went unseen (Codex #2066 r7).
+  const named = new RegExp(esc).test(text);
+  if (named) {
+    // THE NAMED-WRITE SCAN IS CONFIG-INDEPENDENT, so it is cached on the file
+    // and the language alone. The r15 cache keyed the whole result on the
+    // config too, which a file selecting a DIFFERENT config on every line
+    // misses every time — Codex measured 500/1,000/2,000/4,000 such deploys at
+    // 0.66/1.49/3.90/15.16 s, still superlinear (r16). Only the `esc`-bearing
+    // patterns above genuinely depend on the config; this scan does not, and
+    // it is the source-sized one.
+    if (anyWriteCache.text === text && anyWriteCache.lang === lang) {
+      writes.push(...anyWriteCache.writes);
+      writes.sort((a, b) => a - b);
+      writesCache = { text, key: wkey, writes };
+      return finishRewrite(writes, text, cfgPath, at, esc);
+    }
+    const anyWrites = [];
+    // Copies are writes here too: `copyFileSync("gen.jsonc", cfg)` puts no
+    // name in the call, so the name-bearing COPY pattern above cannot see it
+    // either (r7) — including the `shutil` spellings, which are the ordinary
+    // Python ones (r8). Redirections likewise: the direct form is already a
+    // write above, and `printf '{}' > "$CFG"` is the same write through a
+    // binding (r8).
+    // A CLOSED, BOUNDED SET, written to be robust at its edges rather than
+    // extended at them. Every r10 finding was one of these entries spelled
+    // more fully — a dotted qualifier, an IO-number prefix, a path-qualified
+    // command — not a new kind of write, so they are handled by making the
+    // existing entries exact instead of by lengthening the list.
+  // THE SHELL SPELLINGS ARE A SEPARATE PATTERN, run as its own pass below.
+  // They were alternatives inside the scan, included only when the FILE was a
+  // shell — so `execSync(`printf '{}' > ${cfg}`)` inside a `.mjs` wrapper had
+  // its redirection compiled away and the write went unreported, a false GREEN
+  // before a config-selected deploy (r40). What decides whether shell syntax
+  // executes is not the containing file but whether something RUNS the text,
+  // which is the correction r35 already made on the directly-named scan; this
+  // scan kept the file-wide gate. Lifted out so both scans ask it the same way.
+  //
+  // A separate pass rather than a flag, for the same reason the direct scan
+  // uses one: sharing a regex lets a shell-shaped expression earlier on a line
+  // consume the text a real write call occupies later on it.
+  const SHELL_COPY_CMD =
+  // Shell write commands, optionally reached through a path — and only
+  // in SHELL text. `const ratio = cp / total;` is ordinary JavaScript
+  // and matched the whitespace-delimited `cp` branch (r11).
+  // …and in COMMAND POSITION. Any whitespace before the word was
+  // enough, so `command -v cp && echo found` — which only tests whether
+  // `cp` exists — counted as a copy (r12). A command starts a line or
+  // follows a separator, optionally behind one of the few wrappers that
+  // take a command as their argument.
+  // …and a command position admits PREFIXES. Requiring the verb to
+  // follow the boundary or a bare wrapper name missed
+  // `MODE=copy cp gen.jsonc "$CFG"` and `sudo -u root cp gen.jsonc
+  // "$CFG"`, both of which copy (r13). Two prefix shapes, each of which
+  // cannot swallow a command name: a `VAR=value` assignment, and one of
+  // the listed wrappers with its own options — including the few sudo
+  // short options that take an argument, spelled out rather than
+  // approximated by "a word".
+  // `command` is deliberately NOT a wrapper here: `command -v cp` only
+  // TESTS for cp, and admitting it would restore the r12 false red.
+  // …and A PAYLOAD BEGINS AT ITS QUOTE. `execSync(`cp gen.jsonc ${cfg}`)`
+  // starts its command at the backtick, which was not a boundary, so lifting
+  // these alternatives out of the file-wide gate reached the payload and then
+  // failed to see the command inside it. The quote is a boundary in exactly
+  // the sense the others are: nothing can precede the verb there.
+    // An assignment VALUE may be quoted, and quoted whitespace is still
+      // one word — `LABEL="two words" cp gen.jsonc "$CFG"` copies (r17).
+      // Matched as a shell word rather than as "contains no space".
+      // …and after a RESERVED WORD. `if true; then cp gen.jsonc "$CFG"; fi`
+      // starts a command at `then`, which is neither a line start nor a
+      // separator, so the copy was invisible (r24).
+      // …and a `case` arm opens with `)`. The boundary may NOT cross a
+      // newline: `\\s*` did, so a comment ending in a reserved word absorbed
+      // the next real command into a match anchored in comment text, and
+      // `matchAll` resumed past it — the command was never reconsidered
+      // (r26).
+      String.raw`(?:^|[;&|()"'\`]|\b(?:if|elif|then|else|while|until|do)\b|[!{])[^\S\n]*(?:(?:[A-Za-z_]\w*=(?:"[^"]*"|'[^']*'|\S)*` +
+      // A long option can take its argument SEPARATED — `sudo --user
+      // root cp …` — and the generic branch consumed `--user` while
+      // leaving `root` to be read as the command (r14). The long forms
+      // that take an argument are named, the same way the short ones
+      // are, rather than approximated by "a following word".
+      // `command` RUNS its argument — `command cp gen.jsonc "$CFG"`
+      // copies — and r12 excluded it wholesale to stop `command -v cp`
+      // counting as one. Admitted here with the QUERY MODES excluded
+      // instead, which is the distinction bash's own help draws (r17).
+      // …and `--` ENDS ITS OPTIONS. `command -- cp gen.jsonc "$CFG"` runs
+      // the copy, and requiring the verb immediately after `command` never
+      // reached it (r38). The query modes stay excluded.
+      String.raw`|command(?!\s+-[vV]\b)(?:\s+--)?` +
+      String.raw`|(?:sudo|env|xargs|time|nohup)(?:` +
+      String.raw`\s+--(?:user|group|prompt|close-from|host|role|type|chdir|other-user)\s+\S+` +
+      // `env -u NAME` and friends take an OPERAND, and stopping before it
+      // let the operand be read as the command — `env -u cp echo harmless`
+      // reported a copy (r22).
+      String.raw`|\s+--?(?:u|unset|C|chdir|S|split-string)(?:=\S+|\s+\S+)` +
+      // The generic alternative must NOT be able to match an
+      // operand-taking option, or backtracking simply re-enters it and
+      // hands the operand back as the command.
+      String.raw`|\s+-(?!(?:u|C|S)(?:\s|=))(?!-(?:unset|chdir|split-string)(?:\s|=))[-\w]+(?:=\S+)?` +
+      String.raw`|\s+-[ugUpChrtDR]\s+\S+)*` +
+      // …AND IT NEEDS A FILE OPERAND. `cp --help` prints usage and `tee`
+      // with no operand writes to standard output, and both were counted
+      // as writes on the strength of the command name alone (r31). Asked
+      // as one question — is there a word here that is not an option and
+      // not a redirection — rather than as a list of the flags that mean
+      // 'do nothing', which is the shape this file keeps deleting.
+      //
+      // The operand search may NOT cross a newline. `\s` does, so
+      // `cp --help` swallowed the line break and took the next line's
+      // first word as its operand — the same mistake the command
+      // boundary made in r26, in a pattern written after it.
+      // …AND NOT IN A MODE THAT MAKES NO CHANGES — which is now ONE
+      // spelling, not three. `--dry-run` means the same thing wherever
+      // it appears and nothing reverses it. `-n` and `--no-clobber` do
+      // NOT: GNU says that of `-i`, `-f` and `-n` only the LAST takes
+      // effect, so `mv --no-clobber -f a b` overwrites, and excluding it
+      // on sight was a false green (r33).
+      //
+      // Reading that ordering means modelling how each command's options
+      // override each other, which is the per-command flag table this
+      // file refuses. So the two order-dependent spellings are dropped
+      // rather than ordered, and `cp -n a b` is reported — a write that
+      // may not happen, which is the direction this reader prefers.
+      String.raw`)\s+)*(?:[\w./-]*/)?(?:cp|mv|install|rsync|tee)` +
+      // …AND THE LOOK-AHEAD STOPS AT THE COMMAND. Scanning the rest of
+      // the LINE let an unrelated option disable the copy beside it:
+      // `cp generated.jsonc "$CFG" && echo -n done` went unreported
+      // because `echo`'s `-n` was in range (r32 self-review). A false
+      // green introduced by the fix for a false red, in the same round.
+      String.raw`(?![^\n;&|]*[^\S\n]--dry-run\b)` +
+      String.raw`[^\S\n]+(?:-\S+[^\S\n]+)*[^\s<>|&;-]`;
+
+  const SHELL_INPLACE_EDIT =
+  // AN IN-PLACE EDIT IS A WRITE. `sed -i 's/old/new/' "$CFG"` rewrites
+  // the file with no redirection and no copy verb, so nothing above saw
+  // it (r34). Two commands, not a category: `sed` and `perl` are the
+  // in-place editors that appear in deploy scripts, and `-i` means
+  // something else entirely on `cp`, `mv` and `grep`, so this cannot be
+  // asked of the option alone.
+  //
+  // The FIRST spelling of this asked whether the option group right
+  // after the command contained an `i`, and r36 returned three findings
+  // against that in one round: `-i.bak` attaches a backup suffix,
+  // `-E -i` puts other options first, and `-i --help` edits nothing.
+  // Parsing an option sequence per command is the flag table this file
+  // refuses — so the shape is replaced rather than patched, with the
+  // one the copy commands beside it already use: the command, then its
+  // options, then an OPERAND. The operand is what excludes `--help`,
+  // and it is the rule already written above rather than a new one.
+  //
+  // The withdrawal condition, restated because r34's was too narrow: a
+  // third editor OR another round of option-shape findings ends this,
+  // rather than extending it again.
+    String.raw`(?:^|[\s;&|("'\`])(?:[\w./-]*/)?(?:sed|perl)` +
+      // WHERE THE LETTER SITS IN THE CLUSTER decides whether it is the
+      // in-place option at all. A short option that takes a value takes
+      // the REST of its token, so the letter is either first — carrying
+      // an attached suffix, `-i.bak` — or last in an all-letter cluster,
+      // `-pi`. Accepting it anywhere read Perl's include-directory
+      // option `-Ilib` as an in-place edit and reported a command that
+      // only prints (r36 self-review). That is the general rule for
+      // short options, not a table of these two tools' flags.
+      String.raw`(?:[^\S\n]+-[^\s;&|]*)*?[^\S\n]+` +
+      String.raw`(?:-i[^\s;&|]*|-[a-zA-Z]*i(?=[^\S\n]|$)|--in-place[^\s;&|]*)` +
+      String.raw`(?:[^\S\n]+-[^\s;&|]*)*[^\S\n]+[^\s<>|&;-]`;
+
+  const SHELL_REDIRECT_BOUND =
+  // A REDIRECTION, not every `>`. The bare alternative also matched the
+  // arrow in `=>` and the comparison in `2 > 1`, and since the deploy's
+  // own `--config` already satisfies the name test, any such operator
+  // reported a config that was never touched (Codex #2066 r9). A
+  // redirection sits at a command boundary and is followed by a target.
+  // …and its TARGET is a path or a variable, with the IO-number prefix
+  // shells allow (`2>"$CFG"`). Only in SHELL text: whitespace is not a
+  // command boundary in JavaScript, so `if (value > "$CFG")` matched
+  // here and reported a config nothing had touched (r9 narrowed this
+  // once and r10 showed the narrowing was still language-blind). The
+  // directly-named redirection is covered above; this alternative exists
+  // for the write through a BINDING.
+  // `>|` (the noclobber override) and `>&` (stdout+stderr to one file)
+  // both truncate their target, and the target class saw the `|` or `&`
+  // and rejected the match (r13). Fd duplication is unaffected: `2>&1`
+  // has a digit for a target, which the class does not accept.
+  // …and `*>` redirects every stream in PowerShell — and is a glob
+  // followed by a redirection in POSIX shell (`cat *> out`), which is
+  // also a write — so the prefix class admits it alongside the IO
+  // number (r14). This is the OPERATOR only; PowerShell's write cmdlets
+  // stay out of scope, as recorded at r11.
+  // …and bash NAMES a descriptor: `exec {out}>"$CFG"` allocates one and
+  // truncates the target exactly as `3>` does, while a prefix class of
+  // digits could not see it (r31). Closed syntax, one alternative.
+  // …and `<>` OPENS FOR WRITING TOO. `exec 3<>"$CFG"` takes a
+  // descriptor that can write, and a pattern beginning at `>` never saw
+  // the operator at all (r38).
+    String.raw`(?:^|[\s;&|)"'\`])(?:\{\w+\}|[\d*]*)(?:<>|>{1,2})[|&]?\s*["'$~/.]`;
+
+    const ANY_WRITE = new RegExp(
+      // A word boundary that admits MEMBER ACCESS but not a suffix. Consuming
+      // the preceding character and excluding `.` blocked
+      // `require("fs").writeFileSync(...)` (found re-running the suite), while
+      // a plain `\b` let `os.remove(` match `move` and `copy.deepcopy(` match
+      // `copy` — both reported a config nothing had touched (r10). The
+      // lookbehind rejects only an identifier character, so `.cp(` is a call
+      // and `remove(` is not.
+      String.raw`(?<![A-Za-z0-9_$])` +
+        String.raw`(?:writeFile(?:Sync)?|appendFile(?:Sync)?|createWriteStream` +
+        String.raw`|outputFile(?:Sync)?|write_text|write_bytes` +
+        // `cp` moved behind the qualifier with `copy` and `move`: it has the
+        // same ambiguity (`function cp(source, destination)`), and leaving it
+        // in the distinctive branch was the r20 refactor left half-done (r21).
+        // `cpSync` stays — it is an API name, not a plausible declaration.
+        String.raw`|copyFile(?:Sync)?|cpSync|rename(?:Sync)?)` + CALL +
+        // A GENERIC COPY NAME NEEDS A FILESYSTEM QUALIFIER, or none at all.
+        // The lookbehind above admits member access on purpose — it is what
+        // lets `require("fs").writeFileSync(…)` and `fs.promises.cp(…)` match
+        // — but it also let `clone = copy.copy(value)` and any object's
+        // `.copy()` match an in-memory copy that writes no file (r15).
+        // `shutil.copy`, `shutil.move` and `fs.copy` stay; `copy.copy` and
+        // `arr.copy()` do not.
+        // A GENERIC COPY NAME MUST BE QUALIFIED BY A FILESYSTEM MODULE.
+        // Dropping the unqualified spellings is what lets the declaration
+        // heuristic go: `copy(` and `move(` were the only verbs a DECLARATION
+        // could plausibly share a name with, and telling `def copy(a, b):`
+        // from `copy(a, b)` needed a reader of parameter lists, bodies, return
+        // types and ternaries that produced findings in SIX consecutive rounds
+        // (r14-r19) and, by r20, false GREENS of its own — "a following brace
+        // alone is not sufficient evidence of a declaration". Nobody declares
+        // a method called `writeFileSync`, so the distinctive verbs never
+        // needed it.
+        //
+        // The cost is ONE nameable miss: `from shutil import copy` and then a
+        // bare `copy(a, b)`. That is incompleteness, which this reader is
+        // allowed; the edge list it replaces was not bounded at all. Same
+        // trade, and the same reasoning, as `keep_vars` against per-call-site
+        // `--keep-vars` in #1995.
+        // The qualifier may itself be DOTTED — `fs.promises.cp` — so the
+        // boundary here refuses a suffix but admits member access, exactly as
+        // the distinctive branch above does (r21).
+        // ROOTED, not any object carrying a matching member name:
+        // `archive.fs.copy(…)` may be an in-memory method (r22). The chain
+        // starts at a module root, with `promises` admitted only as `fs`'s
+        // own member — which is how `fs.promises.cp` is spelled.
+        String.raw`|(?<![A-Za-z0-9_$.])(?:shutil|fs|fse|fsExtra|fsp)` +
+        String.raw`(?:\s*\.\s*promises)?\s*\.\s*` +
+        String.raw`(?:copy|move|copyfile|copy2|copytree|cp)` + CALL +
+        // `os.replace` renames ONTO an existing path — an overwrite by
+        // definition — and no spelling of it was in the set (r13). Written
+        // QUALIFIED, unlike its neighbours: the lookbehind above admits member
+        // access, so a bare `replace` would take `text.replace('a', 'b')` in
+        // any file that names a config. Same reasoning that bounded `copy`
+        // and `move` in r10, applied to a far commoner method name.
+        String.raw`|(?<![A-Za-z0-9_$.])os\s*\.\s*replace` + CALL +
+        // `Path("gen.jsonc").replace(cfg)` renames onto its target. Admitted
+        // because the RECEIVER is a literal constructor call, which is syntax
+        // rather than the type resolution this reader declines: a bare
+        // `.replace(` on an unknown value stays out (r25).
+        String.raw`|(?<![A-Za-z0-9_$.])Path\s*\((?:[^()]|\([^()]*\))*\)\s*\.\s*replace` + CALL +
+        // THE MODE-STRING SPELLINGS live in `openModeAlts` above, with the
+        // reasoning for where a mode may sit and why each alternative closes
+        // its own quote by name. They are shared because the payload pass
+        // below asks the same three questions of a bare `open`.
+        //
+        // …and the METHOD form is GONE (r30). `webbrowser.open("w")` opens a
+        // URL named `w` and touches no file, and closing the literal was not
+        // enough to tell them apart: what separates them is the TYPE of the
+        // receiver, and a bare name carries none. Qualifying it by receiver
+        // NAME was written and withdrawn in the same sitting — a list of
+        // plausible variable names is the unbounded predicate this file
+        // deletes on sight.
+        //
+        // What it caught was `p.open("w")` on a variable bound to a path,
+        // which is the same miss this reader already accepts for `.replace`
+        // on a bound path and for a process module under an alias: the
+        // receiver's type is not in the text. The constructor form
+        // `Path("…").open("w")` is syntax, and is still read.
+        openModeAlts(fsOpen(lang)) +
+        // …and on a CONSTRUCTED PATH the first argument IS the mode, so both
+        // spellings are read there. Splitting these apart is what lets the
+        // builtin tighten without losing `Path("…").open("w")`.
+        String.raw`|Path\s*\([^()]*\)\s*\.\s*open` + CALL + String.raw`\s*(?:mode\s*=\s*)?(?<mp>["'\`])[rbt]*[wax+][rbt+]*\k<mp>` +
+        // `os.open` DOES NOT TAKE A MODE STRING AT ALL. Its second argument is
+        // an integer flag set, so the only way to see its intent is to read
+        // the flags — and `os.open(cfg, os.O_WRONLY | os.O_TRUNC)` truncates
+        // the file while every mode-string pattern above walks past it (r34).
+        // The POSIX names are a closed set, which is why this is admissible
+        // where a list of tool options would not be.
+        // …and the flags are the SECOND ARGUMENT. Scanning the whole call read
+        // the permission mode as an access flag, so
+        // `os.open(cfg, os.O_RDONLY, mode=os.O_TRUNC)` — which opens for
+        // reading — reported a truncation (r36). Bounded to the one argument
+        // that carries them, or to a `flags=` keyword.
+        // `truncate` EMPTIES a file — and is a generic name, not a
+        // distinctive one. Admitted to this list unqualified in r38, it
+        // reported `db.truncate()` and a plain `truncate(text, 80)` helper in
+        // any file that names the config (found by probing r38 afterwards).
+        // So it carries a filesystem module, exactly as the copy verbs and
+        // the process-execution names do — the rule this file already applies
+        // three times, which I did not apply when adding it.
+        String.raw`|(?<![A-Za-z0-9_$.])(?:fs|fsp|fse|fsExtra|os)` +
+        String.raw`(?:\s*\.\s*promises)?\s*\.\s*truncate(?:Sync)?` + CALL +
+        String.raw`|(?<![A-Za-z0-9_$.])os\s*\.\s*open` + CALL +
+        String.raw`(?:[^(),]|\([^()]*\))*,\s*(?:flags\s*=\s*)?` +
+        String.raw`(?:[^(),]|\([^()]*\))*O_(?:WRONLY|RDWR|TRUNC|CREAT|APPEND)`,
+      'gm',
+    );
+    // NO ORDERING BETWEEN THE NAME AND THE WRITE. Requiring the write to come
+    // after the name discarded a real rewrite whose call BEGINS before it —
+    // `writeFileSync(path.join(process.cwd(), "configs/custom.jsonc"), …)`
+    // starts at `writeFileSync` and names the config inside its own arguments
+    // (Codex #2066 r8). Deciding whether a name sits inside a given call means
+    // finding that call's extent, which is the parsing this reader stopped
+    // doing. The question is asked without the ordering instead: the file
+    // names the config and writes before the deploy. Ordering against the
+    // DEPLOY is still enforced below, which is the one that protects a
+    // legitimate command.
+    // NON-EXECUTABLE TEXT IS NOT A WRITE — and what counts as non-executable
+    // depends on the LANGUAGE. Three ad-hoc recognisers were tried before
+    // this: a JavaScript stripper over shell (blanked `//` in a path, r3), a
+    // line-comment scan with no language (blanked everything after Python's
+    // floor division `//`, r12 — a false GREEN), and none of them looked at
+    // string literals at all, so `const example = "copy(a, b)"` counted as a
+    // write (r12).
+    //
+    // One classifier instead, told which language it is reading, and consulted
+    // by offset. The lookup is a typed array rather than a scan over collected
+    // spans, which also answers the quadratic path r12 measured at 32k/64k/128k
+    // commented lines.
+    const kind = classifyText(text, lang);
+    // THE SPELLINGS WHOSE LANGUAGE IS NOT THE FILE'S. The shell ones always,
+    // and in JavaScript the bare `open` too: `spawnSync("python3", ["-c",
+    // "open('cfg','w')…"])` executes PYTHON, and gating that form on the outer
+    // file's language passed the overwrite as safe (r41). One pass, because it
+    // is one question — does something run this text — and answering it per
+    // spelling is how the file-wide gate came back the second time.
+    const ANY_WRITE_EXECUTED = new RegExp(
+      [
+        SHELL_COPY_CMD,
+        SHELL_INPLACE_EDIT,
+        SHELL_REDIRECT_BOUND,
+        ...(lang === 'js' ? [openModeAlts(BARE_OPEN).slice(1)] : []),
+      ].join('|'),
+      'gm',
+    );
+    for (const w of text.matchAll(ANY_WRITE_EXECUTED)) {
+      // A SHELL SPELLING EXECUTES WHERE A SHELL READS IT. In a shell file that
+      // is the file's own syntax, judged exactly as the calls below are; in
+      // JavaScript or Python the same characters are an arrow function, a
+      // comparison or an ordinary identifier UNLESS something runs the text —
+      // `execSync(`printf '{}' > ${cfg}`)` runs it, and the binding means the
+      // directly-named matcher cannot recover the basename either (r40).
+      const at0 = w.index + (w[0].length - w[0].replace(/^[^A-Za-z0-9_$/>%]+/, '').length);
+      if (kind[at0] === 2) continue;
+      const executes = shellish
+        ? !(kind[at0] === 1 && isInertAssignment(at0, text, kind)) &&
+          !inTestExpression(at0, text, kind)
+        : kind[at0] === 1 && isCommandPayload(at0, text, kind);
+      if (executes) anyWrites.push(w.index);
+    }
+    for (const w of text.matchAll(ANY_WRITE)) {
+      // The verb itself must be CODE — where "string" means DATA. In
+      // JavaScript and Python a literal is data, so `const example =
+      // "copy(a, b)"` describes a write rather than performing one (r12). In
+      // SHELL it is not: `node -e "…writeFileSync…"` and `sh -c '…'` execute
+      // their quoted payload, which this guard already pins elsewhere ("a
+      // shell's -c payload is a command position, as eval's argument is").
+      // Excluding shell strings broke that fixture immediately.
+      const at0 = w.index + (w[0].length - w[0].replace(/^[^A-Za-z0-9_$/>%]+/, '').length);
+      const insideData = shellish
+        ? kind[at0] === 2 ||
+          (kind[at0] === 1 && isInertAssignment(at0, text, kind)) ||
+          inTestExpression(at0, text, kind)
+        : kind[at0] !== 0 && !isCommandPayload(at0, text, kind);
+      if (!insideData) anyWrites.push(w.index);
+    }
+    anyWriteCache = { text, lang, writes: anyWrites };
+    writes.push(...anyWrites);
+    writes.sort((a, b) => a - b);
+  }
+  writesCache = { text, key: wkey, writes };
+  return finishRewrite(writes, text, cfgPath, at, esc);
+}
+
+let writesCache = { text: null, key: null, writes: null };
+let anyWriteCache = { text: null, lang: null, writes: null };
+
+/**
+ * Decide the rewrite question from an already-collected list of write offsets.
+ *
+ * Split out so the collection above can be cached: this half depends on `at`,
+ * which differs per deploy, while the collection depends only on the file, the
+ * config and the language.
+ */
+function finishRewrite(writes, text, cfgPath, at, esc) {
   if (writes.length === 0) return false;
   // ...AND THE WRITE HAS TO COME FIRST. Scanning the whole file without
   // comparing positions let maintenance code BELOW a deploy invalidate the
@@ -3318,6 +4677,16 @@ function configIsRewritten(text, cfgPath, at = null) {
   // file deploying safely, rewriting, then deploying again made the SECOND
   // selection satisfy the ordering for the FIRST deploy, and reported a command
   // that runs before the rewrite (#2036 r20).
+  // REFUTED, r10: "count writes evaluated inside deploy arguments". A write in
+  // the deploy's own argument list — `spawnSync("wrangler", [...],
+  // (writeFileSync(cfg, "{}"), {}))` — does run first, and its lexical offset
+  // is later, so this comparison misses it. Extending the bound to the end of
+  // the deploy's LINE was tried and breaks a pinned behaviour: a rewrite AFTER
+  // a deploy on the same line must not invalidate it
+  // (`wrangler deploy --config side.jsonc; echo … > side.jsonc`, r26).
+  // Separating the two means knowing where the deploy's call ENDS, which is
+  // the extent-finding this reader does not do. The pinned false-red case
+  // outranks the contrived false-green one.
   if (at !== null) return writes.some((w) => w < at);
   const uses = [
     ...text.matchAll(
@@ -4001,7 +5370,7 @@ function declaredWorkerName(absPath) {
  * against every REACHABLE cwd, the same states the `cd` walk maintains, so a
  * relative selector lands where the shell would put it.
  */
-function selectorScope(seg, states, hasCwdState = true, vars = null, fileText = '', fileAt = null) {
+function selectorScope(seg, states, hasCwdState = true, vars = null, fileText = '', fileAt = null, lang = 'shell') {
   // A value is ONE SHELL WORD, and a word can mix adjacent quoted and unquoted
   // chunks: `--name vaipakam"-"agent` is the single argument `vaipakam-agent`.
   // Capturing only the first chunk made the value `vaipakam`, which matched no
@@ -4629,7 +5998,12 @@ function selectorScope(seg, states, hasCwdState = true, vars = null, fileText = 
       // A config the surrounding file REWRITES before the deploy is not the
       // file wrangler will load, so the checkout's copy answers nothing
       // (#2036 r13). Unread reaches the inversion, which reports.
-      const read = configIsRewritten(fileText ?? '', cfg, fileAt)
+      // `srcIsShell` describes the file being SCANNED. `rel` here is the
+      // resolved CONFIG path — passing it to `isShellFile` asked whether a
+      // `.jsonc` is a shell script, which is always false, so the shell
+      // alternatives switched off for every real `.sh` wrapper without a
+      // shebang (Codex #2066 r11, a bug I introduced in r10).
+      const read = configIsRewritten(fileText ?? '', cfg, fileAt, lang)
         ? null
         : declaredWorkerNames(`${REPO_ROOT}/${rel}`, envSelected, envName);
       const declared = read === null ? null : read.names;
@@ -6029,8 +7403,14 @@ function closesQuote(s, q) {
 
 /** Shift a block's logical lines back to real file line numbers. */
 function offset(block, start, blockId, cwd = '', env = null) {
+  // SPREAD, so this cannot lose a field again. Listing them re-numbered the
+  // line and silently dropped `folds` — how a position inside a continued
+  // command translates back to the file's coordinates (r27) — for every block
+  // this function wraps: the workflow `run:` bodies, the fenced blocks and the
+  // Makefile recipes, which is where most of the shell this guard reads lives.
+  // The only field this function has an opinion about is the line number.
   return block.map((l) => ({
-    text: l.text,
+    ...l,
     line: l.line + start,
     block: blockId,
     cwd,
@@ -7342,6 +8722,17 @@ function jsonValueLines(text) {
         text: decodeJsonString(mm[1]),
         line: i + 1,
         physical: true,
+        // PHYSICAL AND SHELL AT ONCE. `physical` answers "can this line set a
+        // working directory for a later one" — no, each manifest value is its
+        // own shell — and it was also being read as "this is not shell text",
+        // which for a script value is false: reading them AS COMMANDS is the
+        // whole reason this function exists. A value such as
+        // `CFG=configs/custom.jsonc; printf '{}' > $CFG; wrangler deploy
+        // --config configs/custom.jsonc` had its redirection classified as
+        // JSON data, so the rewrite went unseen and the deploy was blessed on
+        // the stale checked-in `keep_vars` (r13). The two questions get two
+        // fields.
+        lang: 'shell',
       }));
     }
     const m = null;
@@ -7501,6 +8892,25 @@ for (const file of walk(REPO_ROOT)) {
   // tests that follow. Not for scoring: the concatenation is a JavaScript fact,
   // and rewriting a line before `commandIsSafe` reads it would put text in
   // front of the safety predicate that the file does not contain.
+  // Shell semantics apply to SHELL files. A redirection is a redirection in
+  // shell text; in JavaScript the same character is a comparison (#2066 r10).
+  const fileIsShell = Boolean(winInterp) || isShellFile(rel, text);
+  // AN EXTENSIONLESS HELPER HAS A SHEBANG, NOT A SUFFIX. `walk` yields
+  // extensionless executables deliberately, and keying the language on `.py`
+  // alone classified `#!/usr/bin/env python3` as `other` — where an f-string
+  // is inert data and the write interpolated into it was dropped (r17). The
+  // same question `isShellFile` already answers from a shebang, asked for the
+  // other interpreter this reader knows.
+  const fileIsPython =
+    /\.py$/.test(rel) || /^#![^\n]*\bpython[\d.]*\b/.test(text.slice(0, 200));
+  // …AND THE SAME IS TRUE OF A NODE HELPER. `#!/usr/bin/env node` with no
+  // suffix was classified `other`, where a template literal is not a string —
+  // so an inert example inside one was read as the file's own code and
+  // reported a config nothing had touched (r40). A false RED, which blocks CI.
+  // The JavaScript runtimes are a closed set, written the way the Python line
+  // above is rather than as a general interpreter table.
+  const fileIsJs =
+    /\.(?:m|c)?[jt]sx?$/.test(rel) || /^#![^\n]*\b(?:node|bun|deno)\b/.test(text.slice(0, 200));
   const foldedText = foldStringConcat(text);
   const folded = winInterp || isShellFile(rel, text)
     ? logicalLines(text)
@@ -7663,7 +9073,36 @@ for (const file of walk(REPO_ROOT)) {
   // `shopt -s expand_aliases` has run, and expansion happens when the CALL is
   // parsed — so the gate is read at the call site, not at the definition.
   let aliasesOn = false;
-  folded.forEach(({ text: line, line: lineNo, block, physical, cwd: blockCwd, env: blockEnv }) => {
+  folded.forEach(({ text: line, line: lineNo, block, physical, lang: entryLang, cwd: blockCwd, env: blockEnv, folds }) => {
+    // A LOGICAL OFFSET IS NOT A RAW ONE. `logicalLines` collapses each
+    // backslash-newline into one space, so an offset into the folded line
+    // runs short of the file by one character per fold before it — while the
+    // write scan indexes the raw file. Compared directly, a write physically
+    // BEFORE a continued deploy read as after it and the rewrite was blessed
+    // (r27). Entries from the readers that do not fold carry no `folds` and
+    // are unaffected.
+    const rawAt = (within) =>
+      lineStartOffset(
+        text,
+        lineNo,
+        typeof within === 'number' && folds?.length
+          ? within + folds.filter((f) => f < within).length
+          : within,
+      );
+    // SHELL-NESS IS PER LINE, not per file. A fenced `bash` block in Markdown
+    // and a workflow `run:` body are extracted and processed as shell although
+    // the containing file is `.md` or `.yml`, so a file-wide flag switched the
+    // shell alternatives off for exactly the text that needs them
+    // (Codex #2066 r11). `physical` marks a line that is NOT from a shell
+    // block; anything from a block is shell.
+    // …or because the splitter that produced the line SAYS it is shell: a
+    // manifest script value is JSON syntactically and a command in substance
+    // (r13).
+    const lineIsShell = fileIsShell || !physical || entryLang === 'shell';
+    // WHICH language this line is, for the comment and string rules. A line
+    // lifted out of a `run:` block or a fenced fence is shell whatever the
+    // container is; otherwise the file's own extension decides.
+    const lineLang = lineIsShell ? 'shell' : fileIsJs ? 'js' : fileIsPython ? 'py' : 'other';
     // Each embedded block is a SEPARATE shell — an Actions step starts fresh,
     // and so does the next fenced example. Carrying `cwdIsKeeper` across them
     // made one block's `cd apps/keeper` reject the NEXT block's agent deploy
@@ -7711,6 +9150,54 @@ for (const file of walk(REPO_ROOT)) {
       // and HF_SCALE remedy beside an agent problem. The scope has to come from
       // the segment carrying the unsafe command.
       const lineScope = scopeOf(line, rel) ?? labelScope.get(lineNo) ?? null;
+      // A MANIFEST SCRIPT VALUE IS SCANNED IN ITS OWN COORDINATES. `part.start`
+      // is an offset into the folded entry; `lineStartOffset` adds it to the
+      // raw physical line, which is the same thing for a shell file and adrift
+      // for a JSON value, whose `"release": "` prefix and escape decoding the
+      // entry text does not carry. Mixing the two spaces compared a raw write
+      // offset against a decoded one, so the redirection in
+      // `printf '{}' > $CFG; wrangler deploy …` read as running AFTER the
+      // deploy on its own line and the rewrite went unseen (r13) — the
+      // language fix alone could not surface it.
+      //
+      // The value alone rather than a decoded-to-raw mapping: the two
+      // coordinates then cannot disagree, and it matches the stance
+      // `jsonValueLines` already takes — values are NOT joined, because a
+      // sequence spanning two of them is one no script performs.
+      const valueScoped = entryLang === 'shell';
+      // …AND A MANIFEST VALUE INCLUDES THE SCRIPTS IT RUNS. `"release": "pnpm
+      // run generate && wrangler deploy --config configs/custom.jsonc"` with
+      // `"generate": "cp generated.jsonc configs/custom.jsonc"` rewrites the
+      // selected config before deploying, and scanning only the release value
+      // never saw it (r17). Not a contradiction of "values are NOT joined":
+      // that rule refuses to CONCATENATE unrelated values into a sequence no
+      // script performs, while this follows an invocation the script actually
+      // makes — through `resolveRunAlias`, the resolver this reader already
+      // uses for the same question on the safety side.
+      // Read with `packageScripts`, NOT `resolveRunAlias`: that resolver
+      // answers "does this alias reach a deploy" and returns nothing for one
+      // that merely rewrites, which is exactly the case here. The bodies are
+      // wanted whatever they do.
+      // A MANIFEST VALUE IS SCANNED ALONE — the scripts it invokes are NOT
+      // followed. `part.start` indexes the value, and `lineStartOffset` adds
+      // it to the raw physical line, which is right for a shell file and
+      // adrift for a JSON value whose `"release": "` prefix the entry text
+      // does not carry; the value's own coordinates cannot disagree (r13).
+      //
+      // FOLLOWING `pnpm run generate` INTO ANOTHER SCRIPT WAS TRIED (r17) AND
+      // IS WITHDRAWN. It is inter-procedural reasoning — the same class as the
+      // hoisted-helper call this reader declined in r17 on the grounds that it
+      // does not build a call graph — and keeping one while declining the
+      // other was an inconsistency that generated NINE findings over five
+      // rounds: invocation ordering, `--filter` selection, quoted mentions,
+      // command position, chain depth twice, short-circuited branches, and npm
+      // pre/post hooks. Each fix was right and each exposed the next, which is
+      // the unbounded shape this reader is written to avoid. Deferred to a
+      // follow-up issue rather than half-done here.
+      const rewriteCtx = (start) =>
+        valueScoped
+          ? { text: line, at: start }
+          : { text, at: rawAt(start) };
       // A markdown CODE SPAN is a command boundary, and prose has no shell
       // separator between two of them. `Use `wrangler deploy --keep-vars` for
       // the keeper and `wrangler deploy` for the agent.` is ONE segment to
@@ -7794,14 +9281,26 @@ for (const file of walk(REPO_ROOT)) {
         // negation.
         const aliased = resolveRunAlias(seg, packageContextOf(rel));
         if (
-          commandIsSafe(aliased ?? seg, safeHint, '', text, lineStartOffset(text, lineNo, part.start)) ||
+          commandIsSafe(
+            aliased ?? seg,
+            safeHint,
+            '',
+            rewriteCtx(part.start).text,
+            rewriteCtx(part.start).at,
+            lineLang,
+          ) ||
           (aliased === null &&
             commandIsSafe(
               expandCommandVars(seg, fileVars),
               safeHint,
               '',
-              text,
-              lineStartOffset(text, lineNo, part.start),
+              rewriteCtx(part.start).text,
+              rewriteCtx(part.start).at,
+              // The LANGUAGE too. Omitting it defaulted this reader to shell,
+              // so a JavaScript comparison such as `value > "/tmp/x"` was read
+              // as a redirection and rejected an unchanged config (r19). The
+              // call above it always passed the language; this one did not.
+              lineLang,
             ))
         ) {
           continue;
@@ -7820,8 +9319,9 @@ for (const file of walk(REPO_ROOT)) {
           [{ cwd: '', stack: [] }],
           false,
           null,
-          text,
-          lineStartOffset(text, lineNo, part.start),
+          rewriteCtx(part.start).text,
+          rewriteCtx(part.start).at,
+          lineLang,
         );
         // A single filter can select BOTH packages, and each needs its own
         // remedy in the same report (#1995 r7).
@@ -8475,7 +9975,15 @@ for (const file of walk(REPO_ROOT)) {
         // reporting it under the keeper handed the reader the wrong remedy
         // (#1995 r2). Textual and cwd scope apply only when no selector
         // resolved.
-        const sel = selectorScope(seg, input, true, shellVars, text, lineStartOffset(text, lineNo, part.start));
+        const sel = selectorScope(
+          seg,
+          input,
+          true,
+          shellVars,
+          text,
+          rawAt(part.start),
+          lineLang,
+        );
         // An explicit `cd` OUTRANKS where the wrapper file happens to live
         // (#1995 r9). `scopeOf`'s last resort is "this file is inside a scoped
         // package", and it ran before the modelled cwd — so in a script under
@@ -8542,10 +10050,10 @@ for (const file of walk(REPO_ROOT)) {
         const fileTextForSafety = text;
         // The LINE this command is on, so a rewrite is compared against THIS
         // deploy rather than against any later selection of the same config.
-        const atInFile = lineStartOffset(text, lineNo, part.start);
+        const atInFile = rawAt(part.start);
         const safeEverywhere = (text) =>
           cmdCwds.every((cwd) =>
-            commandIsSafe(text, safeHint, cwd, fileTextForSafety, atInFile),
+            commandIsSafe(text, safeHint, cwd, fileTextForSafety, atInFile, lineLang),
           );
         if (
           safeEverywhere(aliased ?? seg) ||
