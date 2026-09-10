@@ -1,3 +1,6 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import enBundle from '../../src/i18n/locales/en.json' with { type: 'json' };
 
@@ -833,5 +836,128 @@ describe('round 9 review findings', () => {
       copy,
     );
     expect(v.verdict).toBe('fail');
+  });
+});
+
+describe('the calibration covers EVERY shipped locale, not only English', () => {
+  // ROUND 11 P2. `FORCED_CLOSE` is the English bundle, so the case
+  // named "passes every shipped forced-close string" was calibrating
+  // one of the bundles a reader can actually be shown. The forced-close
+  // card is translatable, its strings are funds copy, and a translator
+  // introducing a figure — or a locale file carrying a stale English
+  // draft with one in it — would have passed both the calibration and
+  // the live drive, which is pinned to en-US.
+  //
+  // Read from disk rather than imported, so a locale added later is
+  // covered without touching this file.
+  const LOCALES_DIR = path.join(
+    path.dirname(fileURLToPath(import.meta.url)),
+    '../../src/i18n/locales',
+  );
+
+  const walk = function* (node, prefix) {
+    if (typeof node === 'string') {
+      yield [prefix, node];
+    } else if (node && typeof node === 'object') {
+      for (const [k, v] of Object.entries(node)) yield* walk(v, `${prefix}.${k}`);
+    }
+  };
+
+  const bundles = fs
+    .readdirSync(LOCALES_DIR)
+    .filter((f) => f.endsWith('.json'))
+    .map((f) => [f, JSON.parse(fs.readFileSync(path.join(LOCALES_DIR, f), 'utf8'))])
+    .map(([f, json]) => [f, json?.copy?.forcedClose])
+    .filter(([, fc]) => fc && typeof fc === 'object');
+
+  it('finds forced-close copy in more than one bundle', () => {
+    // Guards the guard: if the key moved or the read broke, the loop
+    // below would pass over an empty set exactly as loudly.
+    expect(bundles.length).toBeGreaterThan(1);
+  });
+
+  it('scans every translated forced-close string for an amount', () => {
+    let checked = 0;
+    for (const [file, fc] of bundles) {
+      for (const [key, value] of walk(fc, 'forcedClose')) {
+        expect(monetaryAmountsIn(value), `${file} ${key}: ${value}`).toEqual([]);
+        checked += 1;
+      }
+    }
+    expect(checked).toBeGreaterThan(30);
+  });
+});
+
+describe('round 11 review findings', () => {
+  const copy = {
+    unknownCopy: FORCED_CLOSE.unknown,
+    readyCopy: [FORCED_CLOSE.readyInKind, FORCED_CLOSE.readyInternalMatch, FORCED_CLOSE.readyRental],
+    withheldCopy: [FORCED_CLOSE.unknown, FORCED_CLOSE.notYet, FORCED_CLOSE.readyNeedsRoute],
+    recognisedCopy: [
+      FORCED_CLOSE.unknown,
+      FORCED_CLOSE.notYet,
+      FORCED_CLOSE.readyInKind,
+      FORCED_CLOSE.readyNeedsRoute,
+    ],
+    receiptLead: FORCED_CLOSE.receipt.youReceive,
+  };
+  const base = {
+    lenderHoldsActive: true,
+    mounted: true,
+    attached: true,
+    submitDisabled: true,
+    saleLocked: false,
+    settled: true,
+    bodyText: 'an explanation',
+    bodyPresent: true,
+    confirmText: null,
+    confirmExpected: false,
+    text: FORCED_CLOSE.readyInKind,
+  };
+
+  it('does NOT fire on the shipped unknown copy, which negates "refused"', () => {
+    // `unknown` says "not what the protocol has refused" — the surface
+    // being correct about the distinction. A matcher that fired here
+    // would accuse the one string the rule exists to protect.
+    const v = forcedCloseVerdict({ ...base, text: FORCED_CLOSE.unknown }, copy);
+    expect(v.verdict).toBe('pass');
+  });
+
+  it('FAILS an affirmative refusal claim that FOLLOWS the negated one', () => {
+    // The first-match flaw: the legitimate negated occurrence inside
+    // `unknown` was vouching for an affirmative claim later in the same
+    // card. Every match is examined now.
+    const v = forcedCloseVerdict(
+      { ...base, text: `${FORCED_CLOSE.unknown} The protocol has refused this.` },
+      copy,
+    );
+    expect(v.verdict).toBe('fail');
+    expect(v.why).toMatch(/opposite claims/);
+  });
+
+  it('catches a ticker behind punctuation', () => {
+    expect(monetaryAmountsIn('You receive 1m (USDC)')).toHaveLength(1);
+    expect(monetaryAmountsIn('Loan 100: USDC principal')).toHaveLength(1);
+    expect(monetaryAmountsIn('Returns 250 — WETH')).toHaveLength(1);
+  });
+
+  it('BLOCKS a card whose copy matches no state this drive knows', () => {
+    // A failed locale lookup or a generic error body renders non-empty,
+    // carries no unresolved sentence, matches no readiness guard — and
+    // was reported as the withheld-but-explained state. That establishes
+    // only that SOMETHING was said.
+    const v = forcedCloseVerdict({ ...base, text: 'Something went wrong.' }, copy);
+    expect(v.verdict).toBe('blocked');
+    expect(v.blockedKind).toBe('incomplete');
+  });
+
+  it('still PASSES every state the drive does know', () => {
+    for (const known of copy.recognisedCopy) {
+      const submitDisabled = known !== FORCED_CLOSE.readyInKind;
+      expect(
+        forcedCloseVerdict({ ...base, submitDisabled, text: known }, copy).verdict,
+        known.slice(0, 40),
+      ).toBe('pass');
+    }
   });
 });

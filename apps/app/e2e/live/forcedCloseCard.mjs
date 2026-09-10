@@ -74,7 +74,31 @@ const IDENTIFIER_LEAD = /\b(loan|position|offer|token|id|no|number|nft|item)\s*$
  * than a style rule (round 7 P2).
  */
 const REFUSAL_CLAIM =
-  /\b(not available|unavailable|cannot be closed|can't be closed|is not possible|not permitted)\b/i;
+  /\b(not available|unavailable|cannot be closed|can't be closed|is not possible|not permitted|has refused|was refused|has been refused|protocol refused)\b/i;
+
+/**
+ * The shipped `unknown` sentence contains the word "refused" in its
+ * NEGATED form — "this is what the app has not read yet, not what the
+ * protocol has refused" — which is the surface being CORRECT about the
+ * distinction, not claiming a refusal. Adding refusal vocabulary to the
+ * matcher above without excluding it would fire on the very copy the
+ * rule exists to protect (round 11 P2).
+ *
+ * So a hit is discarded when a negation governs it within a short
+ * window. Deliberately narrow: it only rescues the negated form, and an
+ * affirmative "the protocol has refused this" still fails.
+ */
+const NEGATED_REFUSAL = /\b(not|never|isn't|is not|nothing)\b[^.]{0,40}$/i;
+
+/** The first refusal claim in `text` that no negation governs, or null. */
+function firstUnnegatedRefusal(text) {
+  const scan = new RegExp(REFUSAL_CLAIM.source, 'gi');
+  let m;
+  while ((m = scan.exec(text)) !== null) {
+    if (!NEGATED_REFUSAL.test(text.slice(0, m.index))) return m[0];
+  }
+  return null;
+}
 
 /**
  * Units that make a number a DURATION or a PROPORTION rather than an
@@ -83,6 +107,20 @@ const REFUSAL_CLAIM =
  * digit scan would fail on correct copy — which is worse than no check,
  * because it would be silenced rather than fixed.
  */
+/**
+ * A token symbol somewhere in the short run that follows a figure,
+ * across the delimiters real copy uses — spaces, brackets, colons,
+ * dashes, commas. Used only to WITHHOLD an exemption, never to create a
+ * hit on its own, so widening it cannot introduce a false positive on
+ * text that carries no figure.
+ */
+function hasTickerNear(after) {
+  for (const word of String(after).split(/[^A-Za-z0-9]+/)) {
+    if (isTicker(word)) return true;
+  }
+  return false;
+}
+
 const NON_MONETARY_UNIT =
   /^(%|bps|day|days|hour|hours|hr|hrs|h|minute|minutes|min|mins|m|second|seconds|sec|secs|s|week|weeks|month|months|year|years|block|blocks)$/i;
 
@@ -120,15 +158,24 @@ export function monetaryAmountsIn(text) {
     // 16 chars, not 8: the identifier words below are up to 8 long on
     // their own (`position `), so a shorter window could not see them.
     const before = text.slice(Math.max(0, start - 16), start);
-    const after = text.slice(end, end + 10);
+    // 16, not 10: a symbol can sit behind a unit word AND a delimiter
+    // (`1m (USDC)`), and the window has to reach it (round 11 P2).
+    const after = text.slice(end, end + 16);
 
     // A unit word immediately after. `2%` and `3 days` are fine; a
     // ticker is not. Parsed BEFORE the exemptions below, because every
     // exemption has to be able to consult it.
     const trailing = after.match(/^\s*([A-Za-z%][A-Za-z0-9]*)\s*([A-Za-z][A-Za-z0-9]*)?/);
-    const trailingTicker = Boolean(
-      trailing && (isTicker(trailing[1]) || (trailing[2] && isTicker(trailing[2]))),
-    );
+    // ROUND 11 P2 — LOOK PAST PUNCTUATION, not only whitespace.
+    //
+    // `1m (USDC)` and `Loan 100: USDC principal` put a bracket or a
+    // colon between the figure and its symbol, and a whitespace-only
+    // parse never reached the ticker — so the duration and identifier
+    // exemptions fired and the amount escaped. Third variant of the
+    // look-before-exempting rule: rounds 3 and 5 widened WHICH
+    // exemptions consult the trailing symbol, and this widens what
+    // counts as reaching it.
+    const trailingTicker = hasTickerNear(after);
     const hugsCurrency =
       CURRENCY_MARK.test(before.slice(-2)) || CURRENCY_MARK.test(after.slice(0, 2));
 
@@ -160,7 +207,12 @@ export function monetaryAmountsIn(text) {
       // of writing a large one. The exemption now only applies when
       // nothing token-shaped follows.
       if (NON_MONETARY_UNIT.test(unit)) {
-        if (next && isTicker(next)) {
+        // ROUND 11 P2 — consult the SAME widened lookahead the
+        // identifier exemption uses. Round 3 checked only the word
+        // immediately after the unit, so `1m (USDC)` exempted `m` as
+        // minutes and never reached the bracketed symbol. Two
+        // exemptions asking the same question needed the same answer.
+        if (trailingTicker) {
           hits.push(fragment(text, start, end));
         }
         continue;
@@ -481,11 +533,17 @@ export function forcedCloseVerdict(obs, copy) {
   // than a judgement about wording. Copy that merely says a route is
   // unavailable — which several legitimate states do — is untouched.
   if (checkRunning) {
-    const refusal = REFUSAL_CLAIM.exec(obs.text ?? '');
+    // EVERY match, not the first one. The shipped `unknown` copy itself
+    // contains "not what the protocol has refused" — correctly negated —
+    // and examining only the first hit let that legitimate occurrence
+    // vouch for an affirmative claim later in the same card. Fourth
+    // variant in this PR of stopping at the first thing found; caught
+    // here by the round-7 case failing rather than by review.
+    const refusal = firstUnnegatedRefusal(obs.text ?? '');
     if (refusal) {
       return {
         verdict: 'fail',
-        why: `card reports a check still running AND claims unavailability ("${refusal[0]}") — opposite claims about the app's knowledge and the protocol's answer`,
+        why: `card reports a check still running AND claims unavailability ("${refusal}") — opposite claims about the app's knowledge and the protocol's answer`,
       };
     }
   }
@@ -545,6 +603,35 @@ export function forcedCloseVerdict(obs, copy) {
       blockedKind: 'incomplete',
       why: 'submit was offered but its confirmation could not be opened or read — half this surface went unscanned',
     };
+  }
+
+  // ROUND 11 P2 — "EXPLAINED" MEANS A RECOGNISED EXPLANATION.
+  //
+  // The pass called every non-empty non-submittable card the
+  // "withheld-but-explained" state, which establishes only that SOME
+  // text exists. A failed locale lookup, a raw key, or a generic
+  // "Something went wrong" body all render non-empty, carry no
+  // unresolved sentence (so `settled` is true), match no readiness
+  // guard, and were reported as correct — while the lender had been
+  // told nothing about what is known, unknown, or blocking the action.
+  //
+  // BLOCKED rather than FAIL, deliberately. Unrecognised copy may be a
+  // genuine defect or may be a state this drive does not know about
+  // yet, and those are not distinguishable from outside. Reporting the
+  // gap in the drive's own vocabulary is honest; accusing the product
+  // from it is the false-FAIL direction this PR has already produced
+  // twice.
+  if (Array.isArray(copy?.recognisedCopy) && copy.recognisedCopy.length > 0) {
+    const known = copy.recognisedCopy.some(
+      (sentence) => typeof sentence === 'string' && sentence && (obs.text ?? '').includes(sentence),
+    );
+    if (!known) {
+      return {
+        verdict: 'blocked',
+        blockedKind: 'incomplete',
+        why: 'the card rendered text this drive does not recognise as any known state — it establishes that something was said, not that the lender was told what is known or blocking',
+      };
+    }
   }
 
   return {

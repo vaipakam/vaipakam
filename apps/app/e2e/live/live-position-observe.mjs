@@ -470,6 +470,27 @@ const FORCED_CLOSE_COPY = (() => {
       need(fc.blockedNoConsent, 'blockedNoConsent'),
       need(fc.readyNeedsRoute, 'readyNeedsRoute'),
     ],
+    // ROUND 11 P2 — every state this card can legitimately be in. A
+    // card matching none of them has said SOMETHING without saying
+    // anything the drive can recognise, which is reported as a gap in
+    // the drive's vocabulary rather than as a product defect.
+    recognisedCopy: [
+      need(fc.unknown, 'unknown'),
+      need(fc.notYet, 'notYet'),
+      need(fc.blockedPaused, 'blockedPaused'),
+      need(fc.blockedSequencer, 'blockedSequencer'),
+      need(fc.blockedNoConsent, 'blockedNoConsent'),
+      need(fc.readyInKind, 'readyInKind'),
+      need(fc.readyInternalMatch, 'readyInternalMatch'),
+      need(fc.readyRental, 'readyRental'),
+      need(fc.readyNeedsRoute, 'readyNeedsRoute'),
+      need(fc.submitted, 'submitted'),
+      need(fc.submittedUnaccounted, 'submittedUnaccounted'),
+      need(fc.outcomeReverted, 'outcomeReverted'),
+      need(fc.outcomeCancelled, 'outcomeCancelled'),
+      need(fc.outcomeReplaced, 'outcomeReplaced'),
+      need(fc.alreadySubmittedElsewhere, 'alreadySubmittedElsewhere'),
+    ],
     // ROUND 7 P2 — positive evidence that the RECEIPT rendered, not
     // merely that its shell opened.
     receiptLead: need(fc.receipt?.youReceive, 'receipt.youReceive'),
