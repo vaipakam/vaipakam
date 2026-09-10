@@ -6083,6 +6083,21 @@ reading its own facet's layout can be wrong: without the read there is no
 proof, and every such class is now indeterminate with the reason the read
 was refused.
 
+**Review round 6 made the attribution rule one rule.** Round 3 had taught
+the enumerable path that a non-zero at an earlier era's counter slot must be
+attributed before it may count, but the shell path and the intent-only read
+still judged the raw readings: the committed table has an old
+`totalLoansEverCreated` slot that is now a list's length and an old
+`intentLiveCommitCount` slot that is now the tier-table version, so a bare
+Diamond with offers but no loans would have read as a counter contradiction
+rather than as proven empty. Every counter read now passes through the same
+attribution: a reading at HEAD's slot is the counter today; a non-zero at an
+earlier slot a current field occupies is that field and is set aside and
+recorded; a non-zero at an earlier slot no field occupies is kept and is the
+contradiction it looks like. No verdict of run 29 moves — all twenty-four
+readings it set aside were on the enumerable path, and the three shells read
+zero at every slot — so run 29 stands.
+
 ### 7a. What the provenance walk found, and how the design changes (2026-09-09)
 
 The walk in question 2 was built first, and it answered before a single slot

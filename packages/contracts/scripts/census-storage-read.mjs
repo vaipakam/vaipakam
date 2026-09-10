@@ -80,6 +80,7 @@ export function prepareStorageRead({ slots, eras }) {
     ok: true,
     head: eras.head,
     occupied,
+    headSlots: slots.fields,
     erasBuilt: eras.eras.length,
     generatedAt: eras.generatedAt,
     eraSlots,
@@ -310,4 +311,34 @@ export function downgradeWithoutEraRead(classes, reason) {
     out[name] = { ...c, status: 'indeterminate', provenBy: undefined, indeterminateReason: `the era-complete storage read is unavailable (${reason}) — a routed getter reads only its facet's layout, so a row at another era's slot cannot be excluded; refusing to certify` };
   }
   return out;
+}
+
+/**
+ * #2095 r6 P2 — the ONE attribution rule for counter readings, on every
+ * path. A reading at HEAD's slot is the counter today and is kept as read; a
+ * NON-ZERO reading at an earlier era's slot is kept only when no current
+ * field occupies that slot (an unexplained counter — a genuine contradiction
+ * candidate), and is set aside as `aliased` when one does (the checked-in
+ * table has an old `totalLoansEverCreated` slot that is now a list length and
+ * an old `intentLiveCommitCount` slot that is now `tierTableVersion`, so a
+ * getter-less Diamond with offers but no loans must not read as a
+ * contradiction). `allZero` is recomputed over the kept readings. Pure.
+ */
+export function attributeCounters(counters, headSlots, occupied) {
+  const earlier = (list, which) => list.filter((x) => x.slot !== headSlots[which]).map((x) => ({ ...x, which, value: x.value.toString() }));
+  const { contradictions, aliased } = classifyEarlierCounters([...earlier(counters.totalLoansEverCreated, 'totalLoansEverCreated'), ...earlier(counters.intentLiveCommitCount, 'intentLiveCommitCount')], occupied);
+  const aliasedSlots = new Set(aliased.map((x) => `${x.which}@${x.slot}`));
+  const keep = (list, which) => list.filter((x) => !aliasedSlots.has(`${which}@${x.slot}`));
+  const totalLoansEverCreated = keep(counters.totalLoansEverCreated, 'totalLoansEverCreated');
+  const intentLiveCommitCount = keep(counters.intentLiveCommitCount, 'intentLiveCommitCount');
+  return {
+    counters: {
+      ...counters,
+      totalLoansEverCreated,
+      intentLiveCommitCount,
+      allZero: counters.nextLoanId === 0n && totalLoansEverCreated.every((x) => x.value === 0n) && intentLiveCommitCount.every((x) => x.value === 0n),
+    },
+    unexplained: contradictions.map((x) => ({ which: x.which, slot: x.slot, value: String(x.value), eras: x.eras })),
+    aliased: aliased.map((x) => ({ which: x.which, slot: x.slot, value: String(x.value), aliases: x.aliases })),
+  };
 }

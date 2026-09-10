@@ -1,7 +1,7 @@
 // census-storage-read.test.mjs — the era-complete storage read's rules (#1566 §7/§7a), over fake readers.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { prepareStorageRead, readCountersByStorage, scanRowsByStorage, intentVerdictFromStorage, eraSlotsExcept, mergeHistoricalRows, aliasOf, classifyEarlierCounters, markAliasedRows, splitByHeadSlot, getterAgreement, downgradeWithoutEraRead, ROW } from './census-storage-read.mjs';
+import { prepareStorageRead, readCountersByStorage, scanRowsByStorage, intentVerdictFromStorage, eraSlotsExcept, mergeHistoricalRows, aliasOf, classifyEarlierCounters, markAliasedRows, splitByHeadSlot, getterAgreement, downgradeWithoutEraRead, attributeCounters, ROW } from './census-storage-read.mjs';
 import { memberSlot, rowSlot } from './storage-slots.mjs';
 
 const H = (n) => '0x' + n.toString(16).padStart(64, '0');
@@ -188,4 +188,36 @@ test('without the era-complete read no getter-derived class stays proven (#2095 
   assert.match(out.rebateRows.indeterminateReason, /HEAD mismatch/);
   assert.equal(out.fallbackSnapshotCustody.indeterminateReason, 'already undetermined', 'an already-indeterminate class keeps its reason');
   assert.equal(out.liveIntentCommits.status, 'non-empty', 'a found row is not hidden by the downgrade');
+});
+
+test('counter readings are attributed on every path: an old counter slot a current field occupies is that field, not a counter (#2095 r6 P2)', () => {
+  const headSlots = { totalLoansEverCreated: '0x' + 'aa'.repeat(32), intentLiveCommitCount: '0x' + 'bb'.repeat(32) };
+  const oldTotal = '0x' + '00'.repeat(31) + '10';   // 0x10 — inside a current list's span below
+  const oldIntent = '0x' + '00'.repeat(31) + '20';  // 0x20 — inside tierTableVersion's span
+  const orphan = '0x' + '00'.repeat(31) + '30';     // 0x30 — no current field
+  const occupied = [
+    { label: 'activeOfferIdsList', from: '16', to: '16', isMapping: false },
+    { label: 'tierTableVersion', from: '32', to: '32', isMapping: false },
+  ];
+  const counters = {
+    nextLoanId: 0n,
+    totalLoansEverCreated: [{ slot: headSlots.totalLoansEverCreated, value: 0n, eras: [] }, { slot: oldTotal, value: 4n, eras: [{ date: '2026-05' }] }],
+    intentLiveCommitCount: [{ slot: headSlots.intentLiveCommitCount, value: 0n, eras: [] }, { slot: oldIntent, value: 3n, eras: [{ date: '2026-06' }] }],
+    allZero: false,
+    slotsRead: 5,
+  };
+  const a = attributeCounters(counters, headSlots, occupied);
+  assert.equal(a.counters.allZero, true, 'offers and a tier-table version are not loans or commits');
+  assert.deepEqual(a.aliased.map((x) => [x.which, x.value, x.aliases]), [['totalLoansEverCreated', '4', 'activeOfferIdsList'], ['intentLiveCommitCount', '3', 'tierTableVersion']]);
+  assert.deepEqual(a.unexplained, []);
+  assert.equal(a.counters.intentLiveCommitCount.length, 1, 'the HEAD-slot reading stays');
+  // a non-zero at a slot no current field occupies is kept and is unexplained
+  const b = attributeCounters({ ...counters, intentLiveCommitCount: [{ slot: headSlots.intentLiveCommitCount, value: 0n, eras: [] }, { slot: orphan, value: 1n, eras: [{ date: '2026-06' }] }] }, headSlots, occupied);
+  assert.equal(b.counters.allZero, false);
+  assert.deepEqual(b.unexplained.map((x) => [x.which, x.value]), [['intentLiveCommitCount', '1']]);
+  // a non-zero at HEAD's slot is the counter today: kept, never unexplained, never aliased
+  const c = attributeCounters({ ...counters, totalLoansEverCreated: [{ slot: headSlots.totalLoansEverCreated, value: 7n, eras: [] }] }, headSlots, occupied);
+  assert.equal(c.counters.allZero, false);
+  assert.deepEqual(c.unexplained.filter((x) => x.which === 'totalLoansEverCreated'), []);
+  assert.equal(c.counters.totalLoansEverCreated[0].value, 7n);
 });

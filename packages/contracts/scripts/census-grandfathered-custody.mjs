@@ -91,7 +91,7 @@
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync, renameSync, rmSync } from 'node:fs';
 import { readManifest, regenerateEntries, withManifestLock, writeSnapshotGuarded, livePublicationsInProgress } from './archive-manifest.mjs';
 import { loadSlots, loadEras } from './storage-slots.mjs';
-import { prepareStorageRead, readCountersByStorage, scanRowsByStorage, intentVerdictFromStorage, mergeHistoricalRows, classifyEarlierCounters, markAliasedRows, splitByHeadSlot, getterAgreement, downgradeWithoutEraRead, MAX_STORAGE_LOAN_SCAN } from './census-storage-read.mjs';
+import { prepareStorageRead, readCountersByStorage, scanRowsByStorage, intentVerdictFromStorage, mergeHistoricalRows, markAliasedRows, splitByHeadSlot, getterAgreement, downgradeWithoutEraRead, attributeCounters, MAX_STORAGE_LOAN_SCAN } from './census-storage-read.mjs';
 
 /** Sum a row field as a decimal string. A function declaration, so it is hoisted above every branch that returns early (#2095 r1 P2). */
 function sum(rows, field) {
@@ -1736,24 +1736,28 @@ async function censusDeployment(dep) {
     let storage = null;
     if (!notADiamond && STORAGE_READ.ok) {
       const readSlot = (slot) => withReplicaRetry(atBlock, () => storageAtHash(client, censusBlock, diamond, slot), { client });
-      const counters = await readCountersByStorage({ readSlot, eraSlots: STORAGE_READ.eraSlots });
+      // #2095 r6 P2 — an earlier era's counter slot may be a current field's slot
+      // today (a list length, tierTableVersion): such a reading is that field, not
+      // a counter, and is set aside before the range and the verdict are judged
+      const attributed = attributeCounters(await readCountersByStorage({ readSlot, eraSlots: STORAGE_READ.eraSlots }), STORAGE_READ.headSlots, STORAGE_READ.occupied);
+      const counters = attributed.counters;
       // #2095 r2 P1 — the corroborating counters can CONTRADICT the range: a lifetime
       // counter above nextLoanId, or any counter non-zero while nextLoanId is zero,
       // means rows the id range cannot reach; nothing is certified then.
       const contradiction = counters.totalLoansEverCreated.filter((x) => x.value > counters.nextLoanId).map((x) => `totalLoansEverCreated=${x.value} at ${x.slot} (${x.eras.map((e) => e.date).join(',')}) > nextLoanId=${counters.nextLoanId}`)
         .concat(counters.nextLoanId === 0n ? counters.intentLiveCommitCount.filter((x) => x.value > 0n).map((x) => `intentLiveCommitCount=${x.value} at ${x.slot} with nextLoanId=0`) : []);
       if (contradiction.length) {
-        storage = { kind: 'counter-contradiction', counters, scan: null, truncated: false, contradiction };
+        storage = { kind: 'counter-contradiction', counters, scan: null, truncated: false, contradiction, aliased: attributed.aliased };
       } else if (counters.allZero) {
-        storage = { kind: 'no-loans-ever-created-by-storage', counters, scan: null, truncated: false };
+        storage = { kind: 'no-loans-ever-created-by-storage', counters, scan: null, truncated: false, aliased: attributed.aliased };
       } else {
         const cap = BigInt(MAX_STORAGE_LOAN_SCAN);
         const n = counters.nextLoanId > cap ? cap : counters.nextLoanId;
         const ids = Array.from({ length: Number(n) }, (_, i) => BigInt(i + 1));
         const scan = await scanRowsByStorage({ readSlot, loanIds: ids, eraSlots: STORAGE_READ.eraSlots });
-        storage = { kind: 'storage-read-calibrated', counters, scan, truncated: counters.nextLoanId > n };
+        storage = { kind: 'storage-read-calibrated', counters, scan, truncated: counters.nextLoanId > n, aliased: attributed.aliased };
       }
-      process.stderr.write(`census: ${who} — storage read (${storage.kind}): nextLoanId=${counters.nextLoanId}${storage.scan ? `, ${storage.scan.loansScanned} id(s) scanned over ${storage.scan.slotsRead} slot(s)` : ''}\n`);
+      process.stderr.write(`census: ${who} — storage read (${storage.kind}): nextLoanId=${counters.nextLoanId}${storage.scan ? `, ${storage.scan.loansScanned} id(s) scanned over ${storage.scan.slotsRead} slot(s)` : ''}${attributed.aliased.length ? `, ${attributed.aliased.length} aliased reading(s) ignored` : ''}\n`);
     }
     const status = 'indeterminate';
     const reason = notADiamond
@@ -1777,6 +1781,7 @@ async function censusDeployment(dep) {
           slotsRead: storage.counters.slotsRead + (storage.scan?.slotsRead ?? 0),
           loansScanned: storage.scan?.loansScanned ?? 0,
           truncated: storage.truncated,
+          aliasedCountersIgnored: storage.aliased,
         }
       : undefined;
     // one verdict per class from the storage read; the routed-path conventions apply:
@@ -1917,8 +1922,9 @@ async function censusDeployment(dep) {
   if (!intentSurfaceRouted && !provenByEnumerable && STORAGE_READ.ok) {
     const readSlot = (slot) => withReplicaRetry(atBlock, () => storageAtHash(client, censusBlock, diamond, slot), { client });
     const scan = await scanRowsByStorage({ readSlot, loanIds, eraSlots: STORAGE_READ.eraSlots, classes: ['liveIntentCommits'] });
-    const counters = await readCountersByStorage({ readSlot, eraSlots: STORAGE_READ.eraSlots });
-    intentStorage = { rows: scan.rows.liveIntentCommits, slotsRead: scan.slotsRead + counters.slotsRead, loansScanned: scan.loansScanned, liveCommitCounts: counters.intentLiveCommitCount.map((x) => ({ slot: x.slot, value: x.value.toString(), eras: x.eras })) };
+    // #2095 r6 P2 — the same attribution rule as every other counter read
+    const { counters, aliased } = attributeCounters(await readCountersByStorage({ readSlot, eraSlots: STORAGE_READ.eraSlots }), STORAGE_READ.headSlots, STORAGE_READ.occupied);
+    intentStorage = { rows: scan.rows.liveIntentCommits, slotsRead: scan.slotsRead + counters.slotsRead, loansScanned: scan.loansScanned, liveCommitCounts: counters.intentLiveCommitCount.map((x) => ({ slot: x.slot, value: x.value.toString(), eras: x.eras })), aliasedCountersIgnored: aliased };
     intentStorage.verdict = intentVerdictFromStorage(intentStorage);
     process.stderr.write(`census: ${who} — intent rows read from storage at ${STORAGE_READ.eraSlots.intentCommits.length} era slot(s) for ${loanIds.length} loan(s): ${intentStorage.rows.length} row(s)\n`);
   }
@@ -1931,8 +1937,8 @@ async function censusDeployment(dep) {
   let historical = null;
   if (STORAGE_READ.ok) {
     const readSlot = (slot) => withReplicaRetry(atBlock, () => storageAtHash(client, censusBlock, diamond, slot), { client });
-    const counters = await readCountersByStorage({ readSlot, eraSlots: STORAGE_READ.eraSlots });
-    const headSlots = loadSlots().fields;
+    const { counters, unexplained: earlierCounters, aliased } = attributeCounters(await readCountersByStorage({ readSlot, eraSlots: STORAGE_READ.eraSlots }), STORAGE_READ.headSlots, STORAGE_READ.occupied);
+    const headSlots = STORAGE_READ.headSlots;
     const cap = BigInt(MAX_STORAGE_LOAN_SCAN);
     const n = counters.nextLoanId > cap ? cap : counters.nextLoanId;
     const ids = Array.from({ length: Number(n) }, (_, i) => BigInt(i + 1));
@@ -1943,11 +1949,7 @@ async function censusDeployment(dep) {
     // at every era (r4 P2).
     const scanClasses = intentStorage ? ['vpfiHeldCustody', 'rebateRows', 'fallbackSnapshotCustody'] : undefined;
     const scan = await scanRowsByStorage({ readSlot, loanIds: ids, eraSlots: STORAGE_READ.eraSlots, classes: scanClasses });
-    // an earlier-era slot may be a CURRENT field's slot today: such a read is that field's value, not an old counter or row
-    const readings = counters.totalLoansEverCreated.filter((x) => x.slot !== headSlots.totalLoansEverCreated).map((x) => ({ ...x, which: 'totalLoansEverCreated' }))
-      .concat(counters.intentLiveCommitCount.filter((x) => x.slot !== headSlots.intentLiveCommitCount).map((x) => ({ ...x, which: 'intentLiveCommitCount' })))
-      .map((x) => ({ ...x, value: x.value.toString() }));
-    const { contradictions: earlierCounters, aliased } = classifyEarlierCounters(readings, STORAGE_READ.occupied);
+    // an earlier-era slot may be a CURRENT field's slot today: attributeCounters set those readings aside above
     const split = splitByHeadSlot(scan.rows, headSlots);
     for (const k of Object.keys(split.earlier)) split.earlier[k] = markAliasedRows(split.earlier[k], STORAGE_READ.occupied);
     // HEAD-slot rows are reconciled against the routed getters AFTER the
@@ -1955,12 +1957,12 @@ async function censusDeployment(dep) {
     historical = {
       rows: split.earlier,
       headRows: split.head,
-      aliasedCountersIgnored: aliased.map((x) => ({ which: x.which, slot: x.slot, value: x.value, aliases: x.aliases })),
+      aliasedCountersIgnored: aliased,
       slotsRead: scan.slotsRead + counters.slotsRead,
       loansScanned: ids.length,
       truncated: counters.nextLoanId > n,
       nextLoanIdFromStorage: counters.nextLoanId.toString(),
-      earlierEraCounters: earlierCounters.map((x) => ({ which: x.which, slot: x.slot, value: String(x.value), eras: x.eras })),
+      earlierEraCounters: earlierCounters,
       erasPerField: scan.erasPerField,
     };
     const found = Object.values(split.earlier).reduce((a, r) => a + r.length, 0);
@@ -2184,7 +2186,7 @@ async function censusDeployment(dep) {
         : intentStorage
           ? `getter unrouted — intentCommits rows read from storage at every layout era's slot (${STORAGE_READ.eraSlots.intentCommits.length} era slot(s)), hash-pinned`
           : `getter unrouted — intentCommits storage NOT read: ${STORAGE_READ.ok ? 'the no-loans bound already settles the class' : STORAGE_READ.reason}`,
-      storageRead: intentStorage ? { ...STORAGE_READ.evidence, kind: 'storage-read-calibrated', slotsRead: intentStorage.slotsRead, loansScanned: intentStorage.loansScanned, liveCommitCounts: intentStorage.liveCommitCounts } : undefined,
+      storageRead: intentStorage ? { ...STORAGE_READ.evidence, kind: 'storage-read-calibrated', aliasedCountersIgnored: intentStorage.aliasedCountersIgnored, slotsRead: intentStorage.slotsRead, loansScanned: intentStorage.loansScanned, liveCommitCounts: intentStorage.liveCommitCounts } : undefined,
       storageReadUnavailable: STORAGE_READ.ok ? undefined : STORAGE_READ.reason,
       intentSurfaceRouted,
       intentProducerRouted: producerRouted,
