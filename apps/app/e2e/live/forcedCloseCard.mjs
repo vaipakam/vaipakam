@@ -280,40 +280,59 @@ export function forcedCloseVerdict(obs, copy) {
   }
 
   // ---- 1. What was actually SEEN on a card that rendered. -----------
-  // These need no eligibility: a card carrying an invented amount is a
-  // defect whoever holds the position and whatever the chain did next.
+  //
+  // ORDERING IS THE RULE HERE, and round 6 is the third time it has had
+  // to be applied: judge the DEFINITE observation before any uncertain
+  // one. Round 3 put content ahead of eligibility; this puts the amount
+  // scan ahead of the body reads, because a card whose own text was
+  // captured and contains an invented figure is a defect already
+  // observed — downgrading it to `blocked` because a LATER, narrower
+  // read failed reports "we could not check" about something we did
+  // check.
   if (obs.mounted) {
-    const text = obs.text ?? '';
-    if (text.trim() === '') {
+    // 1a. Nothing was read at all. `text: null` is not empty text: the
+    //     card can unmount, or the locator read time out, after the
+    //     visibility wait. Coercing that to '' reported an empty-card
+    //     defect over an observation that never happened.
+    if (obs.text === null || obs.text === undefined) {
+      return {
+        verdict: 'blocked',
+        blockedKind: 'incomplete',
+        why: 'the card was visible but its text could not be read — nothing was observed about its content',
+      };
+    }
+
+    // 1b. THE DEFINITE FINDING, before anything that might be missing.
+    const scanned = obs.confirmText ? `${obs.text}\n${obs.confirmText}` : obs.text;
+    const amounts = monetaryAmountsIn(scanned);
+    if (amounts.length > 0) {
+      return {
+        verdict: 'fail',
+        why: `states an amount it cannot know: ${amounts.join(' | ')}`,
+        amounts,
+      };
+    }
+
+    // 1c. Read, and genuinely empty.
+    if (obs.text.trim() === '') {
       return {
         verdict: 'fail',
         why: 'card mounted with no text — withheld the explanation with the action',
       };
     }
-    // ROUND 4 P2 — an UNREAD body is not an EMPTY one.
+
+    // 1d-f. THREE STATES for the body, not two (round 5 P2).
     //
-    // The body scrape happens after the card's own text read, and the
-    // card can unmount in between (terminal loan, transferred
-    // position) or the locator read can fail transiently. Coercing that
-    // null to "" reported a product defect over a scrape that never
-    // happened — and reported it BEFORE the eligibility read that would
-    // have explained the unmount. `bodyRead === false` is therefore
-    // incomplete, and only a body genuinely read and blank is the
-    // defect.
-    // ROUND 5 P2 — THREE STATES, NOT TWO.
-    //
-    // Round 4 split "read and blank" from "could not read", then
+    // Round 4 split "read and blank" from "could not read" and then
     // implemented the split as `bodyText !== null || count() > 0`,
     // which sets read=true because an element EXISTS even though the
-    // read failed. Existence is not a successful read, and conflating
-    // them put the false-FAIL straight back.
+    // read failed. Existence is not a successful read.
     //
-    //   bodyPresent false           → no body element rendered at all.
-    //                                 That IS the heading-only shell,
-    //                                 and it is the defect.
-    //   present, bodyText null      → the element is there and the read
-    //                                 did not land. Nothing observed.
-    //   present, bodyText blank     → read, and genuinely empty.
+    //   bodyPresent false        → no body element rendered at all.
+    //                              That IS the heading-only shell.
+    //   present, bodyText null   → the element is there and the read
+    //                              did not land. Nothing observed.
+    //   present, bodyText blank  → read, and genuinely empty.
     if (obs.bodyPresent === false) {
       return {
         verdict: 'fail',
@@ -331,15 +350,6 @@ export function forcedCloseVerdict(obs, copy) {
       return {
         verdict: 'fail',
         why: 'card mounted with no explanatory body — the withheld-action-without-explanation state',
-      };
-    }
-    const scanned = obs.confirmText ? `${text}\n${obs.confirmText}` : text;
-    const amounts = monetaryAmountsIn(scanned);
-    if (amounts.length > 0) {
-      return {
-        verdict: 'fail',
-        why: `states an amount it cannot know: ${amounts.join(' | ')}`,
-        amounts,
       };
     }
   }

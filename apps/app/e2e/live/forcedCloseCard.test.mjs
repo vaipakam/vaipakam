@@ -484,3 +484,62 @@ describe('round 5 review findings', () => {
     expect(monetaryAmountsIn('Loan #21 is overdue.')).toEqual([]);
   });
 });
+
+describe('round 6 review findings', () => {
+  const copy = { unknownCopy: FORCED_CLOSE.unknown };
+  const base = {
+    lenderHoldsActive: true,
+    mounted: true,
+    attached: true,
+    submitDisabled: true,
+    saleLocked: false,
+    settled: true,
+    bodyText: 'an explanation',
+    bodyPresent: true,
+    confirmText: null,
+    confirmExpected: false,
+    text: FORCED_CLOSE.readyInKind,
+  };
+
+  it('BLOCKS when the card was visible but its text could not be read', () => {
+    // `text: null` is not empty text. The card can unmount, or the read
+    // time out, after the visibility wait — and coercing that to ''
+    // reported an empty-card defect over an observation that never
+    // happened.
+    const v = forcedCloseVerdict({ ...base, text: null }, copy);
+    expect(v.verdict).toBe('blocked');
+    expect(v.blockedKind).toBe('incomplete');
+  });
+
+  it('reports an amount in the CARD text even when the body read failed', () => {
+    // The definite finding outranks the uncertain one. Blocking here
+    // says "we could not check" about something that was checked.
+    const v = forcedCloseVerdict(
+      {
+        ...base,
+        text: `${FORCED_CLOSE.readyInKind} You will receive 1.5 WETH.`,
+        bodyPresent: true,
+        bodyText: null,
+      },
+      copy,
+    );
+    expect(v.verdict).toBe('fail');
+    expect(v.amounts).toHaveLength(1);
+  });
+
+  it('still blocks on the failed body read when the card text is clean', () => {
+    // The other half — the reordering must not disable the arm it now
+    // sits above.
+    const v = forcedCloseVerdict({ ...base, bodyPresent: true, bodyText: null }, copy);
+    expect(v.verdict).toBe('blocked');
+    expect(v.blockedKind).toBe('incomplete');
+  });
+
+  it('reports an amount in the CONFIRMATION even when the body read failed', () => {
+    const v = forcedCloseVerdict(
+      { ...base, confirmText: 'You receive 250 USDC', bodyPresent: true, bodyText: null },
+      copy,
+    );
+    expect(v.verdict).toBe('fail');
+  });
+});
