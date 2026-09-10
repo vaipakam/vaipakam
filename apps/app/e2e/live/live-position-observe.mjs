@@ -3020,13 +3020,36 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
   const readCard = () =>
     page
       .evaluate(() => {
+        // ROUND 22 P2 — OPACITY IS NOT INHERITED, so asking the node
+        // alone is not asking whether the lender can see it.
+        //
+        // An ancestor with `opacity: 0` makes everything under it
+        // invisible while each descendant still computes `opacity: 1`
+        // and keeps a non-zero rect — so a card, a body or a submit
+        // control inside one read as visible. `display: none` and
+        // `visibility: hidden` do not have this problem: the first
+        // zeroes the rect and the second inherits.
+        //
+        // `checkVisibility` asks the browser the whole question, walking
+        // the chain for exactly these properties. The manual walk is the
+        // fallback for an engine without it, and it is a walk rather
+        // than a single read for the reason above.
         const visible = (node) => {
           if (node === null) return false;
+          if (typeof node.checkVisibility === 'function') {
+            return node.checkVisibility({
+              opacityProperty: true,
+              visibilityProperty: true,
+              contentVisibilityAuto: true,
+            });
+          }
           const cs = getComputedStyle(node);
           if (cs.display === 'none' || cs.visibility === 'hidden' || cs.visibility === 'collapse') {
             return false;
           }
-          if (Number(cs.opacity) === 0) return false;
+          for (let n = node; n; n = n.parentElement) {
+            if (Number(getComputedStyle(n).opacity) === 0) return false;
+          }
           const r = node.getBoundingClientRect();
           return r.width > 0 && r.height > 0;
         };

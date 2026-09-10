@@ -1522,3 +1522,24 @@ describe('round 21 review findings', () => {
     expect(monetaryAmountsIn('about 2h remaining')).toEqual([]);
   });
 });
+
+describe('round 22 — a duration lead has to establish time', () => {
+  // The round-21 list swept in generic modifiers that read naturally in
+  // front of an AMOUNT, so the compact-figure hole stayed open in the
+  // phrasings a regression is most likely to use.
+  it('finds a compact amount behind an ordinary modifier', () => {
+    expect(monetaryAmountsIn('Sell for 1m')).toHaveLength(1);
+    expect(monetaryAmountsIn('You receive about 1m')).toHaveLength(1);
+    expect(monetaryAmountsIn('Worth over 1m')).toHaveLength(1);
+  });
+
+  it('still exempts a genuine wait, marked before OR after the figure', () => {
+    // Real copy puts the temporal marker on either side, so dropping the
+    // generic leads had to be paired with reading the trailing one.
+    expect(monetaryAmountsIn('unlocks in 30m')).toEqual([]);
+    expect(monetaryAmountsIn('wait 30m')).toEqual([]);
+    expect(monetaryAmountsIn('2h remaining')).toEqual([]);
+    expect(monetaryAmountsIn('30m left')).toEqual([]);
+    expect(monetaryAmountsIn('48h of grace')).toEqual([]);
+  });
+});

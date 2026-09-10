@@ -175,8 +175,30 @@ const NON_MONETARY_UNIT =
  * `You receive 1m` is an amount.
  */
 const AMBIGUOUS_UNIT = /^[hms]$/i;
-const DURATION_LEAD =
-  /\b(in|within|after|for|every|about|around|under|over|another|next|takes|wait|waits|remaining|remains|left)\s*[~≈]?\s*$/i;
+/**
+ * Context that ESTABLISHES TIME, not merely context that precedes a
+ * number (round 22 P2).
+ *
+ * My first list swept in generic modifiers — `for`, `about`, `around`,
+ * `under`, `over`, `another` — which read perfectly naturally in front
+ * of an amount: `Sell for 1m`, `You receive about 1m`, `Worth over 1m`.
+ * Every one of those was exempted as a duration, so the round-21 fix
+ * still let a compact amount through, in the phrasings a regression is
+ * most likely to use.
+ *
+ * Only prepositions and verbs that cannot introduce a quantity survive:
+ * `in 30m` is a wait, `for 1m` is a price. Kept deliberately small,
+ * because a word that is wrong here silently disarms the check, while a
+ * missing word merely produces a loud false hit somebody fixes.
+ */
+const DURATION_LEAD = /\b(in|within|after|every|next|wait|waits|waiting|takes|lasts|expires)\s+$/i;
+/**
+ * The other half: a temporal word AFTER the unit. Real copy puts the
+ * marker on either side — `in 30m` and `2h remaining` are both waits —
+ * and dropping the generic leads above would otherwise have made the
+ * second shape a false hit.
+ */
+const DURATION_TRAIL = /^\s*(remaining|remain|remains|left|ago|to go|from now|of grace)\b/i;
 
 /**
  * A number with something money-shaped attached to it.
@@ -276,7 +298,11 @@ export function monetaryAmountsIn(text) {
       if (NON_MONETARY_UNIT.test(unit)) {
         // ROUND 21 P2 — a one-letter unit needs duration CONTEXT, not
         // just the absence of a ticker. See `AMBIGUOUS_UNIT`.
-        if (AMBIGUOUS_UNIT.test(unit) && !DURATION_LEAD.test(before)) {
+        // Strip the UNIT only — `trailing[0]` also swallows the word
+        // after it, which is precisely the word being looked for.
+        const afterUnit = after.replace(/^\s*[A-Za-z%][A-Za-z0-9]*/, '');
+        const temporal = DURATION_LEAD.test(before) || DURATION_TRAIL.test(afterUnit);
+        if (AMBIGUOUS_UNIT.test(unit) && !temporal) {
           hits.push(fragment(text, start, end));
           continue;
         }
