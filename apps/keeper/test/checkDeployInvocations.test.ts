@@ -11934,41 +11934,52 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(r.ok).toBe(true);
   });
 
-  it('the scanner shares the escape rule too (#2105 r6)', () => {
-    // `$$` IS AN ESCAPED DOLLAR, and this is the one Make rule the model keeps.
-    // `echo '$$(DEPLOY)'` runs no deploy — `make -n` prints `echo '$(DEPLOY)'` —
-    // but a matcher looking only for `$(NAME)` finds one at the SECOND dollar,
-    // substitutes, and reports a deploy the file never runs.
+  it('a runbook sentence naming a write reports the deploy (#2112, stated miss)', () => {
+    // A STATED MISS, asserted so a future fix announces itself.
     //
-    // A false red this guard has had all along, not one introduced here: it
-    // reproduces on the parent. Kept because it is LEXICAL — it decides whether
-    // a reference exists, not what value a name has — which is the line the
-    // withdrawn expansion could not hold.
-    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
-    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
-    const r = runWith(
-      'Makefile',
-      "noop:\n\tcd apps/agent && echo '$$(DEPLOY)'\n\nDEPLOY = wrangler deploy\n",
-    );
-    expect(r.ok).toBe(true);
-  });
-
-  it('the scanner reads a GNUmakefile (#2105 r7)', () => {
-    // GNU Make's default build-file names are `GNUmakefile`, `makefile` and
-    // `Makefile`. The canonical GNU one was missing from the filename gate, so
-    // a deploy in such a file was not scanned at all — a false GREEN.
-    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    // Nothing in this file performs a write — the sentence DESCRIBES one — but
+    // the guard reads prose as shell and reports the deploy below it. A false
+    // RED, in a check that runs inside typecheck, so it blocks correct work.
     //
-    // The deploy is written through a VARIABLE deliberately. Spelled out, the
-    // ordinary line scan finds it whatever the filename gate says, and the
-    // fixture would pass with the fix reverted — proving nothing. Only
-    // `makefileBlocks` expands `$(DEP)`, so only this shape needs the gate.
-    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
+    // Blanking the prose was tried three times and withdrawn (#2105 r4-r6).
+    // The rule cannot exist: this guard treats a bare, unindented line as an
+    // actionable command — the two fixtures above pin that, and it is why a
+    // runbook's `cp a b` is reported at all — and a prose sentence naming a
+    // write has that same shape.
+    //
+    // `r.ok` is TRUE here only in the sense that the guard reports: assert the
+    // report, so if someone fixes #2112 this fails and they come back to it.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
     const r = runWith(
-      'GNUmakefile',
-      'deploy:\n\tcd apps/agent && $(DEP)\n\nDEP = wrangler deploy\n',
+      'docs/rb-prose.md',
+      '# Runbook\n\nBefore deploying, the release tool calls\n' +
+        'writeFileSync("configs/custom.jsonc", generated) for you.\n\n' +
+        '```bash\nwrangler deploy --config configs/custom.jsonc\n```\n',
     );
     expect(r.ok).toBe(false);
+  });
+
+  it('a settable recipe prefix is NOT followed (#2114, stated miss)', () => {
+    // A STATED MISS. `.RECIPEPREFIX := >` makes `>`-prefixed lines recipes and
+    // `make -n` expands `$(WRITE)` there; this guard's membership is `^\t`, so
+    // it does not.
+    //
+    // Following the prefix was implemented in #2105 r7 and withdrawn in r8:
+    // read over the whole file, a LATE `.RECIPEPREFIX` applied retroactively
+    // and dropped an EARLIER tab recipe, turning a stated miss into a silent
+    // one. Doing it correctly needs per-line prefix and continuation state.
+    //
+    // The miss is `main`'s miss, so nothing regressed. Asserting it means a
+    // later correct fix fails this fixture rather than passing unnoticed.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'Makefile',
+      '.RECIPEPREFIX := >\ndeploy:\n>$(WRITE)\n>wrangler deploy --config configs/custom.jsonc\n\n' +
+        "WRITE = printf '{}' > configs/custom.jsonc\n",
+    );
+    expect(r.ok).toBe(true);
   });
 
   it('a write in an earlier step counts against a later one (#2084 bounds)', () => {

@@ -6684,7 +6684,6 @@ function indentedBlocks(lines, indentRe, startAt = 0) {
 // `Makefile` — it looks for them in that order — plus the `.mk` files those
 // include. `GNUmakefile` was missing, so a Makefile under its canonical GNU
 // name was not scanned for deploys at all (#2105 r7).
-const MAKEFILE_NAME_RE = /(^|\/)(GNUmakefile|[Mm]akefile|.*\.mk)$/;
 
 /**
  * THE Make variable model, shared by the scanner's two needs instead of copied.
@@ -6721,22 +6720,6 @@ const MAKEFILE_NAME_RE = /(^|\/)(GNUmakefile|[Mm]akefile|.*\.mk)$/;
  * rewrite question, where a wrong answer would invent a write. See the note at
  * `text`'s former call site for why that half was withdrawn (#2084).
  */
-function makeVarModel(text) {
-  const mkVars = new Map();
-  for (const l of text.split('\n')) {
-    if (/^\t/.test(l)) continue;
-    const m = l.match(/^([A-Za-z_]\w*)\s*(\?=|:{1,2}=|=)\s*(.*?)\s*$/);
-    if (!m) continue;
-    if (m[2] === '?=' && mkVars.has(m[1])) continue;
-    if (/\$/.test(m[3])) mkVars.delete(m[1]);
-    else mkVars.set(m[1], m[3]);
-  }
-  return (l) =>
-    l.replace(/\$\$|\$[({]([A-Za-z_]\w*)[)}]/g, (m0, n) =>
-      m0 === '$$' ? m0 : (mkVars.get(n) ?? m0),
-    );
-}
-
 function makefileBlocks(text) {
   const oneshell = /^\s*\.ONESHELL:/m.test(text);
   // `WORKER := apps/agent` then `cd $(WORKER)` deploys from the protected
@@ -6752,7 +6735,17 @@ function makefileBlocks(text) {
   // withdrawn (#2105 r7 then r8): the prefix has to be tracked per line, and a
   // whole-file reading of it applied a late `.RECIPEPREFIX` retroactively and
   // DROPPED an earlier tab recipe. #2114.
-  const expandMk = makeVarModel(text);
+  const mkVars = new Map();
+  for (const l of text.split('\n')) {
+    if (/^\t/.test(l)) continue;
+    const m = l.match(/^([A-Za-z_]\w*)\s*(\?=|:{1,2}=|=)\s*(.*?)\s*$/);
+    if (!m) continue;
+    if (m[2] === '?=' && mkVars.has(m[1])) continue;
+    if (/\$/.test(m[3])) mkVars.delete(m[1]);
+    else mkVars.set(m[1], m[3]);
+  }
+  const expandMk = (l) =>
+    l.replace(/\$[({]([A-Za-z_]\w*)[)}]/g, (m0, n) => mkVars.get(n) ?? m0);
   const lines = text
     .split('\n')
     .map((l) => (/^\t/.test(l) ? expandMk(l.replace(/^(\t+)[@+-]+\s*/, '$1')) : l));
@@ -8963,8 +8956,8 @@ for (const file of walk(REPO_ROOT)) {
   // shell text; in JavaScript the same character is a comparison (#2066 r10).
   const fileIsShell = Boolean(winInterp) || isShellFile(rel, text);
   // THE REWRITE QUESTION IS ASKED OF THE FILE AS WRITTEN. Three transformations
-  // were tried here and all three are withdrawn; this is the record of why, so
-  // the next person does not rebuild one (#2084, #2105).
+  // were tried here and all three withdrawn; this is the record, so the next
+  // person does not rebuild one (#2084, #2105 — ten review rounds).
   //
   //   1. A collected "executable image" — the parts of the file believed to
   //      run. SIX ingestion paths reached the file without reaching the
@@ -8979,21 +8972,34 @@ for (const file of walk(REPO_ROOT)) {
   //      that same shape. Telling them apart IS the classifier whose answer
   //      produced the false red. #2112.
   //   3. EXPANDING Makefile recipe variables, so a variable holding a
-  //      redirection would be seen as the write it is. This one is not
-  //      unsafe in principle — expansion only ADDS text, so a wrong answer
-  //      costs a report rather than silence — but being RIGHT about it means
-  //      implementing Make. Four rounds and FIFTEEN findings: conditionals in
-  //      both directions, `undefine` and `undefine` in a dead branch, a
-  //      settable recipe marker and that marker moving mid-file, `define`
-  //      bodies, indented assignments, mismatched `$(NAME}` delimiters, `?=`
-  //      after a computed value. Every round's findings were edges of the
-  //      previous round's fix. #2084 stays open with the whole trail.
+  //      redirection would be seen as the write it is. FIFTEEN findings over
+  //      four rounds — conditionals both ways, `undefine`, `undefine` in a dead
+  //      branch, a settable recipe marker, that marker moving mid-file,
+  //      `define` bodies, indented assignments, mismatched `$(NAME}`, `?=`
+  //      after a computed value — every round's findings edges of the previous
+  //      round's fix. Not unsafe in principle (expansion only ADDS text) but
+  //      being RIGHT needs an interpreter for Make. #2084.
   //
   // The shape common to all three: each asks a question about the file that
   // needs a PARSER FOR SOMETHING ELSE — a CI system's execution model, a
   // Markdown grammar, Make's variable semantics — and this reader is a scanner.
   // Where such a parser is genuinely needed, the answer is a declaration from
   // the deploy itself (#2085), not a better approximation here.
+  //
+  // TWO SMALLER "OBVIOUSLY SAFE" CORRECTIONS WERE ALSO WITHDRAWN, and they are
+  // the cheapest lesson here because each survived to the final round:
+  //
+  //   - Treating Make's `$$` as inert. It is inert TO MAKE, which then hands a
+  //     single `$` to the shell — so `$${DEPLOY} deploy`, with `DEPLOY`
+  //     exported, really runs, and skipping it hid the deploy. A false GREEN
+  //     introduced by a rule adopted precisely because it was "purely lexical".
+  //   - Adding `GNUmakefile` to the files scanned as Makefiles. Correct in
+  //     itself, but it routes those files through `makefileBlocks`' variable
+  //     model — already known to be imperfect — and so extends its false reds
+  //     to files that previously escaped them.
+  //
+  // The model's imperfection is LOAD-BEARING: its consumers are calibrated
+  // around it, so making it locally more faithful can be a regression.
   // AN EXTENSIONLESS HELPER HAS A SHEBANG, NOT A SUFFIX. `walk` yields
   // extensionless executables deliberately, and keying the language on `.py`
   // alone classified `#!/usr/bin/env python3` as `other` — where an f-string
@@ -9019,7 +9025,7 @@ for (const file of walk(REPO_ROOT)) {
         // Makefile recipes are tab-indented and are shell, whatever the file
         // extension says. Kept out of `embeddedShellLines` because the trigger
         // is the FILE, not a construct inside it.
-        ...(MAKEFILE_NAME_RE.test(rel) ? makefileBlocks(text) : []),
+        ...(/(^|\/)([Mm]akefile|.*\.mk)$/.test(rel) ? makefileBlocks(text) : []),
       ];
   if (
     !folded.some(
@@ -9302,7 +9308,7 @@ for (const file of walk(REPO_ROOT)) {
       const rewriteCtx = (start) =>
         valueScoped
           ? { text: line, at: start }
-          : { text: text, at: rawAt(start) };
+          : { text, at: rawAt(start) };
       // A markdown CODE SPAN is a command boundary, and prose has no shell
       // separator between two of them. `Use `wrangler deploy --keep-vars` for
       // the keeper and `wrangler deploy` for the agent.` is ONE segment to
