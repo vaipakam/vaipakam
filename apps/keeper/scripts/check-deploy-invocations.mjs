@@ -9005,9 +9005,10 @@ for (const file of walk(REPO_ROOT)) {
   //     rule is stated as what it will KEEP rather than as what it recognises.
   //
   // Deliberately NOT a collected "executable image". That was tried and is what
-  // #2105 rounds 1-3 rejected: five separate ingestion paths were missed, each
-  // omission a false GREEN on the hazard this guard exists for, and two attempts
-  // to enumerate the paths were both incomplete.
+  // #2105 rounds 1-3 rejected: SIX separate ingestion paths were missed, five
+  // of them a false GREEN this change introduced and the sixth a pre-existing
+  // gap the new mode failed to close, and two attempts to enumerate the paths
+  // were both incomplete — the second refuted by the very next review round.
   //
   // Expansion cannot omit, because it removes nothing. BLANKING CAN, and an
   // earlier version of this comment claimed otherwise — that it "fails toward

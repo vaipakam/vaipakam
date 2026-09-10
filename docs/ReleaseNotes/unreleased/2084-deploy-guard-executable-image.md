@@ -25,10 +25,13 @@ coordinate systems is needed.
 The first version of this change did something more ambitious and worse: it
 built the file's executable text by *collecting* the parts it believed could
 run — code blocks, workflow steps, build recipes — and asked the question of
-that. Review found five separate routes by which executable text reached the
+that. Review found six separate routes by which executable text reached the
 file without reaching that collection, each one a case where a rewritten
-configuration would be trusted. Two attempts to enumerate all such routes were
-both incomplete, the second failing on the very next review round.
+configuration would be trusted — five of them introduced by this change, the
+sixth a gap that predated it and that the new mode failed to close. A seventh
+was found without review, and could not be proven reachable at all. Two
+attempts to enumerate all such routes were both incomplete, the second failing
+on the very next review round.
 
 The decisive one was inline command spans. A document's prose is not simply
 narrative: a sentence telling an operator to run a command, with that command
