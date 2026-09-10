@@ -50,12 +50,27 @@ unrecognised code construct is a silent pass, not a noisy one. The claim is
 corrected here rather than removed, because it was the stated reason for
 choosing this design and a reader deserves to know it was too strong.
 
-What makes the subtraction acceptable is not its failure direction but how
-small the thing to be recognised is. A document's code constructs are a closed,
-specified set — fenced blocks, indented blocks, and inline spans — which is a
-grammar rather than an open-ended list of the ways a build system might run a
-command. Suppressing a false report requires suppressing something; the only
-question is whether the rule can be stated completely, and this one can.
+That correction was not the end of it. The next claim — that a document's code
+constructs are a closed set small enough to state completely, so recognising
+them was safe — was also too strong. Recognising them means implementing the
+format's grammar, and the next review round found three more rules got wrong in
+one pass: a closing delimiter carrying trailing text does not close the block,
+an unmatched delimiter must not prevent a later valid one from being
+recognised, and an indented block may be indented with a tab. Each correction
+was right and each revealed the next.
+
+So recognition was abandoned. The rule is now stated as what it will KEEP, not
+as what it can identify: a line is blanked only if no block is open, it
+contains no inline delimiter anywhere, and it does not begin with whitespace.
+Every test errs toward keeping the line. Getting one wrong now leaves text in
+that the previous checker also read — costing at most the report it already
+made — where getting one wrong before removed a real command.
+
+The cost is honest and worth stating: prose that happens to contain an inline
+delimiter, or that is indented, is no longer blanked, so the false report this
+fixes is fixed for the plain case and not for those. That is the right
+direction for a subtraction in a checker whose whole purpose is to notice
+writes, and it needs no parser.
 
 ## What is deferred, and why
 

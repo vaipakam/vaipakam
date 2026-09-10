@@ -11935,6 +11935,48 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(r.ok).toBe(true);
   });
 
+  it('a fence closer carrying text does not close it (#2105 r5)', () => {
+    // CommonMark: a closing fence must be whitespace-only. Treating a line with
+    // trailing text as a closer ended the block early and blanked the command
+    // below it.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'docs/rb7.md',
+      '# R\n\n```bash\n```text not a closer\ncp generated.jsonc configs/custom.jsonc\n```\n\n' +
+        '```bash\nwrangler deploy --config configs/custom.jsonc\n```\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('an unmatched backtick does not mask a later span (#2105 r5)', () => {
+    // A stray single backtick before a valid double-backtick span. The pairing
+    // matcher locked onto the stray opener and rejected both later runs,
+    // blanking the real command. No pairing is attempted now — any line with a
+    // backtick is kept whole.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'docs/rb8.md',
+      '# R\n\nA stray ` tick then run ``cp generated.jsonc configs/custom.jsonc`` first.\n\n' +
+        '```bash\nwrangler deploy --config configs/custom.jsonc\n```\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a tab-indented code block is executable (#2105 r5)', () => {
+    // CommonMark expands a tab to four columns, so a tab-indented line is an
+    // indented code block. A spaces-only test called it prose and blanked it.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'docs/rb9.md',
+      '# R\n\n\tcp generated.jsonc configs/custom.jsonc\n\n' +
+        '```bash\nwrangler deploy --config configs/custom.jsonc\n```\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
   it('an indented code block is executable (#2084 bounds)', () => {
     // BOUNDS GUARD: the fence-free spelling of the same example (#2105 r3).
     seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');

@@ -6681,94 +6681,63 @@ function indentedBlocks(lines, indentRe, startAt = 0) {
  * lose anything, because it removes nothing.
  */
 /**
- * A Markdown file with its PROSE blanked and every code construct kept.
+ * A Markdown file with its PLAIN PROSE blanked, conservatively.
  *
  * A runbook sentence naming a write is not a write, and reading one as shell
  * reported a deployment below it — a false red, in a check that runs inside
  * typecheck (#2084).
  *
- * BLANKING IS A SUBTRACTION, AND SUBTRACTIONS CAN LOSE A WRITE. An earlier
- * comment here claimed the opposite — that a construct this misses is "left in
- * the text" and so costs at most noise. That is wrong, and #2105 r4 proved it:
- * a code span whose backticks sit on DIFFERENT LINES was not recognised, so the
- * command inside it was blanked and the deploy below went unreported. An
- * unrecognised code construct is SILENCE, not noise. The claim is corrected
- * rather than deleted because it was the stated justification for this design.
+ * THIS IS THE THIRD SHAPE OF THIS FIX, and the first two failed the same way.
+ * Blanking REMOVES text, so every construct it fails to recognise as code is a
+ * write that disappears — a silent pass, on the hazard this guard exists for.
+ * A per-line span matcher missed spans whose backticks span lines (#2105 r4).
+ * A hand-written CommonMark pass then missed three more in one round: a fence
+ * closer carrying trailing text does not close, an unmatched delimiter must not
+ * mask a later valid span, and an indented block may be indented with a TAB
+ * (#2105 r5). Each fix was correct and each revealed the next, which is the
+ * signature this file is written to stop chasing.
  *
- * What makes the subtraction acceptable is not its failure direction but the
- * size of what must be recognised: Markdown's code constructs are a closed,
- * specified set — fenced blocks, indented blocks, and inline spans. That is a
- * grammar, not an open-ended list of the ways a CI system can run a command,
- * which is the enumeration that failed twice in #2105 rounds 1-3. Suppressing
- * a false report requires suppressing SOMETHING; the question is only whether
- * the rule is small enough to state completely, and CommonMark's is.
+ * So recognition is abandoned in favour of a rule that CANNOT lose a command.
+ * A line is blanked only when all three hold:
  *
- * Spans are therefore paired across the whole document rather than per line: a
- * run of N backticks opens a span, the next run of exactly N closes it, and a
- * blank line or a fenced block ends any open run — the paragraph rules that
- * bound a span in CommonMark. Blanked to spaces of EQUAL LENGTH, so every
- * offset in the file is unchanged and no coordinate translation is needed.
+ *   - no fence is open (an unclosed fence therefore protects the rest of the
+ *     file, and a closer must be whitespace-only as CommonMark requires);
+ *   - the line contains NO BACKTICK anywhere — so every code span survives
+ *     whole, paired or not, on one line or several, without any pairing logic;
+ *   - the line does not begin with a space or a tab — so every indented block
+ *     survives, at any indent, with either character.
+ *
+ * Each test errs toward KEEPING. Getting one wrong leaves text in that the
+ * pre-existing reader also read, which costs at most the report it already
+ * made; it can no longer cost silence. The price is that prose which happens to
+ * contain a backtick, or is indented, is not blanked — so the false red this
+ * fixes is fixed for the plain case and not for those. That is the correct
+ * direction for a subtraction in this guard, and it needs no parser.
  */
 function blankMarkdownProse(text) {
   const lines = text.split('\n');
-  const block = new Uint8Array(lines.length);
   let fence = null;
-  for (let i = 0; i < lines.length; i += 1) {
-    const f = lines[i].match(/^\s*(`{3,}|~{3,})/);
-    if (fence) {
-      block[i] = 1;
-      if (f && f[1][0] === fence[0] && f[1].length >= fence.length) fence = null;
-      continue;
-    }
-    if (f) {
-      block[i] = 1;
-      fence = f[1];
-      continue;
-    }
-    // An indented code block is the fence-free spelling of the same example.
-    if (/^ {4,}\S/.test(lines[i])) block[i] = 1;
-  }
-  const lineStart = [];
-  let at = 0;
-  for (const l of lines) {
-    lineStart.push(at);
-    at += l.length + 1;
-  }
-  const keep = new Uint8Array(text.length);
-  for (let i = 0; i < lines.length; i += 1) {
-    if (!block[i]) continue;
-    for (let k = 0; k < lines[i].length; k += 1) keep[lineStart[i] + k] = 1;
-  }
-  let open = null;
-  for (let i = 0; i < lines.length; i += 1) {
-    // A fenced block, and a blank line ending the paragraph, both close any
-    // run left hanging — a span cannot cross either.
-    if (block[i] || lines[i].trim() === '') {
-      open = null;
-      continue;
-    }
-    const l = lines[i];
-    let k = 0;
-    while (k < l.length) {
-      if (l[k] !== '`') {
-        k += 1;
-        continue;
+  return lines
+    .map((l) => {
+      const open = l.match(/^\s*(`{3,}|~{3,})/);
+      if (fence) {
+        // CLOSED ONLY BY A WHITESPACE-ONLY RUN of the same character, at least
+        // as long. A closer carrying trailing text is block CONTENT, and
+        // treating it as a closer ended the fence early and blanked the command
+        // below it (#2105 r5).
+        if (open && open[1][0] === fence[0] && open[1].length >= fence.length && /^\s*[`~]+\s*$/.test(l)) {
+          fence = null;
+        }
+        return l;
       }
-      let n = 0;
-      while (k + n < l.length && l[k + n] === '`') n += 1;
-      if (open === null) open = { len: n, from: lineStart[i] + k };
-      else if (open.len === n) {
-        for (let j = open.from; j < lineStart[i] + k + n; j += 1) keep[j] = 1;
-        open = null;
+      if (open) {
+        fence = open[1];
+        return l;
       }
-      k += n;
-    }
-  }
-  const out = new Array(text.length);
-  for (let i = 0; i < text.length; i += 1) {
-    out[i] = text[i] === '\n' ? '\n' : keep[i] ? text[i] : ' ';
-  }
-  return out.join('');
+      if (l.includes('`') || /^[ \t]/.test(l)) return l;
+      return ' '.repeat(l.length);
+    })
+    .join('\n');
 }
 
 function expandMakeVars(text) {
@@ -9030,15 +8999,23 @@ for (const file of walk(REPO_ROOT)) {
   //
   //   - a Makefile's recipes are expanded, because Make expands them before the
   //     shell sees them and a variable holding a redirection really is a write;
-  //   - a Markdown file's prose is blanked, because a sentence describing a
-  //     write is not one — while every executable construct in it, fenced,
-  //     indented or an inline span, is kept exactly where it was.
+  //   - a Markdown file's PLAIN prose is blanked, because a sentence describing
+  //     a write is not one. Only a line with no backtick, no leading
+  //     whitespace and no open fence: see `blankMarkdownProse` for why the
+  //     rule is stated as what it will KEEP rather than as what it recognises.
   //
   // Deliberately NOT a collected "executable image". That was tried and is what
   // #2105 rounds 1-3 rejected: five separate ingestion paths were missed, each
   // omission a false GREEN on the hazard this guard exists for, and two attempts
-  // to enumerate the paths were both incomplete. Transformations cannot omit,
-  // and blanking fails toward noise rather than silence.
+  // to enumerate the paths were both incomplete.
+  //
+  // Expansion cannot omit, because it removes nothing. BLANKING CAN, and an
+  // earlier version of this comment claimed otherwise — that it "fails toward
+  // noise rather than silence". That was wrong and is retracted: a construct
+  // blanking fails to recognise is a write REPLACED BY SPACES, which passes
+  // silently. Four such misses were found across #2105 r4 and r5. What makes it
+  // safe now is not recognition but the conservative keep-rule above, which
+  // errs toward leaving text in (#2105 r5).
   const rewriteText = /(^|\/)([Mm]akefile|.*\.mk)$/.test(rel)
     ? expandMakeVars(text)
     : /\.mdx?$/.test(rel)
