@@ -37,13 +37,25 @@ written inline, is an instruction the checker already treats as actionable. So
 rule — and any approach built on selecting executable parts inherits the
 problem that a part it fails to select becomes silence rather than noise.
 
-Transforming instead of selecting inverts that. A transformation cannot omit
-anything, because it removes nothing. Blanking is the one subtraction, and it
-is confined to document prose, where a construct the checker fails to recognise
-is simply left in place — costing at most a report, never a silent pass. The
-guard's own standing rule is that it may be incomplete but must not be noisy;
-this keeps both halves, where the withdrawn approach traded silence for
-tidiness.
+Transforming instead of selecting removes most of that risk: a transformation
+cannot omit anything, because it removes nothing. Expansion is such a
+transformation.
+
+Blanking is not, and an earlier version of this note claimed otherwise — that a
+construct the blanking fails to recognise is simply left in place, costing at
+most a report. That is wrong, and review found the case that proves it: a
+command written inline whose delimiters sit on different lines was not
+recognised as one, so it was blanked and the write inside it disappeared. An
+unrecognised code construct is a silent pass, not a noisy one. The claim is
+corrected here rather than removed, because it was the stated reason for
+choosing this design and a reader deserves to know it was too strong.
+
+What makes the subtraction acceptable is not its failure direction but how
+small the thing to be recognised is. A document's code constructs are a closed,
+specified set — fenced blocks, indented blocks, and inline spans — which is a
+grammar rather than an open-ended list of the ways a build system might run a
+command. Suppressing a false report requires suppressing something; the only
+question is whether the rule can be stated completely, and this one can.
 
 ## What is deferred, and why
 

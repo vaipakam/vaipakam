@@ -6681,56 +6681,94 @@ function indentedBlocks(lines, indentRe, startAt = 0) {
  * lose anything, because it removes nothing.
  */
 /**
- * A Markdown file with its PROSE blanked and every executable construct kept.
+ * A Markdown file with its PROSE blanked and every code construct kept.
  *
  * A runbook sentence naming a write is not a write, and reading one as shell
  * reported a deployment below it — a false red, in a check that runs inside
  * typecheck (#2084).
  *
- * SUBTRACTIVE, and that is the whole point. The first attempt at this selected
- * the executable parts instead, and anything it failed to select became a false
- * GREEN: five such omissions in three review rounds (#2105), including — fatally
- * for that approach — inline code spans, which sit INSIDE prose and are
- * executable. Blanking instead inverts the failure: a construct this misses is
- * simply left in the text, which at worst reports as the pre-existing reader
- * already does. Omissions cost noise, never silence.
+ * BLANKING IS A SUBTRACTION, AND SUBTRACTIONS CAN LOSE A WRITE. An earlier
+ * comment here claimed the opposite — that a construct this misses is "left in
+ * the text" and so costs at most noise. That is wrong, and #2105 r4 proved it:
+ * a code span whose backticks sit on DIFFERENT LINES was not recognised, so the
+ * command inside it was blanked and the deploy below went unreported. An
+ * unrecognised code construct is SILENCE, not noise. The claim is corrected
+ * rather than deleted because it was the stated justification for this design.
  *
- * Blanked to spaces of EQUAL LENGTH, so every offset in the file is unchanged
- * and no coordinate translation is needed.
+ * What makes the subtraction acceptable is not its failure direction but the
+ * size of what must be recognised: Markdown's code constructs are a closed,
+ * specified set — fenced blocks, indented blocks, and inline spans. That is a
+ * grammar, not an open-ended list of the ways a CI system can run a command,
+ * which is the enumeration that failed twice in #2105 rounds 1-3. Suppressing
+ * a false report requires suppressing SOMETHING; the question is only whether
+ * the rule is small enough to state completely, and CommonMark's is.
+ *
+ * Spans are therefore paired across the whole document rather than per line: a
+ * run of N backticks opens a span, the next run of exactly N closes it, and a
+ * blank line or a fenced block ends any open run — the paragraph rules that
+ * bound a span in CommonMark. Blanked to spaces of EQUAL LENGTH, so every
+ * offset in the file is unchanged and no coordinate translation is needed.
  */
 function blankMarkdownProse(text) {
   const lines = text.split('\n');
-  const keep = new Uint8Array(lines.length);
+  const block = new Uint8Array(lines.length);
   let fence = null;
   for (let i = 0; i < lines.length; i += 1) {
     const f = lines[i].match(/^\s*(`{3,}|~{3,})/);
     if (fence) {
-      keep[i] = 1;
+      block[i] = 1;
       if (f && f[1][0] === fence[0] && f[1].length >= fence.length) fence = null;
       continue;
     }
     if (f) {
-      keep[i] = 1;
+      block[i] = 1;
       fence = f[1];
       continue;
     }
     // An indented code block is the fence-free spelling of the same example.
-    if (/^ {4,}\S/.test(lines[i])) keep[i] = 1;
+    if (/^ {4,}\S/.test(lines[i])) block[i] = 1;
   }
-  return lines
-    .map((l, i) => {
-      if (keep[i]) return l;
-      // A CODE SPAN inside prose is executable — the scanner treats one as an
-      // actionable command, and a runbook that says "first run `cp a b`" is
-      // instructing the operator to run it. Kept in place, with only the prose
-      // around it blanked, at equal length.
-      let out = ' '.repeat(l.length);
-      for (const m of l.matchAll(/`+[^`]*`+/g)) {
-        out = out.slice(0, m.index) + m[0] + out.slice(m.index + m[0].length);
+  const lineStart = [];
+  let at = 0;
+  for (const l of lines) {
+    lineStart.push(at);
+    at += l.length + 1;
+  }
+  const keep = new Uint8Array(text.length);
+  for (let i = 0; i < lines.length; i += 1) {
+    if (!block[i]) continue;
+    for (let k = 0; k < lines[i].length; k += 1) keep[lineStart[i] + k] = 1;
+  }
+  let open = null;
+  for (let i = 0; i < lines.length; i += 1) {
+    // A fenced block, and a blank line ending the paragraph, both close any
+    // run left hanging — a span cannot cross either.
+    if (block[i] || lines[i].trim() === '') {
+      open = null;
+      continue;
+    }
+    const l = lines[i];
+    let k = 0;
+    while (k < l.length) {
+      if (l[k] !== '`') {
+        k += 1;
+        continue;
       }
-      return out;
-    })
-    .join('\n');
+      let n = 0;
+      while (k + n < l.length && l[k + n] === '`') n += 1;
+      if (open === null) open = { len: n, from: lineStart[i] + k };
+      else if (open.len === n) {
+        for (let j = open.from; j < lineStart[i] + k + n; j += 1) keep[j] = 1;
+        open = null;
+      }
+      k += n;
+    }
+  }
+  const out = new Array(text.length);
+  for (let i = 0; i < text.length; i += 1) {
+    out[i] = text[i] === '\n' ? '\n' : keep[i] ? text[i] : ' ';
+  }
+  return out.join('');
 }
 
 function expandMakeVars(text) {

@@ -11905,6 +11905,36 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(r.ok).toBe(false);
   });
 
+  it('a code span across two lines is still one span (#2105 r4)', () => {
+    // Markdown lets a span's backticks sit on different lines. A per-line
+    // matcher saw no complete span, blanked the command inside it, and the
+    // deploy below went unreported — blanking losing a write, which is the
+    // failure direction I had wrongly claimed this design could not have.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'docs/rb5.md',
+      '# Runbook\n\nFirst run `cp generated.jsonc\nconfigs/custom.jsonc` to stage it.\n\n' +
+        '```bash\nwrangler deploy --config configs/custom.jsonc\n```\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('an unpaired backtick does not swallow the document (#2105 r4 bounds)', () => {
+    // BOUNDS GUARD: pairing spans across lines must not let one stray backtick
+    // keep the rest of the file. A blank line ends the paragraph and any run
+    // left open with it, so the prose below stays prose.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'docs/rb6.md',
+      '# Runbook\n\nA stray ` backtick opens nothing.\n\n' +
+        'The tool calls writeFileSync("configs/custom.jsonc", generated).\n\n' +
+        '```bash\nwrangler deploy --config configs/custom.jsonc\n```\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
   it('an indented code block is executable (#2084 bounds)', () => {
     // BOUNDS GUARD: the fence-free spelling of the same example (#2105 r3).
     seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
