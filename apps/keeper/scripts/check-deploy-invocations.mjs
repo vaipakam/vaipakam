@@ -8935,17 +8935,25 @@ for (const file of walk(REPO_ROOT)) {
   // Shell semantics apply to SHELL files. A redirection is a redirection in
   // shell text; in JavaScript the same character is a comparison (#2066 r10).
   const fileIsShell = Boolean(winInterp) || isShellFile(rel, text);
-  // THE REWRITE QUESTION IS ASKED OF THE FILE ESSENTIALLY AS WRITTEN — the one
-  // exception being a Windows helper, which `forInterpreter` has already
-  // normalised above into the same form its workflow-body equivalent takes.
-  // That one stands because it is a SEMANTICS-PRESERVING NORMALISATION: a
-  // total, deterministic rewriting of one spelling into another, deciding
-  // nothing about what runs. (It removes and replaces characters, so "only
-  // additive transformations are safe" is NOT the rule — see the spec.)
+  // THE REWRITE QUESTION IS ASKED OF THE FILE ESSENTIALLY AS WRITTEN. Two
+  // exceptions predate this and stand:
+  //
+  //   - a Windows helper, which `forInterpreter` has already normalised above
+  //     into the same form its workflow-body equivalent takes. A SEMANTICS-
+  //     PRESERVING NORMALISATION: a total, deterministic rewriting of one
+  //     spelling into another, deciding nothing about what runs. (It removes
+  //     and replaces characters, so "only additive transformations are safe"
+  //     is NOT the rule — see the spec.)
+  //   - a manifest script, where `rewriteCtx`'s `valueScoped` branch asks the
+  //     question of the DECLARED VALUE rather than the whole file, because a
+  //     sibling script's write is not part of the script being judged. A
+  //     selection — but of a boundary the FORMAT draws, not of "the parts that
+  //     look executable", which is the selection that failed.
   //
   // Three transformations
   // were tried here and all three withdrawn; this is the record, so the next
-  // person does not rebuild one (#2084, #2105 — ten review rounds).
+  // person does not rebuild one (#2084, #2105 — ten rounds of building and
+  // withdrawing, then three more correcting this record).
   //
   //   1. A collected "executable image" — the parts of the file believed to
   //      run. SIX ingestion paths reached the file without reaching the
@@ -8965,8 +8973,9 @@ for (const file of walk(REPO_ROOT)) {
   //      branch, a settable recipe marker, that marker moving mid-file,
   //      `define` bodies, indented assignments, mismatched `$(NAME}`, `?=`
   //      after a computed value — every round's findings edges of the previous
-  //      round's fix. Not unsafe in principle (expansion only ADDS text) but
-  //      being RIGHT needs an interpreter for Make. #2084.
+  //      round's fix. It failed the same way the other two did — it had to
+  //      infer WHAT A NAME DENOTES — which is the real test, not whether a
+  //      transformation adds or removes characters (#2105 r13). #2084.
   //
   // The shape common to all three: each asks a question about the file that
   // needs a PARSER FOR SOMETHING ELSE — a CI system's execution model, a

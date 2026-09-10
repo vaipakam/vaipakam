@@ -11857,13 +11857,17 @@ describe('check-deploy-invocations — #1996 config identity', () => {
 describe('check-deploy-invocations — #2084 the rewrite model, and three withdrawn designs', () => {
   // ---- #2084: the rewrite question reads the file AS WRITTEN ----
   //
-  // Three transformations were tried and all three withdrawn (#2105, ten
-  // rounds). Nothing transforms the text now — bar the pre-existing Windows
-  // normalisation, which none of these fixtures exercises — so they pin two
+  // Three transformations were tried and all three withdrawn (#2105 — ten
+  // rounds building and withdrawing, three more correcting the record).
+  // Nothing transforms the text now, bar two pre-existing exceptions neither
+  // of which these fixtures exercise: the Windows normalisation, and a
+  // manifest script judged against its declared value. So they pin two
   // things:
-  // the shapes that defeated the withdrawn designs, and three MISSES that
-  // remain — asserted, so a later fix fails them and comes back to the question
-  // instead of passing unnoticed.
+  // the shapes that defeated the withdrawn designs, and three WRONG VERDICTS
+  // that remain — two misses and one false report, asserted so a later fix
+  // fails them and comes back to the question instead of passing unnoticed.
+  // The direction matters and is not decoration: #2084 and #2114 are silent
+  // misses, #2112 is the opposite failure and its fixture asserts a REPORT.
   //
   //   - COLLECTING the executable parts. Six ingestion paths missed, every
   //     omission a false green; two enumerations of "all the paths" incomplete.
@@ -11919,12 +11923,23 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     // redirection first. This guard does not see it: the rewrite question reads
     // the file as written, where the write is only a name.
     //
+    // WHY IT IS MISSED IS SOURCE ORDER, not invisibility, and the distinction
+    // matters (#2105 r14). The raw file DOES contain the redirection — it is
+    // right there in the `GENERATE =` line. The guard misses it only because
+    // that assignment sits BELOW the deploy, and the write scan compares
+    // positions. Move the assignment above the target and the guard reports,
+    // with no expansion at all.
+    //
+    // So #2084 is narrower than "a variable's value is invisible": it is that
+    // a Make assignment's POSITION does not constrain when its value is used,
+    // because `=` resolves at use. That also means a fix need not model Make's
+    // variables — relaxing the ordering comparison for Makefiles might do it —
+    // which is worth knowing before anyone rebuilds the expansion.
+    //
     // Expanding the recipe was implemented and withdrawn over four review
     // rounds and fifteen findings (see the note at the rewrite question's call
-    // site). Expansion is not unsafe in principle — it only ADDS text, so being
-    // wrong costs a report rather than silence — but being RIGHT about it means
-    // implementing Make's variable semantics, and every round's findings were
-    // edges of the previous round's fix.
+    // site). It failed the way the other two withdrawn designs did: it had to
+    // infer WHAT A NAME DENOTES.
     //
     // The miss is `main`'s miss, so nothing regressed. #2084 stays open.
     // If someone makes this work, THIS FIXTURE FAILS — that is the signal to

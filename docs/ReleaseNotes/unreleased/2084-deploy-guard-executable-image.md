@@ -6,7 +6,8 @@ three ways that question reads text which does not correspond to what runs.
 
 **It fixes none of them, and changes no behaviour at all.** Every attempt was
 withdrawn under review. What lands is the record of why, and tests that pin the
-misses so a later fix announces itself instead of passing unnoticed.
+wrong verdicts that remain — two misses and one false report — so a later fix
+announces itself instead of passing unnoticed.
 
 That is worth landing on its own. Two of these designs are the kind a
 maintainer would reach for again, and one of them looks obviously correct until
@@ -35,9 +36,9 @@ conditionals in both directions, explicit removal, removal inside a dead branch,
 a settable recipe marker, that marker moving partway down the file, stored
 variable bodies, indented assignments, mismatched delimiters, a default-value
 assignment after a computed one. Every round's findings were edges of the
-previous round's fix. This one is not unsafe in principle — expansion only
-*adds* text, so being wrong costs a report rather than silence — but being
-*right* about it means implementing the build tool's variable language.
+previous round's fix. It failed the way the other two did — it had to infer
+what a name denotes — which is the real test, and not whether a transformation
+adds or removes characters.
 
 Two smaller corrections survived to the last round and were withdrawn too. Each
 looked obviously safe, and — the part worth keeping — they regressed in
@@ -62,11 +63,12 @@ No behaviour change. The check's logic is what it was.
 - The reasoning above, recorded beside the code that would have to change, in
   the functional specification, and here — so the next person does not rebuild
   one of these designs without knowing what happened to it.
-- Tests that **assert three current misses**, so a later fix fails them and
-  comes back to the question rather than passing silently: a build file variable
-  holding a write is not seen; a runbook sentence naming a write reports the
-  deployment below it; a recipe marked by something other than a tab is not read
-  as a recipe.
+- Tests that **assert three current wrong verdicts** — two misses and one false
+  report — so a later fix fails them and comes back to the question rather than
+  passing silently: a build file variable holding a write is not seen; a recipe
+  marked by something other than a tab is not read as a recipe; and, in the
+  other direction, a runbook sentence naming a write **reports** the deployment
+  below it. That third one's test asserts the report, not a miss.
 - Two tests pinning that a bare command line and an inline command span in a
   document **are** read as commands — the two shapes that defeated the withdrawn
   designs, so a future attempt cannot quietly reintroduce the erasure.
@@ -76,13 +78,14 @@ No behaviour change. The check's logic is what it was.
 Every symptom this work set out to fix, plus the limitations found while proving
 them, is recorded as its own issue with a reproduction and what a fix would have
 to be true of. All are behaviour the check already had, so nothing is made
-worse. Three are additionally pinned by tests that assert the miss:
+worse. Three are additionally pinned by tests that assert the current verdict —
+two of them a miss, one a false report:
 
 | | |
 | --- | --- |
-| **#2084** | a build file variable holding a write is not seen — *pinned* |
-| **#2112** | a runbook sentence naming a write reports the deployment below it — *pinned* |
-| **#2114** | a recipe marked by something other than a tab is not read as a recipe — *pinned* |
+| **#2084** | a build file variable holding a write is not seen, when the assignment sits below the deployment — *pinned (miss)* |
+| **#2112** | a runbook sentence naming a write reports the deployment below it — *pinned (false report)* |
+| **#2114** | a recipe marked by something other than a tab is not read as a recipe — *pinned (miss)* |
 | **#2110** | a folded workflow scalar's positions are not comparable with the file's |
 | **#2113** | a write assigned by a live conditional branch is not seen |
 | **#2106** | a build file's prerequisites are ordered as written, not as they run |
