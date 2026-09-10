@@ -458,6 +458,18 @@ const FORCED_CLOSE_COPY = (() => {
       need(fc.readyInternalMatch, 'readyInternalMatch'),
       need(fc.readyRental, 'readyRental'),
     ],
+    // ROUND 8 P2 — the states that must NOT offer an enabled control.
+    // `readyNeedsRoute` belongs here rather than in `readyCopy`: it is
+    // ready AND correctly unactionable, so an enabled button on it is
+    // the defect the spec names — a fee paid for a certain refusal.
+    withheldCopy: [
+      need(fc.unknown, 'unknown'),
+      need(fc.notYet, 'notYet'),
+      need(fc.blockedPaused, 'blockedPaused'),
+      need(fc.blockedSequencer, 'blockedSequencer'),
+      need(fc.blockedNoConsent, 'blockedNoConsent'),
+      need(fc.readyNeedsRoute, 'readyNeedsRoute'),
+    ],
     // ROUND 7 P2 — positive evidence that the RECEIPT rendered, not
     // merely that its shell opened.
     receiptLead: need(fc.receipt?.youReceive, 'receipt.youReceive'),
@@ -716,8 +728,9 @@ function isRevert(err) {
  * treats one as locked: a read that could not answer must not be turned
  * into a product finding.
  */
-async function saleLockedOn(lenderTokenId, blockNumber) {
+async function saleLockedOn(lenderTokenId, loanId, blockNumber) {
   if (lenderTokenId === undefined || lenderTokenId === null) return true;
+  let locked;
   try {
     const lock = await pub.readContract({
       address: DIAMOND,
@@ -726,11 +739,62 @@ async function saleLockedOn(lenderTokenId, blockNumber) {
       args: [lenderTokenId],
       ...(blockNumber === undefined ? {} : { blockNumber }),
     });
-    return Number(lock) === LOCK_EARLY_WITHDRAWAL_SALE;
+    locked = Number(lock) === LOCK_EARLY_WITHDRAWAL_SALE;
   } catch (err) {
     if (!isRevert(err)) throw err;
     return true;
   }
+  if (!locked) return false;
+
+  // ROUND 8 P2 — THE LOCK IS LISTING-WIDE; THE UNMOUNT IS ACCEPTANCE-
+  // SPECIFIC.
+  //
+  // `createLoanSaleOffer` stamps `positionLock` for the WHOLE listing
+  // lifecycle, but `PositionDetails` unmounts the card only on
+  // `saleHold.data === 'accepted'`. Treating the raw lock as the excuse
+  // therefore forgave a genuinely missing card on an ordinary LIVE
+  // listing — a regression labelled inapplicable. I had disclosed that
+  // as a deliberate trade; it is too coarse, because the states differ
+  // in exactly the way the verdict turns on.
+  //
+  // So classify, the way the app does: simulate `teardownStaleSaleListing`
+  // and read the revert. `NoStaleSaleListing` on a LOCKED position means
+  // an accepted sale awaiting completion — the one state that correctly
+  // unmounts the card. `SaleListingLoanStillLive` is an ordinary live
+  // listing, where the card must be present.
+  try {
+    await pub.simulateContract({
+      address: DIAMOND,
+      abi: DIAMOND_ABI_VIEM,
+      functionName: 'teardownStaleSaleListing',
+      args: [BigInt(loanId)],
+      account: observed,
+      ...(blockNumber === undefined ? {} : { blockNumber }),
+    });
+    return false; // 'clearable' — a stale listing, not an accepted sale
+  } catch (err) {
+    const name = revertNameOf(err);
+    if (name === 'NoStaleSaleListing') return true; // locked + no stale → accepted
+    if (name === 'SaleListingLoanStillLive') return false; // live listing
+    if (name === null) throw err; // not a revert — BLOCKED, not a verdict
+    // An unrecognised revert cannot rule an accepted sale in or out.
+    // Fail toward `blocked` rather than toward a FAIL.
+    return true;
+  }
+}
+
+/** The custom-error NAME from a viem simulate failure, or null when the
+ *  failure did not decode as a contract revert. */
+function revertNameOf(err) {
+  const seen = new Set();
+  let cur = err;
+  while (cur && typeof cur === 'object' && !seen.has(cur)) {
+    seen.add(cur);
+    const name = cur?.data?.errorName;
+    if (typeof name === 'string') return name;
+    cur = cur.cause;
+  }
+  return null;
 }
 
 async function offsetLockedOn(borrowerTokenId) {
@@ -2402,7 +2466,7 @@ async function observeForcedClose(page, loan) {
           blockNumber,
         }),
         tokenOwnerOf(loan.lenderTokenId, blockNumber),
-        saleLockedOn(loan.lenderTokenId, blockNumber),
+        saleLockedOn(loan.lenderTokenId, loan.id, blockNumber),
       ]);
     },
   );
@@ -2427,20 +2491,38 @@ async function observeForcedClose(page, loan) {
   // the page was ahead of us and the observation is `blocked` instead.
   // A confirmation step on the accusing path, rather than a wider net.
   if (lenderHoldsActive && !card.mounted) {
-    const laterStatus = await discovery(
+    // ROUND 8 P2 — RECONFIRM EVERY FACT THE DOM COULD BE REFLECTING,
+    // not only the status.
+    //
+    // The first version re-read `getLoanDetails` alone, so a lender
+    // token TRANSFERRED at a block the page had seen and this observer
+    // had not still produced a false missing-card FAIL: the loan is
+    // still Active, and the stale ownership carried straight through
+    // the confirmation. Ownership and the sale state can each explain
+    // an absent card exactly as well as status can, so all three are
+    // re-read at the confirming head.
+    const later = await discovery(
       `confirming loan ${loan.id} is still eligible before reporting a missing card`,
       async () => {
         const head = await pub.getBlockNumber();
-        return pub.readContract({
-          address: DIAMOND,
-          abi: DIAMOND_ABI_VIEM,
-          functionName: 'getLoanDetails',
-          args: [loan.id],
-          blockNumber: head,
-        });
+        const [status, holder, sale] = await Promise.all([
+          pub.readContract({
+            address: DIAMOND,
+            abi: DIAMOND_ABI_VIEM,
+            functionName: 'getLoanDetails',
+            args: [loan.id],
+            blockNumber: head,
+          }),
+          tokenOwnerOf(loan.lenderTokenId, head),
+          saleLockedOn(loan.lenderTokenId, loan.id, head),
+        ]);
+        return { status, holder, sale };
       },
     );
-    if (Number(laterStatus.status) !== STATUS_ACTIVE) {
+    const stillHeld =
+      typeof later.holder === 'string' &&
+      later.holder.toLowerCase() === String(observed).toLowerCase();
+    if (Number(later.status.status) !== STATUS_ACTIVE || !stillHeld || later.sale) {
       lenderHoldsActive = false;
     }
   }

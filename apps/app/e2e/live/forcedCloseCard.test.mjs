@@ -144,6 +144,7 @@ describe('forcedCloseVerdict', () => {
     saleLocked: false,
     settled: true,
     bodyText: 'an explanation',
+    bodyPresent: true,
     confirmText: null,
   };
 
@@ -209,6 +210,7 @@ describe('forcedCloseVerdict — round 1 review findings', () => {
     saleLocked: false,
     settled: true,
     bodyText: 'an explanation',
+    bodyPresent: true,
     confirmText: null,
     text: FORCED_CLOSE.readyInKind,
   };
@@ -334,6 +336,7 @@ describe('forcedCloseVerdict — round 2 review findings', () => {
     saleLocked: false,
     settled: true,
     bodyText: 'an explanation',
+    bodyPresent: true,
     text: FORCED_CLOSE.readyInKind,
   };
 
@@ -490,10 +493,17 @@ describe('round 4 review findings', () => {
     expect(v.why).toMatch(/explanatory body/);
   });
 
-  it('treats a legacy observation with no bodyPresent field as before', () => {
-    // Neither new arm fires on `undefined`, so a record predating the
-    // field is judged exactly as it used to be.
-    expect(forcedCloseVerdict({ ...base, bodyPresent: undefined }, copy).verdict).toBe('pass');
+  it('BLOCKS an observation that carries no bodyPresent at all', () => {
+    // ROUND 8 changed what `undefined` MEANS, and this case with it.
+    // Round 7 used it as "not stated, judge as before"; round 8 showed
+    // that let a vanished card exit clean, so it now means "the card
+    // went before its body could be checked" — incomplete. The driver
+    // emits it only in that case, so no real observation is affected,
+    // but every FIXTURE describing a fully observed card must now say
+    // `bodyPresent: true` rather than rely on the field's absence.
+    const v = forcedCloseVerdict({ ...base, bodyPresent: undefined }, copy);
+    expect(v.verdict).toBe('blocked');
+    expect(v.blockedKind).toBe('incomplete');
   });
 });
 
@@ -680,10 +690,92 @@ describe('round 7 review findings', () => {
     expect(v.confirmScanned).toBe(true);
   });
 
-  it('leaves an undefined bodyPresent alone — the card vanished with it', () => {
-    // A body absent from a card that is still mounted is the defect; a
-    // body absent because the card went too is not an observation.
+  it('BLOCKS on an undefined bodyPresent — the card vanished with it', () => {
+    // ROUND 8 corrected this case. Round 7 introduced `undefined` to
+    // stop a vanished card being reported as the heading-only shell,
+    // and then asserted it PASSES — so a run could exit clean having
+    // never established that the required body existed. Not observed
+    // is not the same as observed to be fine, which is the distinction
+    // this whole harness is built on, and my own case had it backwards.
     const v = forcedCloseVerdict({ ...base, bodyPresent: undefined, bodyText: null }, copy);
-    expect(v.verdict).toBe('pass');
+    expect(v.verdict).toBe('blocked');
+    expect(v.blockedKind).toBe('incomplete');
+  });
+});
+
+describe('round 8 review findings', () => {
+  const copy = {
+    unknownCopy: FORCED_CLOSE.unknown,
+    readyCopy: [
+      FORCED_CLOSE.readyInKind,
+      FORCED_CLOSE.readyInternalMatch,
+      FORCED_CLOSE.readyRental,
+    ],
+    withheldCopy: [
+      FORCED_CLOSE.unknown,
+      FORCED_CLOSE.notYet,
+      FORCED_CLOSE.blockedPaused,
+      FORCED_CLOSE.blockedSequencer,
+      FORCED_CLOSE.blockedNoConsent,
+      FORCED_CLOSE.readyNeedsRoute,
+    ],
+    receiptLead: FORCED_CLOSE.receipt.youReceive,
+  };
+  const base = {
+    lenderHoldsActive: true,
+    mounted: true,
+    attached: true,
+    submitDisabled: true,
+    saleLocked: false,
+    settled: true,
+    bodyText: 'an explanation',
+    bodyPresent: true,
+    confirmText: null,
+    confirmExpected: false,
+    text: FORCED_CLOSE.readyInKind,
+  };
+
+  it('scans the BODY text for amounts, not only the card and confirmation', () => {
+    // `bodyText` is captured independently, a moment after the card
+    // read, so the card can update in between and the body can carry a
+    // figure the card text does not. It was never scanned at all.
+    const v = forcedCloseVerdict({ ...base, bodyText: 'You receive 250 USDC' }, copy);
+    expect(v.verdict).toBe('fail');
+    expect(v.amounts).toHaveLength(1);
+  });
+
+  it('FAILS a NON-ACTIONABLE state that offers an enabled action', () => {
+    // The inverse of the ready-without-action defect, and the more
+    // expensive half: here the user pays a fee for a refusal.
+    for (const withheld of copy.withheldCopy) {
+      const v = forcedCloseVerdict({ ...base, submitDisabled: false, text: withheld }, copy);
+      expect(v.verdict, withheld.slice(0, 40)).toBe('fail');
+      expect(v.why).toMatch(/NON-ACTIONABLE/);
+    }
+  });
+
+  it('still PASSES an actionable state with an enabled action', () => {
+    for (const ready of copy.readyCopy) {
+      expect(
+        forcedCloseVerdict({ ...base, submitDisabled: false, text: ready }, copy).verdict,
+        ready.slice(0, 40),
+      ).toBe('pass');
+    }
+  });
+
+  it('keeps readyNeedsRoute passing when it withholds, and failing when it does not', () => {
+    // The one route that appears in `withheldCopy` while reading as
+    // ready. Both directions asserted together, because they are the
+    // same fact and it is easy to fix one and break the other.
+    expect(
+      forcedCloseVerdict({ ...base, submitDisabled: true, text: FORCED_CLOSE.readyNeedsRoute }, copy)
+        .verdict,
+    ).toBe('pass');
+    expect(
+      forcedCloseVerdict(
+        { ...base, submitDisabled: false, text: FORCED_CLOSE.readyNeedsRoute },
+        copy,
+      ).verdict,
+    ).toBe('fail');
   });
 });

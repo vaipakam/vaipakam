@@ -312,7 +312,15 @@ export function forcedCloseVerdict(obs, copy) {
     }
 
     // 1b. THE DEFINITE FINDING, before anything that might be missing.
-    const scanned = obs.confirmText ? `${obs.text}\n${obs.confirmText}` : obs.text;
+    //
+    // ROUND 8 P2 — `bodyText` is scanned TOO. It is captured
+    // independently, a moment after the whole-card read, so the card
+    // can update in between and the body can positively carry a figure
+    // the card text does not. Scanning only `text` and `confirmText`
+    // ignored a value this drive had actually read.
+    const scanned = [obs.text, obs.bodyText, obs.confirmText]
+      .filter((part) => typeof part === 'string' && part !== '')
+      .join('\n');
     const amounts = monetaryAmountsIn(scanned);
     if (amounts.length > 0) {
       return {
@@ -346,6 +354,19 @@ export function forcedCloseVerdict(obs, copy) {
       return {
         verdict: 'fail',
         why: 'card mounted with no explanatory body element — the withheld-action-without-explanation state',
+      };
+    }
+    // ROUND 8 P2 — a card that vanished mid-scrape is INCOMPLETE, not
+    // a pass. Round 7 introduced `undefined` to stop the vanished case
+    // being reported as the heading-only shell, and then let it fall
+    // through to the final `pass` — so a run could exit clean having
+    // never established that the required body existed. My own test
+    // asserted that pass, which is the assertion being corrected here.
+    if (obs.bodyPresent === undefined) {
+      return {
+        verdict: 'blocked',
+        blockedKind: 'incomplete',
+        why: 'the card was read and then vanished before its body could be checked — the explanation was never established',
       };
     }
     if (obs.bodyPresent === true && obs.bodyText === null) {
@@ -478,6 +499,27 @@ export function forcedCloseVerdict(obs, copy) {
       blockedKind: 'incomplete',
       why: 'submit was offered but its confirmation could not be opened or read — half this surface went unscanned',
     };
+  }
+
+  // ROUND 8 P2 — THE OTHER DIRECTION OF THE SAME CONTRACT.
+  //
+  // The ready-without-action arm above catches a route that should
+  // offer the action and does not. This catches its inverse: a
+  // WITHHELD state rendering an ENABLED control, which offers a user a
+  // transaction the protocol has not established is permitted — or has
+  // established will be refused. Checking one direction and not the
+  // other left the more expensive half unguarded, since here the user
+  // pays the fee.
+  if (!obs.submitDisabled && Array.isArray(copy?.withheldCopy)) {
+    const withheld = copy.withheldCopy.find(
+      (sentence) => typeof sentence === 'string' && sentence && (obs.text ?? '').includes(sentence),
+    );
+    if (withheld) {
+      return {
+        verdict: 'fail',
+        why: 'card renders a NON-ACTIONABLE state yet offers an enabled action — the user would pay a fee for a refusal',
+      };
+    }
   }
 
   return {
