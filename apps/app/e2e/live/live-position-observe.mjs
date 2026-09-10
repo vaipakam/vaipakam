@@ -2579,84 +2579,102 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
   // false`, which the verdict turns into BLOCKED, not into a pass. So a
   // reworded sentence degrades to "we could not confirm it settled",
   // never to a false clean.
-  const deadline = Date.now() + timeoutMs;
-  let text = await card.innerText({ timeout: 2_000 }).catch(() => null);
+  //
+  // ROUND 4/5 P2 — the BODY is captured with three states in mind: no
+  // element (the heading-only shell, a defect), an element whose text
+  // did not read (nothing observed), and an element read and blank (a
+  // defect). Existence is not a successful read, and the two must not
+  // collapse into one flag.
+  //
+  // ROUND 9 P2 — COPY AND CONTROL ARE READ IN ONE DOM EVALUATION.
+  //
+  // Two arms of the verdict now compare the rendered READINESS COPY
+  // against the SUBMIT CONTROL — ready-without-action, and its inverse.
+  // Reading them in separate round-trips lets a tip that changes
+  // readiness mid-scrape pair copy from the old render with a control
+  // from the new one, and that impossible pair produces a FALSE FAIL on
+  // a page that was transitioning correctly. The two checks I added in
+  // rounds 7 and 8 are precisely what made this matter.
+  //
+  // One `evaluate` takes the card text, the body text and the submit
+  // control's presence and disabled state from a single synchronous
+  // pass over the DOM, so they cannot disagree about which render they
+  // came from.
+  const snap = await card
+    .evaluate((el) => {
+      const body = el.querySelector('[data-testid="forced-close-body"]');
+      const submit = el.querySelector('[data-testid="forced-close-submit"]');
+      return {
+        text: el.innerText,
+        bodyPresent: body !== null,
+        bodyText: body === null ? null : body.innerText,
+        submitPresent: submit !== null,
+        submitDisabled: submit === null ? true : submit.disabled === true,
+      };
+    })
+    .catch(() => null);
+  // The whole-card evaluate is atomic, so a null here means the card
+  // went between the visibility wait and this pass — round 7's vanished
+  // case, now detected by the capture itself rather than by a follow-up
+  // count. `bodyPresent: undefined` is what the verdict reads as
+  // "incomplete".
+  if (snap === null) {
+    return {
+      mounted: true,
+      attached: true,
+      text: null,
+      bodyText: null,
+      bodyPresent: undefined,
+      confirmText: null,
+      confirmExpected: false,
+      submitDisabled: true,
+      settled: false,
+    };
+  }
+  const { bodyPresent, bodyText, submitPresent, submitDisabled } = snap;
+  let text = snap.text;
+
+  // ROUND 1 P2 — ATTACHMENT IS NOT SETTLEMENT, so the copy is re-read
+  // until it leaves the unresolved sentence. Each re-read takes the
+  // control WITH it, for the reason the atomic capture exists: a
+  // verdict that compares copy against control must not mix renders.
   let settled = !saysCheckRunning(text ?? '', FORCED_CLOSE_COPY.unknownCopy);
+  let liveSubmitDisabled = submitDisabled;
+  let liveSubmitPresent = submitPresent;
+  const deadline = Date.now() + timeoutMs;
   while (!settled && Date.now() < deadline) {
     await page.waitForTimeout(1_000);
-    text = await card.innerText({ timeout: 2_000 }).catch(() => text);
+    const again = await card
+      .evaluate((el) => {
+        const submit = el.querySelector('[data-testid="forced-close-submit"]');
+        return {
+          text: el.innerText,
+          submitPresent: submit !== null,
+          submitDisabled: submit === null ? true : submit.disabled === true,
+        };
+      })
+      .catch(() => null);
+    if (again === null) break;
+    text = again.text;
+    liveSubmitPresent = again.submitPresent;
+    liveSubmitDisabled = again.submitDisabled;
     settled = !saysCheckRunning(text ?? '', FORCED_CLOSE_COPY.unknownCopy);
   }
-  // ROUND 4 P2 — `null` here means COULD NOT READ, not "read and
-  // empty", and the two must not collapse.
-  //
-  // The card can unmount between the visible/text read above and this
-  // one (the loan goes terminal, the position transfers), and a locator
-  // read can fail transiently. Returning null for those and letting the
-  // verdict coerce it to an empty body reports a product failure —
-  // "withheld the explanation" — over a scrape that simply did not
-  // happen. `bodyRead` records which it was; an unread body is
-  // incomplete, an empty one is the defect.
-  // ROUND 5 P2 — PRESENCE AND READABILITY ARE SEPARATE FACTS, and
-  // presence is asked FIRST.
-  //
-  // Round 4's `bodyText !== null || count() > 0` set "read" true
-  // because an element existed even when the read had failed, putting
-  // the false-FAIL straight back. Asking `count()` first and keeping it
-  // apart from the text gives the verdict the three states it needs: no
-  // element (the heading-only shell — a defect), element but no text
-  // (nothing observed), element read and blank (a defect).
-  const bodyLocator = card.getByTestId('forced-close-body').first();
-  let bodyPresent = (await bodyLocator.count().catch(() => 0)) > 0;
-  // ROUND 7 P2 — A VANISHED CARD IS NOT A MISSING BODY.
-  //
-  // If the loan terminalizes or the position transfers between the
-  // whole-card read above and this count, the entire card unmounts and
-  // the body count is legitimately zero — which the verdict would read
-  // as the heading-only shell and report as a product defect, before
-  // ever consulting the eligibility snapshot that explains it. So the
-  // parent is re-checked when the body is missing: a body absent from a
-  // card that is still there is the defect; a body absent because the
-  // card went with it is `undefined`, which the verdict leaves alone.
-  if (!bodyPresent && (await card.count().catch(() => 0)) === 0) {
-    bodyPresent = undefined;
-  }
-  const bodyText = bodyPresent
-    ? await bodyLocator.innerText({ timeout: 2_000 }).catch(() => null)
-    : null;
-  const submit = card.getByTestId('forced-close-submit').first();
-  // A card in a withheld state renders no submit control at all, which
-  // reads the same way as a disabled one for this verdict: the action
-  // is not offered. Both are the designed behaviour, so neither is a
-  // finding — only an ABSENT CARD is.
-  const submitCount = await submit.count();
-  const submitDisabled =
-    submitCount === 0 ? true : await submit.isDisabled().catch(() => true);
 
-  // ROUND 1 P2 — THE CONFIRMATION IS PART OF THIS SURFACE.
-  //
-  // The spec is explicit: "The confirmation shown before the lender
-  // signs is part of this surface and carries the same obligation." An
-  // invented figure there was unreachable while only the card was
-  // scanned.
-  //
-  // STILL WATCH-ONLY, and checked rather than assumed:
-  // `forced-close-submit`'s handler is `onOpenConfirm`, which sets page
-  // state and renders `ConfirmReceipt`. Nothing signs and nothing is
-  // sent — `closeOut` sits behind ConfirmReceipt's OWN confirm button,
-  // which this never touches. The session also holds no key and denies
-  // every signing RPC, so a regression that tried to send would be
-  // refused rather than approved.
-  let confirmText = null;
   // ROUND 2 P2 — a submittable card whose confirmation could NOT be read
   // is `confirmExpected` with `confirmText === null`, which the verdict
   // turns into BLOCKED. Catching the interaction error and quietly
   // accepting its null result would let the run exit 0 having skipped
   // half the surface it advertises — the same silent-null shape as the
   // findings above it.
-  const confirmExpected = submitCount > 0 && !submitDisabled;
+  // The submit facts come from the atomic capture (round 9 P2), so the
+  // control this clicks is the one the verdict judged.
+  const confirmExpected = liveSubmitPresent && !liveSubmitDisabled;
+  let confirmText = null;
   if (confirmExpected) {
-    const opened = await submit
+    const opened = await card
+      .getByTestId('forced-close-submit')
+      .first()
       .click({ timeout: 5_000 })
       .then(() => true)
       .catch(() => false);
@@ -2695,7 +2713,7 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
     bodyPresent,
     confirmText,
     confirmExpected,
-    submitDisabled,
+    submitDisabled: liveSubmitDisabled,
     settled,
   };
 }

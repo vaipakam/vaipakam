@@ -222,7 +222,9 @@ describe('forcedCloseVerdict — round 1 review findings', () => {
     // cries wolf gets switched off.
     const v = forcedCloseVerdict({ ...held, mounted: false, text: null, saleLocked: true }, copy);
     expect(v.verdict).toBe('blocked');
-    expect(v.why).toMatch(/sale lock/);
+    // Round 9 unified the mounted and absent sale-locked arms into one
+    // applicability rule, so the wording moved; the verdict did not.
+    expect(v.why).toMatch(/accepted sale/);
   });
 
   it('still FAILS an absent card when no sale lock can explain it', () => {
@@ -752,6 +754,17 @@ describe('round 8 review findings', () => {
       expect(v.verdict, withheld.slice(0, 40)).toBe('fail');
       expect(v.why).toMatch(/NON-ACTIONABLE/);
     }
+    // ROUND 9 P2 — AND WITH `settled: false`, which is the only shape
+    // the driver can actually produce for `unknown`. The round-8 case
+    // above modelled it as settled, so the arm sat below the unsettled
+    // return and could never fire on its own headline state while the
+    // test reported it working.
+    const v = forcedCloseVerdict(
+      { ...base, submitDisabled: false, settled: false, text: FORCED_CLOSE.unknown },
+      copy,
+    );
+    expect(v.verdict).toBe('fail');
+    expect(v.why).toMatch(/NON-ACTIONABLE/);
   });
 
   it('still PASSES an actionable state with an enabled action', () => {
@@ -777,5 +790,48 @@ describe('round 8 review findings', () => {
         copy,
       ).verdict,
     ).toBe('fail');
+  });
+});
+
+describe('round 9 review findings', () => {
+  const copy = {
+    unknownCopy: FORCED_CLOSE.unknown,
+    readyCopy: [FORCED_CLOSE.readyInKind, FORCED_CLOSE.readyInternalMatch, FORCED_CLOSE.readyRental],
+    withheldCopy: [FORCED_CLOSE.unknown, FORCED_CLOSE.notYet, FORCED_CLOSE.readyNeedsRoute],
+    receiptLead: FORCED_CLOSE.receipt.youReceive,
+  };
+  const base = {
+    lenderHoldsActive: true,
+    mounted: true,
+    attached: true,
+    submitDisabled: true,
+    saleLocked: false,
+    settled: true,
+    bodyText: 'an explanation',
+    bodyPresent: true,
+    confirmText: null,
+    confirmExpected: false,
+    text: FORCED_CLOSE.readyInKind,
+  };
+
+  it('BLOCKS a MOUNTED card on a sale-locked position rather than banking it', () => {
+    // A sale accepted between the DOM scrape and the pinned snapshot
+    // leaves a card that WAS mounted on a position now outside the
+    // card's applicability. Banking that clean reading would satisfy
+    // coverage with evidence from a state the card is not meant to be
+    // in.
+    const v = forcedCloseVerdict({ ...base, saleLocked: true }, copy);
+    expect(v.verdict).toBe('blocked');
+    expect(v.blockedKind).toBe('inapplicable');
+  });
+
+  it('still reports a definite content failure on a sale-locked position', () => {
+    // Applicability refuses to BANK a clean reading; it does not erase
+    // one that was positively observed. Round 3's rule, held.
+    const v = forcedCloseVerdict(
+      { ...base, saleLocked: true, text: `${FORCED_CLOSE.readyInKind} You get 1.5 WETH.` },
+      copy,
+    );
+    expect(v.verdict).toBe('fail');
   });
 });

@@ -396,16 +396,29 @@ export function forcedCloseVerdict(obs, copy) {
       why: 'position is not a held Active lender position',
     };
   }
+  // ROUND 9 P2 — applicability gates a MOUNTED card too, not only an
+  // absent one.
+  //
+  // A sale accepted between the DOM scrape and the pinned snapshot
+  // leaves a card that WAS mounted on a position now outside the
+  // card's applicability. Consulting `saleLocked` only in the absence
+  // branch let that stale-but-clean card bank a `pass` and satisfy
+  // coverage — evidence drawn from a state the card is not supposed to
+  // be in. Definite content failures are preserved above; what is
+  // refused here is BANKING a clean reading, exactly as a later
+  // ownership or status change is refused.
+  if (obs.saleLocked) {
+    return {
+      verdict: 'blocked',
+      blockedKind: 'inapplicable',
+      why: 'the position carries an accepted sale awaiting completion — outside this card\'s applicability',
+    };
+  }
 
   // ---- 3. The ABSENCE claim, which eligibility legitimately gates. --
   if (!obs.mounted) {
-    if (obs.saleLocked) {
-      return {
-        verdict: 'blocked',
-        blockedKind: 'inapplicable',
-        why: 'card absent, but the position carries a sale lock — an accepted sale awaiting completion correctly unmounts it',
-      };
-    }
+    // The accepted-sale case already returned above, for mounted and
+    // absent alike — one rule rather than two.
     if (obs.attached) {
       return {
         verdict: 'fail',
@@ -419,6 +432,39 @@ export function forcedCloseVerdict(obs, copy) {
   }
 
   // ---- 4. Was the observation COMPLETE? ----------------------------
+  // ROUND 8 P2, MOVED UP IN ROUND 9 — THE OTHER DIRECTION OF THE SAME
+  // CONTRACT, AND IT HAS TO OUTRANK THE UNSETTLED RETURN.
+  //
+  // The ready-without-action arm below catches a route that should offer
+  // the action and does not. This catches its inverse: a WITHHELD state
+  // rendering an ENABLED control, offering a transaction the protocol
+  // has not established is permitted — or has established will be
+  // refused. That is the more expensive half, because there the user
+  // pays the fee.
+  //
+  // Round 8 put it below the `!settled` return, which made it
+  // UNREACHABLE for the state that matters most: a card showing
+  // `unknown` is BY DEFINITION unsettled, so an `unknown` card with a
+  // live button reported `blocked` — the check could not fire on its
+  // own headline case. My test hid that by modelling `unknown` with
+  // `settled: true`, a combination the driver cannot produce.
+  //
+  // Fourth application of one rule in this PR: a DEFINITE observation
+  // outranks an uncertain one. An enabled control on a withheld state
+  // was seen; the settlement question was not answered. The seen thing
+  // wins.
+  if (!obs.submitDisabled && Array.isArray(copy?.withheldCopy)) {
+    const withheld = copy.withheldCopy.find(
+      (sentence) => typeof sentence === 'string' && sentence && (obs.text ?? '').includes(sentence),
+    );
+    if (withheld) {
+      return {
+        verdict: 'fail',
+        why: 'card renders a NON-ACTIONABLE state yet offers an enabled action — the user would pay a fee for a refusal',
+      };
+    }
+  }
+
   const checkRunning = saysCheckRunning(obs.text ?? '', copy?.unknownCopy ?? '');
 
   // ROUND 7 P2 — AN UNRESOLVED CHECK MAY NOT CLAIM UNAVAILABILITY.
@@ -499,27 +545,6 @@ export function forcedCloseVerdict(obs, copy) {
       blockedKind: 'incomplete',
       why: 'submit was offered but its confirmation could not be opened or read — half this surface went unscanned',
     };
-  }
-
-  // ROUND 8 P2 — THE OTHER DIRECTION OF THE SAME CONTRACT.
-  //
-  // The ready-without-action arm above catches a route that should
-  // offer the action and does not. This catches its inverse: a
-  // WITHHELD state rendering an ENABLED control, which offers a user a
-  // transaction the protocol has not established is permitted — or has
-  // established will be refused. Checking one direction and not the
-  // other left the more expensive half unguarded, since here the user
-  // pays the fee.
-  if (!obs.submitDisabled && Array.isArray(copy?.withheldCopy)) {
-    const withheld = copy.withheldCopy.find(
-      (sentence) => typeof sentence === 'string' && sentence && (obs.text ?? '').includes(sentence),
-    );
-    if (withheld) {
-      return {
-        verdict: 'fail',
-        why: 'card renders a NON-ACTIONABLE state yet offers an enabled action — the user would pay a fee for a refusal',
-      };
-    }
   }
 
   return {
