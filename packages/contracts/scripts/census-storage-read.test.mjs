@@ -138,10 +138,12 @@ test('aliasing: an earlier-era slot that is a current field today is that field,
   assert.equal(contradictions.length, 1, 'a non-zero at a slot no field occupies is a contradiction');
   assert.equal(contradictions[0].which, 'intentLiveCommitCount');
   // a row candidate under an old mapping head that is today another mapping's head is ambiguous, and still reported
-  const rows = markAliasedRows([{ loanId: '7', orderHash: '0xab', mappingSlot: slotOf(OLDREL.intentCommits) }, { loanId: '8', vpfiHeld: '1', mappingSlot: slotOf(OLDREL.borrowerLifRebate) }], p.occupied);
-  assert.equal(rows[0].ambiguous, true);
+  const rows = markAliasedRows([{ loanId: '7', orderHash: '0xab', mappingSlot: slotOf(OLDREL.intentCommits) }, { loanId: '8', vpfiHeld: '1', mappingSlot: slotOf(OLDREL.borrowerLifRebate) }, { loanId: '9', vpfiHeld: '2', mappingSlot: slotOf(OLDREL.totalLoansEverCreated) }], p.occupied);
+  assert.equal(rows[0].ambiguous, true, 'the old head is a current MAPPING head: same-key rows collide');
   assert.equal(rows[0].aliasesCurrentField, 'otherMapping');
-  assert.equal(rows[1].ambiguous, undefined);
+  assert.equal(rows[1].ambiguous, undefined, 'no current field at the old head');
+  assert.equal(rows[2].ambiguous, undefined, 'a current VALUE field at the old head occupies one slot, never a hashed row');
+  assert.equal(rows[2].oldHeadNowHolds, 'someCounterToday');
   // the merge names the ambiguity
   const merged = mergeHistoricalRows({ status: 'proven', count: 0, total: '0', rows: [] }, { rows: { liveIntentCommits: [rows[0]] } }, 'liveIntentCommits');
   assert.match(merged.indeterminateReason, /alias a current field's rows \(otherMapping\)/);

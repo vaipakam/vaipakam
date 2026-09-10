@@ -217,9 +217,11 @@ export function mergeHistoricalRows(cls, historical, className) {
  * exactly this).
  */
 export function aliasOf(slot, occupied) {
+  return aliasEntry(slot, occupied)?.label ?? null;
+}
+export function aliasEntry(slot, occupied) {
   const n = BigInt(slot);
-  const hit = (occupied ?? []).find((r) => n >= (r.fromN ?? BigInt(r.from)) && n <= (r.toN ?? BigInt(r.to)));
-  return hit ? hit.label : null;
+  return (occupied ?? []).find((r) => n >= (r.fromN ?? BigInt(r.from)) && n <= (r.toN ?? BigInt(r.to))) ?? null;
 }
 
 /**
@@ -240,13 +242,15 @@ export function classifyEarlierCounters(readings, occupied) {
 }
 
 /**
- * A row candidate found at an earlier era's mapping slot is AMBIGUOUS when
- * that head slot is a current mapping's head: today's row for the same key
- * lives at the very same derived slot. Marks each candidate; never drops it.
+ * A row candidate found at an earlier era's mapping slot is AMBIGUOUS only
+ * when that head slot is a current MAPPING's head: today's row for the same
+ * key then lives at the very same derived slot. A current value field at the
+ * old head occupies that one slot and nothing hashed from it, so rows under
+ * it are unambiguous. Marks each candidate; never drops it.
  */
 export function markAliasedRows(rows, occupied) {
   return rows.map((r) => {
-    const alias = aliasOf(r.mappingSlot, occupied);
-    return alias ? { ...r, aliasesCurrentField: alias, ambiguous: true } : r;
+    const hit = aliasEntry(r.mappingSlot, occupied);
+    return hit && hit.isMapping ? { ...r, aliasesCurrentField: hit.label, ambiguous: true } : hit ? { ...r, oldHeadNowHolds: hit.label } : r;
   });
 }
