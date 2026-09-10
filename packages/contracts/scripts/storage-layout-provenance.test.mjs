@@ -7,7 +7,7 @@ import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { extractDeclarations, isPrefix, walkProvenance, stripComments, inlineStructsBefore } from './storage-layout-provenance.mjs';
+import { extractDeclarations, isPrefix, walkProvenance, stripComments, inlineStructsBefore, layoutFingerprint, storagePositionOf } from './storage-layout-provenance.mjs';
 
 const SRC = (extra = '', rowExtra = '') => `
 // SPDX-License-Identifier: MIT
@@ -115,4 +115,26 @@ library LibVaipakam {
   assert.equal(w.changeEvents.length, 1);
   assert.equal(w.changeEvents[0].struct, 'Config');
   assert.equal(w.changeEvents[0].kind, 'append', 'an append inside an inline struct grows its footprint');
+});
+
+test('a storage-position change is an era for every field, and the fingerprint is content, not a SHA (#2095 r2)', () => {
+  const src = (pos) => `library LibVaipakam {\n  bytes32 internal constant VANGKI_STORAGE_POSITION = ${pos};\n  struct Row { bytes32 orderHash; }\n  struct Storage { uint256 nextLoanId; mapping(uint256 => Row) intentCommits; }\n}`;
+  const A = '0x' + 'aa'.repeat(32); const B = '0x' + 'bb'.repeat(32);
+  const repo = mkdtempSync(join(tmpdir(), 'prov-ns-'));
+  const lib = 'contracts/src/libraries/LibVaipakam.sol';
+  mkdirSync(join(repo, 'contracts/src/libraries'), { recursive: true });
+  const g = (...a) => execFileSync('git', a, { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  g('init', '-q'); g('config', 'user.email', 't@t'); g('config', 'user.name', 't');
+  const commit = (s, msg, date) => { writeFileSync(join(repo, lib), s); g('add', lib); execFileSync('git', ['commit', '-q', '-m', msg, '--date', date], { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, GIT_COMMITTER_DATE: date, GIT_AUTHOR_DATE: date } }); };
+  commit(src(A), 'v1', '2026-05-02T00:00:00Z');
+  commit(src(B), 'v2 namespace moved', '2026-06-01T00:00:00Z');
+  const w = walkProvenance({ repo, libPath: lib, since: '2026-05-01', structs: ['Storage', 'Row'], fields: ['intentCommits'] });
+  assert.equal(w.changeEvents.length, 1);
+  assert.equal(w.changeEvents[0].kind, 'namespace-change');
+  assert.equal(w.positionEras.length, 2);
+  assert.equal(w.violations.length, 0, 'the declaration sequences never changed');
+  // fingerprint: identical content → identical fingerprint whatever the commit; a position or declaration change → different
+  assert.equal(layoutFingerprint(src(B), ['Storage', 'Row'], ['intentCommits']), w.headFingerprint);
+  assert.notEqual(layoutFingerprint(src(A), ['Storage', 'Row'], ['intentCommits']), w.headFingerprint);
+  assert.equal(storagePositionOf(src(B)).position, B);
 });

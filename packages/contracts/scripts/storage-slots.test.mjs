@@ -3,7 +3,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { loadSlots, rowSlot, memberSlot } from './storage-slots.mjs';
-import { slotsFromLayout, storagePositionOf } from './storage-layout-eras.mjs';
+import { slotsFromLayout } from './storage-layout-eras.mjs';
+import { storagePositionOf } from './storage-layout-provenance.mjs';
 
 test('rowSlot/memberSlot reproduce the compiler-loaded example rows in storage-slots.json', () => {
   const s = loadSlots();

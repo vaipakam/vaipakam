@@ -26,6 +26,8 @@
  * Usage:  node scripts/storage-layout-provenance.mjs [--since 2026-05-01] [--json]
  */
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { keccak256, toBytes } from 'viem';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve as resolvePath } from 'node:path';
@@ -104,6 +106,29 @@ export function fieldName(decl) {
   return decl.split(' ').pop();
 }
 const PRIMITIVE = /^(u?int\d*|address|bool|bytes\d*|bytes|string)$/;
+/** The era's own storage position: the ERC-7201 constant if declared, else the plain hash the older source used. */
+export function storagePositionOf(libSource) {
+  const c = /VANGKI_STORAGE_POSITION\s*=\s*(0x[0-9a-fA-F]{64})/.exec(libSource);
+  if (c) return { position: c[1].toLowerCase(), derivation: 'VANGKI_STORAGE_POSITION constant (ERC-7201)' };
+  if (/keccak256\("vaipakam\.storage"\)/.test(libSource)) return { position: keccak256(toBytes('vaipakam.storage')), derivation: 'keccak256("vaipakam.storage") (pre-ERC-7201 source)' };
+  return null;
+}
+/**
+ * A CONTENT fingerprint of everything the era table depends on at a source
+ * revision: the storage position and the declaration sequences of Storage,
+ * the row structs and every inline struct before a target. `--check` pins
+ * the table's freshness to this rather than to a commit SHA, because a
+ * feature-branch SHA is an ancestor of nothing after a squash merge (#2095 r2).
+ */
+export function layoutFingerprint(source, structs, fields) {
+  const inline = inlineStructsBefore(source, fields);
+  const names = [...new Set([...structs, ...inline.local])].sort();
+  const parts = [storagePositionOf(source)?.position ?? 'no-position'];
+  for (const n of names) {
+    try { parts.push(`${n}:${extractDeclarations(source, n).join(';')}`); } catch { parts.push(`${n}:absent`); }
+  }
+  return createHash('sha256').update(parts.join('\n')).digest('hex');
+}
 /**
  * The INLINE struct types `struct Storage` embeds before the last target
  * field, recursively (#2095 r1 P1). An inline struct's members occupy slots
@@ -231,6 +256,8 @@ export function walkProvenance({ repo = REPO_ROOT, libPath = LIB_PATH, since = D
   /** Per target field: the eras of its index — [{index, from, to}] — so a deployment date maps to an index. */
   const indexEras = Object.fromEntries(fields.map((f) => [f, []]));
   const prevSeq = {};
+  /** The storage position at every commit: a change is an era for EVERY field (#2095 r2 P1). */
+  const positionEras = [];
   for (const f of fields) introducedAt[f] = null;
   for (const c of commits) {
     let src;
@@ -239,6 +266,12 @@ export function walkProvenance({ repo = REPO_ROOT, libPath = LIB_PATH, since = D
     } catch {
       continue; // the file did not exist at this commit — nothing was deployable from it
     }
+    const pos = storagePositionOf(src)?.position ?? null;
+    const lastPos = positionEras[positionEras.length - 1];
+    if (!lastPos || lastPos.position !== pos) {
+      if (lastPos) changeEvents.push({ commit: c.sha, date: c.date, struct: '(storage position)', firstDifferentIndex: 0, before: lastPos.position ?? '(none)', after: pos ?? '(none)', lengthDelta: 0, kind: 'namespace-change' });
+      positionEras.push({ position: pos, from: c.date, fromCommit: c.sha, to: c.date });
+    } else lastPos.to = c.date;
     for (const s of structs) {
       let seq;
       try {
@@ -300,6 +333,8 @@ export function walkProvenance({ repo = REPO_ROOT, libPath = LIB_PATH, since = D
     violations,
     changeEvents,
     indexEras,
+    positionEras,
+    headFingerprint: layoutFingerprint(headSource, structs, fields),
   };
 }
 

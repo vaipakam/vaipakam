@@ -5536,17 +5536,21 @@ reported a comfortable answer it had not earned:
   latter as a failure on op-sepolia rather than silently counting it as an
   absent commit.
 
-**RESULT (2026-09-10, run 27 — the run-26 population and rules, plus the
+**RESULT (2026-09-10, run 28 — the run-26 population and rules, plus the
 calibrated, era-complete storage read of §7/§7a where a Diamond routes no
-getter): SEVENTEEN of the twenty deployments are PROVEN EMPTY on every class;
-three are INDETERMINATE.** 215 loan reads across the twenty artifacts, zero
-rows in any class on any deployment where rows could be read, every chain at
-its `finalized` block, no chain failed. Of the seventeen, eight are proven by
+getter, against the complete 32-era table; run 27, read against a 16-era
+table the compiler later showed to have been complete for every slot it
+used, reached the same verdicts and is superseded only so that each result's
+recorded evidence names the table in force): SEVENTEEN of the twenty
+deployments are PROVEN EMPTY on every class; three are INDETERMINATE.** 215
+loan reads across the twenty artifacts, zero rows in any class on any
+deployment where rows could be read, every chain at its `finalized` block, no
+chain failed, no live-commit counter contradicting an empty scan. Of the seventeen, eight are proven by
 routed-getter enumeration, six by a routed loan counter that reads zero, and
 three — the base-sepolia shells of 2026-07-01 — by the storage twin of that
 proof: `nextLoanId` zero at its only slot and the other counters zero at every
 era slot. Six deployments whose intent getter is unrouted had their intent
-rows read from storage at all three era slots for every enumerated loan (580
+rows read from storage at all three era slots for every enumerated loan (591
 slots across the nine storage-read deployments; the evidence — method, slot
 table, era table, calibration test — is recorded on each result). The three
 that remain: the base-sepolia record of 2026-07-01T01-03 naming a non-Diamond
@@ -5983,8 +5987,27 @@ implies. The same round tightened three rules: an era whose mapping exists
 without its row layout is refused rather than read with today's offsets; a
 non-zero `intentLiveCommitCount` at any era slot contradicts an empty row
 scan and leaves the class indeterminate; and the shell path no longer sums
-an intent amount storage never read. Run 28 re-reads every deployment
-against the complete era table.
+an intent amount storage never read. Run 28 re-read every deployment against the complete era table and reached the
+same seventeen-of-twenty with no contradiction; it is the canonical artifact.
+
+**Review round 2 closed the remaining doors.** A change of the storage
+namespace itself — the ERC-7201 position, or its derivation — is now an era
+for every field, recorded by the walker as a namespace-change event (the
+position has been the same constant since the repository's first commit, so
+no era was missing, but nothing had checked). The era table's freshness is
+pinned to a content fingerprint of everything it depends on — the position
+and the declaration sequences of `Storage`, the row structs and the inline
+structs before a target — rather than to the commit it was generated at,
+because a feature-branch commit is an ancestor of nothing after a squash
+merge and the CI check would have failed on every merge. The diagnostic
+`--only-head` mode can no longer write the production table and marks its
+output incomplete. On the shell path a lifetime counter above the loan-id
+range, or any counter non-zero while the range is empty, contradicts the
+verdict and nothing is certified; the shell return keeps the live-producer
+classification the retirement rule reads; and on the enumerable path a row
+the storage read finds is counted, not hidden under a zero count. The
+predictable temporary path the era tool used for its worktrees is replaced
+by a fresh directory per build.
 
 ### 7a. What the provenance walk found, and how the design changes (2026-09-09)
 

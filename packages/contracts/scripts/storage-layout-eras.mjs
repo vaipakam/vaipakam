@@ -27,12 +27,12 @@
  * Usage: node scripts/storage-layout-eras.mjs [--since 2026-05-01] [--only-head] [--keep-worktrees] [--out <path>]
  */
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync, symlinkSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve as resolvePath } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { keccak256, toBytes } from 'viem';
-import { walkProvenance, REPO_ROOT, LIB_PATH, DEFAULT_SINCE } from './storage-layout-provenance.mjs';
+import { walkProvenance, storagePositionOf, layoutFingerprint, REPO_ROOT, LIB_PATH, DEFAULT_SINCE, STRUCTS } from './storage-layout-provenance.mjs';
+export { storagePositionOf };
 
 export const FIELDS = ['nextLoanId', 'totalLoansEverCreated', 'intentLiveCommitCount', 'intentCommits', 'borrowerLifRebate', 'fallbackSnapshot'];
 export const ROW_STRUCTS = ['SwapToRepayIntentCommit', 'BorrowerLifRebate', 'FallbackSnapshot'];
@@ -48,14 +48,6 @@ contract StorageLayoutEraProbe {
 
 function sh(cmd, args, cwd, opts = {}) {
   return execFileSync(cmd, args, { cwd, encoding: 'utf8', maxBuffer: 256 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'], ...opts });
-}
-
-/** The era's own storage position: the ERC-7201 constant if declared, else the plain hash the older source used. */
-export function storagePositionOf(libSource) {
-  const c = /VANGKI_STORAGE_POSITION\s*=\s*(0x[0-9a-fA-F]{64})/.exec(libSource);
-  if (c) return { position: c[1].toLowerCase(), derivation: 'VANGKI_STORAGE_POSITION constant (ERC-7201)' };
-  if (/keccak256\("vaipakam\.storage"\)/.test(libSource)) return { position: keccak256(toBytes('vaipakam.storage')), derivation: 'keccak256("vaipakam.storage") (pre-ERC-7201 source)' };
-  return null;
 }
 
 /** Pull the members we need out of a forge storageLayout artifact. Pure; exported for the test. */
@@ -97,10 +89,10 @@ export function eraCommits(walk, commitsAsc) {
 }
 
 export function buildEra(sha, { repo = REPO_ROOT, keep = false, log = () => {} } = {}) {
-  const dir = join(tmpdir(), `vaipakam-era-${sha.slice(0, 9)}`);
-  if (existsSync(dir)) {
-    try { sh('git', ['worktree', 'remove', '--force', dir], repo); } catch { rmSync(dir, { recursive: true, force: true }); }
-  }
+  // A fresh, unpredictable directory per build (CodeQL js/insecure-temporary-file:
+  // a fixed name under the OS temp dir could be pre-created by another user).
+  const dir = mkdtempSync(join(tmpdir(), `vaipakam-era-${sha.slice(0, 9)}-`));
+  rmSync(dir, { recursive: true, force: true }); // git worktree add wants a path that does not exist yet
   sh('git', ['worktree', 'add', '--detach', dir, sha], repo);
   try {
     const c = join(dir, 'contracts');
@@ -142,17 +134,14 @@ export function checkEraTable({ tablePath = OUT_DEFAULT, since = DEFAULT_SINCE, 
   const needed = eraCommits(walk, commitsAsc);
   const have = new Set((table.eras ?? []).map((e) => e.commit));
   const missing = needed.filter((e) => !have.has(e.sha));
-  let headOk = true;
-  try {
-    sh('git', ['merge-base', '--is-ancestor', table.head, 'HEAD'], REPO_ROOT);
-  } catch {
-    headOk = false;
-  }
   const problems = [];
-  if (!table.complete) problems.push(`the table is incomplete (${(table.unavailable ?? []).length} era(s) unavailable)`);
-  if (!headOk) problems.push(`the table's head ${String(table.head).slice(0, 9)} is not an ancestor of HEAD`);
+  if (!table.complete) problems.push(`the table is incomplete (${(table.unavailable ?? []).length} era(s) unavailable${table.partial ? `; ${table.partial}` : ''})`);
+  // Freshness is a CONTENT identity, never a commit SHA: the table's HEAD era
+  // must have been built from the layout inputs HEAD has now (#2095 r2 P1 — a
+  // branch SHA is no ancestor of a squash commit, and PR CI reviews a merge
+  // commit the branch head is not an ancestor of either).
+  if (table.headFingerprint !== walk.headFingerprint) problems.push(`the table's HEAD era was built from a different layout (fingerprint ${String(table.headFingerprint).slice(0, 12)} vs ${walk.headFingerprint.slice(0, 12)} now) — regenerate`);
   for (const m of missing) problems.push(`era ${m.sha.slice(0, 9)} (${m.date.slice(0, 10)}, ${m.event}) is not in the table`);
-  // a HEAD-layout change since the table: the pinned probe file is the other half of that check (StorageSlotPinTest)
   log(`storage-layout-eras --check: ${problems.length ? 'STALE' : 'OK'} — ${needed.length} era(s) implied by the walk, ${have.size} in the table${problems.length ? '\n  ' + problems.join('\n  ') : ''}`);
   return { ok: problems.length === 0, problems, needed: needed.length, inTable: have.size };
 }
@@ -163,6 +152,11 @@ export function main(argv = process.argv.slice(2)) {
   const out = arg('--out', OUT_DEFAULT);
   if (argv.includes('--check')) return checkEraTable({ tablePath: out, since, log: (m) => process.stderr.write(m + '\n') }).ok ? 0 : 1;
   const onlyHead = argv.includes('--only-head');
+  // --only-head is a pipeline diagnostic: it must never overwrite the production table (#2095 r2 P2)
+  if (onlyHead && resolvePath(out) === resolvePath(OUT_DEFAULT)) {
+    process.stderr.write('storage-layout-eras: --only-head builds one era and is not a complete table; pass --out <path> outside contracts/deployments\n');
+    return 2;
+  }
   const keep = argv.includes('--keep-worktrees');
   // --reuse <path>: eras already built (same commit) in a previous output are copied, not rebuilt
   const reusePath = arg('--reuse', null);
@@ -204,7 +198,9 @@ export function main(argv = process.argv.slice(2)) {
     head,
     since,
     walk: { commitsWalked: walk.commitsWalked, changeEvents: walk.changeEvents.map((x) => ({ commit: x.commit, date: x.date, struct: x.struct, kind: x.kind, index: x.firstDifferentIndex, lengthDelta: x.lengthDelta })) },
-    complete: unavailable.length === 0,
+    complete: unavailable.length === 0 && !onlyHead,
+    partial: onlyHead ? 'only-head diagnostic — one era, not a table the census may read' : undefined,
+    headFingerprint: walk.headFingerprint,
     eras: built,
     unavailable,
     distinctSlots: distinct,

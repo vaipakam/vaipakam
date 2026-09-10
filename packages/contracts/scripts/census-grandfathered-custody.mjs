@@ -1737,7 +1737,14 @@ async function censusDeployment(dep) {
     if (!notADiamond && STORAGE_READ.ok) {
       const readSlot = (slot) => withReplicaRetry(atBlock, () => storageAtHash(client, censusBlock, diamond, slot), { client });
       const counters = await readCountersByStorage({ readSlot, eraSlots: STORAGE_READ.eraSlots });
-      if (counters.allZero) {
+      // #2095 r2 P1 — the corroborating counters can CONTRADICT the range: a lifetime
+      // counter above nextLoanId, or any counter non-zero while nextLoanId is zero,
+      // means rows the id range cannot reach; nothing is certified then.
+      const contradiction = counters.totalLoansEverCreated.filter((x) => x.value > counters.nextLoanId).map((x) => `totalLoansEverCreated=${x.value} at ${x.slot} (${x.eras.map((e) => e.date).join(',')}) > nextLoanId=${counters.nextLoanId}`)
+        .concat(counters.nextLoanId === 0n ? counters.intentLiveCommitCount.filter((x) => x.value > 0n).map((x) => `intentLiveCommitCount=${x.value} at ${x.slot} with nextLoanId=0`) : []);
+      if (contradiction.length) {
+        storage = { kind: 'counter-contradiction', counters, scan: null, truncated: false, contradiction };
+      } else if (counters.allZero) {
         storage = { kind: 'no-loans-ever-created-by-storage', counters, scan: null, truncated: false };
       } else {
         const cap = BigInt(MAX_STORAGE_LOAN_SCAN);
@@ -1752,9 +1759,11 @@ async function censusDeployment(dep) {
     const reason = notADiamond
         ? 'the contract at the recorded address is NOT a Vaipakam Diamond (every custody selector reverts without the Diamond fallback\'s FunctionDoesNotExist signature) — it cannot be scoped, and its rows, if any, are not this protocol\'s; undetermined until the artifact is corrected'
         : STORAGE_READ.ok
-          ? storage?.truncated
-            ? `the storage read found nextLoanId=${storage.counters.nextLoanId}, above the ${MAX_STORAGE_LOAN_SCAN}-id scan cap — undetermined until scanned in full`
-            : undefined
+          ? storage?.kind === 'counter-contradiction'
+            ? `the storage counters contradict the loan-id range (${storage.contradiction.join('; ')}) — rows the range cannot reach may exist; refusing to certify`
+            : storage?.truncated
+              ? `the storage read found nextLoanId=${storage.counters.nextLoanId}, above the ${MAX_STORAGE_LOAN_SCAN}-id scan cap — undetermined until scanned in full`
+              : undefined
           : `${custodySurfaceUnrouted ? 'every custody selector is UNROUTED on this Diamond today' : 'this Diamond routes no loan-enumeration surface'}, and the calibrated storage read is unavailable: ${STORAGE_READ.reason}`;
     const storageEvidence = storage
       ? {
@@ -1773,7 +1782,7 @@ async function censusDeployment(dep) {
     // one verdict per class from the storage read; the routed-path conventions apply:
     // a rebate/held row is VPFI by definition, a fallback/intent row's asset is unreadable here
     const cls = (name, extra = {}) => {
-      if (!storage || storage.truncated) return { status, indeterminateReason: reason, provenBy: undefined, count: 0, total: '0', rows: [], ...extra };
+      if (!storage || storage.truncated || storage.kind === 'counter-contradiction') return { status, indeterminateReason: reason, provenBy: undefined, count: 0, total: '0', rows: [], counterContradiction: storage?.kind === 'counter-contradiction' || undefined, ...extra };
       if (storage.kind === 'no-loans-ever-created-by-storage') return { status: 'proven', provenBy: storage.kind, count: 0, total: '0', rows: [], ...extra };
       const rows = storage.scan.rows[name];
       if (name === 'liveIntentCommits') {
@@ -1812,7 +1821,8 @@ async function censusDeployment(dep) {
       atBlockHash: censusBlock.hash,
       blockTag: censusBlock.tag,
       rpcHost: rpcHostOf(rpc),
-      scanned: { loanIdsEnumerated: storage?.scan?.loansScanned ?? 0, totalLoansEverCreated: storage ? storage.counters.totalLoansEverCreated.map((x) => x.value.toString()).join('|') : 'n/a', loanIdRange: storage?.scan?.loansScanned ? `1..${storage.scan.loansScanned}` : 'none', enumerable: false, noCode: false, custodySurfaceUnrouted, notADiamond, loupeRouted, storageRead: storageEvidence, storageReadUnavailable: STORAGE_READ.ok ? undefined : STORAGE_READ.reason },
+      // producers may still be live where custody selectors route (the prior indeterminate return said so too; #2095 r2 P1)
+      scanned: { loanIdsEnumerated: storage?.scan?.loansScanned ?? 0, totalLoansEverCreated: storage ? storage.counters.totalLoansEverCreated.map((x) => x.value.toString()).join('|') : 'n/a', loanIdRange: storage?.scan?.loansScanned ? `1..${storage.scan.loansScanned}` : 'none', enumerable: false, noCode: false, custodySurfaceUnrouted, notADiamond, loupeRouted, producersMayBeLive: !notADiamond && !custodySurfaceUnrouted, storageRead: storageEvidence, storageReadUnavailable: STORAGE_READ.ok ? undefined : STORAGE_READ.reason },
       classes,
     };
   }
@@ -2215,8 +2225,10 @@ async function censusDeployment(dep) {
                 : intentAbsenceProof?.reason,
         absenceProof:
           provenByEnumerable && !corroboration?.contradictsPrimaryProof ? undefined : intentSurfaceRouted || intentStorage ? undefined : intentAbsenceProof,
-        count: intentRows.length,
-        total: sum(intentRows, 'custodialCollateral'),
+        // on the storage path the candidates ARE the count (#2095 r2 P2); their amount is not read from storage
+        count: intentSurfaceRouted ? intentRows.length : intentStorage ? intentStorage.rows.length : intentRows.length,
+        total: intentSurfaceRouted || !intentStorage ? sum(intentRows, 'custodialCollateral') : intentStorage.rows.length ? null : '0',
+        totalUnavailable: !intentSurfaceRouted && intentStorage?.rows.length ? "an intent row's amount is not read from storage" : undefined,
         rows: intentRows,
         nonVpfiRowsExcluded: nonVpfiIntentRows,
       },
