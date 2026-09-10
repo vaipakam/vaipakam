@@ -126,6 +126,20 @@ const copySource = {
       description:
         'Plain-language answers about lending, borrowing, NFT rentals, fees, and the risks — plus build and contract info for this deployment.',
     },
+    // #1959 — the two public transparency surfaces. Indexable like the
+    // rows above, not like the per-user block below: both are meant to
+    // be findable, and both render identically for a visitor with no
+    // wallet.
+    analytics: {
+      title: 'Analytics — Vaipakam',
+      description:
+        'Live loan and offer counts for this deployment, read from the public indexer — the same keyless endpoints anyone can call and check for themselves.',
+    },
+    protocolConsole: {
+      title: 'Protocol console — Vaipakam',
+      description:
+        'Current values for the protocol parameters the public indexer publishes — fees, thresholds, durations, and feature flags — read-only and open to anyone.',
+    },
     // Wallet-gated, per-user surfaces — carried for the browser tab
     // title only; SeoMeta marks all of these noindex.
     positions: { title: 'My positions — Vaipakam' },
@@ -357,8 +371,25 @@ const copySource = {
     eraseButton: 'Erase my data',
     eraseConfirm: 'Yes, erase it',
     eraseCancel: 'Cancel',
+    /* Round 54 P2 — the second sentence is new, and it is about the one
+       thing an erasure genuinely cannot reach.
+
+       "Anything you had part-way through will lose its local marker" is
+       true and, for a transaction already broadcast, badly incomplete.
+       Some of those markers record a close-out, a sale or a repayment
+       that is LIVE on the blockchain: erasing removes this browser's note
+       of it, the blockchain keeps running it, and the app — no longer
+       knowing — can offer the same action again. That second attempt can
+       spend a fee for nothing, or act on what is left of a position the
+       first one partly settled.
+
+       Deferring the erasure until such a transaction resolves was
+       considered and rejected: a right-to-erasure control that decides
+       for itself when to obey is not one. So the user is told the
+       consequence and left with the choice, which is the honest shape of
+       a control that cannot undo what has already left the browser. */
     eraseConfirmPrompt:
-      'This cannot be undone. Download a copy first if you want to keep one.',
+      'This cannot be undone. Download a copy first if you want to keep one. If you have sent something to the blockchain that has not finished yet, it keeps going — erasing removes only this browser’s note of it, so this app will stop following it and may offer you the same action again, which could cost you a fee.',
     /** Counts are shown rather than a bare "done" — see `eraseMyData`
      *  for why the three outcomes must stay distinguishable. */
     /* Review round 3 P2 — "from this browser" under-reported whenever
@@ -2241,6 +2272,278 @@ const copySource = {
    *  the fact that doing nothing is the default that costs nothing in
    *  sale forfeitures. Wait renders FIRST and is worded conditionally —
    *  never as a promise of repayment. */
+  // The lender's forced close-out of a loan whose borrower stopped
+  // paying. Three rules govern every string here, and each exists
+  // because the contract makes the obvious wording false:
+  //
+  //  - Nothing states an AMOUNT. `triggerDefault` chooses between an
+  //    internal match, a DEX sale and a full-collateral fallback while
+  //    the transaction runs; no figure is knowable beforehand.
+  //  - Nothing claims the lender is the only one who can do this. The
+  //    call is permissionless, so a keeper may well get there first.
+  //  - Nothing implies the money arrives by itself. Closing sets the
+  //    loan terminal; the lender still claims afterwards.
+  forcedClose: {
+    title: 'This loan is overdue',
+    // The card renders in states where the loan is NOT overdue — while
+    // the borrower still has time, and while the checks are still
+    // running. Reusing the overdue heading there would assert, in the
+    // largest text on the card, the exact fact the body underneath is
+    // saying is not yet true. Found by writing the e2e spec, which had
+    // to match a heading that contradicted the state it was asserting.
+    titlePending: 'If this loan is not repaid',
+    // Deliberately not "liquidate": that word already names the
+    // separate health-factor route on RiskFacet, and using it here for
+    // the time-based one would conflate two different triggers with
+    // different conditions.
+    submit: 'Close out this loan',
+    submitting: 'Closing out…',
+    notYet:
+      'The borrower still has time. Once the repayment window and the grace period after it have both passed, you can close this loan out yourself.',
+    // Never says "not closable" — the app does not know that yet.
+    unknown:
+      'Still checking whether this loan can be closed out. Nothing has been ruled out — this is what the app has not read yet, not what the protocol has refused.',
+    blockedSequencer:
+      'The network’s sequencer is down or still recovering. Closing out is paused until prices can be trusted again — this usually clears on its own, so it is worth trying later.',
+    readyInKind:
+      'The grace period has passed, so you can close this loan out now. The collateral moves out of the borrower’s vault as-is rather than being sold, and you claim it afterwards from the Claims page.',
+    // The honest version of "we cannot do this here". It says the
+    // position IS eligible, which is the part a lender needs, and it
+    // does not pretend the app's limitation is the protocol's.
+    // Round 28 P2 — this used to say the state was "handled by the
+    // protocol's automated closers". There are none: the shipped keeper
+    // routes `triggerLiquidation` only, and nothing in the repo submits
+    // `triggerDefault`. Telling a lender an automated service will
+    // collect for them, when none exists, is the one sentence on this
+    // card that could leave a position open indefinitely.
+    readyNeedsRoute:
+      'The grace period has passed and this loan can be closed out — but its collateral has to be sold on an exchange to do it, and that sale has to be routed by whoever submits the transaction. This app cannot build that route yet, and no automated service currently submits it either, so closing this position needs an operator. Contact support rather than waiting for it to happen on its own.',
+    // Round 31 P2 — a liquid, non-collapsed position the protocol can
+    // settle against an opposing one. `triggerDefault` dispatches that
+    // match BEFORE the swap branch, so the app CAN close this today;
+    // treating it as `readyNeedsRoute` withheld a working action. The
+    // copy names the LENT asset, because an internal match settles at
+    // oracle price rather than handing over collateral.
+    readyInternalMatch:
+      'The grace period has passed, so this loan can be acted on now. The protocol has an opposing position it can settle this one against, so instead of the collateral being sold you are repaid in the asset you lent, at the oracle price when the transaction runs. That opposing position may not be large enough to cover the whole loan — if it is not, only part settles and the rest stays open for you to close again later.',
+    // Round 34 P2 — a rental default recovers something else entirely.
+    // `DefaultedFacet` clears the renter, leaves the lender's NFT where
+    // it already is, and records a claim for the PREPAID rental asset
+    // after fees. The in-kind copy said collateral moves out of the
+    // borrower's vault and that the amount depends on what it is worth;
+    // neither is true here.
+    readyRental:
+      'The grace period has passed, so you can end this rental now. Your NFT stays where it is and the renter’s access is removed. What becomes claimable is the rent that was paid up front, less fees — you claim it from the Claims page.',
+    // Round 39 P2 — the race sentence used to live inside
+    // `readyInternalMatch` and promised that losing the race merely
+    // costs a network fee. That is true only when the fallthrough
+    // reaches the swap branch with no route. Where the collateral is an
+    // NFT, is illiquid with consent recorded, or has collapsed past the
+    // LTV threshold, the contract falls through to the IN-KIND branch
+    // and the close-out SUCCEEDS with a different asset. So the outcome
+    // is named per fallback, chosen by `forcedCloseWithoutMatch` — which
+    // derives it from the resolver rather than restating the ordering.
+    // Round 44 P2 — the race runs BOTH ways and only one direction was
+    // disclosed. `triggerDefault` re-checks for an opposing position
+    // on-chain at DefaultedFacet.sol:287, after this card's read and
+    // after the pre-submit simulation. So a loan that read as in-kind,
+    // or as needing a routed sale, can gain a candidate in between and
+    // settle as a match instead — repaying the LENT asset rather than
+    // moving collateral. The receipt already admitted both outcomes; the
+    // card body and its valuation note still promised one.
+    matchMayAppear:
+      'One thing can change this. The protocol looks for an opposing position to settle against at the moment the transaction runs, not when this page was loaded — so if one has appeared since, the loan is settled that way instead: you are repaid in the asset you lent, and possibly only in part.',
+    raceFallbackFails:
+      'Someone else may settle against that opposing position first. If that happens this close-out does not simply stop — it carries on down whatever route the protocol finds next. Here that route cannot complete, so the attempt would fail and cost you only the network fee. The loan stays open and you can try again.',
+    raceFallbackInKind:
+      'Someone else may settle against that opposing position first. If that happens this close-out does not simply stop — it carries on down whatever route the protocol finds next. Here that route hands you the borrower’s collateral as it stands instead of the asset you lent. The close-out still succeeds — you would simply be recovering something different from what this card describes above.',
+    raceFallbackRental:
+      'Someone else may settle against that opposing position first. If that happens this close-out does not simply stop — it carries on down whatever route the protocol finds next. Here that route ends the rental instead: the renter’s access is removed, your NFT stays where it is, and the rent paid up front becomes claimable less fees.',
+    raceFallbackUnknown:
+      'Someone else may settle against that opposing position first. If that happens this close-out does not simply stop — it carries on down whatever route the protocol finds next. Which route that is cannot be worked out in advance from what the app has read, so this attempt may either complete with a different recovery or fail costing only the network fee.',
+    blockedPaused:
+      'The protocol is paused right now, so nothing can be closed out until governance lifts it. Your position and the collateral behind it are unaffected by the pause.',
+    // Not "the app cannot" — nobody can. Worth saying plainly, because
+    // it is the one state on this card where waiting is genuinely
+    // pointless and support is the only route.
+    blockedNoConsent:
+      'This loan is past its grace period, but it was opened without both sides recording the risk-and-terms acknowledgement the protocol requires before it will hand over collateral that has no market price. As things stand the close-out is refused for everyone, not just for you — contact support.',
+    submitted:
+      'Close-out submitted. Give the page a moment to catch up — what actually happened is decided while the transaction runs, and the refreshed position will show whether the loan ended or part of it is still running. Anything that became yours appears on the Claims page.',
+    // Round 50 P1 — shown once the app has waited past its own bound
+    // without a receipt for the submitted transaction OR for anything
+    // that replaced it. It says the true thing, which is that we do not
+    // know: offering the button again here would invite a second
+    // close-out behind a first that may still be live, and saying
+    // nothing would present an indefinitely disabled button as an
+    // ordinary pause. It names the wallet as the place to look because
+    // the wallet is where the answer actually is.
+    submittedUnaccounted:
+      'Your close-out was sent, but we have not been able to confirm what happened to it. That does not mean it failed — a transaction can sit unconfirmed for a while and still go through, and if it does, this position will update on its own. We are still watching for it, and we keep watching if you leave this page and come back. Until we know, the button stays off, because sending a second close-out while the first may still be live could cost you a fee for nothing. Check this transaction in your wallet — that is where the answer is.',
+    // Round 53 self-review. The persistence added in that round created a
+    // dead end the copy above used to cover by accident: the record used
+    // to die with the page, so reloading cleared a stuck hold. Now it
+    // survives, and a lender whose transaction genuinely vanished has no
+    // way back to the action at all — the app refuses forever, on a funds
+    // path, over something it cannot verify.
+    //
+    // So it asks the person who CAN verify it. The app does not know the
+    // transaction is gone and does not claim to; the lender reads their
+    // wallet and tells us. That is the honest division of labour, and it
+    // is why this is worded as their statement rather than as a reset
+    // button.
+    forgetSubmission: 'My wallet says this transaction is gone',
+    forgetSubmissionNote:
+      'We cannot check your wallet ourselves, so if your wallet no longer shows this transaction — not pending, not confirmed, simply gone — tell us and we will stop waiting for it and let you try again. Only do this if you have actually looked. If the transaction is still out there and later goes through, a second close-out could cost you a fee for nothing.',
+    /* Round 63 P2 — the card KNOWS which of the three non-success
+       endings happened, and used to drop that on the floor: the hold
+       released, the ordinary copy and the button came back, and the
+       lender was left to work out for themselves whether their close-out
+       had reverted, been cancelled, or been displaced. Three sentences
+       are cheap; making somebody reconstruct a funds-path outcome from
+       an unchanged screen is not.
+
+       Each says the same two things in its own terms — nothing changed,
+       and you may try again — because that is what all three have in
+       common and what a lender most needs first. What differs is the
+       cause, and the cause is what tells them whether to expect it to
+       happen again. */
+    outcomeReverted:
+      'Your close-out reached the blockchain and was rejected, so nothing moved and the loan is exactly as it was. You can try again. If it keeps being rejected, something about this loan has changed since you started — reloading will show its current state.',
+    outcomeCancelled:
+      'You cancelled this close-out from your wallet before it went through, so nothing moved and the loan is exactly as it was. You can start again whenever you like.',
+    outcomeReplaced:
+      'Another transaction from your wallet took this one’s place before it went through, so the close-out never ran and nothing moved. You can start again whenever you like.',
+    /* Round 54 P2 — shown when this browser REFUSED to store the record
+       of a close-out (private mode, storage disabled, quota). The hold
+       still works on this page; what does not survive is a reload, which
+       is precisely the protection the stored record exists for. Saying
+       "reloading loses this" is a smaller and more useful statement than
+       either silence or a general warning about browser settings, so it
+       names the one action to avoid and why. */
+    submitRecordNotStored:
+      'This browser would not let us save a note of the close-out you just sent. Nothing is wrong with the transaction itself — but if you reload this page or come back to it later, we will have forgotten that you sent it, and you may be offered the button again while it is still going through. Until this position updates, please avoid reloading, and check the transaction in your wallet if you are unsure.',
+    /* Round 54 P1 — the second tab's refusal. Deliberately about the
+       RECORD rather than about the chain: this browser knows a close-out
+       for this loan was sent from it, and knows nothing about whether it
+       succeeded. Both halves are stated because a lender who is told only
+       "already sent" will reasonably assume the position is closed. */
+    alreadySubmittedElsewhere:
+      'A close-out for this loan has already been sent from this browser — most likely in another tab. We have not sent a second one. This page will follow that transaction and update when it settles; check your wallet if you want to see where it is.',
+    // Round 28 P2 — names WHO is paid, not just who may act. The
+    // proceeds follow the lender position NFT as it stands when the
+    // transaction runs, and this card is reachable by a wallet whose
+    // last ownership poll is up to a minute old.
+    notExclusive:
+      'Anyone can close out an overdue loan, not just you. If someone else does it first, this position will show as closed, or — if only part of it settled — as smaller than it was. Whatever the close-out recovers goes to whoever holds the lender position for this loan at that moment — so if you have transferred or sold it, it is theirs, not yours.',
+    claimNote: 'Closing out does not move funds to your wallet by itself. What you are owed becomes claimable once the loan has fully closed. If the protocol settles only part of it, that part is held for you until the rest closes later.',
+    // Round 40 P2 — true of every route EXCEPT the internal match.
+    // `DefaultedFacet` passes `msg.sender` as the matcher, and
+    // `_settleLeg` sends the per-leg incentive straight to that address
+    // with `safeTransfer` while only `moved - incentive` reaches the
+    // lender's vault. So on that route something DOES arrive in the
+    // submitting wallet immediately, and it is taken out of the amount
+    // the lender later claims. Saying "nothing moves to your wallet"
+    // was wrong in both directions at once.
+    // Round 50 P2 — the incentive sentences moved OUT of this string,
+    // into the three `matcherIncentive*` strings below, because whether
+    // the incentive is paid at all depends on the submitting wallet and
+    // this note does not. They are separate ELEMENTS rather than a
+    // composed sentence: `_executeTwoWayMatch` zeroes `incentiveBps` for
+    // a sanctioned matcher, so a flagged lender reading the old ending
+    // ("Submit it yourself and that part is yours immediately") was
+    // being promised a transfer the contract does not make for them.
+    // That posture is reachable, not hypothetical — `triggerDefault` is
+    // a Tier-2 close-out path that stays open to a flagged caller by
+    // design, and the auto-dispatch passes `msg.sender` as the matcher.
+    claimNoteInternalMatch:
+      'The amount you are owed does not arrive in your wallet by itself — it becomes claimable once the loan reaches a terminal state. If the opposing position covers only part of this loan, the settled part is held for you and becomes claimable when the rest is closed later, not straight away.',
+    // The three eligibility cases for the matcher incentive. Full
+    // sentences, one per case, never assembled at runtime — the same
+    // rule the match-race paragraph follows, and for the same reason
+    // (a join character that is wrong in Japanese and Chinese).
+    matcherIncentiveYours:
+      'One part is different: the protocol pays whoever submits this transaction a small matcher incentive, sent straight to the submitting wallet. It comes out of the same settled amount rather than on top of it, so submitting this yourself moves that part to you immediately and reduces what you claim later by the same amount.',
+    // Deliberately precise about WHERE the money goes instead, because
+    // "you do not get the incentive" would overstate the loss. Zeroing
+    // it folds each leg's share back into that leg's lender: the part
+    // taken from this position returns to what this lender claims, and
+    // only the part from the opposing position goes elsewhere.
+    matcherIncentiveNotPaid:
+      'One part works differently for your wallet. The protocol normally pays whoever submits this transaction a small matcher incentive, straight to the submitting wallet — but it is not paid to a wallet the sanctions oracle has flagged, and yours is flagged. The close-out itself still runs. The part of that incentive which would have been taken from this position stays in what you claim; the part that would have come from the opposing position goes to that position’s lender instead.',
+    matcherIncentiveUnknown:
+      'One part is not settled yet. The protocol pays whoever submits this transaction a small matcher incentive, straight to the submitting wallet, unless the sanctions oracle has flagged that wallet — and the check on yours has not come back. Until it does, we cannot tell you which of those applies to you.',
+    // Round 40 P2 — the shared note names a collateral valuation, and
+    // neither of these two routes has one. A rental makes the FIXED
+    // prepaid rent claimable after the treasury split; an internal match
+    // repays the lent asset at the oracle price when the transaction
+    // runs, which is a different unknown from "what the collateral is
+    // worth".
+    outcomeNoteRental:
+      'What becomes claimable is the rent that was already paid, less the protocol’s share. It does not depend on what anything is worth when the transaction runs.',
+    outcomeNoteInternalMatch:
+      'What comes back is the asset you lent, valued at the oracle price at the moment the transaction runs — so the amount is not known in advance, and it is not a question of what the collateral is worth.',
+    intentNote:
+      'If the borrower has a pending swap-to-repay order on this loan, closing out cancels it.',
+    outcomeNote:
+      'How much comes back depends on what the collateral is worth when the transaction runs, so the amount is not known in advance.',
+    // The six receipt rows. `youReceive` is the one worth reading
+    // twice: every other receipt in the app puts a figure here, and
+    // this one cannot, because the contract has not chosen between its
+    // three settlement paths yet. Saying "the collateral" and naming
+    // the claim step is the true answer; a number would be invented.
+    receipt: {
+      // Round 28 P2 — it is not always the collateral. Before the
+      // in-kind branch, `triggerDefault` tries an internal match, which
+      // settles at oracle price and pays in the LENDING asset instead;
+      // a match smaller than the position can also leave the loan open.
+      // The old wording named one of three outcomes as if it were the
+      // only one.
+      youReceive:
+        'Either the borrower’s collateral, or — if the protocol can settle this position against an opposing one instead — the amount you lent, in the asset you lent it in. Which of the two is decided while the transaction runs, and either way you claim it afterwards. No figure is known in advance.',
+      youLock: 'Nothing.',
+      youMayOwe: 'Nothing beyond the network fee.',
+      // Both real, and neither obvious. A lender who closes out has
+      // given up the loan running to term — which, if the borrower was
+      // about to pay, was worth more than the collateral.
+      // Round 34 P2 — the second sentence used to say closing out is
+      // final and the borrower can never repay. That contradicted
+      // `whenThisEnds` directly below, which had already been corrected
+      // to admit partial settlement and a failed sale: a residual stays
+      // Active, and a fallback stays curable by the borrower. Two rows
+      // of one receipt disagreeing about the loan's lifecycle is worse
+      // than either being vague.
+      youCanLose:
+        'If the collateral is worth less than you are owed, you absorb the shortfall. Where this transaction does end the loan, it ends it for good — the borrower can no longer repay it with interest. Where it only settles part, or the sale cannot go through, the loan stays open and the borrower may still repay or add collateral.',
+      fees: 'The network fee, plus the protocol’s share of any sale proceeds.',
+      // Round 28 P2 — "straight away" was not guaranteed. A partial
+      // internal match settles part of the position and leaves the loan
+      // Active, and a failed sale leaves it curable in fallback.
+      whenThisEnds:
+        'Usually straight away — this transaction normally ends the loan. If the protocol can only settle part of it, or the sale of the collateral cannot go through, the loan stays open and you can close it again later.',
+    },
+    // Round 39 P2 — the shared receipt above describes collateral-sale
+    // economics, and a rental default has none of them. `DefaultedFacet`
+    // removes the renter's access, leaves the lender's own NFT exactly
+    // where it is, and records a claim for the PREPAID rent after fees.
+    // Nothing of the borrower's moves, there is no sale, and there is no
+    // shortfall to absorb — so every row needed its own answer rather
+    // than a reworded one. This is the fourth surface to carry the wrong
+    // rental description (card body, functional spec, release note, and
+    // now the confirmation); the receipt was missed each time because it
+    // is state-independent and reads correctly for the majority route.
+    rentalReceipt: {
+      youReceive:
+        'The rent that was paid up front, less fees, in the asset it was paid in. Your NFT is not part of this — it stays where it already is. You claim the rent afterwards from the Claims page.',
+      youLock: 'Nothing.',
+      youMayOwe: 'Nothing beyond the network fee.',
+      youCanLose:
+        'Nothing. The rental term and the grace period after it have both already passed, so there is no remaining term to give up and no rent still to accrue — the whole term was paid for up front. Your NFT never leaves your vault, and there is no shortfall for you to absorb. Until this runs, the renter keeps access they are no longer entitled to.',
+      fees: 'The network fee, plus the protocol’s share of the prepaid rent.',
+      whenThisEnds:
+        'The rental ends when this transaction settles. Your NFT does not move, and what was prepaid becomes claimable.',
+    },
+  },
   lenderExit: {
     title: 'Your options as the lender',
     blurb:
@@ -4470,6 +4773,214 @@ const copySource = {
     invalidAddress: 'Enter a valid contract address — “0x” followed by 40 hex characters.',
     // aria-label for the contract-address field, prefixed by the asset label.
     contractAddressAria: tmpl('{{label}} contract address', ['label']),
+  },
+  /* Public transparency dashboard (#1959). Wallet-free and a marketing
+     deep-link target, so every string here is read by people who have
+     never connected — it translates like the rest of the app. */
+  analytics: {
+    title: 'Protocol analytics',
+    lede: tmpl(
+      'Live counts from the public indexer for chain {{chain}}. No wallet needed — these are the same keyless endpoints anyone can query.',
+      ['chain'],
+    ),
+    refresh: 'Refresh',
+    unreachable:
+      'The indexer did not answer, so no figures are shown. Nothing is inferred from the silence — an unreachable indexer is not evidence of zero activity.',
+    loading:
+      'Reading the latest figures from the public indexer…',
+    uninitialized:
+      'The indexer answered, but has not read any blocks yet, so there are no figures to show. That is a fact about the indexer, not about the protocol — a database that has ingested nothing would report zero of everything, which is exactly why those zeros are withheld here rather than displayed.',
+    contractLabel: 'Diamond contract',
+    notReported: 'not reported',
+    /* Round 54 P2 — kept SEPARATE from "not reported", because they are
+       different facts about the indexer and this page's whole business
+       is not blurring those. "Not reported" means the field was absent.
+       This one means it arrived and could not be a count — negative,
+       fractional, or not a finite number — so the figure is withheld and
+       the reason is the producer's, not a gap. Telling a reader a value
+       was missing when it was in fact impossible would hide a defect in
+       the very system the page exists to let them audit. */
+    notUsable: 'reported, but not a usable count',
+    loansHeading: 'Loans',
+    offersHeading: 'Offers',
+    offersScope:
+      'On-chain offers only. Gasless signed orders are not counted here, though they are fillable and do appear in the offer book.',
+    active: 'Active',
+    repaid: 'Repaid',
+    defaulted: 'Defaulted',
+    liquidated: 'Liquidated',
+    settled: 'Settled',
+    total: 'Total',
+    erc20Active: 'ERC-20 loans active',
+    // Round 41 P2 — the indexer counts an active row whose lending
+    // asset is still the `'0x'` placeholder, but excludes it from both
+    // typed subtotals. Naming the difference is the whole point: an
+    // unexplained gap on a transparency page is worse than the gap.
+    unclassifiedActive: 'Active, type not yet read',
+    unclassifiedActiveNote:
+      'Some active loans arrived before the indexer had read what asset they are in, so they are counted in the total but not yet in either type below it. They move into the right one as the details are filled in.',
+    // Self-review, 2026-09-09. The residual used to be clamped with
+    // `Math.max(0, …)`, which is right that a negative count must not be
+    // rendered and wrong about what to do instead: it folds "the
+    // endpoint contradicted itself" into "there is no residual", so
+    // three counters that do not add up were shown side by side with
+    // nothing saying so. A reader can do the subtraction themselves.
+    //
+    // The standing principle is that an unstated unknown is a defect, so
+    // the page states it. Deliberately about the FIGURES rather than
+    // about the reader's position: nothing here is at risk, the split is
+    // simply not trustworthy, and saying more than that would be its own
+    // invention.
+    activeSplitContradiction: 'These counts do not add up',
+    activeSplitContradictionNote:
+      'The totals below disagree: the loans broken down by type add up to more than the number of active loans they are meant to be part of. That is a fault in how these figures were counted, not in any loan — nothing here is at risk, and this page cannot tell you the correct split until the counts agree. The total and the breakdown are both shown as reported so you can see the discrepancy rather than take our word for it.',
+    nftRentalsActive: 'NFT rentals active',
+    accepted: 'Accepted',
+    cancelled: 'Cancelled',
+    expired: 'Expired',
+    consumedBySale: 'Consumed by sale',
+    fullyFilled: 'Fully filled',
+    // Round 28 P2 — this is a settlement state (a liquidation sale
+    // that failed and left the collateral held for retry or
+    // distribution), not a row whose metadata is still loading.
+    // "Awaiting details" invited a reader of the transparency page to
+    // dismiss exposed collateral as an indexing gap.
+    fallbackPending: 'Settlement pending',
+    internalMatched: 'Internally matched',
+    other: 'Other',
+    // An offer the chain still calls active, whose expiry the indexer
+    // never managed to read. Named rather than counted as active,
+    // because nothing has established it is still fillable.
+    activeUnknownExpiry: 'Active, expiry unknown',
+    // Says what the offer Total actually counts. Cancelled offers are
+    // dropped from the index once they are past the retention window,
+    // so this figure is the records currently held — not every offer
+    // ever made. A page whose claim is that its numbers can be checked
+    // must not let "Total" be read as a lifetime count it is not.
+    offersRetentionNote:
+      'Total counts the offers currently on record. Cancelled offers are dropped from the index after about a month, so this is not a lifetime count — it can go down as old cancellations age out.',
+    transparencyHeading: 'Transparency',
+    transparencyBody:
+      'Every figure above is read from the public indexer API, which is keyless and open-CORS. You do not have to trust this page — query the same endpoints yourself and compare.',
+    cursorBlock: 'Indexer cursor block',
+    lastIngest: 'Last ingest',
+    chain: 'Chain',
+    unknown: 'unknown',
+    caveat:
+      'These counts are as current as the cursor above, not as current as the chain. If the last ingest is old, the numbers are old — that is why the age is shown here rather than left for you to guess. Settlement figures come from indexed events, so a state change that has not been ingested yet will not appear.',
+    ageSeconds: tmpl('{{n}}s ago', ['n']),
+    ageMinutes: tmpl('{{n}} min ago', ['n']),
+    ageHours: tmpl('{{n}} h ago', ['n']),
+  },
+  /* Public, read-only governance parameters (#1959). */
+  protocolConsole: {
+    title: 'Protocol console',
+    lede: tmpl(
+      'Current values for the protocol parameters the public indexer publishes for chain {{chain}} — fees, thresholds, durations and feature flags. Not every governance-tunable setting is published here yet, so read this as a subset rather than the full picture; the parameter reference lists them all. Public and read-only — no wallet needed, and no controls here change anything. Governance changes go through the timelock, not this page.',
+      ['chain'],
+    ),
+    refresh: 'Refresh',
+    reference: 'Parameter reference',
+    // The off-state used to promise the reference "remains public" and
+    // link to it. It does not: the marketing site's reference page reads
+    // the SAME flag and redirects to its home page, so the only action
+    // this posture offered could not deliver what it said (review round
+    // 2 P2). Says nothing about the reference now, and offers no link.
+    hiddenBody:
+      'Parameter visibility is turned off on this deployment, so the live values are not shown here. This is a display setting only — the parameters themselves are on-chain and readable by anyone directly from the contracts.',
+    unavailable:
+      'No configuration snapshot is available for this chain. Nothing is inferred from that — it means the value is unknown here, not that it is unset on-chain.',
+    /* Round 65 P2 — the state between "here are the values" and "there is
+       no snapshot", which used to be reported as the latter.
+
+       The published snapshot arrived, but without the named values this
+       page insists on. That happens when an older worker sends only the
+       positional bundle, and — the case worth protecting — when the
+       indexer withholds the names because a stored bundle's length no
+       longer matches the current contract. Guessing at that point would
+       show a real number under the wrong label, which is the one failure
+       this page was built to avoid. Saying "no snapshot" instead was
+       also wrong, just more quietly: it discarded the age, the block and
+       the staleness verdict, all of which are real. */
+    labelsUnavailable:
+      'A configuration snapshot exists for this chain, but its values did not arrive with the names this page needs to label them. Rather than guess which number belongs to which setting — and risk showing a real value under the wrong name — the values are withheld. The provenance below is still accurate, and the parameters themselves remain readable directly from the contracts.',
+    // Distinct from `undated` on purpose: this is the indexer telling us
+    // the values ARE behind, not that their age is unknown.
+    /* Round 64 P2 — this used to send readers to the parameter reference
+       "for what is in force now", and that reference cannot answer the
+       question. Its live-value pipeline reads THIS SAME `/config/:chainId`
+       snapshot, rejects the zero-timestamp stale row, and falls back to
+       the compile-time defaults — so it can display the original starting
+       values at precisely the moment this console knows governance has
+       moved them. Sending someone there for current values hands them a
+       confident wrong answer instead of an admitted unknown, which is the
+       one thing this page exists not to do.
+
+       The reference is still the right place to understand what each knob
+       MEANS and where it started. For what is in force right now, only
+       the chain can say. */
+    knownStale:
+      'The indexer has seen a governance change that came after this snapshot, so these values are known to be out of date — not merely of uncertain age. Treat them as historical. For what is in force right now, read the parameters from the contracts on this chain, or on a public explorer; the parameter reference explains what each setting means and where it started, but it cannot tell you the current value.',
+    undated:
+      'This snapshot carries no usable timestamp, so there is no way to tell how old these values are. They may be current or they may be long superseded — read them as unverified rather than as the protocol’s present configuration.',
+    stale:
+      'This snapshot is more than a day old, so treat the values below as historical. Config changes normally reach the snapshot within one ingest scan.',
+    notReported: 'not reported',
+    feesHeading: 'Fees',
+    treasuryFee: 'Treasury fee',
+    treasuryFeeHint: 'Cut of interest at settlement.',
+    loanInitiationFee: 'Loan initiation fee',
+    loanInitiationFeeHint: 'Charged once, at accept.',
+    liquidationHandlingFee: 'Liquidation handling fee',
+    matcherFee: 'Matcher fee',
+    riskHeading: 'Risk',
+    maxSlippage: 'Max liquidation slippage',
+    maxIncentive: 'Max liquidator incentive',
+    volatilityLtv: 'Volatility LTV threshold',
+    volatilityLtvHint: 'LTV at which the volatility collapse rule applies.',
+    rentalBuffer: 'NFT rental buffer',
+    limitsHeading: 'Limits and timing',
+    autoPause: 'Auto-pause duration',
+    maxOfferDuration: 'Max offer duration',
+    flagsHeading: 'Feature flags',
+    rangeAmount: 'Range amount offers',
+    rangeRate: 'Range rate offers',
+    partialFill: 'Partial fill',
+    tiersHeading: 'VPFI discount tiers',
+    tiers: 'Tiers',
+    tierThreshold: tmpl('Tier {{n}} threshold', ['n']),
+    // `{{amount}}` arrives in VPFI TOKEN units — `exactAmountString`
+    // converts the 18-decimal base-unit string before it gets here. The
+    // placeholder was named `raw` and the template said "(raw)" back
+    // when the value really was base units; after the conversion that
+    // label described the number as something it is no longer, which is
+    // worse than no label at all on a page read for exact figures.
+    tierValue: tmpl('{{amount}} VPFI → {{discount}} discount', ['amount', 'discount']),
+    enabled: 'enabled',
+    disabled: 'disabled',
+    days: 'days',
+    provenance: 'Read from the public indexer’s configuration snapshot',
+    provenanceBlock: tmpl(' at block {{block}}', ['block']),
+    // The age is stated in the SAME sentence as the source, so a reader
+    // cannot take in where a figure came from without also taking in how
+    // old it is. An undated snapshot says so rather than saying nothing.
+    //
+    // `{{age}}` ARRIVES AS A COMPLETE RELATIVE PHRASE — "12s ago",
+    // "vor 12 s", "12 秒前" — because it comes from the same
+    // `ageSeconds`/`ageMinutes`/`ageHours` templates the analytics page
+    // renders on their own. So this wrapper must NOT add a relative
+    // marker of its own. The first version did, in English and in all
+    // nine translations at once, producing "taken 12s ago ago" and
+    // "aufgenommen vor vor 12 s" everywhere.
+    provenanceAge: tmpl(', taken {{age}}', ['age']),
+    provenanceAgeUnknown:
+      ', with no usable timestamp on it — so how current these values are is unknown',
+    provenanceTail:
+      '. The same endpoint is keyless and open-CORS, so you can verify any figure here independently rather than taking this page’s word for it.',
+    bpsValue: tmpl('{{pct}}% ({{bps}} bps)', ['pct', 'bps']),
+    hoursValue: tmpl('{{h}} h ({{s}}s)', ['h', 's']),
+    minutesValue: tmpl('{{m}} min ({{s}}s)', ['m', 's']),
+    secondsValue: tmpl('{{s}}s', ['s']),
   },
   copyAddress: {
     copyAria: tmpl('Copy address {{address}}', ['address']),

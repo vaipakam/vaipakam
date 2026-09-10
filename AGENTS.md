@@ -2,6 +2,40 @@
 
 This file provides shared agent guidance for working in this repository.
 
+## Standing principle — clean architecture, and transparency about funds
+
+**User directive, 2026-09-09.** This outranks convenience, diff size, and
+schedule. Where a choice exists, take the architecturally clean approach and
+the most transparent presentation of funds and operational detail, **even
+when it costs more effort and more time.**
+
+What this means in practice, for reviews and for implementation alike:
+
+- **No shortcut that trades structure for speed.** A layered, modular
+  placement that costs an extra file is preferred over a quick inline one
+  that muddies a boundary. If the clean version is genuinely out of scope
+  for the change at hand, say so explicitly and open an issue — do not ship
+  the shortcut silently.
+- **Money and state get stated, not implied.** Any surface that touches
+  funds, fees, collateral, claims, or a position's lifecycle must say what
+  it knows, say what it does not know, and never present a figure or an
+  outcome it cannot substantiate. Silence about an unknown is a defect, not
+  a neutral omission.
+- **Operational posture is disclosed.** Where a deployment's own
+  configuration changes what a user sees or can do, the surface says so.
+  Hiding a capability behind a flag without telling the reader the flag
+  exists is the failure mode this rule exists to prevent.
+- **When a doc and the code disagree, the intended-behaviour doc wins the
+  argument and the code gets fixed** — unless a human explicitly decides
+  otherwise and records the decision. Do not resolve a divergence by
+  quietly rewriting the spec to match what was built.
+- **Prefer the honest, more expensive answer to the cheap, confident one.**
+  A message that admits an unknown age, an unroutable settlement, or an
+  intrinsic race is better product than one that implies certainty it does
+  not have.
+
+Applies to `#2072` and to every future intent decision of the same shape.
+
 ## GitHub Review Commands
 
 Use these command conventions when a PR, issue, or project card asks for an

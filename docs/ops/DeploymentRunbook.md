@@ -1751,7 +1751,7 @@ pointed at.
 
 | Hostname | Worker | Source | Notes |
 | --- | --- | --- | --- |
-| `app.vaipakam.com` | `vaipakam-app` | `apps/app` | The connected app. **BOUND** (verified 2026-09-07: the hostname served the exact `/assets/index-*.js` hash a `pnpm run deploy` had just published). Verify it that way, never by status code — this host and `defi.vaipakam.com` both return an identical 200 SPA shell for *every* path, including ones that do not exist. The marketing site's links still resolve to the legacy host, which is now a deliberate hold, not a missing prerequisite: see the cutover note below. |
+| `app.vaipakam.com` | `vaipakam-app` | `apps/app` | The connected app. **BOUND** (verified 2026-09-07: the hostname served the exact `/assets/index-*.js` hash a `pnpm run deploy` had just published). Verify it that way, never by status code — this host and `defi.vaipakam.com` both return an identical 200 SPA shell for *every* path, including ones that do not exist. Since #1959 the marketing site's links resolve HERE — both remaining destinations were ported and `APP_TARGET` was flipped. Still on the legacy host by design: the `/recover` guide links, held by same-origin browser storage rather than by any missing route. See the cutover note below. |
 | `vaipakam.com` | `vaipakam-www` | `apps/www` | Marketing + docs, wallet-free. Apex, not `www`. |
 | `agent.vaipakam.com` | `vaipakam-agent` | `apps/agent` | Origin-gated API. A bare `GET /` answering **403 `Forbidden` is correct, not an outage** — `apps/agent/src/index.ts:258` rejects any request whose `Origin` is not in `FRONTEND_ORIGIN`, and a curl sends none. **To actually health-check it, send an allowed Origin**: `curl -H 'origin: https://vaipakam.com' https://agent.vaipakam.com/nope` should return **404**, the Worker's own fallback. 403 with an allowed Origin means that origin is missing from `FRONTEND_ORIGIN`; 403 *without* one proves nothing. (#1971 — filed on the belief this was an outage, closed as designed behaviour.) |
 | `indexer.vaipakam.com` | `vaipakam-indexer` | `apps/indexer` | |
@@ -1814,11 +1814,26 @@ a config-empty build on the production hostname.
 
 Populate `apps/app/.env.local` first. A build with none of the nineteen
 `VITE_*` operator variables is a preview build, not a deployable one.
-There is a twentieth setting, `VITE_APP_PUBLIC_ORIGIN`, which is NOT
-among them and cannot be: the `prebuild` step reads it from the shell
-environment rather than from `.env.local`, and it selects the origin in
-the generated sitemap and robots.txt. Leave it unset for the production
-deploy; export it for any deployment served from another origin.
+There is a twentieth setting, `VITE_APP_PUBLIC_ORIGIN`, which selects
+the origin in the generated sitemap and robots.txt. It is read through
+Vite's own `loadEnv`, so `.env.local` works for it exactly like every
+other variable here — an earlier version of this paragraph said it
+could only come from the shell, which was true of the previous prebuild
+and is not true now. Leave it unset for the production deploy; set it
+for any deployment served from another origin.
+
+There is a twenty-first, `VITE_ADMIN_DASHBOARD_PUBLIC`, and it is the
+only one that must be set the SAME WAY IN TWO APPS. Unset — or anything
+other than `false` — means the read-only protocol console is public,
+which is the retail posture and what the marketing site links to. Set it
+to `false` only for a pre-launch or fork deployment that should not
+publish live governance values, and set it for `apps/www` as well as
+`apps/app`: `apps/app` gates the page and its documentation link, while
+`apps/www` gates the marketing links and the sitemap entry. Setting it
+in one app alone produces the two worst outcomes available — a marketing
+link advertising a page the app withholds, or a live console nothing
+points at. It is read at BUILD time, so it must be in place before
+`pnpm run deploy`; changing it later needs a rebuild of both Workers.
 Be precise about what that costs, because the failure is partial:
 chain reads still work — every chain in `apps/app/src/chain/chains.ts`
 carries a public `rpcUrlDefault` and `rpcUrlFor` falls back to it
@@ -1858,19 +1873,56 @@ advertises a hostname that nothing answers.
 
 ### Retiring a surface — redirect, don't delete
 
-**`defi.vaipakam.com` is not retirable yet, and not just for bookmark
-reasons.** The #1854 rename rehomed the connected app but did not port
-every surface the old one served: `apps/app` defines no `/analytics`
-and no `/protocol-console`, so that host is still the only thing
-serving those two public tools, and the marketing site links to them
-there on purpose. Retiring it — or blanket-redirecting it to
-`app.vaipakam.com`, which would land those links on the app's NotFound
-page — breaks them. Port the tools first, then retire. (The NFT
-Verifier is fine: it WAS ported, as `/nft`.)
+**`defi.vaipakam.com` is now retirable as a link target, with one
+condition that is NOT about links.** The blocker recorded here for
+months was that `apps/app` defined neither `/analytics` nor
+`/protocol-console`, so that host was the only thing serving those two
+public tools. #1959 ported both, and `APP_TARGET` was flipped with
+them, so the marketing site's links resolve to `app.vaipakam.com` and
+every destination they name exists there. (The NFT Verifier was
+already fine: it was ported as `/nft`.)
 
-For a host that is genuinely superseded, converting its Worker into a
-redirect beats deleting it: bookmarks and external links keep working,
-and per-origin browser storage is lost on an origin change regardless,
+What remains is the `/recover` guide links, and they are held for a
+different reason than a missing route — porting them is not what
+unblocks it. That flow keeps its pending-recovery marker in
+**same-origin browser storage**, so somebody mid-recovery who is sent
+to the new origin cannot see their own marker and may broadcast a
+second recovery. A redirect does not help: it lands on the new origin
+too. Those links move once the legacy host's in-flight attempts have
+drained, which is a decision about elapsed time and observed traffic,
+not about code.
+
+**So: do NOT touch `defi.vaipakam.com` yet — neither delete it NOR
+convert it into a redirect.** Both send a recovery user to the new
+origin, which is the whole problem; a redirect is not the safe half of
+this choice, it is the same failure with a friendlier name. An earlier
+version of this very section said a redirect was "safe for every tool
+link today", two sentences after stating that a redirect lands on the
+new origin too — the correct fact and the opposite conclusion, side by
+side. That is worth recording because this hazard has now been reached
+by three different routes, and the seductive step each time is the one
+that looks partial and reversible.
+
+The host stays as it is until the legacy `/recover` attempts have
+drained. Then the guide links move, and only then is the host
+retirable — by redirect or otherwise.
+
+See the notes beside `APP_TARGET` in `apps/www/src/lib/appUrl.ts` for
+the current state.
+
+For a host that is genuinely superseded — which, per the above,
+`defi.vaipakam.com` is NOT yet — converting its Worker into a
+redirect beats deleting it: bookmarks and external links keep working
+**for the paths the new app still answers** — which is not all of them,
+and the difference has to be checked rather than assumed. A
+path-preserving redirect only lands people somewhere useful where the
+destination host has a route for that path; where it does not, the
+visitor reaches the catch-all not-found page, which is a worse outcome
+than a dead host only in that it looks like the app is broken rather
+than gone. The retired connected app served several paths that have no
+counterpart or alias today — see the enumeration in #2076 — so treat "bookmarks keep working" as a claim to verify per host,
+not a property of redirecting. Per-origin browser storage is lost on an
+origin change regardless,
 so a redirect at least lands people on a working app instead of a dead
 host. `alpha02.vaipakam.com` qualifies today — it was the live
 testnet-review target for months and is cited throughout

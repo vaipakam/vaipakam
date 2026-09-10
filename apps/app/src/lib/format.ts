@@ -120,3 +120,74 @@ export function fullTermInterest(
     (principal * BigInt(rateBps) * BigInt(durationDays)) / (10_000n * 365n)
   );
 }
+
+/**
+ * A number formatted in the APP's selected language, not the device's.
+ *
+ * ROUND 65 P2 — `toLocaleString()` with no locale uses the runtime
+ * default, which is the browser or OS setting. That is the wrong source
+ * for any surface whose labels come from this app's own language
+ * picker: German selected on an en-US device produced German labels
+ * beside English-formatted numbers, and the functional spec requires
+ * live values to follow the chosen language.
+ *
+ * Deliberately separate from `exactAmountString` above, which pins
+ * `en-US` on purpose — a token amount is a quantity a user may copy,
+ * paste and compare, and locale-swapping its separators would change
+ * what it appears to say. This helper is for figures being READ:
+ * percentages, counts, block numbers.
+ */
+export function localeNumber(
+  n: number,
+  locale: string | undefined,
+  opts?: Intl.NumberFormatOptions,
+): string {
+  return n.toLocaleString(locale, opts);
+}
+
+/** Does this runtime's `Intl.NumberFormat` accept a STRING and keep
+ *  every digit of it?
+ *
+ *  ES2023 added arbitrary-precision formatting for string input. An
+ *  older engine coerces the argument to `number` instead, which for an
+ *  18-decimal threshold silently rounds — and rounding a figure on a
+ *  page that exists so figures can be checked is worse than leaving it
+ *  unformatted. So this probes with a value only the exact path can
+ *  reproduce (`1.000000000000000001` survives; a `number` round-trip
+ *  collapses it to `1`) and the caller falls back to the raw string. */
+const FORMATS_EXACT_STRINGS = ((): boolean => {
+  try {
+    return (
+      new Intl.NumberFormat('en', { maximumFractionDigits: 20 }).format(
+        '1.000000000000000001' as unknown as number,
+      ) === '1.000000000000000001'
+    );
+  } catch {
+    return false;
+  }
+})();
+
+/**
+ * Locale-format an EXACT decimal string with no numeric round-trip.
+ *
+ * The companion to `localeNumber` for values that must not be rounded:
+ * a `uint256`-derived threshold has more significant digits than a
+ * double carries, so `localeNumber(Number(s), …)` would change the
+ * figure while formatting it. Where the runtime cannot format exactly,
+ * the raw string is returned unchanged — ASCII separators are a
+ * cosmetic loss, a rounded threshold is a factual one.
+ */
+export function localeDecimalString(
+  value: string,
+  locale: string | undefined,
+): string {
+  if (!FORMATS_EXACT_STRINGS) return value;
+  if (!/^-?\d+(\.\d+)?$/.test(value)) return value;
+  try {
+    return new Intl.NumberFormat(locale, {
+      maximumFractionDigits: 20,
+    }).format(value as unknown as number);
+  } catch {
+    return value;
+  }
+}

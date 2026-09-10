@@ -133,14 +133,32 @@
 /faucet/*
   X-Robots-Tag: noindex
 
+# `/nft/:tokenId` — REAL pages, deliberately not indexed. A category of
+# its own, and it is neither of the two below it: the children are not
+# soft 404s, and the parent stays indexable.
+#
+# This block is round 56 P3 and it closes a gap rather than only
+# correcting a comment. SeoMeta widened `/nft/*` from "noindex the
+# malformed ids" to "noindex every token id" — token details are an
+# unbounded url space of thin lookups and the sitemap has never listed
+# them — but that decision is a META TAG, which only a crawler that
+# executes JavaScript ever sees. The header is what the others read, and
+# without this line they were free to index the whole space. A noindex
+# that depends on JS execution is precisely the failure this file exists
+# to prevent.
+#
+# `/nft` itself is absent on purpose: the verifier's entry point is
+# indexable and is in the sitemap. `/nft/*` does not match it.
+/nft/*
+  X-Robots-Tag: noindex
+
 # Childless PUBLIC routes — the route itself is indexable, but any
 # deeper path (`/borrow/anything`) is NotFound in the router: the SPA
 # fallback still serves the index shell with a 200, so a non-executing
-# crawler would otherwise index a soft 404 (Codex #1309 r8). `/nft` is
-# deliberately ABSENT from this list: `/nft/:tokenId` children are
-# valid, indexable pages (SeoMeta noindexes the malformed ones after
-# hydration). `/positions/*` already carries noindex in the
-# wallet-gated block above.
+# crawler would otherwise index a soft 404 (Codex #1309 r8).
+# `/positions/*` already carries noindex in the wallet-gated block
+# above, and `/nft/*` in the block directly above this one — for a
+# different reason, which is why it is not folded in here.
 
 /borrow/*
   X-Robots-Tag: noindex
@@ -156,6 +174,57 @@
   X-Robots-Tag: noindex
 /help/*
   X-Robots-Tag: noindex
+# #1959 — the two public transparency routes are exact and childless in
+# App.tsx, so `/analytics/spam` is NotFound in the router. Cloudflare's
+# SPA fallback still answers 200 with the index shell, and a crawler
+# that does not execute `SeoMeta` would index that soft 404 — the same
+# reason every route above is listed.
+# REMOVED, not narrowed (round 37 P3). These two child splats existed to
+# noindex soft 404s like `/analytics/foo`, but `*` also matches an empty
+# remainder — so `/analytics/` picked up `noindex` while `SeoMeta` strips
+# the trailing slash and correctly chooses `index: true`. A header cannot
+# be undone after hydration, so the response won that disagreement and a
+# valid form of a public URL was withheld from the index.
+#
+# Deleting them rather than rewriting the pattern, because the `/:locale/*`
+# rule below already covers every path with a non-empty child segment —
+# `/analytics/foo` matches it with first segment `analytics` — so these
+# were redundant for the case they were written for. Narrowing with a
+# `:placeholder` would have worked too; deletion needs no assumption
+# about how the matcher treats an empty segment, which is the assumption
+# that produced this bug.
+#
+# RESIDUAL — NOW MEASURED, AND IT RESOLVED AGAINST THE DELETION.
+# This block used to say the empty-remainder question could not be
+# settled from here. It can be, against the deployed app, and it was
+# (2026-09-09, `app.vaipakam.com`):
+#
+#     /vpfi      200, no X-Robots-Tag
+#     /vpfi/     200, x-robots-tag: noindex     <- `/vpfi/*` matched
+#     /vpfi/foo  200, x-robots-tag: noindex
+#
+# So a splat DOES match an empty remainder, and `/:locale/*` therefore
+# matches `/analytics/` too, with first segment `analytics` and an empty
+# rest. Deleting the two child splats removed a redundant rule; it did
+# NOT change what a crawler receives for the trailing-slash form, which
+# is still `noindex`. The earlier claim that this was "strictly better"
+# was wrong — the outcome is identical, and only the rule count moved.
+#
+# The same is true of EVERY single-segment public route: `/borrow/`,
+# `/lend/`, `/rent/`, `/offers/`, `/desk/`, `/vpfi/`, `/help/`,
+# `/analytics/`, `/protocol-console/` are all noindexed in their
+# trailing-slash form by `/:locale/*`, whatever the child splats above
+# do. Deleting five more rules would not fix it either, for the same
+# reason.
+#
+# The actual fix is a REDIRECT, not a header — strip the trailing slash
+# at the edge so only one form is ever served. That is a global routing
+# change to the deployed Worker (a `_redirects` rule, or
+# `html_handling: drop-trailing-slash`, which issues a 307 rather than
+# the 301 canonicalization wants), and it cannot be verified before it
+# ships. It is tracked as its own change rather than folded in here.
+# Until then the consolidation signal is the canonical `SeoMeta` emits,
+# which points at the slashless URL and is what a crawler follows.
 
 # SPA aliases (App.tsx Navigate routes). The redirect only happens
 # after JS runs, so a non-executing crawler fetching an alias gets
@@ -222,4 +291,58 @@
 /nft-rental
   X-Robots-Tag: noindex
 /nft-rental/*
+  X-Robots-Tag: noindex
+# The two aliases this PR added (round 38 P3). Both are single-segment,
+# and `/:locale/*` below needs a first segment followed by more path —
+# so neither is covered by it and both were served as an indexable 200
+# shell to a crawler that never runs `Navigate`. `/nft-verifier` would
+# then be indexed as a duplicate of `/nft`, and `/admin` as a duplicate
+# of `/protocol-console` — or, where the console is hidden, as a public
+# address for a page this deployment has chosen not to present.
+# The `/*` partners cover a locale-free deep bookmark like
+# `/admin/docs`, which the alias block above pairs for the same reason.
+/nft-verifier
+  X-Robots-Tag: noindex
+/nft-verifier/*
+  X-Robots-Tag: noindex
+/admin
+  X-Robots-Tag: noindex
+/admin/*
+  X-Robots-Tag: noindex
+
+# ── Locale-prefixed aliases from the retired deployment ──────────────
+#
+# The old app mounted every route under `/:locale`, so `/es/positions/7`
+# and `/de/analytics` are real bookmarks this app answers — with a React
+# route that strips the prefix and re-enters the router. A crawler that
+# does not execute the SPA never runs that redirect, nor SeoMeta, and
+# receives the generic indexable 200 shell. The per-user rules above are
+# EXACT paths, which a locale prefix walks straight past.
+#
+# ONE placeholder rule, not one pair per locale, and the reason is a
+# hard limit: `_headers` accepts at most 100 rules. Enumerating 34
+# locales took this file from 59 rules to 127, and the Cloudflare
+# Workers build failed on both commits that did so while passing on
+# every commit before them. It also never grows — adding a locale needs
+# no edit here.
+#
+# `/:locale/*` matches a first segment followed by more path, so it
+# cannot touch anything this app wants indexed: EVERY url in the
+# generated sitemap is single-segment, which `src/lib/localeHeaders.test.ts`
+# asserts precisely so this rule stays safe. What it does catch beyond
+# the locale aliases is `/nft/:tokenId` — a per-token lookup with an
+# unbounded url space that the sitemap already omits, so withholding it
+# from the index is right on its own merits; the verifier's own entry
+# point `/nft` stays indexable.
+#
+# RESIDUAL, stated rather than hidden: a BARE `/es` is not covered.
+# `/:locale` as a pattern would match every single-segment path —
+# `/borrow`, `/analytics`, the lot — so it cannot be used, and spelling
+# out 34 bare paths would put this file back at 94 of its 100 rules,
+# where the next locale or route silently breaks the build again. The
+# cost is that `/es` may be indexed as a duplicate of `/`. That is an
+# SEO nuisance, not an exposure: the bare prefix redirects to the public
+# home page, and every per-user route is a deeper path the rule above
+# already covers.
+/:locale/*
   X-Robots-Tag: noindex

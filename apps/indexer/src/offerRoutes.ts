@@ -168,14 +168,72 @@ function toJson(row: OfferRow): Record<string, unknown> {
  * Used by the homepage hero card and by the offer-book preloader to
  * decide whether to pull a fresh page or trust the cached payload.
  */
+/** Statuses this endpoint publishes under their own name. Anything else
+ *  a future indexer persists lands in `other`, so the published buckets
+ *  always sum to the published `total`. */
+const KNOWN_OFFER_STATUSES = new Set([
+  'active',
+  'accepted',
+  'cancelled',
+  'expired',
+  'consumed_by_sale',
+  'fullyFilled',
+  'active_unknown_expiry',
+]);
+
 export async function handleOffersStats(req: Request, env: Env): Promise<Response> {
   const url = new URL(req.url);
   const chainId = parseChainId(url.searchParams.get('chainId')) ?? 8453;
   try {
     const counts = await env.DB.prepare(
-      `SELECT status, COUNT(*) as n FROM offers WHERE chain_id = ? GROUP BY status`,
+      // BOOKKEEPING ROWS ARE NOT OFFERS (#2069 review round 8).
+      // Lender-sale and preclose-offset vehicles mint a temporary offer
+      // row to carry the mechanics; migrations 0029 and 0031 flag them
+      // precisely so they are excluded from anything a person reads, and
+      // every other query in this file that faces a user already filters
+      // them. This one did not — tolerable while it was an internal
+      // aggregate, and not once the public transparency dashboard
+      // renders it as the deployment's offer count, where a vehicle
+      // inflates `total` and an open one inflates `active` too.
+      // EXPIRY IS LAZY ON-CHAIN, so a lapsed GTT offer's row still reads
+      // `status='active'` until some later event touches it — this file
+      // documents that at the `/offers/active` handler, and that handler
+      // offers `excludeExpired` precisely because of it. Grouping on the
+      // raw status published a public "Active" count full of offers
+      // nobody can fill, next to an "Expired" count that read ~0.
+      //
+      // Reclassified rather than dropped: the row is still a real offer
+      // that really existed, so the lifetime `total` must not move. Only
+      // which bucket it lands in changes. `expires_at = 0` is GTC — never
+      // expires — and must not be swept in by a `<=` against now.
+      //
+      // A STUB'S ZERO IS NOT GTC (review round 20 P2). When the inline
+      // `getOfferDetails` read fails, the ingest inserts the row without
+      // an `expires_at` at all, so it takes the column DEFAULT — which
+      // is 0, the same value that means "never expires". If healing keeps
+      // failing past the offer's real deadline, an unfillable offer is
+      // published as active for as long as that lasts, and the ingest
+      // cursor advances regardless, so the wrong count sits beside
+      // apparently fresh provenance. `is_stub = 1` is exactly "expiry
+      // unknown" — healing flips it to 0 as it writes the real value —
+      // so those rows get their own bucket instead of borrowing the GTC
+      // meaning of a placeholder.
+      `SELECT
+         CASE
+           WHEN status = 'active' AND is_stub = 1
+             THEN 'active_unknown_expiry'
+           WHEN status = 'active' AND expires_at != 0 AND expires_at <= ?
+             THEN 'expired'
+           ELSE status
+         END AS status,
+         COUNT(*) as n
+       FROM offers
+        WHERE chain_id = ? AND is_sale_vehicle = 0 AND is_offset_vehicle = 0
+        GROUP BY 1`,
     )
-      .bind(chainId)
+      // Bind order follows the SQL text, not the clause order you'd say
+      // aloud: the `?` inside the CASE appears before the one in WHERE.
+      .bind(Math.floor(Date.now() / 1000), chainId)
       .all<{ status: string; n: number }>();
     // Note: chainIndexer.ts writes the cursor with `kind = 'diamond'`
     // (it scans the diamond's full event surface — offers + loans).
@@ -193,11 +251,20 @@ export async function handleOffersStats(req: Request, env: Env): Promise<Respons
       accepted: 0,
       cancelled: 0,
       expired: 0,
+      // A normal terminal state for a range offer (filled, or dust
+      // remainder). Seeded so it is always present in the response
+      // rather than appearing only once one exists.
+      fullyFilled: 0,
       // T-086 Round-8 §19.7e + Codex round-20 P2 — Scenario A
       // parallel-sale terminal. Without this bucket the public
       // `total` (used by dashboard / lifetime-metrics widgets) would
       // silently undercount every sold-before-acceptance offer.
       consumed_by_sale: 0,
+      // Active on chain, but its expiry metadata never healed — so
+      // whether it is still fillable is unknown. Named rather than
+      // folded into `active`, which would assert a fillability nothing
+      // has established (review round 20 P2).
+      active_unknown_expiry: 0,
     };
     for (const row of counts.results ?? []) {
       tally[row.status] = row.n;
@@ -209,12 +276,40 @@ export async function handleOffersStats(req: Request, env: Env): Promise<Respons
       cancelled: tally.cancelled,
       expired: tally.expired,
       consumedBySale: tally.consumed_by_sale,
-      total:
-        tally.active +
-        tally.accepted +
-        tally.cancelled +
-        tally.expired +
-        tally.consumed_by_sale,
+      // NAMED so `total` can be reconciled. `fullyFilled` is a normal
+      // terminal state for a range offer, and `other` catches any status
+      // this endpoint has not been taught yet — without them a reader
+      // adding up the published buckets got less than the published
+      // Total and had no way to find the difference, on a page whose
+      // whole claim is that its figures can be checked.
+      fullyFilled: tally.fullyFilled ?? 0,
+      // Active on chain, expiry metadata never healed — so nothing has
+      // established whether it is still fillable. Published under its
+      // own name rather than counted as active (review round 20 P2).
+      activeUnknownExpiry: tally.active_unknown_expiry ?? 0,
+      other: Object.entries(tally)
+        .filter(([k]) => !KNOWN_OFFER_STATUSES.has(k))
+        .reduce((a, [, n]) => a + n, 0),
+      // EVERY PERSISTED STATUS, for the same reason `/loans/stats`
+      // sums every tally: a range offer that closes as fully filled (or
+      // as dust) is persisted with status `fullyFilled`, and adding only
+      // the five named statuses undercounted the book whenever any range
+      // offer had completed. A category silently missing from a figure
+      // labelled "Total" is exactly what the public dashboard exists to
+      // prevent.
+      //
+      // NOT A LIFETIME TOTAL, and nothing here should be written as if
+      // it were (review round 16 P2). `pruneOldCancelledOffers` deletes
+      // cancelled rows past `CANCELLED_OFFER_RETENTION_DAYS` (30 by
+      // default), so this figure and `cancelled` beside it both FALL as
+      // old cancellations age out. That is deliberate — cancelled rows
+      // exist so the dashboard's filter can render without a per-row RPC,
+      // and they stop earning their storage once nobody is looking them
+      // up — but it makes this a count of the records currently held,
+      // not of every offer ever made. The dashboard states that next to
+      // the figure; a durable lifetime counter would need its own
+      // event-sourced aggregate and is not what this row set is.
+      total: Object.values(tally).reduce((a, b) => a + b, 0),
       // Deploy provenance (version-metadata binding): every deploy —
       // Workers Builds auto-deploys and manual wrangler alike — mints a
       // new version id, so "is the merged code live?" is answerable

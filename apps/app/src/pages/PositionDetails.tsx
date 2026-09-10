@@ -69,6 +69,13 @@ import { RefinanceFlow } from '../components/RefinanceFlow';
 import { RefinancePendingCard } from '../components/RefinancePendingCard';
 import { EarlyRepayOptionsCard } from '../components/EarlyRepayOptionsCard';
 import { LenderExitOptionsCard } from '../components/LenderExitOptionsCard';
+import { ForcedCloseCard } from '../components/ForcedCloseCard';
+import {
+  decideForcedClose,
+  forcedCloseWithoutMatch,
+  type ForcedCloseInput,
+} from '../data/forcedClose';
+import { useForcedCloseReads } from '../data/useForcedClose';
 import { ObligationTransferFlow } from '../components/ObligationTransferFlow';
 import { OffsetFlow } from '../components/OffsetFlow';
 import { OffsetPendingCard } from '../components/OffsetPendingCard';
@@ -105,7 +112,8 @@ type ConfirmSurface =
   | 'offset'
   | 'early-exit'
   | 'loan-sale'
-  | 'sale-teardown';
+  | 'sale-teardown'
+  | 'forced-close';
 
 export function PositionDetails() {
   const { loanId: loanIdParam } = useParams();
@@ -483,9 +491,26 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     // full-repay CURE surface still renders, and an accepted sale must
     // pause that cure with the explanation up front rather than let
     // the live pre-write gate block it as a surprise.
+    // Round 29 P1 — LENDER HOLDERS TOO, and the forced-close
+    // interlock is why. `saleCompletionPending` is derived from this
+    // probe, and round 28 used it to stop a forced close from
+    // terminalizing a loan whose accepted sale still needs its manual
+    // `completeLoanSale`. But this read was borrower-only, so on the
+    // lender's own page `saleHold.data` was permanently `undefined`
+    // and that interlock could never fire — a guard that looked right
+    // at its use site and was inert at its source, on exactly the
+    // surface it was written to protect.
+    //
+    // The lender-side `useLoanSalePending` is not a substitute: its
+    // `listed` keys on the sale LOCK, which is held for the whole
+    // lifecycle, so it cannot tell an accepted sale from a live
+    // listing — and blocking a close-out on a live listing nobody has
+    // taken would withhold an action that is genuinely due. This probe
+    // classifies the two apart, which is precisely what the interlock
+    // needs.
     Boolean(loan.data) &&
       saleEligible &&
-      role === 'borrower' &&
+      (role === 'borrower' || isLenderHolder) &&
       (effectivelyActive || loan.data?.status === 'fallback_pending'),
   );
   // Durable success flag — keeps the card (and its confirmation)
@@ -553,7 +578,17 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     // borrower never opened a review for, against a different chain's
     // listing. Only this surface's slot is cleared; other flows own
     // their own reset.
-    setConfirmingSurface((sfc) => (sfc === 'sale-teardown' ? null : sfc));
+    // Round 28 P1 — the forced-close receipt is chain-scoped for the
+    // same reason, and worse in consequence: `triggerDefault` is
+    // permissionless, so a receipt carried across a chain switch onto
+    // an equally `ready-in-kind` loan N is one click from closing out
+    // a position the lender never opened a review for. Listed
+    // explicitly rather than clearing the slot unconditionally —
+    // other surfaces own their own reset, and this block has no
+    // standing to discard theirs.
+    setConfirmingSurface((sfc) =>
+      sfc === 'sale-teardown' || sfc === 'forced-close' ? null : sfc,
+    );
   }
   // The ref advances in a LAYOUT effect, not a passive one (Codex #1683 r1).
   // I had argued the guard and the state it protects must move together, so
@@ -899,6 +934,38 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     partialInputWei !== null &&
     principalBalance.data !== undefined &&
     partialInputWei > principalBalance.data;
+
+  /** Reads behind the lender's forced close-out card.
+   *
+   *  Mounted HERE, above the early returns below, because it is a hook
+   *  — the decision it feeds is resolved much further down, next to
+   *  `resolvedLoanStatus`, where the authoritative status is known.
+   *  Splitting them that way is what keeps the hook order stable; the
+   *  pure `decideForcedClose` can live anywhere, the queries cannot.
+   *
+   *  `enabled` is therefore the CHEAP gate rather than the real one:
+   *  the indexed status keeps these reads off borrower views and off
+   *  settled loans, and `decideForcedClose` still makes the binding
+   *  judgement from the reconciled status later. A loan the indexer
+   *  believes is active but the chain has since closed simply resolves
+   *  to `not-applicable` there and renders nothing. */
+  const forcedCloseReads = useForcedCloseReads({
+    loanId: Number.isFinite(loanId) ? loanId : undefined,
+    // A rental's collateral leg is an NFT and `checkLiquidity` is an
+    // ERC-20 question — but the decision never asks it for a rental,
+    // so leaving this undefined disables a read nothing consults.
+    collateralAsset:
+      loan.data && loan.data.collateralAssetType === AssetType.ERC20
+        ? (loan.data.collateralAsset as `0x${string}`)
+        : undefined,
+    // Round 28 P2 — the RECONCILED active predicate, not the raw
+    // indexed row. A borrower who cures `FallbackPending` back to
+    // Active is Active on chain while the indexer still says
+    // otherwise; keying on the row left every read disabled, so a
+    // fresh visit showed a card checking forever, while a visit with
+    // warm cache could serve a frozen verdict as if it were current.
+    enabled: isLenderHolder && effectivelyActive,
+  });
 
   if (loan.isLoading) {
     return <EmptyState icon={LoaderCircle} title={copy.positions.details.loadingLoan} />;
@@ -1328,6 +1395,98 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       // reads only the sources that can still speak (Codex #1858 r6).
       // The terminal find above keeps the full list on purpose.
     ) ?? freshStatusCandidates.find((st) => st !== undefined);
+
+  /** Whether the lender can force this overdue loan closed, and by
+   *  which of the contract's two routes.
+   *
+   *  The reads are mounted only for a lender holding an ACTIVE
+   *  position — a terminal loan has nothing to force, and a borrower
+   *  viewing their own position should not be paying RPC for a card
+   *  they never see.
+   *
+   *  ROUND 65 P2 — an unread status is passed as `undefined`, not
+   *  `false`. It used to be affirmative-only, on the reasoning that the
+   *  window is brief and self-correcting; that was wrong twice over. A
+   *  persistent RPC failure is not brief, and `not-applicable` does not
+   *  merely delay the card, it removes it — so the capability becomes
+   *  indistinguishable from one that does not exist, which is the exact
+   *  failure the functional spec forbids for this surface. Even the
+   *  ordinary first load flickered it.
+   *
+   *  The old comment's fear — "treating unread as active would flash a
+   *  close-out card onto loans that turn out to be repaid" — is answered
+   *  by `unknown` rather than by `false`: visible, explicitly waiting on
+   *  a check, and non-submittable. Not the lender is still a firm
+   *  `false`; that is a fact, not an unread. */
+  const forcedCloseActive = !isLenderHolder
+    ? false
+    : resolvedLoanStatus === undefined
+      ? undefined
+      : resolvedLoanStatus === LoanStatus.Active;
+  const forcedCloseInput: ForcedCloseInput = {
+    active: forcedCloseActive,
+    defaultable: forcedCloseReads.defaultable,
+    sequencerHealthy: forcedCloseReads.sequencerHealthy,
+    paused: forcedCloseReads.paused,
+    consentFromBoth: forcedCloseReads.consentFromBoth,
+    internalMatchCandidate: forcedCloseReads.internalMatchCandidate,
+    assetType:
+      loan.data === null || loan.data === undefined
+        ? undefined
+        : loanIsRental
+          ? 'rental'
+          : 'erc20',
+    // The PRINCIPAL leg above and the COLLATERAL leg here are separate
+    // axes (round 28 P1). An ERC-20 loan secured by an NFT is neither a
+    // rental nor a liquidity question — the liquidity read is never
+    // issued for it, so without this the decision waited on an answer
+    // that could not arrive.
+    collateralIsNft:
+      loan.data === null || loan.data === undefined
+        ? undefined
+        : collateralIsNft,
+    collateralIlliquid: forcedCloseReads.collateralIlliquid,
+    ltvCollapsed: forcedCloseReads.ltvCollapsed,
+  };
+  const forcedCloseReadiness = decideForcedClose(forcedCloseInput);
+  /** Where a close-out lands if the internal-match candidate is gone by
+   *  the time the transaction mines (round 39 P2). Only meaningful on
+   *  `ready-internal-match`; the card ignores it otherwise. Derived from
+   *  the same resolver rather than restated, so it cannot drift from the
+   *  contract's branch order. */
+  const forcedCloseMatchFallback = forcedCloseWithoutMatch(forcedCloseInput);
+  /** Can this loan carry a swap-to-repay intent at all?
+   *
+   *  Round 41 built this from the LIVE collateral-liquidity probe, and
+   *  round 42 P2 showed that is the wrong input. `SwapToRepayIntentFacet`
+   *  gates on the loan's STORED `principalLiquidity` /
+   *  `collateralLiquidity`, fixed when the loan opened — so a loan
+   *  created Liquid/Liquid can still hold a pending commit after the
+   *  live probe has since turned illiquid, and `triggerDefault`
+   *  force-cancels that commit regardless. Predicting from live
+   *  liquidity therefore SUPPRESSED a disclosure that was still true.
+   *
+   *  Neither remedy Codex proposed is taken verbatim, and the reason is
+   *  worth stating: the stored liquidity fields are NOT on the loan row
+   *  (`IndexedLoanRow` carries `assetType` and `collateralAssetType` and
+   *  no liquidity), and reading the commit state directly is a second
+   *  new chain read — both are a per-position read added for a P3
+   *  wording nuance.
+   *
+   *  So the wrong input is removed rather than replaced. What remains
+   *  are the two exclusions that are certain, immutable for the life of
+   *  the loan, and already in hand: a rental fails the principal-leg
+   *  ERC-20 test, and NFT collateral fails the collateral-leg one. An
+   *  illiquid ERC-20 loan now keeps the note — over-showing, which is
+   *  the direction this note is deliberately biased toward, because
+   *  hiding a live one means a lender cancels the borrower's pending
+   *  order without being told. */
+  const forcedCloseSwapToRepayPossible: boolean | undefined =
+    forcedCloseInput.assetType === undefined ||
+    forcedCloseInput.collateralIsNft === undefined
+      ? undefined
+      : forcedCloseInput.assetType === 'erc20' &&
+        !forcedCloseInput.collateralIsNft;
 
   /** `loanLive`'s chain clock, ADVANCED by local elapsed time.
    *
@@ -3201,6 +3360,106 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           Flagged wallets still see nothing (Tier-1), and a rental is
           excluded entirely — lender early withdrawal does not cover
           rentals in Phase 1. */}
+
+      {/* The forced close-out, for a borrower who stopped paying.
+          `DefaultedFacet.triggerDefault` has been callable the whole
+          time and had no surface here, so a lender could watch the
+          grace period expire with nothing to press.
+
+          Placed ABOVE the exit chooser deliberately. Once a loan is
+          past grace the chooser's rows are the wrong conversation —
+          its lead row is "wait for the loan to run its course", which
+          on an overdue position is advice to keep waiting for
+          something that already failed to happen.
+
+          Unlike the chooser this is NOT rental-excluded: an NFT rental
+          is one of the cases the contract closes out in kind, and it
+          is the case where the one-click path works best.
+
+          `isLenderHolder`, never `role` — a wallet holding BOTH
+          position NFTs resolves to `borrower` and would never see
+          this, which is the same bug Codex r13 caught on the sale
+          surfaces.
+
+          NO sanctions gate, and that is the deliberate part (round 28
+          P1). Every other lender surface on this page is Tier-1 and
+          hides for a flagged wallet; this one is Tier-2. `triggerDefault`
+          carries no `_assertNotSanctioned` at all — its own comment
+          says a time-based default "must not brick" on a sanctioned
+          caller and withholds only the matcher bonus
+          (`if (isSanctionedAddress(msg.sender)) bonus = 0`). Hiding the
+          card would have removed a flagged lender's ONLY self-service
+          recovery from an overdue position, for a transaction the
+          protocol deliberately keeps open to them. */}
+      {isLenderHolder &&
+      // Round 28 P1 — an ACCEPTED loan-sale awaiting its manual
+      // `completeLoanSale` recovery needs the loan to stay Active. The
+      // buyer's principal has already moved; a forced close here
+      // terminalizes the loan and strands that completion permanently.
+      // Same interlock the borrower's settlement flows already carry a
+      // few hundred lines up, applied to the one write on this page
+      // that can reach the same terminal state from the lender side.
+      //
+      // Round 32 P1 — `saleHoldResolving` TOO, and the omission is
+      // instructive: round 28 cited this pattern while copying only
+      // half of it. Every neighbouring settlement write pairs
+      // `saleCompletionPending || saleHoldResolving` at the gate with
+      // an `assertSaleSettlementSafe()` immediately before sending,
+      // because `saleCompletionPending` is FALSE while the probe is
+      // pending or failed — so a gate on it alone leaves the action
+      // enabled through exactly the window where the answer is
+      // unknown. `triggerDefault` never inspects the sale link, so the
+      // simulation succeeds too and nothing downstream catches it.
+      // Fail closed on an unanswered probe, as its siblings do.
+      //
+      // ROUND 40 P2 — failing closed means NOT SUBMITTABLE, not
+      // INVISIBLE, and this gate conflated the two. `saleHoldResolving`
+      // is true while the probe is pending, has errored, or returned
+      // something undecodable, so an RPC failure removed the whole card
+      // and the lender saw neither the action nor any explanation —
+      // potentially for as long as the failure lasted. That is the
+      // opposite of what this card is for: it renders every unresolved
+      // check as visible state, saying which check is running, and the
+      // functional spec requires exactly that. So only a COMPLETED sale
+      // unmounts it now; an unresolved probe maps the readiness to
+      // `unknown`, which is already the state meaning "a check has not
+      // answered yet" and is already non-submittable. The submit path
+      // stays guarded by `assertSaleSettlementSafe()` regardless.
+      !saleCompletionPending ? (
+        <ForcedCloseCard
+          loanId={row.loanId}
+          readiness={
+            saleHoldResolving ? 'unknown' : forcedCloseReadiness
+          }
+          matchFallback={forcedCloseMatchFallback}
+          swapToRepayPossible={forcedCloseSwapToRepayPossible}
+          confirmOpen={confirmingSurface === 'forced-close'}
+          onOpenConfirm={() => setConfirmingSurface('forced-close')}
+          onCloseConfirm={() => setConfirmingSurface(null)}
+          // The whole page mutex (round 28 P2), not just `pending`. A
+          // dual-position holder sees the borrower's approve/submit
+          // flows beside this card, and `phase === 'pending'` left the
+          // confirmation live through `approving` and `submitting` —
+          // two wallet prompts racing, which is exactly what the mutex
+          // exists to prevent.
+          busy={busy}
+          setBusy={setBusy}
+          onClosedOut={() => {
+            void queryClient.invalidateQueries({ queryKey: ['forcedClose'] });
+            void loan.refetch?.();
+          }}
+          // Round 29 P2 — the card's post-submit hold releases on
+          // EVIDENCE, not on a timer, so it needs to know when the
+          // actionability read last returned.
+          // The LIVE re-check every settlement write on this page runs
+          // immediately before sending. The gate above is a cached
+          // verdict up to a tip interval old; an acceptance landing
+          // inside that window must not slip a terminalizing write
+          // through (round 32 P1).
+          preSubmitBlock={assertSaleSettlementSafe}
+        />
+      ) : null}
+
       {isLenderHolder &&
       // Codex r10 P2 — `fallback_pending` belongs here, not only
       // `active`. r9 added copy telling a lender that a loan settling

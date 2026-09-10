@@ -11,6 +11,44 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - GitHub repo for this project is: https://github.com/vaipakam/vaipakam.
 - Always look for a better approach and let the user know about it to decide
 
+### Clean architecture and fund transparency outrank effort (user directive 2026-09-09)
+
+**Verbatim intent: always go for the architecturally clean approach and the
+most transparent way on funds and operation details — do things accordingly
+and appropriately EVEN IF IT TAKES MORE EFFORT AND TIME.**
+
+This is a standing tie-breaker, not a preference. When a cheaper option and a
+cleaner one both satisfy the request, the cleaner one is the requirement.
+
+- **Structure over speed.** Take the layered, modular placement even when it
+  costs an extra module, an extra seam, or another review round. Where the
+  clean version is genuinely outside the change at hand, say so and open an
+  issue — never ship the shortcut silently.
+- **Funds and lifecycle state get stated, never implied.** Any surface
+  touching principal, interest, fees, collateral, claims, or a position's
+  status must say what it knows, say what it does not know, and never render
+  a figure or an outcome it cannot substantiate. An unstated unknown is a
+  defect. This is why the forced-close card names no amount, why the protocol
+  console reports an undeterminable age as unknown rather than as an age, and
+  why a settlement route the app cannot drive says so instead of offering a
+  button that would fail.
+- **Operational posture is disclosed.** Where a deployment's own config
+  changes what a user sees or may do, the surface says the config exists.
+  Hiding a capability behind a flag without telling the reader is the failure
+  this rule prevents.
+- **Docs vs code divergence resolves toward intent.** `docs/FunctionalSpecs/`
+  states what the platform is MEANT to do; when it and the code disagree, the
+  code is the candidate bug. Resolving a divergence by rewriting the spec to
+  match the implementation requires an explicit recorded human decision —
+  see `_CodeVsDocsAudit.md`.
+- **Prefer the honest expensive answer to the cheap confident one.** Copy
+  admitting an intrinsic race, an unknown timestamp, or an unroutable
+  settlement is better product than copy implying a certainty the system does
+  not have.
+
+The same principle is recorded for all agents in
+[`AGENTS.md`](AGENTS.md) under "Standing principle".
+
 ## Build & Test Commands
 
 All commands must be run from the `contracts/` directory:

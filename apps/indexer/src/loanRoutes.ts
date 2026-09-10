@@ -845,13 +845,37 @@ export async function handleClaimCandidates(
  * via `getAssetPrice` and multiplies. This endpoint stays
  * deterministic and fast (no oracle dep).
  */
+/** Statuses this endpoint publishes under their own name. Anything else
+ *  lands in `other`, so the published buckets always sum to `total`. */
+const KNOWN_LOAN_STATUSES = new Set([
+  'active',
+  'repaid',
+  'defaulted',
+  'liquidated',
+  'settled',
+  'fallback_pending',
+  'internal_matched',
+]);
+
 export async function handleLoansStats(req: Request, env: Env): Promise<Response> {
   const url = new URL(req.url);
   const chainId = parseChainId(url.searchParams.get('chainId')) ?? 8453;
   try {
     // Counts per status.
     const counts = await env.DB.prepare(
-      `SELECT status, COUNT(*) as n FROM loans WHERE chain_id = ? GROUP BY status`,
+      // SALE VEHICLES ARE NOT BORROWER POSITIONS (#2069 review round 8).
+      // Selling a lender position emits a temporary bookkeeping loan,
+      // which migration 0029 flags precisely so it stays out of anything
+      // a person reads — and `getLoans`, the activity feed and the
+      // claimables query all already filter it. This one did not, so
+      // every secondary sale raised the count as though a new loan had
+      // originated. Invisible while this was an internal aggregate;
+      // not once the public dashboard prints it as the deployment's
+      // loan total. (`loans` carries no `is_offset_vehicle` column —
+      // that flag exists on `offers` only.)
+      `SELECT status, COUNT(*) as n FROM loans
+        WHERE chain_id = ? AND is_sale_vehicle = 0
+        GROUP BY status`,
     )
       .bind(chainId)
       .all<{ status: string; n: number }>();
@@ -861,15 +885,60 @@ export async function handleLoansStats(req: Request, env: Env): Promise<Response
       defaulted: 0,
       liquidated: 0,
       settled: 0,
+      // Normal lifecycle states, seeded so they are always present in
+      // the response rather than appearing only once one exists.
+      fallback_pending: 0,
+      internal_matched: 0,
     };
     for (const row of counts.results ?? []) {
       tally[row.status] = row.n;
     }
     // Asset-type breakdown for the active set (ERC-20 vs NFT rental).
     const assetTypeBreakdown = await env.DB.prepare(
+      // Same exclusion as the status counters above. Without it the
+       // ERC-20 / NFT active subtotals could EXCEED the `active` count
+       // beside them while a sale vehicle is open — two figures on one
+       // card disagreeing, which is worse than either being wrong alone.
+      // EXCLUDE ROWS WITH NO ASSET METADATA — which is NOT the same set
+      // as `is_stub = 1`.
+      //
+      // Two different paths set that flag. Fallback B (no
+      // `LoanInitiatedDetails`, canonical read-back failed) inserts
+      // `asset_type = 0` regardless of what the loan is, so counting
+      // those published every such NFT rental as an active ERC-20 loan.
+      // The companion-event path ALSO sets `is_stub = 1`, but only
+      // because the two position token IDs are missing — it writes the
+      // REAL `assetType` from the event. Keying on the flag therefore
+      // dropped correctly classified loans from both subtotals while
+      // healing was merely delayed, which is its own inaccuracy.
+      //
+      // `lending_asset` is the discriminator: fallback B writes the
+      // literal `'0x'` placeholder, the companion path writes the actual
+      // address. So this asks the question that matters — do we know
+      // what this loan is? — rather than a flag that answers a
+      // different one.
+      //
+      // TWO SENTINELS, not one (round 61 P2). `'0x'` is what fallback B
+      // writes today; rows predating it carry the COLUMN DEFAULT,
+      // `0x0000…0000` (migrations/0005:52), and migration 0009 marks
+      // those as stubs without normalising the value. Excluding only
+      // `'0x'` let such a row through with its default `asset_type = 0`
+      // and published it as an ERC-20 loan — a false classification, not
+      // a gap. Worse, it was a SILENT one: the subtotals then reconcile
+      // against `active`, so the unclassified remainder reads zero and
+      // the transparency page's contradiction notice never fires. A
+      // misfiled row that makes the arithmetic look right is exactly what
+      // that notice exists to expose.
+      //
+      // The `active` count above still includes both kinds, so the
+      // subtotals may sum to less than `active` while metadata-less rows
+      // await healing. That direction is the honest one: undercounting a
+      // type is an admitted gap, misfiling it is a false statement.
       `SELECT asset_type, COUNT(*) as n
        FROM loans
-       WHERE chain_id = ? AND status = 'active'
+       WHERE chain_id = ? AND is_sale_vehicle = 0
+         AND lending_asset NOT IN ('0x', '0x0000000000000000000000000000000000000000')
+         AND status = 'active'
        GROUP BY asset_type`,
     )
       .bind(chainId)
@@ -894,8 +963,14 @@ export async function handleLoansStats(req: Request, env: Env): Promise<Response
     // past memory pressure we can add a precomputed
     // `volume_by_asset` materialised view.
     const volumeRows = await env.DB.prepare(
+      // And again for lifetime volume and average APR: a secondary sale
+      // is not an origination, so counting its bookkeeping row inflates
+      // volume and drags the rate average toward a number nobody agreed
+      // to. Every aggregate in this handler now excludes vehicles —
+      // the previous commit fixed one query and left these two, which
+      // is the third time this exact omission has been found.
       `SELECT lending_asset, principal, interest_rate_bps
-       FROM loans WHERE chain_id = ?`,
+       FROM loans WHERE chain_id = ? AND is_sale_vehicle = 0`,
     )
       .bind(chainId)
       .all<{ lending_asset: string; principal: string; interest_rate_bps: number }>();
@@ -944,8 +1019,28 @@ export async function handleLoansStats(req: Request, env: Env): Promise<Response
       defaulted: tally.defaulted,
       liquidated: tally.liquidated,
       settled: tally.settled,
-      total:
-        tally.active + tally.repaid + tally.defaulted + tally.liquidated + tally.settled,
+      // NAMED so `total` reconciles — see the offers endpoint. The loans
+      // table also holds `fallback_pending` and the terminal
+      // `internal_matched`, both normal lifecycle states, and `other`
+      // absorbs anything added later.
+      fallbackPending: tally.fallback_pending ?? 0,
+      internalMatched: tally.internal_matched ?? 0,
+      other: Object.entries(tally)
+        .filter(([k]) => !KNOWN_LOAN_STATUSES.has(k))
+        .reduce((a, [, n]) => a + n, 0),
+      // EVERY PERSISTED STATUS, not the five named above. The GROUP BY
+      // returns whatever statuses exist, and this table also holds
+      // `fallback_pending` and the terminal `internal_matched` — so
+      // adding only the named five reported a total lower than the
+      // number of loan rows whenever either existed, with neither
+      // population represented anywhere else in the response.
+      //
+      // That was survivable while this was an internal aggregate. It is
+      // not now that the public transparency dashboard presents this
+      // figure to readers as the deployment's total loan count: a total
+      // that silently omits a category is exactly the kind of number
+      // that page exists so nobody has to take on trust.
+      total: Object.values(tally).reduce((a, b) => a + b, 0),
       erc20ActiveLoans,
       nftRentalsActive,
       volumeByAsset: volumeByAssetSerialized,
@@ -1212,7 +1307,10 @@ export async function handleLoansTimeseries(
  *   - `asset_type = 0 AND collateral_asset_type = 0`: ERC-20 both legs. The
  *     desk's markets are ERC-20/ERC-20 pairs; NFT-legged loans are a
  *     different product surface (rentals) and their rate isn't comparable.
- *   - Metadata-less stub rows (fallback-B inserts, lending_asset = '0x')
+ *   - Metadata-less stub rows — fallback-B inserts carry `'0x'`;
+ *     rows predating that carry the column default `0x0000…0000`. Both
+ *     are "we do not know what this loan is" and both are excluded from
+ *     the typed subtotals (round 61 P2).
  *     can never match the market equality filter, so no explicit `is_stub`
  *     predicate is needed — and MUST NOT be added: a companion-path row with
  *     is_stub = 1 only lacks its position token ids (see the LoanInitiated

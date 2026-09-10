@@ -34,6 +34,7 @@ import { useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { copy } from '../content/copy';
+import { isProtocolConsolePublic } from '../lib/protocolConsoleVisibility';
 
 /** Production origin every canonical is rooted at. Hardcoded on
  *  purpose (same rationale as www): the canonical is what crawlers
@@ -78,7 +79,14 @@ function metaForPath(rawPathname: string): RouteMeta {
   // matchRoutes behaviour) — normalize trailing slashes so a slashed
   // URL of a public page doesn't fall through to the noindex NotFound
   // row while rendering valid content (Codex #1309 r6).
-  const pathname = rawPathname.replace(/\/+$/, '') || '/';
+  // LOWER-CASED, like `tosExitRoutes.isExitRoute` does for the same
+  // reason (round 35 P3): React Router matches route declarations
+  // case-insensitively, so `/Analytics` renders the real page — while
+  // these exact comparisons fell through to the NotFound row, making a
+  // working public page announce "Page not found", emit `noindex` and
+  // drop its canonical. Two modules classifying the same pathname must
+  // not disagree about what the router will do with it.
+  const pathname = rawPathname.toLowerCase().replace(/\/+$/, '') || '/';
   const seo = copy.seo;
   // Route table mirroring App.tsx EXACTLY: exact-only routes match
   // exactly (in the router, `/borrow/anything` is NotFound — emitting
@@ -97,10 +105,49 @@ function metaForPath(rawPathname: string): RouteMeta {
   // (`/^[1-9]\d*$/` in the page) — a malformed id (`/nft/foo`,
   // `/nft/0`) renders just the empty form, a thin duplicate that must
   // not be indexable (Codex #1309 r5).
-  if (pathname === '/nft' || /^\/nft\/[1-9]\d*$/.test(pathname)) {
-    return { ...seo.nftVerifier, index: true };
+  if (pathname === '/nft') return { ...seo.nftVerifier, index: true };
+  // A TOKEN DETAIL IS NOT INDEXABLE, and this must agree with
+  // `_headers.base` (round 35 P3). The `/:locale/*` response rule added
+  // for locale-prefixed bookmarks also matches `/nft/123`, so the header
+  // says noindex while this row said indexable and emitted a canonical —
+  // a direct contradiction of the functional spec's requirement that a
+  // crawler which does not run the app sees the same decision a browser
+  // sees after it loads.
+  //
+  // Resolved toward noindex rather than by narrowing the header rule,
+  // because it is right on its own merits: token details are an
+  // unbounded url space of thin lookups, the sitemap has never listed
+  // them, and the verifier's own entry point stays indexable. Malformed
+  // ids (`/nft/foo`, `/nft/0`) render just the empty form and were
+  // already excluded (Codex #1309 r5); this widens that to every token
+  // id rather than only the malformed ones.
+  // ONE child segment, via the same helper every other parameterised
+  // section uses (round 36 P3). My widened regex matched
+  // `/nft/123/extra` too — a URL the router renders as NotFound, which
+  // would then have carried the verifier's title and description. The
+  // helper's docstring already stated this rule; I wrote a second
+  // matcher beside it instead of using it.
+  if (inSection(pathname, '/nft')) {
+    return { ...seo.nftVerifier, index: false };
   }
   if (pathname === '/help') return { ...seo.help, index: true };
+  // #1959 review round 2 P2 — both are public marketing deep-link
+  // targets. Without a row here they fell through to the NotFound row,
+  // so a working page announced itself as "Page not found" in the tab,
+  // emitted `noindex`, and dropped its canonical — the exact regression
+  // the `/data-rights` row below was added for. Indexable, unlike the
+  // per-user surfaces: these two are the public record.
+  if (pathname === '/analytics') return { ...seo.analytics, index: true };
+  if (pathname === '/protocol-console') {
+    // INDEXABLE ONLY WHEN IT ACTUALLY SHOWS ANYTHING (review round 6 P2).
+    // With `VITE_ADMIN_DASHBOARD_PUBLIC=false` the page renders only its
+    // hidden-state message, so indexing it advertises a surface the
+    // deployment has decided to withhold — and this row's own
+    // description promises current parameter values, which that posture
+    // does not provide. `generate-seo.mjs` drops the sitemap entry under
+    // the same flag; both must agree or one contradicts the other.
+    return { ...seo.protocolConsole, index: isProtocolConsolePublic() };
+  }
   if (inSection(pathname, '/positions')) return { ...seo.positions, index: false };
   if (pathname === '/claims') return { ...seo.claims, index: false };
   if (pathname === '/vault') return { ...seo.vault, index: false };
@@ -168,7 +215,15 @@ export function SeoMeta() {
 
     // Canonical — absolute, production-origin, query dropped
     // (no route uses canonical query parameters today).
-    const path = pathname.replace(/\/+$/, '') || '/';
+    //
+    // LOWER-CASED with the same rule `metaForPath` classifies by (round
+    // 36 P3). Normalising only the classification was half a fix: a
+    // crawler on `/Analytics` then got the correct indexable metadata
+    // and a canonical pointing at `/Analytics`, so the duplicate
+    // self-canonicalised instead of consolidating onto the `/analytics`
+    // the sitemap publishes. One normalisation, used by both, or the
+    // two disagree again the next time one of them moves.
+    const path = pathname.toLowerCase().replace(/\/+$/, '') || '/';
     let canonical = document.querySelector(
       'link[rel="canonical"]',
     ) as HTMLLinkElement | null;

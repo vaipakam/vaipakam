@@ -14,10 +14,10 @@ import "./Security.css";
  * chain-agnostic by design. Each Security card describes a property
  * of the protocol; the per-chain Diamond / facet addresses + live
  * event feed live on the connected-app surface, reachable via the
- * Footer "Smart Contracts" link. That link goes through
- * `legacyToolUrl`, not `appUrl`: Analytics was never ported to
- * `apps/app` (#1959), so it resolves to the deployment that still
- * serves `/analytics#transparency`. The cards therefore intentionally
+ * Footer "Smart Contracts" link. That link goes through `appUrl`
+ * like every other destination — Analytics is now ported to
+ * `apps/app` (#1959), so it follows the cutover rather than being
+ * pinned to one deployment. The cards therefore intentionally
  * carry NO inline verify links — the marketing page is the high-
  * level claim, the connected app is where the artifacts are.
  */

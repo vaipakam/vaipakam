@@ -13,7 +13,7 @@
  * the platform-level consent toggle, and deposit/withdraw with the
  * standard review receipt before signing.
  */
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { CircleCheck, Coins, LoaderCircle } from 'lucide-react';
 import { useModal } from 'connectkit';
 import { usePublicClient, useWalletClient } from 'wagmi';
@@ -399,6 +399,40 @@ export function Vpfi() {
     </section>
   );
 
+  // RE-SCROLL WHEN THE TARGET FINALLY EXISTS (review round 3 P2).
+  //
+  // A cold `/vpfi#deposit` load renders the availability-loading branch
+  // below FIRST, and that branch has no `deposit` element. The browser
+  // resolves a fragment once, at load, against a document that does not
+  // yet contain it — and React Router does not replay fragment scrolling
+  // when a matching element appears later. So the newly repointed
+  // marketing CTA could still drop visitors at the top of a long
+  // educational page, which is the exact regression the anchor was added
+  // to prevent: the id existing is necessary and not sufficient.
+  //
+  // Runs after the async read settles, when whichever branch owns the id
+  // has mounted. `getElementById`, not `querySelector`, because the
+  // fragment is user-controlled and an invalid selector would throw
+  // during mount — the same reasoning as `/help`, whose effect this
+  // mirrors.
+  useEffect(() => {
+    if (vpfi.isLoading) return;
+    const hash = window.location.hash;
+    if (!hash) return;
+    let id = hash.slice(1);
+    try {
+      id = decodeURIComponent(id);
+    } catch {
+      /* malformed escape — fall back to the raw fragment */
+    }
+    // One frame, so the branch that owns the id is painted before the
+    // scroll is asked for.
+    const raf = requestAnimationFrame(() => {
+      document.getElementById(id)?.scrollIntoView();
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [vpfi.isLoading, isConnected]);
+
   // ---- Page states -------------------------------------------------
   if (vpfi.isLoading) {
     return (
@@ -477,7 +511,21 @@ export function Vpfi() {
       </div>
 
       {!isConnected ? (
-        <div className="card" style={{ textAlign: 'center' }}>
+        // THE SAME DEEP-LINK TARGET, in the disconnected state.
+        //
+        // The marketing CTA links to `/vpfi#deposit`, and most arrivals
+        // from it have no wallet — so if this id existed only on the
+        // deposit card below, the fragment would resolve to nothing for
+        // the majority of the people it was built for, silently leaving
+        // them at the top of an educational page. That is precisely the
+        // regression the cutover note warned about, reintroduced by
+        // anchoring only the connected branch.
+        //
+        // The two branches are mutually exclusive, so exactly one
+        // element carries the id at a time and the document stays valid.
+        // For a disconnected visitor the connect prompt IS the first
+        // actionable step toward depositing, so it is the honest target.
+        <div className="card" id="deposit" style={{ textAlign: 'center' }}>
           <p className="muted">{copy.wallet.connectFirst}</p>
           <button type="button" className="btn btn-primary" onClick={() => setOpen(true)}>
             {copy.wallet.connect}
@@ -626,7 +674,23 @@ export function Vpfi() {
             ) : null}
           </section>
 
-          <section className="card">
+          {/*
+            THE DEEP-LINK TARGET (#1854 cutover step 7).
+
+            The marketing site's VPFI CTA promises a landing position, not
+            just a page: on the retired app it linked to
+            `/vpfi-vault#step-2`, where `step-2` was the id on the first
+            ACTIONABLE deposit card. The name is a legacy artifact — that
+            card rendered as "Step 1" in the UI — so this uses `deposit`,
+            which says what it is.
+
+            Load-bearing: `appUrl`'s `vpfiVault` destination carries this
+            fragment, so removing the id silently drops CTA arrivals at
+            the top of an educational page instead of the control they
+            came for. That regression is invisible to a route test, which
+            is why it is called out here rather than left to a reviewer.
+          */}
+          <section className="card" id="deposit">
             <div className="segmented" role="radiogroup" aria-label={copy.vpfi.vaultActionLabel}>
               {(['deposit', 'withdraw'] as const).map((a) => (
                 <button

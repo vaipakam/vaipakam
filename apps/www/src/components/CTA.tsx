@@ -16,11 +16,15 @@ export default function CTA() {
           <p className="cta-subtitle">{t('cta.subtitle')}</p>
           <div className="cta-actions">
             {/* Cross-domain link to the connected app. The host comes from
-                `appUrl`'s APP_TARGET, which is deliberately still the
-                legacy surface — not because app.vaipakam.com is unbound
-                (it is bound and serving) but because the flip waits on
-                this CTA's own promised landing position, the Vpfi
-                deposit anchor (#1854). Do not hard-code either host here.
+                `appUrl`'s APP_TARGET, which now points at the connected
+                app: the flip was waiting on this CTA's own promised
+                landing position, the Vpfi deposit anchor, and that
+                anchor landed in the same change that switched the
+                default (#1854 cutover complete). This comment used to
+                say the legacy surface was deliberate — left as-is it
+                would have talked a future maintainer into reverting the
+                routing this CTA exists to use. Do not hard-code either
+                host here.
                 A react-router <Link> can't do cross-domain, and "/app" no
                 longer exists on this domain after the Stage-4 split — use
                 a plain <a> via appUrl(), opening in a new tab to match

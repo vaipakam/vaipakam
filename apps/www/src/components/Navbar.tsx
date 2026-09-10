@@ -14,7 +14,8 @@ import {
 } from 'lucide-react';
 import './Navbar.css';
 import { LanguagePicker } from './LanguagePicker';
-import { appUrl, legacyToolUrl } from '../lib/appUrl';
+import { appUrl } from '../lib/appUrl';
+import { isProtocolConsolePublic } from '../lib/protocolConsoleVisibility';
 
 type NavLink = {
   labelKey: string;
@@ -70,13 +71,20 @@ const NAV_GROUPS: NavGroup[] = [
       // their `/markets` / `/explore` / governance dashboards on the
       // app subdomain alongside the wallet-bearing write flows).
       // Linked out and opened in a new tab so the marketing tab stays
-      // open behind. TWO helpers, and the split matters: the NFT Verifier
-      // uses `appUrl(...)`, which follows the cutover; Analytics and the
-      // Protocol Console use `legacyToolUrl(...)` because they were never
-      // ported to `apps/app` and only one deployment serves them (#1959).
-      { labelKey: 'nav.analytics', href: legacyToolUrl('/analytics'), newTab: true },
+      // open behind. ONE helper now: Analytics and the Protocol Console
+      // were ported to `apps/app` (#1959), so all three destinations go
+      // through `appUrl(...)` and move together at the cutover. The old
+      // two-helper split existed only while one deployment served them.
+      { labelKey: 'nav.analytics', href: appUrl('analytics'), newTab: true },
       { labelKey: 'nav.nftVerifier', href: appUrl('nftVerifier'), newTab: true },
-      { labelKey: 'nav.protocolConsole', href: legacyToolUrl('/protocol-console'), newTab: true },
+      // Conditional for the same reason the footer link is: with
+      // `VITE_ADMIN_DASHBOARD_PUBLIC=false` both this link's destination
+      // and the reference page behind it withhold themselves, so
+      // offering it navigates a reader into a dead end the deployment
+      // chose.
+      ...(isProtocolConsolePublic()
+        ? [{ labelKey: 'nav.protocolConsole', href: appUrl('protocolConsole'), newTab: true }]
+        : []),
     ],
   },
 ];

@@ -707,12 +707,36 @@ export interface IndexerProtocolConfig {
   updatedAt: number;
 }
 
+/** How far ahead of us a source's clock may legitimately be.
+ *
+ *  Machine clocks differ by seconds; anything beyond this is not skew,
+ *  it is a stamp we cannot interpret. Exported so the pages that RENDER
+ *  an age apply the same threshold this guard does — two different
+ *  answers to "is this timestamp usable" is how one surface calls a
+ *  reading fresh while the other calls it unknown. */
+export const CLOCK_SKEW_ALLOWANCE_SEC = 120;
+
+/** How old a config snapshot may be before it is presented as
+ *  historical rather than current. Named rather than inlined because
+ *  `resolveSnapshotAge` decides the console's banner from the same
+ *  threshold, and two copies of it would let the guard and the warning
+ *  disagree about what "a day old" means. */
+export const CONFIG_MAX_AGE_SEC = 24 * 3600;
+
 /** Snapshot freshness guard: config flips reach the snapshot within
  *  ~one ingest scan (event-triggered), so a row older than a day means
  *  the refresh rail is wedged — refuse it and let the chain fallback
- *  serve display. */
+ *  serve display.
+ *
+ *  A FUTURE STAMP IS NOT FRESH (review round 22 P2). This was a bare
+ *  `now - updatedAt < 24h`, which a negative age satisfies trivially —
+ *  so a clock-skewed or corrupted timestamp was treated as the most
+ *  current reading possible, and the page beside it printed "0s ago".
+ *  The spec is explicit that an unknown age must never be presented as
+ *  a fresh one, and this was the exact inverse. */
 export function protocolConfigFresh(updatedAt: number): boolean {
-  return Date.now() / 1000 - updatedAt < 24 * 3600;
+  const age = Date.now() / 1000 - updatedAt;
+  return age >= -CLOCK_SKEW_ALLOWANCE_SEC && age < CONFIG_MAX_AGE_SEC;
 }
 
 export async function fetchProtocolConfig(
@@ -798,4 +822,166 @@ export async function probeIndexerFreshness(
   return res.indexer
     ? { kind: 'cursor', freshness: res.indexer }
     : { kind: 'no-cursor' };
+}
+
+/* ── Public protocol statistics (/analytics) ───────────────────────────
+ *
+ * The transparency dashboard reads the SAME keyless, open-CORS endpoints
+ * any third party can call. That is deliberate and is the page's whole
+ * claim: a number a visitor cannot reproduce independently is a number
+ * they have to take on trust, which is the opposite of transparency.
+ *
+ * Every field is optional on the wire. The indexer adds counters over
+ * time, and an older Worker answering a newer app must degrade to "not
+ * reported" rather than render 0 — a fabricated zero is worse than an
+ * absent figure on a page whose purpose is accuracy.
+ */
+export interface LoanStats {
+  chainId: number;
+  active?: number;
+  repaid?: number;
+  defaulted?: number;
+  liquidated?: number;
+  settled?: number;
+  /** Normal lifecycle states the dashboard must render, because `total`
+   *  counts them — see the endpoint's own note. Without these a reader
+   *  adding up the visible buckets got less than the published Total. */
+  fallbackPending?: number;
+  internalMatched?: number;
+  /** Any status the endpoint has not been taught to name yet. */
+  other?: number;
+  total?: number;
+  erc20ActiveLoans?: number;
+  nftRentalsActive?: number;
+  /** asset address → summed principal, as a decimal STRING in the
+   *  asset's smallest unit. Kept as a string on purpose: these exceed
+   *  Number.MAX_SAFE_INTEGER for 18-decimal assets, and parsing them
+   *  into a float here would silently round the very figures the page
+   *  exists to report honestly. */
+  volumeByAsset?: Record<string, string>;
+  loansByAsset?: Record<string, number>;
+  /** Ingest cursor, mirroring `/offers/stats`. `/loans/stats` has
+   *  always returned this and the type simply omitted it — which
+   *  mattered once the transparency page began requiring a cursor
+   *  before treating counters as authoritative, since a missing type
+   *  made this endpoint look unable to answer that question. */
+  indexer?: { lastBlock: number; updatedAt: number } | null;
+}
+
+export interface OfferStats {
+  chainId: number;
+  active?: number;
+  accepted?: number;
+  cancelled?: number;
+  expired?: number;
+  consumedBySale?: number;
+  /** Terminal state for a filled (or dust-remainder) range offer, plus
+   *  the catch-all — both counted in `total`, so both are rendered. */
+  fullyFilled?: number;
+  /** Active on chain but with unhealed expiry metadata, so fillability
+   *  is unknown — counted apart from `active` rather than asserted. */
+  activeUnknownExpiry?: number;
+  other?: number;
+  total?: number;
+  indexer?: { lastBlock: number; updatedAt: number } | null;
+}
+
+export async function fetchLoanStats(chainId: number): Promise<LoanStats | null> {
+  return getJson<LoanStats>(`/loans/stats?chainId=${chainId}`);
+}
+
+export async function fetchOfferStats(chainId: number): Promise<OfferStats | null> {
+  return getJson<OfferStats>(`/offers/stats?chainId=${chainId}`);
+}
+
+/* ── Named protocol knobs (/protocol-console) ──────────────────────────
+ *
+ * `fetchProtocolConfig` above returns the POSITIONAL `bundle`, which is
+ * right for the display path that already knows its indices. A console
+ * that lists knobs by name must not decode positionally: the release
+ * record has a whole incident about hand-typed tuples silently shifting
+ * field positions, and a governance parameter shown against the wrong
+ * label is worse than one not shown at all.
+ *
+ * So this reads the endpoint's NAMED `values` object instead. Every
+ * field is optional — the indexer adds knobs as governance gains them,
+ * and an older Worker must degrade to "not reported" rather than
+ * mislabel whatever happens to sit at that index.
+ */
+export interface ProtocolKnobValues {
+  treasuryFeeBps?: string;
+  loanInitiationFeeBps?: string;
+  liquidationHandlingFeeBps?: string;
+  maxLiquidationSlippageBps?: string;
+  maxLiquidatorIncentiveBps?: string;
+  volatilityLtvThresholdBps?: string;
+  rentalBufferBps?: string;
+  lifMatcherFeeBps?: string;
+  autoPauseDurationSeconds?: string;
+  maxOfferDurationDays?: string;
+  tierThresholds?: string[];
+  tierDiscountBps?: string[];
+  rangeAmountEnabled?: boolean;
+  rangeRateEnabled?: boolean;
+  partialFillEnabled?: boolean;
+}
+
+export interface ProtocolKnobSnapshot {
+  values: ProtocolKnobValues;
+  /** The deployment HAS a snapshot, but this app will not put names to
+   *  its numbers (round 65 P2).
+   *
+   *  Reached two ways: an older Worker that returns only the positional
+   *  bundle, and — the important one — the indexer deliberately omitting
+   *  `values` because a stored bundle's length no longer matches the
+   *  current ABI. That second case is the console's founding rule doing
+   *  its job: a governance parameter shown against the wrong label is
+   *  worse than one not shown, because it looks authoritative.
+   *
+   *  This is NOT "no snapshot exists", and collapsing the two threw away
+   *  what the deployment actually knows — the provenance, the flags, the
+   *  age, the staleness verdict — while telling the reader nothing is
+   *  there. `values` is empty here; everything else still applies. */
+  labelsUnavailable?: boolean;
+  flags: Record<string, boolean>;
+  sourceBlock?: number;
+  /** Unix SECONDS. Callers MUST surface this — see `protocolConfigFresh`. */
+  updatedAt?: number;
+  /** The indexer's own verdict: this snapshot predates a governance
+   *  event a catch-up scan already saw. Distinct from an unknown age —
+   *  it is a positive statement that the values are out of date. */
+  stale?: boolean;
+}
+
+export async function fetchProtocolKnobs(
+  chainId: number,
+): Promise<ProtocolKnobSnapshot | null> {
+  const res = await getJson<{
+    available?: boolean;
+    values?: ProtocolKnobValues;
+    flags?: Record<string, boolean>;
+    sourceBlock?: number;
+    updatedAt?: number;
+    stale?: boolean;
+  }>(`/config/${chainId}`);
+  if (!res || res.available !== true) return null;
+  return {
+    // An available snapshot whose values cannot be trusted to their
+    // names is preserved rather than collapsed to `null` — see
+    // `labelsUnavailable`. Everything the response DOES carry (flags,
+    // provenance, the staleness verdict) is still true and still worth
+    // showing.
+    values: res.values ?? {},
+    labelsUnavailable: res.values === undefined,
+    flags: res.flags ?? {},
+    sourceBlock: res.sourceBlock,
+    updatedAt: res.updatedAt,
+    // CARRY THE VERDICT, DON'T RE-DERIVE IT. The indexer sets `stale`
+    // when a catch-up scan saw a governance event this snapshot
+    // predates — it KNOWS the values are behind, which is strictly more
+    // than "we cannot tell how old this is". Dropping the flag left the
+    // page showing its undated copy, which says the values may be
+    // current; they are known not to be.
+    stale: res.stale === true,
+  };
 }

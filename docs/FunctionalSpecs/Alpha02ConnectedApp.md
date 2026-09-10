@@ -1,9 +1,11 @@
 # Connected App Functional Specification
 
 This document states the intended behaviour of the Vaipakam connected app —
-`apps/app`, served at `app.vaipakam.com` (bound as of 2026-09-07; the
-marketing site's links are still held on the legacy host by a separate
-decision — see #1854). It is the app-specific functional
+`apps/app`, served at `app.vaipakam.com` (bound as of 2026-09-07, and the
+marketing site's links resolve here since #1959 ported the last two
+destinations and flipped the cutover switch; the `/recover` guide links
+alone stay on the legacy host, held by same-origin recovery state rather
+than by any missing route). It is the app-specific functional
 spec distilled from the release notes through 2026-08-12. It is intentionally
 written without implementation snippets. (The app was called `alpha02` and
 served `alpha02.vaipakam.com` until #1854 renamed it; this file keeps the old
@@ -37,6 +39,118 @@ reveal denser market and management tools without leaving the same product.
   by a display failure.
 - The global support control remains reachable without covering primary mobile
   action buttons.
+
+## Public Transparency Surfaces
+
+Two surfaces exist to be read by people who have not connected anything,
+including people who never will.
+
+- An analytics view reports the deployment's loan and offer counts, and a
+  protocol console reports the current value of the governance-tunable
+  parameters the public indexer publishes — a bounded subset, not the
+  whole catalogue. Both are read-only. Neither offers any control that changes
+  protocol state; parameter changes are a governance action elsewhere.
+- Both render fully without a wallet, and both are reachable by direct
+  link from outside the app. They resolve their chain the same way every
+  other read does when no wallet is connected, so arriving cold shows
+  real figures rather than an empty page.
+- Connecting a wallet must never take either away. Whatever the terms
+  prompt withholds, it does not withhold these: withholding a page
+  anyone could read without a wallet, because a wallet is present, is a
+  contradiction rather than a restriction.
+- Each carries its own page title and description. The analytics view is
+  indexable; the console is indexable **only while it is public**. A
+  deployment may withhold the console, in which case the page renders
+  only its withheld-state message, and it is then excluded from the
+  index and from the sitemap alike — indexing a surface a deployment has
+  decided not to publish would advertise it anyway, and the description
+  would promise current values the page is not showing.
+- Figures are reported with their age. A reader is told how current the
+  data is beside the data itself, and an unknown age is never presented
+  as a fresh one.
+- A counter the source did not report is distinguished from a counter
+  that is genuinely zero, and neither is inferred from the other. Where
+  nothing has been indexed at all, that is stated instead of reporting
+  zero for everything — an unread source is a fact about the source, not
+  about the protocol.
+- A loan whose lending asset the indexer has not recorded is counted in the
+  active total and excluded from every typed subtotal, whichever placeholder
+  the row carries. Publishing such a row under a type it was merely defaulted
+  to would be worse than the gap it hides, because the subtotals would then
+  reconcile and the unclassified remainder — the surface's own signal that
+  something is unknown — would read zero.
+- A counter that arrives but cannot be a count of anything — negative,
+  fractional, or not a finite number — is withheld rather than published,
+  and is distinguished from one that was never reported. Both withhold
+  the figure; only one of them says the source sent something impossible,
+  and a reader auditing the source is owed that difference. The same rule
+  decides whether a figure may be shown and whether it may be used in a
+  subtotal, so the view cannot withhold a derived figure while printing
+  the invalid input it came from.
+- Where the console knows its values are superseded, it points the reader at the
+  chain itself for what is in force — not at documentation that derives from the
+  same superseded source. A reference that would answer from the same snapshot,
+  or fall back to starting defaults, gives a confident wrong answer exactly when
+  the console has established that the values moved; the documentation is still
+  the right place to learn what a setting means and where it began.
+- The console's values refresh while it is open. A reader who leaves it
+  open is shown parameters as they currently stand, not the snapshot the
+  page loaded with; reporting the snapshot's age correctly is not a
+  substitute for refreshing it, since a parameter superseded minutes ago
+  sits well inside any age the page would call current.
+- The analytics view names the protocol's contract address for the chain
+  being read and offers a way to open it on a public explorer, so a
+  reader can go to the primary source rather than accept the page's
+  reading of it.
+- Any total the analytics view reports is the sum of the categories it
+  shows beside it. Every state counted toward a total is either named or
+  gathered into a stated remainder, so a reader can add up the parts and
+  arrive at the whole. A total that exceeds its visible parts is a defect
+  on a page whose purpose is that its figures can be checked rather than
+  taken on trust — the reader is left with a discrepancy and no account
+  of it.
+- Where a figure counts one kind of thing and the product offers another
+  kind alongside it, the view says which it is counting. Offers that
+  exist only as a signed instruction — fillable, visible in the offer
+  book, but never written to the chain — are a different population from
+  offers the protocol holds, and an unqualified count of the second
+  understates what a reader can see elsewhere in the same product.
+  Naming the scope is preferred over merging the two, because the
+  populations have different lifetimes and a merged figure cannot be
+  reconciled against the chain.
+- A state's label describes the state, not the page's knowledge of it. A
+  loan whose settlement is part-way through and awaiting a further step
+  is a settlement state holding real collateral; labelling it as though
+  its details were still being fetched invites a reader to dismiss real
+  exposure as a gap in the reporting.
+- The protocol console reports each parameter against its own name, and
+  never by inferring which value belongs to which name from ordering.
+- The console states that it shows a subset rather than implying it is
+  complete. Settings that exist but are not published — lifecycle and
+  automation switches, the grace schedule, sanctions-oracle
+  configuration and several risk controls among them — are absent, and
+  a reader is pointed at the full parameter reference rather than left
+  to infer that what is shown is all there is. An incomplete view that
+  asserts completeness is worse than an incomplete view, because it
+  stops the reader looking further.
+- An operator may hide the live parameter values on a deployment. In
+  that state the console says so plainly, and does not direct the reader
+  to any resource that the same setting has also withheld.
+- A published snapshot that carries no parameter values is not the same as no
+  snapshot, and the console does not collapse the two. The snapshot still
+  states when it was read and that the deployment is publishing, and the
+  console reports that the values themselves did not arrive. Discarding the
+  whole reading because one part of it was empty would tell the reader the
+  console has heard nothing from a source that in fact answered — an unread
+  source and a source that answered without values are different facts about
+  the deployment, and only the first is a reason to stop asking.
+- Retaining those facts and not showing them is the same failure with an extra
+  step. Where a surface tells the reader that its provenance — which source,
+  which block, how long ago — is still accurate, that provenance is on the
+  page. A statement that something is disclosed below, followed by nothing
+  below, is worse than saying nothing: it spends the reader's trust on a
+  disclosure that never happens, and it is the surface's own copy that
+  disproves it.
 
 ## Wallet and Network Behaviour
 
@@ -258,6 +372,348 @@ Thin-market honesty rules apply.
 - Past-due loan pages show the grace window and the consequence of inaction.
 - Health and risk labels escalate when collateral health is poor.
 - Position rows should offer the next relevant action where one exists.
+
+### Forced close-out of an overdue loan
+
+- A lender holding an active position whose repayment window and grace period
+  have both elapsed is offered a way to close the loan out from the position
+  page. The capability exists in the protocol for any caller; the product's
+  obligation is to make it reachable by the party who is owed.
+- Whether the grace period has elapsed is decided by the protocol, not by the
+  app. The grace schedule is configurable, so an app that recomputed it from the
+  loan's own dates would be correct only until a deployment changed it, and
+  would then be wrong about the one fact this surface exists to state. The app
+  may show the grace window to explain a wait; it must never use its own
+  arithmetic to decide whether the action is permitted.
+- Two settlement routes are distinguished, because they are not equally
+  available. Where closing out transfers the collateral as-is — collateral
+  without a reliable market price, or collateral whose value has collapsed far
+  enough that selling it is moot — the app offers the action directly. An
+  overdue NFT rental is offered directly too, but it is NOT that route and must
+  not be described as one: ending a rental removes the renter's access, leaves
+  the lender's own asset exactly where it is, and makes the rent paid up front
+  claimable less fees. Nothing belonging to the borrower moves, and no
+  valuation of collateral decides what comes back. Where the protocol requires the collateral be sold on an exchange,
+  the app states that the position is closable and that the sale must be routed
+  by whoever submits it, and offers no button it cannot honour. Presenting an
+  action that is certain to be refused is worse than presenting none: the user
+  pays a network fee for the refusal.
+- A third route is available where the protocol can settle the overdue
+  position against an opposing one instead of selling anything. The app
+  can perform that close-out directly, and says so — it is distinguished
+  from the in-kind route in what the lender receives, since this one
+  repays the asset that was lent rather than handing over collateral.
+  Whether such an opposing position exists is asked of the protocol, not
+  inferred. An unanswered question resolves to the surface's
+  outcome-neutral state — the one that says a check is still running —
+  and NOT to whichever description seems more cautious. There is no
+  cautious description here: every other route names what the lender
+  receives, so choosing one of them on an unread answer is a claim, and
+  the wrong one whenever the protocol settles the position against an
+  opposing one instead.
+- Where that opposing position exists, the surface must not describe the
+  consequence of losing it as a single outcome. Another party may settle
+  against the same position first, and what happens then is decided by the
+  route the protocol reaches next — which may hand over the collateral as it
+  stands, end a rental, or refuse the close-out for the cost of the network
+  fee alone. Telling a lender the only downside is a wasted fee, on a
+  transaction that can instead complete and return a materially different
+  asset, is a false statement about what they recover. The surface states the
+  route it would actually fall to, and where it cannot read enough to know,
+  says that rather than choosing the likeliest.
+- That fallback is the surface's own routing decision asked again with the
+  opposing position absent — never a second, hand-written account of the order
+  the protocol tries things in. One description of that order is a
+  requirement, not a convenience: two will diverge, and the divergence surfaces
+  as a confident sentence about somebody's money that no longer matches what
+  the protocol does.
+- The confirmation shown before the lender signs is part of this surface and
+  carries the same obligation. It must describe the route being confirmed
+  rather than the commonest one: an overdue rental sells nothing, transfers
+  nothing belonging to the renter, and leaves no shortfall for the lender to
+  absorb, so a confirmation written around collateral sale economics misstates
+  every one of its own lines for that route.
+- The in-kind route also covers collateral that is itself a non-fungible asset
+  held against an ordinary loan. That is a supported shape and a distinct one
+  from a rental: the leg being lent and the leg securing it are separate
+  questions, and a surface that answers only the first will ask an
+  inapplicable question about the second and wait indefinitely for an answer
+  that cannot arrive.
+- Nothing on this surface states an amount. The settlement path is chosen while
+  the transaction executes, so no figure is knowable in advance, and a predicted
+  one would be invented.
+- The asset returned is not assumed to be the collateral. The protocol may
+  instead settle the position against an opposing one and return what was lent,
+  in the asset it was lent in, and the surface says so rather than naming one of
+  the possible outcomes as though it were the only one.
+- Closing out is not stated as certainly final. It ordinarily ends the loan, but
+  a settlement that covers only part of the position, or a sale that cannot be
+  carried out, leaves the loan open and closable again later.
+- Nothing on this surface implies the lender is the only party who may act. Any
+  caller may close out an overdue loan, and a lender returning to find the
+  position already closed is to read that as the normal course rather than as a
+  loss.
+- Nor is the party who submits assumed to be the party who is paid. What a
+  close-out recovers goes to whoever holds the lender's position for that loan
+  at the moment it executes, so a holder who has since transferred or sold the
+  position is told plainly that it is no longer theirs.
+- Closing out is not presented as payment. It ends the loan; what the lender is
+  owed becomes claimable afterwards through the ordinary claim route — with one
+  stated exception. Where the protocol settles the position against an opposing
+  one, it pays whoever submitted the transaction an incentive directly to that
+  wallet, deducted from the settled amount rather than added to it. A surface
+  that says nothing reaches the wallet by itself is wrong twice over on that
+  route: about the payment, and about the amount left to claim. Both are
+  disclosed.
+- A surface must not describe an amount as depending on a valuation the route
+  does not perform. An overdue rental makes an already-paid, fixed sum
+  claimable; a settlement against an opposing position returns the lent asset
+  priced when the transaction runs. Neither is a question of what collateral is
+  worth, and neither may borrow that sentence.
+- A close-out confirmation must not state a loss that cannot occur. A rental
+  becomes closable only once its term and the grace period after it have both
+  expired, and the full term was paid at origination — so there is no remaining
+  term to forgo. Where a route genuinely risks nothing, the surface says so
+  rather than filling the space, and states what is actually at stake instead:
+  until the close-out runs, the renter retains access they are no longer
+  entitled to.
+- What a surface says immediately after a close-out is submitted must not
+  assert an outcome the transaction has not yet reported. A settlement covering
+  only part of the position leaves the remainder running with nothing claimable
+  yet, so the post-submit message describes the result as still being decided
+  and directs the lender to the refreshed position, never to a claim that may
+  not exist.
+- A surface that has lost track of a submitted transaction says so, and keeps
+  the action withheld while it does not know. Elapsed time is not evidence that
+  a transaction failed: one that has not confirmed may still confirm, and
+  offering the action again on the strength of a timer invites a second
+  close-out behind a live first one. So the surface states that it cannot
+  account for the transaction, that this does not mean it failed, why the
+  action is withheld, and that the wallet is where the answer is.
+- Withholding an action indefinitely over a question the platform cannot answer
+  requires an answer from someone who can. Because a record of the submitted
+  transaction now survives leaving the page and returning, no ordinary action
+  by the lender clears a transaction that has genuinely vanished — so the
+  surface offers them a way to state that their wallet no longer shows it,
+  which ends the wait. It is framed as the lender's statement about their own
+  wallet rather than as a control that checks anything, and it says what it
+  costs to be wrong, because presenting it as a check would claim a capability
+  the platform does not have.
+- A record that a close-out was submitted belongs to the position and the
+  network it was sent on, not to the page that sent it. Reloading, navigating
+  away and returning, or having the same position open more than once must not
+  produce a surface that offers the action again over a transaction already on
+  its way; and equally, learning that the record has been cleared elsewhere
+  must stop the wait rather than leave it running against a record that no
+  longer exists.
+- A conditional sentence whose condition cannot arise on the route being shown
+  does not belong on it. The swap-to-repay cancellation note is the case in
+  point: that facility covers ordinary-asset loans only, so an overdue rental
+  can never carry such an order — and the sentence, while never false, puts a
+  borrower repaying a loan on a surface whose position has a renter paying
+  rent. Unreachable conditions are shown only where they are reachable.
+- Where a surface shows subtotals beneath a total, and the source may count
+  something in the total that it cannot yet place in any subtotal, the surface
+  states the difference. A reader who can subtract and find an unexplained gap
+  is worse served than one shown the gap and told what it is. The rule holds
+  even when the omission is the source behaving correctly — an admitted
+  undercount is still an admission the surface must carry.
+- The same rule binds in the opposite direction, and more strongly. Where the
+  subtotals add up to MORE than the total they sit beneath, the figures
+  contradict each other, and the surface says so rather than presenting the
+  smaller discrepancy of nothing at all. Rounding a contradiction away asserts
+  by omission that the numbers reconcile, which is a claim the surface cannot
+  support and a reader can disprove with arithmetic. What it states is the
+  disagreement itself: that the fault lies in the counting rather than in any
+  position, that nothing is at risk because of it, and that the correct split
+  is not known. Both the total and the breakdown remain on screen exactly as
+  reported, so the discrepancy can be seen rather than taken on trust.
+- Where one freshness figure is stated over data drawn from more than one
+  request, it is the figure of the LAGGING request. Quoting the more advanced
+  of two reads presents one dataset's coverage as though it covered both.
+- The order in which a surface reports obstacles follows the order the protocol
+  applies them. A loan still inside its repayment window is refused for being
+  early before any infrastructure condition is consulted, so a surface that
+  reports an infrastructure pause first tells a lender their close-out is
+  merely delayed about a position the borrower may have most of the term left
+  to save. Where two gates would each block, the one the protocol reaches first
+  is the one the reader is told about.
+- A route the protocol may only partly complete is not described as completing.
+  Settling against an opposing position moves the smaller of the two, so where
+  that position is smaller than this loan only part settles and the remainder
+  stays open — which the surface says before the lender acts, not only
+  afterwards.
+- Where a single freshness figure covers more than one request, EVERY request
+  it covers must carry its own position marker. A response that arrives without
+  one is not a weaker claim to be outvoted by its sibling; it is the absence of
+  a claim, and it disqualifies the combined statement rather than borrowing the
+  other's.
+- A disclosure about cancelling something belonging to the counterparty is
+  suppressed only on facts that cannot change for the life of the position.
+  Predicting it from a live measurement that may have moved since the position
+  opened withholds a warning that is still true.
+- Where the protocol re-decides a route at execution time, every surface that
+  names an outcome discloses that it may be re-decided — in BOTH directions.
+  The opposing-position check runs when the transaction executes, not when the
+  page was read, so a position described as returning collateral may instead
+  repay what was lent, exactly as one described as settling against an opposing
+  position may lose it. Disclosing one direction of a symmetric race and not
+  the other leaves the undisclosed half reading as a promise.
+- Operator instructions name a file the tooling actually reads. Telling an
+  operator to configure a value in a template that nothing loads produces a
+  deployment that is misconfigured while its operator believes otherwise, which
+  is worse than no instruction at all.
+- Where a settlement may be partial, no sentence on the surface may describe
+  its result as terminal — including sentences about what SOMEONE ELSE's
+  close-out does, and sentences about when the proceeds can be collected. A
+  partial settlement leaves the position open and smaller, and holds the
+  settled portion until the remainder closes, so "it will show as closed" and
+  "it becomes claimable once this settles" are both wrong for it.
+- Withholding an action for safety must not withhold the explanation with it.
+  Where a check that guards the close-out is unanswered — pending, failed, or
+  undecodable — the surface stays visible in its unresolved state and says a
+  check is running. Removing it entirely leaves the lender with neither the
+  action nor a reason, for as long as the underlying failure lasts, which is
+  indistinguishable from the capability not existing.
+- The surface appears before it can be used — while checks are still running,
+  and while the borrower still has time — and says which of those applies. A
+  capability shown only at the moment it becomes actionable cannot be
+  anticipated, planned around, or asked about.
+- An unresolved check is never reported as "not available". The two are opposite
+  claims: one describes the app's knowledge, the other the protocol's answer.
+- That rule binds hardest on the read that decides whether the surface belongs
+  on the page at all. A loan whose status has not been read yet is not a loan
+  the protocol has said is closed, so the surface appears in its unresolved
+  state rather than being removed. Removing it is the strongest possible
+  statement — it tells the lender the capability does not apply to this
+  position — made on the one reading that has not happened, and a lender who
+  never sees the surface has nothing to wait on and no reason to return.
+- Sequencer health is judged before collateral is classified. While the sequencer
+  is unavailable the protocol reports every asset as unpriceable, so a surface
+  that classified collateral first would describe the wrong settlement route and
+  offer an action the protocol refuses for an unrelated reason.
+- Conditions the protocol checks before it will close a loan out are reported as
+  states of this surface, not discovered when the action is attempted. Two are
+  distinguished because they mean different things to the reader: a
+  protocol-wide pause, which is temporary and affects everyone; and a loan
+  opened without both parties recording the risk acknowledgement the protocol
+  requires before it will hand over collateral that has no market price, which
+  is permanent for that loan and refuses every caller equally. The second is
+  stated as such — not as a limitation of this app, and not as something waiting
+  will resolve.
+- The protocol is asked one final time immediately before the action is sent.
+  Several facts behind the decision can change while the user is reading the
+  confirmation, and each turns a correct action into a certain refusal. Asking
+  the protocol whether the action would succeed is preferred over the app
+  re-deriving that answer from its own copy of the rules.
+- Forced close-out is not offered while a completed sale of the lender's position
+  is awaiting its final step, nor while the app has not yet established
+  whether one is — an unanswered question about a pending sale withholds
+  the action rather than permitting it, because the protocol does not
+  check this itself and nothing downstream would catch the mistake. The
+  check is repeated against live state immediately before the action is
+  sent, since a sale can be accepted inside the window a cached answer
+  covers. The buyer's funds have already moved and that
+  completion requires the loan to remain open, so closing it out here would end
+  the loan and strand the recovery permanently.
+- Forced close-out remains available to a lender who has not accepted pending
+  changes to the Terms. Withholding it would place paperwork between a lender and
+  collateral owed to them by a counterparty already in breach.
+- It likewise remains available to a lender whose wallet is flagged by sanctions
+  screening. Screening withholds the ability to open new exposure; closing out a
+  loan that has already defaulted is a wind-down, which the protocol keeps open
+  to every caller so that a position cannot be made unclosable by the status of
+  the party who is owed. Surfaces that create exposure are withheld from a
+  flagged wallet; this one is not, and the distinction is deliberate rather than
+  an oversight in the gating.
+- The surface claims a loan is overdue only where the protocol has said so.
+  States reached before that question is answered — a protocol-wide pause, checks
+  still running — describe what is being waited on instead, since those are
+  reachable by a loan that is nowhere near its due date. An unavailable sequencer
+  is NOT one of them: the protocol settles the repayment window before it
+  considers sequencer health, so a loan withheld for an outage has already been
+  confirmed overdue and is described as such.
+- A close-out this app has broadcast is watched continuously until its outcome is
+  known, and the record of it survives leaving the page. Watching that stops and
+  restarts can no longer recognise a replaced or cancelled transaction, because
+  recognising one requires the original to still be in flight — so the wait is
+  never given a deadline. Elapsed time changes only what the surface SAYS: past a
+  few minutes it stops describing an ordinary pause and states that it can no
+  longer account for the transaction, while continuing to watch.
+- The action stays withheld for as long as the surface has not reconciled the
+  transaction, and the device-local record backing that is kept for exactly as
+  long as the withholding lasts — including after a success, whose figures the
+  surface has not yet caught up with. After a successful close-out the surface
+  waits for the refresh it asked for to COMPLETE, rather than judging by
+  timestamps whether the figures look new enough; a device whose clock moves is
+  then unable to make a refreshed reading look stale, or a stale one look
+  refreshed.
+- The refresh it waits for must be one that could have seen the close-out. A
+  read already in flight when the outcome arrived was sent against the position
+  as it stood BEFORE settlement, so letting it satisfy the wait releases the
+  action over figures that predate the transaction — the exact staleness the
+  wait exists to prevent, arriving faster than the wait can notice. Reads
+  outstanding at that moment are therefore abandoned rather than counted, and
+  the surface waits on reads it started afterwards.
+- The wait is also scoped to the reads whose answers the lender is about to act
+  on. A read the surface has stopped consuming, or one the refresh would not
+  re-issue, can never report anything and would hold the action open forever if
+  the wait included it. Waiting on more than is needed is not the safer error
+  here: it is indistinguishable, to the reader, from the surface having lost
+  the transaction.
+- Reads left out of that wait are DISCARDED, not just left alone. A read the
+  surface has stopped consuming still holds its last answer, and the states
+  that stop it consuming one are reversible: a close-out that leaves the loan
+  awaiting a further step suspends these checks, and a borrower curing that
+  state resumes them. Resuming them against answers taken before the close-out
+  would put a route, and an action, back on screen on facts the close-out
+  already invalidated — with the wait long since satisfied, because there was
+  nothing left in it to wait for. So a reading that will not be refreshed is
+  dropped rather than kept: the check resumes from nothing, says it is running,
+  and asserts no route until it has an answer of its own.
+- Dropping a reading has to reach whatever is displaying it. Discarding it
+  somewhere the surface no longer consults, while the part of the app that
+  renders it still holds its own copy, leaves the stale figure on screen and
+  makes its disappearance depend on something unrelated happening to redraw the
+  page. The discard tells the reader of that value, directly, that there is no
+  longer a value — which is what makes the surface fall back to saying a check
+  is running.
+- Where a transaction is never resolved, the lender's own statement that their
+  wallet no longer shows it is the only route back to the action. Because it is
+  the only one, when the surface offers it must not depend on the device's clock
+  being correct: a clock corrected backwards after the transaction was sent, or a
+  record written while the clock was wrong, cannot be allowed to withhold that
+  route. Elapsed time is measured so that no clock fault can delay it
+  indefinitely.
+- Where the browser refuses to keep that record, the surface says so and names
+  the consequence: this page still withholds the action, a reload will not.
+- When the protocol establishes that a close-out did NOT execute, the surface
+  says which of the three things happened — the call was rejected, the wallet
+  cancelled it, or another transaction from that wallet took its place — rather
+  than returning silently to its ordinary state. All three leave the position
+  untouched and the action available again, so the surface offers it; what
+  differs is the cause, and the cause is what tells the lender whether to expect
+  the same result next time. A screen that looks untouched after a funds-moving
+  attempt makes the reader reconstruct the outcome for themselves.
+- Learning from another browser tab that a close-out has been disposed of does
+  not, by itself, release this tab's withholding. The other tab knows about its
+  own transaction and nothing about whether this tab's figures have caught up;
+  after a partial settlement the position remains open and legitimately
+  actionable, so the protocol would accept a second close-out while this tab
+  still described the first one's expected outcome. Only this tab's own refresh
+  can end its withholding.
+- Before a close-out is sent, the surface re-reads that record so a confirmation
+  open in a second tab does not send a duplicate. It does not claim this is a
+  lock — two tabs acting in the same instant is a race the browser offers no way
+  to settle — and it says what it did rather than implying the position closed.
+- Erasing this browser's data does not reach a transaction already sent. The
+  erasure states that: what is removed is this app's note of it, the transaction
+  continues, and the app will no longer be following it.
+- Where the protocol has no path that could produce an outcome, the surface does
+  not warn about that outcome. A rental cannot be settled against an opposing
+  position — the protocol's search requires the rented asset to carry a market
+  price and its settlement moves fungible assets only — so a rental close-out is
+  described as ending the rental, with no competing-settlement caveat.
 
 ## Claims
 
@@ -628,6 +1084,28 @@ Thin-market honesty rules apply.
   text (the exact message a wallet signs, cryptographic domain names)
   and proper nouns (chain and asset names) stay in one language by
   necessity.
+- A number standing on its own follows the chosen language the same way a
+  number inside a sentence does. Figures printed as their own cell — a
+  parameter's value, a counter on a public page — are formatted for the
+  language the reader picked, not for the one the device happens to be
+  configured in. The two disagree often enough to matter: a reader who has
+  chosen a language whose digit grouping and decimal mark differ from their
+  operating system's sees the surrounding page in one convention and the
+  figures in another, and has no way to tell which of the two the page meant.
+- Every figure in a line, not the first one. Where a sentence carries a value
+  and then restates it in the underlying unit — a percentage beside the raw
+  basis points, an interval in hours beside the same interval in seconds —
+  both are figures the reader is being shown, and formatting one while leaving
+  the other reproduces the mismatch inside a single line instead of across the
+  page. The rule is about the reader's ability to tell which convention is in
+  force, and one raw figure is enough to remove it.
+- Formatting a figure may never change it. Where a value carries more
+  precision than the formatting path can represent — a threshold taken from a
+  full-width integer, shown to the digit so it can be checked against the
+  chain — the surface formats it without a lossy conversion, or shows it
+  unformatted. Losing the reader's separators is a cosmetic failure; losing a
+  digit of the number they came to verify defeats the purpose of publishing
+  it, and does so invisibly.
 - Where signing-critical text cannot be translated, the reader is not
   simply left with a language they may not read. A declaration the user
   must affirm they have understood is shown in their own language
@@ -676,6 +1154,12 @@ Thin-market honesty rules apply.
   activity, settings, faucet) are never indexed. The exclusion is
   visible both to browsers and to crawlers that do not run
   JavaScript.
+- A per-item lookup reached from an indexable entry point is not itself
+  indexed. The NFT verifier's own page is listed; the individual token
+  pages beneath it are an unbounded space of thin lookups, have never
+  been listed in the sitemap, and are excluded — in the response as well
+  as in the page, so the exclusion does not depend on the crawler running
+  the app.
 - A crawl policy file and a sitemap of the indexable pages ship with
   every build.
 - The public data service's root address should answer with a
@@ -690,6 +1174,24 @@ Thin-market honesty rules apply.
   pages and response headers: a crawler that does not execute
   JavaScript sees the same indexable / noindex decision that a browser
   sees after the app loads.
+- **A compatibility address is never indexed.** Addresses kept working
+  for bookmarks from a retired deployment — including the forms that
+  carried a language in the address itself — answer by sending the
+  visitor to the current address, which is the one that belongs in a
+  search index. A crawler that does not run the app never follows that
+  hand-off, so the exclusion has to be stated in the response rather
+  than left to the page. Two failures are prevented by the same rule: a
+  per-user address becoming indexable merely because it was reached by
+  an older spelling, and a public page being listed twice under two
+  addresses.
+- **Every address the app asks to have indexed is a single top-level
+  page.** That is a deliberate property rather than an accident of the
+  current route set: it is what allows the compatibility exclusion above
+  to be expressed as one rule instead of one per language, which in turn
+  keeps the response-header policy inside the limit its host imposes.
+  Publishing a nested public page would break that, so it is a decision
+  to be taken knowingly and with the exclusion rule revisited alongside
+  it — not a change that should be able to pass unremarked.
 
 ## Privacy and Legal Posture
 
@@ -1037,6 +1539,16 @@ Thin-market honesty rules apply.
   so refusing them would leave the slow route open and the instant one shut.
   Publishing a standing offer of one's own is a different thing and is not
   covered, even when the intent behind it is to leave.
+- **The protection follows the destination, not the spelling of the address
+  used to reach it.** A retired deployment's addresses remain in circulation as
+  bookmarks and links, including forms that carried a language in the address
+  itself. Such an address is answered by sending the visitor to the current one
+  — but that answer is itself something the gate can withhold, so an address
+  that leads to a protected destination is treated as protected. Otherwise a
+  user holding unaccepted terms meets the prompt on the way to repaying or
+  claiming, purely because of which link they followed. Normalising the address
+  this way never widens the protection: an old address leading to a surface that
+  creates new exposure is withheld exactly as its current form is.
 - **An acceptance is honoured in every open tab, not only the one that paid.**
   The chain permits a second acceptance and would charge for it while changing
   nothing but a timestamp — so the moment one tab's acceptance is confirmed,

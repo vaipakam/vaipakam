@@ -121,20 +121,33 @@ export async function blocked(why, err, cleanup) {
  * caller has asked to decide the verdict itself (Codex #1621 r1).
  *
  * `launch()` exiting BLOCKED directly is right for a drive that has
- * observed nothing yet — which is all of them at launch time, with one
- * exception. `live-recover-locales.mjs` launches a fresh browser PER
- * LOCALE and accumulates findings across them, so a setup failure on
- * locale 6 must not discard a real localization defect found on locale
- * 2: "verified nothing" would be a false statement about that run. It
- * catches this and lets its own `exitOnEvidence` choose.
+ * observed nothing yet — which is all of them at their FIRST launch, and
+ * not all of them at every launch. Two drivers launch repeatedly and
+ * accumulate across launches: `live-recover-locales.mjs` (a fresh
+ * browser per locale) and `live-role-journeys.mjs` (one per role). For
+ * those, a setup failure on locale 6 or on the borrower role must not
+ * discard what locale 2 or the visitor already found — "verified
+ * nothing" would be a false statement about such a run. They pass
+ * `onSetupFailure: 'throw'` and decide the verdict themselves.
+ *
+ * So exit 2 means the drive did not COMPLETE, not that it saw nothing;
+ * `run-live-batch.mjs` states the same contract in the same terms.
  *
  * Part 1 of #1581 broke exactly that, silently — moving the exit inside
  * `launch()` meant that catch could never run, and the precedence rule
  * #1590 r6 added went dead without any test noticing.
  */
 export class LiveSetupError extends Error {
-  constructor(what, cause) {
-    super(`browser setup failed (${what})`);
+  /**
+   * `kind` names WHAT failed to set up. It defaulted to the browser
+   * because that was the only thing this covered; credential resolution
+   * now raises it too, and reporting a missing dev-wallet key as
+   * "browser setup failed" sends the reader to check Chromium and their
+   * disk. The prefix is the first thing an operator reads on a blocked
+   * run, so it has to name the right thing.
+   */
+  constructor(what, cause, kind = 'browser') {
+    super(`${kind} setup failed (${what})`);
     this.name = 'LiveSetupError';
     this.cause = cause;
   }
@@ -367,12 +380,33 @@ let WALLETS;
  * `launch()`, which is the first thing it does, so the BLOCKED exit
  * still fires before any browser work.
  */
-function loadWallets() {
+/**
+ * @param {{ throwOnUnreadable?: boolean }} [opts] — when the caller
+ *   asked for `onSetupFailure: 'throw'`, an unreadable or malformed
+ *   wallet FILE has to reach them as a `LiveSetupError` like every other
+ *   setup failure. `blockedSync` exits the process, which for a
+ *   multi-role driver throws away the results already gathered and the
+ *   JSON report with them — so a missing file after the visitor run
+ *   reported BLOCKED and hid whatever the visitor scenarios had found.
+ *
+ *   Distinct from the unusable-KEY case fixed earlier: this happens
+ *   before any per-role validation, at the read/parse step, so that fix
+ *   could not cover it. Exiting stays the default, for drivers that
+ *   never asked to accumulate.
+ */
+function loadWallets(opts = {}) {
   if (WALLETS !== undefined) return WALLETS;
   let raw;
   try {
     raw = JSON.parse(fs.readFileSync(WALLETS_PATH, 'utf8'));
   } catch (err) {
+    if (opts.throwOnUnreadable) {
+      throw new LiveSetupError(
+        `cannot read the dev wallet file.\n  path: ${WALLETS_PATH}\n  ${err.message}`,
+        err,
+        'credential',
+      );
+    }
     // Exit 2 = BLOCKED, per the contract in run-live-batch.mjs. An absent
     // dev-wallet file is a missing PRECONDITION, not a product regression:
     // letting this throw exits 1 and makes every ordinary
@@ -408,24 +442,37 @@ function loadWallets() {
  * check alone was not enough; the check has to be per ROLE, at the point
  * of use.
  */
-function walletFor(role) {
-  const wallets = loadWallets();
+/**
+ * The four things that make a role's entry a USABLE credential, in ONE
+ * place (#2069 review round 52 P2).
+ *
+ * There were two copies of this: `walletFor` below, and the
+ * `onSetupFailure: 'throw'` branch in `launch`, which reimplemented the
+ * same four checks so it could raise a `LiveSetupError` instead of
+ * exiting. They differed only in transport, and the comment history in
+ * that branch records the duplication drifting TWICE already — once
+ * checking only `privateKey` and not the declared address (round 17 P2),
+ * once missing the secp256k1 validity check. Both were caught in review
+ * rather than by a run, which is the failure mode a second definition of
+ * a security-sensitive invariant has: nothing executes the copies
+ * side by side.
+ *
+ * The checks are ordered so each one's precondition is already
+ * established: shape before curve validity (the regex is what makes
+ * `privateKeyToAccount` meaningful), declared address before derivation
+ * (there is nothing to compare against otherwise).
+ *
+ * @returns `{ ok: true, wallet }`, or `{ ok: false, why, roles }` where
+ *   `why` completes the sentence "no usable credential for role X — ".
+ */
+function validateWalletEntry(wallets, role) {
+  const roles = Object.keys(wallets ?? {});
   const w = wallets?.[role];
   const key = w?.privateKey;
-  // Shared exit, not a local copy of it (#1581).
-  const blocked = (why) => {
-    const roles = Object.keys(wallets ?? {});
-    blockedSync(
-      `the dev wallet file has no usable credential for role "${role}" — ${why}.` +
-        `\n  path:  ${WALLETS_PATH}` +
-        `\n  roles: ${roles.length ? roles.join(', ') : '(none)'}` +
-        `\n  → each role needs { address, privateKey } with a 32-byte key,` +
-        ` and the address must be the one that key derives.`,
-    );
-  };
+  const no = (why) => ({ ok: false, why, roles });
 
   if (typeof key !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(key)) {
-    blocked('no valid privateKey');
+    return no('no valid privateKey');
   }
   // The ADDRESS is a credential too, not decoration. `addressOf` is used
   // BEFORE launch by several drivers, so a missing one crashes with exit 1
@@ -433,26 +480,45 @@ function walletFor(role) {
   // key makes a drive inspect one wallet while injecting another, which
   // fails in a way that looks like an app bug (#1529 review round 8).
   if (typeof w.address !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(w.address)) {
-    blocked('no valid address');
+    return no('no valid address');
   }
   // The regex proves 32 bytes of hex, not a usable key: secp256k1 also
   // requires 1 <= k < n, so the all-zero placeholder and anything at or
   // above the curve order pass the shape test and throw here. Letting
   // that escape exits 1 from every signing driver, and the batch reports
-  // an unusable CREDENTIAL as a possible product FAIL — the precondition
-  // shape this file's `blocked()` exists for (#1529 review round 20).
+  // an unusable CREDENTIAL as a possible product FAIL (#1529 round 20).
   let derived;
   try {
     derived = privateKeyToAccount(key).address;
   } catch {
-    blocked('privateKey is 32 bytes of hex but not a valid secp256k1 key');
+    return no('privateKey is 32 bytes of hex but not a valid secp256k1 key');
   }
   if (derived.toLowerCase() !== w.address.toLowerCase()) {
-    blocked(
+    return no(
       `address ${w.address} is not the one its privateKey derives (${derived})`,
     );
   }
-  return w;
+  return { ok: true, wallet: w };
+}
+
+/** The remedy line, shared so both transports say the same thing. */
+const CREDENTIAL_REMEDY =
+  '\n  → each role needs { address, privateKey } with a 32-byte key,' +
+  ' and the address must be the one that key derives.';
+
+function walletFor(role) {
+  const wallets = loadWallets();
+  const r = validateWalletEntry(wallets, role);
+  if (!r.ok) {
+    // Shared exit, not a local copy of it (#1581).
+    blockedSync(
+      `the dev wallet file has no usable credential for role "${role}" — ${r.why}.` +
+        `\n  path:  ${WALLETS_PATH}` +
+        `\n  roles: ${r.roles.length ? r.roles.join(', ') : '(none)'}` +
+        CREDENTIAL_REMEDY,
+    );
+  }
+  return r.wallet;
 }
 
 export const CHAINS = {
@@ -488,10 +554,25 @@ export const CHAINS = {
 // `app.vaipakam.com` once you have confirmed it serves the same build
 // (compare the `/assets/index-*.js` hash — every path on both hosts
 // returns the same 200 SPA shell, so a status code proves nothing).
+//
+// ROUND 49 P2 — it exits BLOCKED, it does not throw. Every caller is an
+// entry-point guard in a three-verdict driver, and a bare throw from one
+// of those is an uncaught exception, which Node reports as exit 1. Exit 1
+// is the batch runner's code for FAIL: "this drive found a defect". An
+// unset environment variable is the opposite kind of event — the drive
+// never reached a served page, so it verified nothing and asserted
+// nothing. That is precisely what BLOCKED (exit 2) is defined to mean
+// above, and it is the classification `loadWallets` and `walletFor`
+// already take for the same reason.
+//
+// Fixed here rather than at the twelve call sites: each of them is one
+// unguarded `requireSiteUrl()` line, so a per-driver try/catch is twelve
+// copies of one decision, and a thirteenth driver would silently start
+// out with the wrong one.
 export function requireSiteUrl() {
   const url = process.env.SITE_URL;
   if (!url) {
-    throw new Error(
+    blockedSync(
       'SITE_URL is required. There is no safe default: the review must ' +
         'target the deployment you just made, and only you know which ' +
         'URL that is. alpha02.vaipakam.com serves the frozen ' +
@@ -629,12 +710,22 @@ export async function launch({
   // represent a first visit (Codex #1181 P2).
   freshProfile = false,
   // keyless: launch the browser + egress route shim with NO wallet
-  // injected and no key read. For drives that only read PUBLIC pages
-  // (live-recover-locales.mjs): the page sees no provider at all, which
-  // is both the honest posture for a public probe and the reason the
-  // drive can run in an environment with no dev-wallet file. The route
-  // shim, viewport, profile handling and `done()` cleanup are shared
-  // with every other drive rather than copied (Codex #1590 r1).
+  // injected and no key read. For a run that only reads PUBLIC pages:
+  // the page sees no provider at all, which is both the honest posture
+  // for a public probe and the reason the run can proceed in an
+  // environment with no dev-wallet file. The route shim, viewport,
+  // profile handling and `done()` cleanup are shared with every other
+  // drive rather than copied (Codex #1590 r1).
+  //
+  // Set per LAUNCH, not per drive — `live-recover-locales.mjs` is
+  // keyless throughout, while `live-role-journeys.mjs` is keyless for
+  // its visitor role and keyed for the connected ones, in the same
+  // process. Note what it costs: with no provider there is no RPC to
+  // observe, so a keyless launch cannot use the blocked-request signal
+  // to show the app does not solicit a connection unprompted. A drive
+  // relying on that has to assert the UI observable instead — the
+  // visitor journey counts connection modals for exactly this reason
+  // (#2069 r15).
   keyless = false,
   // onSetupFailure: what a browser/context SETUP failure does.
   //
@@ -643,17 +734,66 @@ export async function launch({
   //   'throw' — raise a `LiveSetupError` for the caller to handle.
   //     For a drive that launches repeatedly and ACCUMULATES findings
   //     across launches, where exiting here would discard evidence
-  //     already gathered and claim the run verified nothing. Only
-  //     `live-recover-locales.mjs` needs it (Codex #1621 r1).
+  //     already gathered. TWO callers need it: `live-recover-locales.mjs`
+  //     (a browser per locale, Codex #1621 r1) and
+  //     `live-role-journeys.mjs` (a browser per role, #2069). Both also
+  //     pass `throwOnUnreadable` through to the wallet loader, since an
+  //     unreadable credential file fails before this wrapper is reached.
+  //
+  //     Name any new accumulating caller here. A maintainer reading only
+  //     this block and seeing one name has, in the past, treated the
+  //     option as unnecessary elsewhere.
   //
   // The default is the safe one on purpose: forgetting the option costs
   // a correct-but-blunt verdict, never a silently discarded finding.
   onSetupFailure = 'blocked',
 } = {}) {
   requireSiteUrl();
-  const account = keyless
-    ? null
-    : privateKeyToAccount(walletFor(role).privateKey);
+  // CREDENTIAL RESOLUTION HONOURS `onSetupFailure` TOO (#2069 review
+  // round 4 P2). `walletFor` reports a bad or missing credential through
+  // `blockedSync`, which exits the PROCESS — and this call sits above
+  // the `setup()` wrapper below, so a caller that asked for `'throw'`
+  // got the exit anyway. For a multi-role driver that means a missing
+  // borrower key discards the visitor and lender findings already
+  // gathered, before the JSON report is written and before
+  // failure-over-blocked precedence is applied: the one outcome the
+  // throw mode exists to prevent, reached through the one setup step it
+  // did not cover.
+  //
+  // `blockedSync` is still the right default — a driver that never asked
+  // to accumulate should stop at a bad credential.
+  let account = null;
+  if (!keyless) {
+    if (onSetupFailure === 'throw') {
+      // Same validator as `walletFor`, different transport (round 52 P2).
+      // This branch used to reimplement all four checks so it could raise
+      // instead of exiting, and the duplication drifted twice before it
+      // was noticed — once checking only `privateKey` and not the
+      // declared address (round 17 P2), once missing the secp256k1
+      // validity check. Nothing runs the two copies side by side, so
+      // neither drift could fail a test; both were caught by reading.
+      //
+      // What legitimately differs is only the failure transport, and
+      // that is now all that differs. `loadWallets` still needs
+      // `throwOnUnreadable`, because an unreadable FILE fails before any
+      // per-role validation can run.
+      const wallets = loadWallets({ throwOnUnreadable: true });
+      const r = validateWalletEntry(wallets, role);
+      if (!r.ok) {
+        throw new LiveSetupError(
+          `the dev wallet file has no usable credential for role "${role}" —` +
+            ` ${r.why}.\n  path:  ${WALLETS_PATH}` +
+            `\n  roles: ${r.roles.length ? r.roles.join(', ') : '(none)'}` +
+            CREDENTIAL_REMEDY,
+          undefined,
+          'credential',
+        );
+      }
+      account = privateKeyToAccount(r.wallet.privateKey);
+    } else {
+      account = privateKeyToAccount(walletFor(role).privateKey);
+    }
+  }
   let chainId = startChainId;
   let authorized = preAuthorized;
 

@@ -5,10 +5,12 @@
   // (basic + advanced), Terms, Privacy, Data Rights, Discord, Help
   // Search. Wallet-free; cross-domain link-outs to the connected-
   // app surface via the `appUrl(...)` helper (env-driven by
-  // `VITE_APP_URL`). The default is still the LEGACY host, on purpose —
-  // but no longer because the new one is unserved: `app.vaipakam.com` IS
-  // bound. The hold is now the cutover checklist beside `APP_TARGET`
-  // (the Vpfi deposit anchor the Launch CTA's landing position needs).
+  // `VITE_APP_URL`). The default is now the CONNECTED APP: #1959 ported
+  // the last two unported destinations and `APP_TARGET` was flipped, so
+  // these links resolve to `app.vaipakam.com`. `VITE_APP_TARGET=legacy`
+  // opts a build back out. The one exception is the `/recover` guide
+  // links, which stay on the legacy host until the in-flight recovery
+  // attempts there have drained — see the note beside `APP_TARGET`.
   // Both the
   // helper and the variable were renamed from `defiUrl` /
   // `VITE_DEFI_URL` in #1854; the old variable name is no longer

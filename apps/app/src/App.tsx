@@ -5,8 +5,10 @@
  *   - everything else lands on the in-shell NotFound page, never a
  *     blank screen.
  */
-import { lazy } from 'react';
-import { Navigate, Route, Routes, useParams } from 'react-router-dom';
+import { lazy, useEffect } from 'react';
+import { Navigate, Route, Routes, useLocation, useParams } from 'react-router-dom';
+import { SUPPORTED_LOCALES } from '@vaipakam/i18n/glossary';
+import i18n from './i18n';
 import { AppShell } from './components/AppShell';
 // The landing route (Home) stays in the boot chunk so the first paint
 // after mount is instant; everything else is a lazy chunk (UX-005) —
@@ -24,6 +26,43 @@ import { AppShell } from './components/AppShell';
 // /borrow or /lend — the same treatment the other action routes already
 // have, painted inside the already-live shell.
 import { Home } from './pages/Home';
+
+/**
+ * Hard navigation to a URL outside this SPA (#1959).
+ *
+ * A react-router <Navigate> cannot leave the origin, and an <a> would
+ * need the user to click. This is for paths the app deliberately does
+ * NOT own but must keep working — currently only
+ * `/protocol-console/docs`, whose prose lives on the marketing apex so
+ * it indexes beside the other public explainers.
+ *
+ * `replace` rather than `assign`: the redirect should not sit in the
+ * back-stack, or Back from the docs bounces the reader straight out
+ * again instead of returning them here.
+ */
+/**
+ * Leaves this origin for `url`, CARRYING THE FRAGMENT.
+ *
+ * The destination reference supports stable `#<knob-id>` deep links, so
+ * a bookmark or an old connected-app link to one parameter's section
+ * has to survive the hop. Dropping the hash lands every one of them at
+ * the top of a long document — the reader is on the right page and has
+ * to hunt for the row they asked for, which is the quiet half of a
+ * broken link (review round 2 P2). Search is carried for the same
+ * reason; a redirect that discards what the URL said is not a redirect
+ * to the same place.
+ *
+ * An incoming hash wins only when the target does not name one itself.
+ */
+function ExternalRedirect({ url }: { url: string }) {
+  if (typeof window !== 'undefined') {
+    const target = new URL(url);
+    if (!target.hash && window.location.hash) target.hash = window.location.hash;
+    if (!target.search && window.location.search) target.search = window.location.search;
+    window.location.replace(target.toString());
+  }
+  return null;
+}
 const Borrow = lazy(() =>
   import('./pages/Borrow').then((m) => ({ default: m.Borrow })),
 );
@@ -67,9 +106,106 @@ const Recover = lazy(() =>
   import('./pages/Recover').then((m) => ({ default: m.Recover })),
 );
 const Help = lazy(() => import('./pages/Help').then((m) => ({ default: m.Help })));
+// #1959 — the two surfaces the #1854 cutover did not port. Until these
+// existed, `defi.vaipakam.com` could not be retired: the marketing site
+// links to both, and pointing those links here would have landed
+// visitors on the in-shell NotFound below.
+const Analytics = lazy(() =>
+  import('./pages/Analytics').then((m) => ({ default: m.Analytics })),
+);
+const ProtocolConsole = lazy(() =>
+  import('./pages/ProtocolConsole').then((m) => ({ default: m.ProtocolConsole })),
+);
 const NotFound = lazy(() =>
   import('./pages/NotFound').then((m) => ({ default: m.NotFound })),
 );
+
+/** `/vpfi-vault` → `/vpfi`, carrying the fragment across.
+ *
+ *  A bare `<Navigate to="/vpfi">` drops the hash, so the legacy deep
+ *  link `/vpfi-vault#step-2` landed at the top of the page — silently
+ *  losing the very anchor the bookmark existed for. And the old
+ *  fragment name does not survive the rename: the deposit section is
+ *  `#deposit` here, so `#step-2` has to be TRANSLATED, not merely
+ *  preserved. Unknown fragments pass through unchanged rather than
+ *  being dropped; a hash this map has not heard of is more likely a
+ *  section that still exists than one that does not.
+ */
+function LegacyVpfiVaultRedirect() {
+  const { hash } = useLocation();
+  const mapped = hash === '#step-2' ? '#deposit' : hash;
+  return <Navigate to={`/vpfi${mapped}`} replace />;
+}
+
+/** Legacy `/<locale>/...` bookmarks from the retired deployment.
+ *
+ *  The old app mounted its whole `pageRoutes()` tree TWICE — once
+ *  unprefixed and once under `:locale` — so `/es/analytics`,
+ *  `/de/protocol-console` and `/ja/vpfi-vault#step-2` are all real
+ *  bookmarks somebody holds. This app has no locale segment (language
+ *  is a user setting, not a URL), so a path-preserving redirect from
+ *  the old host would land every one of them on NotFound.
+ *
+ *  It strips the locale and RE-ENTERS the router at the unprefixed
+ *  path, deliberately rather than mapping the renames itself. The
+ *  alias routes above already know that `/nft-verifier` is `/nft` and
+ *  that `#step-2` is `#deposit`; duplicating that table here would
+ *  give the two copies somewhere to drift apart, and the localized
+ *  half would be the copy nobody notices is wrong. Two client-side
+ *  `replace` hops, no history entry either time.
+ *
+ *  An unknown first segment falls through to NotFound — the same
+ *  answer the catch-all would have given, so this cannot swallow a
+ *  genuine 404 and report it as a redirect.
+ */
+function LegacyLocaleRedirect() {
+  const params = useParams();
+  const { search, hash } = useLocation();
+  const locale = (params.locale ?? '').toLowerCase();
+  const known = (SUPPORTED_LOCALES as readonly string[]).includes(locale);
+
+  // Apply the language the bookmark encoded. The retired app's
+  // `LocaleResolver` did exactly this (`i18n.changeLanguage(target)`
+  // from the `:locale` param), so `/en/analytics` rendered English
+  // whatever the visitor's stored preference was. Stripping the
+  // segment without applying it would silently answer a bookmark in a
+  // language it did not ask for.
+  //
+  // WORTH KNOWING, because it differs in consequence from the app this
+  // is inherited from: `changeLanguage` PERSISTS — localStorage plus
+  // the `.vaipakam.com` cookie the picker uses — so following one old
+  // link changes the visitor's language for this app and the marketing
+  // site until they change it back. That was harmless when every URL
+  // carried a locale and the URL was the authority; here language is a
+  // stored setting and the URL never mentions it. Matching the old
+  // behaviour is the conservative reading of "keep bookmarks working",
+  // The narrower alternative — apply the prefix only when no explicit
+  // preference is stored — is a PRODUCT call and is flagged for the
+  // owner on that basis alone. Not on cost: `createI18n` already
+  // computes exactly the needed fact as `hadExplicitPref`, at the only
+  // moment it can be computed (its own docstring explains why —
+  // i18next's `caches: ['localStorage']` writes the navigator-detected
+  // language during init, so before that is the only point where a
+  // user's choice and a detection cache are distinguishable). It is a
+  // module-local const consumed for cookie-write suppression and never
+  // surfaced, so the narrow option costs surfacing it plus a condition
+  // here. An earlier version of this comment implied the export was
+  // the obstacle; it is not, and saying so kept a decidable question
+  // looking expensive.
+  //
+  // In an effect, not during render: this is a side effect, and i18n is
+  // a module singleton so it survives this component unmounting as the
+  // redirect commits.
+  useEffect(() => {
+    if (known && i18n.resolvedLanguage !== locale) {
+      void i18n.changeLanguage(locale);
+    }
+  }, [known, locale]);
+
+  if (!known) return <NotFound />;
+  const rest = params['*'] ?? '';
+  return <Navigate to={`/${rest}${search}${hash}`} replace />;
+}
 
 export function App() {
   return (
@@ -102,6 +238,20 @@ export function App() {
             so this is a separate page, not a link to that one. */}
         <Route path="/data-rights" element={<DataRights />} />
 
+        {/* #1959 — both are PUBLIC and wallet-free by design. They are
+            the marketing site's deep-link targets, so a visitor arriving
+            cold must get the real page, not a connect wall. */}
+        <Route path="/analytics" element={<Analytics />} />
+        <Route path="/protocol-console" element={<ProtocolConsole />} />
+        {/* The prose reference lives on the marketing apex so it indexes
+            with the other public explainers; this app owns only the live
+            values. Sending `/protocol-console/docs` there keeps the old
+            defi URL working instead of 404ing. */}
+        <Route
+          path="/protocol-console/docs"
+          element={<ExternalRedirect url="https://vaipakam.com/protocol-console/docs" />}
+        />
+
         {/* Aliases people will guess or carry over from apps/defi. */}
         <Route path="/earn" element={<Navigate to="/lend" replace />} />
         <Route path="/loans" element={<Navigate to="/positions" replace />} />
@@ -118,10 +268,33 @@ export function App() {
         <Route path="/offer-book" element={<Navigate to="/offers" replace />} />
         <Route path="/trade" element={<Navigate to="/desk" replace />} />
         <Route path="/terminal" element={<Navigate to="/desk" replace />} />
-        <Route path="/vpfi-vault" element={<Navigate to="/vpfi" replace />} />
+        <Route path="/vpfi-vault" element={<LegacyVpfiVaultRedirect />} />
         <Route path="/nft-rental" element={<Navigate to="/rent" replace />} />
+        {/* The verifier's legacy path. Its absence would have sent every
+            existing `/nft-verifier` bookmark to NotFound the moment the
+            old host started redirecting here — which is the one thing
+            the deployment runbook promises retiring the host will not
+            do. */}
+        <Route path="/nft-verifier" element={<Navigate to="/nft" replace />} />
+        {/* The pre-rename console paths. The retired router kept both
+            for stale bookmarks; dropping them here would have 404'd
+            every one the moment the old host started redirecting. The
+            docs half goes to the marketing apex, exactly as
+            `/protocol-console/docs` above does — same destination,
+            because it is the same document. */}
+        <Route path="/admin" element={<Navigate to="/protocol-console" replace />} />
+        <Route
+          path="/admin/docs"
+          element={<ExternalRedirect url="https://vaipakam.com/protocol-console/docs" />}
+        />
         <Route path="/vault-assets" element={<Navigate to="/vault" replace />} />
         <Route path="/history" element={<Navigate to="/activity" replace />} />
+
+        {/* Locale-prefixed bookmarks from the retired deployment. Must
+            sit immediately before the catch-all: a first segment that
+            is not a known locale is a genuine 404 and falls through to
+            it. */}
+        <Route path=":locale/*" element={<LegacyLocaleRedirect />} />
 
         <Route path="*" element={<NotFound />} />
       </Route>
