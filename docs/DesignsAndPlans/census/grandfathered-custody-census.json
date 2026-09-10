@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-09T15:37:56.751Z",
+  "generatedAt": "2026-09-10T01:58:56.808Z",
   "purpose": "#1566 grandfathered-custody census — decides whether slices 0-3 are live work or a certified no-op",
   "scope": "all-deployed-chains",
   "allClassesEmpty": false,
@@ -43,18 +43,6 @@
     },
     {
       "chainSlug": "arb-sepolia",
-      "deployment": "archived 2026-05-10T02-37-43Z",
-      "class": "liveIntentCommits",
-      "reason": "the intent getter is unrouted; a zero VPFI balance proves the rows would be UNBACKED, not that they are absent, and cut history can only refute — undetermined pending a calibrated storage read of intentCommits[loanId] or routing of the getter"
-    },
-    {
-      "chainSlug": "arb-sepolia",
-      "deployment": "archived 2026-07-01T01-28-35Z",
-      "class": "liveIntentCommits",
-      "reason": "the intent getter is unrouted; a zero VPFI balance proves the rows would be UNBACKED, not that they are absent, and cut history can only refute — undetermined pending a calibrated storage read of intentCommits[loanId] or routing of the getter"
-    },
-    {
-      "chainSlug": "arb-sepolia",
       "deployment": "archived 2026-07-01T01-36-25Z",
       "class": "vpfiHeldCustody",
       "reason": "VPFI token unresolvable (neither on-chain nor in the artifact); VPFI custody cannot be scoped"
@@ -79,123 +67,27 @@
     },
     {
       "chainSlug": "base-sepolia",
-      "deployment": "archived 2026-06-30T23-56-49Z",
-      "class": "liveIntentCommits",
-      "reason": "the intent getter is unrouted; a zero VPFI balance proves the rows would be UNBACKED, not that they are absent, and cut history can only refute — undetermined pending a calibrated storage read of intentCommits[loanId] or routing of the getter"
-    },
-    {
-      "chainSlug": "base-sepolia",
-      "deployment": "archived 2026-07-01T00-15-58Z",
-      "class": "vpfiHeldCustody",
-      "reason": "every custody selector is UNROUTED on this Diamond today, which says nothing about rows written before they were removed — storage is unreadable without a getter, so absence cannot be established without a calibrated storage read"
-    },
-    {
-      "chainSlug": "base-sepolia",
-      "deployment": "archived 2026-07-01T00-15-58Z",
-      "class": "rebateRows",
-      "reason": "every custody selector is UNROUTED on this Diamond today, which says nothing about rows written before they were removed — storage is unreadable without a getter, so absence cannot be established without a calibrated storage read"
-    },
-    {
-      "chainSlug": "base-sepolia",
-      "deployment": "archived 2026-07-01T00-15-58Z",
-      "class": "fallbackSnapshotCustody",
-      "reason": "every custody selector is UNROUTED on this Diamond today, which says nothing about rows written before they were removed — storage is unreadable without a getter, so absence cannot be established without a calibrated storage read"
-    },
-    {
-      "chainSlug": "base-sepolia",
-      "deployment": "archived 2026-07-01T00-15-58Z",
-      "class": "liveIntentCommits",
-      "reason": "every custody selector is UNROUTED on this Diamond today, which says nothing about rows written before they were removed — storage is unreadable without a getter, so absence cannot be established without a calibrated storage read"
-    },
-    {
-      "chainSlug": "base-sepolia",
-      "deployment": "archived 2026-07-01T00-27-51Z",
-      "class": "vpfiHeldCustody",
-      "reason": "every custody selector is UNROUTED on this Diamond today, which says nothing about rows written before they were removed — storage is unreadable without a getter, so absence cannot be established without a calibrated storage read"
-    },
-    {
-      "chainSlug": "base-sepolia",
-      "deployment": "archived 2026-07-01T00-27-51Z",
-      "class": "rebateRows",
-      "reason": "every custody selector is UNROUTED on this Diamond today, which says nothing about rows written before they were removed — storage is unreadable without a getter, so absence cannot be established without a calibrated storage read"
-    },
-    {
-      "chainSlug": "base-sepolia",
-      "deployment": "archived 2026-07-01T00-27-51Z",
-      "class": "fallbackSnapshotCustody",
-      "reason": "every custody selector is UNROUTED on this Diamond today, which says nothing about rows written before they were removed — storage is unreadable without a getter, so absence cannot be established without a calibrated storage read"
-    },
-    {
-      "chainSlug": "base-sepolia",
-      "deployment": "archived 2026-07-01T00-27-51Z",
-      "class": "liveIntentCommits",
-      "reason": "every custody selector is UNROUTED on this Diamond today, which says nothing about rows written before they were removed — storage is unreadable without a getter, so absence cannot be established without a calibrated storage read"
-    },
-    {
-      "chainSlug": "base-sepolia",
-      "deployment": "archived 2026-07-01T00-39-00Z",
-      "class": "vpfiHeldCustody",
-      "reason": "every custody selector is UNROUTED on this Diamond today, which says nothing about rows written before they were removed — storage is unreadable without a getter, so absence cannot be established without a calibrated storage read"
-    },
-    {
-      "chainSlug": "base-sepolia",
-      "deployment": "archived 2026-07-01T00-39-00Z",
-      "class": "rebateRows",
-      "reason": "every custody selector is UNROUTED on this Diamond today, which says nothing about rows written before they were removed — storage is unreadable without a getter, so absence cannot be established without a calibrated storage read"
-    },
-    {
-      "chainSlug": "base-sepolia",
-      "deployment": "archived 2026-07-01T00-39-00Z",
-      "class": "fallbackSnapshotCustody",
-      "reason": "every custody selector is UNROUTED on this Diamond today, which says nothing about rows written before they were removed — storage is unreadable without a getter, so absence cannot be established without a calibrated storage read"
-    },
-    {
-      "chainSlug": "base-sepolia",
-      "deployment": "archived 2026-07-01T00-39-00Z",
-      "class": "liveIntentCommits",
-      "reason": "every custody selector is UNROUTED on this Diamond today, which says nothing about rows written before they were removed — storage is unreadable without a getter, so absence cannot be established without a calibrated storage read"
-    },
-    {
-      "chainSlug": "base-sepolia",
       "deployment": "archived 2026-07-01T01-03-39Z",
       "class": "vpfiHeldCustody",
-      "reason": "the contract at the recorded address is NOT a Vaipakam Diamond (every custody selector reverts without the Diamond fallback's FunctionDoesNotExist signature) — it cannot be scoped, and its artifact should be checked"
+      "reason": "the contract at the recorded address is NOT a Vaipakam Diamond (every custody selector reverts without the Diamond fallback's FunctionDoesNotExist signature) — it cannot be scoped, and its rows, if any, are not this protocol's; undetermined until the artifact is corrected"
     },
     {
       "chainSlug": "base-sepolia",
       "deployment": "archived 2026-07-01T01-03-39Z",
       "class": "rebateRows",
-      "reason": "the contract at the recorded address is NOT a Vaipakam Diamond (every custody selector reverts without the Diamond fallback's FunctionDoesNotExist signature) — it cannot be scoped, and its artifact should be checked"
+      "reason": "the contract at the recorded address is NOT a Vaipakam Diamond (every custody selector reverts without the Diamond fallback's FunctionDoesNotExist signature) — it cannot be scoped, and its rows, if any, are not this protocol's; undetermined until the artifact is corrected"
     },
     {
       "chainSlug": "base-sepolia",
       "deployment": "archived 2026-07-01T01-03-39Z",
       "class": "fallbackSnapshotCustody",
-      "reason": "the contract at the recorded address is NOT a Vaipakam Diamond (every custody selector reverts without the Diamond fallback's FunctionDoesNotExist signature) — it cannot be scoped, and its artifact should be checked"
+      "reason": "the contract at the recorded address is NOT a Vaipakam Diamond (every custody selector reverts without the Diamond fallback's FunctionDoesNotExist signature) — it cannot be scoped, and its rows, if any, are not this protocol's; undetermined until the artifact is corrected"
     },
     {
       "chainSlug": "base-sepolia",
       "deployment": "archived 2026-07-01T01-03-39Z",
       "class": "liveIntentCommits",
-      "reason": "the contract at the recorded address is NOT a Vaipakam Diamond (every custody selector reverts without the Diamond fallback's FunctionDoesNotExist signature) — it cannot be scoped, and its artifact should be checked"
-    },
-    {
-      "chainSlug": "op-sepolia",
-      "deployment": "live",
-      "class": "liveIntentCommits",
-      "reason": "the intent getter is unrouted; a zero VPFI balance proves the rows would be UNBACKED, not that they are absent, and cut history can only refute — undetermined pending a calibrated storage read of intentCommits[loanId] or routing of the getter"
-    },
-    {
-      "chainSlug": "op-sepolia",
-      "deployment": "archived prior-rehearsal-1778076638",
-      "class": "liveIntentCommits",
-      "reason": "the intent getter is unrouted; a zero VPFI balance proves the rows would be UNBACKED, not that they are absent, and cut history can only refute — undetermined pending a calibrated storage read of intentCommits[loanId] or routing of the getter"
-    },
-    {
-      "chainSlug": "sepolia",
-      "deployment": "archived 2026-05-10T13-02-26Z",
-      "class": "liveIntentCommits",
-      "reason": "the intent getter is unrouted; a zero VPFI balance proves the rows would be UNBACKED, not that they are absent, and cut history can only refute — undetermined pending a calibrated storage read of intentCommits[loanId] or routing of the getter"
+      "reason": "the contract at the recorded address is NOT a Vaipakam Diamond (every custody selector reverts without the Diamond fallback's FunctionDoesNotExist signature) — it cannot be scoped, and its rows, if any, are not this protocol's; undetermined until the artifact is corrected"
     }
   ],
   "results": [
@@ -210,8 +102,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "307094207",
-      "atBlockHash": "0x29de372097ef589b61a757db0052e20fc05deaa15e65b8b0248d1076f43daf07",
+      "atBlock": "307217034",
+      "atBlockHash": "0xf073b88d0b2ee0d24d4c970a5015785e925776d5ad7131438a7e05e018c942e4",
       "blockTag": "finalized",
       "rpcHost": "arbitrum-sepolia.gateway.tenderly.co",
       "scanned": {
@@ -272,8 +164,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "307094207",
-      "atBlockHash": "0x29de372097ef589b61a757db0052e20fc05deaa15e65b8b0248d1076f43daf07",
+      "atBlock": "307217034",
+      "atBlockHash": "0xf073b88d0b2ee0d24d4c970a5015785e925776d5ad7131438a7e05e018c942e4",
       "blockTag": "finalized",
       "rpcHost": "arbitrum-sepolia.gateway.tenderly.co",
       "scanned": {
@@ -284,7 +176,68 @@
         "noCode": false,
         "custodySurfaceUnrouted": false,
         "loupeRouted": true,
-        "intentSource": "getter unrouted — intentCommits storage is NOT readable here; the class is indeterminate pending a calibrated storage read (cut history can only refute)",
+        "intentSource": "getter unrouted — intentCommits rows read from storage at every layout era's slot (3 era slot(s)), hash-pinned",
+        "storageRead": {
+          "method": "eth_getStorageAt pinned by the census block hash (EIP-1898, requireCanonical)",
+          "slotTable": "contracts/deployments/storage-slots.json (forge probe; StorageSlotPinTest)",
+          "eraTable": "contracts/deployments/storage-slot-eras.json (16 eras since 2026-05-01; head cc91487f6)",
+          "calibration": "contracts/test/StorageSlotCalibrationTest.t.sol — derived slots vs routed getters on non-zero rows",
+          "distinctSlots": {
+            "borrowerLifRebate": 9,
+            "fallbackSnapshot": 5,
+            "intentCommits": 3,
+            "intentLiveCommitCount": 3,
+            "nextLoanId": 1,
+            "totalLoansEverCreated": 7
+          },
+          "kind": "storage-read-calibrated",
+          "slotsRead": 83,
+          "loansScanned": 24,
+          "liveCommitCounts": [
+            {
+              "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10ece",
+              "value": "0",
+              "eras": [
+                {
+                  "commit": "ef6ec7848",
+                  "date": "2026-06-08"
+                }
+              ]
+            },
+            {
+              "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10ec8",
+              "value": "0",
+              "eras": [
+                {
+                  "commit": "4b2b6cbab",
+                  "date": "2026-06-23"
+                }
+              ]
+            },
+            {
+              "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10ec1",
+              "value": "0",
+              "eras": [
+                {
+                  "commit": "d2b7a6b3d",
+                  "date": "2026-06-23"
+                },
+                {
+                  "commit": "ca951517e",
+                  "date": "2026-06-23"
+                },
+                {
+                  "commit": "1cc21ca1a",
+                  "date": "2026-08-16"
+                },
+                {
+                  "commit": "cc91487f6",
+                  "date": "2026-09-09"
+                }
+              ]
+            }
+          ]
+        },
         "intentSurfaceRouted": false,
         "intentProducerRouted": false,
         "intentCorroboration": null,
@@ -312,21 +265,9 @@
           "unknownAssetRows": []
         },
         "liveIntentCommits": {
-          "status": "indeterminate",
+          "status": "proven",
+          "provenBy": "storage-read-calibrated",
           "unknownAssetRows": [],
-          "indeterminateReason": "the intent getter is unrouted; a zero VPFI balance proves the rows would be UNBACKED, not that they are absent, and cut history can only refute — undetermined pending a calibrated storage read of intentCommits[loanId] or routing of the getter",
-          "absenceProof": {
-            "proven": false,
-            "reason": "the intent getter is unrouted; a zero VPFI balance proves the rows would be UNBACKED, not that they are absent, and cut history can only refute — undetermined pending a calibrated storage read of intentCommits[loanId] or routing of the getter",
-            "diamondVpfiBacking": "0",
-            "cutHistoryRefutation": {
-              "refuted": false,
-              "verdict": "not-refuted",
-              "reason": "no DiamondCut in the RETURNED history routes the intent producer, and that history carries an ADD for every selector the Diamond currently routes — but an omitted Add/Remove pair is invisible to this test, so this is NOT a proof of absence; the class stays indeterminate pending a state read of the rows",
-              "cutsScanned": 4,
-              "routedSelectors": 396
-            }
-          },
           "count": 0,
           "total": "0",
           "rows": [],
@@ -345,8 +286,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "307094207",
-      "atBlockHash": "0x29de372097ef589b61a757db0052e20fc05deaa15e65b8b0248d1076f43daf07",
+      "atBlock": "307217034",
+      "atBlockHash": "0xf073b88d0b2ee0d24d4c970a5015785e925776d5ad7131438a7e05e018c942e4",
       "blockTag": "finalized",
       "rpcHost": "arbitrum-sepolia.gateway.tenderly.co",
       "scanned": {
@@ -357,7 +298,68 @@
         "noCode": false,
         "custodySurfaceUnrouted": false,
         "loupeRouted": true,
-        "intentSource": "getter unrouted — intentCommits storage is NOT readable here; the class is indeterminate pending a calibrated storage read (cut history can only refute)",
+        "intentSource": "getter unrouted — intentCommits rows read from storage at every layout era's slot (3 era slot(s)), hash-pinned",
+        "storageRead": {
+          "method": "eth_getStorageAt pinned by the census block hash (EIP-1898, requireCanonical)",
+          "slotTable": "contracts/deployments/storage-slots.json (forge probe; StorageSlotPinTest)",
+          "eraTable": "contracts/deployments/storage-slot-eras.json (16 eras since 2026-05-01; head cc91487f6)",
+          "calibration": "contracts/test/StorageSlotCalibrationTest.t.sol — derived slots vs routed getters on non-zero rows",
+          "distinctSlots": {
+            "borrowerLifRebate": 9,
+            "fallbackSnapshot": 5,
+            "intentCommits": 3,
+            "intentLiveCommitCount": 3,
+            "nextLoanId": 1,
+            "totalLoansEverCreated": 7
+          },
+          "kind": "storage-read-calibrated",
+          "slotsRead": 122,
+          "loansScanned": 37,
+          "liveCommitCounts": [
+            {
+              "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10ece",
+              "value": "0",
+              "eras": [
+                {
+                  "commit": "ef6ec7848",
+                  "date": "2026-06-08"
+                }
+              ]
+            },
+            {
+              "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10ec8",
+              "value": "0",
+              "eras": [
+                {
+                  "commit": "4b2b6cbab",
+                  "date": "2026-06-23"
+                }
+              ]
+            },
+            {
+              "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10ec1",
+              "value": "0",
+              "eras": [
+                {
+                  "commit": "d2b7a6b3d",
+                  "date": "2026-06-23"
+                },
+                {
+                  "commit": "ca951517e",
+                  "date": "2026-06-23"
+                },
+                {
+                  "commit": "1cc21ca1a",
+                  "date": "2026-08-16"
+                },
+                {
+                  "commit": "cc91487f6",
+                  "date": "2026-09-09"
+                }
+              ]
+            }
+          ]
+        },
         "intentSurfaceRouted": false,
         "intentProducerRouted": false,
         "intentCorroboration": null,
@@ -385,21 +387,9 @@
           "unknownAssetRows": []
         },
         "liveIntentCommits": {
-          "status": "indeterminate",
+          "status": "proven",
+          "provenBy": "storage-read-calibrated",
           "unknownAssetRows": [],
-          "indeterminateReason": "the intent getter is unrouted; a zero VPFI balance proves the rows would be UNBACKED, not that they are absent, and cut history can only refute — undetermined pending a calibrated storage read of intentCommits[loanId] or routing of the getter",
-          "absenceProof": {
-            "proven": false,
-            "reason": "the intent getter is unrouted; a zero VPFI balance proves the rows would be UNBACKED, not that they are absent, and cut history can only refute — undetermined pending a calibrated storage read of intentCommits[loanId] or routing of the getter",
-            "diamondVpfiBacking": "0",
-            "cutHistoryRefutation": {
-              "refuted": false,
-              "verdict": "not-refuted",
-              "reason": "no DiamondCut in the RETURNED history routes the intent producer, and that history carries an ADD for every selector the Diamond currently routes — but an omitted Add/Remove pair is invisible to this test, so this is NOT a proof of absence; the class stays indeterminate pending a state read of the rows",
-              "cutsScanned": 3,
-              "routedSelectors": 407
-            }
-          },
           "count": 0,
           "total": "0",
           "rows": [],
@@ -418,8 +408,8 @@
       "diamondVpfiBacking": null,
       "vpfiRowsTotal": "0",
       "backingShortfall": null,
-      "atBlock": "307094207",
-      "atBlockHash": "0x29de372097ef589b61a757db0052e20fc05deaa15e65b8b0248d1076f43daf07",
+      "atBlock": "307217034",
+      "atBlockHash": "0xf073b88d0b2ee0d24d4c970a5015785e925776d5ad7131438a7e05e018c942e4",
       "blockTag": "finalized",
       "rpcHost": "arbitrum-sepolia.gateway.tenderly.co",
       "scanned": {
@@ -482,8 +472,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "46598283",
-      "atBlockHash": "0xd49a1a9bb24b0463ccb63f0d8f5af366d39a9a0150245a3440abce651957e8fe",
+      "atBlock": "46615374",
+      "atBlockHash": "0x0a038ab662ac9a91e70d8e62e7bbe69b799c498f341a450bfee4f83c374515e2",
       "blockTag": "finalized",
       "rpcHost": "sepolia.base.org",
       "scanned": {
@@ -543,8 +533,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "46598283",
-      "atBlockHash": "0xd49a1a9bb24b0463ccb63f0d8f5af366d39a9a0150245a3440abce651957e8fe",
+      "atBlock": "46615374",
+      "atBlockHash": "0x0a038ab662ac9a91e70d8e62e7bbe69b799c498f341a450bfee4f83c374515e2",
       "blockTag": "finalized",
       "rpcHost": "sepolia.base.org",
       "scanned": {
@@ -555,7 +545,7 @@
         "noCode": false,
         "custodySurfaceUnrouted": false,
         "loupeRouted": true,
-        "intentSource": "getter unrouted — intentCommits storage is NOT readable here; the class is indeterminate pending a calibrated storage read (cut history can only refute)",
+        "intentSource": "getter unrouted — intentCommits storage NOT read: the no-loans bound already settles the class",
         "intentSurfaceRouted": false,
         "intentProducerRouted": false,
         "intentCorroboration": null,
@@ -608,8 +598,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "46598283",
-      "atBlockHash": "0xd49a1a9bb24b0463ccb63f0d8f5af366d39a9a0150245a3440abce651957e8fe",
+      "atBlock": "46615374",
+      "atBlockHash": "0x0a038ab662ac9a91e70d8e62e7bbe69b799c498f341a450bfee4f83c374515e2",
       "blockTag": "finalized",
       "rpcHost": "sepolia.base.org",
       "scanned": {
@@ -620,7 +610,7 @@
         "noCode": false,
         "custodySurfaceUnrouted": false,
         "loupeRouted": true,
-        "intentSource": "getter unrouted — intentCommits storage is NOT readable here; the class is indeterminate pending a calibrated storage read (cut history can only refute)",
+        "intentSource": "getter unrouted — intentCommits storage NOT read: the no-loans bound already settles the class",
         "intentSurfaceRouted": false,
         "intentProducerRouted": false,
         "intentCorroboration": null,
@@ -672,8 +662,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "46598283",
-      "atBlockHash": "0xd49a1a9bb24b0463ccb63f0d8f5af366d39a9a0150245a3440abce651957e8fe",
+      "atBlock": "46615374",
+      "atBlockHash": "0x0a038ab662ac9a91e70d8e62e7bbe69b799c498f341a450bfee4f83c374515e2",
       "blockTag": "finalized",
       "rpcHost": "sepolia.base.org",
       "scanned": {
@@ -684,7 +674,68 @@
         "noCode": false,
         "custodySurfaceUnrouted": false,
         "loupeRouted": true,
-        "intentSource": "getter unrouted — intentCommits storage is NOT readable here; the class is indeterminate pending a calibrated storage read (cut history can only refute)",
+        "intentSource": "getter unrouted — intentCommits rows read from storage at every layout era's slot (3 era slot(s)), hash-pinned",
+        "storageRead": {
+          "method": "eth_getStorageAt pinned by the census block hash (EIP-1898, requireCanonical)",
+          "slotTable": "contracts/deployments/storage-slots.json (forge probe; StorageSlotPinTest)",
+          "eraTable": "contracts/deployments/storage-slot-eras.json (16 eras since 2026-05-01; head cc91487f6)",
+          "calibration": "contracts/test/StorageSlotCalibrationTest.t.sol — derived slots vs routed getters on non-zero rows",
+          "distinctSlots": {
+            "borrowerLifRebate": 9,
+            "fallbackSnapshot": 5,
+            "intentCommits": 3,
+            "intentLiveCommitCount": 3,
+            "nextLoanId": 1,
+            "totalLoansEverCreated": 7
+          },
+          "kind": "storage-read-calibrated",
+          "slotsRead": 110,
+          "loansScanned": 33,
+          "liveCommitCounts": [
+            {
+              "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10ece",
+              "value": "0",
+              "eras": [
+                {
+                  "commit": "ef6ec7848",
+                  "date": "2026-06-08"
+                }
+              ]
+            },
+            {
+              "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10ec8",
+              "value": "0",
+              "eras": [
+                {
+                  "commit": "4b2b6cbab",
+                  "date": "2026-06-23"
+                }
+              ]
+            },
+            {
+              "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10ec1",
+              "value": "0",
+              "eras": [
+                {
+                  "commit": "d2b7a6b3d",
+                  "date": "2026-06-23"
+                },
+                {
+                  "commit": "ca951517e",
+                  "date": "2026-06-23"
+                },
+                {
+                  "commit": "1cc21ca1a",
+                  "date": "2026-08-16"
+                },
+                {
+                  "commit": "cc91487f6",
+                  "date": "2026-09-09"
+                }
+              ]
+            }
+          ]
+        },
         "intentSurfaceRouted": false,
         "intentProducerRouted": false,
         "intentCorroboration": null,
@@ -712,19 +763,9 @@
           "unknownAssetRows": []
         },
         "liveIntentCommits": {
-          "status": "indeterminate",
+          "status": "proven",
+          "provenBy": "storage-read-calibrated",
           "unknownAssetRows": [],
-          "indeterminateReason": "the intent getter is unrouted; a zero VPFI balance proves the rows would be UNBACKED, not that they are absent, and cut history can only refute — undetermined pending a calibrated storage read of intentCommits[loanId] or routing of the getter",
-          "absenceProof": {
-            "proven": false,
-            "reason": "the intent getter is unrouted; a zero VPFI balance proves the rows would be UNBACKED, not that they are absent, and cut history can only refute — undetermined pending a calibrated storage read of intentCommits[loanId] or routing of the getter",
-            "diamondVpfiBacking": "0",
-            "cutHistoryRefutation": {
-              "refuted": false,
-              "verdict": "unreadable",
-              "reason": "the cut history could not be read in full (rate), so absence cannot be established"
-            }
-          },
           "count": 0,
           "total": "0",
           "rows": [],
@@ -740,54 +781,223 @@
       "vpfiToken": null,
       "vpfiTokenSource": "unresolvable",
       "vpfiScopeAuthoritative": false,
+      "provenBy": "no-loans-ever-created-by-storage",
       "diamondVpfiBacking": null,
       "vpfiRowsTotal": null,
       "backingShortfall": null,
-      "atBlock": "46598283",
-      "atBlockHash": "0xd49a1a9bb24b0463ccb63f0d8f5af366d39a9a0150245a3440abce651957e8fe",
+      "atBlock": "46615374",
+      "atBlockHash": "0x0a038ab662ac9a91e70d8e62e7bbe69b799c498f341a450bfee4f83c374515e2",
       "blockTag": "finalized",
       "rpcHost": "sepolia.base.org",
       "scanned": {
         "loanIdsEnumerated": 0,
-        "totalLoansEverCreated": "n/a",
+        "totalLoansEverCreated": "0|0|0|0|0|0|0",
         "loanIdRange": "none",
         "enumerable": false,
         "noCode": false,
-        "codeAtDeployBlock": null,
         "custodySurfaceUnrouted": true,
         "notADiamond": false,
         "loupeRouted": false,
-        "intentSurfaceRouted": false,
-        "intentProducerRouted": false,
-        "intentCorroboration": null,
-        "producersMayBeLive": false
+        "storageRead": {
+          "method": "eth_getStorageAt pinned by the census block hash (EIP-1898, requireCanonical)",
+          "slotTable": "contracts/deployments/storage-slots.json (forge probe; StorageSlotPinTest)",
+          "eraTable": "contracts/deployments/storage-slot-eras.json (16 eras since 2026-05-01; head cc91487f6)",
+          "calibration": "contracts/test/StorageSlotCalibrationTest.t.sol — derived slots vs routed getters on non-zero rows",
+          "distinctSlots": {
+            "borrowerLifRebate": 9,
+            "fallbackSnapshot": 5,
+            "intentCommits": 3,
+            "intentLiveCommitCount": 3,
+            "nextLoanId": 1,
+            "totalLoansEverCreated": 7
+          },
+          "kind": "no-loans-ever-created-by-storage",
+          "counters": {
+            "nextLoanId": "0",
+            "totalLoansEverCreated": [
+              {
+                "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10e58",
+                "value": "0",
+                "eras": [
+                  {
+                    "commit": "d6ca0f9c6",
+                    "date": "2026-05-01"
+                  },
+                  {
+                    "commit": "5d6aae201",
+                    "date": "2026-05-02"
+                  },
+                  {
+                    "commit": "0980a2ca3",
+                    "date": "2026-05-02"
+                  }
+                ]
+              },
+              {
+                "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10e59",
+                "value": "0",
+                "eras": [
+                  {
+                    "commit": "7316a7cf2",
+                    "date": "2026-05-03"
+                  }
+                ]
+              },
+              {
+                "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10e5e",
+                "value": "0",
+                "eras": [
+                  {
+                    "commit": "52a5687d7",
+                    "date": "2026-05-03"
+                  },
+                  {
+                    "commit": "ab1270ae3",
+                    "date": "2026-05-04"
+                  }
+                ]
+              },
+              {
+                "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10e60",
+                "value": "0",
+                "eras": [
+                  {
+                    "commit": "0277ae76a",
+                    "date": "2026-05-07"
+                  }
+                ]
+              },
+              {
+                "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10e62",
+                "value": "0",
+                "eras": [
+                  {
+                    "commit": "ca1f87b6a",
+                    "date": "2026-05-08"
+                  },
+                  {
+                    "commit": "bf6a3efef",
+                    "date": "2026-05-11"
+                  },
+                  {
+                    "commit": "d7e5f209c",
+                    "date": "2026-05-17"
+                  },
+                  {
+                    "commit": "ef6ec7848",
+                    "date": "2026-06-08"
+                  }
+                ]
+              },
+              {
+                "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10e5d",
+                "value": "0",
+                "eras": [
+                  {
+                    "commit": "4b2b6cbab",
+                    "date": "2026-06-23"
+                  }
+                ]
+              },
+              {
+                "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10e56",
+                "value": "0",
+                "eras": [
+                  {
+                    "commit": "d2b7a6b3d",
+                    "date": "2026-06-23"
+                  },
+                  {
+                    "commit": "ca951517e",
+                    "date": "2026-06-23"
+                  },
+                  {
+                    "commit": "1cc21ca1a",
+                    "date": "2026-08-16"
+                  },
+                  {
+                    "commit": "cc91487f6",
+                    "date": "2026-09-09"
+                  }
+                ]
+              }
+            ],
+            "intentLiveCommitCount": [
+              {
+                "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10ece",
+                "value": "0",
+                "eras": [
+                  {
+                    "commit": "ef6ec7848",
+                    "date": "2026-06-08"
+                  }
+                ]
+              },
+              {
+                "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10ec8",
+                "value": "0",
+                "eras": [
+                  {
+                    "commit": "4b2b6cbab",
+                    "date": "2026-06-23"
+                  }
+                ]
+              },
+              {
+                "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10ec1",
+                "value": "0",
+                "eras": [
+                  {
+                    "commit": "d2b7a6b3d",
+                    "date": "2026-06-23"
+                  },
+                  {
+                    "commit": "ca951517e",
+                    "date": "2026-06-23"
+                  },
+                  {
+                    "commit": "1cc21ca1a",
+                    "date": "2026-08-16"
+                  },
+                  {
+                    "commit": "cc91487f6",
+                    "date": "2026-09-09"
+                  }
+                ]
+              }
+            ]
+          },
+          "slotsRead": 11,
+          "loansScanned": 0,
+          "truncated": false
+        }
       },
       "classes": {
         "vpfiHeldCustody": {
-          "status": "indeterminate",
-          "indeterminateReason": "every custody selector is UNROUTED on this Diamond today, which says nothing about rows written before they were removed — storage is unreadable without a getter, so absence cannot be established without a calibrated storage read",
+          "status": "proven",
+          "provenBy": "no-loans-ever-created-by-storage",
           "count": 0,
           "total": "0",
           "rows": []
         },
         "rebateRows": {
-          "status": "indeterminate",
-          "indeterminateReason": "every custody selector is UNROUTED on this Diamond today, which says nothing about rows written before they were removed — storage is unreadable without a getter, so absence cannot be established without a calibrated storage read",
+          "status": "proven",
+          "provenBy": "no-loans-ever-created-by-storage",
           "count": 0,
           "total": "0",
           "rows": []
         },
         "fallbackSnapshotCustody": {
-          "status": "indeterminate",
-          "indeterminateReason": "every custody selector is UNROUTED on this Diamond today, which says nothing about rows written before they were removed — storage is unreadable without a getter, so absence cannot be established without a calibrated storage read",
+          "status": "proven",
+          "provenBy": "no-loans-ever-created-by-storage",
           "count": 0,
           "total": "0",
           "rows": [],
           "nonVpfiRowsExcluded": []
         },
         "liveIntentCommits": {
-          "status": "indeterminate",
-          "indeterminateReason": "every custody selector is UNROUTED on this Diamond today, which says nothing about rows written before they were removed — storage is unreadable without a getter, so absence cannot be established without a calibrated storage read",
+          "status": "proven",
+          "provenBy": "no-loans-ever-created-by-storage",
           "count": 0,
           "total": "0",
           "rows": [],
@@ -803,54 +1013,223 @@
       "vpfiToken": null,
       "vpfiTokenSource": "unresolvable",
       "vpfiScopeAuthoritative": false,
+      "provenBy": "no-loans-ever-created-by-storage",
       "diamondVpfiBacking": null,
       "vpfiRowsTotal": null,
       "backingShortfall": null,
-      "atBlock": "46598283",
-      "atBlockHash": "0xd49a1a9bb24b0463ccb63f0d8f5af366d39a9a0150245a3440abce651957e8fe",
+      "atBlock": "46615374",
+      "atBlockHash": "0x0a038ab662ac9a91e70d8e62e7bbe69b799c498f341a450bfee4f83c374515e2",
       "blockTag": "finalized",
       "rpcHost": "sepolia.base.org",
       "scanned": {
         "loanIdsEnumerated": 0,
-        "totalLoansEverCreated": "n/a",
+        "totalLoansEverCreated": "0|0|0|0|0|0|0",
         "loanIdRange": "none",
         "enumerable": false,
         "noCode": false,
-        "codeAtDeployBlock": null,
         "custodySurfaceUnrouted": true,
         "notADiamond": false,
         "loupeRouted": false,
-        "intentSurfaceRouted": false,
-        "intentProducerRouted": false,
-        "intentCorroboration": null,
-        "producersMayBeLive": false
+        "storageRead": {
+          "method": "eth_getStorageAt pinned by the census block hash (EIP-1898, requireCanonical)",
+          "slotTable": "contracts/deployments/storage-slots.json (forge probe; StorageSlotPinTest)",
+          "eraTable": "contracts/deployments/storage-slot-eras.json (16 eras since 2026-05-01; head cc91487f6)",
+          "calibration": "contracts/test/StorageSlotCalibrationTest.t.sol — derived slots vs routed getters on non-zero rows",
+          "distinctSlots": {
+            "borrowerLifRebate": 9,
+            "fallbackSnapshot": 5,
+            "intentCommits": 3,
+            "intentLiveCommitCount": 3,
+            "nextLoanId": 1,
+            "totalLoansEverCreated": 7
+          },
+          "kind": "no-loans-ever-created-by-storage",
+          "counters": {
+            "nextLoanId": "0",
+            "totalLoansEverCreated": [
+              {
+                "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10e58",
+                "value": "0",
+                "eras": [
+                  {
+                    "commit": "d6ca0f9c6",
+                    "date": "2026-05-01"
+                  },
+                  {
+                    "commit": "5d6aae201",
+                    "date": "2026-05-02"
+                  },
+                  {
+                    "commit": "0980a2ca3",
+                    "date": "2026-05-02"
+                  }
+                ]
+              },
+              {
+                "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10e59",
+                "value": "0",
+                "eras": [
+                  {
+                    "commit": "7316a7cf2",
+                    "date": "2026-05-03"
+                  }
+                ]
+              },
+              {
+                "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10e5e",
+                "value": "0",
+                "eras": [
+                  {
+                    "commit": "52a5687d7",
+                    "date": "2026-05-03"
+                  },
+                  {
+                    "commit": "ab1270ae3",
+                    "date": "2026-05-04"
+                  }
+                ]
+              },
+              {
+                "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10e60",
+                "value": "0",
+                "eras": [
+                  {
+                    "commit": "0277ae76a",
+                    "date": "2026-05-07"
+                  }
+                ]
+              },
+              {
+                "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10e62",
+                "value": "0",
+                "eras": [
+                  {
+                    "commit": "ca1f87b6a",
+                    "date": "2026-05-08"
+                  },
+                  {
+                    "commit": "bf6a3efef",
+                    "date": "2026-05-11"
+                  },
+                  {
+                    "commit": "d7e5f209c",
+                    "date": "2026-05-17"
+                  },
+                  {
+                    "commit": "ef6ec7848",
+                    "date": "2026-06-08"
+                  }
+                ]
+              },
+              {
+                "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10e5d",
+                "value": "0",
+                "eras": [
+                  {
+                    "commit": "4b2b6cbab",
+                    "date": "2026-06-23"
+                  }
+                ]
+              },
+              {
+                "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10e56",
+                "value": "0",
+                "eras": [
+                  {
+                    "commit": "d2b7a6b3d",
+                    "date": "2026-06-23"
+                  },
+                  {
+                    "commit": "ca951517e",
+                    "date": "2026-06-23"
+                  },
+                  {
+                    "commit": "1cc21ca1a",
+                    "date": "2026-08-16"
+                  },
+                  {
+                    "commit": "cc91487f6",
+                    "date": "2026-09-09"
+                  }
+                ]
+              }
+            ],
+            "intentLiveCommitCount": [
+              {
+                "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10ece",
+                "value": "0",
+                "eras": [
+                  {
+                    "commit": "ef6ec7848",
+                    "date": "2026-06-08"
+                  }
+                ]
+              },
+              {
+                "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10ec8",
+                "value": "0",
+                "eras": [
+                  {
+                    "commit": "4b2b6cbab",
+                    "date": "2026-06-23"
+                  }
+                ]
+              },
+              {
+                "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10ec1",
+                "value": "0",
+                "eras": [
+                  {
+                    "commit": "d2b7a6b3d",
+                    "date": "2026-06-23"
+                  },
+                  {
+                    "commit": "ca951517e",
+                    "date": "2026-06-23"
+                  },
+                  {
+                    "commit": "1cc21ca1a",
+                    "date": "2026-08-16"
+                  },
+                  {
+                    "commit": "cc91487f6",
+                    "date": "2026-09-09"
+                  }
+                ]
+              }
+            ]
+          },
+          "slotsRead": 11,
+          "loansScanned": 0,
+          "truncated": false
+        }
       },
       "classes": {
         "vpfiHeldCustody": {
-          "status": "indeterminate",
-          "indeterminateReason": "every custody selector is UNROUTED on this Diamond today, which says nothing about rows written before they were removed — storage is unreadable without a getter, so absence cannot be established without a calibrated storage read",
+          "status": "proven",
+          "provenBy": "no-loans-ever-created-by-storage",
           "count": 0,
           "total": "0",
           "rows": []
         },
         "rebateRows": {
-          "status": "indeterminate",
-          "indeterminateReason": "every custody selector is UNROUTED on this Diamond today, which says nothing about rows written before they were removed — storage is unreadable without a getter, so absence cannot be established without a calibrated storage read",
+          "status": "proven",
+          "provenBy": "no-loans-ever-created-by-storage",
           "count": 0,
           "total": "0",
           "rows": []
         },
         "fallbackSnapshotCustody": {
-          "status": "indeterminate",
-          "indeterminateReason": "every custody selector is UNROUTED on this Diamond today, which says nothing about rows written before they were removed — storage is unreadable without a getter, so absence cannot be established without a calibrated storage read",
+          "status": "proven",
+          "provenBy": "no-loans-ever-created-by-storage",
           "count": 0,
           "total": "0",
           "rows": [],
           "nonVpfiRowsExcluded": []
         },
         "liveIntentCommits": {
-          "status": "indeterminate",
-          "indeterminateReason": "every custody selector is UNROUTED on this Diamond today, which says nothing about rows written before they were removed — storage is unreadable without a getter, so absence cannot be established without a calibrated storage read",
+          "status": "proven",
+          "provenBy": "no-loans-ever-created-by-storage",
           "count": 0,
           "total": "0",
           "rows": [],
@@ -866,54 +1245,223 @@
       "vpfiToken": null,
       "vpfiTokenSource": "unresolvable",
       "vpfiScopeAuthoritative": false,
+      "provenBy": "no-loans-ever-created-by-storage",
       "diamondVpfiBacking": null,
       "vpfiRowsTotal": null,
       "backingShortfall": null,
-      "atBlock": "46598283",
-      "atBlockHash": "0xd49a1a9bb24b0463ccb63f0d8f5af366d39a9a0150245a3440abce651957e8fe",
+      "atBlock": "46615374",
+      "atBlockHash": "0x0a038ab662ac9a91e70d8e62e7bbe69b799c498f341a450bfee4f83c374515e2",
       "blockTag": "finalized",
       "rpcHost": "sepolia.base.org",
       "scanned": {
         "loanIdsEnumerated": 0,
-        "totalLoansEverCreated": "n/a",
+        "totalLoansEverCreated": "0|0|0|0|0|0|0",
         "loanIdRange": "none",
         "enumerable": false,
         "noCode": false,
-        "codeAtDeployBlock": null,
         "custodySurfaceUnrouted": true,
         "notADiamond": false,
         "loupeRouted": false,
-        "intentSurfaceRouted": false,
-        "intentProducerRouted": false,
-        "intentCorroboration": null,
-        "producersMayBeLive": false
+        "storageRead": {
+          "method": "eth_getStorageAt pinned by the census block hash (EIP-1898, requireCanonical)",
+          "slotTable": "contracts/deployments/storage-slots.json (forge probe; StorageSlotPinTest)",
+          "eraTable": "contracts/deployments/storage-slot-eras.json (16 eras since 2026-05-01; head cc91487f6)",
+          "calibration": "contracts/test/StorageSlotCalibrationTest.t.sol — derived slots vs routed getters on non-zero rows",
+          "distinctSlots": {
+            "borrowerLifRebate": 9,
+            "fallbackSnapshot": 5,
+            "intentCommits": 3,
+            "intentLiveCommitCount": 3,
+            "nextLoanId": 1,
+            "totalLoansEverCreated": 7
+          },
+          "kind": "no-loans-ever-created-by-storage",
+          "counters": {
+            "nextLoanId": "0",
+            "totalLoansEverCreated": [
+              {
+                "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10e58",
+                "value": "0",
+                "eras": [
+                  {
+                    "commit": "d6ca0f9c6",
+                    "date": "2026-05-01"
+                  },
+                  {
+                    "commit": "5d6aae201",
+                    "date": "2026-05-02"
+                  },
+                  {
+                    "commit": "0980a2ca3",
+                    "date": "2026-05-02"
+                  }
+                ]
+              },
+              {
+                "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10e59",
+                "value": "0",
+                "eras": [
+                  {
+                    "commit": "7316a7cf2",
+                    "date": "2026-05-03"
+                  }
+                ]
+              },
+              {
+                "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10e5e",
+                "value": "0",
+                "eras": [
+                  {
+                    "commit": "52a5687d7",
+                    "date": "2026-05-03"
+                  },
+                  {
+                    "commit": "ab1270ae3",
+                    "date": "2026-05-04"
+                  }
+                ]
+              },
+              {
+                "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10e60",
+                "value": "0",
+                "eras": [
+                  {
+                    "commit": "0277ae76a",
+                    "date": "2026-05-07"
+                  }
+                ]
+              },
+              {
+                "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10e62",
+                "value": "0",
+                "eras": [
+                  {
+                    "commit": "ca1f87b6a",
+                    "date": "2026-05-08"
+                  },
+                  {
+                    "commit": "bf6a3efef",
+                    "date": "2026-05-11"
+                  },
+                  {
+                    "commit": "d7e5f209c",
+                    "date": "2026-05-17"
+                  },
+                  {
+                    "commit": "ef6ec7848",
+                    "date": "2026-06-08"
+                  }
+                ]
+              },
+              {
+                "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10e5d",
+                "value": "0",
+                "eras": [
+                  {
+                    "commit": "4b2b6cbab",
+                    "date": "2026-06-23"
+                  }
+                ]
+              },
+              {
+                "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10e56",
+                "value": "0",
+                "eras": [
+                  {
+                    "commit": "d2b7a6b3d",
+                    "date": "2026-06-23"
+                  },
+                  {
+                    "commit": "ca951517e",
+                    "date": "2026-06-23"
+                  },
+                  {
+                    "commit": "1cc21ca1a",
+                    "date": "2026-08-16"
+                  },
+                  {
+                    "commit": "cc91487f6",
+                    "date": "2026-09-09"
+                  }
+                ]
+              }
+            ],
+            "intentLiveCommitCount": [
+              {
+                "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10ece",
+                "value": "0",
+                "eras": [
+                  {
+                    "commit": "ef6ec7848",
+                    "date": "2026-06-08"
+                  }
+                ]
+              },
+              {
+                "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10ec8",
+                "value": "0",
+                "eras": [
+                  {
+                    "commit": "4b2b6cbab",
+                    "date": "2026-06-23"
+                  }
+                ]
+              },
+              {
+                "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10ec1",
+                "value": "0",
+                "eras": [
+                  {
+                    "commit": "d2b7a6b3d",
+                    "date": "2026-06-23"
+                  },
+                  {
+                    "commit": "ca951517e",
+                    "date": "2026-06-23"
+                  },
+                  {
+                    "commit": "1cc21ca1a",
+                    "date": "2026-08-16"
+                  },
+                  {
+                    "commit": "cc91487f6",
+                    "date": "2026-09-09"
+                  }
+                ]
+              }
+            ]
+          },
+          "slotsRead": 11,
+          "loansScanned": 0,
+          "truncated": false
+        }
       },
       "classes": {
         "vpfiHeldCustody": {
-          "status": "indeterminate",
-          "indeterminateReason": "every custody selector is UNROUTED on this Diamond today, which says nothing about rows written before they were removed — storage is unreadable without a getter, so absence cannot be established without a calibrated storage read",
+          "status": "proven",
+          "provenBy": "no-loans-ever-created-by-storage",
           "count": 0,
           "total": "0",
           "rows": []
         },
         "rebateRows": {
-          "status": "indeterminate",
-          "indeterminateReason": "every custody selector is UNROUTED on this Diamond today, which says nothing about rows written before they were removed — storage is unreadable without a getter, so absence cannot be established without a calibrated storage read",
+          "status": "proven",
+          "provenBy": "no-loans-ever-created-by-storage",
           "count": 0,
           "total": "0",
           "rows": []
         },
         "fallbackSnapshotCustody": {
-          "status": "indeterminate",
-          "indeterminateReason": "every custody selector is UNROUTED on this Diamond today, which says nothing about rows written before they were removed — storage is unreadable without a getter, so absence cannot be established without a calibrated storage read",
+          "status": "proven",
+          "provenBy": "no-loans-ever-created-by-storage",
           "count": 0,
           "total": "0",
           "rows": [],
           "nonVpfiRowsExcluded": []
         },
         "liveIntentCommits": {
-          "status": "indeterminate",
-          "indeterminateReason": "every custody selector is UNROUTED on this Diamond today, which says nothing about rows written before they were removed — storage is unreadable without a getter, so absence cannot be established without a calibrated storage read",
+          "status": "proven",
+          "provenBy": "no-loans-ever-created-by-storage",
           "count": 0,
           "total": "0",
           "rows": [],
@@ -933,8 +1481,8 @@
       "diamondVpfiBacking": null,
       "vpfiRowsTotal": "0",
       "backingShortfall": null,
-      "atBlock": "46598283",
-      "atBlockHash": "0xd49a1a9bb24b0463ccb63f0d8f5af366d39a9a0150245a3440abce651957e8fe",
+      "atBlock": "46615374",
+      "atBlockHash": "0x0a038ab662ac9a91e70d8e62e7bbe69b799c498f341a450bfee4f83c374515e2",
       "blockTag": "finalized",
       "rpcHost": "sepolia.base.org",
       "scanned": {
@@ -997,8 +1545,8 @@
       "diamondVpfiBacking": null,
       "vpfiRowsTotal": null,
       "backingShortfall": null,
-      "atBlock": "46598283",
-      "atBlockHash": "0xd49a1a9bb24b0463ccb63f0d8f5af366d39a9a0150245a3440abce651957e8fe",
+      "atBlock": "46615374",
+      "atBlockHash": "0x0a038ab662ac9a91e70d8e62e7bbe69b799c498f341a450bfee4f83c374515e2",
       "blockTag": "finalized",
       "rpcHost": "sepolia.base.org",
       "scanned": {
@@ -1007,33 +1555,28 @@
         "loanIdRange": "none",
         "enumerable": false,
         "noCode": false,
-        "codeAtDeployBlock": null,
         "custodySurfaceUnrouted": false,
         "notADiamond": true,
-        "loupeRouted": false,
-        "intentSurfaceRouted": false,
-        "intentProducerRouted": false,
-        "intentCorroboration": null,
-        "producersMayBeLive": false
+        "loupeRouted": false
       },
       "classes": {
         "vpfiHeldCustody": {
           "status": "indeterminate",
-          "indeterminateReason": "the contract at the recorded address is NOT a Vaipakam Diamond (every custody selector reverts without the Diamond fallback's FunctionDoesNotExist signature) — it cannot be scoped, and its artifact should be checked",
+          "indeterminateReason": "the contract at the recorded address is NOT a Vaipakam Diamond (every custody selector reverts without the Diamond fallback's FunctionDoesNotExist signature) — it cannot be scoped, and its rows, if any, are not this protocol's; undetermined until the artifact is corrected",
           "count": 0,
           "total": "0",
           "rows": []
         },
         "rebateRows": {
           "status": "indeterminate",
-          "indeterminateReason": "the contract at the recorded address is NOT a Vaipakam Diamond (every custody selector reverts without the Diamond fallback's FunctionDoesNotExist signature) — it cannot be scoped, and its artifact should be checked",
+          "indeterminateReason": "the contract at the recorded address is NOT a Vaipakam Diamond (every custody selector reverts without the Diamond fallback's FunctionDoesNotExist signature) — it cannot be scoped, and its rows, if any, are not this protocol's; undetermined until the artifact is corrected",
           "count": 0,
           "total": "0",
           "rows": []
         },
         "fallbackSnapshotCustody": {
           "status": "indeterminate",
-          "indeterminateReason": "the contract at the recorded address is NOT a Vaipakam Diamond (every custody selector reverts without the Diamond fallback's FunctionDoesNotExist signature) — it cannot be scoped, and its artifact should be checked",
+          "indeterminateReason": "the contract at the recorded address is NOT a Vaipakam Diamond (every custody selector reverts without the Diamond fallback's FunctionDoesNotExist signature) — it cannot be scoped, and its rows, if any, are not this protocol's; undetermined until the artifact is corrected",
           "count": 0,
           "total": "0",
           "rows": [],
@@ -1041,7 +1584,7 @@
         },
         "liveIntentCommits": {
           "status": "indeterminate",
-          "indeterminateReason": "the contract at the recorded address is NOT a Vaipakam Diamond (every custody selector reverts without the Diamond fallback's FunctionDoesNotExist signature) — it cannot be scoped, and its artifact should be checked",
+          "indeterminateReason": "the contract at the recorded address is NOT a Vaipakam Diamond (every custody selector reverts without the Diamond fallback's FunctionDoesNotExist signature) — it cannot be scoped, and its rows, if any, are not this protocol's; undetermined until the artifact is corrected",
           "count": 0,
           "total": "0",
           "rows": [],
@@ -1060,9 +1603,9 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "130045140",
-      "atBlockHash": "0x66f773a5b32b549f0a4b6579b96576c00008afd493ce37cbc86ea2e09b18cf9b",
-      "blockTag": "finalized (lowest of 6 samples: 130045140, 130045143, 130045144, 130045147)",
+      "atBlock": "130123005",
+      "atBlockHash": "0x6b166c1f8a985b7f614948180e976875cda6b9ae79d9efac0145fb5afb68dc62",
+      "blockTag": "finalized (lowest of 6 samples: 130123005, 130123007, 130123009, 130123010, 130123011, 130123012)",
       "rpcHost": "bsc-testnet-rpc.publicnode.com",
       "scanned": {
         "loanIdsEnumerated": 4,
@@ -1121,9 +1664,9 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "130045140",
-      "atBlockHash": "0x66f773a5b32b549f0a4b6579b96576c00008afd493ce37cbc86ea2e09b18cf9b",
-      "blockTag": "finalized (lowest of 6 samples: 130045140, 130045143, 130045144, 130045147)",
+      "atBlock": "130123005",
+      "atBlockHash": "0x6b166c1f8a985b7f614948180e976875cda6b9ae79d9efac0145fb5afb68dc62",
+      "blockTag": "finalized (lowest of 6 samples: 130123005, 130123007, 130123009, 130123010, 130123011, 130123012)",
       "rpcHost": "bsc-testnet-rpc.publicnode.com",
       "scanned": {
         "loanIdsEnumerated": 0,
@@ -1133,7 +1676,7 @@
         "noCode": false,
         "custodySurfaceUnrouted": false,
         "loupeRouted": true,
-        "intentSource": "getter unrouted — intentCommits storage is NOT readable here; the class is indeterminate pending a calibrated storage read (cut history can only refute)",
+        "intentSource": "getter unrouted — intentCommits storage NOT read: the no-loans bound already settles the class",
         "intentSurfaceRouted": false,
         "intentProducerRouted": false,
         "intentCorroboration": null,
@@ -1185,9 +1728,9 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "48582033",
-      "atBlockHash": "0x9e8bf1082ed93f95c5ab198df33a9c3634500c8a16d514b70f139b9c79afe8bb",
-      "blockTag": "finalized (lowest of 6 samples: 48582033, 48582153)",
+      "atBlock": "48600446",
+      "atBlockHash": "0x001fccdfe11be76d4ff54b9bcc82cd02dbbeb03ad0811f994688f987a20ac762",
+      "blockTag": "finalized",
       "rpcHost": "optimism-sepolia-rpc.publicnode.com",
       "scanned": {
         "loanIdsEnumerated": 33,
@@ -1197,7 +1740,68 @@
         "noCode": false,
         "custodySurfaceUnrouted": false,
         "loupeRouted": true,
-        "intentSource": "getter unrouted — intentCommits storage is NOT readable here; the class is indeterminate pending a calibrated storage read (cut history can only refute)",
+        "intentSource": "getter unrouted — intentCommits rows read from storage at every layout era's slot (3 era slot(s)), hash-pinned",
+        "storageRead": {
+          "method": "eth_getStorageAt pinned by the census block hash (EIP-1898, requireCanonical)",
+          "slotTable": "contracts/deployments/storage-slots.json (forge probe; StorageSlotPinTest)",
+          "eraTable": "contracts/deployments/storage-slot-eras.json (16 eras since 2026-05-01; head cc91487f6)",
+          "calibration": "contracts/test/StorageSlotCalibrationTest.t.sol — derived slots vs routed getters on non-zero rows",
+          "distinctSlots": {
+            "borrowerLifRebate": 9,
+            "fallbackSnapshot": 5,
+            "intentCommits": 3,
+            "intentLiveCommitCount": 3,
+            "nextLoanId": 1,
+            "totalLoansEverCreated": 7
+          },
+          "kind": "storage-read-calibrated",
+          "slotsRead": 110,
+          "loansScanned": 33,
+          "liveCommitCounts": [
+            {
+              "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10ece",
+              "value": "0",
+              "eras": [
+                {
+                  "commit": "ef6ec7848",
+                  "date": "2026-06-08"
+                }
+              ]
+            },
+            {
+              "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10ec8",
+              "value": "0",
+              "eras": [
+                {
+                  "commit": "4b2b6cbab",
+                  "date": "2026-06-23"
+                }
+              ]
+            },
+            {
+              "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10ec1",
+              "value": "0",
+              "eras": [
+                {
+                  "commit": "d2b7a6b3d",
+                  "date": "2026-06-23"
+                },
+                {
+                  "commit": "ca951517e",
+                  "date": "2026-06-23"
+                },
+                {
+                  "commit": "1cc21ca1a",
+                  "date": "2026-08-16"
+                },
+                {
+                  "commit": "cc91487f6",
+                  "date": "2026-09-09"
+                }
+              ]
+            }
+          ]
+        },
         "intentSurfaceRouted": false,
         "intentProducerRouted": false,
         "intentCorroboration": null,
@@ -1225,20 +1829,9 @@
           "unknownAssetRows": []
         },
         "liveIntentCommits": {
-          "status": "indeterminate",
+          "status": "proven",
+          "provenBy": "storage-read-calibrated",
           "unknownAssetRows": [],
-          "indeterminateReason": "the intent getter is unrouted; a zero VPFI balance proves the rows would be UNBACKED, not that they are absent, and cut history can only refute — undetermined pending a calibrated storage read of intentCommits[loanId] or routing of the getter",
-          "absenceProof": {
-            "proven": false,
-            "reason": "the intent getter is unrouted; a zero VPFI balance proves the rows would be UNBACKED, not that they are absent, and cut history can only refute — undetermined pending a calibrated storage read of intentCommits[loanId] or routing of the getter",
-            "diamondVpfiBacking": "0",
-            "cutHistoryRefutation": {
-              "refuted": false,
-              "verdict": "unreadable",
-              "reason": "the cut-history scan returned ZERO DiamondCut events, but every Diamond emits at least one at deploy — the history was not actually read (pruned endpoint, or a deployBlock that does not match this address), so absence is not established. Re-run against an archive endpoint.",
-              "cutsScanned": 0
-            }
-          },
           "count": 0,
           "total": "0",
           "rows": [],
@@ -1257,9 +1850,9 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "48582033",
-      "atBlockHash": "0x9e8bf1082ed93f95c5ab198df33a9c3634500c8a16d514b70f139b9c79afe8bb",
-      "blockTag": "finalized (lowest of 6 samples: 48582033, 48582153)",
+      "atBlock": "48600446",
+      "atBlockHash": "0x001fccdfe11be76d4ff54b9bcc82cd02dbbeb03ad0811f994688f987a20ac762",
+      "blockTag": "finalized",
       "rpcHost": "optimism-sepolia-rpc.publicnode.com",
       "scanned": {
         "loanIdsEnumerated": 13,
@@ -1269,7 +1862,68 @@
         "noCode": false,
         "custodySurfaceUnrouted": false,
         "loupeRouted": true,
-        "intentSource": "getter unrouted — intentCommits storage is NOT readable here; the class is indeterminate pending a calibrated storage read (cut history can only refute)",
+        "intentSource": "getter unrouted — intentCommits rows read from storage at every layout era's slot (3 era slot(s)), hash-pinned",
+        "storageRead": {
+          "method": "eth_getStorageAt pinned by the census block hash (EIP-1898, requireCanonical)",
+          "slotTable": "contracts/deployments/storage-slots.json (forge probe; StorageSlotPinTest)",
+          "eraTable": "contracts/deployments/storage-slot-eras.json (16 eras since 2026-05-01; head cc91487f6)",
+          "calibration": "contracts/test/StorageSlotCalibrationTest.t.sol — derived slots vs routed getters on non-zero rows",
+          "distinctSlots": {
+            "borrowerLifRebate": 9,
+            "fallbackSnapshot": 5,
+            "intentCommits": 3,
+            "intentLiveCommitCount": 3,
+            "nextLoanId": 1,
+            "totalLoansEverCreated": 7
+          },
+          "kind": "storage-read-calibrated",
+          "slotsRead": 50,
+          "loansScanned": 13,
+          "liveCommitCounts": [
+            {
+              "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10ece",
+              "value": "0",
+              "eras": [
+                {
+                  "commit": "ef6ec7848",
+                  "date": "2026-06-08"
+                }
+              ]
+            },
+            {
+              "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10ec8",
+              "value": "0",
+              "eras": [
+                {
+                  "commit": "4b2b6cbab",
+                  "date": "2026-06-23"
+                }
+              ]
+            },
+            {
+              "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10ec1",
+              "value": "0",
+              "eras": [
+                {
+                  "commit": "d2b7a6b3d",
+                  "date": "2026-06-23"
+                },
+                {
+                  "commit": "ca951517e",
+                  "date": "2026-06-23"
+                },
+                {
+                  "commit": "1cc21ca1a",
+                  "date": "2026-08-16"
+                },
+                {
+                  "commit": "cc91487f6",
+                  "date": "2026-09-09"
+                }
+              ]
+            }
+          ]
+        },
         "intentSurfaceRouted": false,
         "intentProducerRouted": false,
         "intentCorroboration": null,
@@ -1297,20 +1951,9 @@
           "unknownAssetRows": []
         },
         "liveIntentCommits": {
-          "status": "indeterminate",
+          "status": "proven",
+          "provenBy": "storage-read-calibrated",
           "unknownAssetRows": [],
-          "indeterminateReason": "the intent getter is unrouted; a zero VPFI balance proves the rows would be UNBACKED, not that they are absent, and cut history can only refute — undetermined pending a calibrated storage read of intentCommits[loanId] or routing of the getter",
-          "absenceProof": {
-            "proven": false,
-            "reason": "the intent getter is unrouted; a zero VPFI balance proves the rows would be UNBACKED, not that they are absent, and cut history can only refute — undetermined pending a calibrated storage read of intentCommits[loanId] or routing of the getter",
-            "diamondVpfiBacking": "0",
-            "cutHistoryRefutation": {
-              "refuted": false,
-              "verdict": "unreadable",
-              "reason": "the cut-history scan returned ZERO DiamondCut events, but every Diamond emits at least one at deploy — the history was not actually read (pruned endpoint, or a deployBlock that does not match this address), so absence is not established. Re-run against an archive endpoint.",
-              "cutsScanned": 0
-            }
-          },
           "count": 0,
           "total": "0",
           "rows": [],
@@ -1330,8 +1973,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "11668793",
-      "atBlockHash": "0x31a3cb98f30afb6c4b10546694f9a5ddde91beab0b761b4b8f24fb94a045f625",
+      "atBlock": "11671778",
+      "atBlockHash": "0x5ad72584c274c1569ff365f530c8a67f48277b8e9f1d3bcaa3c4eb42b98543ee",
       "blockTag": "finalized",
       "rpcHost": "ethereum-sepolia-rpc.publicnode.com",
       "scanned": {
@@ -1342,7 +1985,7 @@
         "noCode": false,
         "custodySurfaceUnrouted": false,
         "loupeRouted": true,
-        "intentSource": "getter unrouted — intentCommits storage is NOT readable here; the class is indeterminate pending a calibrated storage read (cut history can only refute)",
+        "intentSource": "getter unrouted — intentCommits storage NOT read: the no-loans bound already settles the class",
         "intentSurfaceRouted": false,
         "intentProducerRouted": false,
         "intentCorroboration": null,
@@ -1394,8 +2037,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "11668793",
-      "atBlockHash": "0x31a3cb98f30afb6c4b10546694f9a5ddde91beab0b761b4b8f24fb94a045f625",
+      "atBlock": "11671778",
+      "atBlockHash": "0x5ad72584c274c1569ff365f530c8a67f48277b8e9f1d3bcaa3c4eb42b98543ee",
       "blockTag": "finalized",
       "rpcHost": "ethereum-sepolia-rpc.publicnode.com",
       "scanned": {
@@ -1406,7 +2049,68 @@
         "noCode": false,
         "custodySurfaceUnrouted": false,
         "loupeRouted": true,
-        "intentSource": "getter unrouted — intentCommits storage is NOT readable here; the class is indeterminate pending a calibrated storage read (cut history can only refute)",
+        "intentSource": "getter unrouted — intentCommits rows read from storage at every layout era's slot (3 era slot(s)), hash-pinned",
+        "storageRead": {
+          "method": "eth_getStorageAt pinned by the census block hash (EIP-1898, requireCanonical)",
+          "slotTable": "contracts/deployments/storage-slots.json (forge probe; StorageSlotPinTest)",
+          "eraTable": "contracts/deployments/storage-slot-eras.json (16 eras since 2026-05-01; head cc91487f6)",
+          "calibration": "contracts/test/StorageSlotCalibrationTest.t.sol — derived slots vs routed getters on non-zero rows",
+          "distinctSlots": {
+            "borrowerLifRebate": 9,
+            "fallbackSnapshot": 5,
+            "intentCommits": 3,
+            "intentLiveCommitCount": 3,
+            "nextLoanId": 1,
+            "totalLoansEverCreated": 7
+          },
+          "kind": "storage-read-calibrated",
+          "slotsRead": 83,
+          "loansScanned": 24,
+          "liveCommitCounts": [
+            {
+              "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10ece",
+              "value": "0",
+              "eras": [
+                {
+                  "commit": "ef6ec7848",
+                  "date": "2026-06-08"
+                }
+              ]
+            },
+            {
+              "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10ec8",
+              "value": "0",
+              "eras": [
+                {
+                  "commit": "4b2b6cbab",
+                  "date": "2026-06-23"
+                }
+              ]
+            },
+            {
+              "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10ec1",
+              "value": "0",
+              "eras": [
+                {
+                  "commit": "d2b7a6b3d",
+                  "date": "2026-06-23"
+                },
+                {
+                  "commit": "ca951517e",
+                  "date": "2026-06-23"
+                },
+                {
+                  "commit": "1cc21ca1a",
+                  "date": "2026-08-16"
+                },
+                {
+                  "commit": "cc91487f6",
+                  "date": "2026-09-09"
+                }
+              ]
+            }
+          ]
+        },
         "intentSurfaceRouted": false,
         "intentProducerRouted": false,
         "intentCorroboration": null,
@@ -1434,21 +2138,9 @@
           "unknownAssetRows": []
         },
         "liveIntentCommits": {
-          "status": "indeterminate",
+          "status": "proven",
+          "provenBy": "storage-read-calibrated",
           "unknownAssetRows": [],
-          "indeterminateReason": "the intent getter is unrouted; a zero VPFI balance proves the rows would be UNBACKED, not that they are absent, and cut history can only refute — undetermined pending a calibrated storage read of intentCommits[loanId] or routing of the getter",
-          "absenceProof": {
-            "proven": false,
-            "reason": "the intent getter is unrouted; a zero VPFI balance proves the rows would be UNBACKED, not that they are absent, and cut history can only refute — undetermined pending a calibrated storage read of intentCommits[loanId] or routing of the getter",
-            "diamondVpfiBacking": "0",
-            "cutHistoryRefutation": {
-              "refuted": false,
-              "verdict": "not-refuted",
-              "reason": "no DiamondCut in the RETURNED history routes the intent producer, and that history carries an ADD for every selector the Diamond currently routes — but an omitted Add/Remove pair is invisible to this test, so this is NOT a proof of absence; the class stays indeterminate pending a state read of the rows",
-              "cutsScanned": 5,
-              "routedSelectors": 395
-            }
-          },
           "count": 0,
           "total": "0",
           "rows": [],
@@ -1468,8 +2160,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "11668793",
-      "atBlockHash": "0x31a3cb98f30afb6c4b10546694f9a5ddde91beab0b761b4b8f24fb94a045f625",
+      "atBlock": "11671778",
+      "atBlockHash": "0x5ad72584c274c1569ff365f530c8a67f48277b8e9f1d3bcaa3c4eb42b98543ee",
       "blockTag": "finalized",
       "rpcHost": "ethereum-sepolia-rpc.publicnode.com",
       "scanned": {
@@ -1480,7 +2172,7 @@
         "noCode": false,
         "custodySurfaceUnrouted": false,
         "loupeRouted": true,
-        "intentSource": "getter unrouted — intentCommits storage is NOT readable here; the class is indeterminate pending a calibrated storage read (cut history can only refute)",
+        "intentSource": "getter unrouted — intentCommits storage NOT read: the no-loans bound already settles the class",
         "intentSurfaceRouted": false,
         "intentProducerRouted": false,
         "intentCorroboration": null,

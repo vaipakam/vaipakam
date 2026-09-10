@@ -5536,7 +5536,31 @@ reported a comfortable answer it had not earned:
   latter as a failure on op-sepolia rather than silently counting it as an
   absent commit.
 
-**RESULT (2026-09-09, run 26 — all TWENTY retained deployments across five
+**RESULT (2026-09-10, run 27 — the run-26 population and rules, plus the
+calibrated, era-complete storage read of §7/§7a where a Diamond routes no
+getter): SEVENTEEN of the twenty deployments are PROVEN EMPTY on every class;
+three are INDETERMINATE.** 215 loan reads across the twenty artifacts, zero
+rows in any class on any deployment where rows could be read, every chain at
+its `finalized` block, no chain failed. Of the seventeen, eight are proven by
+routed-getter enumeration, six by a routed loan counter that reads zero, and
+three — the base-sepolia shells of 2026-07-01 — by the storage twin of that
+proof: `nextLoanId` zero at its only slot and the other counters zero at every
+era slot. Six deployments whose intent getter is unrouted had their intent
+rows read from storage at all three era slots for every enumerated loan (580
+slots across the nine storage-read deployments; the evidence — method, slot
+table, era table, calibration test — is recorded on each result). The three
+that remain: the base-sepolia record of 2026-07-01T01-03 naming a non-Diamond
+(an artifact correction, operator-gated); the arb-sepolia archive of
+2026-07-01T01-36, which records no VPFI token and whose Diamond does not route
+the token getter (artifact correction, operator-gated; its intent class is
+now readable but its rows have no scope); and arb-sepolia's live Diamond on
+the fallback and intent classes, whose scope comes from the artifact because
+the token getter is unrouted (item 4 below). `migrationRetirable` stays
+`false` for the reason recorded since run 8: sixteen deployments still route
+a custody surface.
+
+**RESULT (2026-09-09, run 26 — superseded by run 27 above; kept as the
+standing of the census before the storage read — all TWENTY retained deployments across five
 chains, inventory from the committed manifest (fifteen archived, one of them
 the quick-loop sidecar round 25 found uncounted), the two unsound bounds
 withdrawn, every chain read at or above the height the previous committed run
@@ -5634,9 +5658,12 @@ returned zero on both unrouted chains and reported both as proven** — an empty
 scan manufacturing the comfortable answer, which is the exact failure this
 census exists to refuse, reintroduced by the machinery meant to prevent it.
 
-**Outstanding — four items, and none is an archive endpoint.**
+**Outstanding — four items, and none is an archive endpoint.** Item 1 is
+DONE as of run 27 (§7, §7a): the nine deployments it named are proven, and
+the list below is kept as it stood so the reasoning survives; items 2 to 4
+remain, all operator-gated or scope work.
 
-1. **A calibrated storage read.** The eight deployments indeterminate for
+1. **A calibrated storage read — DONE in run 27.** The eight deployments indeterminate for
    want of a getter (five on class 3, three shells on every class) can be
    settled only by reading the rows' storage directly: the slot of
    `intentCommits[loanId].orderHash` (and, for the shells, the loan counter and
@@ -5920,6 +5947,15 @@ one answer this census must never manufacture.
 calibration test; census integration with the two proof kinds; the
 guidance-file correction and the release-note fragment; partial runs per
 chain; then a full run that writes run 27 as the new canonical artifact.
+
+**Outcome (run 27, 2026-09-10).** Seventeen of twenty proven, up from
+eight, with zero rows in 215 loans and no chain failed. The read settled
+every cell it was designed for: the three shells by their counters, the six
+unrouted-intent deployments — including two that predate the intent mapping
+and one that lived across the June removals — by the row read at all three
+era slots. Nothing it read was non-zero. The three cells left are the
+non-Diamond record, the token-less archive and arb-sepolia's live scope,
+which are items 2 to 4 above and were never within this read's reach.
 
 ### 7a. What the provenance walk found, and how the design changes (2026-09-09)
 
