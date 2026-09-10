@@ -2357,13 +2357,28 @@ async function observeForcedClose(page, loan) {
 
 async function readForcedCloseCard(page, timeoutMs = 30_000) {
   const card = page.getByTestId('forced-close-card').first();
+  // ROUND 3 P2 — VISIBLE, not merely ATTACHED.
+  //
+  // A CSS regression that leaves the card in the DOM under
+  // `display: none` satisfies `attached`, and every text read still
+  // succeeds against the DOM — so a ready, well-formed card would pass
+  // while the lender sees neither the action nor its explanation, which
+  // is the exact outcome the absence rule exists to catch. Playwright's
+  // `visible` does not require the viewport, so an off-screen card is
+  // still visible and nothing is weakened by asking for it.
+  //
+  // `attached` is still recorded, separately, so the failure can say
+  // WHICH happened: a hidden card and an absent one are different
+  // defects and a reader should not have to guess.
   const mounted = await card
-    .waitFor({ state: 'attached', timeout: timeoutMs })
+    .waitFor({ state: 'visible', timeout: timeoutMs })
     .then(() => true)
     .catch(() => false);
+  const attached = mounted ? true : (await card.count()) > 0;
   if (!mounted) {
     return {
       mounted: false,
+      attached,
       text: null,
       bodyText: null,
       confirmText: null,
@@ -2451,6 +2466,7 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
   }
   return {
     mounted: true,
+    attached: true,
     text,
     bodyText,
     confirmText,

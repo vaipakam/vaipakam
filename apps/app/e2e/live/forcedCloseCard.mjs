@@ -62,18 +62,18 @@ function isTicker(word) {
 }
 
 /**
+ * Words that make a following number a NAME for something rather than a
+ * quantity of it — `loan 21`, `position 4`, `token 9`.
+ */
+const IDENTIFIER_LEAD = /\b(loan|position|offer|token|id|no|number|nft|item)\s*$/i;
+
+/**
  * Units that make a number a DURATION or a PROPORTION rather than an
  * amount of money. The card is explicitly allowed to show the grace
  * window ("may show the grace window to explain a wait"), so a naive
  * digit scan would fail on correct copy — which is worse than no check,
  * because it would be silenced rather than fixed.
  */
-/**
- * Words that make a following number a NAME for something rather than a
- * quantity of it — `loan 21`, `position 4`, `token 9`.
- */
-const IDENTIFIER_LEAD = /\b(loan|position|offer|token|id|no|number|nft|item)\s*$/i;
-
 const NON_MONETARY_UNIT =
   /^(%|bps|day|days|hour|hours|hr|hrs|h|minute|minutes|min|mins|m|second|seconds|sec|secs|s|week|weeks|month|months|year|years|block|blocks)$/i;
 
@@ -130,10 +130,22 @@ export function monetaryAmountsIn(text) {
 
     // A unit word immediately after. `2%` and `3 days` are fine; a
     // ticker is not.
-    const trailing = after.match(/^\s*([A-Za-z%][A-Za-z0-9]*)/);
+    const trailing = after.match(/^\s*([A-Za-z%][A-Za-z0-9]*)\s*([A-Za-z][A-Za-z0-9]*)?/);
     if (trailing) {
       const unit = trailing[1];
-      if (NON_MONETARY_UNIT.test(unit)) continue;
+      const next = trailing[2];
+      // ROUND 3 P2 — A MAGNITUDE ABBREVIATION IS NOT A DURATION WHEN A
+      // TICKER FOLLOWS IT. `1m USDC` reads `m` as minutes, exempts the
+      // figure and never looks at `USDC` — so the scanner missed
+      // precisely the promise it exists to catch, on the shortest way
+      // of writing a large one. The exemption now only applies when
+      // nothing token-shaped follows.
+      if (NON_MONETARY_UNIT.test(unit)) {
+        if (next && isTicker(next)) {
+          hits.push(fragment(text, start, end));
+        }
+        continue;
+      }
       if (isTicker(unit)) {
         hits.push(fragment(text, start, end));
         continue;
@@ -193,71 +205,114 @@ export function saysCheckRunning(text, unknownCopy) {
 
 /**
  * @typedef {object} ForcedCloseObservation
- * @property {boolean} mounted   the card rendered at all
+ * @property {boolean} mounted   the card rendered AND was visible. Round
+ *   3 P2 — `attached` alone passes a card left in the DOM by a CSS
+ *   regression with `display: none`, whose text still reads fine from
+ *   the DOM while the lender sees neither the action nor its
+ *   explanation. Visibility does not require the viewport, so this
+ *   costs nothing on an off-screen card.
+ * @property {boolean} attached  in the DOM at all, visible or not — kept
+ *   apart from `mounted` so the failure can say WHICH of the two
+ *   happened rather than reporting a hidden card as an absent one.
  * @property {string|null} text  its rendered text, null when absent
  * @property {string|null} bodyText  the `forced-close-body` paragraph
  *   ALONE. Round 1 P2 — checking only whether the whole card is empty
- *   passes a rendered shell: a heading with no body and no submit
- *   control is precisely the withheld-action-without-explanation state
- *   this module claims to detect, and it has text (the heading), so the
- *   whole-card check waves it through.
+ *   passes a rendered shell: a heading with no body is precisely the
+ *   withheld-action-without-explanation state this module claims to
+ *   detect, and it has text.
  * @property {string|null} confirmText  the confirmation panel's text
- *   when it was opened, null when it was not. Round 1 P2 — the spec
- *   puts the pre-sign confirmation on this same surface ("The
- *   confirmation shown before the lender signs is part of this surface
- *   and carries the same obligation"), so an invented figure there is
- *   in scope and was previously unreachable.
+ *   when it was opened, null when it was not
+ * @property {boolean} confirmExpected  a submit control was present and
+ *   enabled, so a confirmation SHOULD have been readable
  * @property {boolean} submitDisabled  the submit control's state
- * @property {boolean} settled   the readiness reads finished — i.e. the
- *   card stopped rendering its "still checking" copy before the
- *   deadline. Round 1 P2: attachment alone resolves while the card is
- *   in its transient unresolved state, so a scrape taken then never
- *   sees the ready copy an amount would appear in.
+ * @property {boolean} settled   the readiness reads finished
  * @property {boolean} lenderHoldsActive  chain says: this wallet holds
- *   the lender position AND the loan is Active — the pair that makes
- *   the card's absence a defect rather than correct behaviour
+ *   the lender position AND the loan is Active
  * @property {boolean} saleLocked  the lender position token carries the
- *   early-withdrawal sale lock. Round 1 P2 — `PositionDetails` UNMOUNTS
- *   this card while an accepted sale awaits `completeLoanSale`, because
- *   closing out would strand the buyer's committed funds. An unlocked
- *   token proves no such sale exists, so absence is a defect; a locked
- *   one cannot rule it out, and the honest verdict there is `blocked`.
+ *   early-withdrawal sale lock, which correctly unmounts the card
  */
 
 /**
- * The verdict, in the same three-way shape the rest of this harness
- * uses: `pass`, `fail` (a defect observed in the product) and `blocked`
- * (nothing was learned — never reported as a pass).
+ * The verdict: `pass`, `fail` (a defect observed in the product), or
+ * `blocked` (nothing was learned — never reported as a pass).
  *
- * The distinction that matters, and the one round 65 of #2069 got wrong
- * in the product itself: an ABSENT card on a position the wallet holds
- * and the chain calls Active is a FAIL, because absence is the
- * strongest claim the surface can make — it says the capability does
- * not apply — and it would be made on the one reading that has not
- * happened. A card that is present and merely non-submittable is a
- * PASS: withholding the action while a check runs is the design.
+ * A blocked result also carries `blockedKind`:
+ *
+ *   `inapplicable` — this position could never have exercised the
+ *                    assertion (not held, not Active, correctly
+ *                    unmounted by a sale lock). Nothing is missing.
+ *   `incomplete`   — this position WAS applicable and the observation
+ *                    failed anyway (never settled, confirmation
+ *                    unreadable). Something IS missing, and round 3 P2
+ *                    is that the two must not be pooled: a run where
+ *                    one position passes and another is incomplete has
+ *                    left a distinct copy path unscanned.
+ *
+ * ORDER MATTERS HERE, and round 3 P2 is the reason. Content defects are
+ * judged FIRST, before eligibility. `observeForcedClose` scrapes the DOM
+ * and THEN reads status and ownership, so a loan going terminal in
+ * between would otherwise discard an empty body or an invented amount
+ * that was actually observed — eligibility qualifying an absence is
+ * correct, eligibility suppressing a positive finding is not.
  *
  * @param {ForcedCloseObservation} obs
  * @param {{unknownCopy: string}} copy
  */
 export function forcedCloseVerdict(obs, copy) {
   if (!obs || typeof obs !== 'object') {
-    return { verdict: 'blocked', why: 'no observation recorded' };
+    return { verdict: 'blocked', blockedKind: 'incomplete', why: 'no observation recorded' };
   }
+
+  // ---- 1. What was actually SEEN on a card that rendered. -----------
+  // These need no eligibility: a card carrying an invented amount is a
+  // defect whoever holds the position and whatever the chain did next.
+  if (obs.mounted) {
+    const text = obs.text ?? '';
+    if (text.trim() === '') {
+      return {
+        verdict: 'fail',
+        why: 'card mounted with no text — withheld the explanation with the action',
+      };
+    }
+    if ((obs.bodyText ?? '').trim() === '') {
+      return {
+        verdict: 'fail',
+        why: 'card mounted with no explanatory body — the withheld-action-without-explanation state',
+      };
+    }
+    const scanned = obs.confirmText ? `${text}\n${obs.confirmText}` : text;
+    const amounts = monetaryAmountsIn(scanned);
+    if (amounts.length > 0) {
+      return {
+        verdict: 'fail',
+        why: `states an amount it cannot know: ${amounts.join(' | ')}`,
+        amounts,
+      };
+    }
+  }
+
+  // ---- 2. Was this position one the assertion could apply to? ------
   if (!obs.lenderHoldsActive) {
-    // The card is correctly absent — or correctly present, since it
-    // also mounts while a status read is still unresolved. Either way
-    // this drive learned nothing about the invariant.
-    return { verdict: 'blocked', why: 'position is not a held Active lender position' };
+    return {
+      verdict: 'blocked',
+      blockedKind: 'inapplicable',
+      why: 'position is not a held Active lender position',
+    };
   }
+
+  // ---- 3. The ABSENCE claim, which eligibility legitimately gates. --
   if (!obs.mounted) {
-    // A sale-locked position may legitimately have no card. Reporting
-    // that as a defect is the false-positive direction, which is the
-    // one that gets a check switched off — so it blocks and says why.
     if (obs.saleLocked) {
       return {
         verdict: 'blocked',
+        blockedKind: 'inapplicable',
         why: 'card absent, but the position carries a sale lock — an accepted sale awaiting completion correctly unmounts it',
+      };
+    }
+    if (obs.attached) {
+      return {
+        verdict: 'fail',
+        why: 'card is in the DOM but not visible — the lender sees neither the action nor its explanation',
       };
     }
     return {
@@ -265,53 +320,25 @@ export function forcedCloseVerdict(obs, copy) {
       why: 'card absent on a held Active lender position with no sale lock — absence claims the capability does not apply',
     };
   }
-  const text = obs.text ?? '';
-  if (text.trim() === '') {
-    return { verdict: 'fail', why: 'card mounted with no text — withheld the explanation with the action' };
-  }
-  // The body is where the explanation lives. A card with a heading and
-  // nothing else withholds the reason while withholding the action.
-  if ((obs.bodyText ?? '').trim() === '') {
-    return {
-      verdict: 'fail',
-      why: 'card mounted with no explanatory body — the withheld-action-without-explanation state',
-    };
-  }
-  // The confirmation is part of this surface, so its text is scanned
-  // with the card's.
-  const scanned = obs.confirmText ? `${text}\n${obs.confirmText}` : text;
-  const amounts = monetaryAmountsIn(scanned);
-  if (amounts.length > 0) {
-    return {
-      verdict: 'fail',
-      why: `states an amount it cannot know: ${amounts.join(' | ')}`,
-      amounts,
-    };
-  }
-  // ROUND 2 P2 — a confirmation we MEANT to read and could not is not a
-  // pass. The click can be refused (covered, detached, re-rendered) and
-  // the read can time out; both leave `confirmText` null, and accepting
-  // that silently exits 0 having scanned half the surface.
-  if (obs.confirmExpected && obs.confirmText === null) {
-    return {
-      verdict: 'blocked',
-      why: 'submit was offered but its confirmation could not be opened or read — half this surface went unscanned',
-    };
-  }
-  const checkRunning = saysCheckRunning(text, copy?.unknownCopy ?? '');
-  // NEVER SETTLED IS NOT A CLEAN PASS. The card is visible and
-  // explaining itself, which satisfies invariant 2 — but the ready copy
-  // an amount would appear in was never rendered, so invariant 1 went
-  // unchecked on this position. Saying "pass" flat would bank coverage
-  // the run did not obtain, which is the failure this whole harness is
-  // organised against.
+
+  // ---- 4. Was the observation COMPLETE? ----------------------------
+  const checkRunning = saysCheckRunning(obs.text ?? '', copy?.unknownCopy ?? '');
   if (!obs.settled) {
     return {
       verdict: 'blocked',
+      blockedKind: 'incomplete',
       why: 'card still reported a check running at the deadline — visible and explained, but its settled copy was never scanned for an amount',
       checkRunning,
     };
   }
+  if (obs.confirmExpected && obs.confirmText === null) {
+    return {
+      verdict: 'blocked',
+      blockedKind: 'incomplete',
+      why: 'submit was offered but its confirmation could not be opened or read — half this surface went unscanned',
+    };
+  }
+
   return {
     verdict: 'pass',
     why: obs.submitDisabled
@@ -325,29 +352,45 @@ export function forcedCloseVerdict(obs, copy) {
 /**
  * Did the run OBSERVE the thing it advertises?
  *
- * Round 1 P2, and the same shape as the empty-snapshot defect that cost
- * #2069 a round: when every visited position is FallbackPending, or
- * sale-locked, or not held, every verdict is `blocked` — and a reporter
- * that only consumes `fail` prints "routes clean" and exits 0 over an
- * assertion that never once ran. A drive claiming a check must be able
- * to say whether the check happened.
+ * Round 1 P2 established the all-blocked case. ROUND 3 P2 corrects the
+ * aggregation: returning null as soon as ANY position passed let an
+ * INCOMPLETE observation elsewhere — a card that never settled, a
+ * confirmation that could not be read — ride out on its neighbour's
+ * success, with that position's distinct copy path unscanned.
  *
- * Returns the reason to exit 2, or null when at least one position
- * produced a real observation.
+ * So the two kinds of `blocked` are counted separately. An
+ * `inapplicable` position is genuinely nothing to report. An
+ * `incomplete` one is a gap, and it is a gap whether or not something
+ * else went well.
  *
- * @param {Array<{forcedCloseVerdict?: {verdict: string}|null}>} visits
+ * @param {Array<{path?: string, forcedCloseVerdict?: {verdict: string, blockedKind?: string}|null}>} visits
+ * @returns {string|null} the reason to exit 2, or null
  */
 export function forcedCloseCoverage(visits) {
   const judged = (Array.isArray(visits) ? visits : []).filter(
     (v) => v && v.forcedCloseVerdict,
   );
   if (judged.length === 0) return null; // not a lender run; nothing advertised
+
+  const incomplete = judged.filter(
+    (v) =>
+      v.forcedCloseVerdict.verdict === 'blocked' &&
+      v.forcedCloseVerdict.blockedKind === 'incomplete',
+  );
+  if (incomplete.length > 0) {
+    return (
+      `the forced-close observation was INCOMPLETE on ${incomplete.length} ` +
+      `applicable position(s): ` +
+      incomplete.map((v) => `${v.path ?? '?'} (${v.forcedCloseVerdict.why})`).join('; ')
+    );
+  }
+
   const applicable = judged.filter((v) =>
     ['pass', 'fail'].includes(v.forcedCloseVerdict.verdict),
   );
   if (applicable.length > 0) return null;
   return (
     `forced-close card was never observed on an applicable position ` +
-    `(${judged.length} visit(s), all blocked) — the assertion did not run`
+    `(${judged.length} visit(s), all inapplicable) — the assertion did not run`
   );
 }

@@ -330,3 +330,91 @@ describe('forcedCloseVerdict — round 2 review findings', () => {
     expect(v.verdict).toBe('pass');
   });
 });
+
+describe('round 3 review findings', () => {
+  const copy = { unknownCopy: FORCED_CLOSE.unknown };
+  const base = {
+    lenderHoldsActive: true,
+    mounted: true,
+    attached: true,
+    submitDisabled: true,
+    saleLocked: false,
+    settled: true,
+    bodyText: 'an explanation',
+    confirmText: null,
+    confirmExpected: false,
+    text: FORCED_CLOSE.readyInKind,
+  };
+
+  it('catches a magnitude abbreviation followed by a ticker', () => {
+    // `1m USDC` read `m` as minutes, exempted the figure and never
+    // looked at the ticker — the scanner missing the promise it exists
+    // for, on the shortest way of writing a large one.
+    expect(monetaryAmountsIn('You receive 1m USDC')).toHaveLength(1);
+    expect(monetaryAmountsIn('1k WETH')).toHaveLength(1);
+    // ...without breaking the genuine duration exemption.
+    expect(monetaryAmountsIn('30 minutes remain')).toEqual([]);
+    expect(monetaryAmountsIn('in 3 days')).toEqual([]);
+  });
+
+  it('judges a scraped content defect BEFORE eligibility', () => {
+    // The DOM is scraped before the chain reads, so a loan going
+    // terminal in between must not discard an amount already observed.
+    // Eligibility qualifies an ABSENCE; it does not suppress a finding.
+    const v = forcedCloseVerdict(
+      { ...base, lenderHoldsActive: false, text: `${FORCED_CLOSE.readyInKind} You get 1.5 WETH.` },
+      copy,
+    );
+    expect(v.verdict).toBe('fail');
+  });
+
+  it('still blocks an ABSENT card on an ineligible position', () => {
+    // The other half: with nothing scraped there is no finding to
+    // preserve, and eligibility rightly decides.
+    const v = forcedCloseVerdict(
+      { ...base, lenderHoldsActive: false, mounted: false, attached: false, text: null },
+      copy,
+    );
+    expect(v.verdict).toBe('blocked');
+    expect(v.blockedKind).toBe('inapplicable');
+  });
+
+  it('FAILS a card that is attached but not visible, and says which', () => {
+    const v = forcedCloseVerdict({ ...base, mounted: false, attached: true, text: null }, copy);
+    expect(v.verdict).toBe('fail');
+    expect(v.why).toMatch(/not visible/);
+  });
+
+  it('labels the two kinds of blocked', () => {
+    expect(
+      forcedCloseVerdict({ ...base, settled: false, text: FORCED_CLOSE.unknown }, copy).blockedKind,
+    ).toBe('incomplete');
+    expect(
+      forcedCloseVerdict({ ...base, mounted: false, attached: false, text: null, saleLocked: true }, copy)
+        .blockedKind,
+    ).toBe('inapplicable');
+  });
+});
+
+describe('forcedCloseCoverage — round 3', () => {
+  const v = (verdict, blockedKind, path = '/positions/1') => ({
+    path,
+    forcedCloseVerdict: { verdict, blockedKind, why: 'because' },
+  });
+
+  it('reports an INCOMPLETE position even when another one passed', () => {
+    // The correction: returning null as soon as anything passed let an
+    // unscanned copy path ride out on its neighbour's success.
+    const why = forcedCloseCoverage([v('pass'), v('blocked', 'incomplete', '/positions/2')]);
+    expect(why).toMatch(/INCOMPLETE/);
+    expect(why).toMatch(/positions\/2/);
+  });
+
+  it('stays silent when the only blocked positions were inapplicable', () => {
+    expect(forcedCloseCoverage([v('pass'), v('blocked', 'inapplicable')])).toBeNull();
+  });
+
+  it('still reports an all-inapplicable run', () => {
+    expect(forcedCloseCoverage([v('blocked', 'inapplicable')])).toMatch(/never observed/);
+  });
+});
