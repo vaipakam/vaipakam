@@ -11851,4 +11851,121 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     );
     expect(r.ok).toBe(false);
   });
+
+  // ---- #2084: the rewrite question is asked of the EXECUTABLE IMAGE ----
+  //
+  // Three symptoms, one cause: the question was asked of the CONTAINER's raw
+  // text with the embedded line's language. Each of these was reproduced
+  // against the pre-fix guard before the fix was written.
+
+  it('prose naming a write is not a write (#2084 too-much-text)', () => {
+    // A runbook SENTENCE mentioning a write, before a fenced deploy. Classified
+    // as shell because the fenced block's language was applied to the whole
+    // file, this was REPORTED — a false red, in a check that runs inside
+    // typecheck and so blocks correct work.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'docs/runbook.md',
+      '# Runbook\n\nBefore deploying, the release tool calls\n' +
+        'writeFileSync("configs/custom.jsonc", generated) for you.\n\n' +
+        '```bash\nwrangler deploy --config configs/custom.jsonc\n```\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a real write in a fenced block still counts (#2084 too-much-text bounds)', () => {
+    // BOUNDS GUARD — this passes with or without the fix. It pins that
+    // excluding prose did not also exclude the blocks themselves.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'docs/runbook2.md',
+      '# Runbook\n\n```bash\nprintf \'{}\' > configs/custom.jsonc\n' +
+        'wrangler deploy --config configs/custom.jsonc\n```\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('an expanded Make recipe writes the config (#2084 too-little-text)', () => {
+    // `makefileBlocks` expands `$(GENERATE)` before the deploy is read, but the
+    // rewrite scan saw the RAW Makefile, where the write is only a variable
+    // name. A false GREEN: the config was rewritten and its checked-in
+    // `keep_vars` trusted anyway.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'Makefile',
+      'deploy:\n\t$(GENERATE)\n\twrangler deploy --config configs/custom.jsonc\n\n' +
+        "GENERATE = printf '{}' > configs/custom.jsonc\n",
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a harmless Make expansion is not a write (#2084 too-little-text bounds)', () => {
+    // BOUNDS GUARD — passes either way. Admitting every recipe to the image
+    // must not make every recipe a write.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'Makefile',
+      'deploy:\n\t$(NOTE)\n\twrangler deploy --config configs/custom.jsonc\n\n' +
+        'NOTE = echo deploying configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a folded scalar keeps write and deploy in order (#2084 wrong-coordinates)', () => {
+    // YAML removes the newlines of a `run: >` scalar before the shell sees it.
+    // The deploy's offset in that folded text was added to a RAW line start, so
+    // with enough lines it landed before a write that physically precedes it
+    // and the write was discarded as "after the deploy" — a false GREEN. Thirty
+    // filler lines is what it took to move the computed position past the
+    // write.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const filler = '          :;\n'.repeat(30);
+    const r = runWith(
+      '.github/workflows/deploy.yml',
+      'name: deploy\non: push\njobs:\n  d:\n    runs-on: ubuntu-latest\n    steps:\n      - run: >\n' +
+        filler +
+        "          printf '{}' > configs/custom.jsonc;\n" +
+        '          wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a write AFTER the deploy in a folded scalar still does not count (#2084 ordering)', () => {
+    // The image must preserve ORDER, not merely presence: the same scalar with
+    // the write moved after the deploy is a safe command this guard must not
+    // report.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const filler = '          :;\n'.repeat(30);
+    const r = runWith(
+      '.github/workflows/deploy2.yml',
+      'name: deploy\non: push\njobs:\n  d:\n    runs-on: ubuntu-latest\n    steps:\n      - run: >\n' +
+        filler +
+        '          wrangler deploy --config configs/custom.jsonc;\n' +
+        "          printf '{}' > configs/custom.jsonc\n",
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a write in an earlier step counts against a later step (#2084 ordering bounds)', () => {
+    // BOUNDS GUARD — this reports with or without the fix, and it is here for
+    // exactly that reason. The image is the whole file's executable text rather
+    // than one block's, and the risk of building it was LOSING this: cross-step
+    // ordering is the property that ruled out the obvious "just pass the block"
+    // fix, so it is pinned rather than assumed.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      '.github/workflows/steps.yml',
+      'name: deploy\non: push\njobs:\n  d:\n    runs-on: ubuntu-latest\n    steps:\n' +
+        "      - run: printf '{}' > configs/custom.jsonc\n" +
+        '      - run: |\n          wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
 });
