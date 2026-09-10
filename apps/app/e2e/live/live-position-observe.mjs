@@ -1506,20 +1506,7 @@ async function visit(path, { expectChooser = false, loan = null } = {}) {
   // product is right about — the same class of error `stillEligible`
   // exists to avoid for the lender card.
   const forcedClose =
-    ROLE === 'lender' && loan
-      ? {
-          ...(await readForcedCloseCard(page)),
-          lenderHoldsActive:
-            loan.status === STATUS_ACTIVE &&
-            typeof loan.authority === 'string' &&
-            loan.authority.toLowerCase() === String(observed).toLowerCase(),
-          // Only consulted when the card is ABSENT, but read here so the
-          // observation is a complete record of what was true at scrape
-          // time rather than a lazy read taken later, against different
-          // chain state, inside the verdict.
-          saleLocked: await saleLockedOn(loan.lenderTokenId),
-        }
-      : null;
+    ROLE === 'lender' && loan ? await observeForcedClose(page, loan) : null;
   const holdCard = await page.getByTestId('sale-listing-hold-card').count();
   const freeHeld = await page.getByTestId('free-held-options').count();
   const out = {
@@ -2320,6 +2307,54 @@ async function readLenderCardText(page, card) {
  * absence verdict is about; a mounted card scrolled out of view is
  * still an answer.
  */
+/**
+ * The forced-close observation, with its chain facts read AT THE SCRAPE.
+ *
+ * ROUND 2 P2, and the second half of round 1's staleness fix. Writing
+ * the fresh status back in `stillEligible` closed the
+ * discovery→revalidation gap and left the one that follows it:
+ * navigation, the settle wait, the readiness poll and the confirmation
+ * scrape can together run for a minute or more, and a loan that leaves
+ * Active inside that window makes the page CORRECTLY drop the card
+ * while a pre-navigation `loan.status` still calls it a defect.
+ *
+ * So the status and the authority are re-read here, beside the DOM
+ * observation they are judged against, rather than inherited from
+ * whenever the loan was last revalidated.
+ *
+ * ROUND 2 P2 — AND THE READS GO THROUGH `discovery()`. `saleLockedOn`
+ * rethrows anything that is not a revert, and this call sits outside
+ * the navigation try-block: an RPC timeout or a rate-limit would have
+ * escaped `visit()` and exited Node with 1, the code this drive
+ * reserves for a PRODUCT REGRESSION. A prerequisite read that could not
+ * answer is BLOCKED, never a finding about the app.
+ */
+async function observeForcedClose(page, loan) {
+  const card = await readForcedCloseCard(page);
+  const [live, authorityNow, saleLocked] = await discovery(
+    `re-reading loan ${loan.id} beside the forced-close scrape`,
+    () =>
+      Promise.all([
+        pub.readContract({
+          address: DIAMOND,
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'getLoanDetails',
+          args: [loan.id],
+        }),
+        lenderAuthorityOf(loan),
+        saleLockedOn(loan.lenderTokenId),
+      ]),
+  );
+  return {
+    ...card,
+    lenderHoldsActive:
+      Number(live.status) === STATUS_ACTIVE &&
+      typeof authorityNow === 'string' &&
+      authorityNow.toLowerCase() === String(observed).toLowerCase(),
+    saleLocked,
+  };
+}
+
 async function readForcedCloseCard(page, timeoutMs = 30_000) {
   const card = page.getByTestId('forced-close-card').first();
   const mounted = await card
@@ -2332,6 +2367,7 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
       text: null,
       bodyText: null,
       confirmText: null,
+      confirmExpected: false,
       submitDisabled: false,
       settled: false,
     };
@@ -2389,7 +2425,14 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
   // every signing RPC, so a regression that tried to send would be
   // refused rather than approved.
   let confirmText = null;
-  if (submitCount > 0 && !submitDisabled) {
+  // ROUND 2 P2 — a submittable card whose confirmation could NOT be read
+  // is `confirmExpected` with `confirmText === null`, which the verdict
+  // turns into BLOCKED. Catching the interaction error and quietly
+  // accepting its null result would let the run exit 0 having skipped
+  // half the surface it advertises — the same silent-null shape as the
+  // findings above it.
+  const confirmExpected = submitCount > 0 && !submitDisabled;
+  if (confirmExpected) {
     const opened = await submit
       .click({ timeout: 5_000 })
       .then(() => true)
@@ -2406,7 +2449,15 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
         .catch(() => {});
     }
   }
-  return { mounted: true, text, bodyText, confirmText, submitDisabled, settled };
+  return {
+    mounted: true,
+    text,
+    bodyText,
+    confirmText,
+    confirmExpected,
+    submitDisabled,
+    settled,
+  };
 }
 
 /**

@@ -68,6 +68,12 @@ function isTicker(word) {
  * digit scan would fail on correct copy — which is worse than no check,
  * because it would be silenced rather than fixed.
  */
+/**
+ * Words that make a following number a NAME for something rather than a
+ * quantity of it — `loan 21`, `position 4`, `token 9`.
+ */
+const IDENTIFIER_LEAD = /\b(loan|position|offer|token|id|no|number|nft|item)\s*$/i;
+
 const NON_MONETARY_UNIT =
   /^(%|bps|day|days|hour|hours|hr|hrs|h|minute|minutes|min|mins|m|second|seconds|sec|secs|s|week|weeks|month|months|year|years|block|blocks)$/i;
 
@@ -78,12 +84,15 @@ const NON_MONETARY_UNIT =
  * either side of it. `$120` and `120 USDC` and `USDC 120` all count;
  * `3 days`, `2%`, `500 bps` and a bare `#21` do not.
  *
- * STATED LIMIT: this is a heuristic over rendered text, not a parse. It
- * can miss an amount written without any unit at all ("you will receive
- * 1.5"), and it is not asked to catch that — the failure it exists for
- * is a figure that LOOKS authoritative, and a bare decimal with no unit
- * does not. Reporting the limit is the point: a check that overstated
- * its reach would let the next reviewer skip the reading.
+ * ABSOLUTE SINCE ROUND 2. The spec forbids stating an amount, full
+ * stop, so what remains after the named exclusions — durations,
+ * proportions, identifiers — is reported. A bare `1.5` fails.
+ *
+ * STATED LIMIT: this is a heuristic over rendered TEXT, not a parse, so
+ * it can only judge what a number sits next to. A figure spelled out in
+ * words would pass, and so would one rendered outside the scraped
+ * elements. Saying so is the point: a check that overstated its reach
+ * would let the next reviewer skip the reading.
  *
  * @param {string} text rendered card text
  * @returns {string[]} the offending fragments, empty when clean
@@ -99,11 +108,19 @@ export function monetaryAmountsIn(text) {
   while ((m = NUMBER.exec(text)) !== null) {
     const start = m.index;
     const end = start + m[0].length;
-    const before = text.slice(Math.max(0, start - 8), start);
+    // 16 chars, not 8: the identifier words below are up to 8 long on
+    // their own (`position `), so a shorter window could not see them.
+    const before = text.slice(Math.max(0, start - 16), start);
     const after = text.slice(end, end + 10);
 
-    // `#21`, `loan 21` — an identifier, never an amount.
+    // An IDENTIFIER, never an amount. The `#` form and the spelled-out
+    // form both, because the comment here used to claim `loan 21` was
+    // covered when only `#21` was — harmless while the scanner needed a
+    // ticker to fire, and a false positive the moment round 2 made it
+    // absolute. A comment that outlived its code, which is the failure
+    // this file keeps finding elsewhere.
     if (/[#]\s*$/.test(before)) continue;
+    if (IDENTIFIER_LEAD.test(before)) continue;
 
     // A currency mark hugging the number on either side.
     if (CURRENCY_MARK.test(before.slice(-2)) || CURRENCY_MARK.test(after.slice(0, 2))) {
@@ -127,7 +144,26 @@ export function monetaryAmountsIn(text) {
     const leading = before.match(/([A-Za-z][A-Za-z0-9]*)\s*$/);
     if (leading && isTicker(leading[1])) {
       hits.push(fragment(text, start, end));
+      continue;
     }
+
+    // ROUND 2 P2 — ANYTHING LEFT IS A FIGURE, AND THE SPEC FORBIDS
+    // FIGURES.
+    //
+    // The rule is "Nothing on this surface states an amount", not
+    // "nothing states a unit-bearing amount". `You will receive 1.5`
+    // carries no ticker and no currency mark, and the first version let
+    // it through while advertising the absolute invariant — narrowing
+    // the claim to what the scanner happened to implement.
+    //
+    // Safe to make absolute BECAUSE the exclusions above are real ones:
+    // durations, proportions and identifiers are removed by name, and
+    // the calibration case over every shipped `forcedClose` string is
+    // what demonstrates there is no third legitimate category. That
+    // test is the guard on this arm — if the card ever gains a
+    // legitimate bare number, it fails there first, on named copy,
+    // rather than surprising a live run.
+    hits.push(fragment(text, start, end));
   }
   return hits;
 }
@@ -250,6 +286,16 @@ export function forcedCloseVerdict(obs, copy) {
       verdict: 'fail',
       why: `states an amount it cannot know: ${amounts.join(' | ')}`,
       amounts,
+    };
+  }
+  // ROUND 2 P2 — a confirmation we MEANT to read and could not is not a
+  // pass. The click can be refused (covered, detached, re-rendered) and
+  // the read can time out; both leave `confirmText` null, and accepting
+  // that silently exits 0 having scanned half the surface.
+  if (obs.confirmExpected && obs.confirmText === null) {
+    return {
+      verdict: 'blocked',
+      why: 'submit was offered but its confirmation could not be opened or read — half this surface went unscanned',
     };
   }
   const checkRunning = saysCheckRunning(text, copy?.unknownCopy ?? '');

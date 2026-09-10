@@ -267,3 +267,66 @@ describe('forcedCloseCoverage', () => {
     expect(forcedCloseCoverage(null)).toBeNull();
   });
 });
+
+describe('monetaryAmountsIn — absolute since round 2', () => {
+  it('fires on a BARE figure with no unit at all', () => {
+    // The spec says "Nothing on this surface states an amount", not
+    // "no unit-bearing amount". The first version advertised the
+    // absolute rule and implemented the narrow one.
+    expect(monetaryAmountsIn('You will receive 1.5')).toHaveLength(1);
+    expect(monetaryAmountsIn('about 12 things')).toHaveLength(1);
+  });
+
+  it('still excludes identifiers spelled out, not only the # form', () => {
+    // The comment claimed `loan 21` was covered when only `#21` was.
+    // Harmless while a ticker was required to fire; a false positive the
+    // moment the rule became absolute.
+    expect(monetaryAmountsIn('Loan 21 is overdue.')).toEqual([]);
+    expect(monetaryAmountsIn('Loan #21 is overdue.')).toEqual([]);
+    expect(monetaryAmountsIn('position 4')).toEqual([]);
+    expect(monetaryAmountsIn('token 9')).toEqual([]);
+  });
+
+  it('still excludes durations and proportions', () => {
+    // Re-asserted HERE as well as above, because the absolute arm is
+    // what would break them and these are the cases that make a
+    // cried-wolf scanner get switched off.
+    expect(monetaryAmountsIn('The grace period is 3 days.')).toEqual([]);
+    expect(monetaryAmountsIn('A 2% treasury share is deducted.')).toEqual([]);
+    expect(monetaryAmountsIn('Set to 200 bps by governance.')).toEqual([]);
+  });
+});
+
+describe('forcedCloseVerdict — round 2 review findings', () => {
+  const copy = { unknownCopy: FORCED_CLOSE.unknown };
+  const base = {
+    lenderHoldsActive: true,
+    mounted: true,
+    saleLocked: false,
+    settled: true,
+    bodyText: 'an explanation',
+    text: FORCED_CLOSE.readyInKind,
+  };
+
+  it('BLOCKS when the confirmation was expected but could not be read', () => {
+    // The click can be refused and the read can time out; both leave
+    // confirmText null. Accepting that silently exits 0 having scanned
+    // half the surface.
+    const v = forcedCloseVerdict(
+      { ...base, submitDisabled: false, confirmExpected: true, confirmText: null },
+      copy,
+    );
+    expect(v.verdict).toBe('blocked');
+    expect(v.why).toMatch(/confirmation/);
+  });
+
+  it('PASSES when no confirmation was expected in the first place', () => {
+    // A non-submittable card offers no confirmation, so its absence is
+    // not a gap in the scan.
+    const v = forcedCloseVerdict(
+      { ...base, submitDisabled: true, confirmExpected: false, confirmText: null },
+      copy,
+    );
+    expect(v.verdict).toBe('pass');
+  });
+});
