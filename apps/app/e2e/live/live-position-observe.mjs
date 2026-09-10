@@ -2938,7 +2938,23 @@ async function observeForcedClose(page, loan) {
 
 async function readForcedCloseCard(page, timeoutMs = 30_000) {
   const cards = page.getByTestId('forced-close-card');
-  const card = cards.first();
+  // ROUND 25 P2 — THE INTERACTION TARGETS THE CARD THE SCRAPE JUDGED.
+  //
+  // Round 23 taught the WAIT to accept any visible match, and round 24
+  // made that fallback actually run — but both only produced a boolean.
+  // `card` stayed `cards.first()`, so with a hidden node ahead of the
+  // real one the drive read the visible card's copy and then clicked,
+  // waited and scanned the HIDDEN one: the submit click times out,
+  // `confirmText` stays null, and a perfectly healthy card is reported
+  // BLOCKED. Two rounds of fixing which element we wait on, while every
+  // later interaction went on addressing the wrong one.
+  //
+  // `:visible` is re-resolved by Playwright at each action, so this
+  // addresses whichever card is being shown at the moment of the action
+  // rather than pinning a node captured earlier. A second visible card
+  // is not this locator's problem to arbitrate — `visibleCards > 1`
+  // already fails the verdict outright.
+  const card = page.locator('[data-testid="forced-close-card"]:visible').first();
   // ROUND 3 P2 — VISIBLE, not merely ATTACHED.
   //
   // A CSS regression that leaves the card in the DOM under
@@ -3400,9 +3416,28 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
             // fallback is needed. If that markup ever changes this
             // returns false and the verdict blocks — the honest failure
             // rather than a silent pass.
+            //
+            // ROUND 25 P2 — THE ROWS, NOT THE WRAPPER THEY SIT IN.
+            //
+            // Last round I added `dl.receipt` itself to this list as a
+            // second anchor, which quietly reintroduced the hole the
+            // round before had closed. `opacity: 0` on the rows leaves
+            // the `<dl>` laid out at full height with a non-zero rect,
+            // so the wrapper answers "visible" for a receipt whose every
+            // row is invisible — and `innerText` still yields the hidden
+            // labels and figures, so the lead check passes too and the
+            // run records `confirmScanned=true` against a receipt the
+            // lender cannot see. This is the exact state the probe
+            // exists to catch, and the wrapper is structurally incapable
+            // of reporting it: it is not the thing being hidden.
+            //
+            // One anchor fewer is the point. A wrapper is not evidence
+            // about its contents, and adding it as a fallback was the
+            // same mistake as the `p`/`dd`/`span` fallback before it —
+            // a claim about a case I had not looked at.
             const rows = [
               ...el.querySelectorAll(
-                '[data-testid^="forced-close-receipt"], dl.receipt .receipt-row, dl.receipt',
+                '[data-testid^="forced-close-receipt"], dl.receipt .receipt-row',
               ),
             ];
             return rows.some(visible);
