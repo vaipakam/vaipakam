@@ -11852,10 +11852,15 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(r.ok).toBe(false);
   });
 
+});
+
+describe('check-deploy-invocations — #2084 the rewrite model, and three withdrawn designs', () => {
   // ---- #2084: the rewrite question reads the file AS WRITTEN ----
   //
   // Three transformations were tried and all three withdrawn (#2105, ten
-  // rounds). NOTHING transforms the text now, so these fixtures pin two things:
+  // rounds). Nothing transforms the text now — bar the pre-existing Windows
+  // normalisation, which none of these fixtures exercises — so they pin two
+  // things:
   // the shapes that defeated the withdrawn designs, and three MISSES that
   // remain — asserted, so a later fix fails them and comes back to the question
   // instead of passing unnoticed.

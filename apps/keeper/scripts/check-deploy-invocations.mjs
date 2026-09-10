@@ -8935,7 +8935,15 @@ for (const file of walk(REPO_ROOT)) {
   // Shell semantics apply to SHELL files. A redirection is a redirection in
   // shell text; in JavaScript the same character is a comparison (#2066 r10).
   const fileIsShell = Boolean(winInterp) || isShellFile(rel, text);
-  // THE REWRITE QUESTION IS ASKED OF THE FILE AS WRITTEN. Three transformations
+  // THE REWRITE QUESTION IS ASKED OF THE FILE ESSENTIALLY AS WRITTEN — the one
+  // exception being a Windows helper, which `forInterpreter` has already
+  // normalised above into the same form its workflow-body equivalent takes.
+  // That one stands because it is a SEMANTICS-PRESERVING NORMALISATION: a
+  // total, deterministic rewriting of one spelling into another, deciding
+  // nothing about what runs. (It removes and replaces characters, so "only
+  // additive transformations are safe" is NOT the rule — see the spec.)
+  //
+  // Three transformations
   // were tried here and all three withdrawn; this is the record, so the next
   // person does not rebuild one (#2084, #2105 — ten review rounds).
   //
