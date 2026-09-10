@@ -151,7 +151,21 @@ function firstUnnegatedRefusal(text) {
  * text that carries no figure.
  */
 function hasTickerNear(after) {
-  for (const word of String(after).split(/[^A-Za-z0-9]+/)) {
+  // ROUND 23 P2 — STOP AT THE CLAUSE BOUNDARY.
+  //
+  // The window is a fixed number of characters, so it runs straight
+  // through a sentence end into whatever follows: `Wait 3 days. USDC
+  // returns later` and `Loan 21. USDC is lent` both put an unrelated
+  // ticker inside it, cancelling the duration and identifier exemptions
+  // and reporting correct copy as an invented amount.
+  //
+  // That is the FALSE-POSITIVE direction, which this file argues at
+  // length is the one that gets a check switched off — and it would
+  // have fired on the two exemptions most likely to appear in real
+  // sentences. A ticker belongs to the figure only if nothing separates
+  // them, so the search stops at the first boundary.
+  const clause = String(after).split(/[.;!?—–]|,\s/)[0] ?? '';
+  for (const word of clause.split(/[^A-Za-z0-9]+/)) {
     if (isTicker(word)) return true;
   }
   return false;
@@ -193,12 +207,26 @@ const AMBIGUOUS_UNIT = /^[hms]$/i;
  */
 const DURATION_LEAD = /\b(in|within|after|every|next|wait|waits|waiting|takes|lasts|expires)\s+$/i;
 /**
- * The other half: a temporal word AFTER the unit. Real copy puts the
- * marker on either side — `in 30m` and `2h remaining` are both waits —
- * and dropping the generic leads above would otherwise have made the
- * second shape a false hit.
+ * The other half: a temporal word AFTER the unit.
+ *
+ * ROUND 23 P2 — and `remaining`, `remain`, `remains` and `left` are NOT
+ * such words. They describe a residual QUANTITY at least as naturally
+ * as a residual duration: `Balance: 1m remaining`, `Only 1m left to
+ * claim`. Including them recreated the bare-amount hole on the trailing
+ * side, one round after closing it on the leading side, and for the
+ * identical reason — I listed words that appear near durations instead
+ * of words that cannot appear near amounts.
+ *
+ * What survives is unambiguous: nothing measures money in `ago` or
+ * `from now`. The cost is that `2h remaining` now reports, which is a
+ * false hit on plausible-sounding copy — but the shipped strings spell
+ * their units out (`72 hours`, `3 days`, `30 minutes`), so no real copy
+ * uses this shape, and the all-locale calibration is what proves that
+ * rather than my judgement. A loud false hit on copy that does not
+ * exist is the affordable error; a silent miss on an invented figure is
+ * not.
  */
-const DURATION_TRAIL = /^\s*(remaining|remain|remains|left|ago|to go|from now|of grace)\b/i;
+const DURATION_TRAIL = /^\s*(ago|to go|from now|of grace|earlier|later)\b/i;
 
 /**
  * A number with something money-shaped attached to it.
@@ -532,7 +560,15 @@ export function reconcileEligibility(pinned, later) {
   // absence is flagged unconfirmed, which the verdict reports as an
   // incomplete observation.
   if (later.unconfirmed) {
-    return { lenderHoldsActive, saleLocked, absenceUnconfirmed: true };
+    return {
+      lenderHoldsActive,
+      saleLocked,
+      absenceUnconfirmed: true,
+      // The SPECIFIC condition that failed, so the report does not send
+      // an operator to a stale RPC when the real gap is that the page's
+      // head was never observed (round 23 P2).
+      absenceUnconfirmedWhy: later.why,
+    };
   }
 
   if (!later.active || !later.stillHeld) {
@@ -780,7 +816,9 @@ export function forcedCloseVerdict(obs, copy) {
       return {
         verdict: 'blocked',
         blockedKind: 'incomplete',
-        why: "the card was absent, but this observer's chain view never advanced past the block it scraped at, so a page reading ahead of it could not be ruled out",
+        why:
+          obs.absenceUnconfirmedWhy ??
+          "the card was absent, but this observer could not be shown to have caught up with the page, so a page reading ahead of it could not be ruled out",
       };
     }
     // The accepted-sale case already returned above, for mounted and

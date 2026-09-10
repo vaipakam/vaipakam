@@ -2863,7 +2863,22 @@ async function observeForcedClose(page, loan) {
           await new Promise((r) => setTimeout(r, 1_000));
           head = await pub.getBlockNumber({ cacheTime: 0 });
         }
-        if (!confirmationReady(head, pinnedBlock, pageHead)) return { unconfirmed: true };
+        if (!confirmationReady(head, pinnedBlock, pageHead)) {
+          // NAME WHICH CONDITION FAILED (round 23 P2). The two causes
+          // send an operator to different places: a stale OBSERVE_RPC,
+          // or page-head instrumentation that saw nothing. Collapsing
+          // them into one sentence about "never advanced" was false in
+          // the second case and pointed at the wrong thing.
+          return {
+            unconfirmed: true,
+            why:
+              pageHead === 0n
+                ? 'the card was absent, but this drive never observed the page announce a head on the deployment endpoint, so it could not be shown to have caught up'
+                : head <= pinnedBlock
+                  ? "the card was absent, but this observer's chain view never advanced past the block it scraped at, so a page reading ahead of it could not be ruled out"
+                  : `the card was absent, and this observer reached ${head} but the page had already announced ${pageHead}, so it was still behind the view that rendered the page`,
+          };
+        }
         const [status, holder, sale] = await Promise.all([
           pub.readContract({
             address: DIAMOND,
@@ -2889,7 +2904,7 @@ async function observeForcedClose(page, loan) {
     // position ineligible, which reports "nothing is wrong" for a
     // missing card on the strength of a sale never established.
     later = confirmed.unconfirmed
-      ? { unconfirmed: true }
+      ? { unconfirmed: true, why: confirmed.why }
       : {
           active: Number(confirmed.status.status) === STATUS_ACTIVE,
           stillHeld:
@@ -2929,10 +2944,32 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
   // `attached` is still recorded, separately, so the failure can say
   // WHICH happened: a hidden card and an absent one are different
   // defects and a reader should not have to guess.
-  const mounted = await card
+  // ROUND 23 P2 — WAIT FOR ANY VISIBLE MATCH, not for the first node.
+  //
+  // `.first()` waits on whichever element is first in the DOM. A hidden
+  // forced-close node sitting before the real one therefore times the
+  // wait out and produced `mounted: false, attached: true` — a reported
+  // product failure while the lender is looking at a perfectly good
+  // card. It also contradicted this file's own rule that a hidden
+  // duplicate is not something the lender is being shown.
+  //
+  // Waiting on the locator's `visible` state without `.first()` is
+  // satisfied by ANY match becoming visible, which is the question
+  // actually being asked.
+  const mounted = await cards
+    .first()
     .waitFor({ state: 'visible', timeout: timeoutMs })
     .then(() => true)
-    .catch(() => false);
+    .catch(async () =>
+      // The first node is hidden: give any other match the remaining
+      // chance rather than concluding from the wrong element.
+      cards
+        .locator('visible=true')
+        .first()
+        .waitFor({ state: 'visible', timeout: 5_000 })
+        .then(() => true)
+        .catch(() => false),
+    );
   const attached = mounted ? true : (await cards.count()) > 0;
   // ROUND 19 P2 — HOW MANY CARDS, not just whether one is there.
   //
@@ -3036,12 +3073,23 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
         // than a single read for the reason above.
         const visible = (node) => {
           if (node === null) return false;
+          // ROUND 23 P2 — SUPPLEMENTS the geometry test, never replaces
+          // it. `checkVisibility` answers about display, visibility,
+          // opacity and content-visibility; it does not establish that
+          // the element occupies space, so `transform: scale(0)` or a
+          // collapsed box still reads as visible through it alone.
           if (typeof node.checkVisibility === 'function') {
-            return node.checkVisibility({
-              opacityProperty: true,
-              visibilityProperty: true,
-              contentVisibilityAuto: true,
-            });
+            if (
+              !node.checkVisibility({
+                opacityProperty: true,
+                visibilityProperty: true,
+                contentVisibilityAuto: true,
+              })
+            ) {
+              return false;
+            }
+            const box = node.getBoundingClientRect();
+            return box.width > 0 && box.height > 0;
           }
           const cs = getComputedStyle(node);
           if (cs.display === 'none' || cs.visibility === 'hidden' || cs.visibility === 'collapse') {
@@ -3288,7 +3336,54 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
         .then(() => true)
         .catch(() => false);
       if (rendered) {
-        confirmText = await card.innerText({ timeout: 2_000 }).catch(() => null);
+        // ROUND 23 P2 — THE RECEIPT'S OWN ROWS, not the shell plus DOM
+        // text.
+        //
+        // A visible Back button proves the panel opened; it says nothing
+        // about the six-row funds receipt beside it. Hide only those
+        // rows — `opacity: 0` on their container — and the Back control
+        // still renders while `innerText` still yields their text, so
+        // the drive recorded `confirmScanned=true` for a lender who was
+        // shown a shell and two controls. That is the same node-property
+        // mistake as the card and the body, on the surface where it
+        // matters most, since this panel is where the no-amount promise
+        // is most likely to be broken.
+        //
+        // The scan is scoped to what is actually rendered: if nothing of
+        // the receipt is visible, `confirmText` stays null and the
+        // verdict blocks rather than banking a clean reading.
+        const receiptShown = await card
+          .evaluate((el) => {
+            const visible = (node) => {
+              if (!node) return false;
+              if (typeof node.checkVisibility === 'function') {
+                if (
+                  !node.checkVisibility({
+                    opacityProperty: true,
+                    visibilityProperty: true,
+                    contentVisibilityAuto: true,
+                  })
+                ) {
+                  return false;
+                }
+              }
+              const r = node.getBoundingClientRect();
+              return r.width > 0 && r.height > 0;
+            };
+            // Any receipt row being genuinely on screen is the evidence.
+            const rows = [...el.querySelectorAll('[data-testid^="forced-close-receipt"]')];
+            if (rows.length > 0) return rows.some(visible);
+            // No test-id'd rows on this build: fall back to asking
+            // whether the panel has ANY visible text-bearing element
+            // beyond its controls, rather than assuming it does.
+            return [...el.querySelectorAll('p, li, dd, dt, span')].some(
+              (n) => visible(n) && (n.textContent ?? '').trim() !== '',
+            );
+          })
+          .catch(() => false);
+        confirmText = receiptShown
+          ? await card.innerText({ timeout: 2_000 }).catch(() => null)
+          : null;
         // Leave the page as it was found. Failing to close it is not a
         // finding and must not fail the drive.
         await back.click({ timeout: 3_000 }).catch(() => {});

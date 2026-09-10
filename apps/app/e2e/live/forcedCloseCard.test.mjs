@@ -1220,7 +1220,12 @@ describe('round 13 review findings', () => {
     );
     expect(v.verdict).toBe('blocked');
     expect(v.blockedKind).toBe('incomplete');
-    expect(v.why).toMatch(/never advanced/);
+    // ROUND 23 changed this wording deliberately. The old sentence said
+    // the observer "never advanced", which is only one of the ways the
+    // confirmation can be unready and was FALSE for the other — a page
+    // head that was never observed at all. With no specific reason
+    // supplied, the fallback now states the general fact.
+    expect(v.why).toMatch(/could not be shown to have caught up/);
   });
 
   it('outranks the hidden-card arm, which reads from the same unconfirmed DOM pass', () => {
@@ -1519,7 +1524,12 @@ describe('round 21 review findings', () => {
   it('still exempts a one-letter unit in genuine duration context', () => {
     expect(monetaryAmountsIn('unlocks in 30m')).toEqual([]);
     expect(monetaryAmountsIn('within 5m')).toEqual([]);
-    expect(monetaryAmountsIn('about 2h remaining')).toEqual([]);
+    // `about 2h remaining` was asserted clean here originally and is
+    // NOT any more — round 23 removed both `about` (a quantity modifier)
+    // and `remaining` (a quantity word) from the temporal markers, and
+    // that phrase has nothing else establishing time. See the round-23
+    // block for why the false hit is the affordable direction.
+    expect(monetaryAmountsIn('after 2h')).toEqual([]);
   });
 });
 
@@ -1538,8 +1548,75 @@ describe('round 22 — a duration lead has to establish time', () => {
     // generic leads had to be paired with reading the trailing one.
     expect(monetaryAmountsIn('unlocks in 30m')).toEqual([]);
     expect(monetaryAmountsIn('wait 30m')).toEqual([]);
-    expect(monetaryAmountsIn('2h remaining')).toEqual([]);
-    expect(monetaryAmountsIn('30m left')).toEqual([]);
     expect(monetaryAmountsIn('48h of grace')).toEqual([]);
+  });
+
+  // ROUND 23 REVERSED TWO ASSERTIONS THIS CASE ORIGINALLY MADE.
+  //
+  // `2h remaining` and `30m left` were asserted clean one round earlier.
+  // They are not: `remaining` and `left` describe a residual QUANTITY as
+  // readily as a residual duration — `Balance: 1m remaining`, `Only 1m
+  // left to claim` — so accepting them recreated the bare-amount hole on
+  // the trailing side. The trailing markers are now only ones that
+  // cannot measure money.
+  //
+  // The cost is a false hit on `2h remaining`, which is why this is
+  // spelled out rather than quietly changed: no shipped string uses that
+  // shape (they spell units out — `72 hours`, `3 days`, `30 minutes`),
+  // and the all-locale calibration proves that rather than my judgement.
+  it('reports an ambiguous unit whose only marker is a quantity word', () => {
+    expect(monetaryAmountsIn('Balance: 1m remaining')).toHaveLength(1);
+    expect(monetaryAmountsIn('Only 1m left to claim')).toHaveLength(1);
+    expect(monetaryAmountsIn('2h remaining')).toHaveLength(1);
+  });
+
+  it('does not let a ticker in a LATER clause cancel an exemption', () => {
+    // The lookahead is a character window, so it ran through the
+    // sentence end into an unrelated ticker and reported correct copy
+    // as an invented amount — the false-positive direction.
+    expect(monetaryAmountsIn('Wait 3 days. USDC returns later')).toEqual([]);
+    expect(monetaryAmountsIn('Loan 21. USDC is lent')).toEqual([]);
+  });
+});
+
+describe('round 23 — the unready confirmation names its own cause', () => {
+  const shape = (extra) => ({
+    mounted: false,
+    attached: false,
+    text: null,
+    bodyPresent: false,
+    bodyVisible: false,
+    bodyText: null,
+    confirmText: null,
+    confirmExpected: false,
+    submitPresent: false,
+    submitVisible: false,
+    submitDisabled: true,
+    settled: true,
+    ...extra,
+  });
+
+  it('reports the specific condition the driver observed', () => {
+    // The two causes send an operator to different places: a stale
+    // OBSERVE_RPC, or page-head instrumentation that saw nothing.
+    const out = reconcileEligibility(
+      { lenderHoldsActive: true, saleLocked: false },
+      { unconfirmed: true, why: 'the page never announced a head on the deployment endpoint' },
+    );
+    const v = forcedCloseVerdict(shape(out), { unknownCopy: FORCED_CLOSE.unknown });
+    expect(v.verdict).toBe('blocked');
+    expect(v.blockedKind).toBe('incomplete');
+    expect(v.why).toBe('the page never announced a head on the deployment endpoint');
+  });
+
+  it('falls back to the general statement when no cause was supplied', () => {
+    const out = reconcileEligibility(
+      { lenderHoldsActive: true, saleLocked: false },
+      { unconfirmed: true },
+    );
+    const v = forcedCloseVerdict(shape(out), { unknownCopy: FORCED_CLOSE.unknown });
+    expect(v.why).toMatch(/could not be shown to have caught up/);
+    // And it must NOT assert the one cause it cannot know.
+    expect(v.why).not.toMatch(/never advanced/);
   });
 });
