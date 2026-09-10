@@ -8939,11 +8939,14 @@ for (const file of walk(REPO_ROOT)) {
   // exceptions predate this and stand:
   //
   //   - a Windows helper, which `forInterpreter` has already normalised above
-  //     into the same form its workflow-body equivalent takes. A SEMANTICS-
-  //     PRESERVING NORMALISATION: a total, deterministic rewriting of one
-  //     spelling into another, deciding nothing about what runs. (It removes
-  //     and replaces characters, so "only additive transformations are safe"
-  //     is NOT the rule — see the spec.)
+  //     into the same form its workflow-body equivalent takes. Both dialects
+  //     get separators and command casing; beyond that they DIFFER — `cmd`
+  //     folds caret continuations, `pwsh` rewrites `$x = 'v'` into `x=v` so the
+  //     shared variable model resolves it, and neither gets the other's rule.
+  //     A SEMANTICS-PRESERVING NORMALISATION: a total, deterministic rewriting
+  //     of one spelling into another, deciding nothing about what runs. (It
+  //     removes and replaces characters, so "only additive transformations are
+  //     safe" is NOT the rule — see the spec.)
   //   - a manifest script, where `rewriteCtx`'s `valueScoped` branch asks the
   //     question of the DECLARED VALUE rather than the whole file, because a
   //     sibling script's write is not part of the script being judged. A
