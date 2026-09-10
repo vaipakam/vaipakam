@@ -3101,6 +3101,38 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
         // the chain for exactly these properties. The manual walk is the
         // fallback for an engine without it, and it is a walk rather
         // than a single read for the reason above.
+        // ROUND 28 P2 — A COLLAPSED CLIPPING ANCESTOR HIDES ITS
+        // DESCENDANTS while each of them keeps its own layout box.
+        //
+        // `checkVisibility` answers about display, visibility, opacity
+        // and content-visibility. It says nothing about OVERFLOW, so a
+        // `height: 0; overflow: hidden` wrapper paints none of its
+        // subtree while every element inside is laid out normally and
+        // reports a full-size rect. Both halves of the test above
+        // therefore pass for content clipped entirely out of view, and
+        // `innerText` still yields all of its text.
+        //
+        // Only a COLLAPSED clipper counts, deliberately. Requiring an
+        // element to lie inside every clipping ancestor's box would also
+        // condemn content scrolled out of a scroll container, which the
+        // lender can simply scroll back to — and a false FAIL is the
+        // direction that gets a check switched off. A zero-area box on
+        // something that clips is not scrolled-away content; it is
+        // content that cannot be reached at all.
+        //
+        // Measured on the RECT rather than `clientHeight`, which is 0
+        // for inline elements: `overflow` has no effect on a non-replaced
+        // inline box, so keying on `clientHeight` would condemn anything
+        // inside an ordinary `<span>`.
+        const notClipped = (node) => {
+          for (let n = node.parentElement; n; n = n.parentElement) {
+            const cs = getComputedStyle(n);
+            const box = n.getBoundingClientRect();
+            if (cs.overflowY !== 'visible' && box.height === 0) return false;
+            if (cs.overflowX !== 'visible' && box.width === 0) return false;
+          }
+          return true;
+        };
         const visible = (node) => {
           if (node === null) return false;
           // ROUND 23 P2 — SUPPLEMENTS the geometry test, never replaces
@@ -3129,7 +3161,8 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
             if (Number(getComputedStyle(n).opacity) === 0) return false;
           }
           const r = node.getBoundingClientRect();
-          return r.width > 0 && r.height > 0;
+          if (!(r.width > 0 && r.height > 0)) return false;
+          return notClipped(node);
         };
         const all = [...document.querySelectorAll('[data-testid="forced-close-card"]')];
         const shown = all.filter(visible);
@@ -3430,6 +3463,30 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
         // verdict blocks rather than banking a clean reading.
         const receiptShown = await card
           .evaluate((el) => {
+            // ROUND 28 P2 — the clipping rule, and a note about this
+            // being the SECOND copy of this predicate.
+            //
+            // These two `visible` helpers live in separate `evaluate`
+            // bodies, so neither can call the other, and they had
+            // ALREADY drifted: the page-level copy carries an
+            // ancestor-opacity walk for engines without
+            // `checkVisibility` and this one never did. That is the same
+            // hand-maintained-duplicate shape as the field list deleted
+            // last round, and it is not fixed here — sharing a function
+            // across evaluates means injecting source and running it
+            // through `eval`/`new Function`, which a page CSP can refuse
+            // outright, and a drive that dies on a CSP header is worse
+            // than one with a duplicated predicate. Filed as a follow-up
+            // rather than attempted mid-review.
+            const notClipped = (node) => {
+              for (let n = node.parentElement; n; n = n.parentElement) {
+                const cs = getComputedStyle(n);
+                const box = n.getBoundingClientRect();
+                if (cs.overflowY !== 'visible' && box.height === 0) return false;
+                if (cs.overflowX !== 'visible' && box.width === 0) return false;
+              }
+              return true;
+            };
             const visible = (node) => {
               if (!node) return false;
               if (typeof node.checkVisibility === 'function') {
@@ -3443,8 +3500,12 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
                   return false;
                 }
               }
+              for (let n = node; n; n = n.parentElement) {
+                if (Number(getComputedStyle(n).opacity) === 0) return false;
+              }
               const r = node.getBoundingClientRect();
-              return r.width > 0 && r.height > 0;
+              if (!(r.width > 0 && r.height > 0)) return false;
+              return notClipped(node);
             };
             // ROUND 24 P2 — THE RECEIPT, not anything with text in it.
             //
@@ -4629,13 +4690,58 @@ let observedDetails = 0;
 // original order behind them. The chooser assertions are unaffected —
 // they apply to both statuses, so reordering changes which loans are
 // sampled, never whether a sampled one is judged.
+// ROUND 28 P2 — ACTIVE IS NOT THE SAME AS APPLICABLE.
+//
+// Round 9's partition put Active loans first because the forced-close
+// card applies only to those. But an Active position whose sale has been
+// ACCEPTED correctly unmounts the card, so its visit returns
+// `inapplicable` — and three of those fill the cap ahead of an Active,
+// unlocked position that would have exercised the assertion. The run
+// then exits 2 reporting that the card was never observed on an
+// applicable position, while a usable target sat discovered and
+// unvisited. Exactly the failure round 9 fixed, one class narrower.
+//
+// So the known-inapplicable Active loans are demoted behind the rest of
+// the Active ones. Same stable-partition shape, and the chooser
+// assertions are again unaffected — they apply to a locked position too,
+// so this changes which loans are sampled, never whether a sampled one
+// is judged.
+//
+// ONLY a positively established accepted sale demotes. `saleLockedOn`
+// returns `false` fast for an unlocked position (one `positionLock`
+// read, no simulate), and can answer `'unknown'` or throw on a transport
+// failure — neither of which is evidence of anything. Treating a failed
+// read as "inapplicable, deprioritise" would let one bad RPC response
+// reorder a good candidate to the back and quietly cost the run its
+// coverage, which is the same fail-toward-confident mistake round 12
+// caught in this predicate's other consumer.
+const acceptedSale = new Set();
+if (ROLE === 'lender') {
+  for (const l of mine.filter((x) => x.status === STATUS_ACTIVE)) {
+    try {
+      if ((await saleLockedOn(l.lenderTokenId, l.id, undefined)) === true) {
+        acceptedSale.add(l.id);
+      }
+    } catch {
+      // Unreadable, so unknown, so not demoted. It keeps its place.
+    }
+  }
+}
 const walkOrder =
   ROLE === 'lender'
     ? [
-        ...mine.filter((l) => l.status === STATUS_ACTIVE),
+        ...mine.filter((l) => l.status === STATUS_ACTIVE && !acceptedSale.has(l.id)),
+        ...mine.filter((l) => l.status === STATUS_ACTIVE && acceptedSale.has(l.id)),
         ...mine.filter((l) => l.status !== STATUS_ACTIVE),
       ]
     : mine;
+if (acceptedSale.size > 0) {
+  console.log(
+    `\ndeprioritised ${acceptedSale.size} Active position(s) with an accepted sale ` +
+      `awaiting completion: ${[...acceptedSale].join(', ')}` +
+      `\n  → the card is correctly unmounted there, so they cannot exercise it.`,
+  );
+}
 for (const l of walkOrder) {
   if (observedDetails >= MAX_POSITIONS) break;
   const changed = await stillEligible(l);
