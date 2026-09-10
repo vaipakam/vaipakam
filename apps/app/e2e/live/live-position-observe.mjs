@@ -3772,7 +3772,28 @@ visited.push(await visit('/positions'));
 // if every sliced row raced out it reported BLOCKED while eligible
 // candidates sat untried behind the slice (#1529 review round 9).
 let observedDetails = 0;
-for (const l of mine) {
+// ROUND 9 P2 — ON A LENDER RUN, ACTIVE CANDIDATES GO FIRST.
+//
+// The forced-close card applies only to an ACTIVE position, while the
+// chooser pool this walk inherits admits FallbackPending too. In
+// discovery order the cap can therefore be filled by three
+// FallbackPending loans while an Active one sits untried behind it —
+// and `forcedCloseCoverage` then exits 2 saying the assertion never ran
+// on an applicable position, when a usable target had been discovered
+// and simply not visited.
+//
+// A stable partition, not a sort: Active first, everything else in its
+// original order behind them. The chooser assertions are unaffected —
+// they apply to both statuses, so reordering changes which loans are
+// sampled, never whether a sampled one is judged.
+const walkOrder =
+  ROLE === 'lender'
+    ? [
+        ...mine.filter((l) => l.status === STATUS_ACTIVE),
+        ...mine.filter((l) => l.status !== STATUS_ACTIVE),
+      ]
+    : mine;
+for (const l of walkOrder) {
   if (observedDetails >= MAX_POSITIONS) break;
   const changed = await stillEligible(l);
   if (changed) {
