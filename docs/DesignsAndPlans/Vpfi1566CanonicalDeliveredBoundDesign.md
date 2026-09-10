@@ -6009,6 +6009,21 @@ the storage read finds is counted, not hidden under a zero count. The
 predictable temporary path the era tool used for its worktrees is replaced
 by a fresh directory per build.
 
+**Review round 3 closed the argument on the enumerable path.** A routed
+getter reads today's layout and nothing else, so a Diamond refreshed in place
+across a layout change could hold a row written by an earlier facet at an
+earlier era's slot where no getter looks — and the routed proof would call
+the class empty. Every enumerable deployment is now also read at every
+EARLIER era's slot for every class, over the id range the era-stable loan
+counter gives rather than today's pagination, and the era counters are read
+too: a non-zero counter at an earlier era withdraws the routed zero-loans
+proof. A rebate or held row found under an earlier layout is VPFI custody
+and counts; a fallback or intent row found there has no readable asset and
+leaves the class indeterminate. Era identity, finally, is a layout
+fingerprint per era rather than a commit, so a table regenerated on a branch
+still matches after the squash merge. Run 29 re-reads every deployment with
+the earlier-era read.
+
 ### 7a. What the provenance walk found, and how the design changes (2026-09-09)
 
 The walk in question 2 was built first, and it answered before a single slot

@@ -166,3 +166,37 @@ export function intentVerdictFromStorage({ rows, liveCommitCounts }) {
   }
   return { status: 'proven', provenBy: 'storage-read-calibrated' };
 }
+
+/** The era slots of each field EXCEPT the one HEAD's layout uses — what a routed getter cannot see. */
+export function eraSlotsExcept(eraSlots, headSlots) {
+  const out = {};
+  for (const [f, list] of Object.entries(eraSlots)) out[f] = list.filter((x) => x.slot !== headSlots[f]);
+  return out;
+}
+
+/**
+ * #2095 r3 P1 — a routed getter reads TODAY's layout; rows written by earlier
+ * facets sit at earlier era slots where no getter looks. This merges the
+ * historical scan into a class's routed verdict: a rebate or held row is VPFI
+ * by definition and simply counts; a fallback or intent row has no readable
+ * asset and makes the class indeterminate. Pure; exported for the test.
+ */
+export function mergeHistoricalRows(cls, historical, className) {
+  const hist = historical?.rows?.[className] ?? [];
+  if (!hist.length) return { ...cls, historicalRows: 0 };
+  if (className === 'vpfiHeldCustody' || className === 'rebateRows') {
+    const field = className === 'vpfiHeldCustody' ? 'vpfiHeld' : 'rebateAmount';
+    const rows = [...(cls.rows ?? []), ...hist.map((r) => ({ ...r, layoutEra: 'earlier' }))];
+    const total = rows.reduce((a, r) => a + BigInt(r[field]), 0n).toString();
+    return { ...cls, count: rows.length, total, rows, historicalRows: hist.length };
+  }
+  return {
+    ...cls,
+    status: 'indeterminate',
+    provenBy: undefined,
+    indeterminateReason: `${hist.length} row(s) exist at an EARLIER layout era's slot (written by facets before a layout change; no getter reads them); their asset cannot be read without a getter for that era`,
+    unknownAssetRows: [...(cls.unknownAssetRows ?? []), ...hist],
+    count: (cls.count ?? 0) + hist.length,
+    historicalRows: hist.length,
+  };
+}

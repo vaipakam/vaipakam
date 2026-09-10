@@ -1,7 +1,7 @@
 // census-storage-read.test.mjs — the era-complete storage read's rules (#1566 §7/§7a), over fake readers.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { prepareStorageRead, readCountersByStorage, scanRowsByStorage, intentVerdictFromStorage, ROW } from './census-storage-read.mjs';
+import { prepareStorageRead, readCountersByStorage, scanRowsByStorage, intentVerdictFromStorage, eraSlotsExcept, mergeHistoricalRows, ROW } from './census-storage-read.mjs';
 import { memberSlot, rowSlot } from './storage-slots.mjs';
 
 const H = (n) => '0x' + n.toString(16).padStart(64, '0');
@@ -89,4 +89,27 @@ test('intentVerdictFromStorage: an empty scan is proven only when every live-com
   const rows = intentVerdictFromStorage({ rows: [{ loanId: '7' }], liveCommitCounts: zero });
   assert.equal(rows.status, 'indeterminate');
   assert.match(rows.reason, /1 live intent row/);
+});
+
+test('eraSlotsExcept drops exactly the slot HEAD uses; mergeHistoricalRows counts VPFI rows and marks unreadable-asset rows indeterminate (#2095 r3 P1)', () => {
+  const p = prepareStorageRead({ slots, eras });
+  const nonHead = eraSlotsExcept(p.eraSlots, slots.fields);
+  assert.equal(nonHead.intentCommits.length, 1, 'the OLD intent slot remains');
+  assert.equal(nonHead.intentCommits[0].slot, slotOf(OLDREL.intentCommits));
+  assert.equal(nonHead.fallbackSnapshot.length, 0, 'a field that never moved has no earlier slot');
+  assert.equal(nonHead.nextLoanId.length, 0);
+  const held = mergeHistoricalRows({ status: 'proven', provenBy: 'x', count: 0, total: '0', rows: [] }, { rows: { vpfiHeldCustody: [{ loanId: '3', vpfiHeld: '7', mappingSlot: '0xold', eras: [] }] } }, 'vpfiHeldCustody');
+  assert.equal(held.status, 'proven');
+  assert.equal(held.count, 1);
+  assert.equal(held.total, '7');
+  assert.equal(held.rows[0].layoutEra, 'earlier');
+  const intent = mergeHistoricalRows({ status: 'proven', provenBy: 'x', count: 0, total: '0', rows: [], unknownAssetRows: [] }, { rows: { liveIntentCommits: [{ loanId: '9', orderHash: '0xab', mappingSlot: '0xold', eras: [] }] } }, 'liveIntentCommits');
+  assert.equal(intent.status, 'indeterminate');
+  assert.equal(intent.provenBy, undefined);
+  assert.equal(intent.count, 1);
+  assert.equal(intent.unknownAssetRows.length, 1);
+  assert.match(intent.indeterminateReason, /EARLIER layout era/);
+  const same = mergeHistoricalRows({ status: 'proven', provenBy: 'x', count: 0, total: '0', rows: [] }, { rows: { rebateRows: [] } }, 'rebateRows');
+  assert.equal(same.status, 'proven');
+  assert.equal(same.historicalRows, 0);
 });

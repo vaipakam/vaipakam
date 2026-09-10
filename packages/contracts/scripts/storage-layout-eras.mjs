@@ -132,9 +132,14 @@ export function checkEraTable({ tablePath = OUT_DEFAULT, since = DEFAULT_SINCE, 
   const walk = walkProvenance({ since, fields: FIELDS });
   const commitsAsc = sh('git', ['log', '--format=%H %cI', `--since=${since}`, '--', LIB_PATH], REPO_ROOT).trim().split('\n').filter(Boolean).map((l) => { const [sha, date] = l.split(' '); return { sha, date }; }).reverse();
   const needed = eraCommits(walk, commitsAsc);
-  const have = new Set((table.eras ?? []).map((e) => e.commit));
-  const missing = needed.filter((e) => !have.has(e.sha));
+  // Era identity is a CONTENT fingerprint, not a SHA (#2095 r3 P2): a squash
+  // merge records the same source under another commit, so membership is
+  // checked by the fingerprint of each needed commit's source.
+  const have = new Set((table.eras ?? []).map((e) => e.fingerprint).filter(Boolean));
+  const fingerprintAt = (sha) => layoutFingerprint(sh('git', ['show', `${sha}:${LIB_PATH}`], REPO_ROOT), STRUCTS, FIELDS);
+  const missing = needed.filter((e) => !have.has(fingerprintAt(e.sha)));
   const problems = [];
+  if ((table.eras ?? []).some((e) => !e.fingerprint)) problems.push('an era carries no fingerprint — regenerate the table');
   if (!table.complete) problems.push(`the table is incomplete (${(table.unavailable ?? []).length} era(s) unavailable${table.partial ? `; ${table.partial}` : ''})`);
   // Freshness is a CONTENT identity, never a commit SHA: the table's HEAD era
   // must have been built from the layout inputs HEAD has now (#2095 r2 P1 — a
@@ -175,14 +180,15 @@ export function main(argv = process.argv.slice(2)) {
   const unavailable = [];
   for (const e of eras) {
     const t0 = Date.now();
+    const fingerprint = layoutFingerprint(sh('git', ['show', `${e.sha}:${LIB_PATH}`], REPO_ROOT), STRUCTS, FIELDS);
     if (reusable.has(e.sha)) {
-      built.push({ ...reusable.get(e.sha), event: e.event ?? reusable.get(e.sha).event ?? null });
+      built.push({ ...reusable.get(e.sha), event: e.event ?? reusable.get(e.sha).event ?? null, fingerprint });
       log(`  ${e.sha.slice(0, 9)} ${e.date.slice(0, 10)} ${(e.event ?? '').padEnd(34)} reused`);
       continue;
     }
     try {
       const r = buildEra(e.sha, { keep, log });
-      built.push({ commit: e.sha, date: e.date, event: e.event ?? null, ...r });
+      built.push({ commit: e.sha, date: e.date, event: e.event ?? null, fingerprint, ...r });
       log(`  ${e.sha.slice(0, 9)} ${e.date.slice(0, 10)} ${(e.event ?? '').padEnd(34)} ok in ${Math.round((Date.now() - t0) / 1000)}s (${r.profile}); intentCommits ${r.fields.intentCommits ? r.fields.intentCommits.slot.slice(0, 12) + '…' : 'absent'}`);
     } catch (err) {
       const reason = String(err.stderr || err.message).split('\n').slice(0, 3).join(' | ').slice(0, 300);
