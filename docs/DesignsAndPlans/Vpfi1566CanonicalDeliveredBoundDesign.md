@@ -5957,6 +5957,29 @@ era slots. Nothing it read was non-zero. The three cells left are the
 non-Diamond record, the token-less archive and arb-sepolia's live scope,
 which are items 2 to 4 above and were never within this read's reach.
 
+**Review round 1 (PR #2095) found the era set incomplete, and run 27 was
+superseded.** The walk tracked `struct Storage` and the three row structs,
+but `Storage` inlines two structs of its own before the targets —
+`ProtocolConfig` ahead of the rebate mapping and `MatchOverride` ahead of
+the intent fields — and an inline struct's members occupy slots in place, so
+a member appended to `ProtocolConfig` shifts every field after it with no
+`Storage` declaration changing at all. `ProtocolConfig` changed nineteen
+times since May, five of them between 2026-06-11 and 2026-06-19 while the
+intent mapping already existed: the intent rows had more slots in that
+window than the three eras run 27 read, and a Diamond alive then could hold
+a row the read never reached. The walker now discovers every inline struct
+that precedes a target (external ones — OpenZeppelin's sets, all after the
+targets — are reported and assumed stable under the pinned submodule),
+counts any length change in an inline or row struct as a change event, and
+the era tool builds at each; a `--check` mode, run in CI on a full-history
+checkout, fails when the committed era table lacks an era the current walk
+implies. The same round tightened three rules: an era whose mapping exists
+without its row layout is refused rather than read with today's offsets; a
+non-zero `intentLiveCommitCount` at any era slot contradicts an empty row
+scan and leaves the class indeterminate; and the shell path no longer sums
+an intent amount storage never read. Run 28 re-reads every deployment
+against the complete era table.
+
 ### 7a. What the provenance walk found, and how the design changes (2026-09-09)
 
 The walk in question 2 was built first, and it answered before a single slot

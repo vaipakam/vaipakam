@@ -91,7 +91,12 @@
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync, renameSync, rmSync } from 'node:fs';
 import { readManifest, regenerateEntries, withManifestLock, writeSnapshotGuarded, livePublicationsInProgress } from './archive-manifest.mjs';
 import { loadSlots, loadEras } from './storage-slots.mjs';
-import { prepareStorageRead, readCountersByStorage, scanRowsByStorage, MAX_STORAGE_LOAN_SCAN } from './census-storage-read.mjs';
+import { prepareStorageRead, readCountersByStorage, scanRowsByStorage, intentVerdictFromStorage, MAX_STORAGE_LOAN_SCAN } from './census-storage-read.mjs';
+
+/** Sum a row field as a decimal string. A function declaration, so it is hoisted above every branch that returns early (#2095 r1 P2). */
+function sum(rows, field) {
+  return rows.reduce((a, r) => a + BigInt(r[field]), 0n).toString();
+}
 
 /**
  * #1566 design §7/§7a — the ERA-COMPLETE storage read, prepared once from the
@@ -1771,9 +1776,15 @@ async function censusDeployment(dep) {
       if (!storage || storage.truncated) return { status, indeterminateReason: reason, provenBy: undefined, count: 0, total: '0', rows: [], ...extra };
       if (storage.kind === 'no-loans-ever-created-by-storage') return { status: 'proven', provenBy: storage.kind, count: 0, total: '0', rows: [], ...extra };
       const rows = storage.scan.rows[name];
-      const assetUnreadable = name === 'fallbackSnapshotCustody' || name === 'liveIntentCommits';
-      if (rows.length && assetUnreadable) {
-        return { status: 'indeterminate', indeterminateReason: `${rows.length} row(s) exist at era slots for this class; their asset cannot be read without the getter, so they are not provably VPFI or non-VPFI`, provenBy: undefined, count: rows.length, total: sum(rows, name === 'fallbackSnapshotCustody' ? 'collateralTotal' : 'custodialCollateral'), rows: [], unknownAssetRows: rows, ...extra };
+      if (name === 'liveIntentCommits') {
+        // the storage row carries no amount (only the orderHash is read), and the live counter can contradict an empty scan
+        const v = intentVerdictFromStorage({ rows, liveCommitCounts: storage.counters.intentLiveCommitCount.map((x) => ({ slot: x.slot, value: x.value.toString(), eras: x.eras })) });
+        return v.status === 'proven'
+          ? { status: 'proven', provenBy: storage.kind, count: 0, total: '0', rows: [], ...extra }
+          : { status: 'indeterminate', indeterminateReason: v.reason, provenBy: undefined, count: rows.length, total: null, totalUnavailable: 'an intent row\'s amount is not read from storage', rows: [], unknownAssetRows: rows, counterContradiction: v.contradiction ?? false, ...extra };
+      }
+      if (rows.length && name === 'fallbackSnapshotCustody') {
+        return { status: 'indeterminate', indeterminateReason: `${rows.length} row(s) exist at era slots for this class; their asset cannot be read without the getter, so they are not provably VPFI or non-VPFI`, provenBy: undefined, count: rows.length, total: sum(rows, 'collateralTotal'), rows: [], unknownAssetRows: rows, ...extra };
       }
       return { status: 'proven', provenBy: storage.kind, count: rows.length, total: name === 'vpfiHeldCustody' ? sum(rows, 'vpfiHeld') : name === 'rebateRows' ? sum(rows, 'rebateAmount') : '0', rows, ...extra };
     };
@@ -1898,6 +1909,7 @@ async function censusDeployment(dep) {
     const scan = await scanRowsByStorage({ readSlot, loanIds, eraSlots: STORAGE_READ.eraSlots, classes: ['liveIntentCommits'] });
     const counters = await readCountersByStorage({ readSlot, eraSlots: STORAGE_READ.eraSlots });
     intentStorage = { rows: scan.rows.liveIntentCommits, slotsRead: scan.slotsRead + counters.slotsRead, loansScanned: scan.loansScanned, liveCommitCounts: counters.intentLiveCommitCount.map((x) => ({ slot: x.slot, value: x.value.toString(), eras: x.eras })) };
+    intentStorage.verdict = intentVerdictFromStorage(intentStorage);
     process.stderr.write(`census: ${who} — intent rows read from storage at ${STORAGE_READ.eraSlots.intentCommits.length} era slot(s) for ${loanIds.length} loan(s): ${intentStorage.rows.length} row(s)\n`);
   }
   let intentAbsenceProof = null;
@@ -2075,7 +2087,6 @@ async function censusDeployment(dep) {
 
   await assertBlockIdentity(client, censusBlock, who);
 
-  const sum = (rows, field) => rows.reduce((a, r) => a + BigInt(r[field]), 0n).toString();
 
   return {
     chainSlug: slug,
@@ -2178,13 +2189,11 @@ async function censusDeployment(dep) {
                 ? 'indeterminate'
                 : 'proven'
               : intentStorage
-                ? intentStorage.rows.length
-                  ? 'indeterminate'
-                  : 'proven'
+                ? intentStorage.verdict.status
                 : intentAbsenceProof?.proven
                   ? 'proven'
                   : 'indeterminate',
-        provenBy: provenByEnumerable ?? (intentStorage && !intentStorage.rows.length ? 'storage-read-calibrated' : undefined),
+        provenBy: provenByEnumerable ?? (intentStorage?.verdict.status === 'proven' ? 'storage-read-calibrated' : undefined),
         unknownAssetRows: intentSurfaceRouted ? unknownAssetIntentRows : intentStorage ? intentStorage.rows : unknownAssetIntentRows,
         // Codex #2070 r8 P2 — every field below derives from ONE verdict. When
         // the no-loans bound proves the class, no indeterminate reason and no
@@ -2202,9 +2211,7 @@ async function censusDeployment(dep) {
                     ? scopeNotAuthoritativeReason
                     : undefined
               : intentStorage
-                ? intentStorage.rows.length
-                  ? `${intentStorage.rows.length} live intent row(s) exist at era slots (read from storage); their asset cannot be read without the getter, so they are not provably VPFI or non-VPFI`
-                  : undefined
+                ? intentStorage.verdict.reason
                 : intentAbsenceProof?.reason,
         absenceProof:
           provenByEnumerable && !corroboration?.contradictsPrimaryProof ? undefined : intentSurfaceRouted || intentStorage ? undefined : intentAbsenceProof,

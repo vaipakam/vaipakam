@@ -128,10 +128,40 @@ export function buildEra(sha, { repo = REPO_ROOT, keep = false, log = () => {} }
   }
 }
 
+/**
+ * `--check`: no builds. The era commits the CURRENT walk implies must all be
+ * present in the committed table, the table must be complete, and its head
+ * must be an ancestor of (or equal to) HEAD — otherwise a layout change has
+ * landed since the table was generated and the census would read too few
+ * eras. Exported for the CI job; returns the list of missing commits.
+ */
+export function checkEraTable({ tablePath = OUT_DEFAULT, since = DEFAULT_SINCE, log = () => {} } = {}) {
+  const table = JSON.parse(readFileSync(tablePath, 'utf8'));
+  const walk = walkProvenance({ since, fields: FIELDS });
+  const commitsAsc = sh('git', ['log', '--format=%H %cI', `--since=${since}`, '--', LIB_PATH], REPO_ROOT).trim().split('\n').filter(Boolean).map((l) => { const [sha, date] = l.split(' '); return { sha, date }; }).reverse();
+  const needed = eraCommits(walk, commitsAsc);
+  const have = new Set((table.eras ?? []).map((e) => e.commit));
+  const missing = needed.filter((e) => !have.has(e.sha));
+  let headOk = true;
+  try {
+    sh('git', ['merge-base', '--is-ancestor', table.head, 'HEAD'], REPO_ROOT);
+  } catch {
+    headOk = false;
+  }
+  const problems = [];
+  if (!table.complete) problems.push(`the table is incomplete (${(table.unavailable ?? []).length} era(s) unavailable)`);
+  if (!headOk) problems.push(`the table's head ${String(table.head).slice(0, 9)} is not an ancestor of HEAD`);
+  for (const m of missing) problems.push(`era ${m.sha.slice(0, 9)} (${m.date.slice(0, 10)}, ${m.event}) is not in the table`);
+  // a HEAD-layout change since the table: the pinned probe file is the other half of that check (StorageSlotPinTest)
+  log(`storage-layout-eras --check: ${problems.length ? 'STALE' : 'OK'} — ${needed.length} era(s) implied by the walk, ${have.size} in the table${problems.length ? '\n  ' + problems.join('\n  ') : ''}`);
+  return { ok: problems.length === 0, problems, needed: needed.length, inTable: have.size };
+}
+
 export function main(argv = process.argv.slice(2)) {
   const arg = (k, d) => { const i = argv.indexOf(k); return i >= 0 ? argv[i + 1] : d; };
   const since = arg('--since', DEFAULT_SINCE);
   const out = arg('--out', OUT_DEFAULT);
+  if (argv.includes('--check')) return checkEraTable({ tablePath: out, since, log: (m) => process.stderr.write(m + '\n') }).ok ? 0 : 1;
   const onlyHead = argv.includes('--only-head');
   const keep = argv.includes('--keep-worktrees');
   // --reuse <path>: eras already built (same commit) in a previous output are copied, not rebuilt

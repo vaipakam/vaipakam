@@ -1,7 +1,7 @@
 // census-storage-read.test.mjs — the era-complete storage read's rules (#1566 §7/§7a), over fake readers.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { prepareStorageRead, readCountersByStorage, scanRowsByStorage, ROW } from './census-storage-read.mjs';
+import { prepareStorageRead, readCountersByStorage, scanRowsByStorage, intentVerdictFromStorage, ROW } from './census-storage-read.mjs';
 import { memberSlot, rowSlot } from './storage-slots.mjs';
 
 const H = (n) => '0x' + n.toString(16).padStart(64, '0');
@@ -34,6 +34,13 @@ test('prepareStorageRead: validates the tables and derives distinct slots per fi
   assert.match(prepareStorageRead({ slots, eras: badRows }).reason, /BorrowerLifRebate\.vpfiHeld at slot 1/);
   const movedCounter = { ...eras, eras: [era('oldold001', '2026-05-10T00:00:00Z', { ...OLDREL, nextLoanId: 2 }), era('headhead1', '2026-09-09T00:00:00Z', HEADREL)] };
   assert.match(prepareStorageRead({ slots, eras: movedCounter }).reason, /nextLoanId occupied 2/);
+  // a mapping present in an era WITHOUT its row layout is a lookup miss, not an absent struct: refused (#2095 r1 P1)
+  const oldNoRows = era('oldold001', '2026-05-10T00:00:00Z', OLDREL);
+  oldNoRows.rows = { ...oldNoRows.rows, SwapToRepayIntentCommit: null };
+  assert.match(prepareStorageRead({ slots, eras: { ...eras, eras: [oldNoRows, era('headhead1', '2026-09-09T00:00:00Z', HEADREL)] } }).reason, /carries the intentCommits mapping but no SwapToRepayIntentCommit row layout/);
+  // whereas an era with NO intent mapping legitimately has no row layout
+  const preIntent = era('preintent1', '2026-05-05T00:00:00Z', { ...OLDREL, intentCommits: null, intentLiveCommitCount: null });
+  assert.equal(prepareStorageRead({ slots, eras: { ...eras, eras: [preIntent, era('headhead1', '2026-09-09T00:00:00Z', HEADREL)] } }).ok, true);
 });
 
 test('scanRowsByStorage: a row written under an OLD era is found at the old slot and named with its era; all-zero everywhere is empty', async () => {
@@ -70,4 +77,16 @@ test('readCountersByStorage: no loans only when nextLoanId is zero and every era
   const oldCounter = await readCountersByStorage({ readSlot: async (s) => (s === slotOf(OLDREL.totalLoansEverCreated) ? 4n : 0n), eraSlots: p.eraSlots });
   assert.equal(oldCounter.allZero, false, 'a counter left non-zero at an OLD era slot still counts');
   assert.equal(oldCounter.totalLoansEverCreated.find((x) => x.value === 4n).eras[0].commit, 'oldold001');
+});
+
+test('intentVerdictFromStorage: an empty scan is proven only when every live-commit counter era slot is zero (#2095 r1 P1)', () => {
+  const zero = [{ slot: '0x01', value: '0', eras: [{ date: '2026-06-23' }] }, { slot: '0x02', value: '0', eras: [{ date: '2026-09-09' }] }];
+  assert.deepEqual(intentVerdictFromStorage({ rows: [], liveCommitCounts: zero }), { status: 'proven', provenBy: 'storage-read-calibrated' });
+  const contradiction = intentVerdictFromStorage({ rows: [], liveCommitCounts: [{ slot: '0x01', value: '1', eras: [{ date: '2026-06-23' }] }, zero[1]] });
+  assert.equal(contradiction.status, 'indeterminate');
+  assert.equal(contradiction.contradiction, true);
+  assert.match(contradiction.reason, /intentLiveCommitCount reads 1 at 0x01/);
+  const rows = intentVerdictFromStorage({ rows: [{ loanId: '7' }], liveCommitCounts: zero });
+  assert.equal(rows.status, 'indeterminate');
+  assert.match(rows.reason, /1 live intent row/);
 });

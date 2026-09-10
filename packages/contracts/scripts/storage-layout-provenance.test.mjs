@@ -7,7 +7,7 @@ import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { extractDeclarations, isPrefix, walkProvenance, stripComments } from './storage-layout-provenance.mjs';
+import { extractDeclarations, isPrefix, walkProvenance, stripComments, inlineStructsBefore } from './storage-layout-provenance.mjs';
 
 const SRC = (extra = '', rowExtra = '') => `
 // SPDX-License-Identifier: MIT
@@ -82,4 +82,37 @@ test('walkProvenance over a real repository: append-only history passes, an inse
   const row = walkProvenance({ repo, libPath: lib, since: '2026-05-01', structs: ['Row'], fields: [] });
   assert.equal(row.ok, false);
   assert.equal(row.violations[0].struct, 'Row');
+});
+
+test('inline structs before a target are layout-bearing: a member added to one is a change event (#2095 r1 P1)', () => {
+  const src = (cfg) => `
+library LibVaipakam {
+    struct Config { uint16 a; ${cfg} }
+    struct Row { bytes32 orderHash; }
+    enum Mode { A, B }
+    struct Storage {
+        uint256 nextLoanId;
+        Config cfg;
+        Mode mode;
+        mapping(uint256 => Row) intentCommits;
+        Config after;
+    }
+}`;
+  // discovery: Config precedes intentCommits (the trailing one does not add a new name); an enum is not a struct
+  assert.deepEqual(inlineStructsBefore(src(''), ['intentCommits']), { local: ['Config'], external: [] });
+  assert.deepEqual(inlineStructsBefore('library L { struct Storage { EnumerableSet.AddressSet s; uint256 nextLoanId; } }', ['nextLoanId']).external, ['EnumerableSet.AddressSet']);
+  // walk: a member appended to Config shifts intentCommits without any Storage declaration changing
+  const repo = mkdtempSync(join(tmpdir(), 'prov-inline-'));
+  const lib = 'contracts/src/libraries/LibVaipakam.sol';
+  mkdirSync(join(repo, 'contracts/src/libraries'), { recursive: true });
+  const g = (...a) => execFileSync('git', a, { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  g('init', '-q'); g('config', 'user.email', 't@t'); g('config', 'user.name', 't');
+  const commit = (s, msg, date) => { writeFileSync(join(repo, lib), s); g('add', lib); execFileSync('git', ['commit', '-q', '-m', msg, '--date', date], { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, GIT_COMMITTER_DATE: date, GIT_AUTHOR_DATE: date } }); };
+  commit(src(''), 'v1', '2026-05-02T00:00:00Z');
+  commit(src('uint256 b;'), 'v2 config grows', '2026-06-01T00:00:00Z');
+  const w = walkProvenance({ repo, libPath: lib, since: '2026-05-01', structs: ['Storage', 'Row'], fields: ['intentCommits'] });
+  assert.deepEqual(w.inlineStructs, { local: ['Config'], external: [] });
+  assert.equal(w.changeEvents.length, 1);
+  assert.equal(w.changeEvents[0].struct, 'Config');
+  assert.equal(w.changeEvents[0].kind, 'append', 'an append inside an inline struct grows its footprint');
 });

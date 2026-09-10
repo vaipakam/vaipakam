@@ -103,6 +103,46 @@ export function extractDeclarations(source, structName) {
 export function fieldName(decl) {
   return decl.split(' ').pop();
 }
+const PRIMITIVE = /^(u?int\d*|address|bool|bytes\d*|bytes|string)$/;
+/**
+ * The INLINE struct types `struct Storage` embeds before the last target
+ * field, recursively (#2095 r1 P1). An inline struct's members occupy slots
+ * in place, so a member added to or retyped in `ProtocolConfig` shifts every
+ * field after it without any `Storage` declaration changing — the walk must
+ * track those structs' own declaration sequences too. A type defined outside
+ * this file (OpenZeppelin's EnumerableSet) is reported as external and
+ * assumed stable, which the pinned submodule makes true.
+ */
+export function inlineStructsBefore(source, targets, structName = 'Storage') {
+  const decls = extractDeclarations(source, structName);
+  const lastTarget = Math.max(-1, ...targets.map((t) => decls.findIndex((d) => fieldName(d) === t)));
+  const local = new Set();
+  const external = new Set();
+  const visit = (struct, upTo) => {
+    let list;
+    try {
+      list = extractDeclarations(source, struct);
+    } catch {
+      return;
+    }
+    for (let i = 0; i < (upTo === undefined ? list.length : upTo); i++) {
+      const t = layoutType(list[i]);
+      if (t === 'mapping' || t === 'dynamic-array') continue;
+      const base = t.replace(/\[\d+\]$/, '');
+      if (PRIMITIVE.test(base)) continue;
+      const short = base.split('.').pop();
+      if (new RegExp(`\\benum\\s+${short}\\b`).test(source)) continue; // an enum is a uint8
+      if (new RegExp(`\\bstruct\\s+${short}\\s*\\{`).test(source)) {
+        if (!local.has(short)) {
+          local.add(short);
+          visit(short);
+        }
+      } else external.add(base);
+    }
+  };
+  visit(structName, lastTarget + 1);
+  return { local: [...local], external: [...external] };
+}
 export function fieldType(decl) {
   return decl.slice(0, decl.length - fieldName(decl).length).trim();
 }
@@ -173,6 +213,10 @@ function git(args, cwd = REPO_ROOT) {
  */
 export function walkProvenance({ repo = REPO_ROOT, libPath = LIB_PATH, since = DEFAULT_SINCE, structs = STRUCTS, fields = [] } = {}) {
   const head = git(['rev-parse', 'HEAD'], repo).trim();
+  // the inline structs that precede a target at HEAD are layout-bearing: track them like the row structs
+  const headSourceForInline = readFileSync(join(repo, libPath), 'utf8');
+  const inline = fields.length ? inlineStructsBefore(headSourceForInline, fields) : { local: [], external: [] };
+  structs = [...new Set([...structs, ...inline.local])];
   const log = git(['log', '--format=%H %cI', `--since=${since}`, '--', libPath], repo).trim();
   const commits = log ? log.split('\n').map((l) => { const [sha, date] = l.split(' '); return { sha, date }; }) : [];
   // oldest first; HEAD last (HEAD's file may be uncommitted-clean or not — read the working tree for HEAD)
@@ -212,7 +256,11 @@ export function walkProvenance({ repo = REPO_ROOT, libPath = LIB_PATH, since = D
         let i = 0;
         while (i < a.length && i < b.length && a[i] === b[i] && (fieldName(prev[i]) === fieldName(seq[i]) || moveReason(prev, seq, i) === null)) i++;
         const appendOnly = i === a.length && b.length >= a.length;
-        if (!appendOnly) {
+        // For `Storage` itself an append shifts nothing. For an INLINE or row
+        // struct an append grows its footprint and shifts every Storage field
+        // after it (#2095 r1 P1), so any length change there is an event too.
+        const footprintBearing = s !== 'Storage';
+        if (!appendOnly || (footprintBearing && seq.length !== prev.length)) {
           changeEvents.push({
             commit: c.sha,
             date: c.date,
@@ -221,7 +269,7 @@ export function walkProvenance({ repo = REPO_ROOT, libPath = LIB_PATH, since = D
             before: prev[i] ?? '(end)',
             after: seq[i] ?? '(end)',
             lengthDelta: seq.length - prev.length,
-            kind: seq.length > prev.length ? 'insertion' : seq.length < prev.length ? 'removal' : 'retype-or-swap',
+            kind: appendOnly ? 'append' : seq.length > prev.length ? 'insertion' : seq.length < prev.length ? 'removal' : 'retype-or-swap',
           });
         }
       }
@@ -246,6 +294,7 @@ export function walkProvenance({ repo = REPO_ROOT, libPath = LIB_PATH, since = D
     libPath,
     commitsWalked: commits.length,
     structs: Object.fromEntries(structs.map((s) => [s, today[s].length])),
+    inlineStructs: inline,
     fields: Object.fromEntries(fields.map((f) => [f, { todayIndex: todayIndex[f], introducedAt: introducedAt[f] }])),
     renames: [...renames],
     violations,
@@ -279,6 +328,7 @@ function main() {
     for (const [f, info] of Object.entries(v.fields)) {
       process.stdout.write(`  ${f.padEnd(24)} today index ${String(info.todayIndex).padStart(4)}  introduced ${info.introducedAt ? `${info.introducedAt.commit.slice(0, 9)} (${info.introducedAt.date.slice(0, 10)}, index ${info.introducedAt.index})` : 'before the walk began'}\n`);
     }
+    process.stdout.write(`  inline structs before the targets: ${v.inlineStructs.local.join(', ') || 'none'}${v.inlineStructs.external.length ? ` (external, assumed stable: ${v.inlineStructs.external.join(', ')})` : ''}\n`);
     for (const r of v.renames) process.stdout.write(`  note: rename (slot unchanged) ${r}\n`);
     for (const e of v.changeEvents) process.stdout.write(`  CHANGE ${e.commit.slice(0, 9)} (${e.date.slice(0, 10)}) ${e.struct} ${e.kind} at index ${e.firstDifferentIndex} (length ${e.lengthDelta >= 0 ? '+' : ''}${e.lengthDelta}): "${e.before.slice(0, 60)}" → "${e.after.slice(0, 60)}"\n`);
     for (const [f, eras] of Object.entries(v.indexEras)) if (eras.length > 1) process.stdout.write(`  eras ${f}: ${eras.map((e) => `index ${e.index} ${e.from.slice(0, 10)}..${e.to.slice(0, 10)}`).join(' | ')}\n`);

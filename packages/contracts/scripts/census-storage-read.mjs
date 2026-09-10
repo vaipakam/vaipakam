@@ -44,11 +44,17 @@ export function prepareStorageRead({ slots, eras }) {
     if (head.fields[f]?.slot !== slots.fields[f]) return refuse(`HEAD era slot for ${f} (${head.fields[f]?.slot}) differs from the pinned probe (${slots.fields[f]})`);
   }
   if (head.storagePosition !== slots.storagePosition) return refuse('HEAD era storage position differs from the pinned probe');
-  // member offsets must be identical in every era where the row struct exists
+  // member offsets must be identical in every era where the row struct exists;
+  // and a mapping that EXISTS in an era must carry its row layout (#2095 r1
+  // P1) — a null row beside a live mapping is a lookup miss, not an absent
+  // struct, and reading it with today's offsets would misattribute that era.
   for (const e of eras.eras) {
+    for (const [field, struct] of Object.entries(FIELD_TO_ROW)) {
+      if (e.fields?.[field]?.slot && !e.rows?.[struct]) return refuse(`era ${e.commit.slice(0, 9)} (${e.date.slice(0, 10)}) carries the ${field} mapping but no ${struct} row layout — the era table cannot say how that era laid its rows out`);
+    }
     for (const [struct, members] of Object.entries(ROW)) {
       const r = e.rows?.[struct];
-      if (!r) continue; // the struct did not exist in that era: nothing was written under it
+      if (!r) continue; // the struct did not exist in that era, and neither did its mapping (checked above)
       for (const [m, off] of Object.entries(members)) {
         if (!r[m] || r[m].slot !== off || (r[m].offset ?? 0) !== 0) return refuse(`era ${e.commit.slice(0, 9)} (${e.date.slice(0, 10)}) places ${struct}.${m} at slot ${r[m]?.slot}/offset ${r[m]?.offset}, not ${off}/0 — the read would misattribute that era's rows`);
       }
@@ -139,4 +145,24 @@ export async function scanRowsByStorage({ readSlot, loanIds, eraSlots, classes =
     }
   }
   return { rows, slotsRead, loansScanned: loanIds.length, erasPerField: Object.fromEntries(Object.entries(eraSlots).map(([f, v]) => [f, v.length])) };
+}
+
+/**
+ * #2095 r1 P1 — the verdict for the intent class from a storage scan. The
+ * live-commit counter is corroboration and never sufficient alone, but it can
+ * CONTRADICT: a non-zero counter at any era slot beside an empty row scan
+ * means a row the scan did not reach (a missing era, a wrong slot), and the
+ * class must not be certified. Pure; exported for the test.
+ */
+export function intentVerdictFromStorage({ rows, liveCommitCounts }) {
+  const nonZero = (liveCommitCounts ?? []).filter((c) => BigInt(c.value) !== 0n);
+  if (rows.length) return { status: 'indeterminate', reason: `${rows.length} live intent row(s) exist at era slots (read from storage); their asset cannot be read without the getter, so they are not provably VPFI or non-VPFI` };
+  if (nonZero.length) {
+    return {
+      status: 'indeterminate',
+      reason: `the row scan found no intent row, but intentLiveCommitCount reads ${nonZero.map((c) => `${c.value} at ${c.slot} (${c.eras.map((e) => e.date).join(',')})`).join('; ')} — the protocol's own counter says a commit exists that the scan did not reach; refusing to certify`,
+      contradiction: true,
+    };
+  }
+  return { status: 'proven', provenBy: 'storage-read-calibrated' };
 }

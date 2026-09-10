@@ -1106,6 +1106,36 @@ jobs:
   # NOT a required status check: this Worker is detection-only and moves
   # no funds, so a red here should inform rather than block a contracts
   # merge. The merge gate stays `contracts-fast` + Slither.
+  # ── Storage-layout provenance (#1566 §7a, #2092) ────────────────────────
+  # The custody census reads storage at EVERY layout era; the era table it
+  # reads is generated from history and must not fall behind it. This job
+  # checks out the FULL history (the walker refuses a shallow clone) and
+  # requires (1) the walk itself to run, and (2) every era the walk implies to
+  # be present in contracts/deployments/storage-slot-eras.json. It does not
+  # build any era — regeneration is `node scripts/storage-layout-eras.mjs`.
+  storage-layout-provenance:
+    name: storage layout provenance (walk + era table freshness)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+        with:
+          run_install: false
+      - uses: actions/setup-node@a0853c24241e2f6d16b3ba4e7ef9d3c78f4bc3ea # v5.0.0
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Walk the library's history (append-only property, change events)
+        working-directory: packages/contracts
+        run: node scripts/storage-layout-provenance.mjs || test $? -eq 1   # exit 1 = violations reported (known: #2092); exit 2 = walked nothing
+      - name: Era table covers every era the walk implies
+        working-directory: packages/contracts
+        run: node scripts/storage-layout-eras.mjs --check
+
   mesh-watcher:
     name: ops/mesh-watcher (typecheck + tests)
     needs: detect-changes
