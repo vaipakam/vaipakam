@@ -11852,17 +11852,20 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(r.ok).toBe(false);
   });
 
-  // ---- #2084: the rewrite question is asked of the EXECUTABLE IMAGE ----
+  // ---- #2084: the rewrite question reads a TRANSFORMED file, never a
+  // selected one ----
   //
-  // Three symptoms, one cause: the question was asked of the CONTAINER's raw
-  // text with the embedded line's language. Each of these was reproduced
-  // against the pre-fix guard before the fix was written.
+  // Each symptom below was reproduced against the pre-fix guard before the fix
+  // was written. An earlier attempt COLLECTED the executable parts instead of
+  // transforming the whole file; #2105 rounds 1-3 found five separate
+  // ingestion paths it missed, every omission a false green, so that approach
+  // was withdrawn. These fixtures pin the transformations and — as importantly
+  // — the constructs a selection would drop.
 
-  it('prose naming a write is not a write (#2084 too-much-text)', () => {
-    // A runbook SENTENCE mentioning a write, before a fenced deploy. Classified
-    // as shell because the fenced block's language was applied to the whole
-    // file, this was REPORTED — a false red, in a check that runs inside
-    // typecheck and so blocks correct work.
+  it('prose naming a write is not a write (#2084)', () => {
+    // A runbook SENTENCE mentioning a write, before a fenced deploy. Read as
+    // shell, it counted as performing one and the deploy below was reported —
+    // a false red, in a check that runs inside typecheck.
     seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
     seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
     const r = runWith(
@@ -11874,24 +11877,50 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(r.ok).toBe(true);
   });
 
-  it('a real write in a fenced block still counts (#2084 too-much-text bounds)', () => {
-    // BOUNDS GUARD — this passes with or without the fix. It pins that
-    // excluding prose did not also exclude the blocks themselves.
+  it('a fenced block is not prose (#2084 bounds)', () => {
+    // BOUNDS GUARD: blanking prose must not blank the examples in it.
     seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
     seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
     const r = runWith(
-      'docs/runbook2.md',
-      '# Runbook\n\n```bash\nprintf \'{}\' > configs/custom.jsonc\n' +
+      'docs/rb2.md',
+      "# Runbook\n\n```bash\nprintf '{}' > configs/custom.jsonc\n" +
         'wrangler deploy --config configs/custom.jsonc\n```\n',
     );
     expect(r.ok).toBe(false);
   });
 
-  it('an expanded Make recipe writes the config (#2084 too-little-text)', () => {
-    // `makefileBlocks` expands `$(GENERATE)` before the deploy is read, but the
-    // rewrite scan saw the RAW Makefile, where the write is only a variable
-    // name. A false GREEN: the config was rewritten and its checked-in
-    // `keep_vars` trusted anyway.
+  it('an inline command span in prose is executable (#2084 bounds)', () => {
+    // BOUNDS GUARD, and the one that decided the design. A code span sits
+    // INSIDE prose and the scanner treats it as an actionable command — "first
+    // run `cp a b`" instructs the operator to run it. Any approach that drops
+    // prose wholesale drops this too, which is how the withdrawn selection
+    // turned a runbook into a false green (#2105 r3).
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'docs/rb3.md',
+      '# Runbook\n\nFirst run `cp generated.jsonc configs/custom.jsonc` to stage it.\n\n' +
+        '```bash\nwrangler deploy --config configs/custom.jsonc\n```\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('an indented code block is executable (#2084 bounds)', () => {
+    // BOUNDS GUARD: the fence-free spelling of the same example (#2105 r3).
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'docs/rb4.md',
+      "# Runbook\n\n    printf '{}' > configs/custom.jsonc\n\nThen deploy:\n\n" +
+        '```bash\nwrangler deploy --config configs/custom.jsonc\n```\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('an expanded Make recipe writes the config (#2084)', () => {
+    // Make expands `$(GENERATE)` before the shell sees it, so a variable
+    // holding a redirection IS a write. The rewrite scan read the raw file,
+    // where it is only a name — a false green.
     seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
     seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
     const r = runWith(
@@ -11902,9 +11931,8 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(r.ok).toBe(false);
   });
 
-  it('a harmless Make expansion is not a write (#2084 too-little-text bounds)', () => {
-    // BOUNDS GUARD — passes either way. Admitting every recipe to the image
-    // must not make every recipe a write.
+  it('a harmless Make expansion is not a write (#2084 bounds)', () => {
+    // BOUNDS GUARD: expanding every recipe must not make every recipe a write.
     seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
     seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
     const r = runWith(
@@ -11915,168 +11943,14 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(r.ok).toBe(true);
   });
 
-  it('a folded scalar keeps write and deploy in order (#2084 wrong-coordinates)', () => {
-    // YAML removes the newlines of a `run: >` scalar before the shell sees it.
-    // The deploy's offset in that folded text was added to a RAW line start, so
-    // with enough lines it landed before a write that physically precedes it
-    // and the write was discarded as "after the deploy" — a false GREEN. Thirty
-    // filler lines is what it took to move the computed position past the
-    // write.
-    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
-    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
-    const filler = '          :;\n'.repeat(30);
-    const r = runWith(
-      '.github/workflows/deploy.yml',
-      'name: deploy\non: push\njobs:\n  d:\n    runs-on: ubuntu-latest\n    steps:\n      - run: >\n' +
-        filler +
-        "          printf '{}' > configs/custom.jsonc;\n" +
-        '          wrangler deploy --config configs/custom.jsonc\n',
-    );
-    expect(r.ok).toBe(false);
-  });
-
-  it('a write AFTER the deploy in a folded scalar still does not count (#2084 ordering)', () => {
-    // The image must preserve ORDER, not merely presence: the same scalar with
-    // the write moved after the deploy is a safe command this guard must not
-    // report.
-    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
-    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
-    const filler = '          :;\n'.repeat(30);
-    const r = runWith(
-      '.github/workflows/deploy2.yml',
-      'name: deploy\non: push\njobs:\n  d:\n    runs-on: ubuntu-latest\n    steps:\n      - run: >\n' +
-        filler +
-        '          wrangler deploy --config configs/custom.jsonc;\n' +
-        "          printf '{}' > configs/custom.jsonc\n",
-    );
-    expect(r.ok).toBe(true);
-  });
-
-  it('a write in an earlier step counts against a later step (#2084 ordering bounds)', () => {
-    // BOUNDS GUARD — this reports with or without the fix, and it is here for
-    // exactly that reason. The image is the whole file's executable text rather
-    // than one block's, and the risk of building it was LOSING this: cross-step
-    // ordering is the property that ruled out the obvious "just pass the block"
-    // fix, so it is pinned rather than assumed.
+  it('a write in an earlier step counts against a later one (#2084 bounds)', () => {
+    // BOUNDS GUARD: ordering across steps, unchanged by the transformations.
     seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
     seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
     const r = runWith(
       '.github/workflows/steps.yml',
       'name: deploy\non: push\njobs:\n  d:\n    runs-on: ubuntu-latest\n    steps:\n' +
         "      - run: printf '{}' > configs/custom.jsonc\n" +
-        '      - run: |\n          wrangler deploy --config configs/custom.jsonc\n',
-    );
-    expect(r.ok).toBe(false);
-  });
-
-  // ---- Codex #2105 r1: the image was missing executable text ----
-
-  it('a non-shell step that writes still counts (#2105 r1)', () => {
-    // A `shell: python` step is kept out of the SCAN unless it launches a
-    // deploy — right there, wrong for the image, which is asked what the
-    // workflow RUNS before deploying. Omitting the writer made the guard bless
-    // a deploy of a config that step had rewritten: a REGRESSION against main,
-    // which reported this shape.
-    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
-    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
-    const r = runWith(
-      '.github/workflows/py.yml',
-      'name: deploy\non: push\njobs:\n  d:\n    runs-on: ubuntu-latest\n    steps:\n' +
-        '      - shell: python\n        run: |\n          from pathlib import Path\n' +
-        '          Path("configs/custom.jsonc").write_text("{}")\n' +
-        '      - run: |\n          wrangler deploy --config configs/custom.jsonc\n',
-    );
-    expect(r.ok).toBe(false);
-  });
-
-  it('a disabled step is still not executable (#2105 r1 bounds)', () => {
-    // BOUNDS GUARD — admitting non-shell steps to the image must not admit
-    // steps that do not run at all. `if: false` keeps its half of the test.
-    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
-    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
-    const r = runWith(
-      '.github/workflows/off.yml',
-      'name: deploy\non: push\njobs:\n  d:\n    runs-on: ubuntu-latest\n    steps:\n' +
-        '      - if: false\n        shell: python\n        run: |\n' +
-        '          from pathlib import Path\n' +
-        '          Path("configs/custom.jsonc").write_text("{}")\n' +
-        '      - run: |\n          wrangler deploy --config configs/custom.jsonc\n',
-    );
-    expect(r.ok).toBe(true);
-  });
-
-  it('a ONESHELL prerequisite recipe writes too (#2105 r1)', () => {
-    // `.ONESHELL:` routes recipes through `indentedBlocks`, which returned
-    // before the all-recipes mode was consulted — so a prerequisite recipe
-    // carrying no deploy of its own was absent from the image, although
-    // `make deploy` runs it first.
-    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
-    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
-    const r = runWith(
-      'Makefile',
-      '.ONESHELL:\n\ngen:\n\t$(GENERATE)\n\ndeploy: gen\n' +
-        '\twrangler deploy --config configs/custom.jsonc\n\n' +
-        "GENERATE = printf '{}' > configs/custom.jsonc\n",
-    );
-    expect(r.ok).toBe(false);
-  });
-
-  it('one matrix variant does not borrow another position (#2105 r1 bounds)', () => {
-    // BOUNDS GUARD, and stated as one because I could not build a failing case.
-    // Every matrix expansion of one `run:` body keeps the SOURCE line it came
-    // from, so a line-only lookup answers with the first variant — a real
-    // imprecision, and the locator now keys on the entry's own text as well.
-    // But this fixture passes with that change REVERTED, so it demonstrates no
-    // defect: it pins the behaviour rather than the fix.
-    //
-    // Both configs are seeded deliberately: with one missing, this reports for
-    // the unrelated reason that its identity cannot be read, which is how the
-    // first attempt at this fixture passed for the wrong reason.
-    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
-    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
-    seed('configs/other.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
-    const r = runWith(
-      '.github/workflows/matrix.yml',
-      'name: deploy\non: push\njobs:\n  d:\n    runs-on: ubuntu-latest\n' +
-        '    strategy:\n      matrix:\n        cfg: [other, custom]\n    steps:\n' +
-        '      - run: |\n' +
-        "          printf '{}' > configs/${{ matrix.cfg }}.jsonc\n" +
-        '          wrangler deploy --config configs/${{ matrix.cfg }}.jsonc\n',
-    );
-    expect(r.ok).toBe(false);
-  });
-
-  // ---- Codex #2105 r2 ----
-
-  it('a flow-mapped step that writes still counts (#2105 r2)', () => {
-    // `- { run: "..." }` was the last ingestion path where the image mode did
-    // not reach: its emission required a working directory OR a Windows
-    // transform, on top of the shell/launch test. A REGRESSION — main reports
-    // this shape, because main reads the raw file where the write is present.
-    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
-    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
-    const r = runWith(
-      '.github/workflows/flowmap.yml',
-      'name: deploy\non: push\njobs:\n  d:\n    runs-on: ubuntu-latest\n    steps:\n' +
-        '      - { run: "printf \'{}\' > configs/custom.jsonc" }\n' +
-        '      - run: |\n          wrangler deploy --config configs/custom.jsonc\n',
-    );
-    expect(r.ok).toBe(false);
-  });
-
-  it('a multi-line flow scalar that writes still counts (#2105 r2 sweep bounds)', () => {
-    // BOUNDS GUARD, stated as one: this passes with the flow-scalar change
-    // reverted, so it does not exercise that emission site. The site was found
-    // by ENUMERATING the readers' emission guards rather than by waiting for a
-    // review round, and it gates on the same shell/launch test the block form
-    // did, so it is fixed for symmetry — but I could not construct a body that
-    // reaches it, and say so rather than leave a fixture that proves nothing.
-    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
-    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
-    const r = runWith(
-      '.github/workflows/flowscalar.yml',
-      'name: deploy\non: push\njobs:\n  d:\n    runs-on: ubuntu-latest\n    steps:\n' +
-        '      - run: "printf \'{}\'\n          > configs/custom.jsonc"\n' +
         '      - run: |\n          wrangler deploy --config configs/custom.jsonc\n',
     );
     expect(r.ok).toBe(false);

@@ -6605,7 +6605,7 @@ function stripConsolePrompts(blockLines) {
  * The common indent is stripped so `logicalLines` sees ordinary commands, and
  * each line keeps the number of the physical line it came from.
  */
-function indentedBlocks(lines, indentRe, startAt = 0, all = false) {
+function indentedBlocks(lines, indentRe, startAt = 0) {
   const out = [];
   let i = startAt;
   let blockId = 0;
@@ -6625,11 +6625,7 @@ function indentedBlocks(lines, indentRe, startAt = 0, all = false) {
     // composition defect the prefilter had, in the newer reader. Found by
     // mutation: widening the filter changed a verdict, which a filter that was
     // only a blast-radius bound could not have done.
-    // …or unconditionally, for the executable image: a block that carries no
-    // deploy still RUNS, and under `.ONESHELL:` it is how a prerequisite recipe
-    // reaches the config (#2105 r1).
     if (
-      all ||
       body.some(
         (l) => new RegExp(ANY_DEPLOY_RE).test(l) || new RegExp(ANY_DEPLOY_RE).test(dequote(l)),
       )
@@ -6670,54 +6666,98 @@ function indentedBlocks(lines, indentRe, startAt = 0, all = false) {
  * way; they are not part of the command.
  */
 /**
- * The executable text of a container, in file order, plus a locator into it.
+ * A Makefile's recipe lines with their variable references expanded.
  *
- * `text` is the blocks' own text joined by newlines — what the shell actually
- * receives, after Make expansion and YAML folding. `at(line, within)` gives the
- * position of a command in that space: the block whose source line matches,
- * offset by where the splitter says the command begins inside it.
+ * Make expands `$(VAR)` before the shell sees the recipe, so a variable holding
+ * a redirection IS a write and the raw file only shows a name. The rewrite
+ * question therefore has to read the expanded form (#2084).
  *
- * A deploy on a line with NO block — a bare `wrangler deploy` inside a markdown
- * code span in prose — still needs an ORDER, and its own line contributes no
- * executable text. It takes the position of the next block at or after it, so a
- * write in an earlier block still counts against it and a later one does not.
- * That is line-granular rather than exact, which is all a prose mention admits.
+ * A TRANSFORMATION, not a selection: same lines, same order, nothing dropped.
+ * That matters — an earlier attempt at this built the executable text by
+ * COLLECTING the parts it believed could run, and every part it failed to
+ * collect became a false green. Five such omissions were found in three review
+ * rounds (#2105), each in a different ingestion path, and two enumerations of
+ * "all the paths" both turned out to be incomplete. Expanding in place cannot
+ * lose anything, because it removes nothing.
  */
-function buildExecutableImage(entries) {
-  const sorted = [...entries].sort((a, b) => a.line - b.line);
-  const starts = [];
-  let at = 0;
-  for (const e of sorted) {
-    starts.push(at);
-    at += e.text.length + 1;
+/**
+ * A Markdown file with its PROSE blanked and every executable construct kept.
+ *
+ * A runbook sentence naming a write is not a write, and reading one as shell
+ * reported a deployment below it — a false red, in a check that runs inside
+ * typecheck (#2084).
+ *
+ * SUBTRACTIVE, and that is the whole point. The first attempt at this selected
+ * the executable parts instead, and anything it failed to select became a false
+ * GREEN: five such omissions in three review rounds (#2105), including — fatally
+ * for that approach — inline code spans, which sit INSIDE prose and are
+ * executable. Blanking instead inverts the failure: a construct this misses is
+ * simply left in the text, which at worst reports as the pre-existing reader
+ * already does. Omissions cost noise, never silence.
+ *
+ * Blanked to spaces of EQUAL LENGTH, so every offset in the file is unchanged
+ * and no coordinate translation is needed.
+ */
+function blankMarkdownProse(text) {
+  const lines = text.split('\n');
+  const keep = new Uint8Array(lines.length);
+  let fence = null;
+  for (let i = 0; i < lines.length; i += 1) {
+    const f = lines[i].match(/^\s*(`{3,}|~{3,})/);
+    if (fence) {
+      keep[i] = 1;
+      if (f && f[1][0] === fence[0] && f[1].length >= fence.length) fence = null;
+      continue;
+    }
+    if (f) {
+      keep[i] = 1;
+      fence = f[1];
+      continue;
+    }
+    // An indented code block is the fence-free spelling of the same example.
+    if (/^ {4,}\S/.test(lines[i])) keep[i] = 1;
   }
-  const image = sorted.map((e) => e.text).join('\n');
-  return {
-    text: image,
-    at(line, body, within) {
-      // The LINE, then the offset within it — the same two-part answer
-      // `lineStartOffset` gives, in image space. A rewrite and a deploy often
-      // share one line, so the within-line part is not optional.
-      //
-      // …and the line ALONE does not identify a region. One `run:` body expands
-      // into a block per matrix variant, and every variant keeps the source
-      // line it came from, so a line-only lookup answers with the FIRST variant
-      // and a later variant's deploy is positioned before its own rewrite
-      // (#2105 r1). The entry's own text disambiguates them, and is stable
-      // where a block id is not: the image is a separate derivation from the
-      // scan's, so their block numbering does not correspond.
-      const exact = sorted.findIndex((e) => e.line === line && e.text === body);
-      const i = exact !== -1 ? exact : sorted.findIndex((e) => e.line === line);
-      if (i !== -1) {
-        return starts[i] + (typeof within === 'number' && within >= 0 ? within : 0);
+  return lines
+    .map((l, i) => {
+      if (keep[i]) return l;
+      // A CODE SPAN inside prose is executable — the scanner treats one as an
+      // actionable command, and a runbook that says "first run `cp a b`" is
+      // instructing the operator to run it. Kept in place, with only the prose
+      // around it blanked, at equal length.
+      let out = ' '.repeat(l.length);
+      for (const m of l.matchAll(/`+[^`]*`+/g)) {
+        out = out.slice(0, m.index) + m[0] + out.slice(m.index + m[0].length);
       }
-      const next = sorted.findIndex((e) => e.line >= line);
-      return next === -1 ? image.length : starts[next];
-    },
-  };
+      return out;
+    })
+    .join('\n');
 }
 
-function makefileBlocks(text, all = false) {
+function expandMakeVars(text) {
+  // Literal values only, last assignment wins, `?=` yields to an existing one,
+  // and a computed value CLEARS the name — the same rules the shell-variable
+  // model follows. Collected over the whole file because recursive `=`
+  // variables resolve at use, not at definition.
+  const mkVars = new Map();
+  for (const l of text.split('\n')) {
+    if (/^\t/.test(l)) continue;
+    const m = l.match(/^([A-Za-z_]\w*)\s*(\?=|:{1,2}=|=)\s*(.*?)\s*$/);
+    if (!m) continue;
+    if (m[2] === '?=' && mkVars.has(m[1])) continue;
+    if (/\$/.test(m[3])) mkVars.delete(m[1]);
+    else mkVars.set(m[1], m[3]);
+  }
+  return text
+    .split('\n')
+    .map((l) =>
+      /^\t/.test(l)
+        ? l.replace(/\$[({]([A-Za-z_]\w*)[)}]/g, (m0, n) => mkVars.get(n) ?? m0)
+        : l,
+    )
+    .join('\n');
+}
+
+function makefileBlocks(text) {
   const oneshell = /^\s*\.ONESHELL:/m.test(text);
   // `WORKER := apps/agent` then `cd $(WORKER)` deploys from the protected
   // package — Make expands the variable before the shell sees the recipe, but
@@ -6741,12 +6781,7 @@ function makefileBlocks(text, all = false) {
   const lines = text
     .split('\n')
     .map((l) => (/^\t/.test(l) ? expandMk(l.replace(/^(\t+)[@+-]+\s*/, '$1')) : l));
-  // `.ONESHELL:` runs a whole recipe in one shell, so the recipes are indented
-  // blocks rather than per-line commands — and this returned BEFORE `all` was
-  // consulted, so the image lost every recipe that carries no deploy of its
-  // own. A prerequisite recipe expanding to a write is exactly that shape, and
-  // `make deploy` runs it first (#2105 r1).
-  if (oneshell) return indentedBlocks(lines, /^\t/, 0, all);
+  if (oneshell) return indentedBlocks(lines, /^\t/);
   // One block per PHYSICAL recipe line, so nothing carries between them. A
   // backslash continuation is still one command and `logicalLines` folds it,
   // which is why the run is walked rather than each line taken alone.
@@ -6761,16 +6796,7 @@ function makefileBlocks(text, all = false) {
     let j = i;
     while (j < lines.length && /\\\s*$/.test(lines[j])) j += 1;
     const body = lines.slice(i, j + 1);
-    // …UNLESS the caller wants EVERY recipe, which the executable image does.
-    // The deploy filter is an optimisation for the scan — a recipe with no
-    // deploy in it cannot produce a finding — but the image is asked a
-    // different question: what does this file RUN before the deploy. A recipe
-    // line that expands to a write is exactly what the image must contain, and
-    // it never carries a deploy of its own (#2084).
-    if (
-      all ||
-      body.some((l) => new RegExp(ANY_DEPLOY_RE).test(l) || new RegExp(ANY_DEPLOY_RE).test(dequote(l)))
-    ) {
+    if (body.some((l) => new RegExp(ANY_DEPLOY_RE).test(l) || new RegExp(ANY_DEPLOY_RE).test(dequote(l)))) {
       out.push(
         ...offset(logicalLines(body.map((l) => l.replace(/^\t+/, '')).join('\n')), i, `mk${blockId}`),
       );
@@ -6891,7 +6917,7 @@ function expandActionsEnv(body, envMap) {
   );
 }
 
-function embeddedShellLines(text, isYaml = false, isMarkdown = false, all = false) {
+function embeddedShellLines(text, isYaml = false, isMarkdown = false) {
   const lines = text.split('\n');
   const out = [];
   // CommonMark's indented code block is the fence-free spelling of the same
@@ -7007,16 +7033,9 @@ function embeddedShellLines(text, isYaml = false, isMarkdown = false, all = fals
       // an argv call names its own executable and arguments, and what the guard
       // needs from the step is WHERE it runs.
       const launchesDeploy = launchesDeployText(body);
-      // …and the EXECUTABLE IMAGE takes a non-shell step too. The shell test
-      // above asks "would scanning this body as shell invent a deploy" — right
-      // for the scan, wrong for the image, which is asked what the workflow
-      // RUNS before the deploy. A `shell: python` step that writes the config
-      // and a later shell step that deploys it is a real sequence, and omitting
-      // the writer made the guard bless it (#2105 r1). A disabled step still
-      // does not run, so that half of the test stands.
       if (
         !isYaml ||
-        ((all || stepIsShell(lines, i) || launchesDeploy) && !stepIsDisabled(lines, i))
+        ((stepIsShell(lines, i) || launchesDeploy) && !stepIsDisabled(lines, i))
       ) {
         const interp = isYaml ? stepShellName(lines, i) : null;
         const env = isYaml ? stepEnvVars(lines, i) : null;
@@ -7067,13 +7086,7 @@ function embeddedShellLines(text, isYaml = false, isMarkdown = false, all = fals
         const stepInterp = stepShellName(lines, i);
         const needsTransform =
           stepInterp === 'cmd' || stepInterp === 'pwsh' || stepInterp === 'powershell';
-        // …or because the EXECUTABLE IMAGE wants it. A single-line `run:` is
-        // judged as a physical line, which is right for the scan and wrong for
-        // the image: the image excludes physical lines (in a container they are
-        // prose and structure), so a one-line step that writes the config was
-        // absent from it and a later step's deploy saw nothing before it
-        // (#2084). The scan's own emission is unchanged.
-        if (all || wd || needsTransform) {
+        if (wd || needsTransform) {
           const env = stepEnvVars(lines, i);
           const base = expandActionsEnv(flow[2], env);
           for (const b of expandMatrixVariants(lines, i, base) ?? [base]) {
@@ -7098,7 +7111,7 @@ function embeddedShellLines(text, isYaml = false, isMarkdown = false, all = fals
         const multiLaunches = launchesDeployText(foldFlowScalar(parts, q));
         if (
           !isYaml ||
-          ((all || stepIsShell(lines, i) || multiLaunches) && !stepIsDisabled(lines, i))
+          ((stepIsShell(lines, i) || multiLaunches) && !stepIsDisabled(lines, i))
         ) {
           const env = isYaml ? stepEnvVars(lines, i) : null;
           const base = expandActionsEnv(foldFlowScalar(parts, q), env);
@@ -7240,11 +7253,7 @@ function embeddedShellLines(text, isYaml = false, isMarkdown = false, all = fals
         // physical line is removed by the reporting dedupe.
         const flowNeedsTransform =
           flowInterp === 'cmd' || flowInterp === 'pwsh' || flowInterp === 'powershell';
-        // …and the IMAGE takes it regardless of both gates. A flow-mapped step
-        // `- { run: "printf '{}' > cfg" }` writes whether or not it declares a
-        // working directory and whether or not it launches a deploy, and this
-        // was the last ingestion path where `all` did not reach (#2105 r2).
-        if ((all || isShell || launches) && !disabled && (all || wd || flowNeedsTransform)) {
+        if ((isShell || launches) && !disabled && (wd || flowNeedsTransform)) {
           const env = stepEnvVars(lines, i);
           const base = expandActionsEnv(body, env);
           for (const b of expandMatrixVariants(lines, i, base) ?? [base]) {
@@ -8978,6 +8987,25 @@ for (const file of walk(REPO_ROOT)) {
   // Shell semantics apply to SHELL files. A redirection is a redirection in
   // shell text; in JavaScript the same character is a comparison (#2066 r10).
   const fileIsShell = Boolean(winInterp) || isShellFile(rel, text);
+  // THE TEXT THE REWRITE QUESTION IS ASKED OF. Same length, same lines, same
+  // offsets as the file — two TRANSFORMATIONS, never a selection (#2084):
+  //
+  //   - a Makefile's recipes are expanded, because Make expands them before the
+  //     shell sees them and a variable holding a redirection really is a write;
+  //   - a Markdown file's prose is blanked, because a sentence describing a
+  //     write is not one — while every executable construct in it, fenced,
+  //     indented or an inline span, is kept exactly where it was.
+  //
+  // Deliberately NOT a collected "executable image". That was tried and is what
+  // #2105 rounds 1-3 rejected: five separate ingestion paths were missed, each
+  // omission a false GREEN on the hazard this guard exists for, and two attempts
+  // to enumerate the paths were both incomplete. Transformations cannot omit,
+  // and blanking fails toward noise rather than silence.
+  const rewriteText = /(^|\/)([Mm]akefile|.*\.mk)$/.test(rel)
+    ? expandMakeVars(text)
+    : /\.mdx?$/.test(rel)
+      ? blankMarkdownProse(text)
+      : text;
   // AN EXTENSIONLESS HELPER HAS A SHEBANG, NOT A SUFFIX. `walk` yields
   // extensionless executables deliberately, and keying the language on `.py`
   // alone classified `#!/usr/bin/env python3` as `other` — where an f-string
@@ -9005,43 +9033,6 @@ for (const file of walk(REPO_ROOT)) {
         // is the FILE, not a construct inside it.
         ...(/(^|\/)([Mm]akefile|.*\.mk)$/.test(rel) ? makefileBlocks(text) : []),
       ];
-  // THE EXECUTABLE IMAGE — the text this file actually RUNS, in file order.
-  //
-  // The rewrite question ("does this file write the selected config before
-  // deploying it") was asked of the CONTAINER's raw text with the embedded
-  // line's language, and in a container those are three different things
-  // (#2084):
-  //
-  //   - too much text: a runbook sentence naming a write was classified as
-  //     shell and reported — a false RED, in a check that runs inside
-  //     typecheck;
-  //   - too little text: a Make recipe is expanded before the deploy is read,
-  //     but the rewrite scan saw the RAW `$(GENERATE)`, so a variable that
-  //     expands to a redirection wrote the config unseen — a false GREEN;
-  //   - wrong coordinates: a folded `run: >` scalar has its newlines removed
-  //     before it executes, so a deploy's offset in the folded text, added to
-  //     a raw line start, could land BEFORE a write that physically precedes
-  //     it — the write was then discarded as "after the deploy", another false
-  //     GREEN.
-  //
-  // All three are the same mistake, and the fix is not a map back to raw
-  // coordinates — it is to stop needing one. `configIsRewritten` never reports
-  // a position; it only compares a write's offset with the deploy's. So it
-  // needs ONE COHERENT SPACE, not the file's. The image is that space: the
-  // executable blocks' own (expanded, folded) text, concatenated in file order.
-  //
-  // Only for CONTAINERS. A shell script, a `.mjs` wrapper and a Python helper
-  // are already wholly executable in their own language, and the manifest-value
-  // path has its own line-local space, so those keep the raw text they have
-  // always had.
-  const containerImage =
-    !fileIsShell && /(\.ya?ml|\.mdx?|(^|\/)[Mm]akefile|\.mk)$/.test(rel)
-      ? buildExecutableImage(
-          /(^|\/)([Mm]akefile|.*\.mk)$/.test(rel)
-            ? makefileBlocks(text, true)
-            : embeddedShellLines(text, /\.ya?ml$/.test(rel), /\.mdx?$/.test(rel), true),
-        )
-      : null;
   if (
     !folded.some(
       (l) =>
@@ -9201,22 +9192,20 @@ for (const file of walk(REPO_ROOT)) {
     // BEFORE a continued deploy read as after it and the rewrite was blessed
     // (r27). Entries from the readers that do not fold carry no `folds` and
     // are unaffected.
-    //
-    // IN A CONTAINER the answer is neither — the raw file is not what runs, so
-    // the comparison happens in the executable image instead and no translation
-    // back to raw coordinates is needed at all (#2084). The fold arithmetic
-    // below is what a raw comparison still requires in a file that IS its own
-    // executable text.
+    // Positions are taken in `rewriteText`, which is what the write scan reads.
+    // The transformations preserve LINE COUNT — expansion rewrites within a
+    // line, blanking replaces a line with spaces of its own length — so a line
+    // number means the same thing in both, while a CHARACTER offset after an
+    // expansion does not. Measuring both ends in the same text is what makes
+    // the comparison meaningful (#2084).
     const rawAt = (within) =>
-      containerImage
-        ? containerImage.at(lineNo, line, within)
-        : lineStartOffset(
-            text,
-            lineNo,
-            typeof within === 'number' && folds?.length
-              ? within + folds.filter((f) => f < within).length
-              : within,
-          );
+      lineStartOffset(
+        rewriteText,
+        lineNo,
+        typeof within === 'number' && folds?.length
+          ? within + folds.filter((f) => f < within).length
+          : within,
+      );
     // SHELL-NESS IS PER LINE, not per file. A fenced `bash` block in Markdown
     // and a workflow `run:` body are extracted and processed as shell although
     // the containing file is `.md` or `.yml`, so a file-wide flag switched the
@@ -9231,15 +9220,6 @@ for (const file of walk(REPO_ROOT)) {
     // lifted out of a `run:` block or a fenced fence is shell whatever the
     // container is; otherwise the file's own extension decides.
     const lineLang = lineIsShell ? 'shell' : fileIsJs ? 'js' : fileIsPython ? 'py' : 'other';
-    /** The text the rewrite question is asked OF — see `containerImage`. */
-    const rewriteText = containerImage ? containerImage.text : text;
-    // …AND ITS LANGUAGE, which is a property of that text and not of the line
-    // that led us to it. The image is executable SHELL by construction, while
-    // the entry pointing into it may be a physical YAML line whose own language
-    // is `other` — so the rewrite ran over shell text with the shell spellings
-    // switched off, and a redirection in an earlier step read as ordinary code
-    // (#2084). Outside a container the two are the same thing, as before.
-    const rewriteLang = containerImage ? 'shell' : lineLang;
     // Each embedded block is a SEPARATE shell — an Actions step starts fresh,
     // and so does the next fenced example. Carrying `cwdIsKeeper` across them
     // made one block's `cd apps/keeper` reject the NEXT block's agent deploy
@@ -9424,7 +9404,7 @@ for (const file of walk(REPO_ROOT)) {
             '',
             rewriteCtx(part.start).text,
             rewriteCtx(part.start).at,
-            rewriteLang,
+            lineLang,
           ) ||
           (aliased === null &&
             commandIsSafe(
@@ -9437,7 +9417,7 @@ for (const file of walk(REPO_ROOT)) {
               // so a JavaScript comparison such as `value > "/tmp/x"` was read
               // as a redirection and rejected an unchanged config (r19). The
               // call above it always passed the language; this one did not.
-              rewriteLang,
+              lineLang,
             ))
         ) {
           continue;
@@ -9458,7 +9438,7 @@ for (const file of walk(REPO_ROOT)) {
           null,
           rewriteCtx(part.start).text,
           rewriteCtx(part.start).at,
-          rewriteLang,
+          lineLang,
         );
         // A single filter can select BOTH packages, and each needs its own
         // remedy in the same report (#1995 r7).
@@ -10119,7 +10099,7 @@ for (const file of walk(REPO_ROOT)) {
           shellVars,
           rewriteText,
           rawAt(part.start),
-          rewriteLang,
+          lineLang,
         );
         // An explicit `cd` OUTRANKS where the wrapper file happens to live
         // (#1995 r9). `scopeOf`'s last resort is "this file is inside a scoped
@@ -10190,7 +10170,7 @@ for (const file of walk(REPO_ROOT)) {
         const atInFile = rawAt(part.start);
         const safeEverywhere = (text) =>
           cmdCwds.every((cwd) =>
-            commandIsSafe(text, safeHint, cwd, fileTextForSafety, atInFile, rewriteLang),
+            commandIsSafe(text, safeHint, cwd, fileTextForSafety, atInFile, lineLang),
           );
         if (
           safeEverywhere(aliased ?? seg) ||
