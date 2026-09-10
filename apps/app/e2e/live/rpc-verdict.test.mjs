@@ -13,6 +13,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   blockNumberFromRpcPair,
+  blockNumberFromWsFrame,
   callsTargetContract,
   classifyRpcFailure,
   classifyRpcResponse,
@@ -735,6 +736,46 @@ describe('blockNumberFromRpcPair — envelope strictness', () => {
         id: 1,
         result: '0x2a',
       }),
+    ).toBeNull();
+  });
+});
+
+describe('blockNumberFromWsFrame — a newHeads push', () => {
+  it('reads the height from an eth_subscription header', () => {
+    expect(
+      blockNumberFromWsFrame(
+        JSON.stringify({
+          jsonrpc: '2.0',
+          method: 'eth_subscription',
+          params: { subscription: '0xabc', result: { number: '0x2c7a5f2', hash: '0xdead' } },
+        }),
+      ),
+    ).toBe(0x2c7a5f2n);
+  });
+
+  it('ignores a bare id/result reply on the socket', () => {
+    // Without the paired request there is nothing to say this result is
+    // a height rather than any other read, and guessing is how a log
+    // count gets recorded as a block number.
+    expect(blockNumberFromWsFrame(JSON.stringify({ id: 1, result: '0x2c7a5f2' }))).toBeNull();
+  });
+
+  it('ignores a subscription that carries no header number', () => {
+    expect(
+      blockNumberFromWsFrame(
+        JSON.stringify({ method: 'eth_subscription', params: { result: ['0xlog'] } }),
+      ),
+    ).toBeNull();
+  });
+
+  it('returns null rather than throwing on junk', () => {
+    expect(blockNumberFromWsFrame('not json')).toBeNull();
+    expect(blockNumberFromWsFrame(undefined)).toBeNull();
+    expect(blockNumberFromWsFrame(Buffer.from([1, 2, 3]))).toBeNull();
+    expect(
+      blockNumberFromWsFrame(
+        JSON.stringify({ method: 'eth_subscription', params: { result: { number: 'soon' } } }),
+      ),
     ).toBeNull();
   });
 });

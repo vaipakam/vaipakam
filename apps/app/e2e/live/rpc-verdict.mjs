@@ -268,6 +268,39 @@ export function blockNumberFromRpcPair(requestBody, responseBody) {
 }
 
 /**
+ * The block height a `newHeads` push disclosed, or null.
+ *
+ * ROUND 16 P2 — THE HTTP SNIFFER IS HALF THE PICTURE. `wagmi.ts` wraps
+ * the chain reads in `fallback([webSocket, http])`, so on a healthy
+ * network the page can learn about a new block over a SOCKET and never
+ * issue the `eth_blockNumber` an HTTP-only listener depends on. Its
+ * announced head then lags its real one, and the absence gate compares
+ * against a bound that stopped moving.
+ *
+ * Only the `eth_subscription` notification is read, and only its header
+ * `number`. A bare `{id, result}` reply on a socket is deliberately NOT
+ * used: without the paired request there is nothing to say the result is
+ * a height rather than any other read, and guessing is how a log count
+ * gets recorded as a block number.
+ *
+ * @param {unknown} payload  one received WebSocket frame
+ * @returns {bigint|null}
+ */
+export function blockNumberFromWsFrame(payload) {
+  const parsed = parseJson(typeof payload === 'string' ? payload : undefined);
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+  if (parsed.method !== 'eth_subscription') return null;
+  const header = parsed.params?.result;
+  if (!header || typeof header !== 'object') return null;
+  if (typeof header.number !== 'string') return null;
+  try {
+    return BigInt(header.number);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Identity of a LOGICAL read: the same call retried on the same endpoint,
  * or re-sent to a fallback endpoint, carries the same key.
  *

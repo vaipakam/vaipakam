@@ -379,6 +379,28 @@ export function saysCheckRunning(text, unknownCopy) {
  *      still-eligible position, and emit the same false FAIL one block
  *      further along.
  *
+ * STRICTLY AHEAD of the page's announced head, not merely level (round
+ * 16 P2). `pageHead` is a LOWER BOUND on what the page knows: it is the
+ * last height the page was seen to ANNOUNCE, and the read that actually
+ * unmounted the card is an `eth_call` the page issues at `latest`, which
+ * carries no block number on the wire in either direction. So the page
+ * can have evaluated at a height above anything we recorded. Requiring
+ * the observer to pass that bound rather than match it closes the
+ * one-block case and re-reads every fact at a height where a transition
+ * at or below it would be visible to us as well.
+ *
+ * IT DOES NOT CLOSE THE GENERAL CASE, and this comment is the place that
+ * says so rather than implying an airtight gate. If the page's real head
+ * runs several blocks beyond its last announced one AND a transition
+ * lands in that window, an absence can still be reported as a defect.
+ * Two things shrink it — `newHeads` pushes are now recorded alongside
+ * HTTP `eth_blockNumber`, so the bound tracks the real head far more
+ * closely — but shrinking is not eliminating. The complete fix is for
+ * the card to publish the block its readiness resolved at, the way the
+ * chooser publishes its readiness (#1855); this drive would then compare
+ * two stated facts instead of racing an unobservable one. Tracked in
+ * #2090.
+ *
  * `pageHead === 0n` means the page's head was never observed, and that
  * is NOT treated as satisfied. Nothing is known about the relationship
  * between the two views, and an absence judged on an unknown
@@ -395,7 +417,7 @@ export function saysCheckRunning(text, unknownCopy) {
 export function confirmationReady(observerHead, pinnedBlock, pageHead) {
   if (typeof observerHead !== 'bigint' || typeof pinnedBlock !== 'bigint') return false;
   if (typeof pageHead !== 'bigint' || pageHead === 0n) return false;
-  return observerHead > pinnedBlock && observerHead >= pageHead;
+  return observerHead > pinnedBlock && observerHead > pageHead;
 }
 
 /**

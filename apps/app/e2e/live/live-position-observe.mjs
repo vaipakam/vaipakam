@@ -109,6 +109,7 @@ import {
   EXECUTION_REVERTED,
   REVERT_BYTES,
   blockNumberFromRpcPair,
+  blockNumberFromWsFrame,
   callsTargetContract,
   classifyRpcFailure,
   codedError,
@@ -1648,6 +1649,24 @@ const pageHeads = new WeakMap();
 
 function watchPageHead(page) {
   pageHeads.set(page, 0n);
+  const record = (seen) => {
+    if (seen !== null && seen > (pageHeads.get(page) ?? 0n)) pageHeads.set(page, seen);
+  };
+  // ROUND 16 P2 — SOCKETS TOO, not only HTTP. `wagmi.ts` wraps the chain
+  // reads in `fallback([webSocket, http])`, so on a healthy network the
+  // page can learn a new block over a socket and never issue the
+  // `eth_blockNumber` an HTTP-only listener depends on — its announced
+  // head then lags its real one, and the gate compares against a bound
+  // that stopped moving.
+  page.on('websocket', (ws) => {
+    ws.on('framereceived', ({ payload }) => {
+      try {
+        record(blockNumberFromWsFrame(payload));
+      } catch {
+        // Observational only, exactly as below.
+      }
+    });
+  });
   page.on('response', async (res) => {
     try {
       const req = res.request();
@@ -1660,8 +1679,7 @@ function watchPageHead(page) {
       // and error members where a result was expected are the cases
       // that matter, and a live chain will not reliably produce any of
       // them — inline here, none of them could be exercised.
-      const seen = blockNumberFromRpcPair(body, await res.json());
-      if (seen !== null && seen > (pageHeads.get(page) ?? 0n)) pageHeads.set(page, seen);
+      record(blockNumberFromRpcPair(body, await res.json()));
     } catch {
       // Observational only. See the note above.
     }

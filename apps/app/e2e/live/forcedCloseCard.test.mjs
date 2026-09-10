@@ -1271,9 +1271,17 @@ describe('round 13 review findings', () => {
 });
 
 describe('confirmationReady — round 14: caught up, not merely moved', () => {
-  it('is satisfied when the observer reached what the page had seen', () => {
+  it('is satisfied when the observer passed what the page had announced', () => {
     expect(confirmationReady(12n, 10n, 11n)).toBe(true);
-    expect(confirmationReady(12n, 10n, 12n)).toBe(true);
+  });
+
+  // ROUND 16 P2 — STRICTLY AHEAD, not level. `pageHead` is a lower bound
+  // on what the page knows: it is the last height the page ANNOUNCED,
+  // while the read that unmounted the card is an `eth_call` at `latest`,
+  // which carries no block number on the wire. Matching that bound left
+  // the page free to have evaluated one block above it.
+  it('is NOT satisfied by merely drawing level with the page', () => {
+    expect(confirmationReady(12n, 10n, 12n)).toBe(false);
   });
 
   // THE ROUND-14 DEFECT. Round 13 required only `head > pinned`, so a
