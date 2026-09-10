@@ -77,3 +77,13 @@ against it says so rather than claiming a fix.
 
 A step that does not run is still excluded. Admitting more executable text must
 not admit text that never executes, and a disabled step remains out.
+
+A second review round found one more of the same kind — a step written as a
+single inline mapping was the last route by which executable text reached the
+file without reaching the image — and the remaining emission points were then
+enumerated directly rather than waited for, so the one that had not yet been
+reported was closed in the same pass. Two further findings from that round are
+recorded as separate work because they are older than this change and reproduce
+without it: prerequisites in a build file are ordered as they are written rather
+than as they run, and a step naming another interpreter still has its body read
+as shell, so inert text in that language can be mistaken for a command.

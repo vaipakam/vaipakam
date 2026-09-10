@@ -7098,7 +7098,7 @@ function embeddedShellLines(text, isYaml = false, isMarkdown = false, all = fals
         const multiLaunches = launchesDeployText(foldFlowScalar(parts, q));
         if (
           !isYaml ||
-          ((stepIsShell(lines, i) || multiLaunches) && !stepIsDisabled(lines, i))
+          ((all || stepIsShell(lines, i) || multiLaunches) && !stepIsDisabled(lines, i))
         ) {
           const env = isYaml ? stepEnvVars(lines, i) : null;
           const base = expandActionsEnv(foldFlowScalar(parts, q), env);
@@ -7240,7 +7240,11 @@ function embeddedShellLines(text, isYaml = false, isMarkdown = false, all = fals
         // physical line is removed by the reporting dedupe.
         const flowNeedsTransform =
           flowInterp === 'cmd' || flowInterp === 'pwsh' || flowInterp === 'powershell';
-        if ((isShell || launches) && !disabled && (wd || flowNeedsTransform)) {
+        // …and the IMAGE takes it regardless of both gates. A flow-mapped step
+        // `- { run: "printf '{}' > cfg" }` writes whether or not it declares a
+        // working directory and whether or not it launches a deploy, and this
+        // was the last ingestion path where `all` did not reach (#2105 r2).
+        if ((all || isShell || launches) && !disabled && (all || wd || flowNeedsTransform)) {
           const env = stepEnvVars(lines, i);
           const base = expandActionsEnv(body, env);
           for (const b of expandMatrixVariants(lines, i, base) ?? [base]) {

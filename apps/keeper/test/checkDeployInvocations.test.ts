@@ -12045,4 +12045,40 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     );
     expect(r.ok).toBe(false);
   });
+
+  // ---- Codex #2105 r2 ----
+
+  it('a flow-mapped step that writes still counts (#2105 r2)', () => {
+    // `- { run: "..." }` was the last ingestion path where the image mode did
+    // not reach: its emission required a working directory OR a Windows
+    // transform, on top of the shell/launch test. A REGRESSION — main reports
+    // this shape, because main reads the raw file where the write is present.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      '.github/workflows/flowmap.yml',
+      'name: deploy\non: push\njobs:\n  d:\n    runs-on: ubuntu-latest\n    steps:\n' +
+        '      - { run: "printf \'{}\' > configs/custom.jsonc" }\n' +
+        '      - run: |\n          wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a multi-line flow scalar that writes still counts (#2105 r2 sweep bounds)', () => {
+    // BOUNDS GUARD, stated as one: this passes with the flow-scalar change
+    // reverted, so it does not exercise that emission site. The site was found
+    // by ENUMERATING the readers' emission guards rather than by waiting for a
+    // review round, and it gates on the same shell/launch test the block form
+    // did, so it is fixed for symmetry — but I could not construct a body that
+    // reaches it, and say so rather than leave a fixture that proves nothing.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      '.github/workflows/flowscalar.yml',
+      'name: deploy\non: push\njobs:\n  d:\n    runs-on: ubuntu-latest\n    steps:\n' +
+        '      - run: "printf \'{}\'\n          > configs/custom.jsonc"\n' +
+        '      - run: |\n          wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
 });
