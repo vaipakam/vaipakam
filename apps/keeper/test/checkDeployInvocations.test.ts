@@ -11852,22 +11852,22 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(r.ok).toBe(false);
   });
 
-  // ---- #2084: the rewrite question reads a TRANSFORMED file, never a
-  // selected one ----
+  // ---- #2084: the rewrite question reads the file AS WRITTEN ----
   //
-  // Each symptom below was reproduced against the pre-fix guard before the fix
-  // was written. TWO approaches were withdrawn before this one:
+  // Three transformations were tried and all three withdrawn (#2105, ten
+  // rounds). NOTHING transforms the text now, so these fixtures pin two things:
+  // the shapes that defeated the withdrawn designs, and three MISSES that
+  // remain — asserted, so a later fix fails them and comes back to the question
+  // instead of passing unnoticed.
   //
-  //   - COLLECTING the executable parts. #2105 rounds 1-3 found six ingestion
-  //     paths it missed, every omission a false green.
-  //   - BLANKING Markdown prose. Rounds 4-6 found six commands it erased, also
-  //     false greens. Removing text is the unsafe direction here and no rule
-  //     for doing it safely exists — see the two Markdown fixtures below.
-  //
-  // What is left is ONE transformation, in the safe direction: Make recipe
-  // expansion, which only ever ADDS text and so can only ever cost a report.
-  // The Markdown fixtures no longer pin a transformation; they pin that there
-  // is none.
+  //   - COLLECTING the executable parts. Six ingestion paths missed, every
+  //     omission a false green; two enumerations of "all the paths" incomplete.
+  //   - BLANKING Markdown prose. Six commands erased. The rule cannot exist:
+  //     this guard treats a bare, unindented line as an actionable command —
+  //     the first two fixtures below pin that — and a prose sentence naming a
+  //     write has the same shape.
+  //   - EXPANDING Makefile recipe variables. Fifteen findings over four rounds,
+  //     each round's edges of the last round's fix.
 
   it('a standalone runbook command is read as written (#2105 r6)', () => {
     // NO SUBTRACTION HAPPENS TO MARKDOWN, and this is the fixture that says so.
@@ -11947,8 +11947,9 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     // runbook's `cp a b` is reported at all — and a prose sentence naming a
     // write has that same shape.
     //
-    // `r.ok` is TRUE here only in the sense that the guard reports: assert the
-    // report, so if someone fixes #2112 this fails and they come back to it.
+    // `r.ok` is FALSE when the guard reports, which is what this asserts — the
+    // report is the current, wrong behaviour being pinned. If someone fixes
+    // #2112 this fixture fails and they come back to the question.
     seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
     seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
     const r = runWith(

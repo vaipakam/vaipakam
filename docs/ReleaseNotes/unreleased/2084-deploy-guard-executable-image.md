@@ -1,4 +1,4 @@
-# Deploy guard: three attempts at the rewrite question, all withdrawn
+## Thread — three attempts at the deploy guard's rewrite question, all withdrawn (PR #2105)
 
 The deploy guard refuses to trust a configuration's checked-in contents when the
 file deploying it rewrites that configuration first. This work set out to fix
@@ -12,7 +12,7 @@ That is worth landing on its own. Two of these designs are the kind a
 maintainer would reach for again, and one of them looks obviously correct until
 it is built.
 
-## What was tried, and what each cost
+### What was tried, and what each cost
 
 **Collecting the file's executable text** — the parts believed to run. Review
 found six routes by which executable text reached the file without reaching the
@@ -39,21 +39,23 @@ previous round's fix. This one is not unsafe in principle — expansion only
 *adds* text, so being wrong costs a report rather than silence — but being
 *right* about it means implementing the build tool's variable language.
 
-Two smaller corrections survived to the last round and were withdrawn too, and
-both are instructive because each looked obviously safe:
+Two smaller corrections survived to the last round and were withdrawn too. Each
+looked obviously safe, and — the part worth keeping — they regressed in
+OPPOSITE directions, so neither is a template for judging the next one:
 
 - Treating the build tool's **escaped currency symbol** as inert. It is inert to
   the build tool — and the build tool then hands a single symbol to the shell,
   which may expand it. A deployment written that way, with the surrounding name
   exported, really does run; treating the escape as permanently inert hid it.
-  A silent pass, introduced by a rule adopted specifically because it was
+  A SILENT PASS, introduced by a rule adopted specifically because it was
   "purely lexical".
 - Adding the tool's **canonical GNU-prefixed default filename** to the set of
   files scanned as build files. Correct in itself, but it routes those files
-  through a variable model already known to be imperfect, extending its false
-  reports to files that previously escaped them.
+  through a variable model already known to be imperfect, extending its FALSE
+  REPORTS to files that previously escaped them — the opposite failure, reached
+  by widening the model's scope rather than by sharpening it.
 
-## What lands
+### What lands
 
 No behaviour change. The check's logic is what it was.
 
@@ -69,7 +71,7 @@ No behaviour change. The check's logic is what it was.
   document **are** read as commands — the two shapes that defeated the withdrawn
   designs, so a future attempt cannot quietly reintroduce the erasure.
 
-## What is deferred
+### What is deferred
 
 Every symptom this work set out to fix, plus the limitations found while proving
 them, is now recorded separately with its reproduction and what a fix would have

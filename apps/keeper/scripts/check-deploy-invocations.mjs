@@ -6666,27 +6666,9 @@ function indentedBlocks(lines, indentRe, startAt = 0) {
  * way; they are not part of the command.
  */
 /**
- * A Makefile's recipe lines with their variable references expanded.
- *
- * Make expands `$(VAR)` before the shell sees the recipe, so a variable holding
- * a redirection IS a write and the raw file only shows a name. The rewrite
- * question therefore has to read the expanded form (#2084).
- *
- * A TRANSFORMATION, not a selection: same lines, same order, nothing dropped.
- * That matters — an earlier attempt at this built the executable text by
- * COLLECTING the parts it believed could run, and every part it failed to
- * collect became a false green. Five such omissions were found in three review
- * rounds (#2105), each in a different ingestion path, and two enumerations of
- * "all the paths" both turned out to be incomplete. Expanding in place cannot
- * lose anything, because it removes nothing.
- */
-// GNU Make's DEFAULT BUILD-FILE NAMES are `GNUmakefile`, `makefile` and
-// `Makefile` — it looks for them in that order — plus the `.mk` files those
-// include. `GNUmakefile` was missing, so a Makefile under its canonical GNU
-// name was not scanned for deploys at all (#2105 r7).
-
-/**
- * THE Make variable model, shared by the scanner's two needs instead of copied.
+ * A Makefile's recipe lines, with their variable references expanded, as blocks
+ * for the DEPLOY SCANNER. This is the only thing Make's variables are modelled
+ * for; the rewrite question reads the file as written (see its call site).
  *
  * `WORKER := apps/agent` then `cd $(WORKER)` deploys from the protected
  * package — Make expands the variable before the shell sees the recipe, but the
@@ -6696,29 +6678,37 @@ function indentedBlocks(lines, indentRe, startAt = 0) {
  * the same rules the shell-variable model follows. Collected over the whole
  * file because recursive `=` variables resolve at use, not at definition.
  *
- * ONE Make RULE BEYOND THAT, and it is lexical rather than semantic: `$$` is an
- * escaped dollar, not the start of a reference. Make reduces it to a literal
- * and expands nothing, so `echo '$$(DEPLOY)'` runs nothing — but a matcher
- * looking only for `$(NAME)` finds one at the SECOND dollar and substitutes,
- * inventing a deploy the file never runs (#2105 r6). Matching `$$` first
- * consumes the pair. The escape is left as written rather than reduced to `$`,
- * since neither spelling is a deploy and a bare `$(` would hand the shell
- * reader a command-substitution shape the source never had.
+ * THIS MODEL IS KNOWN TO BE WRONG ABOUT MAKE IN SEVERAL WAYS, and #2105 is the
+ * record of what happened when it was made more faithful. Four rounds and
+ * fifteen findings: conditionals in both directions, `undefine`, `undefine`
+ * inside a dead branch, a settable recipe marker, that marker moving mid-file,
+ * `define` bodies, indented assignments, mismatched `$(NAME}` delimiters, `?=`
+ * after a computed value. Every round's findings were edges of the previous
+ * round's fix.
  *
- * NOTHING ELSE ABOUT MAKE IS MODELLED HERE, and that is a decision rather than
- * an omission. #2105 spent four review rounds and FIFTEEN findings trying to
- * make this faithful — conditionals in both directions, `undefine`, `undefine`
- * inside a dead branch, a settable recipe marker, that marker changing partway
- * down the file, `define` bodies, indented assignments, mismatched delimiters,
- * `?=` after a computed value. Each round's findings were edges of the previous
- * round's fix. Answering "what value does Make give this name" needs an
- * interpreter for Make, and this file is not one.
+ * TWO CORRECTIONS THAT LOOKED OBVIOUSLY SAFE WERE ALSO WITHDRAWN, and they
+ * failed in OPPOSITE directions, which is why neither is a template for the
+ * other:
  *
- * What made that survivable to abandon is that the ONLY consumer is the deploy
- * scanner, whose behaviour here is unchanged from before #2105. An imperfect
- * model here can miss a deploy exactly as it always could; it is not asked the
- * rewrite question, where a wrong answer would invent a write. See the note at
- * `text`'s former call site for why that half was withdrawn (#2084).
+ *   - Treating `$$` as an escaped dollar, hence inert. It is inert TO MAKE,
+ *     which then hands a single `$` to the SHELL — so `$${DEPLOY} deploy` with
+ *     `DEPLOY` exported really runs, and skipping it HID THE DEPLOY. A false
+ *     GREEN, from a rule adopted precisely because it was "purely lexical".
+ *   - Adding `GNUmakefile` to the files scanned as Makefiles. Correct about
+ *     Make, but it routes those files through this model, spreading its false
+ *     REDS to files that previously escaped them.
+ *
+ * So the lesson is not "err toward reporting" — one erred each way. It is that
+ * THE MODEL'S IMPERFECTION IS LOAD-BEARING: its consumers are calibrated around
+ * it, so making it locally more faithful, or widening the set of files it
+ * judges, can each be a regression. `main` expanding `$${DEPLOY}` from the
+ * second dollar is strictly a bug, and that bug is what keeps the deploy
+ * visible.
+ *
+ * Recipe membership is `^\t`. Following a settable prefix was tried and
+ * withdrawn (#2105 r7 then r8): read over the whole file, a late
+ * `.RECIPEPREFIX` applied retroactively and DROPPED an earlier tab recipe,
+ * turning a stated miss into a silent one. #2114.
  */
 function makefileBlocks(text) {
   const oneshell = /^\s*\.ONESHELL:/m.test(text);
