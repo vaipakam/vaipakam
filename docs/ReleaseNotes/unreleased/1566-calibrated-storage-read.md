@@ -18,8 +18,11 @@ to equal both, on rows that are not zero. And the read is complete across histor
 been append-only since the earliest deployment — fields were inserted in May
 and removed in June and August — so the census reads each row at the slot
 every layout era used, and a row counts as absent only when it is zero at all
-of them. A bare shell is settled the same way from its loan counter, whose
-slot never moved.
+of them. What storage shows at today's slot is checked against what the
+getter reported, loan by loan and in both directions, so a getter cut from
+an older layout than the one the census assumes cannot certify a row away.
+A bare shell is settled the same way from its loan counter, whose slot never
+moved.
 
 What it changes: where the read finds nothing, the cell is proven empty and
 says how; where it finds a row, the row is reported with the era it was

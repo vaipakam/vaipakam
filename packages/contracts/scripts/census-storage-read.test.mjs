@@ -1,7 +1,7 @@
 // census-storage-read.test.mjs — the era-complete storage read's rules (#1566 §7/§7a), over fake readers.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { prepareStorageRead, readCountersByStorage, scanRowsByStorage, intentVerdictFromStorage, eraSlotsExcept, mergeHistoricalRows, aliasOf, classifyEarlierCounters, markAliasedRows, ROW } from './census-storage-read.mjs';
+import { prepareStorageRead, readCountersByStorage, scanRowsByStorage, intentVerdictFromStorage, eraSlotsExcept, mergeHistoricalRows, aliasOf, classifyEarlierCounters, markAliasedRows, splitByHeadSlot, getterAgreement, ROW } from './census-storage-read.mjs';
 import { memberSlot, rowSlot } from './storage-slots.mjs';
 
 const H = (n) => '0x' + n.toString(16).padStart(64, '0');
@@ -151,4 +151,25 @@ test('aliasing: an earlier-era slot that is a current field today is that field,
   const bare = { ...era('headhead1', '2026-09-09T00:00:00Z', HEADREL) }; delete bare.occupied;
   const noOcc = { ...eras, eras: [era('oldold001', '2026-05-10T00:00:00Z', OLDREL), bare] };
   assert.match(prepareStorageRead({ slots, eras: noOcc }).reason, /no occupied-range map/);
+});
+
+test('HEAD-slot rows are reconciled with the routed getter both ways, never merged (#2095 r4 P1)', () => {
+  const rows = {
+    vpfiHeldCustody: [{ loanId: '1', vpfiHeld: '5', mappingSlot: slots.fields.borrowerLifRebate }, { loanId: '2', vpfiHeld: '9', mappingSlot: slotOf(OLDREL.borrowerLifRebate) }],
+    rebateRows: [{ loanId: '3', rebateAmount: '4', mappingSlot: slots.fields.borrowerLifRebate }],
+    fallbackSnapshotCustody: [],
+    liveIntentCommits: [{ loanId: '7', orderHash: '0xab', mappingSlot: slots.fields.intentCommits }],
+  };
+  const { head, earlier } = splitByHeadSlot(rows, slots.fields);
+  assert.deepEqual(head.vpfiHeldCustody.map((r) => r.loanId), ['1']);
+  assert.deepEqual(earlier.vpfiHeldCustody.map((r) => r.loanId), ['2'], 'the old-slot row is historical');
+  // getter agrees on loan 1 and 3; reported loan 8 that storage does not see at HEAD; did not report loan 7's intent
+  const agreement = getterAgreement({ headRows: head, routed: { vpfiHeldCustody: [{ loanId: '1', vpfiHeld: '5' }, { loanId: '8', vpfiHeld: '1' }], rebateRows: [{ loanId: '3', rebateAmount: '4' }], fallbackSnapshotCustody: [], liveIntentCommits: [] } });
+  assert.deepEqual(agreement.rebateRows, []);
+  assert.deepEqual(agreement.vpfiHeldCustody, [{ loanId: '8', storage: 'absent at the HEAD slot', getter: 'present' }]);
+  assert.deepEqual(agreement.liveIntentCommits, [{ loanId: '7', storage: 'present', getter: 'absent' }]);
+  // an amount mismatch is a disagreement too
+  const amt = getterAgreement({ headRows: head, routed: { vpfiHeldCustody: [{ loanId: '1', vpfiHeld: '6' }], rebateRows: [{ loanId: '3', rebateAmount: '4' }], fallbackSnapshotCustody: [], liveIntentCommits: [{ loanId: '7' }] } });
+  assert.deepEqual(amt.vpfiHeldCustody, [{ loanId: '1', storage: '5', getter: '6' }]);
+  assert.deepEqual(amt.liveIntentCommits, []);
 });

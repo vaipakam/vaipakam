@@ -6034,6 +6034,29 @@ occupies is a genuine contradiction, and a row candidate whose old mapping
 head is a current mapping's head is reported as ambiguous with the field it
 aliases. Run 29 re-reads every deployment with the earlier-era read.
 
+**Review round 4 removed the last assumption in the read.** The round-3 read
+had left HEAD's slot out of the era scan on the grounds that the routed getter
+covers it. That assumes the routed getter was compiled from today's layout,
+which a partially refreshed Diamond need not satisfy: a newer writer can put a
+fallback snapshot at HEAD's slot while an older routed getter still reads an
+earlier slot, and then neither read sees the row. The storage read now scans
+EVERY era's slot, HEAD's included, and what it finds at HEAD's slot is not
+merged but reconciled against the routed getter per loan id in both
+directions — a row storage sees that the getter did not report, a row the
+getter reported that storage does not see, or an amount that differs, means
+the cut getter reads some other layout, and the class is indeterminate rather
+than certified. The same test catches a gap in the routed pagination. Where
+the intent getter is unrouted the intent class was already read at every era
+and is not read twice, so a row is neither double-counted nor double-listed.
+The top-level liability figures are recomputed after the historical rows
+merge, so a held or rebate row found under an earlier layout reaches the
+reconciliation shortfall as well as its class. And an unexplained non-zero
+live-commit counter at an earlier era contradicts the intent class on every
+path, not only where the zero-loans shortcut had been taken: on a deployment
+with ordinary loans the routed getter and the row scan can both come back
+empty while the protocol's own counter says a commit was missed. Run 29
+carries all of it.
+
 ### 7a. What the provenance walk found, and how the design changes (2026-09-09)
 
 The walk in question 2 was built first, and it answered before a single slot

@@ -254,3 +254,42 @@ export function markAliasedRows(rows, occupied) {
     return hit && hit.isMapping ? { ...r, aliasesCurrentField: hit.label, ambiguous: true } : hit ? { ...r, oldHeadNowHolds: hit.label } : r;
   });
 }
+
+/** Split scanned rows into those at HEAD's slot for their mapping (what a current-layout getter reads) and those at earlier slots. */
+export function splitByHeadSlot(rows, headSlots) {
+  const head = {};
+  const earlier = {};
+  for (const [cls, list] of Object.entries(rows)) {
+    const field = cls === 'liveIntentCommits' ? 'intentCommits' : cls === 'fallbackSnapshotCustody' ? 'fallbackSnapshot' : 'borrowerLifRebate';
+    head[cls] = list.filter((r) => r.mappingSlot === headSlots[field]);
+    earlier[cls] = list.filter((r) => r.mappingSlot !== headSlots[field]);
+  }
+  return { head, earlier };
+}
+
+/**
+ * #2095 r4 P1 — a routed getter reads the layout of the FACET that was cut,
+ * which need not be HEAD's. So the HEAD-slot rows the storage read finds
+ * are not merged; they are reconciled against what the routed getter said,
+ * per loan id and in BOTH directions. A row storage sees at the HEAD slot
+ * that the getter did not report, or a row the getter reported that storage
+ * does not see at the HEAD slot, means the getter reads another layout — the
+ * class is indeterminate. Pure; exported for the test.
+ */
+export function getterAgreement({ headRows, routed }) {
+  const out = {};
+  const amount = { vpfiHeldCustody: 'vpfiHeld', rebateRows: 'rebateAmount' };
+  for (const cls of Object.keys(headRows)) {
+    const storage = new Map(headRows[cls].map((r) => [String(r.loanId), r]));
+    const getter = new Map((routed[cls] ?? []).map((r) => [String(r.loanId), r]));
+    const mismatches = [];
+    for (const [id, r] of storage) {
+      const g = getter.get(id);
+      if (!g) { mismatches.push({ loanId: id, storage: amount[cls] ? r[amount[cls]] : 'present', getter: 'absent' }); continue; }
+      if (amount[cls] && String(g[amount[cls]]) !== String(r[amount[cls]])) mismatches.push({ loanId: id, storage: r[amount[cls]], getter: String(g[amount[cls]]) });
+    }
+    for (const [id] of getter) if (!storage.has(id)) mismatches.push({ loanId: id, storage: 'absent at the HEAD slot', getter: 'present' });
+    out[cls] = mismatches;
+  }
+  return out;
+}

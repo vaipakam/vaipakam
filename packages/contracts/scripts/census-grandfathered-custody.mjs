@@ -91,7 +91,7 @@
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync, renameSync, rmSync } from 'node:fs';
 import { readManifest, regenerateEntries, withManifestLock, writeSnapshotGuarded, livePublicationsInProgress } from './archive-manifest.mjs';
 import { loadSlots, loadEras } from './storage-slots.mjs';
-import { prepareStorageRead, readCountersByStorage, scanRowsByStorage, intentVerdictFromStorage, eraSlotsExcept, mergeHistoricalRows, classifyEarlierCounters, markAliasedRows, MAX_STORAGE_LOAN_SCAN } from './census-storage-read.mjs';
+import { prepareStorageRead, readCountersByStorage, scanRowsByStorage, intentVerdictFromStorage, mergeHistoricalRows, classifyEarlierCounters, markAliasedRows, splitByHeadSlot, getterAgreement, MAX_STORAGE_LOAN_SCAN } from './census-storage-read.mjs';
 
 /** Sum a row field as a decimal string. A function declaration, so it is hoisted above every branch that returns early (#2095 r1 P2). */
 function sum(rows, field) {
@@ -1933,19 +1933,28 @@ async function censusDeployment(dep) {
     const readSlot = (slot) => withReplicaRetry(atBlock, () => storageAtHash(client, censusBlock, diamond, slot), { client });
     const counters = await readCountersByStorage({ readSlot, eraSlots: STORAGE_READ.eraSlots });
     const headSlots = loadSlots().fields;
-    const nonHead = eraSlotsExcept(STORAGE_READ.eraSlots, headSlots);
     const cap = BigInt(MAX_STORAGE_LOAN_SCAN);
     const n = counters.nextLoanId > cap ? cap : counters.nextLoanId;
     const ids = Array.from({ length: Number(n) }, (_, i) => BigInt(i + 1));
-    const scan = await scanRowsByStorage({ readSlot, loanIds: ids, eraSlots: nonHead });
+    // EVERY era slot, HEAD's included (#2095 r4 P1): a routed getter reads the
+    // layout of the facet that was cut, not necessarily HEAD's, so HEAD-slot
+    // rows are reconciled against the getter rather than assumed covered by
+    // it. The intent class is left out where intentStorage already read it
+    // at every era (r4 P2).
+    const scanClasses = intentStorage ? ['vpfiHeldCustody', 'rebateRows', 'fallbackSnapshotCustody'] : undefined;
+    const scan = await scanRowsByStorage({ readSlot, loanIds: ids, eraSlots: STORAGE_READ.eraSlots, classes: scanClasses });
     // an earlier-era slot may be a CURRENT field's slot today: such a read is that field's value, not an old counter or row
     const readings = counters.totalLoansEverCreated.filter((x) => x.slot !== headSlots.totalLoansEverCreated).map((x) => ({ ...x, which: 'totalLoansEverCreated' }))
       .concat(counters.intentLiveCommitCount.filter((x) => x.slot !== headSlots.intentLiveCommitCount).map((x) => ({ ...x, which: 'intentLiveCommitCount' })))
       .map((x) => ({ ...x, value: x.value.toString() }));
     const { contradictions: earlierCounters, aliased } = classifyEarlierCounters(readings, STORAGE_READ.occupied);
-    for (const k of Object.keys(scan.rows)) scan.rows[k] = markAliasedRows(scan.rows[k], STORAGE_READ.occupied);
+    const split = splitByHeadSlot(scan.rows, headSlots);
+    for (const k of Object.keys(split.earlier)) split.earlier[k] = markAliasedRows(split.earlier[k], STORAGE_READ.occupied);
+    // HEAD-slot rows are reconciled against the routed getters AFTER the
+    // enumeration below has filled the routed row sets (see the post-merge block).
     historical = {
-      rows: scan.rows,
+      rows: split.earlier,
+      headRows: split.head,
       aliasedCountersIgnored: aliased.map((x) => ({ which: x.which, slot: x.slot, value: x.value, aliases: x.aliases })),
       slotsRead: scan.slotsRead + counters.slotsRead,
       loansScanned: ids.length,
@@ -1954,8 +1963,9 @@ async function censusDeployment(dep) {
       earlierEraCounters: earlierCounters.map((x) => ({ which: x.which, slot: x.slot, value: String(x.value), eras: x.eras })),
       erasPerField: scan.erasPerField,
     };
-    const found = Object.values(scan.rows).reduce((a, r) => a + r.length, 0);
-    process.stderr.write(`census: ${who} — earlier-era storage read: ${ids.length} id(s) × ${Object.values(scan.erasPerField).reduce((a, b) => a + b, 0)} earlier slot set(s), ${scan.slotsRead} slot(s), ${found} row(s)${earlierCounters.length ? `, ${earlierCounters.length} unexplained non-zero earlier-era counter(s)` : ''}${aliased.length ? `, ${aliased.length} aliased reading(s) ignored` : ''}\n`);
+    const found = Object.values(split.earlier).reduce((a, r) => a + r.length, 0);
+    const atHead = Object.values(split.head).reduce((a, r) => a + r.length, 0);
+    process.stderr.write(`census: ${who} — era-complete storage read: ${ids.length} id(s) × ${Object.values(scan.erasPerField).reduce((a, b) => a + b, 0)} era slot set(s), ${scan.slotsRead} slot(s), ${found} earlier-era row(s), ${atHead} HEAD-slot row(s) to reconcile${earlierCounters.length ? `, ${earlierCounters.length} unexplained non-zero earlier-era counter(s)` : ''}${aliased.length ? `, ${aliased.length} aliased reading(s) ignored` : ''}\n`);
   }
   let intentAbsenceProof = null;
   if (!intentSurfaceRouted) {
@@ -2168,7 +2178,7 @@ async function censusDeployment(dep) {
       custodySurfaceUnrouted: false,
       loupeRouted,
       // r3 P1 — what no routed getter can see: every class at every earlier era slot over 1..nextLoanId
-      earlierEraRead: historical ? { ...STORAGE_READ.evidence, slotsRead: historical.slotsRead, loansScanned: historical.loansScanned, truncated: historical.truncated, nextLoanIdFromStorage: historical.nextLoanIdFromStorage, erasPerField: historical.erasPerField, rowsFound: Object.fromEntries(Object.entries(historical.rows).map(([k, v]) => [k, v.length])), earlierEraCounters: historical.earlierEraCounters, aliasedCountersIgnored: historical.aliasedCountersIgnored } : undefined,
+      earlierEraRead: historical ? { ...STORAGE_READ.evidence, slotsRead: historical.slotsRead, loansScanned: historical.loansScanned, truncated: historical.truncated, nextLoanIdFromStorage: historical.nextLoanIdFromStorage, erasPerField: historical.erasPerField, rowsFound: Object.fromEntries(Object.entries(historical.rows).map(([k, v]) => [k, v.length])), headSlotRows: Object.fromEntries(Object.entries(historical.headRows).map(([k, v]) => [k, v.length])), earlierEraCounters: historical.earlierEraCounters, aliasedCountersIgnored: historical.aliasedCountersIgnored } : undefined,
       intentSource: intentSurfaceRouted
         ? 'getIntentCommit view (live state, history-independent)'
         : intentStorage
@@ -2276,6 +2286,36 @@ async function censusDeployment(dep) {
   // loans were created under a layout today's counter does not read.
   if (historical) {
     for (const name of Object.keys(result.classes)) result.classes[name] = mergeHistoricalRows(result.classes[name], historical, name);
+    // r4 P1 — the routed getter and the HEAD-slot storage read must agree per loan id, both ways
+    historical.agreement = getterAgreement({
+      headRows: historical.headRows,
+      routed: {
+        vpfiHeldCustody: vpfiHeldRows,
+        rebateRows,
+        fallbackSnapshotCustody: [...fallbackRows, ...nonVpfiFallbackRows, ...unknownAssetFallbackRows],
+        liveIntentCommits: [...intentRows, ...nonVpfiIntentRows, ...unknownAssetIntentRows],
+      },
+    });
+    const disagreements = Object.values(historical.agreement).reduce((a, r) => a + r.length, 0);
+    result.scanned.earlierEraRead.getterDisagreements = Object.fromEntries(Object.entries(historical.agreement).map(([k, v]) => [k, v.length]));
+    if (disagreements) process.stderr.write(`census: ${who} — ${disagreements} getter/HEAD-slot disagreement(s)\n`);
+    for (const [name, mism] of Object.entries(historical.agreement)) {
+      if (!mism.length) continue;
+      const c = result.classes[name];
+      result.classes[name] = { ...c, status: 'indeterminate', provenBy: undefined, getterDisagreements: mism, indeterminateReason: `the routed getter and the storage read at HEAD's slot disagree for ${mism.length} loan id(s) (${mism.slice(0, 3).map((x) => `#${x.loanId}: storage ${x.storage}, getter ${x.getter}`).join('; ')}${mism.length > 3 ? '; …' : ''}) — the cut getter reads a layout other than HEAD's; refusing to certify` };
+    }
+    // r4 P1 — an unexplained non-zero earlier-era LIVE-COMMIT counter contradicts the intent class on every path
+    const oldIntent = historical.earlierEraCounters.filter((c) => c.which === 'intentLiveCommitCount');
+    if (oldIntent.length && result.classes.liveIntentCommits.status === 'proven') {
+      result.classes.liveIntentCommits = { ...result.classes.liveIntentCommits, status: 'indeterminate', provenBy: undefined, counterContradiction: true, indeterminateReason: `intentLiveCommitCount is non-zero at an earlier era's slot no current field occupies (${oldIntent.map((c) => `${c.value} at ${c.slot} (${c.eras.map((e) => e.date).join(',')})`).join('; ')}) — a commit was written under an earlier layout that neither the getter nor the row scan matched; refusing to certify` };
+    }
+    // r4 P1 — the liability figures must include what the earlier-era read merged
+    const rowsTotal = ['vpfiHeldCustody', 'rebateRows', 'fallbackSnapshotCustody', 'liveIntentCommits'].reduce((acc, name) => {
+      const field = { vpfiHeldCustody: 'vpfiHeld', rebateRows: 'rebateAmount', fallbackSnapshotCustody: 'collateralTotal', liveIntentCommits: 'custodialCollateral' }[name];
+      return acc + (result.classes[name].rows ?? []).reduce((a, r) => a + (r[field] !== undefined ? BigInt(r[field]) : 0n), 0n);
+    }, 0n);
+    result.vpfiRowsTotal = rowsTotal.toString();
+    result.backingShortfall = diamondVpfiBalance === null ? null : (rowsTotal > diamondVpfiBalance ? rowsTotal - diamondVpfiBalance : 0n).toString();
     if (historical.earlierEraCounters.length && provenByEnumerable) {
       const why = `the routed loan counter reads zero, but an earlier layout era's counter is non-zero (${historical.earlierEraCounters.map((c) => `${c.which}=${c.value} at ${c.slot} (${c.eras.map((e) => e.date).join(',')})`).join('; ')}) — loans were created under an earlier layout; the zero-loans proof is withdrawn`;
       result.provenBy = undefined;
