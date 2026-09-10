@@ -68,6 +68,15 @@ function isTicker(word) {
 const IDENTIFIER_LEAD = /\b(loan|position|offer|token|id|no|number|nft|item)\s*$/i;
 
 /**
+ * Wording that asserts the protocol has REFUSED, as opposed to the app
+ * not yet knowing. Checked only against a card that is simultaneously
+ * reporting a check in flight, so this is a contradiction test rather
+ * than a style rule (round 7 P2).
+ */
+const REFUSAL_CLAIM =
+  /\b(not available|unavailable|cannot be closed|can't be closed|is not possible|not permitted)\b/i;
+
+/**
  * Units that make a number a DURATION or a PROPORTION rather than an
  * amount of money. The card is explicitly allowed to show the grace
  * window ("may show the grace window to explain a wait"), so a naive
@@ -346,7 +355,11 @@ export function forcedCloseVerdict(obs, copy) {
         why: 'the body element is present but its text could not be read — nothing was observed about the explanation',
       };
     }
-    if ((obs.bodyText ?? '').trim() === '') {
+    // Only when the body was actually observed. `bodyPresent:
+    // undefined` means the whole CARD vanished mid-scrape (round 7 P2),
+    // and a blank read taken from a card that is no longer there is not
+    // evidence of anything.
+    if (obs.bodyPresent !== undefined && (obs.bodyText ?? '').trim() === '') {
       return {
         verdict: 'fail',
         why: 'card mounted with no explanatory body — the withheld-action-without-explanation state',
@@ -386,6 +399,71 @@ export function forcedCloseVerdict(obs, copy) {
 
   // ---- 4. Was the observation COMPLETE? ----------------------------
   const checkRunning = saysCheckRunning(obs.text ?? '', copy?.unknownCopy ?? '');
+
+  // ROUND 7 P2 — AN UNRESOLVED CHECK MAY NOT CLAIM UNAVAILABILITY.
+  //
+  // The module names this invariant in its own header — "An unresolved
+  // check is never reported as 'not available'" — and then used the
+  // unresolved copy only as a readiness SIGNAL, never enforcing it. A
+  // card saying both "still checking" and "not available" states the
+  // app's ignorance and the protocol's refusal at once, and they are
+  // opposite claims.
+  //
+  // Narrow by construction: this fires only while the card is ALSO
+  // reporting a check in flight, so it is a self-contradiction rather
+  // than a judgement about wording. Copy that merely says a route is
+  // unavailable — which several legitimate states do — is untouched.
+  if (checkRunning) {
+    const refusal = REFUSAL_CLAIM.exec(obs.text ?? '');
+    if (refusal) {
+      return {
+        verdict: 'fail',
+        why: `card reports a check still running AND claims unavailability ("${refusal[0]}") — opposite claims about the app's knowledge and the protocol's answer`,
+      };
+    }
+  }
+
+  // ROUND 7 P2 — A READY ROUTE MUST OFFER THE ACTION.
+  //
+  // `pass` labelled every present non-submittable card the valid
+  // "withheld-but-explained" state, which is correct for `unknown`,
+  // `notYet`, `blockedPaused` and the rest — and wrong for a card
+  // rendering ready copy, where the spec says the app offers the
+  // action directly. The explanation is what distinguishes a safe
+  // withheld state from an actionable one, so it has to be consulted
+  // rather than assumed.
+  if (obs.submitDisabled && Array.isArray(copy?.readyCopy)) {
+    const ready = copy.readyCopy.find(
+      (sentence) => typeof sentence === 'string' && sentence && (obs.text ?? '').includes(sentence),
+    );
+    if (ready) {
+      return {
+        verdict: 'fail',
+        why: 'card renders a READY route yet offers no usable action — a ready route is offered directly, not withheld',
+      };
+    }
+  }
+
+  // ROUND 7 P2 — THE BACK BUTTON PROVES THE SHELL, NOT THE CONTENT.
+  //
+  // Round 4 waited for Back before accepting a confirmation scan. Back
+  // belongs to `ConfirmReceipt`, so it does prove the panel mounted —
+  // but the scrape is of the whole card, which still carries the
+  // heading, body and notes. A receipt whose rows failed to render
+  // therefore produced a non-null `confirmText` and `confirmScanned:
+  // true` over content nobody had observed.
+  //
+  // The receipt's own `youReceive` line is the positive evidence, taken
+  // from the shipped bundle so there is no second copy to drift.
+  if (obs.confirmText !== null && obs.confirmText !== undefined && copy?.receiptLead) {
+    if (!obs.confirmText.includes(copy.receiptLead)) {
+      return {
+        verdict: 'blocked',
+        blockedKind: 'incomplete',
+        why: 'the confirmation shell opened but its receipt content did not render — nothing was observed about what it claims',
+      };
+    }
+  }
   if (!obs.settled) {
     return {
       verdict: 'blocked',

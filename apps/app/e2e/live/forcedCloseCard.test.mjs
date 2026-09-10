@@ -67,14 +67,29 @@ describe('monetaryAmountsIn', () => {
     expect(monetaryAmountsIn(42)).toEqual([]);
   });
 
-  it('passes every shipped forced-close string', () => {
+  it('passes every shipped forced-close string, INCLUDING the nested receipts', () => {
     // The strongest available calibration: the real copy, all of it. If
     // this ever fails, either the scanner regressed or somebody put an
     // amount in the card — and the two are told apart by reading the
     // named string.
+    //
+    // ROUND 7 P2 — RECURSES. `receipt` and `rentalReceipt` are nested
+    // OBJECTS, so a top-level `typeof value !== 'string'` skipped every
+    // one of their strings while this case claimed to cover "every
+    // shipped string". Those are the CONFIRMATION lines — the panel the
+    // drive now opens and scans, and the copy most likely to carry a
+    // figure, since it is the part that describes what the lender
+    // receives. The calibration was blind to exactly the surface it
+    // most needed to cover.
+    const walk = function* (node, path) {
+      if (typeof node === 'string') {
+        yield [path, node];
+      } else if (node && typeof node === 'object') {
+        for (const [k, v] of Object.entries(node)) yield* walk(v, `${path}.${k}`);
+      }
+    };
     let checked = 0;
-    for (const [key, value] of Object.entries(FORCED_CLOSE)) {
-      if (typeof value !== 'string') continue;
+    for (const [key, value] of walk(FORCED_CLOSE, 'forcedClose')) {
       expect(monetaryAmountsIn(value), `${key}: ${value}`).toEqual([]);
       checked += 1;
     }
@@ -85,6 +100,12 @@ describe('monetaryAmountsIn', () => {
     // equality: adding copy should not fail this, removing most of it
     // should.
     expect(checked).toBeGreaterThanOrEqual(30);
+    // And the nested receipts really were reached — the whole point of
+    // the recursion. A named assertion, because a walk that silently
+    // stopped recursing would still clear the floor above.
+    const reached = [...walk(FORCED_CLOSE, 'forcedClose')].map(([k]) => k);
+    expect(reached).toContain('forcedClose.receipt.youReceive');
+    expect(reached).toContain('forcedClose.rentalReceipt.youReceive');
   });
 });
 
@@ -211,7 +232,15 @@ describe('forcedCloseVerdict — round 1 review findings', () => {
     // The rendered-shell case: whole-card emptiness passes it, because
     // the heading is text. This is the very state the module claims to
     // detect.
-    const v = forcedCloseVerdict({ ...held, text: 'This loan is overdue', bodyText: '  ' }, copy);
+    //
+    // `bodyPresent: true` is load-bearing since round 7: the element
+    // EXISTS and its text is blank. An undefined `bodyPresent` now means
+    // the card vanished mid-scrape, and a blank read taken from a card
+    // that is no longer there is not evidence of anything.
+    const v = forcedCloseVerdict(
+      { ...held, text: 'This loan is overdue', bodyPresent: true, bodyText: '  ' },
+      copy,
+    );
     expect(v.verdict).toBe('fail');
     expect(v.why).toMatch(/explanatory body/);
   });
@@ -541,5 +570,120 @@ describe('round 6 review findings', () => {
       copy,
     );
     expect(v.verdict).toBe('fail');
+  });
+});
+
+describe('round 7 review findings', () => {
+  const copy = {
+    unknownCopy: FORCED_CLOSE.unknown,
+    // `readyNeedsRoute` deliberately excluded — see below.
+    readyCopy: [
+      FORCED_CLOSE.readyInKind,
+      FORCED_CLOSE.readyInternalMatch,
+      FORCED_CLOSE.readyRental,
+    ],
+    receiptLead: FORCED_CLOSE.receipt.youReceive,
+  };
+  const base = {
+    lenderHoldsActive: true,
+    mounted: true,
+    attached: true,
+    submitDisabled: false,
+    saleLocked: false,
+    settled: true,
+    bodyText: 'an explanation',
+    bodyPresent: true,
+    confirmText: null,
+    confirmExpected: false,
+    text: FORCED_CLOSE.readyInKind,
+  };
+
+  it('FAILS a card that says a check is running AND claims unavailability', () => {
+    // The module named this invariant in its header and never enforced
+    // it. Narrow by construction: it fires only on the contradiction,
+    // never on copy that merely says a route is unavailable.
+    const v = forcedCloseVerdict(
+      { ...base, submitDisabled: true, text: `${FORCED_CLOSE.unknown} This is not available.` },
+      copy,
+    );
+    expect(v.verdict).toBe('fail');
+    expect(v.why).toMatch(/opposite claims/);
+  });
+
+  it('does NOT fire on a settled card that legitimately reports unavailability', () => {
+    const v = forcedCloseVerdict(
+      { ...base, submitDisabled: true, text: 'This route is not available for this loan.' },
+      copy,
+    );
+    expect(v.verdict).toBe('pass');
+  });
+
+  it('FAILS a READY route that offers no usable action', () => {
+    // `pass` labelled every present non-submittable card the valid
+    // withheld-but-explained state. That is right for `unknown` and
+    // `notYet`; it is wrong for a route the spec says is offered
+    // directly.
+    for (const ready of copy.readyCopy) {
+      const v = forcedCloseVerdict({ ...base, submitDisabled: true, text: ready }, copy);
+      expect(v.verdict, ready.slice(0, 40)).toBe('fail');
+      expect(v.why).toMatch(/READY route/);
+    }
+  });
+
+  it('PASSES readyNeedsRoute with no button — it is ready AND correctly unactionable', () => {
+    // Caught by RUNNING the check, not by writing it: including this
+    // route in `readyCopy` fired on a live position within a minute.
+    // The spec is explicit that this route offers no button, because
+    // "presenting an action that is certain to be refused is worse than
+    // presenting none: the user pays a network fee for the refusal".
+    //
+    // My own tests had missed it because the loop sliced the first
+    // three entries — a slice that was itself a tell.
+    const v = forcedCloseVerdict(
+      { ...base, submitDisabled: true, text: FORCED_CLOSE.readyNeedsRoute },
+      copy,
+    );
+    expect(v.verdict).toBe('pass');
+  });
+
+  it('still PASSES a withheld card whose copy is genuinely a waiting state', () => {
+    for (const waiting of [FORCED_CLOSE.unknown, FORCED_CLOSE.notYet, FORCED_CLOSE.blockedPaused]) {
+      expect(
+        forcedCloseVerdict({ ...base, submitDisabled: true, text: waiting }, copy).verdict,
+        waiting.slice(0, 40),
+      ).toBe('pass');
+    }
+  });
+
+  it('BLOCKS when the confirmation shell opened but its receipt did not render', () => {
+    // Back proves the panel mounted; the scrape is of the whole card,
+    // which still carries the heading and body. Without the receipt's
+    // own line, nothing was observed about what it claims.
+    const v = forcedCloseVerdict(
+      { ...base, confirmExpected: true, confirmText: `${FORCED_CLOSE.readyInKind} Back Confirm` },
+      copy,
+    );
+    expect(v.verdict).toBe('blocked');
+    expect(v.why).toMatch(/receipt content/);
+  });
+
+  it('PASSES when the receipt content is actually present', () => {
+    const v = forcedCloseVerdict(
+      {
+        ...base,
+        confirmExpected: true,
+        confirmText: `${FORCED_CLOSE.readyInKind}\n${FORCED_CLOSE.receipt.youReceive}`,
+      },
+      copy,
+    );
+    expect(v.verdict).toBe('pass');
+    expect(v.confirmScanned).toBe(true);
+  });
+
+  it('leaves an undefined bodyPresent alone — the card vanished with it', () => {
+    // A body absent from a card that is still mounted is the defect; a
+    // body absent because the card went too is not an observation.
+    const v = forcedCloseVerdict({ ...base, bodyPresent: undefined, bodyText: null }, copy);
+    expect(v.verdict).toBe('pass');
   });
 });

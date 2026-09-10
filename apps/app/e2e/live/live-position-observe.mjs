@@ -423,21 +423,45 @@ const STATUS_ACTIVE = 0;
  * false` for every unresolved card, and nothing would look broken.
  * Sourcing it means a rename fails loudly at startup instead.
  */
-const FORCED_CLOSE_UNKNOWN = (() => {
+const FORCED_CLOSE_COPY = (() => {
   const bundle = JSON.parse(
     fs.readFileSync(
       path.join(path.dirname(fileURLToPath(import.meta.url)), '../../src/i18n/locales/en.json'),
       'utf8',
     ),
   );
-  const value = bundle?.copy?.forcedClose?.unknown;
-  if (typeof value !== 'string' || value === '') {
-    throw new Error(
-      'copy.forcedClose.unknown is missing from src/i18n/locales/en.json — ' +
-        'the forced-close observation cannot recognise the unresolved state.',
-    );
-  }
-  return value;
+  const fc = bundle?.copy?.forcedClose ?? {};
+  const need = (value, key) => {
+    if (typeof value !== 'string' || value === '') {
+      throw new Error(
+        `copy.forcedClose.${key} is missing from src/i18n/locales/en.json — ` +
+          'the forced-close observation cannot judge the deployed card without it.',
+      );
+    }
+    return value;
+  };
+  return {
+    unknownCopy: need(fc.unknown, 'unknown'),
+    // ROUND 7 P2 — the READY routes, so a card rendering one of them
+    // while offering no usable action reads as the defect it is rather
+    // than as the valid withheld-but-explained state.
+    // `readyNeedsRoute` is DELIBERATELY ABSENT. It is a ready state that
+    // correctly offers no control: the spec has the app state that the
+    // position is closable and that the sale must be routed by whoever
+    // submits it, and "offers no button it cannot honour" — presenting
+    // an action certain to be refused is worse than presenting none.
+    // Including it fired on a live position within a minute of the
+    // check shipping, which is exactly the false FAIL that gets a check
+    // switched off.
+    readyCopy: [
+      need(fc.readyInKind, 'readyInKind'),
+      need(fc.readyInternalMatch, 'readyInternalMatch'),
+      need(fc.readyRental, 'readyRental'),
+    ],
+    // ROUND 7 P2 — positive evidence that the RECEIPT rendered, not
+    // merely that its shell opened.
+    receiptLead: need(fc.receipt?.youReceive, 'receipt.youReceive'),
+  };
 })();
 /**
  * LoanStatus.FallbackPending. The lender card mounts on it DELIBERATELY
@@ -1564,7 +1588,7 @@ async function visit(path, { expectChooser = false, loan = null } = {}) {
     // reporter can print the reason rather than re-deriving it.
     forcedClose,
     forcedCloseVerdict: forcedClose
-      ? forcedCloseVerdict(forcedClose, { unknownCopy: FORCED_CLOSE_UNKNOWN })
+      ? forcedCloseVerdict(forcedClose, FORCED_CLOSE_COPY)
       : null,
     // DETAIL PAGES ONLY, gated on `loan` (self-inflicted, caught by
     // running it). The lender card exists only on `/positions/<id>`, and
@@ -2382,14 +2406,46 @@ async function observeForcedClose(page, loan) {
       ]);
     },
   );
-  return {
-    ...card,
-    lenderHoldsActive:
-      Number(live.status) === STATUS_ACTIVE &&
-      typeof authorityNow === 'string' &&
-      authorityNow.toLowerCase() === String(observed).toLowerCase(),
-    saleLocked,
-  };
+  let lenderHoldsActive =
+    Number(live.status) === STATUS_ACTIVE &&
+    typeof authorityNow === 'string' &&
+    authorityNow.toLowerCase() === String(observed).toLowerCase();
+
+  // ROUND 7 P2 — CONFIRM A MISSING-CARD FAIL BEFORE REPORTING IT.
+  //
+  // Pinning the three reads to one block made them a consistent
+  // snapshot; it did not make them CONTEMPORANEOUS WITH THE DOM. The
+  // deployed bundle uses its own RPC, which can be a block ahead of
+  // `OBSERVE_RPC`, so the page can already have seen a terminalizing
+  // transaction that this observer has not — the card correctly absent
+  // while the snapshot still reads held / Active / unlocked. That is a
+  // false missing-card regression, and it is the one verdict here whose
+  // cost is a wrongly accused product.
+  //
+  // Only the FAIL path pays for the re-read, and only when the card was
+  // absent: if the position has left the eligible set by a later block,
+  // the page was ahead of us and the observation is `blocked` instead.
+  // A confirmation step on the accusing path, rather than a wider net.
+  if (lenderHoldsActive && !card.mounted) {
+    const laterStatus = await discovery(
+      `confirming loan ${loan.id} is still eligible before reporting a missing card`,
+      async () => {
+        const head = await pub.getBlockNumber();
+        return pub.readContract({
+          address: DIAMOND,
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'getLoanDetails',
+          args: [loan.id],
+          blockNumber: head,
+        });
+      },
+    );
+    if (Number(laterStatus.status) !== STATUS_ACTIVE) {
+      lenderHoldsActive = false;
+    }
+  }
+
+  return { ...card, lenderHoldsActive, saleLocked };
 }
 
 async function readForcedCloseCard(page, timeoutMs = 30_000) {
@@ -2443,11 +2499,11 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
   // never to a false clean.
   const deadline = Date.now() + timeoutMs;
   let text = await card.innerText({ timeout: 2_000 }).catch(() => null);
-  let settled = !saysCheckRunning(text ?? '', FORCED_CLOSE_UNKNOWN);
+  let settled = !saysCheckRunning(text ?? '', FORCED_CLOSE_COPY.unknownCopy);
   while (!settled && Date.now() < deadline) {
     await page.waitForTimeout(1_000);
     text = await card.innerText({ timeout: 2_000 }).catch(() => text);
-    settled = !saysCheckRunning(text ?? '', FORCED_CLOSE_UNKNOWN);
+    settled = !saysCheckRunning(text ?? '', FORCED_CLOSE_COPY.unknownCopy);
   }
   // ROUND 4 P2 — `null` here means COULD NOT READ, not "read and
   // empty", and the two must not collapse.
@@ -2469,7 +2525,20 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
   // element (the heading-only shell — a defect), element but no text
   // (nothing observed), element read and blank (a defect).
   const bodyLocator = card.getByTestId('forced-close-body').first();
-  const bodyPresent = (await bodyLocator.count().catch(() => 0)) > 0;
+  let bodyPresent = (await bodyLocator.count().catch(() => 0)) > 0;
+  // ROUND 7 P2 — A VANISHED CARD IS NOT A MISSING BODY.
+  //
+  // If the loan terminalizes or the position transfers between the
+  // whole-card read above and this count, the entire card unmounts and
+  // the body count is legitimately zero — which the verdict would read
+  // as the heading-only shell and report as a product defect, before
+  // ever consulting the eligibility snapshot that explains it. So the
+  // parent is re-checked when the body is missing: a body absent from a
+  // card that is still there is the defect; a body absent because the
+  // card went with it is `undefined`, which the verdict leaves alone.
+  if (!bodyPresent && (await card.count().catch(() => 0)) === 0) {
+    bodyPresent = undefined;
+  }
   const bodyText = bodyPresent
     ? await bodyLocator.innerText({ timeout: 2_000 }).catch(() => null)
     : null;
