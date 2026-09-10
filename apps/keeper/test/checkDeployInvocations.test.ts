@@ -11917,7 +11917,7 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     expect(r.ok).toBe(false);
   });
 
-  it('a Makefile variable holding a write is NOT seen (#2084, stated miss)', () => {
+  it('a Makefile write assigned BELOW the deploy is NOT seen (#2084, stated miss)', () => {
     // A STATED MISS, asserted so that a future fix announces itself.
     //
     // Make expands `$(GENERATE)` before the shell sees the recipe, so this file

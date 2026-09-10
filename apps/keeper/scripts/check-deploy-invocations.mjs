@@ -6699,9 +6699,9 @@ function indentedBlocks(lines, indentRe, startAt = 0) {
  *     REDS to files that previously escaped them.
  *
  * So the lesson is not "err toward reporting" — one erred each way. It is that
- * THE MODEL'S IMPERFECTION IS LOAD-BEARING: its consumers are calibrated around
- * it, so making it locally more faithful, or widening the set of files it
- * judges, can each be a regression. `main` expanding `$${DEPLOY}` from the
+ * THE MODEL'S IMPERFECTION IS LOAD-BEARING: its one consumer is calibrated
+ * around it, so making it locally more faithful, or widening the set of files
+ * it judges, can each be a regression. `main` expanding `$${DEPLOY}` from the
  * second dollar is strictly a bug, and that bug is what keeps the deploy
  * visible.
  *
@@ -8986,7 +8986,8 @@ for (const file of walk(REPO_ROOT)) {
   // the deploy itself (#2085), not a better approximation here.
   //
   // TWO SMALLER "OBVIOUSLY SAFE" CORRECTIONS WERE ALSO WITHDRAWN, and they are
-  // the cheapest lesson here because each survived to the final round:
+  // the cheapest lesson here because each survived to the LAST BEHAVIOUR-
+  // CHANGING round (r10), long after the three designs above were gone:
   //
   //   - Treating Make's `$$` as inert. It is inert TO MAKE, which then hands a
   //     single `$` to the shell — so `$${DEPLOY} deploy`, with `DEPLOY`
@@ -8997,7 +8998,7 @@ for (const file of walk(REPO_ROOT)) {
   //     model — already known to be imperfect — and so extends its false reds
   //     to files that previously escaped them.
   //
-  // The model's imperfection is LOAD-BEARING: its consumers are calibrated
+  // The model's imperfection is LOAD-BEARING: its one consumer is calibrated
   // around it, so making it locally more faithful can be a regression.
   // AN EXTENSIONLESS HELPER HAS A SHEBANG, NOT A SUFFIX. `walk` yields
   // extensionless executables deliberately, and keying the language on `.py`

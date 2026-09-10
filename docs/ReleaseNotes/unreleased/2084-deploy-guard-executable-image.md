@@ -40,8 +40,8 @@ previous round's fix. It failed the way the other two did — it had to infer
 what a name denotes — which is the real test, and not whether a transformation
 adds or removes characters.
 
-Two smaller corrections survived to the last round and were withdrawn too. Each
-looked obviously safe, and — the part worth keeping — they regressed in
+Two smaller corrections outlived all three designs above and were withdrawn in
+the last behaviour-changing round. Each looked obviously safe, and — the part worth keeping — they regressed in
 OPPOSITE directions, so neither is a template for judging the next one:
 
 - Treating the build tool's **escaped currency symbol** as inert. It is inert to
@@ -65,7 +65,8 @@ No behaviour change. The check's logic is what it was.
   one of these designs without knowing what happened to it.
 - Tests that **assert three current wrong verdicts** — two misses and one false
   report — so a later fix fails them and comes back to the question rather than
-  passing silently: a build file variable holding a write is not seen; a recipe
+  passing silently: a build file variable holding a write is not seen when its
+  assignment sits below the deployment; a recipe
   marked by something other than a tab is not read as a recipe; and, in the
   other direction, a runbook sentence naming a write **reports** the deployment
   below it. That third one's test asserts the report, not a miss.
