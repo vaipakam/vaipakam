@@ -555,6 +555,27 @@ export function forcedCloseVerdict(obs, copy) {
       };
     }
 
+    // 1a-bis. MORE THAN ONE CARD IS ITSELF A FINDING (round 19 P2).
+    //
+    // Every read and every click this drive makes is scoped to the FIRST
+    // match, so a second visible card was silently discarded — and the
+    // contracts asserted here are about the whole surface, not about
+    // whichever element matched first. A clean first card would let a
+    // second state an amount it cannot know, withhold its explanation,
+    // or offer a control the first correctly withholds, and the run
+    // would still pass.
+    //
+    // Reported BEFORE the content scan below rather than after: the scan
+    // only ever saw the first card, so a pass from it says nothing about
+    // the others, and a reader must not be handed a clean-looking
+    // content verdict for a surface that was never fully read.
+    if (typeof obs.visibleCards === 'number' && obs.visibleCards > 1) {
+      return {
+        verdict: 'fail',
+        why: `${obs.visibleCards} forced-close cards are visible at once — this drive reads only the first, so the others are unchecked and the surface states its case more than once`,
+      };
+    }
+
     // 1b. THE DEFINITE FINDING, before anything that might be missing.
     //
     // ROUND 8 P2 — `bodyText` is scanned TOO. It is captured

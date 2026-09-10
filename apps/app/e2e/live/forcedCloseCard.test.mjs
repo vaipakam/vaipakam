@@ -1423,3 +1423,48 @@ describe('round 18 — a hidden control is not an offered action', () => {
     expect(v.why).toBe('card present and submittable');
   });
 });
+
+describe('round 19 — duplicate cards are a finding, not a choice', () => {
+  const copy = { unknownCopy: FORCED_CLOSE.unknown };
+  const held = {
+    lenderHoldsActive: true,
+    mounted: true,
+    attached: true,
+    saleLocked: false,
+    settled: true,
+    bodyPresent: true,
+    bodyText: 'an explanation',
+    confirmText: null,
+    confirmExpected: false,
+    submitPresent: true,
+    submitVisible: true,
+    submitDisabled: true,
+    text: FORCED_CLOSE.unknown,
+  };
+
+  it('FAILS when a second card is visible, even if the first is clean', () => {
+    const v = forcedCloseVerdict({ ...held, visibleCards: 2 }, copy);
+    expect(v.verdict).toBe('fail');
+    expect(v.why).toMatch(/2 forced-close cards/);
+  });
+
+  it('passes a single visible card', () => {
+    expect(forcedCloseVerdict({ ...held, visibleCards: 1 }, copy).verdict).toBe('pass');
+  });
+
+  it('says nothing about duplicates when the count was not observed', () => {
+    // Records predating the field must not invent a finding.
+    expect(forcedCloseVerdict({ ...held }, copy).verdict).toBe('pass');
+  });
+
+  it('outranks the content scan, which only ever read the first card', () => {
+    // A clean-looking content verdict for a surface that was never fully
+    // read is the misleading outcome; the duplicate is reported instead.
+    const v = forcedCloseVerdict(
+      { ...held, visibleCards: 3, text: 'You receive 1.5 WETH' },
+      copy,
+    );
+    expect(v.verdict).toBe('fail');
+    expect(v.why).toMatch(/3 forced-close cards/);
+  });
+});

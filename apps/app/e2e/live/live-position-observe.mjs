@@ -1684,6 +1684,15 @@ const pageDiamondKeys = new WeakMap(); // page -> Set<key>
 function watchPageHead(page) {
   const heads = new Map();
   const diamond = new Set();
+  // ROUND 19 P2 — AN EXCLUSION HAS TO OUTLIVE THE RESPONSE THAT PROVED
+  // IT. Round 18's version returned early on a foreign chain id, which
+  // skipped only THAT response: a later body from the same endpoint
+  // carrying the Diamond address — an ENS reverse lookup does exactly
+  // that — re-admitted it through the substring heuristic, and if the
+  // ordering ran the other way the existing entry was never removed at
+  // all. Once an endpoint has identified itself as a different chain,
+  // that is settled for the rest of the run.
+  const foreign = new Set();
   pageRpcHeads.set(page, heads);
   pageDiamondKeys.set(page, diamond);
 
@@ -1729,14 +1738,22 @@ function watchPageHead(page) {
       if (responseBody !== undefined) {
         const id = chainIdFromRpcPair(body, responseBody);
         if (id !== null) {
-          if (id === CHAIN_ID) diamond.add(key);
-          // A DIFFERENT chain is positive evidence the other way, and it
-          // outranks the address heuristics below — an ENS endpoint
-          // asked to reverse-resolve an address carries that address in
-          // its calldata exactly as a batched Diamond read does.
-          else return;
+          if (id === CHAIN_ID) {
+            diamond.add(key);
+          } else {
+            // A DIFFERENT chain is positive evidence the other way, and
+            // it outranks the address heuristics below — an ENS endpoint
+            // asked to reverse-resolve an address carries that address
+            // in its calldata exactly as a batched Diamond read does.
+            // Recorded permanently, and it also REVOKES any earlier
+            // admission, since the heuristic may have run first.
+            foreign.add(key);
+            diamond.delete(key);
+            return;
+          }
         }
       }
+      if (foreign.has(key)) return;
       if (typeof body === 'string' && body.toLowerCase().includes(DIAMOND_HEX)) {
         diamond.add(key);
         return;
@@ -1757,15 +1774,26 @@ function watchPageHead(page) {
   // A socket is its own endpoint: keyed by the socket object, and marked
   // as deployment-serving by what the PAGE sends over it.
   //
-  // The obvious worry is that a socket carrying ONLY subscriptions would
-  // never be marked, so its `newHeads` would go uncounted. Checked
-  // rather than assumed: `wagmi.ts` builds `fallback([webSocket(...),
-  // http(...)])`, and viem's fallback sends EVERY request to the first
-  // working transport — so while the socket is healthy the Diamond reads
-  // travel over it too, and it marks itself. Should that ever stop being
-  // true, the failure is the mild one: heads still come from the HTTP
-  // endpoint of the same chain, so the bound is staler rather than
-  // wrong, which the documented lower-bound residual already covers.
+  // ⚠ INERT TODAY, AND THE COMMENT SAYING OTHERWISE WAS WRONG (round 19
+  // P2). If the page makes ANY JSON-RPC call over a socket, this drive
+  // exits 2 near the end — a blanket refusal to vouch for reads that
+  // bypassed the allowlist, the response ledger and the chain probe,
+  // all of which ride on an HTTP-only route. That exit happens BEFORE
+  // any verdict or coverage is computed, so on precisely the runs where
+  // socket heads would matter, nothing downstream ever reads them.
+  //
+  // The capture is kept rather than deleted because it is correct and
+  // tested, and because the blocker is the thing expected to move: when
+  // socket frames are classified well enough to lift it, this needs no
+  // change. But it must not be described as shrinking the head race
+  // today, which is what the previous comment and the coverage row both
+  // claimed. Extending socket classification is out of scope here.
+  //
+  // The related worry — a socket carrying ONLY subscriptions would never
+  // be marked — was checked rather than assumed: `wagmi.ts` builds
+  // `fallback([webSocket(...), http(...)])`, and viem's fallback sends
+  // EVERY request to the first working transport, so while the socket is
+  // healthy the Diamond reads travel over it and it marks itself.
   //
   // Linking a socket to an HTTP endpoint by HOST was considered and
   // rejected: providers routinely serve several chains from one host on
@@ -2886,7 +2914,8 @@ async function observeForcedClose(page, loan) {
 }
 
 async function readForcedCloseCard(page, timeoutMs = 30_000) {
-  const card = page.getByTestId('forced-close-card').first();
+  const cards = page.getByTestId('forced-close-card');
+  const card = cards.first();
   // ROUND 3 P2 — VISIBLE, not merely ATTACHED.
   //
   // A CSS regression that leaves the card in the DOM under
@@ -2904,11 +2933,36 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
     .waitFor({ state: 'visible', timeout: timeoutMs })
     .then(() => true)
     .catch(() => false);
-  const attached = mounted ? true : (await card.count()) > 0;
+  const attached = mounted ? true : (await cards.count()) > 0;
+  // ROUND 19 P2 — HOW MANY CARDS, not just whether one is there.
+  //
+  // Every scrape and every click below is scoped to `.first()`, so a
+  // second VISIBLE card was silently discarded — and the contracts this
+  // drive asserts are about the whole surface, not about whichever
+  // element happened to match first. A clean first card would let a
+  // second one state an amount it cannot know, withhold its explanation,
+  // or offer a control the first correctly withholds, while the run
+  // still reported a pass.
+  //
+  // Counted VISIBLE rather than attached, for the same reason the wait
+  // is: a duplicate hidden in the DOM is not something the lender is
+  // being shown, and failing on it would be the false-positive
+  // direction that gets checks switched off.
+  const visibleCards = mounted
+    ? await cards.evaluateAll((els) =>
+        els.filter((el) => {
+          const cs = getComputedStyle(el);
+          if (cs.display === 'none' || cs.visibility === 'hidden') return false;
+          const r = el.getBoundingClientRect();
+          return r.width > 0 && r.height > 0;
+        }).length,
+      ).catch(() => 1)
+    : 0;
   if (!mounted) {
     return {
       mounted: false,
       attached,
+      visibleCards,
       text: null,
       bodyText: null,
       bodyPresent: undefined,
@@ -3011,6 +3065,7 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
     return {
       mounted: true,
       attached: true,
+      visibleCards,
       text: null,
       bodyText: null,
       bodyPresent: undefined,
@@ -3077,6 +3132,7 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
       return {
         mounted: true,
         attached: true,
+        visibleCards,
         text: null,
         bodyText: null,
         bodyPresent: undefined,
@@ -3149,6 +3205,7 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
     bodyPresent,
     confirmText,
     confirmExpected,
+    visibleCards,
     submitPresent,
     submitVisible,
     submitDisabled,
