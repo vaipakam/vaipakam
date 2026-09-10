@@ -6683,114 +6683,58 @@ function indentedBlocks(lines, indentRe, startAt = 0) {
 // GNU Make's DEFAULT BUILD-FILE NAMES are `GNUmakefile`, `makefile` and
 // `Makefile` — it looks for them in that order — plus the `.mk` files those
 // include. `GNUmakefile` was missing, so a Makefile under its canonical GNU
-// name had its recipes read unexpanded and a write through a variable went
-// unseen (#2105 r7). Named once and shared by both Make-specific gates, since
-// the two disagreeing about what a Makefile IS is the same class of defect as
-// two variable models.
+// name was not scanned for deploys at all (#2105 r7).
 const MAKEFILE_NAME_RE = /(^|\/)(GNUmakefile|[Mm]akefile|.*\.mk)$/;
 
 /**
- * THE Make variable model. One collector, two policies, both consumers.
+ * THE Make variable model, shared by the scanner's two needs instead of copied.
  *
- * There were two copies of this — the scanner's (which finds deploys) and the
- * rewrite question's (which finds writes) — textually identical and modelling
- * the same thing, so every correction had to be made twice or the two would
- * answer differently (#2105 r6). One collector now serves both.
+ * `WORKER := apps/agent` then `cd $(WORKER)` deploys from the protected
+ * package — Make expands the variable before the shell sees the recipe, but the
+ * scanner received `$(WORKER)` and modelled an unknown directory, so the bare
+ * deploy under it passed (#1995 r17). Literal values only, last assignment
+ * wins, `?=` yields to an existing one, and a computed value CLEARS the name —
+ * the same rules the shell-variable model follows. Collected over the whole
+ * file because recursive `=` variables resolve at use, not at definition.
  *
- * WHAT THIS DELIBERATELY DOES NOT DO IS MODEL MAKE. Rounds 6-8 produced ELEVEN
- * findings chasing fidelity — escaped dollars, conditionals in both directions,
- * `undefine`, `undefine` inside a dead conditional, a settable recipe prefix,
- * that prefix changing mid-file, certainty that never came back. Round 8's were
- * all edges of round 7's fixes, which is the signature of an unbounded rule and
- * not of a nearly-finished one (#1995, #2066). Each added rule was more
- * faithful than the last and each introduced a fresh regression.
+ * ONE Make RULE BEYOND THAT, and it is lexical rather than semantic: `$$` is an
+ * escaped dollar, not the start of a reference. Make reduces it to a literal
+ * and expands nothing, so `echo '$$(DEPLOY)'` runs nothing — but a matcher
+ * looking only for `$(NAME)` finds one at the SECOND dollar and substitutes,
+ * inventing a deploy the file never runs (#2105 r6). Matching `$$` first
+ * consumes the pair. The escape is left as written rather than reduced to `$`,
+ * since neither spelling is a deploy and a bare `$(` would hand the shell
+ * reader a command-substitution shape the source never had.
  *
- * So the question asked here is not "what value does Make give this name",
- * which needs an interpreter, but a decidable one:
+ * NOTHING ELSE ABOUT MAKE IS MODELLED HERE, and that is a decision rather than
+ * an omission. #2105 spent four review rounds and FIFTEEN findings trying to
+ * make this faithful — conditionals in both directions, `undefine`, `undefine`
+ * inside a dead branch, a settable recipe marker, that marker changing partway
+ * down the file, `define` bodies, indented assignments, mismatched delimiters,
+ * `?=` after a computed value. Each round's findings were edges of the previous
+ * round's fix. Answering "what value does Make give this name" needs an
+ * interpreter for Make, and this file is not one.
  *
- *   DOES THIS FILE GIVE THE NAME EXACTLY ONE ANSWER?
- *
- * A name is AMBIGUOUS if it is assigned more than once, assigned anywhere
- * inside a conditional, or named by an `undefine` — no evaluation, no ordering,
- * no branch analysis, just whether the file is unanimous. That single rule
- * subsumes every conditional finding from rounds 6, 7 and 8, and it cannot grow
- * an edge list, because it never tries to decide WHICH value wins.
- *
- * The two consumers then differ, which is the whole reason one model exposes
- * both. Their BASELINES differ: on `main` the scanner already expands and the
- * rewrite question does not expand at all.
- *
- *   - `expandCertain` (rewrite question) substitutes only unambiguous names.
- *     It therefore cannot invent a write — the value it uses is the file's only
- *     answer — and what it declines to substitute is a miss `main` already has.
- *   - `expand` (scanner) substitutes last-wins, exactly as `main` does, because
- *     declining there would LOSE a deploy found today (#1995 r17).
- *
- * The one Make rule kept is lexical, not dataflow: `$$` is an escaped dollar,
- * not the start of a reference. Make reduces it to a literal and expands
- * nothing, so `echo '$$(WRITE)'` is inert — but a matcher looking only for
- * `$(NAME)` finds one at the SECOND dollar and substitutes, inventing a write
- * in a recipe that performs none, in BOTH consumers (#2105 r6). It is left as
- * written rather than reduced to `$`, since neither spelling is a write and a
- * bare `$(` would hand the shell reader a command-substitution shape the source
- * never had.
+ * What made that survivable to abandon is that the ONLY consumer is the deploy
+ * scanner, whose behaviour here is unchanged from before #2105. An imperfect
+ * model here can miss a deploy exactly as it always could; it is not asked the
+ * rewrite question, where a wrong answer would invent a write. See the note at
+ * `text`'s former call site for why that half was withdrawn (#2084).
  */
 function makeVarModel(text) {
-  const lines = text.split('\n');
-  // Recipe membership is `^\t`, as it has always been. A settable prefix was
-  // tried in r7 and withdrawn in r8: it has to be tracked per line rather than
-  // per file, and getting that wrong DROPPED an earlier tab recipe entirely.
-  // The shapes it would have covered are #2114 — they are misses `main` shares,
-  // never silent regressions.
-  const recipe = lines.map((l) => /^\t/.test(l));
   const mkVars = new Map();
-  const ambiguous = new Set();
-  let depth = 0;
-  lines.forEach((l, i) => {
-    if (recipe[i]) return;
-    if (/^\s*(?:ifeq|ifneq|ifdef|ifndef)\b/.test(l)) {
-      depth += 1;
-      return;
-    }
-    if (/^\s*endif\b/.test(l)) {
-      depth = Math.max(0, depth - 1);
-      return;
-    }
-    if (/^\s*else\b/.test(l)) return;
-    const u = l.match(/^\s*(?:override\s+)?undefine\s+([A-Za-z_]\w*)\s*$/);
-    if (u) {
-      // Named by `undefine` — whether it fires or not, the file no longer gives
-      // one answer. Note this does NOT delete: deleting is what let a DEAD
-      // `undefine` hide a deploy from the scanner (r8).
-      ambiguous.add(u[1]);
-      return;
-    }
+  for (const l of text.split('\n')) {
+    if (/^\t/.test(l)) continue;
     const m = l.match(/^([A-Za-z_]\w*)\s*(\?=|:{1,2}=|=)\s*(.*?)\s*$/);
-    if (!m) return;
-    if (depth > 0 || mkVars.has(m[1])) ambiguous.add(m[1]);
-    if (m[2] === '?=' && mkVars.has(m[1])) return;
+    if (!m) continue;
+    if (m[2] === '?=' && mkVars.has(m[1])) continue;
     if (/\$/.test(m[3])) mkVars.delete(m[1]);
     else mkVars.set(m[1], m[3]);
-  });
-  const sub = (l, certainOnly) =>
-    l.replace(/\$\$|\$[({]([A-Za-z_]\w*)[)}]/g, (m0, n) => {
-      if (m0 === '$$') return m0;
-      if (certainOnly && ambiguous.has(n)) return m0;
-      return mkVars.get(n) ?? m0;
-    });
-  return {
-    recipe,
-    expand: (l) => sub(l, false),
-    expandCertain: (l) => sub(l, true),
-  };
-}
-
-function expandMakeVars(text) {
-  const model = makeVarModel(text);
-  return text
-    .split('\n')
-    .map((l, i) => (model.recipe[i] ? model.expandCertain(l) : l))
-    .join('\n');
+  }
+  return (l) =>
+    l.replace(/\$\$|\$[({]([A-Za-z_]\w*)[)}]/g, (m0, n) =>
+      m0 === '$$' ? m0 : (mkVars.get(n) ?? m0),
+    );
 }
 
 function makefileBlocks(text) {
@@ -6808,12 +6752,10 @@ function makefileBlocks(text) {
   // withdrawn (#2105 r7 then r8): the prefix has to be tracked per line, and a
   // whole-file reading of it applied a late `.RECIPEPREFIX` retroactively and
   // DROPPED an earlier tab recipe. #2114.
-  const model = makeVarModel(text);
-  const expandMk = model.expand;
-  const isRecipe = model.recipe;
+  const expandMk = makeVarModel(text);
   const lines = text
     .split('\n')
-    .map((l, i) => (isRecipe[i] ? expandMk(l.replace(/^(\t+)[@+-]+\s*/, '$1')) : l));
+    .map((l) => (/^\t/.test(l) ? expandMk(l.replace(/^(\t+)[@+-]+\s*/, '$1')) : l));
   if (oneshell) return indentedBlocks(lines, /^\t/);
   // One block per PHYSICAL recipe line, so nothing carries between them. A
   // backslash continuation is still one command and `logicalLines` folds it,
@@ -6822,7 +6764,7 @@ function makefileBlocks(text) {
   let i = 0;
   let blockId = 0;
   while (i < lines.length) {
-    if (!isRecipe[i]) {
+    if (!/^\t/.test(lines[i])) {
       i += 1;
       continue;
     }
@@ -9020,36 +8962,38 @@ for (const file of walk(REPO_ROOT)) {
   // Shell semantics apply to SHELL files. A redirection is a redirection in
   // shell text; in JavaScript the same character is a comparison (#2066 r10).
   const fileIsShell = Boolean(winInterp) || isShellFile(rel, text);
-  // THE TEXT THE REWRITE QUESTION IS ASKED OF. One TRANSFORMATION, never a
-  // selection (#2084): a Makefile's recipes are expanded, because Make expands
-  // them before the shell sees them and a variable holding a redirection really
-  // is a write. Same lines, same order, nothing removed.
+  // THE REWRITE QUESTION IS ASKED OF THE FILE AS WRITTEN. Three transformations
+  // were tried here and all three are withdrawn; this is the record of why, so
+  // the next person does not rebuild one (#2084, #2105).
   //
-  // Deliberately NOT a collected "executable image". That was tried and is what
-  // #2105 rounds 1-3 rejected: SIX separate ingestion paths were missed, five
-  // of them a false GREEN this change introduced and the sixth a pre-existing
-  // gap the new mode failed to close, and two attempts to enumerate the paths
-  // were both incomplete — the second refuted by the very next review round.
+  //   1. A collected "executable image" — the parts of the file believed to
+  //      run. SIX ingestion paths reached the file without reaching the
+  //      collection, each a false GREEN, and two enumerations of "all the
+  //      paths" were both incomplete. A selection turns anything it fails to
+  //      recognise into SILENCE.
+  //   2. BLANKING a document's prose, so a sentence naming a write would stop
+  //      reporting the deploy below it. Six commands erased across three
+  //      rounds. The rule cannot exist: this guard treats a bare, unindented
+  //      Markdown line as an actionable command — which is why a runbook's
+  //      `cp a b` is reported at all — and a prose sentence naming a write has
+  //      that same shape. Telling them apart IS the classifier whose answer
+  //      produced the false red. #2112.
+  //   3. EXPANDING Makefile recipe variables, so a variable holding a
+  //      redirection would be seen as the write it is. This one is not
+  //      unsafe in principle — expansion only ADDS text, so a wrong answer
+  //      costs a report rather than silence — but being RIGHT about it means
+  //      implementing Make. Four rounds and FIFTEEN findings: conditionals in
+  //      both directions, `undefine` and `undefine` in a dead branch, a
+  //      settable recipe marker and that marker moving mid-file, `define`
+  //      bodies, indented assignments, mismatched `$(NAME}` delimiters, `?=`
+  //      after a computed value. Every round's findings were edges of the
+  //      previous round's fix. #2084 stays open with the whole trail.
   //
-  // ADDING text is the safe direction here and REMOVING it is not, which is why
-  // only one transformation survives. Expanding wrongly invents a write and
-  // costs a report; failing to expand costs nothing this guard did not already
-  // miss. Blanking is the mirror image, and it was tried three times:
-  //
-  //   - Markdown prose was blanked so a sentence NAMING a write would stop
-  //     reporting the deploy below it (a false red, #2084);
-  //   - a per-line span matcher, then a hand-written CommonMark pass, then a
-  //     conservative keep-rule — six findings across #2105 r4, r5 and r6, every
-  //     one a real command turned into spaces, i.e. a false GREEN.
-  //
-  // It is gone. The rule it needed cannot exist: this guard treats a bare,
-  // unindented Markdown line as an actionable command (which is why a runbook's
-  // `cp a b` is reported at all), and a prose sentence naming a write has that
-  // same shape. Telling them apart IS the classifier whose answer produced the
-  // false red in the first place. So `.md` keeps its raw text, the false red
-  // stays until it is fixed by a means that cannot go silent (#2112), and the
-  // one transformation left here can only ever cost noise.
-  const rewriteText = MAKEFILE_NAME_RE.test(rel) ? expandMakeVars(text) : text;
+  // The shape common to all three: each asks a question about the file that
+  // needs a PARSER FOR SOMETHING ELSE — a CI system's execution model, a
+  // Markdown grammar, Make's variable semantics — and this reader is a scanner.
+  // Where such a parser is genuinely needed, the answer is a declaration from
+  // the deploy itself (#2085), not a better approximation here.
   // AN EXTENSIONLESS HELPER HAS A SHEBANG, NOT A SUFFIX. `walk` yields
   // extensionless executables deliberately, and keying the language on `.py`
   // alone classified `#!/usr/bin/env python3` as `other` — where an f-string
@@ -9236,7 +9180,7 @@ for (const file of walk(REPO_ROOT)) {
     // BEFORE a continued deploy read as after it and the rewrite was blessed
     // (r27). Entries from the readers that do not fold carry no `folds` and
     // are unaffected.
-    // Positions are taken in `rewriteText`, which is what the write scan reads.
+    // Positions are taken in `text`, which is what the write scan reads.
     // The transformations preserve LINE COUNT — expansion rewrites within a
     // line, blanking replaces a line with spaces of its own length — so a line
     // number means the same thing in both, while a CHARACTER offset after an
@@ -9244,7 +9188,7 @@ for (const file of walk(REPO_ROOT)) {
     // the comparison meaningful (#2084).
     const rawAt = (within) =>
       lineStartOffset(
-        rewriteText,
+        text,
         lineNo,
         typeof within === 'number' && folds?.length
           ? within + folds.filter((f) => f < within).length
@@ -9358,7 +9302,7 @@ for (const file of walk(REPO_ROOT)) {
       const rewriteCtx = (start) =>
         valueScoped
           ? { text: line, at: start }
-          : { text: rewriteText, at: rawAt(start) };
+          : { text: text, at: rawAt(start) };
       // A markdown CODE SPAN is a command boundary, and prose has no shell
       // separator between two of them. `Use `wrangler deploy --keep-vars` for
       // the keeper and `wrangler deploy` for the agent.` is ONE segment to
@@ -10141,7 +10085,7 @@ for (const file of walk(REPO_ROOT)) {
           input,
           true,
           shellVars,
-          rewriteText,
+          text,
           rawAt(part.start),
           lineLang,
         );
@@ -10208,7 +10152,7 @@ for (const file of walk(REPO_ROOT)) {
         // Captured because the closure's own parameter is also called `text`
         // and shadows the file's. Named rather than renamed so the shadowing
         // is visible at the point it matters.
-        const fileTextForSafety = rewriteText;
+        const fileTextForSafety = text;
         // The LINE this command is on, so a rewrite is compared against THIS
         // deploy rather than against any later selection of the same config.
         const atInFile = rawAt(part.start);

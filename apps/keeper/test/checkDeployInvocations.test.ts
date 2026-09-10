@@ -11906,10 +11906,24 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(r.ok).toBe(false);
   });
 
-  it('an expanded Make recipe writes the config (#2084)', () => {
-    // Make expands `$(GENERATE)` before the shell sees it, so a variable
-    // holding a redirection IS a write. The rewrite scan read the raw file,
-    // where it is only a name — a false green.
+  it('a Makefile variable holding a write is NOT seen (#2084, stated miss)', () => {
+    // A STATED MISS, asserted so that a future fix announces itself.
+    //
+    // Make expands `$(GENERATE)` before the shell sees the recipe, so this file
+    // really does rewrite the config before deploying it — `make -n` prints the
+    // redirection first. This guard does not see it: the rewrite question reads
+    // the file as written, where the write is only a name.
+    //
+    // Expanding the recipe was implemented and withdrawn over four review
+    // rounds and fifteen findings (see the note at the rewrite question's call
+    // site). Expansion is not unsafe in principle — it only ADDS text, so being
+    // wrong costs a report rather than silence — but being RIGHT about it means
+    // implementing Make's variable semantics, and every round's findings were
+    // edges of the previous round's fix.
+    //
+    // The miss is `main`'s miss, so nothing regressed. #2084 stays open.
+    // If someone makes this work, THIS FIXTURE FAILS — that is the signal to
+    // reopen the discussion, not a breakage.
     seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
     seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
     const r = runWith(
@@ -11917,81 +11931,19 @@ describe('check-deploy-invocations — #1996 config identity', () => {
       'deploy:\n\t$(GENERATE)\n\twrangler deploy --config configs/custom.jsonc\n\n' +
         "GENERATE = printf '{}' > configs/custom.jsonc\n",
     );
-    expect(r.ok).toBe(false);
-  });
-
-  it('a harmless Make expansion is not a write (#2084 bounds)', () => {
-    // BOUNDS GUARD: expanding every recipe must not make every recipe a write.
-    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
-    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
-    const r = runWith(
-      'Makefile',
-      'deploy:\n\t$(NOTE)\n\twrangler deploy --config configs/custom.jsonc\n\n' +
-        'NOTE = echo deploying configs/custom.jsonc\n',
-    );
-    expect(r.ok).toBe(true);
-  });
-
-  it('an escaped dollar is not a variable reference (#2105 r6)', () => {
-    // `$$` is Make's escape for a literal dollar: `make -n` (GNU Make 4.3)
-    // prints `echo '$(WRITE)'` and runs no write. A matcher looking only for
-    // `$(NAME)` found one starting at the SECOND dollar and substituted,
-    // inventing a rewrite in a recipe that performs none — a false red.
-    //
-    // The assignment sits AFTER the recipe deliberately. Put before it, the
-    // assignment line is itself a literal write to the config and the #2052
-    // rule reports it, so the fixture would pass without exercising expansion
-    // at all — which is how the first version of this repro fooled me.
-    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
-    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
-    const r = runWith(
-      'Makefile',
-      "deploy:\n\techo '$$(WRITE)'\n\twrangler deploy --config configs/custom.jsonc\n\n" +
-        "WRITE = printf '{}' > configs/custom.jsonc\n",
-    );
-    expect(r.ok).toBe(true);
-  });
-
-  it('a dead conditional branch does not invent a write (#2105 r6)', () => {
-    // `ifeq (1,0)` never fires, so `make -n` prints `echo no rewrite`. Taking
-    // every textual assignment as executed Make state let the dead branch
-    // override the live one and invented a rewrite — a false red.
-    //
-    // THE REASON THIS PASSES CHANGED IN r7, so the comment is rewritten rather
-    // than left describing a rule that is gone. r6 made a guarded assignment
-    // lose to an unguarded one — and r7 produced the mirror case, where the
-    // guarded branch is LIVE and preferring the unconditional value hid its
-    // write instead. Neither horn can be fixed without evaluating the
-    // conditional, which this guard cannot do.
-    //
-    // So the value is no longer chosen. r8 generalised the rule further, to the
-    // only question about a name this guard can decide without an interpreter:
-    // DOES THE FILE GIVE IT EXACTLY ONE ANSWER? Assigned twice, assigned inside
-    // any conditional, or named by an `undefine` — ambiguous. Here that means
-    // `$(WRITE)` stays literal: no invented write, same verdict as before, a
-    // third mechanism. The live-branch write it misses is `main`'s existing
-    // miss, not a regression (#2113).
-    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
-    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
-    const r = runWith(
-      'Makefile',
-      'deploy:\n\t$(WRITE)\n\twrangler deploy --config configs/custom.jsonc\n\n' +
-        'WRITE = echo no rewrite\nifeq (1,0)\n' +
-        "WRITE = printf '{}' > configs/custom.jsonc\nendif\n",
-    );
     expect(r.ok).toBe(true);
   });
 
   it('the scanner shares the escape rule too (#2105 r6)', () => {
-    // WHY THE DUPLICATION HAD TO GO FIRST. The Make variable model existed
-    // twice — once for finding deploys, once for finding writes — so fixing
-    // `$$` in one copy would have left the other still expanding it.
+    // `$$` IS AN ESCAPED DOLLAR, and this is the one Make rule the model keeps.
+    // `echo '$$(DEPLOY)'` runs no deploy — `make -n` prints `echo '$(DEPLOY)'` —
+    // but a matcher looking only for `$(NAME)` finds one at the SECOND dollar,
+    // substitutes, and reports a deploy the file never runs.
     //
-    // This exercises the SCANNER copy: `echo '$$(DEPLOY)'` runs no deploy at
-    // all (`make -n` prints `echo '$(DEPLOY)'`), but expanding from the second
-    // dollar invented one and reported it. That is a false red this guard has
-    // had all along, not one introduced here — it reproduces on the parent —
-    // and sharing one model cured it as a side effect of removing the copy.
+    // A false red this guard has had all along, not one introduced here: it
+    // reproduces on the parent. Kept because it is LEXICAL — it decides whether
+    // a reference exists, not what value a name has — which is the line the
+    // withdrawn expansion could not hold.
     seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
     seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
     const r = runWith(
@@ -12001,147 +11953,22 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(r.ok).toBe(true);
   });
 
-  it('the scanner still expands a conditional-only deploy (#2105 r7)', () => {
-    // WHY UNCERTAINTY RESOLVES DIFFERENTLY IN THE TWO CONSUMERS, which is the
-    // whole reason the model exposes `certain` instead of picking a value.
-    //
-    // On `main` the scanner ALREADY expands and the rewrite question does not
-    // expand at all. So declining to substitute costs the two sides different
-    // things: for the rewrite question it leaves the miss `main` already has,
-    // but for the scanner it would LOSE A DEPLOY that is found today (#1995
-    // r17). Many Makefiles define a variable only inside a conditional.
-    //
-    // This was written in r6 as "a conditional-only assignment is still
-    // expanded" and asserted the WRITE was found. r7 made the rewrite question
-    // decline uncertain values, so that assertion no longer held — and the
-    // honest replacement is not to delete the fixture but to move it to the
-    // consumer whose behaviour the argument was always about.
-    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
-    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
-    const r = runWith(
-      'Makefile',
-      'noop:\n\tcd apps/agent && $(DEP)\n\nifeq (1,1)\nDEP = wrangler deploy\nendif\n',
-    );
-    expect(r.ok).toBe(false);
-  });
-
-  it('undefine makes the name ambiguous (#2105 r7, revised r8)', () => {
-    // `undefine WRITE` removes the name, so keeping the obsolete value expanded
-    // it into a recipe Make runs with nothing there — inventing a write and
-    // rejecting a safe file. `make -n` prints only the deploy.
-    //
-    // r7 fixed this by DELETING the name from the model. r8 showed that is
-    // wrong in the mirror case: a dead `ifeq (1,0)` containing an `undefine`
-    // then deleted a live value and hid a deploy from the scanner. So the name
-    // is marked AMBIGUOUS instead — the rewrite question declines to substitute
-    // it (no invented write, this fixture) while the scanner still substitutes
-    // last-wins (no lost deploy).
-    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
-    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
-    const r = runWith(
-      'Makefile',
-      'deploy:\n\t$(WRITE)\n\twrangler deploy --config configs/custom.jsonc\n\n' +
-        "WRITE = printf '{}' > configs/custom.jsonc\nundefine WRITE\n",
-    );
-    expect(r.ok).toBe(true);
-  });
-
-  it('a dead undefine does not hide a deploy from the scanner (#2105 r8)', () => {
-    // THE MIRROR OF THE FIXTURE ABOVE, and the reason `undefine` marks a name
-    // ambiguous rather than deleting it.
-    //
-    // r7 deleted the name. Here the `undefine` sits inside `ifeq (1,0)` and
-    // never fires — `make -n` runs the deploy — but deleting made the scanner
-    // stop expanding `$(DEP)`, so the deploy vanished from the scan entirely.
-    // A false GREEN, and worse than `main`, which reports this.
-    //
-    // Marking instead of deleting keeps the scanner's last-wins substitution
-    // intact while still stopping the rewrite question from inventing a write.
-    // Without this fixture the two rules are indistinguishable: reverting to
-    // delete leaves every other test green.
-    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
-    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
-    const r = runWith(
-      'Makefile',
-      'noop:\n\tcd apps/agent && $(DEP)\n\nDEP = wrangler deploy\nifeq (1,0)\nundefine DEP\nendif\n',
-    );
-    expect(r.ok).toBe(false);
-  });
-
-  it('a lone assignment inside a conditional is ambiguous (#2105 r8)', () => {
-    // The other half of the rule, and the one the sibling fixtures do not
-    // reach. Here `WRITE` is assigned exactly ONCE, so repetition does not make
-    // it ambiguous — only the fact that the assignment is GUARDED does.
-    //
-    // Without the guard clause the single value looks unanimous and would be
-    // substituted, inventing a write from a branch `make -n` never takes. This
-    // is the r6 finding in its purest form: dropping `depth > 0` leaves every
-    // other test green, which is how the clause could be removed unnoticed.
-    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
-    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
-    const r = runWith(
-      'Makefile',
-      'deploy:\n\t$(WRITE)\n\twrangler deploy --config configs/custom.jsonc\n\n' +
-        "ifeq (1,0)\nWRITE = printf '{}' > configs/custom.jsonc\nendif\n",
-    );
-    expect(r.ok).toBe(true);
-  });
-
-  it('a name assigned twice is ambiguous (#2105 r8)', () => {
-    // Repetition alone is ambiguity — no conditional needed. Two unconditional
-    // assignments and the file does not give one answer, so the rewrite
-    // question declines to substitute rather than picking last-wins and
-    // possibly inventing a write that the earlier value would not perform.
-    //
-    // This is the half of the rule the conditional fixtures do not reach, and
-    // without it "assigned more than once" could be removed unnoticed.
-    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
-    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
-    const r = runWith(
-      'Makefile',
-      'deploy:\n\t$(WRITE)\n\twrangler deploy --config configs/custom.jsonc\n\n' +
-        "WRITE = echo harmless\nWRITE = printf '{}' > configs/custom.jsonc\n",
-    );
-    expect(r.ok).toBe(true);
-  });
-
-  it('GNUmakefile is a Makefile (#2105 r7)', () => {
+  it('the scanner reads a GNUmakefile (#2105 r7)', () => {
     // GNU Make's default build-file names are `GNUmakefile`, `makefile` and
     // `Makefile`. The canonical GNU one was missing from the filename gate, so
-    // its recipes were never expanded and a write through a variable went
-    // unseen while the deploy itself was still detected.
+    // a deploy in such a file was not scanned at all — a false GREEN.
     seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
-    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    //
+    // The deploy is written through a VARIABLE deliberately. Spelled out, the
+    // ordinary line scan finds it whatever the filename gate says, and the
+    // fixture would pass with the fix reverted — proving nothing. Only
+    // `makefileBlocks` expands `$(DEP)`, so only this shape needs the gate.
+    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
     const r = runWith(
       'GNUmakefile',
-      'deploy:\n\t$(WRITE)\n\twrangler deploy --config configs/custom.jsonc\n\n' +
-        "WRITE = printf '{}' > configs/custom.jsonc\n",
+      'deploy:\n\tcd apps/agent && $(DEP)\n\nDEP = wrangler deploy\n',
     );
     expect(r.ok).toBe(false);
-  });
-
-  it('a settable recipe prefix is NOT followed (#2105 r8, stated miss)', () => {
-    // A STATED LIMITATION, pinned so it is a decision and not a surprise.
-    // `.RECIPEPREFIX := >` makes `>`-prefixed lines recipes, and `make -n` does
-    // expand `$(WRITE)` there. This guard does not: recipe membership is `^\t`.
-    //
-    // r7 implemented the prefix and r8 withdrew it. Reading the prefix over the
-    // whole file applied a LATE `.RECIPEPREFIX` retroactively and dropped an
-    // earlier tab recipe entirely — turning a stated miss into a silent one.
-    // Doing it correctly means tracking prefix state per line, which is the
-    // fidelity chase this model stopped (#2114).
-    //
-    // The miss is `main`'s miss too, so nothing regressed. This asserts the
-    // MISS, so if anyone implements the prefix properly this fixture fails and
-    // must be rewritten — which is the intended signal, not a failure.
-    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
-    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
-    const r = runWith(
-      'Makefile',
-      '.RECIPEPREFIX := >\ndeploy:\n>$(WRITE)\n>wrangler deploy --config configs/custom.jsonc\n\n' +
-        "WRITE = printf '{}' > configs/custom.jsonc\n",
-    );
-    expect(r.ok).toBe(true);
   });
 
   it('a write in an earlier step counts against a later one (#2084 bounds)', () => {
