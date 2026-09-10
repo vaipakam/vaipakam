@@ -358,3 +358,52 @@ describe('a page can carry both verdicts at once', () => {
     });
   });
 });
+
+describe('the forced-close card (#2069)', () => {
+  const fail = { verdict: 'fail', why: 'card absent on a held Active lender position' };
+
+  it('fails when its verdict is fail', () => {
+    expect(visitProblems(lender({ forcedCloseVerdict: fail }), 'lender')).toContain(
+      `forced-close card: ${fail.why}`,
+    );
+  });
+
+  it('is REPORTED ALONGSIDE a missing exit chooser, not swallowed by it', () => {
+    // The placement test, and the reason this arm sits above the
+    // `!v.chooser` early return. They are different cards that happen
+    // to share a page; a run that observed two defects must report two.
+    const problems = visitProblems(
+      lender({ chooser: false, forcedCloseVerdict: fail }),
+      'lender',
+    );
+    expect(problems).toContain(`forced-close card: ${fail.why}`);
+    expect(problems).toContain('lender chooser MISSING on an eligible loan');
+    expect(problems).toHaveLength(2);
+  });
+
+  it('adds nothing when the verdict passes', () => {
+    expect(
+      visitProblems(lender({ forcedCloseVerdict: { verdict: 'pass', why: 'present' } }), 'lender'),
+    ).toEqual([]);
+  });
+
+  it('adds nothing when the verdict is blocked — nothing observed is not a defect', () => {
+    expect(
+      visitProblems(
+        lender({ forcedCloseVerdict: { verdict: 'blocked', why: 'not a held Active position' } }),
+        'lender',
+      ),
+    ).toEqual([]);
+  });
+
+  it('adds nothing when there is no verdict at all (borrower runs)', () => {
+    expect(visitProblems(lender({ forcedCloseVerdict: null }), 'lender')).toEqual([]);
+    expect(visitProblems(lender({ forcedCloseVerdict: undefined }), 'lender')).toEqual([]);
+  });
+
+  it('stays silent on the list route, which has no position card', () => {
+    expect(
+      visitProblems({ path: '/positions', http: 200, forcedCloseVerdict: fail }, 'lender'),
+    ).toEqual([]);
+  });
+});

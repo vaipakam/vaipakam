@@ -103,6 +103,20 @@ export function visitProblems(v, role) {
   // #1505 surfaces it claims to validate (#1529 review).
   if (!isDetailPath(v.path) || v.nav || preRaced(v)) return problems;
 
+  // THE FORCED-CLOSE CARD IS JUDGED BEFORE THE CHOOSER'S EARLY RETURN
+  // (#2069), and the placement is the whole point.
+  //
+  // It is a DIFFERENT card that happens to render on the same page. Put
+  // below the `!v.chooser` return, a missing exit chooser would swallow
+  // a positively observed forced-close defect and the run would report
+  // one finding where it had seen two — the aggregation mistake this
+  // file already carries two comments about. Its verdict is computed by
+  // its own module and only surfaced here, so nothing about the chooser
+  // can change it.
+  if (v.forcedCloseVerdict?.verdict === 'fail') {
+    problems.push(`forced-close card: ${v.forcedCloseVerdict.why}`);
+  }
+
   if (!v.chooser) {
     problems.push(`${role} chooser MISSING on an eligible loan`);
     return problems;

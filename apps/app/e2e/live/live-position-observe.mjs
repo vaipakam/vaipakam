@@ -95,6 +95,7 @@ import {
   snapshotCardEligible,
   snapshotJumpable,
 } from './jumpability.mjs';
+import { forcedCloseVerdict } from './forcedCloseCard.mjs';
 import { requireSiteUrl } from './driver.mjs';
 import { redactUrl } from './redact.mjs';
 import { isDetailPath, visitVerdict } from './visitVerdict.mjs';
@@ -407,6 +408,33 @@ console.log(`fetched   ${ids.length} loan id(s) across ${Math.ceil(Number(active
 // is either would be a FALSE "chooser MISSING" rather than a finding
 // (#1529 review).
 const STATUS_ACTIVE = 0;
+
+/**
+ * The shipped "a check is running" sentence, READ FROM THE REPO's own
+ * locale bundle rather than restated here.
+ *
+ * A hand-copied string is a second copy to drift, and it would drift
+ * silently in the direction that matters: a reworded `copy.forcedClose.
+ * unknown` would stop matching, the drive would report `checkRunning:
+ * false` for every unresolved card, and nothing would look broken.
+ * Sourcing it means a rename fails loudly at startup instead.
+ */
+const FORCED_CLOSE_UNKNOWN = (() => {
+  const bundle = JSON.parse(
+    fs.readFileSync(
+      path.join(path.dirname(fileURLToPath(import.meta.url)), '../../src/i18n/locales/en.json'),
+      'utf8',
+    ),
+  );
+  const value = bundle?.copy?.forcedClose?.unknown;
+  if (typeof value !== 'string' || value === '') {
+    throw new Error(
+      'copy.forcedClose.unknown is missing from src/i18n/locales/en.json — ' +
+        'the forced-close observation cannot recognise the unresolved state.',
+    );
+  }
+  return value;
+})();
 /**
  * LoanStatus.FallbackPending. The lender card mounts on it DELIBERATELY
  * (`PositionDetails.tsx`: `row.status === 'active' || 'fallback_pending'`,
@@ -1405,6 +1433,25 @@ async function visit(path, { expectChooser = false, loan = null } = {}) {
   );
   const lenderCardText =
     ROLE === 'lender' && loan ? await readLenderCardText(page) : null;
+  // FORCED-CLOSE CARD (#2069), judged on its own evidence.
+  //
+  // `lenderHoldsActive` is deliberately STRICTER than lender-card
+  // eligibility, which admits FallbackPending: this card is gated on
+  // `resolvedLoanStatus === Active`, so a FallbackPending position is
+  // one where its absence is CORRECT. Feeding the looser predicate in
+  // would manufacture a missing-card FAIL on exactly the positions the
+  // product is right about — the same class of error `stillEligible`
+  // exists to avoid for the lender card.
+  const forcedClose =
+    ROLE === 'lender' && loan
+      ? {
+          ...(await readForcedCloseCard(page)),
+          lenderHoldsActive:
+            loan.status === STATUS_ACTIVE &&
+            typeof loan.authority === 'string' &&
+            loan.authority.toLowerCase() === String(observed).toLowerCase(),
+        }
+      : null;
   const holdCard = await page.getByTestId('sale-listing-hold-card').count();
   const freeHeld = await page.getByTestId('free-held-options').count();
   const out = {
@@ -1438,6 +1485,12 @@ async function visit(path, { expectChooser = false, loan = null } = {}) {
     // that then went terminal before the snapshot, had its genuine
     // regression suppressed as a pre-render race.
     cardAbsentAtScrape: ROLE === 'lender' && loan ? lenderCardText === null : false,
+    // The forced-close observation and its verdict, kept whole so the
+    // reporter can print the reason rather than re-deriving it.
+    forcedClose,
+    forcedCloseVerdict: forcedClose
+      ? forcedCloseVerdict(forcedClose, { unknownCopy: FORCED_CLOSE_UNKNOWN })
+      : null,
     // DETAIL PAGES ONLY, gated on `loan` (self-inflicted, caught by
     // running it). The lender card exists only on `/positions/<id>`, and
     // on the LIST route the card locator matches nothing — but a
@@ -2166,6 +2219,43 @@ async function readLenderCardText(page, card) {
   const target = card ?? lenderCardOf(page);
   if ((await target.count()) === 0) return null;
   return await target.innerText({ timeout: 2_000 }).catch(() => null);
+}
+
+/**
+ * The FORCED-CLOSE card, observed on the same visit as the lender exit
+ * chooser and judged separately from it.
+ *
+ * Separately on purpose. The two cards render on the same page for the
+ * same role, and folding their verdicts together is the mistake this
+ * file has already recorded twice: aggregating lets one card's missing
+ * row hide a positively observed defect on the other. Each keeps its
+ * own presence, its own reason and its own contribution to the exit
+ * code.
+ *
+ * WAITS rather than reading once. Its readiness reads are chain reads
+ * that can outrun a single instantaneous scrape, and a false "absent"
+ * here would be reported as a FAIL — the one outcome that gets a check
+ * switched off rather than fixed. `state: 'attached'` because the
+ * question is whether the card mounted at all, which is what the
+ * absence verdict is about; a mounted card scrolled out of view is
+ * still an answer.
+ */
+async function readForcedCloseCard(page, timeoutMs = 20_000) {
+  const card = page.getByTestId('forced-close-card').first();
+  const mounted = await card
+    .waitFor({ state: 'attached', timeout: timeoutMs })
+    .then(() => true)
+    .catch(() => false);
+  if (!mounted) return { mounted: false, text: null, submitDisabled: false };
+  const text = await card.innerText({ timeout: 2_000 }).catch(() => null);
+  const submit = card.getByTestId('forced-close-submit').first();
+  // A card in a withheld state renders no submit control at all, which
+  // reads the same way as a disabled one for this verdict: the action
+  // is not offered. Both are the designed behaviour, so neither is a
+  // finding — only an ABSENT CARD is.
+  const submitDisabled =
+    (await submit.count()) === 0 ? true : await submit.isDisabled().catch(() => true);
+  return { mounted: true, text, submitDisabled };
 }
 
 /**
@@ -3289,7 +3379,19 @@ for (const v of visited) {
                 .join(', ')}]`
             : '') +
           (v.advancedWhy ? ` (${v.advancedWhy})` : '') +
-          (v.advancedJumps ? '' : `\n      sell-now row: ${v.sellNowText ?? '-'}\n      listing row: ${v.listText ?? '-'}`)
+          (v.advancedJumps ? '' : `\n      sell-now row: ${v.sellNowText ?? '-'}\n      listing row: ${v.listText ?? '-'}`) +
+          // Printed on EVERY lender detail visit, including a blocked
+          // one. A verdict that only appears when it fails leaves the
+          // reader unable to tell "checked and fine" from "never
+          // looked" — which is the distinction this whole drive is
+          // built around.
+          (v.forcedCloseVerdict
+            ? `\n      forced-close: ${v.forcedCloseVerdict.verdict}` +
+              ` (${v.forcedCloseVerdict.why})` +
+              (v.forcedCloseVerdict.verdict === 'pass'
+                ? ` checkRunning=${v.forcedCloseVerdict.checkRunning}`
+                : '')
+            : '')
         : `      chooser=${v.chooser} handover=${v.handover} offset=${v.offset}` +
         ` holdCard=${v.holdCard} freeHeldBtn=${v.freeHeld}`,
     );
