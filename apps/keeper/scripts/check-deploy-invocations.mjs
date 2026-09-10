@@ -6712,19 +6712,9 @@ function indentedBlocks(lines, indentRe, startAt = 0) {
  */
 function makefileBlocks(text) {
   const oneshell = /^\s*\.ONESHELL:/m.test(text);
-  // `WORKER := apps/agent` then `cd $(WORKER)` deploys from the protected
-  // package — Make expands the variable before the shell sees the recipe, but
-  // the scanner received `$(WORKER)` and modelled an unknown directory, so the
-  // bare deploy under it passed (#1995 r17). Literal values only, last
-  // assignment wins, `?=` yields to an existing one, and a computed value
-  // CLEARS the name — the same rules the shell-variable model follows.
-  // Collected over the whole file because recursive `=` variables resolve at
-  // use, not at definition.
-  // Recipe membership comes from the model so both consumers agree on it — but
-  // the rule is still `^\t`. Making it follow a settable prefix was tried and
-  // withdrawn (#2105 r7 then r8): the prefix has to be tracked per line, and a
-  // whole-file reading of it applied a late `.RECIPEPREFIX` retroactively and
-  // DROPPED an earlier tab recipe. #2114.
+  // The variable rules and their limits are on this function's JSDoc; there is
+  // ONE consumer of them, this scanner. Recipe membership is `^\t` — following
+  // a settable prefix was tried and withdrawn (#2114).
   const mkVars = new Map();
   for (const l of text.split('\n')) {
     if (/^\t/.test(l)) continue;
@@ -9176,12 +9166,12 @@ for (const file of walk(REPO_ROOT)) {
     // BEFORE a continued deploy read as after it and the rewrite was blessed
     // (r27). Entries from the readers that do not fold carry no `folds` and
     // are unaffected.
-    // Positions are taken in `text`, which is what the write scan reads.
-    // The transformations preserve LINE COUNT — expansion rewrites within a
-    // line, blanking replaces a line with spaces of its own length — so a line
-    // number means the same thing in both, while a CHARACTER offset after an
-    // expansion does not. Measuring both ends in the same text is what makes
-    // the comparison meaningful (#2084).
+    // Positions are taken in `text`, the same text the write scan reads, so
+    // both ends of the ordering comparison are measured in one coordinate
+    // system. That is the whole requirement, and it is why the #2084
+    // transformations were required to preserve line count while they existed;
+    // all three were withdrawn (#2105), so the only adjustment left here is the
+    // fold compensation above.
     const rawAt = (within) =>
       lineStartOffset(
         text,

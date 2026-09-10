@@ -74,9 +74,23 @@ No behaviour change. The check's logic is what it was.
 ### What is deferred
 
 Every symptom this work set out to fix, plus the limitations found while proving
-them, is now recorded separately with its reproduction and what a fix would have
+them, is recorded as its own issue with a reproduction and what a fix would have
 to be true of. All are behaviour the check already had, so nothing is made
-worse.
+worse. Three are additionally pinned by tests that assert the miss:
+
+| | |
+| --- | --- |
+| **#2084** | a build file variable holding a write is not seen — *pinned* |
+| **#2112** | a runbook sentence naming a write reports the deployment below it — *pinned* |
+| **#2114** | a recipe marked by something other than a tab is not read as a recipe — *pinned* |
+| **#2110** | a folded workflow scalar's positions are not comparable with the file's |
+| **#2113** | a write assigned by a live conditional branch is not seen |
+| **#2106** | a build file's prerequisites are ordered as written, not as they run |
+| **#2108** | a step naming another interpreter has its body read as shell |
+| **#2104** | a deployment written as a single-line workflow step whose configuration cannot be read is not reported |
+| **#2085** | whether this detection should be a declaration rather than an inference — the three withdrawals are the strongest evidence yet that it should |
+
+This PR closes none of them.
 
 The common thread, and the most useful conclusion: each attempt asked a question
 about a file that can only be answered by modelling **another system** — a

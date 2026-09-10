@@ -11962,25 +11962,40 @@ describe('check-deploy-invocations — #1996 config identity', () => {
   });
 
   it('a settable recipe prefix is NOT followed (#2114, stated miss)', () => {
-    // A STATED MISS. `.RECIPEPREFIX := >` makes `>`-prefixed lines recipes and
-    // `make -n` expands `$(WRITE)` there; this guard's membership is `^\t`, so
-    // it does not.
+    // A STATED MISS, and the verdict depends on RECIPE MEMBERSHIP ALONE.
     //
-    // Following the prefix was implemented in #2105 r7 and withdrawn in r8:
-    // read over the whole file, a LATE `.RECIPEPREFIX` applied retroactively
-    // and dropped an EARLIER tab recipe, turning a stated miss into a silent
-    // one. Doing it correctly needs per-line prefix and continuation state.
+    // `.RECIPEPREFIX := >` makes `>`-prefixed lines recipes, so `make -n` runs
+    // `cd apps/agent && wrangler deploy`. This guard's membership is `^\t`, so
+    // it finds no recipe, never expands `$(DEP)`, and sees no deploy at all.
     //
-    // The miss is `main`'s miss, so nothing regressed. Asserting it means a
-    // later correct fix fails this fixture rather than passing unnoticed.
+    // THE DEPLOY IS WRITTEN THROUGH A VARIABLE DELIBERATELY, and the sibling
+    // fixture below is the control. Spelled out, the ordinary line scan finds
+    // `wrangler deploy` whatever membership says — and an earlier version of
+    // this fixture did exactly that, so a partial #2114 fix could land without
+    // failing it (#2105 r12). Only `makefileBlocks` expands `$(DEP)`, so only
+    // this shape's verdict is coupled to the prefix.
+    //
+    // Asserting the miss means a correct fix FAILS this fixture and comes back
+    // to #2114 rather than passing unnoticed.
     seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
-    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
     const r = runWith(
       'Makefile',
-      '.RECIPEPREFIX := >\ndeploy:\n>$(WRITE)\n>wrangler deploy --config configs/custom.jsonc\n\n' +
-        "WRITE = printf '{}' > configs/custom.jsonc\n",
+      '.RECIPEPREFIX := >\nnoop:\n>cd apps/agent && $(DEP)\n\nDEP = wrangler deploy\n',
     );
     expect(r.ok).toBe(true);
+  });
+
+  it('the same recipe under a tab IS found (#2114 control)', () => {
+    // The control for the fixture above: identical but tab-indented. Found and
+    // reported, which proves the miss there is about the recipe MARKER and not
+    // about the deploy being undiscoverable in principle. Without this, the
+    // stated-miss fixture could pass for a reason that has nothing to do with
+    // #2114.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith('Makefile', 'noop:\n\tcd apps/agent && $(DEP)\n\nDEP = wrangler deploy\n');
+    expect(r.ok).toBe(false);
   });
 
   it('a write in an earlier step counts against a later one (#2084 bounds)', () => {
