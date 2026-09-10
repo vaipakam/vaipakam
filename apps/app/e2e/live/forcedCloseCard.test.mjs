@@ -1692,3 +1692,79 @@ describe('round 24 review findings', () => {
     expect(v.why).not.toMatch(/refus/i);
   });
 });
+
+describe('round 26 review findings', () => {
+  const copy = { unknownCopy: FORCED_CLOSE.unknown };
+  // A card that is otherwise entirely clean, so every assertion below
+  // isolates the duplicate-control rule rather than riding on some
+  // other defect in the fixture.
+  const held = {
+    lenderHoldsActive: true,
+    mounted: true,
+    attached: true,
+    saleLocked: false,
+    settled: true,
+    visibleCards: 1,
+    bodyPresent: true,
+    bodyVisible: true,
+    bodyText: 'an explanation',
+    text: FORCED_CLOSE.unknown,
+    confirmText: null,
+    confirmExpected: false,
+    submitPresent: true,
+    submitVisible: true,
+    submitDisabled: true,
+  };
+
+  it('FAILS when one card shows two submit controls', () => {
+    const v = forcedCloseVerdict({ ...held, visibleSubmits: 2 }, copy);
+    expect(v.verdict).toBe('fail');
+    expect(v.why).toMatch(/2 forced-close submit controls/);
+  });
+
+  it('passes a card offering exactly one control', () => {
+    expect(
+      forcedCloseVerdict({ ...held, visibleSubmits: 1 }, copy).verdict,
+    ).toBe('pass');
+  });
+
+  it('passes a card offering none — a withheld action is not a duplicate', () => {
+    expect(
+      forcedCloseVerdict(
+        { ...held, visibleSubmits: 0, submitVisible: false },
+        copy,
+      ).verdict,
+    ).toBe('pass');
+  });
+
+  it('invents no finding when the control count was not observed', () => {
+    // Records predating the field must not start failing. Same rule the
+    // duplicate-CARD arm follows, and the reason both are `typeof`
+    // guarded rather than truthiness tests.
+    expect(forcedCloseVerdict({ ...held }, copy).verdict).toBe('pass');
+  });
+
+  it('outranks the content scan, which only ever clicked the first control', () => {
+    // The danger of the duplicate is precisely that the drive interacted
+    // with one of them; a clean content verdict over a partly
+    // interrogated surface is the misleading outcome.
+    const v = forcedCloseVerdict(
+      { ...held, visibleSubmits: 2, text: 'You receive 1.5 WETH' },
+      copy,
+    );
+    expect(v.verdict).toBe('fail');
+    expect(v.why).toMatch(/submit controls/);
+  });
+
+  it('reports the duplicate control even when an action is genuinely offered', () => {
+    // `submitDisabled: false` means the visible set contains an enabled
+    // control, so the actionability flags would answer "action offered"
+    // — correctly, and while concealing that it is offered twice. The
+    // arm exists so that answer does not stand alone.
+    const v = forcedCloseVerdict(
+      { ...held, visibleSubmits: 2, submitDisabled: false },
+      copy,
+    );
+    expect(v.verdict).toBe('fail');
+  });
+});

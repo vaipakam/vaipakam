@@ -684,6 +684,29 @@ export function forcedCloseVerdict(obs, copy) {
       };
     }
 
+    // 1a-ter. MORE THAN ONE SUBMIT CONTROL, same rule one level down
+    // (round 26 P2).
+    //
+    // The card-level duplicate check above does not see two controls
+    // inside ONE card, and that arrangement is the more dangerous of the
+    // two: the readiness copy explains a single decision while the
+    // surface offers the lender two buttons for it. Whichever is
+    // pressed, at most one can be the action the copy describes.
+    //
+    // Reported as a FAIL rather than folded into the actionability
+    // flags, because the flags now answer "is an action offered" from
+    // the visible set and would answer YES here — correctly, and while
+    // hiding that the surface offers the action twice. Ranked beside the
+    // duplicate-card arm and before the content scan for the same
+    // reason: a clean content verdict must not be handed to a reader
+    // over a surface this drive has only partly interrogated.
+    if (typeof obs.visibleSubmits === 'number' && obs.visibleSubmits > 1) {
+      return {
+        verdict: 'fail',
+        why: `${obs.visibleSubmits} forced-close submit controls are visible in one card — the copy explains a single decision while the lender is offered it more than once, and this drive clicks only the first`,
+      };
+    }
+
     // 1b. THE DEFINITE FINDING, before anything that might be missing.
     //
     // ROUND 8 P2 — `bodyText` is scanned TOO. It is captured

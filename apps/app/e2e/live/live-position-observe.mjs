@@ -3147,7 +3147,24 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
         if (shown.length === 0) return { hiddenNow: true };
         const el = shown[0];
         const body = el.querySelector('[data-testid="forced-close-body"]');
-        const submit = el.querySelector('[data-testid="forced-close-submit"]');
+        // ROUND 26 P2 — EVERY SUBMIT CONTROL, not whichever is first.
+        //
+        // `querySelector` described control number one and nothing else.
+        // A render that leaves two in one card — the same duplication
+        // round 19 caught at CARD level, one level down — could put a
+        // DISABLED control first and an ENABLED, clickable one after it:
+        // the drive records "no action offered", classifies withheld
+        // copy as correctly withheld, skips the confirmation entirely,
+        // and passes a card that is inviting the lender to pay gas for a
+        // transaction the protocol will refuse.
+        //
+        // Actionability is therefore derived from the VISIBLE controls
+        // as a set: offered if any visible one is enabled, since that is
+        // the one the lender can actually press. The count travels with
+        // it so the verdict can report the duplication itself — a second
+        // control is a finding, not a detail to resolve silently.
+        const submits = [...el.querySelectorAll('[data-testid="forced-close-submit"]')];
+        const shownSubmits = submits.filter(visible);
         // ROUND 18 P2 — VISIBILITY OF THE CONTROL, in the same pass.
         //
         // `disabled === false` on an element that exists says an action
@@ -3181,9 +3198,17 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
           // three.
           bodyVisible: visible(body),
           bodyText: body === null ? null : body.innerText,
-          submitPresent: submit !== null,
-          submitVisible: visible(submit),
-          submitDisabled: submit === null ? true : submit.disabled === true,
+          submitPresent: submits.length > 0,
+          submitVisible: shownSubmits.length > 0,
+          // Disabled only when EVERY visible control is — one enabled
+          // control among several is an offered action, however many
+          // disabled ones sit beside it. With none visible the old
+          // meaning is kept: nothing pressable, so nothing offered.
+          submitDisabled:
+            shownSubmits.length > 0
+              ? shownSubmits.every((b) => b.disabled === true)
+              : true,
+          visibleSubmits: shownSubmits.length,
         };
       })
       .catch(() => null);
@@ -3206,6 +3231,7 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
       submitPresent: false,
       submitVisible: false,
       submitDisabled: true,
+      visibleSubmits: 0,
       settled: false,
     };
   }
@@ -3225,6 +3251,7 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
       submitPresent: false,
       submitVisible: false,
       submitDisabled: true,
+      visibleSubmits: 0,
       settled: false,
     };
   }
@@ -3341,7 +3368,12 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
   let confirmText = null;
   if (confirmExpected) {
     const opened = await card
-      .getByTestId('forced-close-submit')
+      // ROUND 26 P2 — click the control the verdict judged actionable.
+      // `getByTestId(...).first()` addresses the first in the DOM, which
+      // on a duplicated render is the one that may be disabled; the
+      // actionability above is derived from the VISIBLE set, so the
+      // click has to be too or the two describe different buttons.
+      .locator('[data-testid="forced-close-submit"]:visible')
       .first()
       .click({ timeout: 5_000 })
       .then(() => true)
@@ -3440,7 +3472,29 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
                 '[data-testid^="forced-close-receipt"], dl.receipt .receipt-row',
               ),
             ];
-            return rows.some(visible);
+            // ROUND 26 P2 — ALL SIX ROWS, not one of them.
+            //
+            // `some` banked the scan on a single visible row while the
+            // other five were hidden, and the whole-card `innerText`
+            // still yielded their text — so the amount scan and the
+            // receipt-lead check both ran happily over disclosures the
+            // lender could not see. The rows that go missing under a
+            // partial-hide regression are exactly the ones that matter:
+            // "You can lose" and "Fees". Passing a confirmation scan
+            // over a hidden fee row is the fund-transparency failure
+            // this probe exists to prevent, not a lesser version of it.
+            //
+            // Six is asserted rather than assumed: `ReviewReceipt`
+            // hard-codes six rows in fixed order with no conditionals,
+            // and `ReceiptData` makes all six fields required, so a
+            // receipt showing fewer is either a product regression or a
+            // markup change — and this drive cannot tell those apart
+            // from outside. It reports neither: `false` here leaves
+            // `confirmText` null and the verdict BLOCKS, which says
+            // "the confirmation was not read" rather than inventing a
+            // diagnosis. The generic block reason is a known limitation
+            // and is not fixed here.
+            return rows.length === 6 && rows.every(visible);
           })
           .catch(() => false);
         confirmText = receiptShown
