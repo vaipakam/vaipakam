@@ -2600,24 +2600,26 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
   // control's presence and disabled state from a single synchronous
   // pass over the DOM, so they cannot disagree about which render they
   // came from.
-  const snap = await card
-    .evaluate((el) => {
-      const body = el.querySelector('[data-testid="forced-close-body"]');
-      const submit = el.querySelector('[data-testid="forced-close-submit"]');
-      return {
-        text: el.innerText,
-        bodyPresent: body !== null,
-        bodyText: body === null ? null : body.innerText,
-        submitPresent: submit !== null,
-        submitDisabled: submit === null ? true : submit.disabled === true,
-      };
-    })
-    .catch(() => null);
-  // The whole-card evaluate is atomic, so a null here means the card
-  // went between the visibility wait and this pass — round 7's vanished
-  // case, now detected by the capture itself rather than by a follow-up
-  // count. `bodyPresent: undefined` is what the verdict reads as
-  // "incomplete".
+  const readCard = () =>
+    card
+      .evaluate((el) => {
+        const body = el.querySelector('[data-testid="forced-close-body"]');
+        const submit = el.querySelector('[data-testid="forced-close-submit"]');
+        return {
+          text: el.innerText,
+          bodyPresent: body !== null,
+          bodyText: body === null ? null : body.innerText,
+          submitPresent: submit !== null,
+          submitDisabled: submit === null ? true : submit.disabled === true,
+        };
+      })
+      .catch(() => null);
+
+  let snap = await readCard();
+  // The evaluate is atomic, so a null means the card went between the
+  // visibility wait and this pass — round 7's vanished case, detected by
+  // the capture itself. `bodyPresent: undefined` is what the verdict
+  // reads as "incomplete".
   if (snap === null) {
     return {
       mounted: true,
@@ -2631,35 +2633,49 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
       settled: false,
     };
   }
-  const { bodyPresent, bodyText, submitPresent, submitDisabled } = snap;
-  let text = snap.text;
 
-  // ROUND 1 P2 — ATTACHMENT IS NOT SETTLEMENT, so the copy is re-read
-  // until it leaves the unresolved sentence. Each re-read takes the
-  // control WITH it, for the reason the atomic capture exists: a
-  // verdict that compares copy against control must not mix renders.
-  let settled = !saysCheckRunning(text ?? '', FORCED_CLOSE_COPY.unknownCopy);
-  let liveSubmitDisabled = submitDisabled;
-  let liveSubmitPresent = submitPresent;
+  // ROUND 10 P2 — THE POLL RE-READS EVERYTHING, AND A READY-BUT-DISABLED
+  // RENDER IS NOT YET AN ANSWER.
+  //
+  // Two corrections to round 9's loop, which re-read only the text and
+  // the control:
+  //
+  //   (a) `bodyPresent`/`bodyText` stayed from the UNRESOLVED render, so
+  //       a regression that blanks the explanatory body only in a
+  //       ready/blocked state passed — the heading kept the card text
+  //       non-empty and the stale body looked fine. Every poll now
+  //       re-snapshots the whole card, and the values returned come from
+  //       the render that established settlement.
+  //
+  //   (b) `ready` in `useDiamondWrite` is `onSupportedChain &&
+  //       Boolean(walletClient)`, and wagmi's `useWalletClient()`
+  //       resolves ASYNCHRONOUSLY. So a card can legitimately render
+  //       ready copy for a moment while its button is still disabled,
+  //       waiting on the wallet client. Ending the poll on the copy
+  //       alone captured that intermediate pair and handed it to the
+  //       round-7 ready-without-action arm, which exits 1 — a false
+  //       product accusation from a page that was about to be correct.
+  //
+  // So the wait ends when the card is settled AND not in that transient
+  // pair. The FAIL now requires the combination to PERSIST to the
+  // deadline rather than to have existed for an instant, which is the
+  // same standard the rest of this drive applies: a defect is something
+  // that stayed true while being looked at.
+  const readyPending = (v) =>
+    v.submitDisabled &&
+    FORCED_CLOSE_COPY.readyCopy.some((sentence) => (v.text ?? '').includes(sentence));
+
+  let settled = !saysCheckRunning(snap.text ?? '', FORCED_CLOSE_COPY.unknownCopy);
   const deadline = Date.now() + timeoutMs;
-  while (!settled && Date.now() < deadline) {
+  while ((!settled || readyPending(snap)) && Date.now() < deadline) {
     await page.waitForTimeout(1_000);
-    const again = await card
-      .evaluate((el) => {
-        const submit = el.querySelector('[data-testid="forced-close-submit"]');
-        return {
-          text: el.innerText,
-          submitPresent: submit !== null,
-          submitDisabled: submit === null ? true : submit.disabled === true,
-        };
-      })
-      .catch(() => null);
+    const again = await readCard();
     if (again === null) break;
-    text = again.text;
-    liveSubmitPresent = again.submitPresent;
-    liveSubmitDisabled = again.submitDisabled;
-    settled = !saysCheckRunning(text ?? '', FORCED_CLOSE_COPY.unknownCopy);
+    snap = again;
+    settled = !saysCheckRunning(snap.text ?? '', FORCED_CLOSE_COPY.unknownCopy);
   }
+
+  const { text, bodyPresent, bodyText, submitPresent, submitDisabled } = snap;
 
   // ROUND 2 P2 — a submittable card whose confirmation could NOT be read
   // is `confirmExpected` with `confirmText === null`, which the verdict
@@ -2669,7 +2685,7 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
   // findings above it.
   // The submit facts come from the atomic capture (round 9 P2), so the
   // control this clicks is the one the verdict judged.
-  const confirmExpected = liveSubmitPresent && !liveSubmitDisabled;
+  const confirmExpected = submitPresent && !submitDisabled;
   let confirmText = null;
   if (confirmExpected) {
     const opened = await card
@@ -2713,7 +2729,7 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
     bodyPresent,
     confirmText,
     confirmExpected,
-    submitDisabled: liveSubmitDisabled,
+    submitDisabled,
     settled,
   };
 }
