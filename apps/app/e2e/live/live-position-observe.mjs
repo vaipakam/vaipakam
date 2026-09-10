@@ -1645,23 +1645,94 @@ await discovery('installing the provider init script', () =>
  * observed page head is reported as unconfirmed rather than as a
  * defect, so silence here is conservative rather than permissive.
  */
-const pageHeads = new WeakMap();
+/**
+ * ROUND 18 P2 — HEADS ARE SCOPED TO THE DEPLOYMENT ENDPOINT.
+ *
+ * The page deliberately talks to more than one network: `wagmi.ts`
+ * registers an explicit chain-1 transport so ENS reverse lookups
+ * resolve, and this file already reasons about that where it decides
+ * which endpoint serves the deployment. Pooling every observed height
+ * into one maximum mixes those chains, and heights are not comparable
+ * across them.
+ *
+ * The failure is not symmetric, which is why neither direction can be
+ * waved through:
+ *
+ *   TOO HIGH (a foreign chain further along) — the observer can never
+ *     pass `pageHead`, so every absence downgrades to incomplete and the
+ *     assertion this drive advertises can never fire. Silent, and it
+ *     looks exactly like a healthy run.
+ *   TOO LOW (a Diamond head skipped) — the gate is passed too easily
+ *     and a false missing-card FAIL becomes reachable again.
+ *
+ * So heights are recorded PER ENDPOINT and resolved only against
+ * endpoints positively known to carry Diamond calls. Attribution is by
+ * positive evidence rather than by excluding known ENS URLs, for the
+ * reason this file already gives about `callsTargetContract`: the ENS
+ * endpoint comes from the deployed bundle's own env, this driver cannot
+ * enumerate it, and an exclusion list would silently stop matching.
+ *
+ * Resolution is DEFERRED rather than decided at record time, which is
+ * what makes it order-independent: a page can announce a head on an
+ * endpoint before it issues its first Diamond call there, and dropping
+ * that height would be the too-low failure above.
+ */
+const pageRpcHeads = new WeakMap(); // page -> Map<key, bigint>
+const pageDiamondKeys = new WeakMap(); // page -> Set<key>
 
 function watchPageHead(page) {
-  pageHeads.set(page, 0n);
-  const record = (seen) => {
-    if (seen !== null && seen > (pageHeads.get(page) ?? 0n)) pageHeads.set(page, seen);
+  const heads = new Map();
+  const diamond = new Set();
+  pageRpcHeads.set(page, heads);
+  pageDiamondKeys.set(page, diamond);
+
+  const recordHead = (key, seen) => {
+    if (seen === null || seen === undefined) return;
+    if (seen > (heads.get(key) ?? 0n)) heads.set(key, seen);
   };
+  // An endpoint counts as serving the deployment when the page ASKS IT
+  // ABOUT THE DIAMOND. Two tests, because one is not enough:
+  //
+  //   - `callsTargetContract` reads the `to` of the shapes it knows.
+  //   - the raw body carrying the Diamond address catches the case that
+  //     one misses, and it is the COMMON one: viem batches contract
+  //     reads through multicall3, so the `to` is the aggregator and the
+  //     Diamond appears only inside the encoded calldata. Attribution by
+  //     `to` alone marked nothing, which showed up immediately as
+  //     `pageHead=unobserved` on the live run — the print earning its
+  //     place on the first run after it was added.
+  //
+  // Still positive evidence rather than an exclusion list, for the
+  // reason this file already gives: the ENS endpoint comes from the
+  // deployed bundle's own env and cannot be enumerated here.
+  const DIAMOND_HEX = String(DIAMOND).replace(/^0x/, '').toLowerCase();
+  const markDiamond = (key, body) => {
+    try {
+      if (typeof body === 'string' && body.toLowerCase().includes(DIAMOND_HEX)) {
+        diamond.add(key);
+        return;
+      }
+      if (callsTargetContract(rpcCallsFromBody(body), DIAMOND)) diamond.add(key);
+    } catch {
+      // Observational only.
+    }
+  };
+
   // ROUND 16 P2 — SOCKETS TOO, not only HTTP. `wagmi.ts` wraps the chain
   // reads in `fallback([webSocket, http])`, so on a healthy network the
   // page can learn a new block over a socket and never issue the
   // `eth_blockNumber` an HTTP-only listener depends on — its announced
   // head then lags its real one, and the gate compares against a bound
   // that stopped moving.
+  //
+  // A socket is its own endpoint: keyed by the socket object, and marked
+  // as deployment-serving by what the PAGE sends over it.
   page.on('websocket', (ws) => {
+    const key = ws;
+    ws.on('framesent', ({ payload }) => markDiamond(key, payload));
     ws.on('framereceived', ({ payload }) => {
       try {
-        record(blockNumberFromWsFrame(payload));
+        recordHead(key, blockNumberFromWsFrame(payload));
       } catch {
         // Observational only, exactly as below.
       }
@@ -1672,23 +1743,41 @@ function watchPageHead(page) {
       const req = res.request();
       if (req.method().toUpperCase() !== 'POST') return;
       const body = req.postData();
+      if (!body) return;
+      const key = res.url();
+      markDiamond(key, body);
       // Cheap reject before parsing — most POSTs are not this.
-      if (!body || !body.includes('eth_blockNumber')) return;
+      if (!body.includes('eth_blockNumber')) return;
       // The PARSE is a pure function in `rpc-verdict.mjs`, tested
       // there. Batches answered out of order, batches mixing methods
       // and error members where a result was expected are the cases
       // that matter, and a live chain will not reliably produce any of
       // them — inline here, none of them could be exercised.
-      record(blockNumberFromRpcPair(body, await res.json()));
+      recordHead(key, blockNumberFromRpcPair(body, await res.json()));
     } catch {
       // Observational only. See the note above.
     }
   });
 }
 
-/** What the page has been seen to know, or 0n if nothing was observed. */
+/**
+ * The highest head the page announced ON AN ENDPOINT SERVING THE
+ * DIAMOND, or 0n if none was observed.
+ *
+ * 0n also covers "heights were seen, but only on endpoints never proven
+ * to serve the deployment" — which is the honest answer rather than a
+ * conservative guess, and the gate treats it as not-ready.
+ */
 function pageHeadOf(page) {
-  return pageHeads.get(page) ?? 0n;
+  const heads = pageRpcHeads.get(page);
+  const diamond = pageDiamondKeys.get(page);
+  if (!heads || !diamond) return 0n;
+  let best = 0n;
+  for (const [key, seen] of heads) {
+    if (!diamond.has(key)) continue;
+    if (seen > best) best = seen;
+  }
+  return best;
 }
 
 /**
@@ -2776,6 +2865,8 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
       bodyPresent: undefined,
       confirmText: null,
       confirmExpected: false,
+      submitPresent: false,
+      submitVisible: false,
       submitDisabled: false,
       settled: false,
     };
@@ -2822,11 +2913,41 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
       .evaluate((el) => {
         const body = el.querySelector('[data-testid="forced-close-body"]');
         const submit = el.querySelector('[data-testid="forced-close-submit"]');
+        // ROUND 18 P2 — VISIBILITY OF THE CONTROL, in the same pass.
+        //
+        // `disabled === false` on an element that exists says an action
+        // is OFFERED, and a CSS regression that hides an enabled button
+        // makes that false in both directions: on withheld copy it
+        // manufactures a FAIL claiming the lender was offered a
+        // fee-paying transaction, and on ready copy it lets the poll
+        // settle on an action nobody can click, reported later as a
+        // merely incomplete confirmation rather than as the missing
+        // usable action it is.
+        //
+        // Same defect as round 3's on the card itself, one level down —
+        // there `attached` was mistaken for `visible`, here existence
+        // for actionability. Captured in this evaluate rather than by a
+        // second round-trip so it cannot describe a different render
+        // from the copy it is judged against (round 9 P2).
+        //
+        // Rect AND computed style: `offsetParent` is null for a
+        // `position: fixed` element, which is visible.
+        const visible = (node) => {
+          if (node === null) return false;
+          const cs = getComputedStyle(node);
+          if (cs.display === 'none' || cs.visibility === 'hidden' || cs.visibility === 'collapse') {
+            return false;
+          }
+          if (Number(cs.opacity) === 0) return false;
+          const r = node.getBoundingClientRect();
+          return r.width > 0 && r.height > 0;
+        };
         return {
           text: el.innerText,
           bodyPresent: body !== null,
           bodyText: body === null ? null : body.innerText,
           submitPresent: submit !== null,
+          submitVisible: visible(submit),
           submitDisabled: submit === null ? true : submit.disabled === true,
         };
       })
@@ -2846,6 +2967,8 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
       bodyPresent: undefined,
       confirmText: null,
       confirmExpected: false,
+      submitPresent: false,
+      submitVisible: false,
       submitDisabled: true,
       settled: false,
     };
@@ -2879,7 +3002,7 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
   // same standard the rest of this drive applies: a defect is something
   // that stayed true while being looked at.
   const readyPending = (v) =>
-    v.submitDisabled &&
+    (v.submitDisabled || v.submitVisible === false) &&
     FORCED_CLOSE_COPY.readyCopy.some((sentence) => (v.text ?? '').includes(sentence));
 
   let settled = !saysCheckRunning(snap.text ?? '', FORCED_CLOSE_COPY.unknownCopy);
@@ -2910,6 +3033,8 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
         bodyPresent: undefined,
         confirmText: null,
         confirmExpected: false,
+        submitPresent: false,
+        submitVisible: false,
         submitDisabled: true,
         settled: false,
       };
@@ -2918,7 +3043,7 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
     settled = !saysCheckRunning(snap.text ?? '', FORCED_CLOSE_COPY.unknownCopy);
   }
 
-  const { text, bodyPresent, bodyText, submitPresent, submitDisabled } = snap;
+  const { text, bodyPresent, bodyText, submitPresent, submitVisible, submitDisabled } = snap;
 
   // ROUND 2 P2 — a submittable card whose confirmation could NOT be read
   // is `confirmExpected` with `confirmText === null`, which the verdict
@@ -2928,7 +3053,10 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
   // findings above it.
   // The submit facts come from the atomic capture (round 9 P2), so the
   // control this clicks is the one the verdict judged.
-  const confirmExpected = submitPresent && !submitDisabled;
+  // A hidden control cannot be clicked, so no confirmation is expected
+  // from one — the verdict reports the missing usable action instead
+  // (round 18 P2).
+  const confirmExpected = submitPresent && submitVisible && !submitDisabled;
   let confirmText = null;
   if (confirmExpected) {
     const opened = await card
@@ -2972,6 +3100,8 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
     bodyPresent,
     confirmText,
     confirmExpected,
+    submitPresent,
+    submitVisible,
     submitDisabled,
     settled,
   };

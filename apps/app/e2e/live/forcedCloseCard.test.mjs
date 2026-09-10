@@ -1335,3 +1335,91 @@ describe('confirmationReady — round 14: caught up, not merely moved', () => {
     expect(v.blockedKind).toBe('incomplete');
   });
 });
+
+describe('round 18 — a hidden control is not an offered action', () => {
+  const copy = {
+    unknownCopy: FORCED_CLOSE.unknown,
+    readyCopy: [FORCED_CLOSE.readyInKind],
+    withheldCopy: [FORCED_CLOSE.unknown, FORCED_CLOSE.notYet],
+  };
+  const base = {
+    lenderHoldsActive: true,
+    mounted: true,
+    attached: true,
+    saleLocked: false,
+    settled: true,
+    bodyPresent: true,
+    confirmText: null,
+    confirmExpected: false,
+    submitPresent: true,
+  };
+
+  // WITHHELD COPY + hidden-but-enabled control. The old predicate read
+  // `!submitDisabled` as "an action is offered" and manufactured a FAIL
+  // claiming the lender was offered a fee-paying transaction on a route
+  // that deliberately offers none.
+  it('does not accuse a withheld route because a hidden control is enabled', () => {
+    const v = forcedCloseVerdict(
+      {
+        ...base,
+        text: FORCED_CLOSE.notYet,
+        bodyText: FORCED_CLOSE.notYet,
+        submitVisible: false,
+        submitDisabled: false,
+      },
+      copy,
+    );
+    expect(v.verdict).toBe('pass');
+    expect(v.why).toMatch(/enabled but not visible/);
+  });
+
+  // READY COPY + hidden-but-enabled control. The lender is told the
+  // close-out is available and has nothing to click. Previously the poll
+  // settled on it and the run reported an incomplete confirmation, which
+  // describes the harness rather than the defect.
+  it('FAILS a ready route whose only control cannot be seen', () => {
+    const v = forcedCloseVerdict(
+      {
+        ...base,
+        text: FORCED_CLOSE.readyInKind,
+        bodyText: FORCED_CLOSE.readyInKind,
+        submitVisible: false,
+        submitDisabled: false,
+      },
+      copy,
+    );
+    expect(v.verdict).toBe('fail');
+  });
+
+  it('still FAILS a withheld route that offers a genuinely usable control', () => {
+    // The arm must not be blunted: visible AND enabled on withheld copy
+    // is the original defect and stays a failure.
+    const v = forcedCloseVerdict(
+      {
+        ...base,
+        text: FORCED_CLOSE.notYet,
+        bodyText: FORCED_CLOSE.notYet,
+        submitVisible: true,
+        submitDisabled: false,
+      },
+      copy,
+    );
+    expect(v.verdict).toBe('fail');
+  });
+
+  it('treats an observation predating the field as saying nothing about visibility', () => {
+    // `submitVisible: undefined` must not invent a finding on records
+    // written before the field existed.
+    const v = forcedCloseVerdict(
+      {
+        ...base,
+        text: FORCED_CLOSE.readyInKind,
+        bodyText: FORCED_CLOSE.readyInKind,
+        submitDisabled: false,
+      },
+      copy,
+    );
+    expect(v.verdict).toBe('pass');
+    expect(v.why).toBe('card present and submittable');
+  });
+});

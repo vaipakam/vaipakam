@@ -731,7 +731,22 @@ export function forcedCloseVerdict(obs, copy) {
   // outranks an uncertain one. An enabled control on a withheld state
   // was seen; the settlement question was not answered. The seen thing
   // wins.
-  if (!obs.submitDisabled && Array.isArray(copy?.withheldCopy)) {
+  // ROUND 18 P2 — AN OFFER IS A CONTROL THE LENDER CAN ACTUALLY USE.
+  //
+  // `disabled === false` on an element that EXISTS is not the same
+  // claim. A CSS regression that hides an enabled button is wrong in
+  // both directions: on withheld copy it manufactures a FAIL saying the
+  // lender was offered a fee-paying transaction, and on ready copy it
+  // hides the missing usable action behind a merely incomplete
+  // confirmation. Same defect as round 3's on the card itself, one
+  // level down — existence mistaken for actionability.
+  //
+  // `!== false` rather than a truthy test, deliberately: an observation
+  // that predates this field says nothing about visibility, and treating
+  // silence as "hidden" would invent findings on every older record.
+  const actionOffered = obs.submitVisible !== false && !obs.submitDisabled;
+
+  if (actionOffered && Array.isArray(copy?.withheldCopy)) {
     const withheld = copy.withheldCopy.find(
       (sentence) => typeof sentence === 'string' && sentence && (obs.text ?? '').includes(sentence),
     );
@@ -783,7 +798,7 @@ export function forcedCloseVerdict(obs, copy) {
   // action directly. The explanation is what distinguishes a safe
   // withheld state from an actionable one, so it has to be consulted
   // rather than assumed.
-  if (obs.submitDisabled && Array.isArray(copy?.readyCopy)) {
+  if (!actionOffered && Array.isArray(copy?.readyCopy)) {
     const ready = copy.readyCopy.find(
       (sentence) => typeof sentence === 'string' && sentence && (obs.text ?? '').includes(sentence),
     );
@@ -868,8 +883,10 @@ export function forcedCloseVerdict(obs, copy) {
 
   return {
     verdict: 'pass',
-    why: obs.submitDisabled
-      ? 'card present and non-submittable — the withheld-but-explained state'
+    why: !actionOffered
+      ? obs.submitVisible === false && !obs.submitDisabled
+        ? 'card present and non-submittable — the control is enabled but not visible'
+        : 'card present and non-submittable — the withheld-but-explained state'
       : 'card present and submittable',
     checkRunning,
     confirmScanned: Boolean(obs.confirmText),
