@@ -6,7 +6,7 @@ three ways that question reads text which does not correspond to what runs.
 
 **It fixes none of them, and changes no behaviour at all.** Every attempt was
 withdrawn under review. What lands is the record of why, and tests that pin the
-wrong verdicts that remain — two misses and one false report — so a later fix
+wrong verdicts that remain — three silent passes and two false reports — so a later fix
 announces itself instead of passing unnoticed.
 
 That is worth landing on its own. Two of these designs are the kind a
@@ -64,16 +64,20 @@ No behaviour change. The check's logic is what it was.
 - The reasoning above, recorded beside the code that would have to change, in
   the functional specification, and here — so the next person does not rebuild
   one of these designs without knowing what happened to it.
-- Tests that **assert three current wrong verdicts** — two misses and one false
-  report — so a later fix fails them and comes back to the question rather than
-  passing silently: a build file variable holding a write is not seen when its
-  assignment sits below the deployment; a recipe marked by something other than
-  a tab is not read as a recipe; and, in the
-  other direction, a runbook sentence naming a write **reports** the deployment
-  below it. That third one's test asserts the report, not a miss.
+- Tests that **assert five current wrong verdicts**, so a later fix fails them
+  and comes back to the question rather than passing silently. Three are silent
+  passes: a build file variable holding a write is not seen when its assignment
+  sits below the deployment; a recipe marked by something other than a tab is
+  not read as a recipe; and a Windows-shell helper whose deployment follows an
+  unrelated line ending in a backslash is read as one command, so a safety flag
+  that belongs to the earlier line is taken to cover the deployment. Two fail
+  the other way and their tests assert the **report**: a runbook sentence naming
+  a write reports the deployment below it, and a package manifest whose
+  description merely names the command is reported as performing it.
 - Two tests pinning that a bare command line and an inline command span in a
   document **are** read as commands — the two shapes that defeated the withdrawn
   designs, so a future attempt cannot quietly reintroduce the erasure.
+- Controls beside the last two, so neither can pass for an unrelated reason.
 
 ### What is deferred
 
@@ -81,14 +85,16 @@ Every symptom this work set out to fix, plus the limitations found while proving
 them — including two false greens surfaced while correcting this record itself —
 is recorded as its own issue with a reproduction and what a fix would have
 to be true of. All are behaviour the check already had, so nothing is made
-worse. Three are additionally pinned by tests that assert the current verdict —
-two of them a miss, one a false report:
+worse. Five are additionally pinned by tests that assert the current verdict —
+three of them a silent pass, two a false report:
 
 | | |
 | --- | --- |
 | **#2084** | a build file variable holding a write is not seen, when the assignment sits below the deployment — *pinned (miss)* |
 | **#2112** | a runbook sentence naming a write reports the deployment below it — *pinned (false report)* |
 | **#2114** | a recipe marked by something other than a tab is not read as a recipe — *pinned (miss)* |
+| **#2118** | a Windows-shell helper's deployment is lent a safety flag by the unrelated line above it, when that line ends in a character that shell does not treat as a continuation — *pinned (silent pass)* |
+| **#2119** | every string value in a manifest is read as a command, so a description naming the deployment is reported as performing it — *pinned (false report)* |
 | **#2110** | a folded workflow scalar's positions are not comparable with the file's |
 | **#2113** | a write assigned by a live conditional branch is not seen |
 | **#2106** | a build file's prerequisites are ordered as written, not as they run |

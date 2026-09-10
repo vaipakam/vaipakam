@@ -8942,10 +8942,23 @@ for (const file of walk(REPO_ROOT)) {
   //     into the same form its workflow-body equivalent takes. Both dialects
   //     get separators, and the TITLE-CASE spelling of the command lowered —
   //     only that one, so `WRANGLER deploy` is still missed although Windows
-  //     runs it (a false green on main too, #2115). Beyond that they DIFFER:
+  //     runs it (a false green on main too, #2115). That rule errs BOTH ways:
+  //     the spelling it does cover is also matched inside a here-string the
+  //     shell never runs. Not a fault of the rewrite — the lower-case spelling
+  //     is already reported there, no rewrite involved — so it WIDENS the
+  //     reach of the missing string state below rather than adding a fault
+  //     (#2115). Beyond that the two dialects DIFFER:
   //     `cmd` folds caret continuations, `pwsh` rewrites `$x = 'v'` into `x=v`
   //     so the shared variable model resolves it, and neither gets the other's
   //     rule.
+  //
+  //     "AND NO CONTINUATION FOLDING HAPPENS FOR PWSH" WAS WRONG — it was
+  //     true of `forInterpreter` and false of the pipeline. `logicalLines`
+  //     runs AFTER this for every language and folds a trailing backslash,
+  //     which pwsh does not treat as a continuation at all, so an unrelated
+  //     line ending in one merges with the deploy below it and lends it a
+  //     `--keep-vars` it never had. A false GREEN on main too (#2118) — the
+  //     direction this check must not fail in.
   //
   //     THE PWSH REWRITE IS NOT PURELY SEMANTICS-PRESERVING, and an earlier
   //     version of this note claimed it was. It has no string state, so an
@@ -8962,6 +8975,21 @@ for (const file of walk(REPO_ROOT)) {
   //     UNRELATED sibling script's write is not part of the script being
   //     judged. A selection — but of a boundary the FORMAT draws, not of "the
   //     parts that look executable", which is the selection that failed.
+  //
+  //     THE REASON IS NARROWER THAN THE CODE, and this note claimed the two
+  //     matched. `jsonValueLines` turns EVERY `: "…"` string in a JSON/JSONC
+  //     file into its own scanned command line — a `description`, a
+  //     `wrangler.jsonc` var — not just the `scripts` map. So a manifest whose
+  //     description merely NAMES the command is reported as deploying it. A
+  //     false RED on main too (#2119).
+  //
+  //     It is the EXTRACTION's breadth, not the `lang: 'shell'` label and not
+  //     `valueScoped`. Worth stating because the obvious reading blames the
+  //     label: relabelling these entries leaves the false report standing,
+  //     while bypassing the extraction removes it. The label is right and
+  //     load-bearing for redirections inside script values (r13), and
+  //     `valueScoped` only picks the coordinate space for the rewrite
+  //     question. Fixing either would not touch this.
   //
   //     Not every sibling is unrelated, and this scope misses the ones that
   //     are not: `release: pnpm run generate && wrangler deploy` really does

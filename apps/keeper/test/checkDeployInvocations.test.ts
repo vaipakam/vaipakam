@@ -11861,15 +11861,20 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
   // rounds building and withdrawing, then further rounds correcting this
   // record itself; the PR carries the running count, deliberately not this
   // file, since every such round would restale a number written here).
-  // Nothing transforms the text now, bar two pre-existing exceptions neither
-  // of which these fixtures exercise: the Windows normalisation, and a
-  // manifest script judged against its declared value. So they pin two
-  // things:
-  // the shapes that defeated the withdrawn designs, and three WRONG VERDICTS
-  // that remain — two misses and one false report, asserted so a later fix
-  // fails them and comes back to the question instead of passing unnoticed.
-  // The direction matters and is not decoration: #2084 and #2114 are silent
-  // misses, #2112 is the opposite failure and its fixture asserts a REPORT.
+  // Nothing transforms the text now, bar two pre-existing exceptions: the
+  // Windows normalisation, and a manifest script judged against its declared
+  // value. An earlier version of this note said no fixture here exercises
+  // those two — the last two pairs below exercise exactly them, and each
+  // exception turned out to carry a wrong verdict of its own (r20).
+  //
+  // So they pin two things: the shapes that defeated the withdrawn designs,
+  // and five WRONG VERDICTS that remain, asserted so a later fix fails them
+  // and comes back to the question instead of passing unnoticed.
+  //
+  // The direction matters and is not decoration. Three are SILENT PASSES —
+  // #2084, #2114 and #2118 — and two fail the opposite way, so their fixtures
+  // assert a REPORT: #2112 and #2119. A fixture that pinned the wrong
+  // direction would pass while the guard did the wrong thing.
   //
   //   - COLLECTING the executable parts. Six ingestion paths missed, every
   //     omission a false green; two enumerations of "all the paths" incomplete.
@@ -12030,6 +12035,77 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
     const r = runWith('Makefile', 'noop:\n\tcd apps/agent && $(DEP)\n\nDEP = wrangler deploy\n');
     expect(r.ok).toBe(false);
+  });
+
+  it('a pwsh trailing backslash lends its flag to the deploy below (#2118, stated false green)', () => {
+    // A STATED FALSE GREEN, and the most dangerous verdict this file pins.
+    //
+    // PowerShell's continuation character is the BACKTICK. A trailing
+    // backslash is an ordinary argument, so these are TWO commands and the
+    // deploy carries no flag — it really would delete every dashboard-managed
+    // var. `forInterpreter` applies no folding for pwsh, but `logicalLines`
+    // runs afterwards for every language alike and folds backslash-newline,
+    // so `--keep-vars` from the unrelated `Write-Output` attaches to the
+    // deploy beside it.
+    //
+    // The backslash is the ONLY difference from the control below. Asserting
+    // the pass means a fix fails here and comes back to #2118 — and a fix is
+    // a behaviour change with a blast radius, since every deploy currently
+    // blessed this way starts reporting.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith('apps/agent/d.ps1', "cd apps/agent\nWrite-Output '--keep-vars' \\\nwrangler deploy\n");
+    expect(r.ok).toBe(true);
+  });
+
+  it('the same helper without the backslash IS reported (#2118 control)', () => {
+    // The control: identical but for the trailing backslash. Reported, which
+    // proves the pass above is about the FOLDING and not about a `.ps1`
+    // helper's deploy being invisible in principle.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith('apps/agent/d.ps1', "cd apps/agent\nWrite-Output '--keep-vars'\nwrangler deploy\n");
+    expect(r.ok).toBe(false);
+  });
+
+  it('an inert manifest description is read as a deploy (#2119, stated false report)', () => {
+    // A STATED FALSE REPORT, in the opposite direction to #2118 above.
+    //
+    // Every declared script here is correct — `deploy` carries the flag. The
+    // block comes from `description`, which nothing executes.
+    //
+    // THE MECHANISM IS THE EXTRACTION, NOT THE LABEL, and the mutation check
+    // is what settled it: `jsonValueLines` turns EVERY `: "…"` string in a
+    // `.json`/`.jsonc` file into its own scanned command line, so any value
+    // naming the command is read as one. Relabelling those entries away from
+    // `shell` leaves this fixture passing unchanged; bypassing
+    // `jsonValueLines` altogether is what flips it. So the `lang: 'shell'`
+    // label — which is right, and load-bearing for redirections inside script
+    // values (r13) — is NOT what produces this, and neither is the
+    // value-scoped rewrite coordinate. The breadth of the extraction is.
+    //
+    // This is the guard's own restraint inverted: it would rather miss an
+    // exotic spelling than report text that performs no write, and here it
+    // reports text that runs nothing at all.
+    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith(
+      'apps/agent/package.json',
+      '{"name":"@vaipakam/agent","description":"wrangler deploy",' +
+        '"scripts":{"deploy":"wrangler deploy --keep-vars"}}\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('the same manifest with an ordinary description passes (#2119 control)', () => {
+    // The control: identical but for the description text. Passing, which
+    // proves the report above comes from that value and not from the scripts.
+    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith(
+      'apps/agent/package.json',
+      '{"name":"@vaipakam/agent","description":"publishes the worker",' +
+        '"scripts":{"deploy":"wrangler deploy --keep-vars"}}\n',
+    );
+    expect(r.ok).toBe(true);
   });
 
   it('a write in an earlier step counts against a later one (#2084 bounds)', () => {
