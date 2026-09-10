@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-10T04:20:58.984Z",
+  "generatedAt": "2026-09-10T08:08:57.960Z",
   "purpose": "#1566 grandfathered-custody census — decides whether slices 0-3 are live work or a certified no-op",
   "scope": "all-deployed-chains",
   "allClassesEmpty": false,
@@ -102,8 +102,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "307273927",
-      "atBlockHash": "0x095dcae70da216bfcbf42753106ca95c52261c3916c0a9ba847b5b7d4b44449e",
+      "atBlock": "307313703",
+      "atBlockHash": "0x0f00ab4c150269471599a747aa22f6869048b590a801cc18c19000c00fead464",
       "blockTag": "finalized",
       "rpcHost": "arbitrum-sepolia.gateway.tenderly.co",
       "scanned": {
@@ -114,6 +114,59 @@
         "noCode": false,
         "custodySurfaceUnrouted": false,
         "loupeRouted": true,
+        "earlierEraRead": {
+          "method": "eth_getStorageAt pinned by the census block hash (EIP-1898, requireCanonical)",
+          "slotTable": "contracts/deployments/storage-slots.json (forge probe; StorageSlotPinTest)",
+          "eraTable": "contracts/deployments/storage-slot-eras.json (32 eras since 2026-05-01; head 655b44e25)",
+          "calibration": "contracts/test/StorageSlotCalibrationTest.t.sol — derived slots vs routed getters on non-zero rows",
+          "distinctSlots": {
+            "borrowerLifRebate": 12,
+            "fallbackSnapshot": 5,
+            "intentCommits": 3,
+            "intentLiveCommitCount": 3,
+            "nextLoanId": 1,
+            "totalLoansEverCreated": 7
+          },
+          "slotsRead": 622,
+          "loansScanned": 13,
+          "truncated": false,
+          "nextLoanIdFromStorage": "13",
+          "erasPerField": {
+            "borrowerLifRebate": 12,
+            "fallbackSnapshot": 5,
+            "intentCommits": 3,
+            "intentLiveCommitCount": 3,
+            "nextLoanId": 1,
+            "totalLoansEverCreated": 7
+          },
+          "rowsFound": {
+            "vpfiHeldCustody": 0,
+            "rebateRows": 0,
+            "fallbackSnapshotCustody": 0,
+            "liveIntentCommits": 0
+          },
+          "headSlotRows": {
+            "vpfiHeldCustody": 0,
+            "rebateRows": 0,
+            "fallbackSnapshotCustody": 0,
+            "liveIntentCommits": 0
+          },
+          "earlierEraCounters": [],
+          "aliasedCountersIgnored": [
+            {
+              "which": "totalLoansEverCreated",
+              "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10e58",
+              "value": "5500",
+              "aliases": "interestRateBpsSum"
+            }
+          ],
+          "getterDisagreements": {
+            "vpfiHeldCustody": 0,
+            "rebateRows": 0,
+            "fallbackSnapshotCustody": 0,
+            "liveIntentCommits": 0
+          }
+        },
         "intentSource": "getIntentCommit view (live state, history-independent)",
         "intentSurfaceRouted": true,
         "intentProducerRouted": true,
@@ -125,13 +178,15 @@
           "status": "proven",
           "count": 0,
           "total": "0",
-          "rows": []
+          "rows": [],
+          "historicalRows": 0
         },
         "rebateRows": {
           "status": "proven",
           "count": 0,
           "total": "0",
-          "rows": []
+          "rows": [],
+          "historicalRows": 0
         },
         "fallbackSnapshotCustody": {
           "status": "indeterminate",
@@ -140,7 +195,8 @@
           "total": "0",
           "rows": [],
           "nonVpfiRowsExcluded": [],
-          "unknownAssetRows": []
+          "unknownAssetRows": [],
+          "historicalRows": 0
         },
         "liveIntentCommits": {
           "status": "indeterminate",
@@ -149,7 +205,8 @@
           "count": 0,
           "total": "0",
           "rows": [],
-          "nonVpfiRowsExcluded": []
+          "nonVpfiRowsExcluded": [],
+          "historicalRows": 0
         }
       }
     },
@@ -164,8 +221,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "307273927",
-      "atBlockHash": "0x095dcae70da216bfcbf42753106ca95c52261c3916c0a9ba847b5b7d4b44449e",
+      "atBlock": "307313703",
+      "atBlockHash": "0x0f00ab4c150269471599a747aa22f6869048b590a801cc18c19000c00fead464",
       "blockTag": "finalized",
       "rpcHost": "arbitrum-sepolia.gateway.tenderly.co",
       "scanned": {
@@ -176,11 +233,79 @@
         "noCode": false,
         "custodySurfaceUnrouted": false,
         "loupeRouted": true,
+        "earlierEraRead": {
+          "method": "eth_getStorageAt pinned by the census block hash (EIP-1898, requireCanonical)",
+          "slotTable": "contracts/deployments/storage-slots.json (forge probe; StorageSlotPinTest)",
+          "eraTable": "contracts/deployments/storage-slot-eras.json (32 eras since 2026-05-01; head 655b44e25)",
+          "calibration": "contracts/test/StorageSlotCalibrationTest.t.sol — derived slots vs routed getters on non-zero rows",
+          "distinctSlots": {
+            "borrowerLifRebate": 12,
+            "fallbackSnapshot": 5,
+            "intentCommits": 3,
+            "intentLiveCommitCount": 3,
+            "nextLoanId": 1,
+            "totalLoansEverCreated": 7
+          },
+          "slotsRead": 1067,
+          "loansScanned": 24,
+          "truncated": false,
+          "nextLoanIdFromStorage": "24",
+          "erasPerField": {
+            "borrowerLifRebate": 12,
+            "fallbackSnapshot": 5,
+            "intentCommits": 3,
+            "intentLiveCommitCount": 3,
+            "nextLoanId": 1,
+            "totalLoansEverCreated": 7
+          },
+          "rowsFound": {
+            "vpfiHeldCustody": 0,
+            "rebateRows": 0,
+            "fallbackSnapshotCustody": 0
+          },
+          "headSlotRows": {
+            "vpfiHeldCustody": 0,
+            "rebateRows": 0,
+            "fallbackSnapshotCustody": 0
+          },
+          "earlierEraCounters": [],
+          "aliasedCountersIgnored": [
+            {
+              "which": "totalLoansEverCreated",
+              "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10e5e",
+              "value": "24",
+              "aliases": "loanIdByPositionTokenId"
+            },
+            {
+              "which": "totalLoansEverCreated",
+              "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10e60",
+              "value": "10500",
+              "aliases": "activeLoanIdsList"
+            },
+            {
+              "which": "totalLoansEverCreated",
+              "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10e62",
+              "value": "4",
+              "aliases": "activeOfferIdsList"
+            },
+            {
+              "which": "totalLoansEverCreated",
+              "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10e5d",
+              "value": "9",
+              "aliases": "nftsInVaultByCollection"
+            }
+          ],
+          "getterDisagreements": {
+            "vpfiHeldCustody": 0,
+            "rebateRows": 0,
+            "fallbackSnapshotCustody": 0
+          }
+        },
         "intentSource": "getter unrouted — intentCommits rows read from storage at every layout era's slot (3 era slot(s)), hash-pinned",
         "storageRead": {
           "method": "eth_getStorageAt pinned by the census block hash (EIP-1898, requireCanonical)",
           "slotTable": "contracts/deployments/storage-slots.json (forge probe; StorageSlotPinTest)",
-          "eraTable": "contracts/deployments/storage-slot-eras.json (32 eras since 2026-05-01; head 613bbb32d)",
+          "eraTable": "contracts/deployments/storage-slot-eras.json (32 eras since 2026-05-01; head 655b44e25)",
           "calibration": "contracts/test/StorageSlotCalibrationTest.t.sol — derived slots vs routed getters on non-zero rows",
           "distinctSlots": {
             "borrowerLifRebate": 12,
@@ -251,7 +376,7 @@
                   "date": "2026-08-16"
                 },
                 {
-                  "commit": "613bbb32d",
+                  "commit": "655b44e25",
                   "date": "2026-09-10"
                 }
               ]
@@ -268,13 +393,15 @@
           "status": "proven",
           "count": 0,
           "total": "0",
-          "rows": []
+          "rows": [],
+          "historicalRows": 0
         },
         "rebateRows": {
           "status": "proven",
           "count": 0,
           "total": "0",
-          "rows": []
+          "rows": [],
+          "historicalRows": 0
         },
         "fallbackSnapshotCustody": {
           "status": "proven",
@@ -282,7 +409,8 @@
           "total": "0",
           "rows": [],
           "nonVpfiRowsExcluded": [],
-          "unknownAssetRows": []
+          "unknownAssetRows": [],
+          "historicalRows": 0
         },
         "liveIntentCommits": {
           "status": "proven",
@@ -291,7 +419,8 @@
           "count": 0,
           "total": "0",
           "rows": [],
-          "nonVpfiRowsExcluded": []
+          "nonVpfiRowsExcluded": [],
+          "historicalRows": 0
         }
       }
     },
@@ -306,8 +435,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "307273927",
-      "atBlockHash": "0x095dcae70da216bfcbf42753106ca95c52261c3916c0a9ba847b5b7d4b44449e",
+      "atBlock": "307313703",
+      "atBlockHash": "0x0f00ab4c150269471599a747aa22f6869048b590a801cc18c19000c00fead464",
       "blockTag": "finalized",
       "rpcHost": "arbitrum-sepolia.gateway.tenderly.co",
       "scanned": {
@@ -318,11 +447,61 @@
         "noCode": false,
         "custodySurfaceUnrouted": false,
         "loupeRouted": true,
+        "earlierEraRead": {
+          "method": "eth_getStorageAt pinned by the census block hash (EIP-1898, requireCanonical)",
+          "slotTable": "contracts/deployments/storage-slots.json (forge probe; StorageSlotPinTest)",
+          "eraTable": "contracts/deployments/storage-slot-eras.json (32 eras since 2026-05-01; head 655b44e25)",
+          "calibration": "contracts/test/StorageSlotCalibrationTest.t.sol — derived slots vs routed getters on non-zero rows",
+          "distinctSlots": {
+            "borrowerLifRebate": 12,
+            "fallbackSnapshot": 5,
+            "intentCommits": 3,
+            "intentLiveCommitCount": 3,
+            "nextLoanId": 1,
+            "totalLoansEverCreated": 7
+          },
+          "slotsRead": 1639,
+          "loansScanned": 37,
+          "truncated": false,
+          "nextLoanIdFromStorage": "37",
+          "erasPerField": {
+            "borrowerLifRebate": 12,
+            "fallbackSnapshot": 5,
+            "intentCommits": 3,
+            "intentLiveCommitCount": 3,
+            "nextLoanId": 1,
+            "totalLoansEverCreated": 7
+          },
+          "rowsFound": {
+            "vpfiHeldCustody": 0,
+            "rebateRows": 0,
+            "fallbackSnapshotCustody": 0
+          },
+          "headSlotRows": {
+            "vpfiHeldCustody": 0,
+            "rebateRows": 0,
+            "fallbackSnapshotCustody": 0
+          },
+          "earlierEraCounters": [],
+          "aliasedCountersIgnored": [
+            {
+              "which": "totalLoansEverCreated",
+              "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10e62",
+              "value": "37",
+              "aliases": "activeOfferIdsList"
+            }
+          ],
+          "getterDisagreements": {
+            "vpfiHeldCustody": 0,
+            "rebateRows": 0,
+            "fallbackSnapshotCustody": 0
+          }
+        },
         "intentSource": "getter unrouted — intentCommits rows read from storage at every layout era's slot (3 era slot(s)), hash-pinned",
         "storageRead": {
           "method": "eth_getStorageAt pinned by the census block hash (EIP-1898, requireCanonical)",
           "slotTable": "contracts/deployments/storage-slots.json (forge probe; StorageSlotPinTest)",
-          "eraTable": "contracts/deployments/storage-slot-eras.json (32 eras since 2026-05-01; head 613bbb32d)",
+          "eraTable": "contracts/deployments/storage-slot-eras.json (32 eras since 2026-05-01; head 655b44e25)",
           "calibration": "contracts/test/StorageSlotCalibrationTest.t.sol — derived slots vs routed getters on non-zero rows",
           "distinctSlots": {
             "borrowerLifRebate": 12,
@@ -393,7 +572,7 @@
                   "date": "2026-08-16"
                 },
                 {
-                  "commit": "613bbb32d",
+                  "commit": "655b44e25",
                   "date": "2026-09-10"
                 }
               ]
@@ -410,13 +589,15 @@
           "status": "proven",
           "count": 0,
           "total": "0",
-          "rows": []
+          "rows": [],
+          "historicalRows": 0
         },
         "rebateRows": {
           "status": "proven",
           "count": 0,
           "total": "0",
-          "rows": []
+          "rows": [],
+          "historicalRows": 0
         },
         "fallbackSnapshotCustody": {
           "status": "proven",
@@ -424,7 +605,8 @@
           "total": "0",
           "rows": [],
           "nonVpfiRowsExcluded": [],
-          "unknownAssetRows": []
+          "unknownAssetRows": [],
+          "historicalRows": 0
         },
         "liveIntentCommits": {
           "status": "proven",
@@ -433,7 +615,8 @@
           "count": 0,
           "total": "0",
           "rows": [],
-          "nonVpfiRowsExcluded": []
+          "nonVpfiRowsExcluded": [],
+          "historicalRows": 0
         }
       }
     },
@@ -448,8 +631,8 @@
       "diamondVpfiBacking": null,
       "vpfiRowsTotal": "0",
       "backingShortfall": null,
-      "atBlock": "307273927",
-      "atBlockHash": "0x095dcae70da216bfcbf42753106ca95c52261c3916c0a9ba847b5b7d4b44449e",
+      "atBlock": "307313703",
+      "atBlockHash": "0x0f00ab4c150269471599a747aa22f6869048b590a801cc18c19000c00fead464",
       "blockTag": "finalized",
       "rpcHost": "arbitrum-sepolia.gateway.tenderly.co",
       "scanned": {
@@ -460,6 +643,59 @@
         "noCode": false,
         "custodySurfaceUnrouted": false,
         "loupeRouted": true,
+        "earlierEraRead": {
+          "method": "eth_getStorageAt pinned by the census block hash (EIP-1898, requireCanonical)",
+          "slotTable": "contracts/deployments/storage-slots.json (forge probe; StorageSlotPinTest)",
+          "eraTable": "contracts/deployments/storage-slot-eras.json (32 eras since 2026-05-01; head 655b44e25)",
+          "calibration": "contracts/test/StorageSlotCalibrationTest.t.sol — derived slots vs routed getters on non-zero rows",
+          "distinctSlots": {
+            "borrowerLifRebate": 12,
+            "fallbackSnapshot": 5,
+            "intentCommits": 3,
+            "intentLiveCommitCount": 3,
+            "nextLoanId": 1,
+            "totalLoansEverCreated": 7
+          },
+          "slotsRead": 622,
+          "loansScanned": 13,
+          "truncated": false,
+          "nextLoanIdFromStorage": "13",
+          "erasPerField": {
+            "borrowerLifRebate": 12,
+            "fallbackSnapshot": 5,
+            "intentCommits": 3,
+            "intentLiveCommitCount": 3,
+            "nextLoanId": 1,
+            "totalLoansEverCreated": 7
+          },
+          "rowsFound": {
+            "vpfiHeldCustody": 0,
+            "rebateRows": 0,
+            "fallbackSnapshotCustody": 0,
+            "liveIntentCommits": 0
+          },
+          "headSlotRows": {
+            "vpfiHeldCustody": 0,
+            "rebateRows": 0,
+            "fallbackSnapshotCustody": 0,
+            "liveIntentCommits": 0
+          },
+          "earlierEraCounters": [],
+          "aliasedCountersIgnored": [
+            {
+              "which": "totalLoansEverCreated",
+              "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10e58",
+              "value": "5500",
+              "aliases": "interestRateBpsSum"
+            }
+          ],
+          "getterDisagreements": {
+            "vpfiHeldCustody": 0,
+            "rebateRows": 0,
+            "fallbackSnapshotCustody": 0,
+            "liveIntentCommits": 0
+          }
+        },
         "intentSource": "getIntentCommit view (live state, history-independent)",
         "intentSurfaceRouted": true,
         "intentProducerRouted": true,
@@ -472,14 +708,16 @@
           "indeterminateReason": "VPFI token unresolvable (neither on-chain nor in the artifact); VPFI custody cannot be scoped",
           "count": 0,
           "total": "0",
-          "rows": []
+          "rows": [],
+          "historicalRows": 0
         },
         "rebateRows": {
           "status": "indeterminate",
           "indeterminateReason": "VPFI token unresolvable (neither on-chain nor in the artifact); VPFI custody cannot be scoped",
           "count": 0,
           "total": "0",
-          "rows": []
+          "rows": [],
+          "historicalRows": 0
         },
         "fallbackSnapshotCustody": {
           "status": "indeterminate",
@@ -488,7 +726,8 @@
           "total": "0",
           "rows": [],
           "nonVpfiRowsExcluded": [],
-          "unknownAssetRows": []
+          "unknownAssetRows": [],
+          "historicalRows": 0
         },
         "liveIntentCommits": {
           "status": "indeterminate",
@@ -497,7 +736,8 @@
           "count": 0,
           "total": "0",
           "rows": [],
-          "nonVpfiRowsExcluded": []
+          "nonVpfiRowsExcluded": [],
+          "historicalRows": 0
         }
       }
     },
@@ -512,8 +752,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "46621129",
-      "atBlockHash": "0x8381eacaf281d92084b41eea1a2fdb8fdc4de39f8e95a2f3057b7990f1a4abec",
+      "atBlock": "46626711",
+      "atBlockHash": "0xc60928d22a166170ed7d0f3dd7ed65a0769823a3b6fb1f1c7794591586edd368",
       "blockTag": "finalized",
       "rpcHost": "sepolia.base.org",
       "scanned": {
@@ -524,6 +764,71 @@
         "noCode": false,
         "custodySurfaceUnrouted": false,
         "loupeRouted": true,
+        "earlierEraRead": {
+          "method": "eth_getStorageAt pinned by the census block hash (EIP-1898, requireCanonical)",
+          "slotTable": "contracts/deployments/storage-slots.json (forge probe; StorageSlotPinTest)",
+          "eraTable": "contracts/deployments/storage-slot-eras.json (32 eras since 2026-05-01; head 655b44e25)",
+          "calibration": "contracts/test/StorageSlotCalibrationTest.t.sol — derived slots vs routed getters on non-zero rows",
+          "distinctSlots": {
+            "borrowerLifRebate": 12,
+            "fallbackSnapshot": 5,
+            "intentCommits": 3,
+            "intentLiveCommitCount": 3,
+            "nextLoanId": 1,
+            "totalLoansEverCreated": 7
+          },
+          "slotsRead": 998,
+          "loansScanned": 21,
+          "truncated": false,
+          "nextLoanIdFromStorage": "21",
+          "erasPerField": {
+            "borrowerLifRebate": 12,
+            "fallbackSnapshot": 5,
+            "intentCommits": 3,
+            "intentLiveCommitCount": 3,
+            "nextLoanId": 1,
+            "totalLoansEverCreated": 7
+          },
+          "rowsFound": {
+            "vpfiHeldCustody": 0,
+            "rebateRows": 0,
+            "fallbackSnapshotCustody": 0,
+            "liveIntentCommits": 0
+          },
+          "headSlotRows": {
+            "vpfiHeldCustody": 0,
+            "rebateRows": 0,
+            "fallbackSnapshotCustody": 0,
+            "liveIntentCommits": 0
+          },
+          "earlierEraCounters": [],
+          "aliasedCountersIgnored": [
+            {
+              "which": "totalLoansEverCreated",
+              "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10e58",
+              "value": "14799",
+              "aliases": "interestRateBpsSum"
+            },
+            {
+              "which": "totalLoansEverCreated",
+              "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10e60",
+              "value": "8",
+              "aliases": "activeLoanIdsList"
+            },
+            {
+              "which": "totalLoansEverCreated",
+              "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10e62",
+              "value": "5",
+              "aliases": "activeOfferIdsList"
+            }
+          ],
+          "getterDisagreements": {
+            "vpfiHeldCustody": 0,
+            "rebateRows": 0,
+            "fallbackSnapshotCustody": 0,
+            "liveIntentCommits": 0
+          }
+        },
         "intentSource": "getIntentCommit view (live state, history-independent)",
         "intentSurfaceRouted": true,
         "intentProducerRouted": true,
@@ -535,13 +840,15 @@
           "status": "proven",
           "count": 0,
           "total": "0",
-          "rows": []
+          "rows": [],
+          "historicalRows": 0
         },
         "rebateRows": {
           "status": "proven",
           "count": 0,
           "total": "0",
-          "rows": []
+          "rows": [],
+          "historicalRows": 0
         },
         "fallbackSnapshotCustody": {
           "status": "proven",
@@ -549,7 +856,8 @@
           "total": "0",
           "rows": [],
           "nonVpfiRowsExcluded": [],
-          "unknownAssetRows": []
+          "unknownAssetRows": [],
+          "historicalRows": 0
         },
         "liveIntentCommits": {
           "status": "proven",
@@ -557,7 +865,8 @@
           "count": 0,
           "total": "0",
           "rows": [],
-          "nonVpfiRowsExcluded": []
+          "nonVpfiRowsExcluded": [],
+          "historicalRows": 0
         }
       }
     },
@@ -573,8 +882,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "46621129",
-      "atBlockHash": "0x8381eacaf281d92084b41eea1a2fdb8fdc4de39f8e95a2f3057b7990f1a4abec",
+      "atBlock": "46626711",
+      "atBlockHash": "0xc60928d22a166170ed7d0f3dd7ed65a0769823a3b6fb1f1c7794591586edd368",
       "blockTag": "finalized",
       "rpcHost": "sepolia.base.org",
       "scanned": {
@@ -585,6 +894,52 @@
         "noCode": false,
         "custodySurfaceUnrouted": false,
         "loupeRouted": true,
+        "earlierEraRead": {
+          "method": "eth_getStorageAt pinned by the census block hash (EIP-1898, requireCanonical)",
+          "slotTable": "contracts/deployments/storage-slots.json (forge probe; StorageSlotPinTest)",
+          "eraTable": "contracts/deployments/storage-slot-eras.json (32 eras since 2026-05-01; head 655b44e25)",
+          "calibration": "contracts/test/StorageSlotCalibrationTest.t.sol — derived slots vs routed getters on non-zero rows",
+          "distinctSlots": {
+            "borrowerLifRebate": 12,
+            "fallbackSnapshot": 5,
+            "intentCommits": 3,
+            "intentLiveCommitCount": 3,
+            "nextLoanId": 1,
+            "totalLoansEverCreated": 7
+          },
+          "slotsRead": 11,
+          "loansScanned": 0,
+          "truncated": false,
+          "nextLoanIdFromStorage": "0",
+          "erasPerField": {
+            "borrowerLifRebate": 12,
+            "fallbackSnapshot": 5,
+            "intentCommits": 3,
+            "intentLiveCommitCount": 3,
+            "nextLoanId": 1,
+            "totalLoansEverCreated": 7
+          },
+          "rowsFound": {
+            "vpfiHeldCustody": 0,
+            "rebateRows": 0,
+            "fallbackSnapshotCustody": 0,
+            "liveIntentCommits": 0
+          },
+          "headSlotRows": {
+            "vpfiHeldCustody": 0,
+            "rebateRows": 0,
+            "fallbackSnapshotCustody": 0,
+            "liveIntentCommits": 0
+          },
+          "earlierEraCounters": [],
+          "aliasedCountersIgnored": [],
+          "getterDisagreements": {
+            "vpfiHeldCustody": 0,
+            "rebateRows": 0,
+            "fallbackSnapshotCustody": 0,
+            "liveIntentCommits": 0
+          }
+        },
         "intentSource": "getter unrouted — intentCommits storage NOT read: the no-loans bound already settles the class",
         "intentSurfaceRouted": false,
         "intentProducerRouted": false,
@@ -597,14 +952,16 @@
           "provenBy": "no-loans-ever-created",
           "count": 0,
           "total": "0",
-          "rows": []
+          "rows": [],
+          "historicalRows": 0
         },
         "rebateRows": {
           "status": "proven",
           "provenBy": "no-loans-ever-created",
           "count": 0,
           "total": "0",
-          "rows": []
+          "rows": [],
+          "historicalRows": 0
         },
         "fallbackSnapshotCustody": {
           "status": "proven",
@@ -613,7 +970,8 @@
           "total": "0",
           "rows": [],
           "nonVpfiRowsExcluded": [],
-          "unknownAssetRows": []
+          "unknownAssetRows": [],
+          "historicalRows": 0
         },
         "liveIntentCommits": {
           "status": "proven",
@@ -622,7 +980,8 @@
           "count": 0,
           "total": "0",
           "rows": [],
-          "nonVpfiRowsExcluded": []
+          "nonVpfiRowsExcluded": [],
+          "historicalRows": 0
         }
       }
     },
@@ -638,8 +997,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "46621129",
-      "atBlockHash": "0x8381eacaf281d92084b41eea1a2fdb8fdc4de39f8e95a2f3057b7990f1a4abec",
+      "atBlock": "46626711",
+      "atBlockHash": "0xc60928d22a166170ed7d0f3dd7ed65a0769823a3b6fb1f1c7794591586edd368",
       "blockTag": "finalized",
       "rpcHost": "sepolia.base.org",
       "scanned": {
@@ -650,6 +1009,52 @@
         "noCode": false,
         "custodySurfaceUnrouted": false,
         "loupeRouted": true,
+        "earlierEraRead": {
+          "method": "eth_getStorageAt pinned by the census block hash (EIP-1898, requireCanonical)",
+          "slotTable": "contracts/deployments/storage-slots.json (forge probe; StorageSlotPinTest)",
+          "eraTable": "contracts/deployments/storage-slot-eras.json (32 eras since 2026-05-01; head 655b44e25)",
+          "calibration": "contracts/test/StorageSlotCalibrationTest.t.sol — derived slots vs routed getters on non-zero rows",
+          "distinctSlots": {
+            "borrowerLifRebate": 12,
+            "fallbackSnapshot": 5,
+            "intentCommits": 3,
+            "intentLiveCommitCount": 3,
+            "nextLoanId": 1,
+            "totalLoansEverCreated": 7
+          },
+          "slotsRead": 11,
+          "loansScanned": 0,
+          "truncated": false,
+          "nextLoanIdFromStorage": "0",
+          "erasPerField": {
+            "borrowerLifRebate": 12,
+            "fallbackSnapshot": 5,
+            "intentCommits": 3,
+            "intentLiveCommitCount": 3,
+            "nextLoanId": 1,
+            "totalLoansEverCreated": 7
+          },
+          "rowsFound": {
+            "vpfiHeldCustody": 0,
+            "rebateRows": 0,
+            "fallbackSnapshotCustody": 0,
+            "liveIntentCommits": 0
+          },
+          "headSlotRows": {
+            "vpfiHeldCustody": 0,
+            "rebateRows": 0,
+            "fallbackSnapshotCustody": 0,
+            "liveIntentCommits": 0
+          },
+          "earlierEraCounters": [],
+          "aliasedCountersIgnored": [],
+          "getterDisagreements": {
+            "vpfiHeldCustody": 0,
+            "rebateRows": 0,
+            "fallbackSnapshotCustody": 0,
+            "liveIntentCommits": 0
+          }
+        },
         "intentSource": "getter unrouted — intentCommits storage NOT read: the no-loans bound already settles the class",
         "intentSurfaceRouted": false,
         "intentProducerRouted": false,
@@ -662,14 +1067,16 @@
           "provenBy": "no-loans-ever-created",
           "count": 0,
           "total": "0",
-          "rows": []
+          "rows": [],
+          "historicalRows": 0
         },
         "rebateRows": {
           "status": "proven",
           "provenBy": "no-loans-ever-created",
           "count": 0,
           "total": "0",
-          "rows": []
+          "rows": [],
+          "historicalRows": 0
         },
         "fallbackSnapshotCustody": {
           "status": "proven",
@@ -678,7 +1085,8 @@
           "total": "0",
           "rows": [],
           "nonVpfiRowsExcluded": [],
-          "unknownAssetRows": []
+          "unknownAssetRows": [],
+          "historicalRows": 0
         },
         "liveIntentCommits": {
           "status": "proven",
@@ -687,7 +1095,8 @@
           "count": 0,
           "total": "0",
           "rows": [],
-          "nonVpfiRowsExcluded": []
+          "nonVpfiRowsExcluded": [],
+          "historicalRows": 0
         }
       }
     },
@@ -702,8 +1111,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "46621129",
-      "atBlockHash": "0x8381eacaf281d92084b41eea1a2fdb8fdc4de39f8e95a2f3057b7990f1a4abec",
+      "atBlock": "46626711",
+      "atBlockHash": "0xc60928d22a166170ed7d0f3dd7ed65a0769823a3b6fb1f1c7794591586edd368",
       "blockTag": "finalized",
       "rpcHost": "sepolia.base.org",
       "scanned": {
@@ -714,11 +1123,61 @@
         "noCode": false,
         "custodySurfaceUnrouted": false,
         "loupeRouted": true,
+        "earlierEraRead": {
+          "method": "eth_getStorageAt pinned by the census block hash (EIP-1898, requireCanonical)",
+          "slotTable": "contracts/deployments/storage-slots.json (forge probe; StorageSlotPinTest)",
+          "eraTable": "contracts/deployments/storage-slot-eras.json (32 eras since 2026-05-01; head 655b44e25)",
+          "calibration": "contracts/test/StorageSlotCalibrationTest.t.sol — derived slots vs routed getters on non-zero rows",
+          "distinctSlots": {
+            "borrowerLifRebate": 12,
+            "fallbackSnapshot": 5,
+            "intentCommits": 3,
+            "intentLiveCommitCount": 3,
+            "nextLoanId": 1,
+            "totalLoansEverCreated": 7
+          },
+          "slotsRead": 1463,
+          "loansScanned": 33,
+          "truncated": false,
+          "nextLoanIdFromStorage": "33",
+          "erasPerField": {
+            "borrowerLifRebate": 12,
+            "fallbackSnapshot": 5,
+            "intentCommits": 3,
+            "intentLiveCommitCount": 3,
+            "nextLoanId": 1,
+            "totalLoansEverCreated": 7
+          },
+          "rowsFound": {
+            "vpfiHeldCustody": 0,
+            "rebateRows": 0,
+            "fallbackSnapshotCustody": 0
+          },
+          "headSlotRows": {
+            "vpfiHeldCustody": 0,
+            "rebateRows": 0,
+            "fallbackSnapshotCustody": 0
+          },
+          "earlierEraCounters": [],
+          "aliasedCountersIgnored": [
+            {
+              "which": "totalLoansEverCreated",
+              "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10e62",
+              "value": "33",
+              "aliases": "activeOfferIdsList"
+            }
+          ],
+          "getterDisagreements": {
+            "vpfiHeldCustody": 0,
+            "rebateRows": 0,
+            "fallbackSnapshotCustody": 0
+          }
+        },
         "intentSource": "getter unrouted — intentCommits rows read from storage at every layout era's slot (3 era slot(s)), hash-pinned",
         "storageRead": {
           "method": "eth_getStorageAt pinned by the census block hash (EIP-1898, requireCanonical)",
           "slotTable": "contracts/deployments/storage-slots.json (forge probe; StorageSlotPinTest)",
-          "eraTable": "contracts/deployments/storage-slot-eras.json (32 eras since 2026-05-01; head 613bbb32d)",
+          "eraTable": "contracts/deployments/storage-slot-eras.json (32 eras since 2026-05-01; head 655b44e25)",
           "calibration": "contracts/test/StorageSlotCalibrationTest.t.sol — derived slots vs routed getters on non-zero rows",
           "distinctSlots": {
             "borrowerLifRebate": 12,
@@ -789,7 +1248,7 @@
                   "date": "2026-08-16"
                 },
                 {
-                  "commit": "613bbb32d",
+                  "commit": "655b44e25",
                   "date": "2026-09-10"
                 }
               ]
@@ -806,13 +1265,15 @@
           "status": "proven",
           "count": 0,
           "total": "0",
-          "rows": []
+          "rows": [],
+          "historicalRows": 0
         },
         "rebateRows": {
           "status": "proven",
           "count": 0,
           "total": "0",
-          "rows": []
+          "rows": [],
+          "historicalRows": 0
         },
         "fallbackSnapshotCustody": {
           "status": "proven",
@@ -820,7 +1281,8 @@
           "total": "0",
           "rows": [],
           "nonVpfiRowsExcluded": [],
-          "unknownAssetRows": []
+          "unknownAssetRows": [],
+          "historicalRows": 0
         },
         "liveIntentCommits": {
           "status": "proven",
@@ -829,7 +1291,8 @@
           "count": 0,
           "total": "0",
           "rows": [],
-          "nonVpfiRowsExcluded": []
+          "nonVpfiRowsExcluded": [],
+          "historicalRows": 0
         }
       }
     },
@@ -845,8 +1308,8 @@
       "diamondVpfiBacking": null,
       "vpfiRowsTotal": null,
       "backingShortfall": null,
-      "atBlock": "46621129",
-      "atBlockHash": "0x8381eacaf281d92084b41eea1a2fdb8fdc4de39f8e95a2f3057b7990f1a4abec",
+      "atBlock": "46626711",
+      "atBlockHash": "0xc60928d22a166170ed7d0f3dd7ed65a0769823a3b6fb1f1c7794591586edd368",
       "blockTag": "finalized",
       "rpcHost": "sepolia.base.org",
       "scanned": {
@@ -858,10 +1321,11 @@
         "custodySurfaceUnrouted": true,
         "notADiamond": false,
         "loupeRouted": false,
+        "producersMayBeLive": false,
         "storageRead": {
           "method": "eth_getStorageAt pinned by the census block hash (EIP-1898, requireCanonical)",
           "slotTable": "contracts/deployments/storage-slots.json (forge probe; StorageSlotPinTest)",
-          "eraTable": "contracts/deployments/storage-slot-eras.json (32 eras since 2026-05-01; head 613bbb32d)",
+          "eraTable": "contracts/deployments/storage-slot-eras.json (32 eras since 2026-05-01; head 655b44e25)",
           "calibration": "contracts/test/StorageSlotCalibrationTest.t.sol — derived slots vs routed getters on non-zero rows",
           "distinctSlots": {
             "borrowerLifRebate": 12,
@@ -1040,7 +1504,7 @@
                     "date": "2026-08-16"
                   },
                   {
-                    "commit": "613bbb32d",
+                    "commit": "655b44e25",
                     "date": "2026-09-10"
                   }
                 ]
@@ -1104,7 +1568,7 @@
                     "date": "2026-08-16"
                   },
                   {
-                    "commit": "613bbb32d",
+                    "commit": "655b44e25",
                     "date": "2026-09-10"
                   }
                 ]
@@ -1161,8 +1625,8 @@
       "diamondVpfiBacking": null,
       "vpfiRowsTotal": null,
       "backingShortfall": null,
-      "atBlock": "46621129",
-      "atBlockHash": "0x8381eacaf281d92084b41eea1a2fdb8fdc4de39f8e95a2f3057b7990f1a4abec",
+      "atBlock": "46626711",
+      "atBlockHash": "0xc60928d22a166170ed7d0f3dd7ed65a0769823a3b6fb1f1c7794591586edd368",
       "blockTag": "finalized",
       "rpcHost": "sepolia.base.org",
       "scanned": {
@@ -1174,10 +1638,11 @@
         "custodySurfaceUnrouted": true,
         "notADiamond": false,
         "loupeRouted": false,
+        "producersMayBeLive": false,
         "storageRead": {
           "method": "eth_getStorageAt pinned by the census block hash (EIP-1898, requireCanonical)",
           "slotTable": "contracts/deployments/storage-slots.json (forge probe; StorageSlotPinTest)",
-          "eraTable": "contracts/deployments/storage-slot-eras.json (32 eras since 2026-05-01; head 613bbb32d)",
+          "eraTable": "contracts/deployments/storage-slot-eras.json (32 eras since 2026-05-01; head 655b44e25)",
           "calibration": "contracts/test/StorageSlotCalibrationTest.t.sol — derived slots vs routed getters on non-zero rows",
           "distinctSlots": {
             "borrowerLifRebate": 12,
@@ -1356,7 +1821,7 @@
                     "date": "2026-08-16"
                   },
                   {
-                    "commit": "613bbb32d",
+                    "commit": "655b44e25",
                     "date": "2026-09-10"
                   }
                 ]
@@ -1420,7 +1885,7 @@
                     "date": "2026-08-16"
                   },
                   {
-                    "commit": "613bbb32d",
+                    "commit": "655b44e25",
                     "date": "2026-09-10"
                   }
                 ]
@@ -1477,8 +1942,8 @@
       "diamondVpfiBacking": null,
       "vpfiRowsTotal": null,
       "backingShortfall": null,
-      "atBlock": "46621129",
-      "atBlockHash": "0x8381eacaf281d92084b41eea1a2fdb8fdc4de39f8e95a2f3057b7990f1a4abec",
+      "atBlock": "46626711",
+      "atBlockHash": "0xc60928d22a166170ed7d0f3dd7ed65a0769823a3b6fb1f1c7794591586edd368",
       "blockTag": "finalized",
       "rpcHost": "sepolia.base.org",
       "scanned": {
@@ -1490,10 +1955,11 @@
         "custodySurfaceUnrouted": true,
         "notADiamond": false,
         "loupeRouted": false,
+        "producersMayBeLive": false,
         "storageRead": {
           "method": "eth_getStorageAt pinned by the census block hash (EIP-1898, requireCanonical)",
           "slotTable": "contracts/deployments/storage-slots.json (forge probe; StorageSlotPinTest)",
-          "eraTable": "contracts/deployments/storage-slot-eras.json (32 eras since 2026-05-01; head 613bbb32d)",
+          "eraTable": "contracts/deployments/storage-slot-eras.json (32 eras since 2026-05-01; head 655b44e25)",
           "calibration": "contracts/test/StorageSlotCalibrationTest.t.sol — derived slots vs routed getters on non-zero rows",
           "distinctSlots": {
             "borrowerLifRebate": 12,
@@ -1672,7 +2138,7 @@
                     "date": "2026-08-16"
                   },
                   {
-                    "commit": "613bbb32d",
+                    "commit": "655b44e25",
                     "date": "2026-09-10"
                   }
                 ]
@@ -1736,7 +2202,7 @@
                     "date": "2026-08-16"
                   },
                   {
-                    "commit": "613bbb32d",
+                    "commit": "655b44e25",
                     "date": "2026-09-10"
                   }
                 ]
@@ -1793,8 +2259,8 @@
       "diamondVpfiBacking": null,
       "vpfiRowsTotal": "0",
       "backingShortfall": null,
-      "atBlock": "46621129",
-      "atBlockHash": "0x8381eacaf281d92084b41eea1a2fdb8fdc4de39f8e95a2f3057b7990f1a4abec",
+      "atBlock": "46626711",
+      "atBlockHash": "0xc60928d22a166170ed7d0f3dd7ed65a0769823a3b6fb1f1c7794591586edd368",
       "blockTag": "finalized",
       "rpcHost": "sepolia.base.org",
       "scanned": {
@@ -1805,6 +2271,52 @@
         "noCode": false,
         "custodySurfaceUnrouted": false,
         "loupeRouted": true,
+        "earlierEraRead": {
+          "method": "eth_getStorageAt pinned by the census block hash (EIP-1898, requireCanonical)",
+          "slotTable": "contracts/deployments/storage-slots.json (forge probe; StorageSlotPinTest)",
+          "eraTable": "contracts/deployments/storage-slot-eras.json (32 eras since 2026-05-01; head 655b44e25)",
+          "calibration": "contracts/test/StorageSlotCalibrationTest.t.sol — derived slots vs routed getters on non-zero rows",
+          "distinctSlots": {
+            "borrowerLifRebate": 12,
+            "fallbackSnapshot": 5,
+            "intentCommits": 3,
+            "intentLiveCommitCount": 3,
+            "nextLoanId": 1,
+            "totalLoansEverCreated": 7
+          },
+          "slotsRead": 11,
+          "loansScanned": 0,
+          "truncated": false,
+          "nextLoanIdFromStorage": "0",
+          "erasPerField": {
+            "borrowerLifRebate": 12,
+            "fallbackSnapshot": 5,
+            "intentCommits": 3,
+            "intentLiveCommitCount": 3,
+            "nextLoanId": 1,
+            "totalLoansEverCreated": 7
+          },
+          "rowsFound": {
+            "vpfiHeldCustody": 0,
+            "rebateRows": 0,
+            "fallbackSnapshotCustody": 0,
+            "liveIntentCommits": 0
+          },
+          "headSlotRows": {
+            "vpfiHeldCustody": 0,
+            "rebateRows": 0,
+            "fallbackSnapshotCustody": 0,
+            "liveIntentCommits": 0
+          },
+          "earlierEraCounters": [],
+          "aliasedCountersIgnored": [],
+          "getterDisagreements": {
+            "vpfiHeldCustody": 0,
+            "rebateRows": 0,
+            "fallbackSnapshotCustody": 0,
+            "liveIntentCommits": 0
+          }
+        },
         "intentSource": "getIntentCommit view (live state, history-independent)",
         "intentSurfaceRouted": true,
         "intentProducerRouted": true,
@@ -1817,14 +2329,16 @@
           "provenBy": "no-loans-ever-created",
           "count": 0,
           "total": "0",
-          "rows": []
+          "rows": [],
+          "historicalRows": 0
         },
         "rebateRows": {
           "status": "proven",
           "provenBy": "no-loans-ever-created",
           "count": 0,
           "total": "0",
-          "rows": []
+          "rows": [],
+          "historicalRows": 0
         },
         "fallbackSnapshotCustody": {
           "status": "proven",
@@ -1833,7 +2347,8 @@
           "total": "0",
           "rows": [],
           "nonVpfiRowsExcluded": [],
-          "unknownAssetRows": []
+          "unknownAssetRows": [],
+          "historicalRows": 0
         },
         "liveIntentCommits": {
           "status": "proven",
@@ -1842,7 +2357,8 @@
           "count": 0,
           "total": "0",
           "rows": [],
-          "nonVpfiRowsExcluded": []
+          "nonVpfiRowsExcluded": [],
+          "historicalRows": 0
         }
       }
     },
@@ -1857,8 +2373,8 @@
       "diamondVpfiBacking": null,
       "vpfiRowsTotal": null,
       "backingShortfall": null,
-      "atBlock": "46621129",
-      "atBlockHash": "0x8381eacaf281d92084b41eea1a2fdb8fdc4de39f8e95a2f3057b7990f1a4abec",
+      "atBlock": "46626711",
+      "atBlockHash": "0xc60928d22a166170ed7d0f3dd7ed65a0769823a3b6fb1f1c7794591586edd368",
       "blockTag": "finalized",
       "rpcHost": "sepolia.base.org",
       "scanned": {
@@ -1869,7 +2385,8 @@
         "noCode": false,
         "custodySurfaceUnrouted": false,
         "notADiamond": true,
-        "loupeRouted": false
+        "loupeRouted": false,
+        "producersMayBeLive": false
       },
       "classes": {
         "vpfiHeldCustody": {
@@ -1915,9 +2432,9 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "130146851",
-      "atBlockHash": "0xbcfae26927dafaa0b02abe4ffa5a010637c1f3e217cdbce601c7720377ff1d0c",
-      "blockTag": "finalized (lowest of 6 samples: 130146851, 130146854, 130146856)",
+      "atBlock": "130173916",
+      "atBlockHash": "0x178259992b3413bc83cd709889eb8c38baa2878966278eb26c8da3621f27d29a",
+      "blockTag": "finalized (lowest of 6 samples: 130173916, 130173917, 130173919, 130173921, 130173922)",
       "rpcHost": "bsc-testnet-rpc.publicnode.com",
       "scanned": {
         "loanIdsEnumerated": 4,
@@ -1927,6 +2444,71 @@
         "noCode": false,
         "custodySurfaceUnrouted": false,
         "loupeRouted": true,
+        "earlierEraRead": {
+          "method": "eth_getStorageAt pinned by the census block hash (EIP-1898, requireCanonical)",
+          "slotTable": "contracts/deployments/storage-slots.json (forge probe; StorageSlotPinTest)",
+          "eraTable": "contracts/deployments/storage-slot-eras.json (32 eras since 2026-05-01; head 655b44e25)",
+          "calibration": "contracts/test/StorageSlotCalibrationTest.t.sol — derived slots vs routed getters on non-zero rows",
+          "distinctSlots": {
+            "borrowerLifRebate": 12,
+            "fallbackSnapshot": 5,
+            "intentCommits": 3,
+            "intentLiveCommitCount": 3,
+            "nextLoanId": 1,
+            "totalLoansEverCreated": 7
+          },
+          "slotsRead": 199,
+          "loansScanned": 4,
+          "truncated": false,
+          "nextLoanIdFromStorage": "4",
+          "erasPerField": {
+            "borrowerLifRebate": 12,
+            "fallbackSnapshot": 5,
+            "intentCommits": 3,
+            "intentLiveCommitCount": 3,
+            "nextLoanId": 1,
+            "totalLoansEverCreated": 7
+          },
+          "rowsFound": {
+            "vpfiHeldCustody": 0,
+            "rebateRows": 0,
+            "fallbackSnapshotCustody": 0,
+            "liveIntentCommits": 0
+          },
+          "headSlotRows": {
+            "vpfiHeldCustody": 0,
+            "rebateRows": 0,
+            "fallbackSnapshotCustody": 0,
+            "liveIntentCommits": 0
+          },
+          "earlierEraCounters": [],
+          "aliasedCountersIgnored": [
+            {
+              "which": "totalLoansEverCreated",
+              "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10e58",
+              "value": "1500",
+              "aliases": "interestRateBpsSum"
+            },
+            {
+              "which": "totalLoansEverCreated",
+              "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10e60",
+              "value": "3",
+              "aliases": "activeLoanIdsList"
+            },
+            {
+              "which": "totalLoansEverCreated",
+              "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10e62",
+              "value": "2",
+              "aliases": "activeOfferIdsList"
+            }
+          ],
+          "getterDisagreements": {
+            "vpfiHeldCustody": 0,
+            "rebateRows": 0,
+            "fallbackSnapshotCustody": 0,
+            "liveIntentCommits": 0
+          }
+        },
         "intentSource": "getIntentCommit view (live state, history-independent)",
         "intentSurfaceRouted": true,
         "intentProducerRouted": true,
@@ -1938,13 +2520,15 @@
           "status": "proven",
           "count": 0,
           "total": "0",
-          "rows": []
+          "rows": [],
+          "historicalRows": 0
         },
         "rebateRows": {
           "status": "proven",
           "count": 0,
           "total": "0",
-          "rows": []
+          "rows": [],
+          "historicalRows": 0
         },
         "fallbackSnapshotCustody": {
           "status": "proven",
@@ -1952,7 +2536,8 @@
           "total": "0",
           "rows": [],
           "nonVpfiRowsExcluded": [],
-          "unknownAssetRows": []
+          "unknownAssetRows": [],
+          "historicalRows": 0
         },
         "liveIntentCommits": {
           "status": "proven",
@@ -1960,7 +2545,8 @@
           "count": 0,
           "total": "0",
           "rows": [],
-          "nonVpfiRowsExcluded": []
+          "nonVpfiRowsExcluded": [],
+          "historicalRows": 0
         }
       }
     },
@@ -1976,9 +2562,9 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "130146851",
-      "atBlockHash": "0xbcfae26927dafaa0b02abe4ffa5a010637c1f3e217cdbce601c7720377ff1d0c",
-      "blockTag": "finalized (lowest of 6 samples: 130146851, 130146854, 130146856)",
+      "atBlock": "130173916",
+      "atBlockHash": "0x178259992b3413bc83cd709889eb8c38baa2878966278eb26c8da3621f27d29a",
+      "blockTag": "finalized (lowest of 6 samples: 130173916, 130173917, 130173919, 130173921, 130173922)",
       "rpcHost": "bsc-testnet-rpc.publicnode.com",
       "scanned": {
         "loanIdsEnumerated": 0,
@@ -1988,6 +2574,52 @@
         "noCode": false,
         "custodySurfaceUnrouted": false,
         "loupeRouted": true,
+        "earlierEraRead": {
+          "method": "eth_getStorageAt pinned by the census block hash (EIP-1898, requireCanonical)",
+          "slotTable": "contracts/deployments/storage-slots.json (forge probe; StorageSlotPinTest)",
+          "eraTable": "contracts/deployments/storage-slot-eras.json (32 eras since 2026-05-01; head 655b44e25)",
+          "calibration": "contracts/test/StorageSlotCalibrationTest.t.sol — derived slots vs routed getters on non-zero rows",
+          "distinctSlots": {
+            "borrowerLifRebate": 12,
+            "fallbackSnapshot": 5,
+            "intentCommits": 3,
+            "intentLiveCommitCount": 3,
+            "nextLoanId": 1,
+            "totalLoansEverCreated": 7
+          },
+          "slotsRead": 11,
+          "loansScanned": 0,
+          "truncated": false,
+          "nextLoanIdFromStorage": "0",
+          "erasPerField": {
+            "borrowerLifRebate": 12,
+            "fallbackSnapshot": 5,
+            "intentCommits": 3,
+            "intentLiveCommitCount": 3,
+            "nextLoanId": 1,
+            "totalLoansEverCreated": 7
+          },
+          "rowsFound": {
+            "vpfiHeldCustody": 0,
+            "rebateRows": 0,
+            "fallbackSnapshotCustody": 0,
+            "liveIntentCommits": 0
+          },
+          "headSlotRows": {
+            "vpfiHeldCustody": 0,
+            "rebateRows": 0,
+            "fallbackSnapshotCustody": 0,
+            "liveIntentCommits": 0
+          },
+          "earlierEraCounters": [],
+          "aliasedCountersIgnored": [],
+          "getterDisagreements": {
+            "vpfiHeldCustody": 0,
+            "rebateRows": 0,
+            "fallbackSnapshotCustody": 0,
+            "liveIntentCommits": 0
+          }
+        },
         "intentSource": "getter unrouted — intentCommits storage NOT read: the no-loans bound already settles the class",
         "intentSurfaceRouted": false,
         "intentProducerRouted": false,
@@ -2000,14 +2632,16 @@
           "provenBy": "no-loans-ever-created",
           "count": 0,
           "total": "0",
-          "rows": []
+          "rows": [],
+          "historicalRows": 0
         },
         "rebateRows": {
           "status": "proven",
           "provenBy": "no-loans-ever-created",
           "count": 0,
           "total": "0",
-          "rows": []
+          "rows": [],
+          "historicalRows": 0
         },
         "fallbackSnapshotCustody": {
           "status": "proven",
@@ -2016,7 +2650,8 @@
           "total": "0",
           "rows": [],
           "nonVpfiRowsExcluded": [],
-          "unknownAssetRows": []
+          "unknownAssetRows": [],
+          "historicalRows": 0
         },
         "liveIntentCommits": {
           "status": "proven",
@@ -2025,7 +2660,8 @@
           "count": 0,
           "total": "0",
           "rows": [],
-          "nonVpfiRowsExcluded": []
+          "nonVpfiRowsExcluded": [],
+          "historicalRows": 0
         }
       }
     },
@@ -2040,8 +2676,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "48605031",
-      "atBlockHash": "0xfd3fc239cf9cbbde864ddc8fe643ba37637212f843f3987d27e87808fb6b1eee",
+      "atBlock": "48611206",
+      "atBlockHash": "0x05cffb909dffbaed39546f8ab6ae3604795a5598959c387d4e75aee2b49ff97d",
       "blockTag": "finalized",
       "rpcHost": "optimism-sepolia-rpc.publicnode.com",
       "scanned": {
@@ -2052,11 +2688,79 @@
         "noCode": false,
         "custodySurfaceUnrouted": false,
         "loupeRouted": true,
+        "earlierEraRead": {
+          "method": "eth_getStorageAt pinned by the census block hash (EIP-1898, requireCanonical)",
+          "slotTable": "contracts/deployments/storage-slots.json (forge probe; StorageSlotPinTest)",
+          "eraTable": "contracts/deployments/storage-slot-eras.json (32 eras since 2026-05-01; head 655b44e25)",
+          "calibration": "contracts/test/StorageSlotCalibrationTest.t.sol — derived slots vs routed getters on non-zero rows",
+          "distinctSlots": {
+            "borrowerLifRebate": 12,
+            "fallbackSnapshot": 5,
+            "intentCommits": 3,
+            "intentLiveCommitCount": 3,
+            "nextLoanId": 1,
+            "totalLoansEverCreated": 7
+          },
+          "slotsRead": 1463,
+          "loansScanned": 33,
+          "truncated": false,
+          "nextLoanIdFromStorage": "33",
+          "erasPerField": {
+            "borrowerLifRebate": 12,
+            "fallbackSnapshot": 5,
+            "intentCommits": 3,
+            "intentLiveCommitCount": 3,
+            "nextLoanId": 1,
+            "totalLoansEverCreated": 7
+          },
+          "rowsFound": {
+            "vpfiHeldCustody": 0,
+            "rebateRows": 0,
+            "fallbackSnapshotCustody": 0
+          },
+          "headSlotRows": {
+            "vpfiHeldCustody": 0,
+            "rebateRows": 0,
+            "fallbackSnapshotCustody": 0
+          },
+          "earlierEraCounters": [],
+          "aliasedCountersIgnored": [
+            {
+              "which": "totalLoansEverCreated",
+              "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10e5e",
+              "value": "33",
+              "aliases": "loanIdByPositionTokenId"
+            },
+            {
+              "which": "totalLoansEverCreated",
+              "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10e60",
+              "value": "15000",
+              "aliases": "activeLoanIdsList"
+            },
+            {
+              "which": "totalLoansEverCreated",
+              "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10e62",
+              "value": "7",
+              "aliases": "activeOfferIdsList"
+            },
+            {
+              "which": "totalLoansEverCreated",
+              "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10e5d",
+              "value": "9",
+              "aliases": "nftsInVaultByCollection"
+            }
+          ],
+          "getterDisagreements": {
+            "vpfiHeldCustody": 0,
+            "rebateRows": 0,
+            "fallbackSnapshotCustody": 0
+          }
+        },
         "intentSource": "getter unrouted — intentCommits rows read from storage at every layout era's slot (3 era slot(s)), hash-pinned",
         "storageRead": {
           "method": "eth_getStorageAt pinned by the census block hash (EIP-1898, requireCanonical)",
           "slotTable": "contracts/deployments/storage-slots.json (forge probe; StorageSlotPinTest)",
-          "eraTable": "contracts/deployments/storage-slot-eras.json (32 eras since 2026-05-01; head 613bbb32d)",
+          "eraTable": "contracts/deployments/storage-slot-eras.json (32 eras since 2026-05-01; head 655b44e25)",
           "calibration": "contracts/test/StorageSlotCalibrationTest.t.sol — derived slots vs routed getters on non-zero rows",
           "distinctSlots": {
             "borrowerLifRebate": 12,
@@ -2127,7 +2831,7 @@
                   "date": "2026-08-16"
                 },
                 {
-                  "commit": "613bbb32d",
+                  "commit": "655b44e25",
                   "date": "2026-09-10"
                 }
               ]
@@ -2144,13 +2848,15 @@
           "status": "proven",
           "count": 0,
           "total": "0",
-          "rows": []
+          "rows": [],
+          "historicalRows": 0
         },
         "rebateRows": {
           "status": "proven",
           "count": 0,
           "total": "0",
-          "rows": []
+          "rows": [],
+          "historicalRows": 0
         },
         "fallbackSnapshotCustody": {
           "status": "proven",
@@ -2158,7 +2864,8 @@
           "total": "0",
           "rows": [],
           "nonVpfiRowsExcluded": [],
-          "unknownAssetRows": []
+          "unknownAssetRows": [],
+          "historicalRows": 0
         },
         "liveIntentCommits": {
           "status": "proven",
@@ -2167,7 +2874,8 @@
           "count": 0,
           "total": "0",
           "rows": [],
-          "nonVpfiRowsExcluded": []
+          "nonVpfiRowsExcluded": [],
+          "historicalRows": 0
         }
       }
     },
@@ -2182,8 +2890,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "48605031",
-      "atBlockHash": "0xfd3fc239cf9cbbde864ddc8fe643ba37637212f843f3987d27e87808fb6b1eee",
+      "atBlock": "48611206",
+      "atBlockHash": "0x05cffb909dffbaed39546f8ab6ae3604795a5598959c387d4e75aee2b49ff97d",
       "blockTag": "finalized",
       "rpcHost": "optimism-sepolia-rpc.publicnode.com",
       "scanned": {
@@ -2194,11 +2902,67 @@
         "noCode": false,
         "custodySurfaceUnrouted": false,
         "loupeRouted": true,
+        "earlierEraRead": {
+          "method": "eth_getStorageAt pinned by the census block hash (EIP-1898, requireCanonical)",
+          "slotTable": "contracts/deployments/storage-slots.json (forge probe; StorageSlotPinTest)",
+          "eraTable": "contracts/deployments/storage-slot-eras.json (32 eras since 2026-05-01; head 655b44e25)",
+          "calibration": "contracts/test/StorageSlotCalibrationTest.t.sol — derived slots vs routed getters on non-zero rows",
+          "distinctSlots": {
+            "borrowerLifRebate": 12,
+            "fallbackSnapshot": 5,
+            "intentCommits": 3,
+            "intentLiveCommitCount": 3,
+            "nextLoanId": 1,
+            "totalLoansEverCreated": 7
+          },
+          "slotsRead": 583,
+          "loansScanned": 13,
+          "truncated": false,
+          "nextLoanIdFromStorage": "13",
+          "erasPerField": {
+            "borrowerLifRebate": 12,
+            "fallbackSnapshot": 5,
+            "intentCommits": 3,
+            "intentLiveCommitCount": 3,
+            "nextLoanId": 1,
+            "totalLoansEverCreated": 7
+          },
+          "rowsFound": {
+            "vpfiHeldCustody": 0,
+            "rebateRows": 0,
+            "fallbackSnapshotCustody": 0
+          },
+          "headSlotRows": {
+            "vpfiHeldCustody": 0,
+            "rebateRows": 0,
+            "fallbackSnapshotCustody": 0
+          },
+          "earlierEraCounters": [],
+          "aliasedCountersIgnored": [
+            {
+              "which": "totalLoansEverCreated",
+              "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10e5e",
+              "value": "13",
+              "aliases": "loanIdByPositionTokenId"
+            },
+            {
+              "which": "totalLoansEverCreated",
+              "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10e60",
+              "value": "5500",
+              "aliases": "activeLoanIdsList"
+            }
+          ],
+          "getterDisagreements": {
+            "vpfiHeldCustody": 0,
+            "rebateRows": 0,
+            "fallbackSnapshotCustody": 0
+          }
+        },
         "intentSource": "getter unrouted — intentCommits rows read from storage at every layout era's slot (3 era slot(s)), hash-pinned",
         "storageRead": {
           "method": "eth_getStorageAt pinned by the census block hash (EIP-1898, requireCanonical)",
           "slotTable": "contracts/deployments/storage-slots.json (forge probe; StorageSlotPinTest)",
-          "eraTable": "contracts/deployments/storage-slot-eras.json (32 eras since 2026-05-01; head 613bbb32d)",
+          "eraTable": "contracts/deployments/storage-slot-eras.json (32 eras since 2026-05-01; head 655b44e25)",
           "calibration": "contracts/test/StorageSlotCalibrationTest.t.sol — derived slots vs routed getters on non-zero rows",
           "distinctSlots": {
             "borrowerLifRebate": 12,
@@ -2269,7 +3033,7 @@
                   "date": "2026-08-16"
                 },
                 {
-                  "commit": "613bbb32d",
+                  "commit": "655b44e25",
                   "date": "2026-09-10"
                 }
               ]
@@ -2286,13 +3050,15 @@
           "status": "proven",
           "count": 0,
           "total": "0",
-          "rows": []
+          "rows": [],
+          "historicalRows": 0
         },
         "rebateRows": {
           "status": "proven",
           "count": 0,
           "total": "0",
-          "rows": []
+          "rows": [],
+          "historicalRows": 0
         },
         "fallbackSnapshotCustody": {
           "status": "proven",
@@ -2300,7 +3066,8 @@
           "total": "0",
           "rows": [],
           "nonVpfiRowsExcluded": [],
-          "unknownAssetRows": []
+          "unknownAssetRows": [],
+          "historicalRows": 0
         },
         "liveIntentCommits": {
           "status": "proven",
@@ -2309,7 +3076,8 @@
           "count": 0,
           "total": "0",
           "rows": [],
-          "nonVpfiRowsExcluded": []
+          "nonVpfiRowsExcluded": [],
+          "historicalRows": 0
         }
       }
     },
@@ -2325,8 +3093,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "11672488",
-      "atBlockHash": "0xe4eeb068ce11d00540f54c1a70d40fa3077c1980327ba58141126beab90a1a5b",
+      "atBlock": "11673548",
+      "atBlockHash": "0x9a5b238c79648a0367dd1af166f60a4e69005342942ba3802648215326357a12",
       "blockTag": "finalized",
       "rpcHost": "ethereum-sepolia-rpc.publicnode.com",
       "scanned": {
@@ -2337,6 +3105,52 @@
         "noCode": false,
         "custodySurfaceUnrouted": false,
         "loupeRouted": true,
+        "earlierEraRead": {
+          "method": "eth_getStorageAt pinned by the census block hash (EIP-1898, requireCanonical)",
+          "slotTable": "contracts/deployments/storage-slots.json (forge probe; StorageSlotPinTest)",
+          "eraTable": "contracts/deployments/storage-slot-eras.json (32 eras since 2026-05-01; head 655b44e25)",
+          "calibration": "contracts/test/StorageSlotCalibrationTest.t.sol — derived slots vs routed getters on non-zero rows",
+          "distinctSlots": {
+            "borrowerLifRebate": 12,
+            "fallbackSnapshot": 5,
+            "intentCommits": 3,
+            "intentLiveCommitCount": 3,
+            "nextLoanId": 1,
+            "totalLoansEverCreated": 7
+          },
+          "slotsRead": 11,
+          "loansScanned": 0,
+          "truncated": false,
+          "nextLoanIdFromStorage": "0",
+          "erasPerField": {
+            "borrowerLifRebate": 12,
+            "fallbackSnapshot": 5,
+            "intentCommits": 3,
+            "intentLiveCommitCount": 3,
+            "nextLoanId": 1,
+            "totalLoansEverCreated": 7
+          },
+          "rowsFound": {
+            "vpfiHeldCustody": 0,
+            "rebateRows": 0,
+            "fallbackSnapshotCustody": 0,
+            "liveIntentCommits": 0
+          },
+          "headSlotRows": {
+            "vpfiHeldCustody": 0,
+            "rebateRows": 0,
+            "fallbackSnapshotCustody": 0,
+            "liveIntentCommits": 0
+          },
+          "earlierEraCounters": [],
+          "aliasedCountersIgnored": [],
+          "getterDisagreements": {
+            "vpfiHeldCustody": 0,
+            "rebateRows": 0,
+            "fallbackSnapshotCustody": 0,
+            "liveIntentCommits": 0
+          }
+        },
         "intentSource": "getter unrouted — intentCommits storage NOT read: the no-loans bound already settles the class",
         "intentSurfaceRouted": false,
         "intentProducerRouted": false,
@@ -2349,14 +3163,16 @@
           "provenBy": "no-loans-ever-created",
           "count": 0,
           "total": "0",
-          "rows": []
+          "rows": [],
+          "historicalRows": 0
         },
         "rebateRows": {
           "status": "proven",
           "provenBy": "no-loans-ever-created",
           "count": 0,
           "total": "0",
-          "rows": []
+          "rows": [],
+          "historicalRows": 0
         },
         "fallbackSnapshotCustody": {
           "status": "proven",
@@ -2365,7 +3181,8 @@
           "total": "0",
           "rows": [],
           "nonVpfiRowsExcluded": [],
-          "unknownAssetRows": []
+          "unknownAssetRows": [],
+          "historicalRows": 0
         },
         "liveIntentCommits": {
           "status": "proven",
@@ -2374,7 +3191,8 @@
           "count": 0,
           "total": "0",
           "rows": [],
-          "nonVpfiRowsExcluded": []
+          "nonVpfiRowsExcluded": [],
+          "historicalRows": 0
         }
       }
     },
@@ -2389,8 +3207,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "11672488",
-      "atBlockHash": "0xe4eeb068ce11d00540f54c1a70d40fa3077c1980327ba58141126beab90a1a5b",
+      "atBlock": "11673548",
+      "atBlockHash": "0x9a5b238c79648a0367dd1af166f60a4e69005342942ba3802648215326357a12",
       "blockTag": "finalized",
       "rpcHost": "ethereum-sepolia-rpc.publicnode.com",
       "scanned": {
@@ -2401,11 +3219,79 @@
         "noCode": false,
         "custodySurfaceUnrouted": false,
         "loupeRouted": true,
+        "earlierEraRead": {
+          "method": "eth_getStorageAt pinned by the census block hash (EIP-1898, requireCanonical)",
+          "slotTable": "contracts/deployments/storage-slots.json (forge probe; StorageSlotPinTest)",
+          "eraTable": "contracts/deployments/storage-slot-eras.json (32 eras since 2026-05-01; head 655b44e25)",
+          "calibration": "contracts/test/StorageSlotCalibrationTest.t.sol — derived slots vs routed getters on non-zero rows",
+          "distinctSlots": {
+            "borrowerLifRebate": 12,
+            "fallbackSnapshot": 5,
+            "intentCommits": 3,
+            "intentLiveCommitCount": 3,
+            "nextLoanId": 1,
+            "totalLoansEverCreated": 7
+          },
+          "slotsRead": 1067,
+          "loansScanned": 24,
+          "truncated": false,
+          "nextLoanIdFromStorage": "24",
+          "erasPerField": {
+            "borrowerLifRebate": 12,
+            "fallbackSnapshot": 5,
+            "intentCommits": 3,
+            "intentLiveCommitCount": 3,
+            "nextLoanId": 1,
+            "totalLoansEverCreated": 7
+          },
+          "rowsFound": {
+            "vpfiHeldCustody": 0,
+            "rebateRows": 0,
+            "fallbackSnapshotCustody": 0
+          },
+          "headSlotRows": {
+            "vpfiHeldCustody": 0,
+            "rebateRows": 0,
+            "fallbackSnapshotCustody": 0
+          },
+          "earlierEraCounters": [],
+          "aliasedCountersIgnored": [
+            {
+              "which": "totalLoansEverCreated",
+              "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10e5e",
+              "value": "24",
+              "aliases": "loanIdByPositionTokenId"
+            },
+            {
+              "which": "totalLoansEverCreated",
+              "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10e60",
+              "value": "11250",
+              "aliases": "activeLoanIdsList"
+            },
+            {
+              "which": "totalLoansEverCreated",
+              "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10e62",
+              "value": "8",
+              "aliases": "activeOfferIdsList"
+            },
+            {
+              "which": "totalLoansEverCreated",
+              "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10e5d",
+              "value": "14",
+              "aliases": "nftsInVaultByCollection"
+            }
+          ],
+          "getterDisagreements": {
+            "vpfiHeldCustody": 0,
+            "rebateRows": 0,
+            "fallbackSnapshotCustody": 0
+          }
+        },
         "intentSource": "getter unrouted — intentCommits rows read from storage at every layout era's slot (3 era slot(s)), hash-pinned",
         "storageRead": {
           "method": "eth_getStorageAt pinned by the census block hash (EIP-1898, requireCanonical)",
           "slotTable": "contracts/deployments/storage-slots.json (forge probe; StorageSlotPinTest)",
-          "eraTable": "contracts/deployments/storage-slot-eras.json (32 eras since 2026-05-01; head 613bbb32d)",
+          "eraTable": "contracts/deployments/storage-slot-eras.json (32 eras since 2026-05-01; head 655b44e25)",
           "calibration": "contracts/test/StorageSlotCalibrationTest.t.sol — derived slots vs routed getters on non-zero rows",
           "distinctSlots": {
             "borrowerLifRebate": 12,
@@ -2476,7 +3362,7 @@
                   "date": "2026-08-16"
                 },
                 {
-                  "commit": "613bbb32d",
+                  "commit": "655b44e25",
                   "date": "2026-09-10"
                 }
               ]
@@ -2493,13 +3379,15 @@
           "status": "proven",
           "count": 0,
           "total": "0",
-          "rows": []
+          "rows": [],
+          "historicalRows": 0
         },
         "rebateRows": {
           "status": "proven",
           "count": 0,
           "total": "0",
-          "rows": []
+          "rows": [],
+          "historicalRows": 0
         },
         "fallbackSnapshotCustody": {
           "status": "proven",
@@ -2507,7 +3395,8 @@
           "total": "0",
           "rows": [],
           "nonVpfiRowsExcluded": [],
-          "unknownAssetRows": []
+          "unknownAssetRows": [],
+          "historicalRows": 0
         },
         "liveIntentCommits": {
           "status": "proven",
@@ -2516,7 +3405,8 @@
           "count": 0,
           "total": "0",
           "rows": [],
-          "nonVpfiRowsExcluded": []
+          "nonVpfiRowsExcluded": [],
+          "historicalRows": 0
         }
       }
     },
@@ -2532,8 +3422,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "11672488",
-      "atBlockHash": "0xe4eeb068ce11d00540f54c1a70d40fa3077c1980327ba58141126beab90a1a5b",
+      "atBlock": "11673548",
+      "atBlockHash": "0x9a5b238c79648a0367dd1af166f60a4e69005342942ba3802648215326357a12",
       "blockTag": "finalized",
       "rpcHost": "ethereum-sepolia-rpc.publicnode.com",
       "scanned": {
@@ -2544,6 +3434,52 @@
         "noCode": false,
         "custodySurfaceUnrouted": false,
         "loupeRouted": true,
+        "earlierEraRead": {
+          "method": "eth_getStorageAt pinned by the census block hash (EIP-1898, requireCanonical)",
+          "slotTable": "contracts/deployments/storage-slots.json (forge probe; StorageSlotPinTest)",
+          "eraTable": "contracts/deployments/storage-slot-eras.json (32 eras since 2026-05-01; head 655b44e25)",
+          "calibration": "contracts/test/StorageSlotCalibrationTest.t.sol — derived slots vs routed getters on non-zero rows",
+          "distinctSlots": {
+            "borrowerLifRebate": 12,
+            "fallbackSnapshot": 5,
+            "intentCommits": 3,
+            "intentLiveCommitCount": 3,
+            "nextLoanId": 1,
+            "totalLoansEverCreated": 7
+          },
+          "slotsRead": 11,
+          "loansScanned": 0,
+          "truncated": false,
+          "nextLoanIdFromStorage": "0",
+          "erasPerField": {
+            "borrowerLifRebate": 12,
+            "fallbackSnapshot": 5,
+            "intentCommits": 3,
+            "intentLiveCommitCount": 3,
+            "nextLoanId": 1,
+            "totalLoansEverCreated": 7
+          },
+          "rowsFound": {
+            "vpfiHeldCustody": 0,
+            "rebateRows": 0,
+            "fallbackSnapshotCustody": 0,
+            "liveIntentCommits": 0
+          },
+          "headSlotRows": {
+            "vpfiHeldCustody": 0,
+            "rebateRows": 0,
+            "fallbackSnapshotCustody": 0,
+            "liveIntentCommits": 0
+          },
+          "earlierEraCounters": [],
+          "aliasedCountersIgnored": [],
+          "getterDisagreements": {
+            "vpfiHeldCustody": 0,
+            "rebateRows": 0,
+            "fallbackSnapshotCustody": 0,
+            "liveIntentCommits": 0
+          }
+        },
         "intentSource": "getter unrouted — intentCommits storage NOT read: the no-loans bound already settles the class",
         "intentSurfaceRouted": false,
         "intentProducerRouted": false,
@@ -2556,14 +3492,16 @@
           "provenBy": "no-loans-ever-created",
           "count": 0,
           "total": "0",
-          "rows": []
+          "rows": [],
+          "historicalRows": 0
         },
         "rebateRows": {
           "status": "proven",
           "provenBy": "no-loans-ever-created",
           "count": 0,
           "total": "0",
-          "rows": []
+          "rows": [],
+          "historicalRows": 0
         },
         "fallbackSnapshotCustody": {
           "status": "proven",
@@ -2572,7 +3510,8 @@
           "total": "0",
           "rows": [],
           "nonVpfiRowsExcluded": [],
-          "unknownAssetRows": []
+          "unknownAssetRows": [],
+          "historicalRows": 0
         },
         "liveIntentCommits": {
           "status": "proven",
@@ -2581,7 +3520,8 @@
           "count": 0,
           "total": "0",
           "rows": [],
-          "nonVpfiRowsExcluded": []
+          "nonVpfiRowsExcluded": [],
+          "historicalRows": 0
         }
       }
     }

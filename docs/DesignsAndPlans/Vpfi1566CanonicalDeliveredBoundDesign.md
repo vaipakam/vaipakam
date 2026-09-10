@@ -5536,23 +5536,28 @@ reported a comfortable answer it had not earned:
   latter as a failure on op-sepolia rather than silently counting it as an
   absent commit.
 
-**RESULT (2026-09-10, run 28 — the run-26 population and rules, plus the
-calibrated, era-complete storage read of §7/§7a where a Diamond routes no
-getter, against the complete 32-era table; run 27, read against a 16-era
-table the compiler later showed to have been complete for every slot it
-used, reached the same verdicts and is superseded only so that each result's
-recorded evidence names the table in force): SEVENTEEN of the twenty
-deployments are PROVEN EMPTY on every class; three are INDETERMINATE.** 215
-loan reads across the twenty artifacts, zero rows in any class on any
-deployment where rows could be read, every chain at its `finalized` block, no
-chain failed, no live-commit counter contradicting an empty scan. Of the seventeen, eight are proven by
+**RESULT (2026-09-10, run 29 — the run-26 population and rules, plus the
+calibrated storage read of §7/§7a where a Diamond routes no getter, plus the
+era-complete read of every class at every era slot on every enumerable
+deployment, reconciled against the routed getters (review rounds 3 and 4);
+runs 27 and 28, read without the earlier eras, reached the same verdicts and
+are superseded so that each result's recorded evidence carries the complete
+read): SEVENTEEN of the twenty deployments are PROVEN EMPTY on every class;
+three are INDETERMINATE.** 215 loan reads across the twenty artifacts, zero
+rows in any class on any deployment where rows could be read, every chain at
+its `finalized` block, no chain failed, no live-commit counter contradicting
+an empty scan, no disagreement between a routed getter and the storage at
+HEAD's slot, and every non-zero earlier-era reading attributed to a current
+field (twenty-four of them, ignored as counters). Of the seventeen, eight are proven by
 routed-getter enumeration, six by a routed loan counter that reads zero, and
 three — the base-sepolia shells of 2026-07-01 — by the storage twin of that
 proof: `nextLoanId` zero at its only slot and the other counters zero at every
 era slot. Six deployments whose intent getter is unrouted had their intent
-rows read from storage at all three era slots for every enumerated loan (591
-slots across the nine storage-read deployments; the evidence — method, slot
-table, era table, calibration test — is recorded on each result). The three
+rows read from storage at all three era slots for every enumerated loan
+(10,380 hash-pinned slot reads across the nineteen deployments read from
+storage, the era-complete read of the sixteen enumerable ones included; the
+evidence — method, slot table, era table, calibration test, per-class
+disagreement and aliasing counts — is recorded on each result). The three
 that remain: the base-sepolia record of 2026-07-01T01-03 naming a non-Diamond
 (an artifact correction, operator-gated); the arb-sepolia archive of
 2026-07-01T01-36, which records no VPFI token and whose Diamond does not route
@@ -5988,7 +5993,8 @@ without its row layout is refused rather than read with today's offsets; a
 non-zero `intentLiveCommitCount` at any era slot contradicts an empty row
 scan and leaves the class indeterminate; and the shell path no longer sums
 an intent amount storage never read. Run 28 re-read every deployment against the complete era table and reached the
-same seventeen-of-twenty with no contradiction; it is the canonical artifact.
+same seventeen-of-twenty with no contradiction; run 29, below, superseded it
+as the canonical artifact.
 
 **Review round 2 closed the remaining doors.** A change of the storage
 namespace itself — the ERC-7201 position, or its derivation — is now an era
@@ -6032,7 +6038,7 @@ classified against it: a non-zero at a slot a current field occupies is that
 field's value and is ignored as a counter, a non-zero at a slot no field
 occupies is a genuine contradiction, and a row candidate whose old mapping
 head is a current mapping's head is reported as ambiguous with the field it
-aliases. Run 29 re-reads every deployment with the earlier-era read.
+aliases. Run 29 re-read every deployment with it, and with round 4.
 
 **Review round 4 removed the last assumption in the read.** The round-3 read
 had left HEAD's slot out of the era scan on the grounds that the routed getter
@@ -6055,7 +6061,10 @@ live-commit counter at an earlier era contradicts the intent class on every
 path, not only where the zero-loans shortcut had been taken: on a deployment
 with ordinary loans the routed getter and the row scan can both come back
 empty while the protocol's own counter says a commit was missed. Run 29
-carries all of it.
+re-read every deployment with all of it: the same seventeen of twenty, zero
+rows, zero getter disagreements over 215 loans, twenty-four earlier-era
+readings attributed to current fields and ignored, 10,380 hash-pinned slot
+reads in all; it is the canonical artifact.
 
 ### 7a. What the provenance walk found, and how the design changes (2026-09-09)
 
