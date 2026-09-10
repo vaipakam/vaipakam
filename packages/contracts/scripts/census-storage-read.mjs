@@ -197,13 +197,19 @@ export function mergeHistoricalRows(cls, historical, className) {
   // in the getter's set; merging it again would double the count, the total
   // and the shortfall. Each getter row absorbs at most ONE historical row
   // with the same key (and the same amount where the row carries one); the
-  // HEAD-slot reconciliation still records the layout disagreement.
+  // HEAD-slot reconciliation still records the layout disagreement. A row
+  // that carries no amount (intent) is never absorbed — see below.
+  // An intent row is NEVER absorbed (#2095 r8 P1): storage reads its orderHash
+  // and the routed getter returns the order, not the hash, so a historical
+  // intent row cannot be proven to be the getter's — an old-layout commit A
+  // left behind under a current-layout commit B for the same loan is a
+  // distinct candidate and must survive as one.
   const amountField = { vpfiHeldCustody: 'vpfiHeld', rebateRows: 'rebateAmount', fallbackSnapshotCustody: 'collateralTotal' }[className];
-  const unclaimed = [...(cls.rows ?? []), ...(cls.nonVpfiRowsExcluded ?? []), ...(cls.unknownAssetRows ?? [])];
+  const unclaimed = amountField ? [...(cls.rows ?? []), ...(cls.nonVpfiRowsExcluded ?? []), ...(cls.unknownAssetRows ?? [])] : [];
   const hist = [];
   let alreadyReported = 0;
   for (const r of all) {
-    const i = unclaimed.findIndex((g) => String(g.loanId) === String(r.loanId) && (!amountField || String(g[amountField]) === String(r[amountField])));
+    const i = unclaimed.findIndex((g) => String(g.loanId) === String(r.loanId) && String(g[amountField]) === String(r[amountField]));
     if (i >= 0) { unclaimed.splice(i, 1); alreadyReported += 1; } else hist.push(r);
   }
   const base = { historicalRows: hist.length, historicalRowsAlreadyReportedByGetter: alreadyReported };
@@ -294,7 +300,8 @@ export function splitByHeadSlot(rows, headSlots) {
  */
 export function getterAgreement({ headRows, routed }) {
   const out = {};
-  const amount = { vpfiHeldCustody: 'vpfiHeld', rebateRows: 'rebateAmount' };
+  // every class that carries an amount compares it (#2095 r8 P1 — fallback included); an intent row has no amount storage reads
+  const amount = { vpfiHeldCustody: 'vpfiHeld', rebateRows: 'rebateAmount', fallbackSnapshotCustody: 'collateralTotal' };
   for (const cls of Object.keys(headRows)) {
     const storage = new Map(headRows[cls].map((r) => [String(r.loanId), r]));
     const getter = new Map((routed[cls] ?? []).map((r) => [String(r.loanId), r]));

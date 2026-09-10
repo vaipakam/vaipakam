@@ -168,10 +168,13 @@ test('HEAD-slot rows are reconciled with the routed getter both ways, never merg
   assert.deepEqual(agreement.rebateRows, []);
   assert.deepEqual(agreement.vpfiHeldCustody, [{ loanId: '8', storage: 'absent at the HEAD slot', getter: 'present' }]);
   assert.deepEqual(agreement.liveIntentCommits, [{ loanId: '7', storage: 'present', getter: 'absent' }]);
-  // an amount mismatch is a disagreement too
+  // an amount mismatch is a disagreement too — for a fallback snapshot as well (#2095 r8 P1)
   const amt = getterAgreement({ headRows: head, routed: { vpfiHeldCustody: [{ loanId: '1', vpfiHeld: '6' }], rebateRows: [{ loanId: '3', rebateAmount: '4' }], fallbackSnapshotCustody: [], liveIntentCommits: [{ loanId: '7' }] } });
   assert.deepEqual(amt.vpfiHeldCustody, [{ loanId: '1', storage: '5', getter: '6' }]);
   assert.deepEqual(amt.liveIntentCommits, []);
+  const fbHead = { fallbackSnapshotCustody: [{ loanId: '4', collateralTotal: '10', mappingSlot: slots.fields.fallbackSnapshot }] };
+  assert.deepEqual(getterAgreement({ headRows: fbHead, routed: { fallbackSnapshotCustody: [{ loanId: '4', collateralTotal: '9' }] } }).fallbackSnapshotCustody, [{ loanId: '4', storage: '10', getter: '9' }]);
+  assert.deepEqual(getterAgreement({ headRows: fbHead, routed: { fallbackSnapshotCustody: [{ loanId: '4', collateralTotal: '10' }] } }).fallbackSnapshotCustody, []);
 });
 
 test('without the era-complete read no getter-derived class stays proven (#2095 r5 P1)', () => {
@@ -236,8 +239,13 @@ test('a historical row an older routed getter already returned is not merged twi
   // one getter row absorbs at most one historical row: two era rows for one key with the same amount keep one
   const two = mergeHistoricalRows(cls, { rows: { vpfiHeldCustody: [{ loanId: '1', vpfiHeld: '5', mappingSlot: '0x01' }, { loanId: '1', vpfiHeld: '5', mappingSlot: '0x02' }] } }, 'vpfiHeldCustody');
   assert.equal(two.count, 2); assert.equal(two.historicalRowsAlreadyReportedByGetter, 1);
-  // an intent row has no amount: the key alone matches, and a getter row filed as non-VPFI or unknown-asset counts as reported too
+  // a getter row filed as non-VPFI or unknown-asset counts as reported too (fallback: same key and amount)
+  const fb = mergeHistoricalRows({ status: 'proven', count: 0, rows: [], nonVpfiRowsExcluded: [{ loanId: '9', asset: '0xab', collateralTotal: '3' }] }, { rows: { fallbackSnapshotCustody: [{ loanId: '9', collateralTotal: '3', mappingSlot: '0x01' }] } }, 'fallbackSnapshotCustody');
+  assert.equal(fb.status, 'proven', 'nothing new to merge'); assert.equal(fb.historicalRowsAlreadyReportedByGetter, 1);
+  // an intent row is NEVER absorbed (#2095 r8 P1): the getter does not expose the orderHash, so commit A under an old
+  // layout and commit B under today's for the same loan are distinct candidates — A survives as unknown-asset
   const intent = mergeHistoricalRows({ status: 'proven', count: 1, rows: [], nonVpfiRowsExcluded: [{ loanId: '9', asset: '0xab' }] }, { rows: { liveIntentCommits: [{ loanId: '9', orderHash: '0xcd', mappingSlot: '0x01' }] } }, 'liveIntentCommits');
-  assert.equal(intent.status, 'proven', 'nothing new to merge');
-  assert.equal(intent.historicalRowsAlreadyReportedByGetter, 1);
+  assert.equal(intent.status, 'indeterminate');
+  assert.equal(intent.historicalRowsAlreadyReportedByGetter, 0);
+  assert.deepEqual(intent.unknownAssetRows.map((r) => r.orderHash), ['0xcd']);
 });

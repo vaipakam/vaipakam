@@ -5536,19 +5536,20 @@ reported a comfortable answer it had not earned:
   latter as a failure on op-sepolia rather than silently counting it as an
   absent commit.
 
-**RESULT (2026-09-10, run 29 — the run-26 population and rules, plus the
+**RESULT (2026-09-10, run 30 — the run-26 population and rules, plus the
 calibrated storage read of §7/§7a where a Diamond routes no getter, plus the
 era-complete read of every class at every era slot on every enumerable
-deployment, reconciled against the routed getters (review rounds 3 and 4);
-runs 27 and 28, read without the earlier eras, reached the same verdicts and
-are superseded so that each result's recorded evidence carries the complete
-read): SEVENTEEN of the twenty deployments are PROVEN EMPTY on every class;
+deployment, reconciled against the routed getters (review rounds 3 to 7);
+run 29 reached the same verdicts and is superseded only so that the three
+bare shells record producers as possibly live, as round 7 requires; runs 27
+and 28, read without the earlier eras, reached them too): SEVENTEEN of the twenty deployments are PROVEN EMPTY on every class;
 three are INDETERMINATE.** 215 loan reads across the twenty artifacts, zero
 rows in any class on any deployment where rows could be read, every chain at
 its `finalized` block, no chain failed, no live-commit counter contradicting
 an empty scan, no disagreement between a routed getter and the storage at
 HEAD's slot, and every non-zero earlier-era reading attributed to a current
-field (twenty-four of them, ignored as counters). Of the seventeen, eight are proven by
+field (twenty-four such readings on the era-complete read, sixteen of them
+recorded a second time on the intent-only read, all ignored as counters). Of the seventeen, eight are proven by
 routed-getter enumeration, six by a routed loan counter that reads zero, and
 three — the base-sepolia shells of 2026-07-01 — by the storage twin of that
 proof: `nextLoanId` zero at its only slot and the other counters zero at every
@@ -6064,7 +6065,7 @@ empty while the protocol's own counter says a commit was missed. Run 29
 re-read every deployment with all of it: the same seventeen of twenty, zero
 rows, zero getter disagreements over 215 loans, twenty-four earlier-era
 readings attributed to current fields and ignored, 10,380 hash-pinned slot
-reads in all; it is the canonical artifact.
+reads in all; run 30, below, superseded it as the canonical artifact.
 
 **Review round 5 closed two doors the read had left on its own frame.** The
 walker discovered the inline structs that precede a target only from HEAD's
@@ -6106,12 +6107,25 @@ which is the input the migration-retirement rule reads. A bare shell is now
 treated as able to write until its writer surface is known — only a
 non-Diamond has no live producers — which changes no verdict and, since the
 population is not established empty, no retirement answer either; run 30
-re-records the three shells accordingly. And a routed getter compiled against
+re-recorded the three shells accordingly and is the canonical artifact. And a routed getter compiled against
 an earlier layout returns the very row the era scan finds at that era's slot,
 so merging the scan's row again doubled the count, the total and the
 shortfall while the reconciliation only marked the layout disagreement. Each
 getter row now absorbs at most one historical row with the same key (and the
 same amount where the row carries one); the disagreement is still recorded.
+
+**Review round 8 tightened both of round 7's rules.** The HEAD-slot
+reconciliation compared amounts for held and rebate rows but only presence
+for a fallback snapshot, so an old getter's stale fallback amount could pass
+as agreement while the class stayed proven on the wrong total; a fallback
+snapshot's collateral total is now compared like every other amount. And the
+absorption rule had let an intent candidate be absorbed on the loan id alone,
+which the getter cannot justify: storage reads a commit's order hash and the
+routed getter returns the order, not the hash, so a commit left behind under
+an old layout and a newer commit for the same loan are indistinguishable by
+key and are two candidates. An intent row is therefore never absorbed — it
+survives as an unknown-asset candidate and leaves the class indeterminate —
+and the amount rule absorbs only what it can prove identical.
 
 ### 7a. What the provenance walk found, and how the design changes (2026-09-09)
 

@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-10T08:08:57.960Z",
+  "generatedAt": "2026-09-10T12:19:50.340Z",
   "purpose": "#1566 grandfathered-custody census — decides whether slices 0-3 are live work or a certified no-op",
   "scope": "all-deployed-chains",
   "allClassesEmpty": false,
@@ -102,8 +102,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "307313703",
-      "atBlockHash": "0x0f00ab4c150269471599a747aa22f6869048b590a801cc18c19000c00fead464",
+      "atBlock": "307370923",
+      "atBlockHash": "0xa8456092a165aca7ff315800418e81f5d3a88d825c9608b1f5c9ed73520a75e4",
       "blockTag": "finalized",
       "rpcHost": "arbitrum-sepolia.gateway.tenderly.co",
       "scanned": {
@@ -221,8 +221,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "307313703",
-      "atBlockHash": "0x0f00ab4c150269471599a747aa22f6869048b590a801cc18c19000c00fead464",
+      "atBlock": "307370923",
+      "atBlockHash": "0xa8456092a165aca7ff315800418e81f5d3a88d825c9608b1f5c9ed73520a75e4",
       "blockTag": "finalized",
       "rpcHost": "arbitrum-sepolia.gateway.tenderly.co",
       "scanned": {
@@ -316,6 +316,32 @@
             "totalLoansEverCreated": 7
           },
           "kind": "storage-read-calibrated",
+          "aliasedCountersIgnored": [
+            {
+              "which": "totalLoansEverCreated",
+              "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10e5e",
+              "value": "24",
+              "aliases": "loanIdByPositionTokenId"
+            },
+            {
+              "which": "totalLoansEverCreated",
+              "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10e60",
+              "value": "10500",
+              "aliases": "activeLoanIdsList"
+            },
+            {
+              "which": "totalLoansEverCreated",
+              "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10e62",
+              "value": "4",
+              "aliases": "activeOfferIdsList"
+            },
+            {
+              "which": "totalLoansEverCreated",
+              "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10e5d",
+              "value": "9",
+              "aliases": "nftsInVaultByCollection"
+            }
+          ],
           "slotsRead": 83,
           "loansScanned": 24,
           "liveCommitCounts": [
@@ -435,8 +461,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "307313703",
-      "atBlockHash": "0x0f00ab4c150269471599a747aa22f6869048b590a801cc18c19000c00fead464",
+      "atBlock": "307370923",
+      "atBlockHash": "0xa8456092a165aca7ff315800418e81f5d3a88d825c9608b1f5c9ed73520a75e4",
       "blockTag": "finalized",
       "rpcHost": "arbitrum-sepolia.gateway.tenderly.co",
       "scanned": {
@@ -512,6 +538,14 @@
             "totalLoansEverCreated": 7
           },
           "kind": "storage-read-calibrated",
+          "aliasedCountersIgnored": [
+            {
+              "which": "totalLoansEverCreated",
+              "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10e62",
+              "value": "37",
+              "aliases": "activeOfferIdsList"
+            }
+          ],
           "slotsRead": 122,
           "loansScanned": 37,
           "liveCommitCounts": [
@@ -631,8 +665,8 @@
       "diamondVpfiBacking": null,
       "vpfiRowsTotal": "0",
       "backingShortfall": null,
-      "atBlock": "307313703",
-      "atBlockHash": "0x0f00ab4c150269471599a747aa22f6869048b590a801cc18c19000c00fead464",
+      "atBlock": "307370923",
+      "atBlockHash": "0xa8456092a165aca7ff315800418e81f5d3a88d825c9608b1f5c9ed73520a75e4",
       "blockTag": "finalized",
       "rpcHost": "arbitrum-sepolia.gateway.tenderly.co",
       "scanned": {
@@ -752,8 +786,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "46626711",
-      "atBlockHash": "0xc60928d22a166170ed7d0f3dd7ed65a0769823a3b6fb1f1c7794591586edd368",
+      "atBlock": "46634167",
+      "atBlockHash": "0xfb624531f355a95d4701147b9f13aecb7517806fdd9d8b14303a21e7c4759751",
       "blockTag": "finalized",
       "rpcHost": "sepolia.base.org",
       "scanned": {
@@ -882,8 +916,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "46626711",
-      "atBlockHash": "0xc60928d22a166170ed7d0f3dd7ed65a0769823a3b6fb1f1c7794591586edd368",
+      "atBlock": "46634167",
+      "atBlockHash": "0xfb624531f355a95d4701147b9f13aecb7517806fdd9d8b14303a21e7c4759751",
       "blockTag": "finalized",
       "rpcHost": "sepolia.base.org",
       "scanned": {
@@ -997,8 +1031,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "46626711",
-      "atBlockHash": "0xc60928d22a166170ed7d0f3dd7ed65a0769823a3b6fb1f1c7794591586edd368",
+      "atBlock": "46634167",
+      "atBlockHash": "0xfb624531f355a95d4701147b9f13aecb7517806fdd9d8b14303a21e7c4759751",
       "blockTag": "finalized",
       "rpcHost": "sepolia.base.org",
       "scanned": {
@@ -1111,8 +1145,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "46626711",
-      "atBlockHash": "0xc60928d22a166170ed7d0f3dd7ed65a0769823a3b6fb1f1c7794591586edd368",
+      "atBlock": "46634167",
+      "atBlockHash": "0xfb624531f355a95d4701147b9f13aecb7517806fdd9d8b14303a21e7c4759751",
       "blockTag": "finalized",
       "rpcHost": "sepolia.base.org",
       "scanned": {
@@ -1188,6 +1222,14 @@
             "totalLoansEverCreated": 7
           },
           "kind": "storage-read-calibrated",
+          "aliasedCountersIgnored": [
+            {
+              "which": "totalLoansEverCreated",
+              "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10e62",
+              "value": "33",
+              "aliases": "activeOfferIdsList"
+            }
+          ],
           "slotsRead": 110,
           "loansScanned": 33,
           "liveCommitCounts": [
@@ -1308,8 +1350,8 @@
       "diamondVpfiBacking": null,
       "vpfiRowsTotal": null,
       "backingShortfall": null,
-      "atBlock": "46626711",
-      "atBlockHash": "0xc60928d22a166170ed7d0f3dd7ed65a0769823a3b6fb1f1c7794591586edd368",
+      "atBlock": "46634167",
+      "atBlockHash": "0xfb624531f355a95d4701147b9f13aecb7517806fdd9d8b14303a21e7c4759751",
       "blockTag": "finalized",
       "rpcHost": "sepolia.base.org",
       "scanned": {
@@ -1321,7 +1363,7 @@
         "custodySurfaceUnrouted": true,
         "notADiamond": false,
         "loupeRouted": false,
-        "producersMayBeLive": false,
+        "producersMayBeLive": true,
         "storageRead": {
           "method": "eth_getStorageAt pinned by the census block hash (EIP-1898, requireCanonical)",
           "slotTable": "contracts/deployments/storage-slots.json (forge probe; StorageSlotPinTest)",
@@ -1577,7 +1619,8 @@
           },
           "slotsRead": 11,
           "loansScanned": 0,
-          "truncated": false
+          "truncated": false,
+          "aliasedCountersIgnored": []
         }
       },
       "classes": {
@@ -1625,8 +1668,8 @@
       "diamondVpfiBacking": null,
       "vpfiRowsTotal": null,
       "backingShortfall": null,
-      "atBlock": "46626711",
-      "atBlockHash": "0xc60928d22a166170ed7d0f3dd7ed65a0769823a3b6fb1f1c7794591586edd368",
+      "atBlock": "46634167",
+      "atBlockHash": "0xfb624531f355a95d4701147b9f13aecb7517806fdd9d8b14303a21e7c4759751",
       "blockTag": "finalized",
       "rpcHost": "sepolia.base.org",
       "scanned": {
@@ -1638,7 +1681,7 @@
         "custodySurfaceUnrouted": true,
         "notADiamond": false,
         "loupeRouted": false,
-        "producersMayBeLive": false,
+        "producersMayBeLive": true,
         "storageRead": {
           "method": "eth_getStorageAt pinned by the census block hash (EIP-1898, requireCanonical)",
           "slotTable": "contracts/deployments/storage-slots.json (forge probe; StorageSlotPinTest)",
@@ -1894,7 +1937,8 @@
           },
           "slotsRead": 11,
           "loansScanned": 0,
-          "truncated": false
+          "truncated": false,
+          "aliasedCountersIgnored": []
         }
       },
       "classes": {
@@ -1942,8 +1986,8 @@
       "diamondVpfiBacking": null,
       "vpfiRowsTotal": null,
       "backingShortfall": null,
-      "atBlock": "46626711",
-      "atBlockHash": "0xc60928d22a166170ed7d0f3dd7ed65a0769823a3b6fb1f1c7794591586edd368",
+      "atBlock": "46634167",
+      "atBlockHash": "0xfb624531f355a95d4701147b9f13aecb7517806fdd9d8b14303a21e7c4759751",
       "blockTag": "finalized",
       "rpcHost": "sepolia.base.org",
       "scanned": {
@@ -1955,7 +1999,7 @@
         "custodySurfaceUnrouted": true,
         "notADiamond": false,
         "loupeRouted": false,
-        "producersMayBeLive": false,
+        "producersMayBeLive": true,
         "storageRead": {
           "method": "eth_getStorageAt pinned by the census block hash (EIP-1898, requireCanonical)",
           "slotTable": "contracts/deployments/storage-slots.json (forge probe; StorageSlotPinTest)",
@@ -2211,7 +2255,8 @@
           },
           "slotsRead": 11,
           "loansScanned": 0,
-          "truncated": false
+          "truncated": false,
+          "aliasedCountersIgnored": []
         }
       },
       "classes": {
@@ -2259,8 +2304,8 @@
       "diamondVpfiBacking": null,
       "vpfiRowsTotal": "0",
       "backingShortfall": null,
-      "atBlock": "46626711",
-      "atBlockHash": "0xc60928d22a166170ed7d0f3dd7ed65a0769823a3b6fb1f1c7794591586edd368",
+      "atBlock": "46634167",
+      "atBlockHash": "0xfb624531f355a95d4701147b9f13aecb7517806fdd9d8b14303a21e7c4759751",
       "blockTag": "finalized",
       "rpcHost": "sepolia.base.org",
       "scanned": {
@@ -2373,8 +2418,8 @@
       "diamondVpfiBacking": null,
       "vpfiRowsTotal": null,
       "backingShortfall": null,
-      "atBlock": "46626711",
-      "atBlockHash": "0xc60928d22a166170ed7d0f3dd7ed65a0769823a3b6fb1f1c7794591586edd368",
+      "atBlock": "46634167",
+      "atBlockHash": "0xfb624531f355a95d4701147b9f13aecb7517806fdd9d8b14303a21e7c4759751",
       "blockTag": "finalized",
       "rpcHost": "sepolia.base.org",
       "scanned": {
@@ -2432,9 +2477,9 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "130173916",
-      "atBlockHash": "0x178259992b3413bc83cd709889eb8c38baa2878966278eb26c8da3621f27d29a",
-      "blockTag": "finalized (lowest of 6 samples: 130173916, 130173917, 130173919, 130173921, 130173922)",
+      "atBlock": "130207094",
+      "atBlockHash": "0x784ac9d58868f01c0cca73e0a7a402d54d965b1914219e629309c3f885ef750d",
+      "blockTag": "finalized (lowest of 6 samples: 130207094, 130207096, 130207098, 130207100, 130207102)",
       "rpcHost": "bsc-testnet-rpc.publicnode.com",
       "scanned": {
         "loanIdsEnumerated": 4,
@@ -2562,9 +2607,9 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "130173916",
-      "atBlockHash": "0x178259992b3413bc83cd709889eb8c38baa2878966278eb26c8da3621f27d29a",
-      "blockTag": "finalized (lowest of 6 samples: 130173916, 130173917, 130173919, 130173921, 130173922)",
+      "atBlock": "130207094",
+      "atBlockHash": "0x784ac9d58868f01c0cca73e0a7a402d54d965b1914219e629309c3f885ef750d",
+      "blockTag": "finalized (lowest of 6 samples: 130207094, 130207096, 130207098, 130207100, 130207102)",
       "rpcHost": "bsc-testnet-rpc.publicnode.com",
       "scanned": {
         "loanIdsEnumerated": 0,
@@ -2676,8 +2721,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "48611206",
-      "atBlockHash": "0x05cffb909dffbaed39546f8ab6ae3604795a5598959c387d4e75aee2b49ff97d",
+      "atBlock": "48618856",
+      "atBlockHash": "0xf4260674670ae6168d3975a788faecae310453213ce2e538cef28625ed02f087",
       "blockTag": "finalized",
       "rpcHost": "optimism-sepolia-rpc.publicnode.com",
       "scanned": {
@@ -2771,6 +2816,32 @@
             "totalLoansEverCreated": 7
           },
           "kind": "storage-read-calibrated",
+          "aliasedCountersIgnored": [
+            {
+              "which": "totalLoansEverCreated",
+              "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10e5e",
+              "value": "33",
+              "aliases": "loanIdByPositionTokenId"
+            },
+            {
+              "which": "totalLoansEverCreated",
+              "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10e60",
+              "value": "15000",
+              "aliases": "activeLoanIdsList"
+            },
+            {
+              "which": "totalLoansEverCreated",
+              "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10e62",
+              "value": "7",
+              "aliases": "activeOfferIdsList"
+            },
+            {
+              "which": "totalLoansEverCreated",
+              "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10e5d",
+              "value": "9",
+              "aliases": "nftsInVaultByCollection"
+            }
+          ],
           "slotsRead": 110,
           "loansScanned": 33,
           "liveCommitCounts": [
@@ -2890,8 +2961,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "48611206",
-      "atBlockHash": "0x05cffb909dffbaed39546f8ab6ae3604795a5598959c387d4e75aee2b49ff97d",
+      "atBlock": "48618856",
+      "atBlockHash": "0xf4260674670ae6168d3975a788faecae310453213ce2e538cef28625ed02f087",
       "blockTag": "finalized",
       "rpcHost": "optimism-sepolia-rpc.publicnode.com",
       "scanned": {
@@ -2973,6 +3044,20 @@
             "totalLoansEverCreated": 7
           },
           "kind": "storage-read-calibrated",
+          "aliasedCountersIgnored": [
+            {
+              "which": "totalLoansEverCreated",
+              "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10e5e",
+              "value": "13",
+              "aliases": "loanIdByPositionTokenId"
+            },
+            {
+              "which": "totalLoansEverCreated",
+              "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10e60",
+              "value": "5500",
+              "aliases": "activeLoanIdsList"
+            }
+          ],
           "slotsRead": 50,
           "loansScanned": 13,
           "liveCommitCounts": [
@@ -3093,8 +3178,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "11673548",
-      "atBlockHash": "0x9a5b238c79648a0367dd1af166f60a4e69005342942ba3802648215326357a12",
+      "atBlock": "11674792",
+      "atBlockHash": "0xccc9f89697fcc32f16f5ac45fb5719da109d64e27abc906115ec5ab7e55f4adc",
       "blockTag": "finalized",
       "rpcHost": "ethereum-sepolia-rpc.publicnode.com",
       "scanned": {
@@ -3207,8 +3292,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "11673548",
-      "atBlockHash": "0x9a5b238c79648a0367dd1af166f60a4e69005342942ba3802648215326357a12",
+      "atBlock": "11674792",
+      "atBlockHash": "0xccc9f89697fcc32f16f5ac45fb5719da109d64e27abc906115ec5ab7e55f4adc",
       "blockTag": "finalized",
       "rpcHost": "ethereum-sepolia-rpc.publicnode.com",
       "scanned": {
@@ -3302,6 +3387,32 @@
             "totalLoansEverCreated": 7
           },
           "kind": "storage-read-calibrated",
+          "aliasedCountersIgnored": [
+            {
+              "which": "totalLoansEverCreated",
+              "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10e5e",
+              "value": "24",
+              "aliases": "loanIdByPositionTokenId"
+            },
+            {
+              "which": "totalLoansEverCreated",
+              "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10e60",
+              "value": "11250",
+              "aliases": "activeLoanIdsList"
+            },
+            {
+              "which": "totalLoansEverCreated",
+              "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10e62",
+              "value": "8",
+              "aliases": "activeOfferIdsList"
+            },
+            {
+              "which": "totalLoansEverCreated",
+              "slot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10e5d",
+              "value": "14",
+              "aliases": "nftsInVaultByCollection"
+            }
+          ],
           "slotsRead": 83,
           "loansScanned": 24,
           "liveCommitCounts": [
@@ -3422,8 +3533,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "11673548",
-      "atBlockHash": "0x9a5b238c79648a0367dd1af166f60a4e69005342942ba3802648215326357a12",
+      "atBlock": "11674792",
+      "atBlockHash": "0xccc9f89697fcc32f16f5ac45fb5719da109d64e27abc906115ec5ab7e55f4adc",
       "blockTag": "finalized",
       "rpcHost": "ethereum-sepolia-rpc.publicnode.com",
       "scanned": {
