@@ -215,6 +215,9 @@ export function saysCheckRunning(text, unknownCopy) {
  *   apart from `mounted` so the failure can say WHICH of the two
  *   happened rather than reporting a hidden card as an absent one.
  * @property {string|null} text  its rendered text, null when absent
+ * @property {boolean} bodyRead  did the body scrape actually happen —
+ *   round 4 P2, because `bodyText: null` conflated "read and empty"
+ *   (the defect) with "could not read" (an incomplete observation)
  * @property {string|null} bodyText  the `forced-close-body` paragraph
  *   ALONE. Round 1 P2 — checking only whether the whole card is empty
  *   passes a rendered shell: a heading with no body is precisely the
@@ -272,6 +275,23 @@ export function forcedCloseVerdict(obs, copy) {
       return {
         verdict: 'fail',
         why: 'card mounted with no text — withheld the explanation with the action',
+      };
+    }
+    // ROUND 4 P2 — an UNREAD body is not an EMPTY one.
+    //
+    // The body scrape happens after the card's own text read, and the
+    // card can unmount in between (terminal loan, transferred
+    // position) or the locator read can fail transiently. Coercing that
+    // null to "" reported a product defect over a scrape that never
+    // happened — and reported it BEFORE the eligibility read that would
+    // have explained the unmount. `bodyRead === false` is therefore
+    // incomplete, and only a body genuinely read and blank is the
+    // defect.
+    if (obs.bodyRead === false) {
+      return {
+        verdict: 'blocked',
+        blockedKind: 'incomplete',
+        why: 'the card was scraped but its explanatory body could not be read — most likely it unmounted mid-scrape',
       };
     }
     if ((obs.bodyText ?? '').trim() === '') {

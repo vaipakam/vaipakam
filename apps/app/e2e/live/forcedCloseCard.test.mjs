@@ -418,3 +418,43 @@ describe('forcedCloseCoverage — round 3', () => {
     expect(forcedCloseCoverage([v('blocked', 'inapplicable')])).toMatch(/never observed/);
   });
 });
+
+describe('round 4 review findings', () => {
+  const copy = { unknownCopy: FORCED_CLOSE.unknown };
+  const base = {
+    lenderHoldsActive: true,
+    mounted: true,
+    attached: true,
+    submitDisabled: true,
+    saleLocked: false,
+    settled: true,
+    bodyText: 'an explanation',
+    bodyRead: true,
+    confirmText: null,
+    confirmExpected: false,
+    text: FORCED_CLOSE.readyInKind,
+  };
+
+  it('BLOCKS on an UNREAD body rather than failing', () => {
+    // The card can unmount between its own text read and the body read.
+    // Coercing that null to "" reported a product defect over a scrape
+    // that never happened.
+    const v = forcedCloseVerdict({ ...base, bodyRead: false, bodyText: null }, copy);
+    expect(v.verdict).toBe('blocked');
+    expect(v.blockedKind).toBe('incomplete');
+  });
+
+  it('still FAILS a body that was read and is genuinely blank', () => {
+    // The other half — this is the state the check exists for, and it
+    // must survive the fix for its neighbour.
+    const v = forcedCloseVerdict({ ...base, bodyRead: true, bodyText: '   ' }, copy);
+    expect(v.verdict).toBe('fail');
+    expect(v.why).toMatch(/explanatory body/);
+  });
+
+  it('treats a legacy observation with no bodyRead field as read', () => {
+    // Only an explicit `false` means unread, so a record that predates
+    // the field is judged as before rather than silently blocking.
+    expect(forcedCloseVerdict({ ...base, bodyRead: undefined }, copy).verdict).toBe('pass');
+  });
+});

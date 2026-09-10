@@ -692,7 +692,7 @@ function isRevert(err) {
  * treats one as locked: a read that could not answer must not be turned
  * into a product finding.
  */
-async function saleLockedOn(lenderTokenId) {
+async function saleLockedOn(lenderTokenId, blockNumber) {
   if (lenderTokenId === undefined || lenderTokenId === null) return true;
   try {
     const lock = await pub.readContract({
@@ -700,6 +700,7 @@ async function saleLockedOn(lenderTokenId) {
       abi: DIAMOND_ABI_VIEM,
       functionName: 'positionLock',
       args: [lenderTokenId],
+      ...(blockNumber === undefined ? {} : { blockNumber }),
     });
     return Number(lock) === LOCK_EARLY_WITHDRAWAL_SALE;
   } catch (err) {
@@ -755,13 +756,16 @@ async function lenderAuthorityOf(loan) {
 }
 
 /** Shared: a revert means burned/never-minted; anything else is BLOCKED. */
-async function tokenOwnerOf(tokenId) {
+async function tokenOwnerOf(tokenId, blockNumber) {
   try {
     return await pub.readContract({
       address: DIAMOND,
       abi: DIAMOND_ABI_VIEM,
       functionName: 'ownerOf',
       args: [tokenId],
+      // Optional: every existing caller reads `latest`, and only the
+      // forced-close snapshot pins a block (round 4 P2).
+      ...(blockNumber === undefined ? {} : { blockNumber }),
     });
   } catch (err) {
     if (!isRevert(err)) throw err; // no answer — BLOCKED, not "burned"
@@ -2331,19 +2335,36 @@ async function readLenderCardText(page, card) {
  */
 async function observeForcedClose(page, loan) {
   const card = await readForcedCloseCard(page);
+  // ROUND 4 P2 — ONE BLOCK FOR ALL THREE FACTS.
+  //
+  // `Promise.all` makes these concurrent; it does not pin them to a
+  // common block, and each RPC resolves `latest` independently. A
+  // `completeLoanSale` landing mid-flight can therefore produce a TORN
+  // snapshot — `ownerOf` answering from before the sale while
+  // `positionLock` answers from after it — yielding a held / Active /
+  // unlocked combination that never existed on any single block. The
+  // page, which was correct to omit the card while the accepted sale
+  // was pending, would then be reported as missing it.
+  //
+  // Pinning to one block number makes the three facts a snapshot rather
+  // than three samples. It also makes them consistent with each other
+  // by construction, which no amount of re-reading can achieve.
   const [live, authorityNow, saleLocked] = await discovery(
     `re-reading loan ${loan.id} beside the forced-close scrape`,
-    () =>
-      Promise.all([
+    async () => {
+      const blockNumber = await pub.getBlockNumber();
+      return Promise.all([
         pub.readContract({
           address: DIAMOND,
           abi: DIAMOND_ABI_VIEM,
           functionName: 'getLoanDetails',
           args: [loan.id],
+          blockNumber,
         }),
-        lenderAuthorityOf(loan),
-        saleLockedOn(loan.lenderTokenId),
-      ]),
+        tokenOwnerOf(loan.lenderTokenId, blockNumber),
+        saleLockedOn(loan.lenderTokenId, blockNumber),
+      ]);
+    },
   );
   return {
     ...card,
@@ -2381,6 +2402,7 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
       attached,
       text: null,
       bodyText: null,
+      bodyRead: false,
       confirmText: null,
       confirmExpected: false,
       submitDisabled: false,
@@ -2411,11 +2433,19 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
     text = await card.innerText({ timeout: 2_000 }).catch(() => text);
     settled = !saysCheckRunning(text ?? '', FORCED_CLOSE_UNKNOWN);
   }
-  const bodyText = await card
-    .getByTestId('forced-close-body')
-    .first()
-    .innerText({ timeout: 2_000 })
-    .catch(() => null);
+  // ROUND 4 P2 — `null` here means COULD NOT READ, not "read and
+  // empty", and the two must not collapse.
+  //
+  // The card can unmount between the visible/text read above and this
+  // one (the loan goes terminal, the position transfers), and a locator
+  // read can fail transiently. Returning null for those and letting the
+  // verdict coerce it to an empty body reports a product failure —
+  // "withheld the explanation" — over a scrape that simply did not
+  // happen. `bodyRead` records which it was; an unread body is
+  // incomplete, an empty one is the defect.
+  const bodyLocator = card.getByTestId('forced-close-body').first();
+  const bodyText = await bodyLocator.innerText({ timeout: 2_000 }).catch(() => null);
+  const bodyRead = bodyText !== null || (await bodyLocator.count().catch(() => 0)) > 0;
   const submit = card.getByTestId('forced-close-submit').first();
   // A card in a withheld state renders no submit control at all, which
   // reads the same way as a disabled one for this verdict: the action
@@ -2453,15 +2483,30 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
       .then(() => true)
       .catch(() => false);
     if (opened) {
-      await page.waitForTimeout(1_500);
-      confirmText = await card.innerText({ timeout: 2_000 }).catch(() => null);
-      // Leave the page as it was found. Failing to close it is not a
-      // finding and must not fail the drive.
-      await card
-        .getByRole('button', { name: /back/i })
-        .first()
-        .click({ timeout: 3_000 })
-        .catch(() => {});
+      // ROUND 4 P2 — CONFIRM THE CONFIRMATION RENDERED.
+      //
+      // The click can succeed while its handler fails to open the
+      // panel, and the old read was scoped to the card — which is still
+      // mounted and still has text. `confirmText` came back non-null,
+      // the verdict recorded `confirmScanned=true`, and a regression
+      // confined to the confirmation went completely unexercised while
+      // reporting as covered.
+      //
+      // The Back control belongs to `ConfirmReceipt` and does not exist
+      // on the card otherwise, so its appearance is the evidence that
+      // the panel is up. No Back, no scan: `confirmText` stays null and
+      // the verdict blocks.
+      const back = card.getByRole('button', { name: /back/i }).first();
+      const rendered = await back
+        .waitFor({ state: 'visible', timeout: 5_000 })
+        .then(() => true)
+        .catch(() => false);
+      if (rendered) {
+        confirmText = await card.innerText({ timeout: 2_000 }).catch(() => null);
+        // Leave the page as it was found. Failing to close it is not a
+        // finding and must not fail the drive.
+        await back.click({ timeout: 3_000 }).catch(() => {});
+      }
     }
   }
   return {
@@ -2469,6 +2514,7 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
     attached: true,
     text,
     bodyText,
+    bodyRead,
     confirmText,
     confirmExpected,
     submitDisabled,
