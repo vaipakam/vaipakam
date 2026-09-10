@@ -43,6 +43,24 @@ here" is the one this drive spends most of its logic on, because
 collapsing the two is how a missing card gets explained away by a reason
 nobody established.
 
+One limitation is intrinsic rather than a gap in coverage, and it is
+worth stating because it bounds what a failure from this drive means.
+The check that a missing card is a real defect rests on proving the
+observer was not simply behind the page — a page whose provider has
+seen a loan go terminal is *correctly* showing nothing. That proof
+cannot be completed from outside the app: the read that removes the card
+is issued against the latest block and carries no block number, so the
+page's position can only be inferred from what it happens to announce,
+which is a lower bound. The drive narrows the window — it watches the
+page's own announcements on the deployment's endpoint only, and requires
+its own view to pass that bound rather than merely match it — and it
+reports an absence it cannot judge as unverified rather than as a
+defect. What remains is that a page running several blocks ahead of its
+last announcement, with a loan going terminal inside that window, can
+still be accused of omitting a card it was right to omit. Closing that
+needs the card to publish the block its readiness resolved at, which is
+a change to the product rather than to this drive.
+
 Two gaps are stated rather than left implied. The candidate pool is
 inherited from the chooser's, so it excludes NFT rentals and excludes a
 sanctions-flagged holder — which means the card's rental route and the

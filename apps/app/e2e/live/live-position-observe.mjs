@@ -2966,6 +2966,7 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
       text: null,
       bodyText: null,
       bodyPresent: undefined,
+      bodyVisible: false,
       confirmText: null,
       confirmExpected: false,
       submitPresent: false,
@@ -3031,8 +3032,19 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
         };
         const all = [...document.querySelectorAll('[data-testid="forced-close-card"]')];
         const shown = all.filter(visible);
-        const el = shown[0] ?? all[0];
-        if (!el) return null;
+        if (all.length === 0) return null;
+        // ROUND 21 P2 — NO VISIBLE CARD IS AN ANSWER, not a reason to
+        // read a hidden one.
+        //
+        // The fallback to the first ATTACHED card meant that a card
+        // hidden during the readiness poll was still scraped, while
+        // `mounted` stayed true from the earlier wait — so a settled,
+        // well-formed, entirely invisible card reported a pass. The
+        // lender sees no surface at all in that state, which is the
+        // exact regression the absence rule exists to catch, arriving
+        // through the one path that had a fallback in it.
+        if (shown.length === 0) return { hiddenNow: true };
+        const el = shown[0];
         const body = el.querySelector('[data-testid="forced-close-body"]');
         const submit = el.querySelector('[data-testid="forced-close-submit"]');
         // ROUND 18 P2 — VISIBILITY OF THE CONTROL, in the same pass.
@@ -3059,6 +3071,14 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
           visibleCards: shown.length,
           text: el.innerText,
           bodyPresent: body !== null,
+          // ROUND 21 P2 — the BODY's own visibility, separately. A CSS
+          // regression that hides only the explanation leaves the
+          // element present and `innerText` can still yield its DOM
+          // text, so the verdict took a heading-only surface for an
+          // explained one. Presence, text and visibility are three
+          // different facts about the body and the verdict needs all
+          // three.
+          bodyVisible: visible(body),
           bodyText: body === null ? null : body.innerText,
           submitPresent: submit !== null,
           submitVisible: visible(submit),
@@ -3068,6 +3088,26 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
       .catch(() => null);
 
   let snap = await readCard();
+  // A card that is attached but no longer VISIBLE is reported the way an
+  // invisible-but-attached card is at the top of this function: not a
+  // pass, and named as what it is (round 21 P2).
+  if (snap?.hiddenNow) {
+    return {
+      mounted: false,
+      attached: true,
+      visibleCards: 0,
+      text: null,
+      bodyText: null,
+      bodyPresent: undefined,
+      bodyVisible: false,
+      confirmText: null,
+      confirmExpected: false,
+      submitPresent: false,
+      submitVisible: false,
+      submitDisabled: true,
+      settled: false,
+    };
+  }
   // The evaluate is atomic, so a null means the card went between the
   // visibility wait and this pass — round 7's vanished case, detected by
   // the capture itself. `bodyPresent: undefined` is what the verdict
@@ -3124,6 +3164,23 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
   while ((!settled || readyPending(snap)) && Date.now() < deadline) {
     await page.waitForTimeout(1_000);
     const again = await readCard();
+    if (again?.hiddenNow) {
+      return {
+        mounted: false,
+        attached: true,
+        visibleCards: 0,
+        text: null,
+        bodyText: null,
+        bodyPresent: undefined,
+        bodyVisible: false,
+        confirmText: null,
+        confirmExpected: false,
+        submitPresent: false,
+        submitVisible: false,
+        submitDisabled: true,
+        settled: false,
+      };
+    }
     // ROUND 13 P2 — A CARD THAT VANISHES MID-POLL IS THE VANISHED CASE,
     // not a reason to keep the last snapshot.
     //
@@ -3157,8 +3214,16 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
     settled = !saysCheckRunning(snap.text ?? '', FORCED_CLOSE_COPY.unknownCopy);
   }
 
-  const { visibleCards, text, bodyPresent, bodyText, submitPresent, submitVisible, submitDisabled } =
-    snap;
+  const {
+    visibleCards,
+    text,
+    bodyPresent,
+    bodyVisible,
+    bodyText,
+    submitPresent,
+    submitVisible,
+    submitDisabled,
+  } = snap;
 
   // ROUND 2 P2 — a submittable card whose confirmation could NOT be read
   // is `confirmExpected` with `confirmText === null`, which the verdict
@@ -3216,6 +3281,7 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
     confirmText,
     confirmExpected,
     visibleCards,
+    bodyVisible,
     submitPresent,
     submitVisible,
     submitDisabled,

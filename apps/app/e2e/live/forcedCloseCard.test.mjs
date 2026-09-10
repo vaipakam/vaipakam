@@ -1468,3 +1468,57 @@ describe('round 19 — duplicate cards are a finding, not a choice', () => {
     expect(v.why).toMatch(/3 forced-close cards/);
   });
 });
+
+describe('round 21 review findings', () => {
+  const copy = { unknownCopy: FORCED_CLOSE.unknown };
+  const held = {
+    lenderHoldsActive: true,
+    mounted: true,
+    attached: true,
+    saleLocked: false,
+    settled: true,
+    visibleCards: 1,
+    bodyPresent: true,
+    bodyVisible: true,
+    bodyText: FORCED_CLOSE.unknown,
+    text: FORCED_CLOSE.unknown,
+    confirmText: null,
+    confirmExpected: false,
+    submitPresent: true,
+    submitVisible: true,
+    submitDisabled: true,
+  };
+
+  it('FAILS a body that is present and readable but not visible', () => {
+    // `innerText` can still yield DOM text from a hidden node, so the
+    // heading-only surface the lender actually sees was passing as
+    // explained.
+    const v = forcedCloseVerdict({ ...held, bodyVisible: false }, copy);
+    expect(v.verdict).toBe('fail');
+    expect(v.why).toMatch(/not visible/);
+  });
+
+  it('says nothing about body visibility when it was not observed', () => {
+    const { bodyVisible: _drop, ...noField } = held;
+    expect(forcedCloseVerdict(noField, copy).verdict).toBe('pass');
+  });
+
+  it('still reports a MISSING body element distinctly from a hidden one', () => {
+    const v = forcedCloseVerdict({ ...held, bodyPresent: false, bodyVisible: false }, copy);
+    expect(v.verdict).toBe('fail');
+    expect(v.why).toMatch(/no explanatory body element/);
+  });
+
+  // The compact-amount hole: `m` read as minutes with no ticker to
+  // cancel the exemption, so a promise of a million read as a wait.
+  it('finds a bare compact amount with no ticker', () => {
+    expect(monetaryAmountsIn('You receive 1m')).toHaveLength(1);
+    expect(monetaryAmountsIn('Recovery: 1m')).toHaveLength(1);
+  });
+
+  it('still exempts a one-letter unit in genuine duration context', () => {
+    expect(monetaryAmountsIn('unlocks in 30m')).toEqual([]);
+    expect(monetaryAmountsIn('within 5m')).toEqual([]);
+    expect(monetaryAmountsIn('about 2h remaining')).toEqual([]);
+  });
+});

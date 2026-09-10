@@ -161,6 +161,24 @@ const NON_MONETARY_UNIT =
   /^(%|bps|day|days|hour|hours|hr|hrs|h|minute|minutes|min|mins|m|second|seconds|sec|secs|s|week|weeks|month|months|year|years|block|blocks)$/i;
 
 /**
+ * Single-letter units are AMBIGUOUS and the rest are not.
+ *
+ * `m` is minutes or millions, `h` is hours or nothing, `s` is seconds or
+ * a plural. `mins`, `hours` and `days` carry no such reading. Round 3
+ * closed `1m USDC` by consulting the trailing ticker, but the absolute
+ * contract says a BARE figure fails too — and `You receive 1m` has no
+ * ticker to cancel the exemption, so the scanner read a promise of a
+ * million as a promise of a minute (round 21 P2).
+ *
+ * So an ambiguous unit is exempt only when something in front of the
+ * number actually reads as a duration. `unlocks in 30m` is a wait;
+ * `You receive 1m` is an amount.
+ */
+const AMBIGUOUS_UNIT = /^[hms]$/i;
+const DURATION_LEAD =
+  /\b(in|within|after|for|every|about|around|under|over|another|next|takes|wait|waits|remaining|remains|left)\s*[~≈]?\s*$/i;
+
+/**
  * A number with something money-shaped attached to it.
  *
  * Scans for a numeric run and then looks at what sits immediately
@@ -256,6 +274,12 @@ export function monetaryAmountsIn(text) {
       // of writing a large one. The exemption now only applies when
       // nothing token-shaped follows.
       if (NON_MONETARY_UNIT.test(unit)) {
+        // ROUND 21 P2 — a one-letter unit needs duration CONTEXT, not
+        // just the absence of a ticker. See `AMBIGUOUS_UNIT`.
+        if (AMBIGUOUS_UNIT.test(unit) && !DURATION_LEAD.test(before)) {
+          hits.push(fragment(text, start, end));
+          continue;
+        }
         // ROUND 11 P2 — consult the SAME widened lookahead the
         // identifier exemption uses. Round 3 checked only the word
         // immediately after the unit, so `1m (USDC)` exempted `m` as
@@ -619,6 +643,23 @@ export function forcedCloseVerdict(obs, copy) {
       return {
         verdict: 'fail',
         why: 'card mounted with no explanatory body element — the withheld-action-without-explanation state',
+      };
+    }
+    // ROUND 21 P2 — A FOURTH STATE: present, read, and NOT VISIBLE.
+    //
+    // A CSS regression that hides only the body leaves the element in
+    // place, and `innerText` can still yield its DOM text — so a
+    // heading-only surface, which is exactly the
+    // withheld-action-without-explanation shape, was passing on text
+    // the lender cannot see. Presence, text and visibility are three
+    // different facts and the first two do not imply the third.
+    //
+    // `=== false` rather than a falsy test, so an observation predating
+    // the field says nothing rather than manufacturing a finding.
+    if (obs.bodyVisible === false && obs.bodyPresent === true) {
+      return {
+        verdict: 'fail',
+        why: 'card mounted with an explanatory body that is not visible — the lender sees the heading and no reason',
       };
     }
     // ROUND 8 P2 — a card that vanished mid-scrape is INCOMPLETE, not
