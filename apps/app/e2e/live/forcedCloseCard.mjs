@@ -130,7 +130,15 @@ function firstUnnegatedRefusal(text) {
     // this one, which the old `[^.]{0,40}` encoded as a side effect of
     // its character class and is stated directly here.
     const prefix = text.slice(0, m.index);
-    const sentence = prefix.slice(prefix.lastIndexOf('.') + 1);
+    // ROUND 24 P2 — `?` and `!` end sentences too, as do the CJK stops
+    // the shipped bundles use, and a rendered line break separates rows.
+    // Slicing on `.` alone let `Is the check not ready? The protocol has
+    // refused this` keep both sentences together, so the earlier `not`
+    // suppressed a definite refusal claim.
+    const lastStop = Math.max(
+      ...['.', '!', '?', '。', '！', '？', '\n'].map((ch) => prefix.lastIndexOf(ch)),
+    );
+    const sentence = prefix.slice(lastStop + 1);
     if (!refusalIsNegated(sentence)) return m[0];
   }
   return null;
@@ -164,7 +172,14 @@ function hasTickerNear(after) {
   // have fired on the two exemptions most likely to appear in real
   // sentences. A ticker belongs to the figure only if nothing separates
   // them, so the search stops at the first boundary.
-  const clause = String(after).split(/[.;!?—–]|,\s/)[0] ?? '';
+  // ROUND 24 P2 — `\n` IS A BOUNDARY, and the likeliest one.
+  //
+  // `innerText` inserts a newline between rendered elements, so the
+  // separator between a card's sections is a line break rather than
+  // punctuation — `Wait 3 days\nUSDC later` is two rows, not one
+  // sentence. Splitting on punctuation alone left exactly the boundary
+  // that real card markup produces.
+  const clause = String(after).split(/[\n.;!?—–]|,\s/)[0] ?? '';
   for (const word of clause.split(/[^A-Za-z0-9]+/)) {
     if (isTicker(word)) return true;
   }
@@ -204,8 +219,15 @@ const AMBIGUOUS_UNIT = /^[hms]$/i;
  * `in 30m` is a wait, `for 1m` is a price. Kept deliberately small,
  * because a word that is wrong here silently disarms the check, while a
  * missing word merely produces a loud false hit somebody fixes.
+ *
+ * ROUND 24 P2 — `next` and `every` went the same way, for the same
+ * reason, on the same list: `The next 1m is claimable` and `Withdraw
+ * every 1m` are quantities. That is now the THIRD time this list has
+ * been trimmed for admitting a word that can precede an amount, which
+ * is the argument recorded on the PR for narrowing what this scanner is
+ * asked to judge rather than continuing to curate vocabulary.
  */
-const DURATION_LEAD = /\b(in|within|after|every|next|wait|waits|waiting|takes|lasts|expires)\s+$/i;
+const DURATION_LEAD = /\b(in|within|after|wait|waits|waiting|takes|lasts|expires)\s+$/i;
 /**
  * The other half: a temporal word AFTER the unit.
  *

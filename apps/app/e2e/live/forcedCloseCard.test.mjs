@@ -1620,3 +1620,75 @@ describe('round 23 — the unready confirmation names its own cause', () => {
     expect(v.why).not.toMatch(/never advanced/);
   });
 });
+
+describe('round 24 review findings', () => {
+  it('reports a compact amount behind next/every', () => {
+    // Third trim of this list for admitting a word that can precede an
+    // amount. `The next 1m is claimable` and `Withdraw every 1m` are
+    // quantities, not cadences.
+    expect(monetaryAmountsIn('The next 1m is claimable')).toHaveLength(1);
+    expect(monetaryAmountsIn('Withdraw every 1m')).toHaveLength(1);
+  });
+
+  it('does not let a ticker on the NEXT RENDERED LINE cancel an exemption', () => {
+    // `innerText` inserts a newline between elements, so the boundary
+    // real card markup produces is a line break, not punctuation.
+    expect(monetaryAmountsIn('Wait 3 days\nUSDC later')).toEqual([]);
+    expect(monetaryAmountsIn('Loan 21\nUSDC is lent')).toEqual([]);
+  });
+
+  it('treats ? and ! as sentence ends when scoping a negation', () => {
+    // A negation in a QUESTION was suppressing a definite refusal claim
+    // in the sentence after it, because the scope was sliced on `.`
+    // alone.
+    const text = `Is the check not ready? The protocol has refused this.`;
+    const v = forcedCloseVerdict(
+      {
+        lenderHoldsActive: true,
+        mounted: true,
+        attached: true,
+        saleLocked: false,
+        settled: false,
+        visibleCards: 1,
+        bodyPresent: true,
+        bodyVisible: true,
+        bodyText: `${FORCED_CLOSE.unknown} ${text}`,
+        text: `${FORCED_CLOSE.unknown} ${text}`,
+        confirmText: null,
+        confirmExpected: false,
+        submitPresent: true,
+        submitVisible: true,
+        submitDisabled: true,
+      },
+      { unknownCopy: FORCED_CLOSE.unknown },
+    );
+    expect(v.verdict).toBe('fail');
+    expect(v.why).toMatch(/refused/i);
+  });
+
+  it('still exempts the shipped negated refusal after the wider split', () => {
+    // The tightening must not start failing the copy the exemption
+    // exists to protect.
+    const v = forcedCloseVerdict(
+      {
+        lenderHoldsActive: true,
+        mounted: true,
+        attached: true,
+        saleLocked: false,
+        settled: false,
+        visibleCards: 1,
+        bodyPresent: true,
+        bodyVisible: true,
+        bodyText: FORCED_CLOSE.unknown,
+        text: FORCED_CLOSE.unknown,
+        confirmText: null,
+        confirmExpected: false,
+        submitPresent: true,
+        submitVisible: true,
+        submitDisabled: true,
+      },
+      { unknownCopy: FORCED_CLOSE.unknown },
+    );
+    expect(v.why).not.toMatch(/refus/i);
+  });
+});

@@ -2914,7 +2914,8 @@ async function observeForcedClose(page, loan) {
         };
   }
 
-  const { lenderHoldsActive, saleLocked, absenceUnconfirmed } = reconcileEligibility(
+  const { lenderHoldsActive, saleLocked, absenceUnconfirmed, absenceUnconfirmedWhy } =
+    reconcileEligibility(
     { lenderHoldsActive: pinnedHoldsActive, saleLocked: pinnedSale },
     later,
   );
@@ -2923,6 +2924,13 @@ async function observeForcedClose(page, loan) {
     lenderHoldsActive,
     saleLocked,
     absenceUnconfirmed,
+    // ROUND 24 P2 — and the REASON with it. Round 23 produced this
+    // string and then dropped it here, so every diagnosis fell back to
+    // the generic sentence and none of the specific ones ever reached an
+    // operator. The pure reconciliation test could not see it: the
+    // defect is in the projection BETWEEN the two, which is exactly the
+    // seam a unit test on either side does not cover.
+    absenceUnconfirmedWhy,
     // Carried out for the REPORT only — `forcedCloseVerdict` ignores it.
     pageHead: pageHead === 0n ? null : String(pageHead),
   };
@@ -2963,8 +2971,14 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
     .catch(async () =>
       // The first node is hidden: give any other match the remaining
       // chance rather than concluding from the wrong element.
-      cards
-        .locator('visible=true')
+      //
+      // ROUND 24 P2 — `:visible`, the CSS pseudo-class Playwright
+      // supports and the rest of this repo uses. My first attempt wrote
+      // `visible=true`, which is not a selector at all: the engine threw,
+      // `.catch` swallowed it, and `mounted` stayed false — so the fix
+      // for this exact case did nothing while reading as if it had.
+      page
+        .locator('[data-testid="forced-close-card"]:visible')
         .first()
         .waitFor({ state: 'visible', timeout: 5_000 })
         .then(() => true)
@@ -3370,15 +3384,28 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
               const r = node.getBoundingClientRect();
               return r.width > 0 && r.height > 0;
             };
-            // Any receipt row being genuinely on screen is the evidence.
-            const rows = [...el.querySelectorAll('[data-testid^="forced-close-receipt"]')];
-            if (rows.length > 0) return rows.some(visible);
-            // No test-id'd rows on this build: fall back to asking
-            // whether the panel has ANY visible text-bearing element
-            // beyond its controls, rather than assuming it does.
-            return [...el.querySelectorAll('p, li, dd, dt, span')].some(
-              (n) => visible(n) && (n.textContent ?? '').trim() !== '',
-            );
+            // ROUND 24 P2 — THE RECEIPT, not anything with text in it.
+            //
+            // My first version fell back to any `p`/`dd`/`dt`/`span` in
+            // the card when no `forced-close-receipt*` id was found —
+            // and `ReviewReceipt` renders none, so the fallback ran every
+            // time and matched `forced-close-body`, a paragraph that is
+            // not part of the receipt at all. The check was therefore
+            // satisfied by the card's own explanation while the receipt
+            // was hidden, which is precisely the state it was written to
+            // catch.
+            //
+            // `ReviewReceipt` renders `<dl class="receipt">` with
+            // `.receipt-row` children, so there is a real anchor and no
+            // fallback is needed. If that markup ever changes this
+            // returns false and the verdict blocks — the honest failure
+            // rather than a silent pass.
+            const rows = [
+              ...el.querySelectorAll(
+                '[data-testid^="forced-close-receipt"], dl.receipt .receipt-row, dl.receipt',
+              ),
+            ];
+            return rows.some(visible);
           })
           .catch(() => false);
         confirmText = receiptShown
