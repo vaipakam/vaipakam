@@ -459,7 +459,23 @@ export function forcedCloseVerdict(obs, copy) {
   // be in. Definite content failures are preserved above; what is
   // refused here is BANKING a clean reading, exactly as a later
   // ownership or status change is refused.
-  if (obs.saleLocked) {
+  // ROUND 12 P2 — the sale probe is TRI-STATE.
+  //
+  // `true` is an established accepted sale, which puts the position
+  // outside this card's applicability: nothing is wrong, nothing to
+  // report. `'unknown'` is a probe that could not classify — on a
+  // deployment carrying another guard, say — and reporting THAT as
+  // inapplicable would suppress a genuinely missing card while printing
+  // a confident reason for its absence. Different facts, different
+  // kinds of blocked.
+  if (obs.saleLocked === 'unknown') {
+    return {
+      verdict: 'blocked',
+      blockedKind: 'incomplete',
+      why: 'the sale-listing probe returned an unrecognised revert, so whether an accepted sale explains this card could not be established',
+    };
+  }
+  if (obs.saleLocked === true) {
     return {
       verdict: 'blocked',
       blockedKind: 'inapplicable',
@@ -622,8 +638,14 @@ export function forcedCloseVerdict(obs, copy) {
   // from it is the false-FAIL direction this PR has already produced
   // twice.
   if (Array.isArray(copy?.recognisedCopy) && copy.recognisedCopy.length > 0) {
+    // The BODY, not the whole card. The card also carries the
+    // `lastOutcome` note about a PREVIOUS attempt, and the component's
+    // own comment says that note does not describe the current state —
+    // so matching against the card text let a broken readiness body be
+    // vouched for by a history line (round 12 P2).
+    const stateText = obs.bodyText ?? obs.text ?? '';
     const known = copy.recognisedCopy.some(
-      (sentence) => typeof sentence === 'string' && sentence && (obs.text ?? '').includes(sentence),
+      (sentence) => typeof sentence === 'string' && sentence && stateText.includes(sentence),
     );
     if (!known) {
       return {

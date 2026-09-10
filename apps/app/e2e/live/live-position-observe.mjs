@@ -474,6 +474,21 @@ const FORCED_CLOSE_COPY = (() => {
     // card matching none of them has said SOMETHING without saying
     // anything the drive can recognise, which is reported as a gap in
     // the drive's vocabulary rather than as a product defect.
+    // ROUND 12 P2 — READINESS BODIES ONLY, no auxiliary history.
+    //
+    // I had included the `lastOutcome` notes (`outcomeReverted` and its
+    // siblings) and the submitted states. Those render BESIDE the
+    // current body, and `ForcedCloseCard`'s own comment says outright
+    // that such a note does not describe the CURRENT state — so a card
+    // whose readiness body was broken or unrecognised still satisfied
+    // recognition on the strength of a note about a previous attempt.
+    // The check would have passed while the lender was told nothing
+    // about where the position stands now.
+    //
+    // These nine are the states the body itself can be in. A watch-only
+    // drive never submits, so a submitted/outcome body is not a state
+    // this run can legitimately produce; if one appears, `blocked` is
+    // the honest answer rather than a pass.
     recognisedCopy: [
       need(fc.unknown, 'unknown'),
       need(fc.notYet, 'notYet'),
@@ -484,12 +499,6 @@ const FORCED_CLOSE_COPY = (() => {
       need(fc.readyInternalMatch, 'readyInternalMatch'),
       need(fc.readyRental, 'readyRental'),
       need(fc.readyNeedsRoute, 'readyNeedsRoute'),
-      need(fc.submitted, 'submitted'),
-      need(fc.submittedUnaccounted, 'submittedUnaccounted'),
-      need(fc.outcomeReverted, 'outcomeReverted'),
-      need(fc.outcomeCancelled, 'outcomeCancelled'),
-      need(fc.outcomeReplaced, 'outcomeReplaced'),
-      need(fc.alreadySubmittedElsewhere, 'alreadySubmittedElsewhere'),
     ],
     // ROUND 7 P2 — positive evidence that the RECEIPT rendered, not
     // merely that its shell opened.
@@ -750,7 +759,7 @@ function isRevert(err) {
  * into a product finding.
  */
 async function saleLockedOn(lenderTokenId, loanId, blockNumber) {
-  if (lenderTokenId === undefined || lenderTokenId === null) return true;
+  if (lenderTokenId === undefined || lenderTokenId === null) return 'unknown';
   let locked;
   try {
     const lock = await pub.readContract({
@@ -763,7 +772,7 @@ async function saleLockedOn(lenderTokenId, loanId, blockNumber) {
     locked = Number(lock) === LOCK_EARLY_WITHDRAWAL_SALE;
   } catch (err) {
     if (!isRevert(err)) throw err;
-    return true;
+    return 'unknown';
   }
   if (!locked) return false;
 
@@ -798,9 +807,18 @@ async function saleLockedOn(lenderTokenId, loanId, blockNumber) {
     if (name === 'NoStaleSaleListing') return true; // locked + no stale → accepted
     if (name === 'SaleListingLoanStillLive') return false; // live listing
     if (name === null) throw err; // not a revert — BLOCKED, not a verdict
-    // An unrecognised revert cannot rule an accepted sale in or out.
-    // Fail toward `blocked` rather than toward a FAIL.
-    return true;
+    // ROUND 12 P2 — AN UNRECOGNISED REVERT IS `unknown`, NOT `true`.
+    //
+    // Returning `true` here read downstream as a SUBSTANTIATED accepted
+    // sale: the verdict reported `inapplicable` with an accepted-sale
+    // explanation that had never been established, and `inapplicable`
+    // does not trip `forcedCloseCoverage` — so on a deployment carrying
+    // another guard, a genuinely missing card could be suppressed while
+    // the run printed a confident reason for it. I wrote "fail toward
+    // blocked" and did, but toward the WRONG blocked: the one that says
+    // nothing is wrong rather than the one that says nothing was
+    // learned.
+    return 'unknown';
   }
 }
 
@@ -1097,7 +1115,31 @@ if (!observed) {
     const k = l.authority.toLowerCase();
     byAuthority.set(k, [...(byAuthority.get(k) ?? []), l]);
   }
-  const [best] = [...byAuthority.entries()].sort((a, b) => b[1].length - a[1].length);
+  // ROUND 12 P2 — ON A LENDER RUN, AN AUTHORITY WITH AN ACTIVE LOAN
+  // OUTRANKS ONE WITH MORE LOANS.
+  //
+  // Round 9 partitioned the SELECTED authority's loans so an Active
+  // candidate could not be hidden behind the visit cap. It could not
+  // help when the selection itself was wrong: this sort maximises the
+  // combined Active-or-FallbackPending pool, so a lender with many
+  // FallbackPending loans and no Active one is chosen over a lender who
+  // has one — and the run then exits 2 for unavailable forced-close
+  // coverage while an applicable target sat one authority away. Fixing
+  // the ordering below the choice, and not the choice, is the same
+  // half-measure twice.
+  //
+  // The forced-close assertion needs an Active position; the chooser
+  // assertions apply to both statuses and are indifferent to which
+  // authority is picked. So Active-bearing authorities come first, and
+  // the loan count breaks ties within each group.
+  const activeCount = (loans) => loans.filter((l) => l.status === STATUS_ACTIVE).length;
+  const [best] = [...byAuthority.entries()].sort((a, b) => {
+    if (ROLE === 'lender') {
+      const byActive = (activeCount(b[1]) > 0 ? 1 : 0) - (activeCount(a[1]) > 0 ? 1 : 0);
+      if (byActive !== 0) return byActive;
+    }
+    return b[1].length - a[1].length;
+  });
   if (!best) {
     console.log(
       `\nBLOCKED: no ${ROLE}-eligible loans on chain — nothing verified.`,

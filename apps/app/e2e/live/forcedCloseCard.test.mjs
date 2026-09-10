@@ -919,7 +919,13 @@ describe('round 11 review findings', () => {
     // `unknown` says "not what the protocol has refused" — the surface
     // being correct about the distinction. A matcher that fired here
     // would accuse the one string the rule exists to protect.
-    const v = forcedCloseVerdict({ ...base, text: FORCED_CLOSE.unknown }, copy);
+    // `bodyText` carries the state copy since round 12 — recognition
+    // reads the BODY, because the card also carries history notes that
+    // do not describe the current state.
+    const v = forcedCloseVerdict(
+      { ...base, text: FORCED_CLOSE.unknown, bodyText: FORCED_CLOSE.unknown },
+      copy,
+    );
     expect(v.verdict).toBe('pass');
   });
 
@@ -955,9 +961,67 @@ describe('round 11 review findings', () => {
     for (const known of copy.recognisedCopy) {
       const submitDisabled = known !== FORCED_CLOSE.readyInKind;
       expect(
-        forcedCloseVerdict({ ...base, submitDisabled, text: known }, copy).verdict,
+        forcedCloseVerdict({ ...base, submitDisabled, text: known, bodyText: known }, copy)
+          .verdict,
         known.slice(0, 40),
       ).toBe('pass');
     }
+  });
+});
+
+describe('round 12 review findings', () => {
+  const copy = {
+    unknownCopy: FORCED_CLOSE.unknown,
+    readyCopy: [FORCED_CLOSE.readyInKind],
+    withheldCopy: [FORCED_CLOSE.unknown, FORCED_CLOSE.notYet],
+    recognisedCopy: [FORCED_CLOSE.unknown, FORCED_CLOSE.notYet, FORCED_CLOSE.readyInKind],
+    receiptLead: FORCED_CLOSE.receipt.youReceive,
+  };
+  const base = {
+    lenderHoldsActive: true,
+    mounted: true,
+    attached: true,
+    submitDisabled: true,
+    saleLocked: false,
+    settled: true,
+    bodyText: FORCED_CLOSE.notYet,
+    bodyPresent: true,
+    confirmText: null,
+    confirmExpected: false,
+    text: FORCED_CLOSE.notYet,
+  };
+
+  it('does NOT let a history note vouch for an unrecognised body', () => {
+    // `lastOutcome` renders beside the current body, and the component's
+    // own comment says it does not describe the current state. Matching
+    // against the card text let it satisfy recognition for a body that
+    // told the lender nothing about where the position stands now.
+    const v = forcedCloseVerdict(
+      {
+        ...base,
+        bodyText: 'Something went wrong.',
+        text: `Something went wrong. ${FORCED_CLOSE.outcomeReverted}`,
+      },
+      copy,
+    );
+    expect(v.verdict).toBe('blocked');
+    expect(v.blockedKind).toBe('incomplete');
+  });
+
+  it('BLOCKS as INCOMPLETE when the sale probe could not classify', () => {
+    // `'unknown'` is a probe that did not answer. Reporting it as
+    // inapplicable would print a confident accepted-sale explanation
+    // that was never established — and inapplicable does not trip
+    // coverage, so a missing card could be suppressed behind it.
+    const v = forcedCloseVerdict({ ...base, saleLocked: 'unknown' }, copy);
+    expect(v.verdict).toBe('blocked');
+    expect(v.blockedKind).toBe('incomplete');
+    expect(v.why).toMatch(/unrecognised revert/);
+  });
+
+  it('still reports an established accepted sale as INAPPLICABLE', () => {
+    const v = forcedCloseVerdict({ ...base, saleLocked: true }, copy);
+    expect(v.verdict).toBe('blocked');
+    expect(v.blockedKind).toBe('inapplicable');
   });
 });
