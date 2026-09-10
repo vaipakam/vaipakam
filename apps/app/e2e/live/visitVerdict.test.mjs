@@ -407,3 +407,44 @@ describe('the forced-close card (#2069)', () => {
     ).toEqual([]);
   });
 });
+
+describe('the forced-close card is judged above the chooser suppressions', () => {
+  const fail = { verdict: 'fail', why: 'card absent on a held Active lender position' };
+
+  it('survives preRaced, which is built only from CHOOSER facts', () => {
+    // `preRaced` = advancedBlocked && advancedPreRaced && cardAbsentAtScrape.
+    // All three describe the lender exit card. The divergence is real:
+    // a sanctions-flagged holder correctly loses the exit chooser while
+    // the forced-close card deliberately stays available, so a
+    // positively observed amount would have been discarded here.
+    const v = lender({
+      advancedBlocked: true,
+      advancedPreRaced: true,
+      cardAbsentAtScrape: true,
+      forcedCloseVerdict: fail,
+    });
+    expect(visitProblems(v, 'lender')).toContain(`forced-close card: ${fail.why}`);
+  });
+
+  it('still suppresses the CHOOSER rows under preRaced', () => {
+    // The suppression must keep doing its own job — this change moves
+    // one arm above it, it does not disable it.
+    const v = lender({
+      advancedBlocked: true,
+      advancedPreRaced: true,
+      cardAbsentAtScrape: true,
+      chooser: false,
+      waitRow: false,
+      forcedCloseVerdict: null,
+    });
+    expect(visitProblems(v, 'lender')).toEqual([]);
+  });
+
+  it('is still not judged on a page that never navigated', () => {
+    // A page that failed to load produced no observation of either
+    // card; the nav failure is the only honest finding.
+    expect(visitProblems({ path: '/positions/7', nav: 'timeout', forcedCloseVerdict: fail }, 'lender')).toEqual(
+      ['nav: timeout'],
+    );
+  });
+});

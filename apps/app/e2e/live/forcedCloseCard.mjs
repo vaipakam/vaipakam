@@ -33,13 +33,33 @@
  *
  * Deliberately a list of shapes rather than a list of assets: the card
  * renders on whatever collateral a real loan carries, and enumerating
- * the testnet mocks would pass on mainnet by accident. A ticker here is
- * "two to six characters that are all upper-case letters or digits,
- * containing at least one letter" — which is what a symbol read off an
- * ERC-20 looks like — plus the currency signs a fiat figure would use.
+ * the testnet mocks would pass on mainnet by accident. See `isTicker`
+ * below for the symbol shape; these are the currency signs a fiat
+ * figure would use.
  */
 const CURRENCY_MARK = /[$€£¥₹]/;
-const TICKER = /\b[A-Z][A-Z0-9]{1,5}\b/;
+
+/**
+ * Is this word a token symbol?
+ *
+ * ROUND 1 P2 — the first version required ALL-UPPERCASE, which misses
+ * `stETH`, `cbETH`, `wstETH`, `rETH` and every other mixed-case symbol
+ * in wide use. Those are exactly the assets a real loan carries, so the
+ * scanner was blind on the collateral most likely to appear.
+ *
+ * Widening to "any word" would be the wrong repair: it would fire on
+ * ordinary prose after a number (`1 lender`, `2 rows`), and a scanner
+ * that cries wolf gets switched off, losing its true positives. The
+ * distinguishing feature of a ticker is an INTERNAL UPPERCASE RUN —
+ * `stETH` and `WETH` have one, `days` and `Position` do not. So: two or
+ * more consecutive upper-case letters somewhere in a short alphanumeric
+ * word.
+ */
+function isTicker(word) {
+  if (typeof word !== 'string') return false;
+  if (!/^[A-Za-z][A-Za-z0-9]{1,11}$/.test(word)) return false;
+  return /[A-Z]{2}/.test(word);
+}
 
 /**
  * Units that make a number a DURATION or a PROPORTION rather than an
@@ -93,19 +113,19 @@ export function monetaryAmountsIn(text) {
 
     // A unit word immediately after. `2%` and `3 days` are fine; a
     // ticker is not.
-    const trailing = after.match(/^\s*([A-Za-z%]+)/);
+    const trailing = after.match(/^\s*([A-Za-z%][A-Za-z0-9]*)/);
     if (trailing) {
       const unit = trailing[1];
       if (NON_MONETARY_UNIT.test(unit)) continue;
-      if (TICKER.test(unit) && unit === unit.toUpperCase()) {
+      if (isTicker(unit)) {
         hits.push(fragment(text, start, end));
         continue;
       }
     }
 
     // A ticker immediately BEFORE the number — `USDC 120`.
-    const leading = before.match(/([A-Za-z]+)\s*$/);
-    if (leading && TICKER.test(leading[1]) && leading[1] === leading[1].toUpperCase()) {
+    const leading = before.match(/([A-Za-z][A-Za-z0-9]*)\s*$/);
+    if (leading && isTicker(leading[1])) {
       hits.push(fragment(text, start, end));
     }
   }
@@ -139,10 +159,33 @@ export function saysCheckRunning(text, unknownCopy) {
  * @typedef {object} ForcedCloseObservation
  * @property {boolean} mounted   the card rendered at all
  * @property {string|null} text  its rendered text, null when absent
+ * @property {string|null} bodyText  the `forced-close-body` paragraph
+ *   ALONE. Round 1 P2 — checking only whether the whole card is empty
+ *   passes a rendered shell: a heading with no body and no submit
+ *   control is precisely the withheld-action-without-explanation state
+ *   this module claims to detect, and it has text (the heading), so the
+ *   whole-card check waves it through.
+ * @property {string|null} confirmText  the confirmation panel's text
+ *   when it was opened, null when it was not. Round 1 P2 — the spec
+ *   puts the pre-sign confirmation on this same surface ("The
+ *   confirmation shown before the lender signs is part of this surface
+ *   and carries the same obligation"), so an invented figure there is
+ *   in scope and was previously unreachable.
  * @property {boolean} submitDisabled  the submit control's state
+ * @property {boolean} settled   the readiness reads finished — i.e. the
+ *   card stopped rendering its "still checking" copy before the
+ *   deadline. Round 1 P2: attachment alone resolves while the card is
+ *   in its transient unresolved state, so a scrape taken then never
+ *   sees the ready copy an amount would appear in.
  * @property {boolean} lenderHoldsActive  chain says: this wallet holds
- *   the lender position AND the loan is Active — the exact pair that
- *   makes the card's absence a defect rather than correct behaviour
+ *   the lender position AND the loan is Active — the pair that makes
+ *   the card's absence a defect rather than correct behaviour
+ * @property {boolean} saleLocked  the lender position token carries the
+ *   early-withdrawal sale lock. Round 1 P2 — `PositionDetails` UNMOUNTS
+ *   this card while an accepted sale awaits `completeLoanSale`, because
+ *   closing out would strand the buyer's committed funds. An unlocked
+ *   token proves no such sale exists, so absence is a defect; a locked
+ *   one cannot rule it out, and the honest verdict there is `blocked`.
  */
 
 /**
@@ -150,13 +193,13 @@ export function saysCheckRunning(text, unknownCopy) {
  * uses: `pass`, `fail` (a defect observed in the product) and `blocked`
  * (nothing was learned — never reported as a pass).
  *
- * The distinction that matters, and the one round 65 got wrong in the
- * product itself: an ABSENT card on a position the wallet holds and the
- * chain calls Active is a FAIL, because absence is the strongest claim
- * the surface can make — it says the capability does not apply — and it
- * would be made on the one reading that has not happened. A card that
- * is present and merely non-submittable is a PASS: withholding the
- * action while a check runs is the designed behaviour.
+ * The distinction that matters, and the one round 65 of #2069 got wrong
+ * in the product itself: an ABSENT card on a position the wallet holds
+ * and the chain calls Active is a FAIL, because absence is the
+ * strongest claim the surface can make — it says the capability does
+ * not apply — and it would be made on the one reading that has not
+ * happened. A card that is present and merely non-submittable is a
+ * PASS: withholding the action while a check runs is the design.
  *
  * @param {ForcedCloseObservation} obs
  * @param {{unknownCopy: string}} copy
@@ -172,21 +215,55 @@ export function forcedCloseVerdict(obs, copy) {
     return { verdict: 'blocked', why: 'position is not a held Active lender position' };
   }
   if (!obs.mounted) {
+    // A sale-locked position may legitimately have no card. Reporting
+    // that as a defect is the false-positive direction, which is the
+    // one that gets a check switched off — so it blocks and says why.
+    if (obs.saleLocked) {
+      return {
+        verdict: 'blocked',
+        why: 'card absent, but the position carries a sale lock — an accepted sale awaiting completion correctly unmounts it',
+      };
+    }
     return {
       verdict: 'fail',
-      why: 'card absent on a held Active lender position — absence claims the capability does not apply',
+      why: 'card absent on a held Active lender position with no sale lock — absence claims the capability does not apply',
     };
   }
   const text = obs.text ?? '';
   if (text.trim() === '') {
     return { verdict: 'fail', why: 'card mounted with no text — withheld the explanation with the action' };
   }
-  const amounts = monetaryAmountsIn(text);
+  // The body is where the explanation lives. A card with a heading and
+  // nothing else withholds the reason while withholding the action.
+  if ((obs.bodyText ?? '').trim() === '') {
+    return {
+      verdict: 'fail',
+      why: 'card mounted with no explanatory body — the withheld-action-without-explanation state',
+    };
+  }
+  // The confirmation is part of this surface, so its text is scanned
+  // with the card's.
+  const scanned = obs.confirmText ? `${text}\n${obs.confirmText}` : text;
+  const amounts = monetaryAmountsIn(scanned);
   if (amounts.length > 0) {
     return {
       verdict: 'fail',
-      why: `card states an amount it cannot know: ${amounts.join(' | ')}`,
+      why: `states an amount it cannot know: ${amounts.join(' | ')}`,
       amounts,
+    };
+  }
+  const checkRunning = saysCheckRunning(text, copy?.unknownCopy ?? '');
+  // NEVER SETTLED IS NOT A CLEAN PASS. The card is visible and
+  // explaining itself, which satisfies invariant 2 — but the ready copy
+  // an amount would appear in was never rendered, so invariant 1 went
+  // unchecked on this position. Saying "pass" flat would bank coverage
+  // the run did not obtain, which is the failure this whole harness is
+  // organised against.
+  if (!obs.settled) {
+    return {
+      verdict: 'blocked',
+      why: 'card still reported a check running at the deadline — visible and explained, but its settled copy was never scanned for an amount',
+      checkRunning,
     };
   }
   return {
@@ -194,6 +271,37 @@ export function forcedCloseVerdict(obs, copy) {
     why: obs.submitDisabled
       ? 'card present and non-submittable — the withheld-but-explained state'
       : 'card present and submittable',
-    checkRunning: saysCheckRunning(text, copy?.unknownCopy ?? ''),
+    checkRunning,
+    confirmScanned: Boolean(obs.confirmText),
   };
+}
+
+/**
+ * Did the run OBSERVE the thing it advertises?
+ *
+ * Round 1 P2, and the same shape as the empty-snapshot defect that cost
+ * #2069 a round: when every visited position is FallbackPending, or
+ * sale-locked, or not held, every verdict is `blocked` — and a reporter
+ * that only consumes `fail` prints "routes clean" and exits 0 over an
+ * assertion that never once ran. A drive claiming a check must be able
+ * to say whether the check happened.
+ *
+ * Returns the reason to exit 2, or null when at least one position
+ * produced a real observation.
+ *
+ * @param {Array<{forcedCloseVerdict?: {verdict: string}|null}>} visits
+ */
+export function forcedCloseCoverage(visits) {
+  const judged = (Array.isArray(visits) ? visits : []).filter(
+    (v) => v && v.forcedCloseVerdict,
+  );
+  if (judged.length === 0) return null; // not a lender run; nothing advertised
+  const applicable = judged.filter((v) =>
+    ['pass', 'fail'].includes(v.forcedCloseVerdict.verdict),
+  );
+  if (applicable.length > 0) return null;
+  return (
+    `forced-close card was never observed on an applicable position ` +
+    `(${judged.length} visit(s), all blocked) — the assertion did not run`
+  );
 }

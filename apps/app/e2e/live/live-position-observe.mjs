@@ -95,7 +95,11 @@ import {
   snapshotCardEligible,
   snapshotJumpable,
 } from './jumpability.mjs';
-import { forcedCloseVerdict } from './forcedCloseCard.mjs';
+import {
+  forcedCloseCoverage,
+  forcedCloseVerdict,
+  saysCheckRunning,
+} from './forcedCloseCard.mjs';
 import { requireSiteUrl } from './driver.mjs';
 import { redactUrl } from './redact.mjs';
 import { isDetailPath, visitVerdict } from './visitVerdict.mjs';
@@ -517,6 +521,9 @@ async function sanctionedAuthorityUncached(addr) {
 }
 /** LibERC721.LockReason.PrecloseOffset — mirrors data/offsetPending.ts. */
 const LOCK_PRECLOSE_OFFSET = 1;
+/** `LOCK_EARLY_WITHDRAWAL_SALE` — kept in step with
+ *  `src/data/loanSalePending.ts`, which is where the app's copy lives. */
+const LOCK_EARLY_WITHDRAWAL_SALE = 2;
 
 /**
  * The chooser's render gate has FOUR conditions, not two
@@ -659,6 +666,46 @@ function isRevert(err) {
   if (!reverted) return false;
   if (typeof reverted.raw === 'string' && REVERT_BYTES.test(reverted.raw)) return true;
   return codedError(err)?.code === EXECUTION_REVERTED;
+}
+
+/**
+ * Does the LENDER position token carry the early-withdrawal SALE lock?
+ *
+ * ROUND 1 P2. `PositionDetails` renders the forced-close card behind
+ * `!saleCompletionPending`, so a loan whose lender-position sale has
+ * been ACCEPTED but not yet completed correctly has NO card — closing
+ * out would terminalize the loan and strand the buyer's committed
+ * funds. Reporting that as a missing-card defect is the false-positive
+ * direction, which is the one that gets a check switched off.
+ *
+ * ONE READ, DELIBERATELY CONSERVATIVE. The app distinguishes a live
+ * listing from an accepted sale by simulating `teardownStaleSaleListing`
+ * — but this drive does not need that resolution, only the safe half of
+ * it. The lock is stamped for the WHOLE listing lifecycle, so an
+ * UNLOCKED token proves no accepted sale exists and an absent card is a
+ * genuine defect. A locked one cannot rule it out, and the verdict
+ * there is `blocked` with the reason stated. The cost is coverage on
+ * sale-locked positions, which is announced; the alternative cost is a
+ * false FAIL, which is silent trust damage.
+ *
+ * A revert is treated as LOCKED for the same reason `offsetLockedOn`
+ * treats one as locked: a read that could not answer must not be turned
+ * into a product finding.
+ */
+async function saleLockedOn(lenderTokenId) {
+  if (lenderTokenId === undefined || lenderTokenId === null) return true;
+  try {
+    const lock = await pub.readContract({
+      address: DIAMOND,
+      abi: DIAMOND_ABI_VIEM,
+      functionName: 'positionLock',
+      args: [lenderTokenId],
+    });
+    return Number(lock) === LOCK_EARLY_WITHDRAWAL_SALE;
+  } catch (err) {
+    if (!isRevert(err)) throw err;
+    return true;
+  }
 }
 
 async function offsetLockedOn(borrowerTokenId) {
@@ -893,6 +940,22 @@ if (dropped > 0) {
         .map((l) => `${l.id} (${why(l)})`)
         .join(', '),
   );
+  // ROUND 1 P2 — SAY WHAT THIS POOL CANNOT REACH.
+  //
+  // The candidate pool is the CHOOSER's, and it filters to ERC-20, so
+  // an overdue NFT rental is never visited. The forced-close card has a
+  // distinct `ready-rental` route the spec treats separately — ending a
+  // rental moves nothing of the borrower's and makes prepaid rent
+  // claimable — and none of it is exercised here. Widening the pool is
+  // a second discovery path and is tracked separately; until then the
+  // honest thing is for the run to state the gap rather than let a
+  // green tally imply the rental surface was covered.
+  if (ROLE === 'lender' && loans.some((l) => l.assetType !== ASSET_ERC20)) {
+    console.log(
+      '          NOTE: rentals are outside this pool, so the forced-close ' +
+        "card's rental route is NOT covered by this run.",
+    );
+  }
 }
 
 // The observed address: whichever authority on the CHOSEN side holds the
@@ -1450,6 +1513,11 @@ async function visit(path, { expectChooser = false, loan = null } = {}) {
             loan.status === STATUS_ACTIVE &&
             typeof loan.authority === 'string' &&
             loan.authority.toLowerCase() === String(observed).toLowerCase(),
+          // Only consulted when the card is ABSENT, but read here so the
+          // observation is a complete record of what was true at scrape
+          // time rather than a lazy read taken later, against different
+          // chain state, inside the verdict.
+          saleLocked: await saleLockedOn(loan.lenderTokenId),
         }
       : null;
   const holdCard = await page.getByTestId('sale-listing-hold-card').count();
@@ -1572,6 +1640,18 @@ async function stillEligible(loan) {
   ) {
     return 'no longer active';
   }
+  // ROUND 1 P2 — CARRY THE FRESH READS BACK ONTO THE LOAN.
+  //
+  // This function re-reads status and authority and then threw both
+  // away, returning only a reason string. Downstream predicates — the
+  // forced-close one above all, which gates on `status === Active` —
+  // then judged against values minutes old. An Active→FallbackPending
+  // transition makes the page correctly drop the forced-close card
+  // while the drive calls it a defect; the reverse hides a genuine
+  // missing card. Writing them back costs nothing: the reads already
+  // happened here.
+  loan.status = Number(live.status);
+  loan.authority = authorityNow;
   if (lockedNow) return 'offset started since discovery';
   if (authorityNow === null) return `${ROLE} token burned since discovery`;
   if (authorityNow.toLowerCase() !== observed.toLowerCase()) {
@@ -2240,22 +2320,93 @@ async function readLenderCardText(page, card) {
  * absence verdict is about; a mounted card scrolled out of view is
  * still an answer.
  */
-async function readForcedCloseCard(page, timeoutMs = 20_000) {
+async function readForcedCloseCard(page, timeoutMs = 30_000) {
   const card = page.getByTestId('forced-close-card').first();
   const mounted = await card
     .waitFor({ state: 'attached', timeout: timeoutMs })
     .then(() => true)
     .catch(() => false);
-  if (!mounted) return { mounted: false, text: null, submitDisabled: false };
-  const text = await card.innerText({ timeout: 2_000 }).catch(() => null);
+  if (!mounted) {
+    return {
+      mounted: false,
+      text: null,
+      bodyText: null,
+      confirmText: null,
+      submitDisabled: false,
+      settled: false,
+    };
+  }
+  // ROUND 1 P2 — ATTACHMENT IS NOT SETTLEMENT.
+  //
+  // The card mounts IMMEDIATELY in its `unknown` state and only later
+  // renders ready/blocked copy, once its readiness RPCs answer. A
+  // scrape taken on attachment therefore reads the transient text, and
+  // an amount introduced into ready copy — the only copy that could
+  // carry one — would never be scanned. Unlike the #1839 chooser this
+  // card publishes no readiness attribute, so settlement is inferred
+  // from the copy leaving the unresolved sentence.
+  //
+  // Inferring from prose is unsound as a general rule (this file says
+  // so at length about the chooser), and it is used here only to RAISE
+  // the bar: a card that never leaves `unknown` reports `settled:
+  // false`, which the verdict turns into BLOCKED, not into a pass. So a
+  // reworded sentence degrades to "we could not confirm it settled",
+  // never to a false clean.
+  const deadline = Date.now() + timeoutMs;
+  let text = await card.innerText({ timeout: 2_000 }).catch(() => null);
+  let settled = !saysCheckRunning(text ?? '', FORCED_CLOSE_UNKNOWN);
+  while (!settled && Date.now() < deadline) {
+    await page.waitForTimeout(1_000);
+    text = await card.innerText({ timeout: 2_000 }).catch(() => text);
+    settled = !saysCheckRunning(text ?? '', FORCED_CLOSE_UNKNOWN);
+  }
+  const bodyText = await card
+    .getByTestId('forced-close-body')
+    .first()
+    .innerText({ timeout: 2_000 })
+    .catch(() => null);
   const submit = card.getByTestId('forced-close-submit').first();
   // A card in a withheld state renders no submit control at all, which
   // reads the same way as a disabled one for this verdict: the action
   // is not offered. Both are the designed behaviour, so neither is a
   // finding — only an ABSENT CARD is.
+  const submitCount = await submit.count();
   const submitDisabled =
-    (await submit.count()) === 0 ? true : await submit.isDisabled().catch(() => true);
-  return { mounted: true, text, submitDisabled };
+    submitCount === 0 ? true : await submit.isDisabled().catch(() => true);
+
+  // ROUND 1 P2 — THE CONFIRMATION IS PART OF THIS SURFACE.
+  //
+  // The spec is explicit: "The confirmation shown before the lender
+  // signs is part of this surface and carries the same obligation." An
+  // invented figure there was unreachable while only the card was
+  // scanned.
+  //
+  // STILL WATCH-ONLY, and checked rather than assumed:
+  // `forced-close-submit`'s handler is `onOpenConfirm`, which sets page
+  // state and renders `ConfirmReceipt`. Nothing signs and nothing is
+  // sent — `closeOut` sits behind ConfirmReceipt's OWN confirm button,
+  // which this never touches. The session also holds no key and denies
+  // every signing RPC, so a regression that tried to send would be
+  // refused rather than approved.
+  let confirmText = null;
+  if (submitCount > 0 && !submitDisabled) {
+    const opened = await submit
+      .click({ timeout: 5_000 })
+      .then(() => true)
+      .catch(() => false);
+    if (opened) {
+      await page.waitForTimeout(1_500);
+      confirmText = await card.innerText({ timeout: 2_000 }).catch(() => null);
+      // Leave the page as it was found. Failing to close it is not a
+      // finding and must not fail the drive.
+      await card
+        .getByRole('button', { name: /back/i })
+        .first()
+        .click({ timeout: 3_000 })
+        .catch(() => {});
+    }
+  }
+  return { mounted: true, text, bodyText, confirmText, submitDisabled, settled };
 }
 
 /**
@@ -3389,7 +3540,12 @@ for (const v of visited) {
             ? `\n      forced-close: ${v.forcedCloseVerdict.verdict}` +
               ` (${v.forcedCloseVerdict.why})` +
               (v.forcedCloseVerdict.verdict === 'pass'
-                ? ` checkRunning=${v.forcedCloseVerdict.checkRunning}`
+                ? ` checkRunning=${v.forcedCloseVerdict.checkRunning}` +
+                  // Whether the pre-sign confirmation was opened and
+                  // scanned. Printed because the no-amount claim covers
+                  // that panel too, and a reader has no other way to
+                  // tell a card-only scan from a full one.
+                  ` confirmScanned=${v.forcedCloseVerdict.confirmScanned}`
                 : '')
             : '')
         : `      chooser=${v.chooser} handover=${v.handover} offset=${v.offset}` +
@@ -3594,6 +3750,18 @@ if (!visited.some((v) => /^\/positions\/\d+$/.test(v.path))) {
   console.log(
     '\nBLOCKED: no position detail page was observed — nothing verified.',
   );
+  process.exit(2);
+}
+// ROUND 1 P2 — AN ADVERTISED ASSERTION THAT NEVER RAN IS NOT A CLEAN
+// RUN. Every visited position can legitimately produce `blocked` (all
+// FallbackPending, all sale-locked, none held), and a reporter that
+// consumes only `fail` then prints "routes clean" and exits 0 over a
+// check that never once executed. Ranked after `failures` and after the
+// Advanced BLOCKED arm, for the same reason those are ordered as they
+// are: a real regression is still reported as one.
+const fcGap = forcedCloseCoverage(visited);
+if (fcGap) {
+  console.log(`\nBLOCKED: ${fcGap}.`);
   process.exit(2);
 }
 process.exit(0);

@@ -101,21 +101,33 @@ export function visitProblems(v, role) {
   // AND both newly-exposed paths. Printing handover/offset without
   // failing on them let the drive pass while missing one of the two
   // #1505 surfaces it claims to validate (#1529 review).
-  if (!isDetailPath(v.path) || v.nav || preRaced(v)) return problems;
+  if (!isDetailPath(v.path) || v.nav) return problems;
 
-  // THE FORCED-CLOSE CARD IS JUDGED BEFORE THE CHOOSER'S EARLY RETURN
-  // (#2069), and the placement is the whole point.
+  // THE FORCED-CLOSE CARD IS JUDGED BEFORE EVERY CHOOSER-SPECIFIC
+  // SUPPRESSION (#2069), and the placement is the whole point.
   //
-  // It is a DIFFERENT card that happens to render on the same page. Put
-  // below the `!v.chooser` return, a missing exit chooser would swallow
-  // a positively observed forced-close defect and the run would report
-  // one finding where it had seen two — the aggregation mistake this
-  // file already carries two comments about. Its verdict is computed by
-  // its own module and only surfaced here, so nothing about the chooser
-  // can change it.
+  // It is a DIFFERENT card that happens to render on the same page, so
+  // nothing about the chooser may decide its verdict. Two suppressions
+  // sit below this line and each would have swallowed it:
+  //
+  //   - `preRaced(v)` is built from THREE chooser facts
+  //     (`advancedBlocked`, `advancedPreRaced`, `cardAbsentAtScrape`).
+  //     None of them is evidence about the forced-close card — and the
+  //     divergence is real rather than theoretical, since the lender
+  //     card is correctly suppressed for a sanctions-flagged holder
+  //     while the forced-close card deliberately stays available to
+  //     one (a wind-down is Tier-2; see the retail-deploy policy). A
+  //     positively observed amount would have been discarded.
+  //   - the `!v.chooser` return below, which would report one finding
+  //     where the run had seen two — the aggregation mistake this file
+  //     already carries two comments about.
+  //
+  // Its verdict is computed by its own module and only surfaced here.
   if (v.forcedCloseVerdict?.verdict === 'fail') {
     problems.push(`forced-close card: ${v.forcedCloseVerdict.why}`);
   }
+
+  if (preRaced(v)) return problems;
 
   if (!v.chooser) {
     problems.push(`${role} chooser MISSING on an eligible loan`);

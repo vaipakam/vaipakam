@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import enBundle from '../../src/i18n/locales/en.json' with { type: 'json' };
 
 import {
+  forcedCloseCoverage,
   forcedCloseVerdict,
   monetaryAmountsIn,
   saysCheckRunning,
@@ -110,7 +111,20 @@ describe('saysCheckRunning', () => {
 
 describe('forcedCloseVerdict', () => {
   const copy = { unknownCopy: FORCED_CLOSE.unknown };
-  const held = { lenderHoldsActive: true, mounted: true, submitDisabled: true };
+  // A held, Active, unlocked position whose card mounted and settled —
+  // the shape in which every invariant is actually checkable. Round 1
+  // added `saleLocked`, `settled` and `bodyText`, and each defaults to
+  // the permissive value HERE so the pre-existing cases keep asserting
+  // what they were written to assert.
+  const held = {
+    lenderHoldsActive: true,
+    mounted: true,
+    submitDisabled: true,
+    saleLocked: false,
+    settled: true,
+    bodyText: 'an explanation',
+    confirmText: null,
+  };
 
   it('FAILS on an absent card over a held Active position', () => {
     // Round 65's P2, as a live check. Absence is the strongest claim
@@ -162,5 +176,94 @@ describe('forcedCloseVerdict', () => {
   it('BLOCKS on a missing observation instead of throwing', () => {
     expect(forcedCloseVerdict(null, copy).verdict).toBe('blocked');
     expect(forcedCloseVerdict(undefined, copy).verdict).toBe('blocked');
+  });
+});
+
+describe('forcedCloseVerdict — round 1 review findings', () => {
+  const copy = { unknownCopy: FORCED_CLOSE.unknown };
+  const held = {
+    lenderHoldsActive: true,
+    mounted: true,
+    submitDisabled: true,
+    saleLocked: false,
+    settled: true,
+    bodyText: 'an explanation',
+    confirmText: null,
+    text: FORCED_CLOSE.readyInKind,
+  };
+
+  it('BLOCKS rather than failing when an absent card sits on a sale-locked position', () => {
+    // `PositionDetails` unmounts the card while an accepted sale awaits
+    // completion — closing out would strand the buyer's funds. Calling
+    // that a defect is the false-positive direction, and a check that
+    // cries wolf gets switched off.
+    const v = forcedCloseVerdict({ ...held, mounted: false, text: null, saleLocked: true }, copy);
+    expect(v.verdict).toBe('blocked');
+    expect(v.why).toMatch(/sale lock/);
+  });
+
+  it('still FAILS an absent card when no sale lock can explain it', () => {
+    const v = forcedCloseVerdict({ ...held, mounted: false, text: null, saleLocked: false }, copy);
+    expect(v.verdict).toBe('fail');
+  });
+
+  it('FAILS a card whose body is empty even though the heading has text', () => {
+    // The rendered-shell case: whole-card emptiness passes it, because
+    // the heading is text. This is the very state the module claims to
+    // detect.
+    const v = forcedCloseVerdict({ ...held, text: 'This loan is overdue', bodyText: '  ' }, copy);
+    expect(v.verdict).toBe('fail');
+    expect(v.why).toMatch(/explanatory body/);
+  });
+
+  it('BLOCKS an unsettled card rather than passing it', () => {
+    // Visible and explaining itself, so invariant 2 holds — but the
+    // settled copy an amount would appear in was never rendered, so
+    // invariant 1 went unchecked. A pass would bank coverage the run
+    // did not obtain.
+    const v = forcedCloseVerdict({ ...held, settled: false, text: FORCED_CLOSE.unknown }, copy);
+    expect(v.verdict).toBe('blocked');
+    expect(v.why).toMatch(/never scanned|check running/i);
+    expect(v.checkRunning).toBe(true);
+  });
+
+  it('scans the CONFIRMATION text too, and fails on an amount there', () => {
+    // The spec puts the pre-sign confirmation on this same surface. An
+    // invented figure there was previously unreachable.
+    const v = forcedCloseVerdict(
+      { ...held, submitDisabled: false, confirmText: 'You receive 1.5 cbETH' },
+      copy,
+    );
+    expect(v.verdict).toBe('fail');
+    expect(v.amounts).toHaveLength(1);
+  });
+
+  it('records whether the confirmation was scanned on a pass', () => {
+    expect(
+      forcedCloseVerdict({ ...held, submitDisabled: false, confirmText: 'Nothing numeric' }, copy)
+        .confirmScanned,
+    ).toBe(true);
+    expect(forcedCloseVerdict({ ...held }, copy).confirmScanned).toBe(false);
+  });
+});
+
+describe('forcedCloseCoverage', () => {
+  const v = (verdict) => ({ forcedCloseVerdict: { verdict } });
+
+  it('returns a reason when every observation was blocked', () => {
+    // The all-FallbackPending chain: nine blocked verdicts, "routes
+    // clean", exit 0, and an advertised assertion that never ran.
+    expect(forcedCloseCoverage([v('blocked'), v('blocked')])).toMatch(/never observed/);
+  });
+
+  it('is satisfied by a single real observation', () => {
+    expect(forcedCloseCoverage([v('blocked'), v('pass')])).toBeNull();
+    expect(forcedCloseCoverage([v('blocked'), v('fail')])).toBeNull();
+  });
+
+  it('says nothing when no verdict was advertised at all (borrower runs)', () => {
+    expect(forcedCloseCoverage([{ path: '/positions/1' }, {}])).toBeNull();
+    expect(forcedCloseCoverage([])).toBeNull();
+    expect(forcedCloseCoverage(null)).toBeNull();
   });
 });
