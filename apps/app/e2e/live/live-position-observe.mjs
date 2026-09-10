@@ -111,6 +111,7 @@ import {
   blockNumberFromRpcPair,
   blockNumberFromWsFrame,
   callsTargetContract,
+  chainIdFromRpcPair,
   classifyRpcFailure,
   codedError,
   recordRpcResponse,
@@ -1706,8 +1707,36 @@ function watchPageHead(page) {
   // reason this file already gives: the ENS endpoint comes from the
   // deployed bundle's own env and cannot be enumerated here.
   const DIAMOND_HEX = String(DIAMOND).replace(/^0x/, '').toLowerCase();
-  const markDiamond = (key, body) => {
+  const markDiamond = (key, body, responseBody) => {
     try {
+      // WHEN THE ENDPOINT SAYS WHICH CHAIN IT SPEAKS FOR, that settles
+      // it in both directions — heights are chain-scoped, so this is the
+      // fact actually needed rather than a proxy for it.
+      //
+      // MEASURED, not assumed: with the address evidence below switched
+      // off, a live run reports `pageHead=unobserved`, so the deployed
+      // page does not disclose `eth_chainId` on its deployment endpoint
+      // within the observed window. Chain id therefore cannot be the
+      // sole test, and the address evidence below is load-bearing rather
+      // than a belt-and-braces extra.
+      //
+      // Its value is as the NEGATIVE discriminator, which is what the
+      // address heuristic cannot do for itself: the app resolves ENS
+      // names on a mainnet endpoint, and a reverse lookup carries an
+      // address in its calldata exactly the way a batched Diamond read
+      // does — so an endpoint that has identified itself as a different
+      // chain is excluded before the heuristic can mistake it.
+      if (responseBody !== undefined) {
+        const id = chainIdFromRpcPair(body, responseBody);
+        if (id !== null) {
+          if (id === CHAIN_ID) diamond.add(key);
+          // A DIFFERENT chain is positive evidence the other way, and it
+          // outranks the address heuristics below — an ENS endpoint
+          // asked to reverse-resolve an address carries that address in
+          // its calldata exactly as a batched Diamond read does.
+          else return;
+        }
+      }
       if (typeof body === 'string' && body.toLowerCase().includes(DIAMOND_HEX)) {
         diamond.add(key);
         return;
@@ -1760,7 +1789,12 @@ function watchPageHead(page) {
       const body = req.postData();
       if (!body) return;
       const key = res.url();
-      markDiamond(key, body);
+      // One `res.json()` for both questions: a response body can only be
+      // consumed once cheaply, and the chain-id evidence needs it.
+      const parsed = body.includes('eth_chainId') || body.includes('eth_blockNumber')
+        ? await res.json().catch(() => undefined)
+        : undefined;
+      markDiamond(key, body, parsed);
       // Cheap reject before parsing — most POSTs are not this.
       if (!body.includes('eth_blockNumber')) return;
       // The PARSE is a pure function in `rpc-verdict.mjs`, tested
@@ -1768,7 +1802,7 @@ function watchPageHead(page) {
       // and error members where a result was expected are the cases
       // that matter, and a live chain will not reliably produce any of
       // them — inline here, none of them could be exercised.
-      recordHead(key, blockNumberFromRpcPair(body, await res.json()));
+      recordHead(key, blockNumberFromRpcPair(body, parsed));
     } catch {
       // Observational only. See the note above.
     }

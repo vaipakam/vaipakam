@@ -14,6 +14,7 @@ import { describe, expect, it } from 'vitest';
 import {
   blockNumberFromRpcPair,
   blockNumberFromWsFrame,
+  chainIdFromRpcPair,
   callsTargetContract,
   classifyRpcFailure,
   classifyRpcResponse,
@@ -777,5 +778,44 @@ describe('blockNumberFromWsFrame — a newHeads push', () => {
         JSON.stringify({ method: 'eth_subscription', params: { result: { number: 'soon' } } }),
       ),
     ).toBeNull();
+  });
+});
+
+describe('chainIdFromRpcPair — which chain an endpoint speaks for', () => {
+  const req = (calls) => {
+    const envelope = calls.map((c) => ({ jsonrpc: '2.0', ...c }));
+    return JSON.stringify(envelope.length === 1 ? envelope[0] : envelope);
+  };
+
+  it('reads the id from a single exchange', () => {
+    expect(
+      chainIdFromRpcPair(req([{ id: 1, method: 'eth_chainId' }]), { id: 1, result: '0x14a34' }),
+    ).toBe(84532);
+  });
+
+  it('matches by id inside a batch rather than by position', () => {
+    const body = req([
+      { id: 4, method: 'eth_blockNumber' },
+      { id: 5, method: 'eth_chainId' },
+    ]);
+    expect(
+      chainIdFromRpcPair(body, [
+        { id: 5, result: '0x1' },
+        { id: 4, result: '0x2c7a5f2' },
+      ]),
+    ).toBe(1);
+  });
+
+  it('discloses nothing when the endpoint was not asked', () => {
+    expect(chainIdFromRpcPair(req([{ id: 1, method: 'eth_call', params: [{}] }]), { id: 1, result: '0x1' }))
+      .toBeNull();
+  });
+
+  it('returns null rather than throwing on junk', () => {
+    expect(chainIdFromRpcPair('not json', { result: '0x1' })).toBeNull();
+    expect(chainIdFromRpcPair(req([{ id: 1, method: 'eth_chainId' }]), { id: 1, error: { code: -1 } }))
+      .toBeNull();
+    expect(chainIdFromRpcPair(req([{ id: 1, method: 'eth_chainId' }]), { id: 1, result: 'soon' }))
+      .toBeNull();
   });
 });

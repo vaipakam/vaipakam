@@ -268,6 +268,50 @@ export function blockNumberFromRpcPair(requestBody, responseBody) {
 }
 
 /**
+ * The chain id an endpoint reported in one `eth_chainId` exchange.
+ *
+ * THE RIGHT EVIDENCE for scoping observed block heights, because heights
+ * are chain-scoped and this is a direct statement of which chain an
+ * endpoint speaks for. Attribution by "the page asked this endpoint
+ * about the Diamond" is a proxy, and a leaky one: the app resolves ENS
+ * names on a mainnet endpoint, and a reverse lookup carries an address
+ * in its calldata exactly the way a batched Diamond read does.
+ *
+ * Same id-matching rule as `blockNumberFromRpcPair`, for the same
+ * reason, and the same single-call leniency.
+ *
+ * @param {string|undefined} requestBody
+ * @param {unknown} responseBody
+ * @returns {number|null} the chain id, or null when none was disclosed
+ */
+export function chainIdFromRpcPair(requestBody, responseBody) {
+  let calls;
+  try {
+    calls = rpcCallsFromBody(requestBody);
+  } catch {
+    return null;
+  }
+  if (!calls) return null;
+  const wanted = new Set(
+    calls.filter((c) => c?.method === 'eth_chainId').map((c) => c?.id),
+  );
+  if (wanted.size === 0) return null;
+  const items = Array.isArray(responseBody) ? responseBody : [responseBody];
+  const lone = calls.length === 1 && items.length === 1;
+  for (const item of items) {
+    if (!lone && !wanted.has(item?.id)) continue;
+    if (typeof item?.result !== 'string') continue;
+    try {
+      const n = Number(BigInt(item.result));
+      if (Number.isSafeInteger(n)) return n;
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
+
+/**
  * The block height a `newHeads` push disclosed, or null.
  *
  * ROUND 16 P2 — THE HTTP SNIFFER IS HALF THE PICTURE. `wagmi.ts` wraps
