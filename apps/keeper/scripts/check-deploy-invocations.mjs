@@ -6681,86 +6681,82 @@ function indentedBlocks(lines, indentRe, startAt = 0) {
  * lose anything, because it removes nothing.
  */
 /**
- * A Markdown file with its PLAIN PROSE blanked, conservatively.
+ * THE Make variable model. One collector, one expander, both consumers.
  *
- * A runbook sentence naming a write is not a write, and reading one as shell
- * reported a deployment below it — a false red, in a check that runs inside
- * typecheck (#2084).
+ * There were two copies of this: the scanner's (which finds deploys) and the
+ * rewrite question's (which finds writes). They were textually identical and
+ * intended to model the same thing — the text Make hands the shell — so every
+ * correction to Make's semantics had to be made twice or the two would answer
+ * in different models (#2105 r6). The `$$` rule below is exactly such a
+ * correction, and it is why the duplication had to go first: fixed in one copy
+ * it would have left the scanner still inventing a write the shell never sees.
  *
- * THIS IS THE THIRD SHAPE OF THIS FIX, and the first two failed the same way.
- * Blanking REMOVES text, so every construct it fails to recognise as code is a
- * write that disappears — a silent pass, on the hazard this guard exists for.
- * A per-line span matcher missed spans whose backticks span lines (#2105 r4).
- * A hand-written CommonMark pass then missed three more in one round: a fence
- * closer carrying trailing text does not close, an unmatched delimiter must not
- * mask a later valid span, and an indented block may be indented with a TAB
- * (#2105 r5). Each fix was correct and each revealed the next, which is the
- * signature this file is written to stop chasing.
- *
- * So recognition is abandoned in favour of a rule that CANNOT lose a command.
- * A line is blanked only when all three hold:
- *
- *   - no fence is open (an unclosed fence therefore protects the rest of the
- *     file, and a closer must be whitespace-only as CommonMark requires);
- *   - the line contains NO BACKTICK anywhere — so every code span survives
- *     whole, paired or not, on one line or several, without any pairing logic;
- *   - the line does not begin with a space or a tab — so every indented block
- *     survives, at any indent, with either character.
- *
- * Each test errs toward KEEPING. Getting one wrong leaves text in that the
- * pre-existing reader also read, which costs at most the report it already
- * made; it can no longer cost silence. The price is that prose which happens to
- * contain a backtick, or is indented, is not blanked — so the false red this
- * fixes is fixed for the plain case and not for those. That is the correct
- * direction for a subtraction in this guard, and it needs no parser.
+ * Rules: literal values only, last assignment wins, `?=` yields to an existing
+ * one, and a computed value CLEARS the name — the same rules the shell-variable
+ * model follows. Collected over the whole file because recursive `=` variables
+ * resolve at use, not at definition.
  */
-function blankMarkdownProse(text) {
-  const lines = text.split('\n');
-  let fence = null;
-  return lines
-    .map((l) => {
-      const open = l.match(/^\s*(`{3,}|~{3,})/);
-      if (fence) {
-        // CLOSED ONLY BY A WHITESPACE-ONLY RUN of the same character, at least
-        // as long. A closer carrying trailing text is block CONTENT, and
-        // treating it as a closer ended the fence early and blanked the command
-        // below it (#2105 r5).
-        if (open && open[1][0] === fence[0] && open[1].length >= fence.length && /^\s*[`~]+\s*$/.test(l)) {
-          fence = null;
-        }
-        return l;
-      }
-      if (open) {
-        fence = open[1];
-        return l;
-      }
-      if (l.includes('`') || /^[ \t]/.test(l)) return l;
-      return ' '.repeat(l.length);
-    })
-    .join('\n');
+function makeVarModel(text) {
+  const mkVars = new Map();
+  // AN ASSIGNMENT INSIDE A CONDITIONAL IS NOT NECESSARILY IN EFFECT. Whether
+  // `ifeq`/`ifdef` fires depends on the environment and command-line overrides
+  // this guard cannot evaluate, and taking every textual assignment as executed
+  // Make state let a DEAD branch win: `WRITE = echo no rewrite` followed by an
+  // `ifeq (1,0)` reassigning it to a redirection expanded to the redirection
+  // and invented a rewrite, where `make -n` prints `echo no rewrite` (#2105 r6).
+  //
+  // The rule is the narrowest one that removes that: a guarded assignment never
+  // OVERRIDES an unguarded one, but is still used when it is all we have. That
+  // keeps expansion working for the many Makefiles whose only definition of a
+  // variable sits inside a conditional — dropping those instead would lose
+  // deploys the scanner finds today (#1995 r17) — while making the always-in-
+  // effect value win whenever there is one. It is not full evaluation, and does
+  // not claim to be: where an active conditional really does override, this
+  // resolves to the unconditional value, which is the answer when no condition
+  // fires.
+  let depth = 0;
+  for (const l of text.split('\n')) {
+    if (/^\t/.test(l)) continue;
+    if (/^\s*(?:ifeq|ifneq|ifdef|ifndef)\b/.test(l)) {
+      depth += 1;
+      continue;
+    }
+    if (/^\s*endif\b/.test(l)) {
+      depth = Math.max(0, depth - 1);
+      continue;
+    }
+    // `else` and `else ifeq (...)` stay at the depth they are already in.
+    if (/^\s*else\b/.test(l)) continue;
+    const m = l.match(/^([A-Za-z_]\w*)\s*(\?=|:{1,2}=|=)\s*(.*?)\s*$/);
+    if (!m) continue;
+    const prev = mkVars.get(m[1]);
+    if (m[2] === '?=' && prev) continue;
+    if (depth > 0 && prev && !prev.conditional) continue;
+    if (/\$/.test(m[3])) mkVars.delete(m[1]);
+    else mkVars.set(m[1], { value: m[3], conditional: depth > 0 });
+  }
+  // `$$` IS AN ESCAPED DOLLAR, NOT THE START OF A REFERENCE. Make reduces it to
+  // a literal `$` and expands nothing, so `echo '$$(WRITE)'` is inert text —
+  // but a matcher looking only for `$(NAME)` finds one starting at the SECOND
+  // dollar and substitutes, inventing a write in a recipe that performs none
+  // (#2105 r6; `make -n` on GNU Make 4.3 prints `echo '$(WRITE)'`).
+  //
+  // Matching `$$` first in the alternation consumes the pair, so the `(WRITE)`
+  // after it can no longer open a reference. The escape is left AS WRITTEN
+  // rather than reduced to a single `$`: reducing it is what Make does, but
+  // neither spelling is a write, and emitting a bare `$(` would hand the shell
+  // reader a command-substitution shape that was never in the source.
+  return (l) =>
+    l.replace(/\$\$|\$[({]([A-Za-z_]\w*)[)}]/g, (m0, n) =>
+      m0 === '$$' ? m0 : (mkVars.get(n)?.value ?? m0),
+    );
 }
 
 function expandMakeVars(text) {
-  // Literal values only, last assignment wins, `?=` yields to an existing one,
-  // and a computed value CLEARS the name — the same rules the shell-variable
-  // model follows. Collected over the whole file because recursive `=`
-  // variables resolve at use, not at definition.
-  const mkVars = new Map();
-  for (const l of text.split('\n')) {
-    if (/^\t/.test(l)) continue;
-    const m = l.match(/^([A-Za-z_]\w*)\s*(\?=|:{1,2}=|=)\s*(.*?)\s*$/);
-    if (!m) continue;
-    if (m[2] === '?=' && mkVars.has(m[1])) continue;
-    if (/\$/.test(m[3])) mkVars.delete(m[1]);
-    else mkVars.set(m[1], m[3]);
-  }
+  const expandMk = makeVarModel(text);
   return text
     .split('\n')
-    .map((l) =>
-      /^\t/.test(l)
-        ? l.replace(/\$[({]([A-Za-z_]\w*)[)}]/g, (m0, n) => mkVars.get(n) ?? m0)
-        : l,
-    )
+    .map((l) => (/^\t/.test(l) ? expandMk(l) : l))
     .join('\n');
 }
 
@@ -6774,17 +6770,7 @@ function makefileBlocks(text) {
   // CLEARS the name — the same rules the shell-variable model follows.
   // Collected over the whole file because recursive `=` variables resolve at
   // use, not at definition.
-  const mkVars = new Map();
-  for (const l of text.split('\n')) {
-    if (/^\t/.test(l)) continue;
-    const m = l.match(/^([A-Za-z_]\w*)\s*(\?=|:{1,2}=|=)\s*(.*?)\s*$/);
-    if (!m) continue;
-    if (m[2] === '?=' && mkVars.has(m[1])) continue;
-    if (/\$/.test(m[3])) mkVars.delete(m[1]);
-    else mkVars.set(m[1], m[3]);
-  }
-  const expandMk = (l) =>
-    l.replace(/\$[({]([A-Za-z_]\w*)[)}]/g, (m0, n) => mkVars.get(n) ?? m0);
+  const expandMk = makeVarModel(text);
   const lines = text
     .split('\n')
     .map((l) => (/^\t/.test(l) ? expandMk(l.replace(/^(\t+)[@+-]+\s*/, '$1')) : l));
@@ -8994,15 +8980,10 @@ for (const file of walk(REPO_ROOT)) {
   // Shell semantics apply to SHELL files. A redirection is a redirection in
   // shell text; in JavaScript the same character is a comparison (#2066 r10).
   const fileIsShell = Boolean(winInterp) || isShellFile(rel, text);
-  // THE TEXT THE REWRITE QUESTION IS ASKED OF. Same length, same lines, same
-  // offsets as the file — two TRANSFORMATIONS, never a selection (#2084):
-  //
-  //   - a Makefile's recipes are expanded, because Make expands them before the
-  //     shell sees them and a variable holding a redirection really is a write;
-  //   - a Markdown file's PLAIN prose is blanked, because a sentence describing
-  //     a write is not one. Only a line with no backtick, no leading
-  //     whitespace and no open fence: see `blankMarkdownProse` for why the
-  //     rule is stated as what it will KEEP rather than as what it recognises.
+  // THE TEXT THE REWRITE QUESTION IS ASKED OF. One TRANSFORMATION, never a
+  // selection (#2084): a Makefile's recipes are expanded, because Make expands
+  // them before the shell sees them and a variable holding a redirection really
+  // is a write. Same lines, same order, nothing removed.
   //
   // Deliberately NOT a collected "executable image". That was tried and is what
   // #2105 rounds 1-3 rejected: SIX separate ingestion paths were missed, five
@@ -9010,18 +8991,25 @@ for (const file of walk(REPO_ROOT)) {
   // gap the new mode failed to close, and two attempts to enumerate the paths
   // were both incomplete — the second refuted by the very next review round.
   //
-  // Expansion cannot omit, because it removes nothing. BLANKING CAN, and an
-  // earlier version of this comment claimed otherwise — that it "fails toward
-  // noise rather than silence". That was wrong and is retracted: a construct
-  // blanking fails to recognise is a write REPLACED BY SPACES, which passes
-  // silently. Four such misses were found across #2105 r4 and r5. What makes it
-  // safe now is not recognition but the conservative keep-rule above, which
-  // errs toward leaving text in (#2105 r5).
-  const rewriteText = /(^|\/)([Mm]akefile|.*\.mk)$/.test(rel)
-    ? expandMakeVars(text)
-    : /\.mdx?$/.test(rel)
-      ? blankMarkdownProse(text)
-      : text;
+  // ADDING text is the safe direction here and REMOVING it is not, which is why
+  // only one transformation survives. Expanding wrongly invents a write and
+  // costs a report; failing to expand costs nothing this guard did not already
+  // miss. Blanking is the mirror image, and it was tried three times:
+  //
+  //   - Markdown prose was blanked so a sentence NAMING a write would stop
+  //     reporting the deploy below it (a false red, #2084);
+  //   - a per-line span matcher, then a hand-written CommonMark pass, then a
+  //     conservative keep-rule — six findings across #2105 r4, r5 and r6, every
+  //     one a real command turned into spaces, i.e. a false GREEN.
+  //
+  // It is gone. The rule it needed cannot exist: this guard treats a bare,
+  // unindented Markdown line as an actionable command (which is why a runbook's
+  // `cp a b` is reported at all), and a prose sentence naming a write has that
+  // same shape. Telling them apart IS the classifier whose answer produced the
+  // false red in the first place. So `.md` keeps its raw text, the false red
+  // stays until it is fixed by a means that cannot go silent (#2112), and the
+  // one transformation left here can only ever cost noise.
+  const rewriteText = /(^|\/)([Mm]akefile|.*\.mk)$/.test(rel) ? expandMakeVars(text) : text;
   // AN EXTENSIONLESS HELPER HAS A SHEBANG, NOT A SUFFIX. `walk` yields
   // extensionless executables deliberately, and keying the language on `.py`
   // alone classified `#!/usr/bin/env python3` as `other` — where an f-string

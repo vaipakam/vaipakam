@@ -11856,134 +11856,51 @@ describe('check-deploy-invocations — #1996 config identity', () => {
   // selected one ----
   //
   // Each symptom below was reproduced against the pre-fix guard before the fix
-  // was written. An earlier attempt COLLECTED the executable parts instead of
-  // transforming the whole file; #2105 rounds 1-3 found five separate
-  // ingestion paths it missed, every omission a false green, so that approach
-  // was withdrawn. These fixtures pin the transformations and — as importantly
-  // — the constructs a selection would drop.
+  // was written. TWO approaches were withdrawn before this one:
+  //
+  //   - COLLECTING the executable parts. #2105 rounds 1-3 found six ingestion
+  //     paths it missed, every omission a false green.
+  //   - BLANKING Markdown prose. Rounds 4-6 found six commands it erased, also
+  //     false greens. Removing text is the unsafe direction here and no rule
+  //     for doing it safely exists — see the two Markdown fixtures below.
+  //
+  // What is left is ONE transformation, in the safe direction: Make recipe
+  // expansion, which only ever ADDS text and so can only ever cost a report.
+  // The Markdown fixtures no longer pin a transformation; they pin that there
+  // is none.
 
-  it('prose naming a write is not a write (#2084)', () => {
-    // A runbook SENTENCE mentioning a write, before a fenced deploy. Read as
-    // shell, it counted as performing one and the deploy below was reported —
-    // a false red, in a check that runs inside typecheck.
+  it('a standalone runbook command is read as written (#2105 r6)', () => {
+    // NO SUBTRACTION HAPPENS TO MARKDOWN, and this is the fixture that says so.
+    // A bare, unindented line in a runbook IS an actionable command to this
+    // guard — which is the whole reason `cp a b` before a deploy is reported.
+    // Blanking "plain prose" therefore erased real commands: this exact shape
+    // exited 0 with blanking in place and 1 without it, a false green on the
+    // hazard the guard exists for. It also shows why the rule could not be
+    // repaired: a PROSE SENTENCE naming a write has the same shape as this
+    // line, so telling them apart IS the classifier whose answer produced the
+    // false red in the first place (#2112).
     seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
     seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
     const r = runWith(
       'docs/runbook.md',
-      '# Runbook\n\nBefore deploying, the release tool calls\n' +
-        'writeFileSync("configs/custom.jsonc", generated) for you.\n\n' +
+      '# Runbook\n\nFirst regenerate it:\n\ncp generated.jsonc configs/custom.jsonc\n\n' +
         '```bash\nwrangler deploy --config configs/custom.jsonc\n```\n',
-    );
-    expect(r.ok).toBe(true);
-  });
-
-  it('a fenced block is not prose (#2084 bounds)', () => {
-    // BOUNDS GUARD: blanking prose must not blank the examples in it.
-    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
-    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
-    const r = runWith(
-      'docs/rb2.md',
-      "# Runbook\n\n```bash\nprintf '{}' > configs/custom.jsonc\n" +
-        'wrangler deploy --config configs/custom.jsonc\n```\n',
     );
     expect(r.ok).toBe(false);
   });
 
-  it('an inline command span in prose is executable (#2084 bounds)', () => {
-    // BOUNDS GUARD, and the one that decided the design. A code span sits
-    // INSIDE prose and the scanner treats it as an actionable command — "first
-    // run `cp a b`" instructs the operator to run it. Any approach that drops
-    // prose wholesale drops this too, which is how the withdrawn selection
-    // turned a runbook into a false green (#2105 r3).
+  it('an inline command span in prose is read as written (#2105 r3)', () => {
+    // The second shape that killed a design. A code span sits INSIDE prose and
+    // is an instruction — "first run `cp a b`" tells the operator to run it —
+    // so the withdrawn selection, which kept only whole blocks, dropped it and
+    // turned a runbook into a false green. Kept as a companion to the fixture
+    // above: between them they cover both spellings any future attempt to
+    // subtract Markdown text would have to preserve.
     seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
     seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
     const r = runWith(
       'docs/rb3.md',
       '# Runbook\n\nFirst run `cp generated.jsonc configs/custom.jsonc` to stage it.\n\n' +
-        '```bash\nwrangler deploy --config configs/custom.jsonc\n```\n',
-    );
-    expect(r.ok).toBe(false);
-  });
-
-  it('a code span across two lines is still one span (#2105 r4)', () => {
-    // Markdown lets a span's backticks sit on different lines. A per-line
-    // matcher saw no complete span, blanked the command inside it, and the
-    // deploy below went unreported — blanking losing a write, which is the
-    // failure direction I had wrongly claimed this design could not have.
-    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
-    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
-    const r = runWith(
-      'docs/rb5.md',
-      '# Runbook\n\nFirst run `cp generated.jsonc\nconfigs/custom.jsonc` to stage it.\n\n' +
-        '```bash\nwrangler deploy --config configs/custom.jsonc\n```\n',
-    );
-    expect(r.ok).toBe(false);
-  });
-
-  it('an unpaired backtick does not swallow the document (#2105 r4 bounds)', () => {
-    // BOUNDS GUARD: pairing spans across lines must not let one stray backtick
-    // keep the rest of the file. A blank line ends the paragraph and any run
-    // left open with it, so the prose below stays prose.
-    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
-    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
-    const r = runWith(
-      'docs/rb6.md',
-      '# Runbook\n\nA stray ` backtick opens nothing.\n\n' +
-        'The tool calls writeFileSync("configs/custom.jsonc", generated).\n\n' +
-        '```bash\nwrangler deploy --config configs/custom.jsonc\n```\n',
-    );
-    expect(r.ok).toBe(true);
-  });
-
-  it('a fence closer carrying text does not close it (#2105 r5)', () => {
-    // CommonMark: a closing fence must be whitespace-only. Treating a line with
-    // trailing text as a closer ended the block early and blanked the command
-    // below it.
-    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
-    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
-    const r = runWith(
-      'docs/rb7.md',
-      '# R\n\n```bash\n```text not a closer\ncp generated.jsonc configs/custom.jsonc\n```\n\n' +
-        '```bash\nwrangler deploy --config configs/custom.jsonc\n```\n',
-    );
-    expect(r.ok).toBe(false);
-  });
-
-  it('an unmatched backtick does not mask a later span (#2105 r5)', () => {
-    // A stray single backtick before a valid double-backtick span. The pairing
-    // matcher locked onto the stray opener and rejected both later runs,
-    // blanking the real command. No pairing is attempted now — any line with a
-    // backtick is kept whole.
-    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
-    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
-    const r = runWith(
-      'docs/rb8.md',
-      '# R\n\nA stray ` tick then run ``cp generated.jsonc configs/custom.jsonc`` first.\n\n' +
-        '```bash\nwrangler deploy --config configs/custom.jsonc\n```\n',
-    );
-    expect(r.ok).toBe(false);
-  });
-
-  it('a tab-indented code block is executable (#2105 r5)', () => {
-    // CommonMark expands a tab to four columns, so a tab-indented line is an
-    // indented code block. A spaces-only test called it prose and blanked it.
-    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
-    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
-    const r = runWith(
-      'docs/rb9.md',
-      '# R\n\n\tcp generated.jsonc configs/custom.jsonc\n\n' +
-        '```bash\nwrangler deploy --config configs/custom.jsonc\n```\n',
-    );
-    expect(r.ok).toBe(false);
-  });
-
-  it('an indented code block is executable (#2084 bounds)', () => {
-    // BOUNDS GUARD: the fence-free spelling of the same example (#2105 r3).
-    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
-    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
-    const r = runWith(
-      'docs/rb4.md',
-      "# Runbook\n\n    printf '{}' > configs/custom.jsonc\n\nThen deploy:\n\n" +
         '```bash\nwrangler deploy --config configs/custom.jsonc\n```\n',
     );
     expect(r.ok).toBe(false);
@@ -12013,6 +11930,81 @@ describe('check-deploy-invocations — #1996 config identity', () => {
         'NOTE = echo deploying configs/custom.jsonc\n',
     );
     expect(r.ok).toBe(true);
+  });
+
+  it('an escaped dollar is not a variable reference (#2105 r6)', () => {
+    // `$$` is Make's escape for a literal dollar: `make -n` (GNU Make 4.3)
+    // prints `echo '$(WRITE)'` and runs no write. A matcher looking only for
+    // `$(NAME)` found one starting at the SECOND dollar and substituted,
+    // inventing a rewrite in a recipe that performs none — a false red.
+    //
+    // The assignment sits AFTER the recipe deliberately. Put before it, the
+    // assignment line is itself a literal write to the config and the #2052
+    // rule reports it, so the fixture would pass without exercising expansion
+    // at all — which is how the first version of this repro fooled me.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'Makefile',
+      "deploy:\n\techo '$$(WRITE)'\n\twrangler deploy --config configs/custom.jsonc\n\n" +
+        "WRITE = printf '{}' > configs/custom.jsonc\n",
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a dead conditional branch does not win the assignment (#2105 r6)', () => {
+    // `ifeq (1,0)` never fires, so `make -n` prints `echo no rewrite`. Taking
+    // every textual assignment as executed Make state let the dead branch
+    // override the live one and invented a rewrite — a false red.
+    //
+    // A guarded assignment no longer overrides an unguarded one. It is still
+    // USED when it is the only definition, which the bounds guard below pins.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'Makefile',
+      'deploy:\n\t$(WRITE)\n\twrangler deploy --config configs/custom.jsonc\n\n' +
+        'WRITE = echo no rewrite\nifeq (1,0)\n' +
+        "WRITE = printf '{}' > configs/custom.jsonc\nendif\n",
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('the scanner shares the escape rule too (#2105 r6)', () => {
+    // WHY THE DUPLICATION HAD TO GO FIRST. The Make variable model existed
+    // twice — once for finding deploys, once for finding writes — so fixing
+    // `$$` in one copy would have left the other still expanding it.
+    //
+    // This exercises the SCANNER copy: `echo '$$(DEPLOY)'` runs no deploy at
+    // all (`make -n` prints `echo '$(DEPLOY)'`), but expanding from the second
+    // dollar invented one and reported it. That is a false red this guard has
+    // had all along, not one introduced here — it reproduces on the parent —
+    // and sharing one model cured it as a side effect of removing the copy.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith(
+      'Makefile',
+      "noop:\n\tcd apps/agent && echo '$$(DEPLOY)'\n\nDEPLOY = wrangler deploy\n",
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a conditional-only assignment is still expanded (#2105 r6)', () => {
+    // NOT a bounds guard — it discriminates, and that is the point. Replacing
+    // "does not override" with "is discarded" fails THIS fixture and no other,
+    // so it pins the choice between the two, which is the reason the rule is
+    // "does not override". Many Makefiles define a variable ONLY inside a
+    // conditional; dropping those would stop expanding them and lose writes —
+    // and deploys — the scanner finds today (#1995 r17). With no unguarded
+    // assignment to defer to, the guarded one is used and the write is found.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'Makefile',
+      'deploy:\n\t$(WRITE)\n\twrangler deploy --config configs/custom.jsonc\n\n' +
+        "ifeq (1,1)\nWRITE = printf '{}' > configs/custom.jsonc\nendif\n",
+    );
+    expect(r.ok).toBe(false);
   });
 
   it('a write in an earlier step counts against a later one (#2084 bounds)', () => {
