@@ -1683,7 +1683,12 @@ async function censusDeployment(dep) {
   //   • `FunctionDoesNotExist` on every custody selector proves those
   //     selectors are unrouted NOW, not that they never wrote rows: facets can
   //     be cut in, write loan-keyed rows, and be cut out with storage intact.
-  //     Recorded as `custodySurfaceUnrouted`; not a proof.
+  //     Recorded as `custodySurfaceUnrouted`; not a proof. And the probes are
+  //     GETTERS (#2095 r7 P1): a Diamond whose loupe and getters are all
+  //     unrouted can still route a writer — RiskFacet, DefaultedFacet, the
+  //     intent producer — so this says nothing about whether producers are
+  //     live. Without a loupe the writer surface cannot be enumerated, so a
+  //     bare shell is treated as able to write until it is known not to.
   // What remains sound: where the counter is routed, zero loans ever created
   // (every class is loan-keyed). An empty-code read is a coverage gap, not a
   // proof (r30).
@@ -1827,7 +1832,7 @@ async function censusDeployment(dep) {
       blockTag: censusBlock.tag,
       rpcHost: rpcHostOf(rpc),
       // producers may still be live where custody selectors route (the prior indeterminate return said so too; #2095 r2 P1)
-      scanned: { loanIdsEnumerated: storage?.scan?.loansScanned ?? 0, totalLoansEverCreated: storage ? storage.counters.totalLoansEverCreated.map((x) => x.value.toString()).join('|') : 'n/a', loanIdRange: storage?.scan?.loansScanned ? `1..${storage.scan.loansScanned}` : 'none', enumerable: false, noCode: false, custodySurfaceUnrouted, notADiamond, loupeRouted, producersMayBeLive: !notADiamond && !custodySurfaceUnrouted, storageRead: storageEvidence, storageReadUnavailable: STORAGE_READ.ok ? undefined : STORAGE_READ.reason },
+      scanned: { loanIdsEnumerated: storage?.scan?.loansScanned ?? 0, totalLoansEverCreated: storage ? storage.counters.totalLoansEverCreated.map((x) => x.value.toString()).join('|') : 'n/a', loanIdRange: storage?.scan?.loansScanned ? `1..${storage.scan.loansScanned}` : 'none', enumerable: false, noCode: false, custodySurfaceUnrouted, notADiamond, loupeRouted, producersMayBeLive: !notADiamond, storageRead: storageEvidence, storageReadUnavailable: STORAGE_READ.ok ? undefined : STORAGE_READ.reason },
       classes,
     };
   }

@@ -6098,6 +6098,21 @@ contradiction it looks like. No verdict of run 29 moves — all twenty-four
 readings it set aside were on the enumerable path, and the three shells read
 zero at every slot — so run 29 stands.
 
+**Review round 7 corrected what a bare shell is allowed to claim, and what
+an old getter is allowed to count.** The four probes that classify a Diamond
+without a loupe are GETTERS, so their all being unrouted said nothing about
+writers; the shell path had nevertheless recorded its producers as not live,
+which is the input the migration-retirement rule reads. A bare shell is now
+treated as able to write until its writer surface is known — only a
+non-Diamond has no live producers — which changes no verdict and, since the
+population is not established empty, no retirement answer either; run 30
+re-records the three shells accordingly. And a routed getter compiled against
+an earlier layout returns the very row the era scan finds at that era's slot,
+so merging the scan's row again doubled the count, the total and the
+shortfall while the reconciliation only marked the layout disagreement. Each
+getter row now absorbs at most one historical row with the same key (and the
+same amount where the row carries one); the disagreement is still recorded.
+
 ### 7a. What the provenance walk found, and how the design changes (2026-09-09)
 
 The walk in question 2 was built first, and it answered before a single slot

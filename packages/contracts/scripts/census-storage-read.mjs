@@ -190,13 +190,28 @@ export function eraSlotsExcept(eraSlots, headSlots) {
  * asset and makes the class indeterminate. Pure; exported for the test.
  */
 export function mergeHistoricalRows(cls, historical, className) {
-  const hist = historical?.rows?.[className] ?? [];
-  if (!hist.length) return { ...cls, historicalRows: 0 };
+  const all = historical?.rows?.[className] ?? [];
+  if (!all.length) return { ...cls, historicalRows: 0 };
+  // #2095 r7 P2 — a routed getter compiled against an EARLIER layout returns
+  // the very row the era scan finds at that era's slot. Such a row is already
+  // in the getter's set; merging it again would double the count, the total
+  // and the shortfall. Each getter row absorbs at most ONE historical row
+  // with the same key (and the same amount where the row carries one); the
+  // HEAD-slot reconciliation still records the layout disagreement.
+  const amountField = { vpfiHeldCustody: 'vpfiHeld', rebateRows: 'rebateAmount', fallbackSnapshotCustody: 'collateralTotal' }[className];
+  const unclaimed = [...(cls.rows ?? []), ...(cls.nonVpfiRowsExcluded ?? []), ...(cls.unknownAssetRows ?? [])];
+  const hist = [];
+  let alreadyReported = 0;
+  for (const r of all) {
+    const i = unclaimed.findIndex((g) => String(g.loanId) === String(r.loanId) && (!amountField || String(g[amountField]) === String(r[amountField])));
+    if (i >= 0) { unclaimed.splice(i, 1); alreadyReported += 1; } else hist.push(r);
+  }
+  const base = { historicalRows: hist.length, historicalRowsAlreadyReportedByGetter: alreadyReported };
+  if (!hist.length) return { ...cls, ...base };
   if (className === 'vpfiHeldCustody' || className === 'rebateRows') {
-    const field = className === 'vpfiHeldCustody' ? 'vpfiHeld' : 'rebateAmount';
     const rows = [...(cls.rows ?? []), ...hist.map((r) => ({ ...r, layoutEra: 'earlier' }))];
-    const total = rows.reduce((a, r) => a + BigInt(r[field]), 0n).toString();
-    return { ...cls, count: rows.length, total, rows, historicalRows: hist.length };
+    const total = rows.reduce((a, r) => a + BigInt(r[amountField]), 0n).toString();
+    return { ...cls, count: rows.length, total, rows, ...base };
   }
   return {
     ...cls,
@@ -205,7 +220,7 @@ export function mergeHistoricalRows(cls, historical, className) {
     indeterminateReason: `${hist.length} row candidate(s) at an EARLIER layout era's slot (no getter reads them)${hist.some((r) => r.ambiguous) ? `; ${hist.filter((r) => r.ambiguous).length} of them alias a current field's rows (${[...new Set(hist.filter((r) => r.ambiguous).map((r) => r.aliasesCurrentField))].join(', ')}) and may be today's rows of that field for the same key` : ''}; their asset cannot be read without a getter for that era`,
     unknownAssetRows: [...(cls.unknownAssetRows ?? []), ...hist],
     count: (cls.count ?? 0) + hist.length,
-    historicalRows: hist.length,
+    ...base,
   };
 }
 

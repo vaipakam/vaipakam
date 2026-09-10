@@ -221,3 +221,23 @@ test('counter readings are attributed on every path: an old counter slot a curre
   assert.deepEqual(c.unexplained.filter((x) => x.which === 'totalLoansEverCreated'), []);
   assert.equal(c.counters.totalLoansEverCreated[0].value, 7n);
 });
+
+test('a historical row an older routed getter already returned is not merged twice (#2095 r7 P2)', () => {
+  const cls = { status: 'proven', count: 1, total: '5', rows: [{ loanId: '1', vpfiHeld: '5' }] };
+  const historical = { rows: { vpfiHeldCustody: [{ loanId: '1', vpfiHeld: '5', mappingSlot: '0x01' }, { loanId: '2', vpfiHeld: '7', mappingSlot: '0x01' }] } };
+  const m = mergeHistoricalRows(cls, historical, 'vpfiHeldCustody');
+  assert.equal(m.count, 2, 'loan 1 once, loan 2 once');
+  assert.equal(m.total, '12');
+  assert.equal(m.historicalRows, 1);
+  assert.equal(m.historicalRowsAlreadyReportedByGetter, 1);
+  // a different amount for the same key is a different physical row and is kept
+  const d = mergeHistoricalRows(cls, { rows: { vpfiHeldCustody: [{ loanId: '1', vpfiHeld: '6', mappingSlot: '0x01' }] } }, 'vpfiHeldCustody');
+  assert.equal(d.count, 2); assert.equal(d.total, '11'); assert.equal(d.historicalRowsAlreadyReportedByGetter, 0);
+  // one getter row absorbs at most one historical row: two era rows for one key with the same amount keep one
+  const two = mergeHistoricalRows(cls, { rows: { vpfiHeldCustody: [{ loanId: '1', vpfiHeld: '5', mappingSlot: '0x01' }, { loanId: '1', vpfiHeld: '5', mappingSlot: '0x02' }] } }, 'vpfiHeldCustody');
+  assert.equal(two.count, 2); assert.equal(two.historicalRowsAlreadyReportedByGetter, 1);
+  // an intent row has no amount: the key alone matches, and a getter row filed as non-VPFI or unknown-asset counts as reported too
+  const intent = mergeHistoricalRows({ status: 'proven', count: 1, rows: [], nonVpfiRowsExcluded: [{ loanId: '9', asset: '0xab' }] }, { rows: { liveIntentCommits: [{ loanId: '9', orderHash: '0xcd', mappingSlot: '0x01' }] } }, 'liveIntentCommits');
+  assert.equal(intent.status, 'proven', 'nothing new to merge');
+  assert.equal(intent.historicalRowsAlreadyReportedByGetter, 1);
+});
