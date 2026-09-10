@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-10T01:58:56.808Z",
+  "generatedAt": "2026-09-10T04:20:58.984Z",
   "purpose": "#1566 grandfathered-custody census — decides whether slices 0-3 are live work or a certified no-op",
   "scope": "all-deployed-chains",
   "allClassesEmpty": false,
@@ -102,8 +102,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "307217034",
-      "atBlockHash": "0xf073b88d0b2ee0d24d4c970a5015785e925776d5ad7131438a7e05e018c942e4",
+      "atBlock": "307273927",
+      "atBlockHash": "0x095dcae70da216bfcbf42753106ca95c52261c3916c0a9ba847b5b7d4b44449e",
       "blockTag": "finalized",
       "rpcHost": "arbitrum-sepolia.gateway.tenderly.co",
       "scanned": {
@@ -164,8 +164,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "307217034",
-      "atBlockHash": "0xf073b88d0b2ee0d24d4c970a5015785e925776d5ad7131438a7e05e018c942e4",
+      "atBlock": "307273927",
+      "atBlockHash": "0x095dcae70da216bfcbf42753106ca95c52261c3916c0a9ba847b5b7d4b44449e",
       "blockTag": "finalized",
       "rpcHost": "arbitrum-sepolia.gateway.tenderly.co",
       "scanned": {
@@ -180,10 +180,10 @@
         "storageRead": {
           "method": "eth_getStorageAt pinned by the census block hash (EIP-1898, requireCanonical)",
           "slotTable": "contracts/deployments/storage-slots.json (forge probe; StorageSlotPinTest)",
-          "eraTable": "contracts/deployments/storage-slot-eras.json (16 eras since 2026-05-01; head cc91487f6)",
+          "eraTable": "contracts/deployments/storage-slot-eras.json (32 eras since 2026-05-01; head 613bbb32d)",
           "calibration": "contracts/test/StorageSlotCalibrationTest.t.sol — derived slots vs routed getters on non-zero rows",
           "distinctSlots": {
-            "borrowerLifRebate": 9,
+            "borrowerLifRebate": 12,
             "fallbackSnapshot": 5,
             "intentCommits": 3,
             "intentLiveCommitCount": 3,
@@ -201,6 +201,26 @@
                 {
                   "commit": "ef6ec7848",
                   "date": "2026-06-08"
+                },
+                {
+                  "commit": "c33230200",
+                  "date": "2026-06-11"
+                },
+                {
+                  "commit": "db86bd021",
+                  "date": "2026-06-17"
+                },
+                {
+                  "commit": "f7fc02262",
+                  "date": "2026-06-18"
+                },
+                {
+                  "commit": "cdf5d27d0",
+                  "date": "2026-06-19"
+                },
+                {
+                  "commit": "e66c1aef8",
+                  "date": "2026-06-19"
                 }
               ]
             },
@@ -231,8 +251,8 @@
                   "date": "2026-08-16"
                 },
                 {
-                  "commit": "cc91487f6",
-                  "date": "2026-09-09"
+                  "commit": "613bbb32d",
+                  "date": "2026-09-10"
                 }
               ]
             }
@@ -286,8 +306,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "307217034",
-      "atBlockHash": "0xf073b88d0b2ee0d24d4c970a5015785e925776d5ad7131438a7e05e018c942e4",
+      "atBlock": "307273927",
+      "atBlockHash": "0x095dcae70da216bfcbf42753106ca95c52261c3916c0a9ba847b5b7d4b44449e",
       "blockTag": "finalized",
       "rpcHost": "arbitrum-sepolia.gateway.tenderly.co",
       "scanned": {
@@ -302,10 +322,10 @@
         "storageRead": {
           "method": "eth_getStorageAt pinned by the census block hash (EIP-1898, requireCanonical)",
           "slotTable": "contracts/deployments/storage-slots.json (forge probe; StorageSlotPinTest)",
-          "eraTable": "contracts/deployments/storage-slot-eras.json (16 eras since 2026-05-01; head cc91487f6)",
+          "eraTable": "contracts/deployments/storage-slot-eras.json (32 eras since 2026-05-01; head 613bbb32d)",
           "calibration": "contracts/test/StorageSlotCalibrationTest.t.sol — derived slots vs routed getters on non-zero rows",
           "distinctSlots": {
-            "borrowerLifRebate": 9,
+            "borrowerLifRebate": 12,
             "fallbackSnapshot": 5,
             "intentCommits": 3,
             "intentLiveCommitCount": 3,
@@ -323,6 +343,26 @@
                 {
                   "commit": "ef6ec7848",
                   "date": "2026-06-08"
+                },
+                {
+                  "commit": "c33230200",
+                  "date": "2026-06-11"
+                },
+                {
+                  "commit": "db86bd021",
+                  "date": "2026-06-17"
+                },
+                {
+                  "commit": "f7fc02262",
+                  "date": "2026-06-18"
+                },
+                {
+                  "commit": "cdf5d27d0",
+                  "date": "2026-06-19"
+                },
+                {
+                  "commit": "e66c1aef8",
+                  "date": "2026-06-19"
                 }
               ]
             },
@@ -353,8 +393,8 @@
                   "date": "2026-08-16"
                 },
                 {
-                  "commit": "cc91487f6",
-                  "date": "2026-09-09"
+                  "commit": "613bbb32d",
+                  "date": "2026-09-10"
                 }
               ]
             }
@@ -408,8 +448,8 @@
       "diamondVpfiBacking": null,
       "vpfiRowsTotal": "0",
       "backingShortfall": null,
-      "atBlock": "307217034",
-      "atBlockHash": "0xf073b88d0b2ee0d24d4c970a5015785e925776d5ad7131438a7e05e018c942e4",
+      "atBlock": "307273927",
+      "atBlockHash": "0x095dcae70da216bfcbf42753106ca95c52261c3916c0a9ba847b5b7d4b44449e",
       "blockTag": "finalized",
       "rpcHost": "arbitrum-sepolia.gateway.tenderly.co",
       "scanned": {
@@ -472,8 +512,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "46615374",
-      "atBlockHash": "0x0a038ab662ac9a91e70d8e62e7bbe69b799c498f341a450bfee4f83c374515e2",
+      "atBlock": "46621129",
+      "atBlockHash": "0x8381eacaf281d92084b41eea1a2fdb8fdc4de39f8e95a2f3057b7990f1a4abec",
       "blockTag": "finalized",
       "rpcHost": "sepolia.base.org",
       "scanned": {
@@ -533,8 +573,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "46615374",
-      "atBlockHash": "0x0a038ab662ac9a91e70d8e62e7bbe69b799c498f341a450bfee4f83c374515e2",
+      "atBlock": "46621129",
+      "atBlockHash": "0x8381eacaf281d92084b41eea1a2fdb8fdc4de39f8e95a2f3057b7990f1a4abec",
       "blockTag": "finalized",
       "rpcHost": "sepolia.base.org",
       "scanned": {
@@ -598,8 +638,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "46615374",
-      "atBlockHash": "0x0a038ab662ac9a91e70d8e62e7bbe69b799c498f341a450bfee4f83c374515e2",
+      "atBlock": "46621129",
+      "atBlockHash": "0x8381eacaf281d92084b41eea1a2fdb8fdc4de39f8e95a2f3057b7990f1a4abec",
       "blockTag": "finalized",
       "rpcHost": "sepolia.base.org",
       "scanned": {
@@ -662,8 +702,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "46615374",
-      "atBlockHash": "0x0a038ab662ac9a91e70d8e62e7bbe69b799c498f341a450bfee4f83c374515e2",
+      "atBlock": "46621129",
+      "atBlockHash": "0x8381eacaf281d92084b41eea1a2fdb8fdc4de39f8e95a2f3057b7990f1a4abec",
       "blockTag": "finalized",
       "rpcHost": "sepolia.base.org",
       "scanned": {
@@ -678,10 +718,10 @@
         "storageRead": {
           "method": "eth_getStorageAt pinned by the census block hash (EIP-1898, requireCanonical)",
           "slotTable": "contracts/deployments/storage-slots.json (forge probe; StorageSlotPinTest)",
-          "eraTable": "contracts/deployments/storage-slot-eras.json (16 eras since 2026-05-01; head cc91487f6)",
+          "eraTable": "contracts/deployments/storage-slot-eras.json (32 eras since 2026-05-01; head 613bbb32d)",
           "calibration": "contracts/test/StorageSlotCalibrationTest.t.sol — derived slots vs routed getters on non-zero rows",
           "distinctSlots": {
-            "borrowerLifRebate": 9,
+            "borrowerLifRebate": 12,
             "fallbackSnapshot": 5,
             "intentCommits": 3,
             "intentLiveCommitCount": 3,
@@ -699,6 +739,26 @@
                 {
                   "commit": "ef6ec7848",
                   "date": "2026-06-08"
+                },
+                {
+                  "commit": "c33230200",
+                  "date": "2026-06-11"
+                },
+                {
+                  "commit": "db86bd021",
+                  "date": "2026-06-17"
+                },
+                {
+                  "commit": "f7fc02262",
+                  "date": "2026-06-18"
+                },
+                {
+                  "commit": "cdf5d27d0",
+                  "date": "2026-06-19"
+                },
+                {
+                  "commit": "e66c1aef8",
+                  "date": "2026-06-19"
                 }
               ]
             },
@@ -729,8 +789,8 @@
                   "date": "2026-08-16"
                 },
                 {
-                  "commit": "cc91487f6",
-                  "date": "2026-09-09"
+                  "commit": "613bbb32d",
+                  "date": "2026-09-10"
                 }
               ]
             }
@@ -785,8 +845,8 @@
       "diamondVpfiBacking": null,
       "vpfiRowsTotal": null,
       "backingShortfall": null,
-      "atBlock": "46615374",
-      "atBlockHash": "0x0a038ab662ac9a91e70d8e62e7bbe69b799c498f341a450bfee4f83c374515e2",
+      "atBlock": "46621129",
+      "atBlockHash": "0x8381eacaf281d92084b41eea1a2fdb8fdc4de39f8e95a2f3057b7990f1a4abec",
       "blockTag": "finalized",
       "rpcHost": "sepolia.base.org",
       "scanned": {
@@ -801,10 +861,10 @@
         "storageRead": {
           "method": "eth_getStorageAt pinned by the census block hash (EIP-1898, requireCanonical)",
           "slotTable": "contracts/deployments/storage-slots.json (forge probe; StorageSlotPinTest)",
-          "eraTable": "contracts/deployments/storage-slot-eras.json (16 eras since 2026-05-01; head cc91487f6)",
+          "eraTable": "contracts/deployments/storage-slot-eras.json (32 eras since 2026-05-01; head 613bbb32d)",
           "calibration": "contracts/test/StorageSlotCalibrationTest.t.sol — derived slots vs routed getters on non-zero rows",
           "distinctSlots": {
-            "borrowerLifRebate": 9,
+            "borrowerLifRebate": 12,
             "fallbackSnapshot": 5,
             "intentCommits": 3,
             "intentLiveCommitCount": 3,
@@ -830,6 +890,14 @@
                   {
                     "commit": "0980a2ca3",
                     "date": "2026-05-02"
+                  },
+                  {
+                    "commit": "57ba9ebe6",
+                    "date": "2026-05-02"
+                  },
+                  {
+                    "commit": "5e8a8325a",
+                    "date": "2026-05-03"
                   }
                 ]
               },
@@ -839,6 +907,10 @@
                 "eras": [
                   {
                     "commit": "7316a7cf2",
+                    "date": "2026-05-03"
+                  },
+                  {
+                    "commit": "c57a7f2dc",
                     "date": "2026-05-03"
                   }
                 ]
@@ -880,12 +952,64 @@
                     "date": "2026-05-11"
                   },
                   {
+                    "commit": "5b290deb1",
+                    "date": "2026-05-13"
+                  },
+                  {
+                    "commit": "1ca7cbaa5",
+                    "date": "2026-05-13"
+                  },
+                  {
+                    "commit": "a63d5efae",
+                    "date": "2026-05-14"
+                  },
+                  {
+                    "commit": "4c84eb5f2",
+                    "date": "2026-05-15"
+                  },
+                  {
+                    "commit": "3037a7a9a",
+                    "date": "2026-05-15"
+                  },
+                  {
+                    "commit": "f5cdf105b",
+                    "date": "2026-05-17"
+                  },
+                  {
                     "commit": "d7e5f209c",
                     "date": "2026-05-17"
                   },
                   {
+                    "commit": "79d0c331e",
+                    "date": "2026-05-21"
+                  },
+                  {
+                    "commit": "c70a9383c",
+                    "date": "2026-06-06"
+                  },
+                  {
                     "commit": "ef6ec7848",
                     "date": "2026-06-08"
+                  },
+                  {
+                    "commit": "c33230200",
+                    "date": "2026-06-11"
+                  },
+                  {
+                    "commit": "db86bd021",
+                    "date": "2026-06-17"
+                  },
+                  {
+                    "commit": "f7fc02262",
+                    "date": "2026-06-18"
+                  },
+                  {
+                    "commit": "cdf5d27d0",
+                    "date": "2026-06-19"
+                  },
+                  {
+                    "commit": "e66c1aef8",
+                    "date": "2026-06-19"
                   }
                 ]
               },
@@ -916,8 +1040,8 @@
                     "date": "2026-08-16"
                   },
                   {
-                    "commit": "cc91487f6",
-                    "date": "2026-09-09"
+                    "commit": "613bbb32d",
+                    "date": "2026-09-10"
                   }
                 ]
               }
@@ -930,6 +1054,26 @@
                   {
                     "commit": "ef6ec7848",
                     "date": "2026-06-08"
+                  },
+                  {
+                    "commit": "c33230200",
+                    "date": "2026-06-11"
+                  },
+                  {
+                    "commit": "db86bd021",
+                    "date": "2026-06-17"
+                  },
+                  {
+                    "commit": "f7fc02262",
+                    "date": "2026-06-18"
+                  },
+                  {
+                    "commit": "cdf5d27d0",
+                    "date": "2026-06-19"
+                  },
+                  {
+                    "commit": "e66c1aef8",
+                    "date": "2026-06-19"
                   }
                 ]
               },
@@ -960,8 +1104,8 @@
                     "date": "2026-08-16"
                   },
                   {
-                    "commit": "cc91487f6",
-                    "date": "2026-09-09"
+                    "commit": "613bbb32d",
+                    "date": "2026-09-10"
                   }
                 ]
               }
@@ -1017,8 +1161,8 @@
       "diamondVpfiBacking": null,
       "vpfiRowsTotal": null,
       "backingShortfall": null,
-      "atBlock": "46615374",
-      "atBlockHash": "0x0a038ab662ac9a91e70d8e62e7bbe69b799c498f341a450bfee4f83c374515e2",
+      "atBlock": "46621129",
+      "atBlockHash": "0x8381eacaf281d92084b41eea1a2fdb8fdc4de39f8e95a2f3057b7990f1a4abec",
       "blockTag": "finalized",
       "rpcHost": "sepolia.base.org",
       "scanned": {
@@ -1033,10 +1177,10 @@
         "storageRead": {
           "method": "eth_getStorageAt pinned by the census block hash (EIP-1898, requireCanonical)",
           "slotTable": "contracts/deployments/storage-slots.json (forge probe; StorageSlotPinTest)",
-          "eraTable": "contracts/deployments/storage-slot-eras.json (16 eras since 2026-05-01; head cc91487f6)",
+          "eraTable": "contracts/deployments/storage-slot-eras.json (32 eras since 2026-05-01; head 613bbb32d)",
           "calibration": "contracts/test/StorageSlotCalibrationTest.t.sol — derived slots vs routed getters on non-zero rows",
           "distinctSlots": {
-            "borrowerLifRebate": 9,
+            "borrowerLifRebate": 12,
             "fallbackSnapshot": 5,
             "intentCommits": 3,
             "intentLiveCommitCount": 3,
@@ -1062,6 +1206,14 @@
                   {
                     "commit": "0980a2ca3",
                     "date": "2026-05-02"
+                  },
+                  {
+                    "commit": "57ba9ebe6",
+                    "date": "2026-05-02"
+                  },
+                  {
+                    "commit": "5e8a8325a",
+                    "date": "2026-05-03"
                   }
                 ]
               },
@@ -1071,6 +1223,10 @@
                 "eras": [
                   {
                     "commit": "7316a7cf2",
+                    "date": "2026-05-03"
+                  },
+                  {
+                    "commit": "c57a7f2dc",
                     "date": "2026-05-03"
                   }
                 ]
@@ -1112,12 +1268,64 @@
                     "date": "2026-05-11"
                   },
                   {
+                    "commit": "5b290deb1",
+                    "date": "2026-05-13"
+                  },
+                  {
+                    "commit": "1ca7cbaa5",
+                    "date": "2026-05-13"
+                  },
+                  {
+                    "commit": "a63d5efae",
+                    "date": "2026-05-14"
+                  },
+                  {
+                    "commit": "4c84eb5f2",
+                    "date": "2026-05-15"
+                  },
+                  {
+                    "commit": "3037a7a9a",
+                    "date": "2026-05-15"
+                  },
+                  {
+                    "commit": "f5cdf105b",
+                    "date": "2026-05-17"
+                  },
+                  {
                     "commit": "d7e5f209c",
                     "date": "2026-05-17"
                   },
                   {
+                    "commit": "79d0c331e",
+                    "date": "2026-05-21"
+                  },
+                  {
+                    "commit": "c70a9383c",
+                    "date": "2026-06-06"
+                  },
+                  {
                     "commit": "ef6ec7848",
                     "date": "2026-06-08"
+                  },
+                  {
+                    "commit": "c33230200",
+                    "date": "2026-06-11"
+                  },
+                  {
+                    "commit": "db86bd021",
+                    "date": "2026-06-17"
+                  },
+                  {
+                    "commit": "f7fc02262",
+                    "date": "2026-06-18"
+                  },
+                  {
+                    "commit": "cdf5d27d0",
+                    "date": "2026-06-19"
+                  },
+                  {
+                    "commit": "e66c1aef8",
+                    "date": "2026-06-19"
                   }
                 ]
               },
@@ -1148,8 +1356,8 @@
                     "date": "2026-08-16"
                   },
                   {
-                    "commit": "cc91487f6",
-                    "date": "2026-09-09"
+                    "commit": "613bbb32d",
+                    "date": "2026-09-10"
                   }
                 ]
               }
@@ -1162,6 +1370,26 @@
                   {
                     "commit": "ef6ec7848",
                     "date": "2026-06-08"
+                  },
+                  {
+                    "commit": "c33230200",
+                    "date": "2026-06-11"
+                  },
+                  {
+                    "commit": "db86bd021",
+                    "date": "2026-06-17"
+                  },
+                  {
+                    "commit": "f7fc02262",
+                    "date": "2026-06-18"
+                  },
+                  {
+                    "commit": "cdf5d27d0",
+                    "date": "2026-06-19"
+                  },
+                  {
+                    "commit": "e66c1aef8",
+                    "date": "2026-06-19"
                   }
                 ]
               },
@@ -1192,8 +1420,8 @@
                     "date": "2026-08-16"
                   },
                   {
-                    "commit": "cc91487f6",
-                    "date": "2026-09-09"
+                    "commit": "613bbb32d",
+                    "date": "2026-09-10"
                   }
                 ]
               }
@@ -1249,8 +1477,8 @@
       "diamondVpfiBacking": null,
       "vpfiRowsTotal": null,
       "backingShortfall": null,
-      "atBlock": "46615374",
-      "atBlockHash": "0x0a038ab662ac9a91e70d8e62e7bbe69b799c498f341a450bfee4f83c374515e2",
+      "atBlock": "46621129",
+      "atBlockHash": "0x8381eacaf281d92084b41eea1a2fdb8fdc4de39f8e95a2f3057b7990f1a4abec",
       "blockTag": "finalized",
       "rpcHost": "sepolia.base.org",
       "scanned": {
@@ -1265,10 +1493,10 @@
         "storageRead": {
           "method": "eth_getStorageAt pinned by the census block hash (EIP-1898, requireCanonical)",
           "slotTable": "contracts/deployments/storage-slots.json (forge probe; StorageSlotPinTest)",
-          "eraTable": "contracts/deployments/storage-slot-eras.json (16 eras since 2026-05-01; head cc91487f6)",
+          "eraTable": "contracts/deployments/storage-slot-eras.json (32 eras since 2026-05-01; head 613bbb32d)",
           "calibration": "contracts/test/StorageSlotCalibrationTest.t.sol — derived slots vs routed getters on non-zero rows",
           "distinctSlots": {
-            "borrowerLifRebate": 9,
+            "borrowerLifRebate": 12,
             "fallbackSnapshot": 5,
             "intentCommits": 3,
             "intentLiveCommitCount": 3,
@@ -1294,6 +1522,14 @@
                   {
                     "commit": "0980a2ca3",
                     "date": "2026-05-02"
+                  },
+                  {
+                    "commit": "57ba9ebe6",
+                    "date": "2026-05-02"
+                  },
+                  {
+                    "commit": "5e8a8325a",
+                    "date": "2026-05-03"
                   }
                 ]
               },
@@ -1303,6 +1539,10 @@
                 "eras": [
                   {
                     "commit": "7316a7cf2",
+                    "date": "2026-05-03"
+                  },
+                  {
+                    "commit": "c57a7f2dc",
                     "date": "2026-05-03"
                   }
                 ]
@@ -1344,12 +1584,64 @@
                     "date": "2026-05-11"
                   },
                   {
+                    "commit": "5b290deb1",
+                    "date": "2026-05-13"
+                  },
+                  {
+                    "commit": "1ca7cbaa5",
+                    "date": "2026-05-13"
+                  },
+                  {
+                    "commit": "a63d5efae",
+                    "date": "2026-05-14"
+                  },
+                  {
+                    "commit": "4c84eb5f2",
+                    "date": "2026-05-15"
+                  },
+                  {
+                    "commit": "3037a7a9a",
+                    "date": "2026-05-15"
+                  },
+                  {
+                    "commit": "f5cdf105b",
+                    "date": "2026-05-17"
+                  },
+                  {
                     "commit": "d7e5f209c",
                     "date": "2026-05-17"
                   },
                   {
+                    "commit": "79d0c331e",
+                    "date": "2026-05-21"
+                  },
+                  {
+                    "commit": "c70a9383c",
+                    "date": "2026-06-06"
+                  },
+                  {
                     "commit": "ef6ec7848",
                     "date": "2026-06-08"
+                  },
+                  {
+                    "commit": "c33230200",
+                    "date": "2026-06-11"
+                  },
+                  {
+                    "commit": "db86bd021",
+                    "date": "2026-06-17"
+                  },
+                  {
+                    "commit": "f7fc02262",
+                    "date": "2026-06-18"
+                  },
+                  {
+                    "commit": "cdf5d27d0",
+                    "date": "2026-06-19"
+                  },
+                  {
+                    "commit": "e66c1aef8",
+                    "date": "2026-06-19"
                   }
                 ]
               },
@@ -1380,8 +1672,8 @@
                     "date": "2026-08-16"
                   },
                   {
-                    "commit": "cc91487f6",
-                    "date": "2026-09-09"
+                    "commit": "613bbb32d",
+                    "date": "2026-09-10"
                   }
                 ]
               }
@@ -1394,6 +1686,26 @@
                   {
                     "commit": "ef6ec7848",
                     "date": "2026-06-08"
+                  },
+                  {
+                    "commit": "c33230200",
+                    "date": "2026-06-11"
+                  },
+                  {
+                    "commit": "db86bd021",
+                    "date": "2026-06-17"
+                  },
+                  {
+                    "commit": "f7fc02262",
+                    "date": "2026-06-18"
+                  },
+                  {
+                    "commit": "cdf5d27d0",
+                    "date": "2026-06-19"
+                  },
+                  {
+                    "commit": "e66c1aef8",
+                    "date": "2026-06-19"
                   }
                 ]
               },
@@ -1424,8 +1736,8 @@
                     "date": "2026-08-16"
                   },
                   {
-                    "commit": "cc91487f6",
-                    "date": "2026-09-09"
+                    "commit": "613bbb32d",
+                    "date": "2026-09-10"
                   }
                 ]
               }
@@ -1481,8 +1793,8 @@
       "diamondVpfiBacking": null,
       "vpfiRowsTotal": "0",
       "backingShortfall": null,
-      "atBlock": "46615374",
-      "atBlockHash": "0x0a038ab662ac9a91e70d8e62e7bbe69b799c498f341a450bfee4f83c374515e2",
+      "atBlock": "46621129",
+      "atBlockHash": "0x8381eacaf281d92084b41eea1a2fdb8fdc4de39f8e95a2f3057b7990f1a4abec",
       "blockTag": "finalized",
       "rpcHost": "sepolia.base.org",
       "scanned": {
@@ -1545,8 +1857,8 @@
       "diamondVpfiBacking": null,
       "vpfiRowsTotal": null,
       "backingShortfall": null,
-      "atBlock": "46615374",
-      "atBlockHash": "0x0a038ab662ac9a91e70d8e62e7bbe69b799c498f341a450bfee4f83c374515e2",
+      "atBlock": "46621129",
+      "atBlockHash": "0x8381eacaf281d92084b41eea1a2fdb8fdc4de39f8e95a2f3057b7990f1a4abec",
       "blockTag": "finalized",
       "rpcHost": "sepolia.base.org",
       "scanned": {
@@ -1603,9 +1915,9 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "130123005",
-      "atBlockHash": "0x6b166c1f8a985b7f614948180e976875cda6b9ae79d9efac0145fb5afb68dc62",
-      "blockTag": "finalized (lowest of 6 samples: 130123005, 130123007, 130123009, 130123010, 130123011, 130123012)",
+      "atBlock": "130146851",
+      "atBlockHash": "0xbcfae26927dafaa0b02abe4ffa5a010637c1f3e217cdbce601c7720377ff1d0c",
+      "blockTag": "finalized (lowest of 6 samples: 130146851, 130146854, 130146856)",
       "rpcHost": "bsc-testnet-rpc.publicnode.com",
       "scanned": {
         "loanIdsEnumerated": 4,
@@ -1664,9 +1976,9 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "130123005",
-      "atBlockHash": "0x6b166c1f8a985b7f614948180e976875cda6b9ae79d9efac0145fb5afb68dc62",
-      "blockTag": "finalized (lowest of 6 samples: 130123005, 130123007, 130123009, 130123010, 130123011, 130123012)",
+      "atBlock": "130146851",
+      "atBlockHash": "0xbcfae26927dafaa0b02abe4ffa5a010637c1f3e217cdbce601c7720377ff1d0c",
+      "blockTag": "finalized (lowest of 6 samples: 130146851, 130146854, 130146856)",
       "rpcHost": "bsc-testnet-rpc.publicnode.com",
       "scanned": {
         "loanIdsEnumerated": 0,
@@ -1728,8 +2040,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "48600446",
-      "atBlockHash": "0x001fccdfe11be76d4ff54b9bcc82cd02dbbeb03ad0811f994688f987a20ac762",
+      "atBlock": "48605031",
+      "atBlockHash": "0xfd3fc239cf9cbbde864ddc8fe643ba37637212f843f3987d27e87808fb6b1eee",
       "blockTag": "finalized",
       "rpcHost": "optimism-sepolia-rpc.publicnode.com",
       "scanned": {
@@ -1744,10 +2056,10 @@
         "storageRead": {
           "method": "eth_getStorageAt pinned by the census block hash (EIP-1898, requireCanonical)",
           "slotTable": "contracts/deployments/storage-slots.json (forge probe; StorageSlotPinTest)",
-          "eraTable": "contracts/deployments/storage-slot-eras.json (16 eras since 2026-05-01; head cc91487f6)",
+          "eraTable": "contracts/deployments/storage-slot-eras.json (32 eras since 2026-05-01; head 613bbb32d)",
           "calibration": "contracts/test/StorageSlotCalibrationTest.t.sol — derived slots vs routed getters on non-zero rows",
           "distinctSlots": {
-            "borrowerLifRebate": 9,
+            "borrowerLifRebate": 12,
             "fallbackSnapshot": 5,
             "intentCommits": 3,
             "intentLiveCommitCount": 3,
@@ -1765,6 +2077,26 @@
                 {
                   "commit": "ef6ec7848",
                   "date": "2026-06-08"
+                },
+                {
+                  "commit": "c33230200",
+                  "date": "2026-06-11"
+                },
+                {
+                  "commit": "db86bd021",
+                  "date": "2026-06-17"
+                },
+                {
+                  "commit": "f7fc02262",
+                  "date": "2026-06-18"
+                },
+                {
+                  "commit": "cdf5d27d0",
+                  "date": "2026-06-19"
+                },
+                {
+                  "commit": "e66c1aef8",
+                  "date": "2026-06-19"
                 }
               ]
             },
@@ -1795,8 +2127,8 @@
                   "date": "2026-08-16"
                 },
                 {
-                  "commit": "cc91487f6",
-                  "date": "2026-09-09"
+                  "commit": "613bbb32d",
+                  "date": "2026-09-10"
                 }
               ]
             }
@@ -1850,8 +2182,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "48600446",
-      "atBlockHash": "0x001fccdfe11be76d4ff54b9bcc82cd02dbbeb03ad0811f994688f987a20ac762",
+      "atBlock": "48605031",
+      "atBlockHash": "0xfd3fc239cf9cbbde864ddc8fe643ba37637212f843f3987d27e87808fb6b1eee",
       "blockTag": "finalized",
       "rpcHost": "optimism-sepolia-rpc.publicnode.com",
       "scanned": {
@@ -1866,10 +2198,10 @@
         "storageRead": {
           "method": "eth_getStorageAt pinned by the census block hash (EIP-1898, requireCanonical)",
           "slotTable": "contracts/deployments/storage-slots.json (forge probe; StorageSlotPinTest)",
-          "eraTable": "contracts/deployments/storage-slot-eras.json (16 eras since 2026-05-01; head cc91487f6)",
+          "eraTable": "contracts/deployments/storage-slot-eras.json (32 eras since 2026-05-01; head 613bbb32d)",
           "calibration": "contracts/test/StorageSlotCalibrationTest.t.sol — derived slots vs routed getters on non-zero rows",
           "distinctSlots": {
-            "borrowerLifRebate": 9,
+            "borrowerLifRebate": 12,
             "fallbackSnapshot": 5,
             "intentCommits": 3,
             "intentLiveCommitCount": 3,
@@ -1887,6 +2219,26 @@
                 {
                   "commit": "ef6ec7848",
                   "date": "2026-06-08"
+                },
+                {
+                  "commit": "c33230200",
+                  "date": "2026-06-11"
+                },
+                {
+                  "commit": "db86bd021",
+                  "date": "2026-06-17"
+                },
+                {
+                  "commit": "f7fc02262",
+                  "date": "2026-06-18"
+                },
+                {
+                  "commit": "cdf5d27d0",
+                  "date": "2026-06-19"
+                },
+                {
+                  "commit": "e66c1aef8",
+                  "date": "2026-06-19"
                 }
               ]
             },
@@ -1917,8 +2269,8 @@
                   "date": "2026-08-16"
                 },
                 {
-                  "commit": "cc91487f6",
-                  "date": "2026-09-09"
+                  "commit": "613bbb32d",
+                  "date": "2026-09-10"
                 }
               ]
             }
@@ -1973,8 +2325,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "11671778",
-      "atBlockHash": "0x5ad72584c274c1569ff365f530c8a67f48277b8e9f1d3bcaa3c4eb42b98543ee",
+      "atBlock": "11672488",
+      "atBlockHash": "0xe4eeb068ce11d00540f54c1a70d40fa3077c1980327ba58141126beab90a1a5b",
       "blockTag": "finalized",
       "rpcHost": "ethereum-sepolia-rpc.publicnode.com",
       "scanned": {
@@ -2037,8 +2389,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "11671778",
-      "atBlockHash": "0x5ad72584c274c1569ff365f530c8a67f48277b8e9f1d3bcaa3c4eb42b98543ee",
+      "atBlock": "11672488",
+      "atBlockHash": "0xe4eeb068ce11d00540f54c1a70d40fa3077c1980327ba58141126beab90a1a5b",
       "blockTag": "finalized",
       "rpcHost": "ethereum-sepolia-rpc.publicnode.com",
       "scanned": {
@@ -2053,10 +2405,10 @@
         "storageRead": {
           "method": "eth_getStorageAt pinned by the census block hash (EIP-1898, requireCanonical)",
           "slotTable": "contracts/deployments/storage-slots.json (forge probe; StorageSlotPinTest)",
-          "eraTable": "contracts/deployments/storage-slot-eras.json (16 eras since 2026-05-01; head cc91487f6)",
+          "eraTable": "contracts/deployments/storage-slot-eras.json (32 eras since 2026-05-01; head 613bbb32d)",
           "calibration": "contracts/test/StorageSlotCalibrationTest.t.sol — derived slots vs routed getters on non-zero rows",
           "distinctSlots": {
-            "borrowerLifRebate": 9,
+            "borrowerLifRebate": 12,
             "fallbackSnapshot": 5,
             "intentCommits": 3,
             "intentLiveCommitCount": 3,
@@ -2074,6 +2426,26 @@
                 {
                   "commit": "ef6ec7848",
                   "date": "2026-06-08"
+                },
+                {
+                  "commit": "c33230200",
+                  "date": "2026-06-11"
+                },
+                {
+                  "commit": "db86bd021",
+                  "date": "2026-06-17"
+                },
+                {
+                  "commit": "f7fc02262",
+                  "date": "2026-06-18"
+                },
+                {
+                  "commit": "cdf5d27d0",
+                  "date": "2026-06-19"
+                },
+                {
+                  "commit": "e66c1aef8",
+                  "date": "2026-06-19"
                 }
               ]
             },
@@ -2104,8 +2476,8 @@
                   "date": "2026-08-16"
                 },
                 {
-                  "commit": "cc91487f6",
-                  "date": "2026-09-09"
+                  "commit": "613bbb32d",
+                  "date": "2026-09-10"
                 }
               ]
             }
@@ -2160,8 +2532,8 @@
       "diamondVpfiBacking": "0",
       "vpfiRowsTotal": "0",
       "backingShortfall": "0",
-      "atBlock": "11671778",
-      "atBlockHash": "0x5ad72584c274c1569ff365f530c8a67f48277b8e9f1d3bcaa3c4eb42b98543ee",
+      "atBlock": "11672488",
+      "atBlockHash": "0xe4eeb068ce11d00540f54c1a70d40fa3077c1980327ba58141126beab90a1a5b",
       "blockTag": "finalized",
       "rpcHost": "ethereum-sepolia-rpc.publicnode.com",
       "scanned": {
