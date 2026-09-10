@@ -2948,21 +2948,21 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
   // is: a duplicate hidden in the DOM is not something the lender is
   // being shown, and failing on it would be the false-positive
   // direction that gets checks switched off.
-  const visibleCards = mounted
-    ? await cards.evaluateAll((els) =>
-        els.filter((el) => {
-          const cs = getComputedStyle(el);
-          if (cs.display === 'none' || cs.visibility === 'hidden') return false;
-          const r = el.getBoundingClientRect();
-          return r.width > 0 && r.height > 0;
-        }).length,
-      ).catch(() => 1)
-    : 0;
+  //
+  // ROUND 20 P2 — COUNTED IN EVERY SNAPSHOT, not once before the poll.
+  //
+  // The first version counted here and never again, while the readiness
+  // loop below refreshed only the first card's contents. A duplicate
+  // introduced by the SETTLED render — which is the render that matters,
+  // since it is the one carrying ready copy and therefore the only one
+  // that could state an amount — appeared after the only count was
+  // taken. The count now comes from the same DOM pass as the text, so it
+  // describes the render being judged rather than an earlier one.
   if (!mounted) {
     return {
       mounted: false,
       attached,
-      visibleCards,
+      visibleCards: 0,
       text: null,
       bodyText: null,
       bodyPresent: undefined,
@@ -3011,9 +3011,28 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
   // control's presence and disabled state from a single synchronous
   // pass over the DOM, so they cannot disagree about which render they
   // came from.
+  // PAGE-LEVEL, not element-level (round 20 P2). The subject is still
+  // the first VISIBLE card, but the pass has to see all of them to count
+  // them — and doing that in a second round-trip would reintroduce
+  // exactly the split-render hazard round 9 closed, with the count
+  // describing one render and the copy another.
   const readCard = () =>
-    card
-      .evaluate((el) => {
+    page
+      .evaluate(() => {
+        const visible = (node) => {
+          if (node === null) return false;
+          const cs = getComputedStyle(node);
+          if (cs.display === 'none' || cs.visibility === 'hidden' || cs.visibility === 'collapse') {
+            return false;
+          }
+          if (Number(cs.opacity) === 0) return false;
+          const r = node.getBoundingClientRect();
+          return r.width > 0 && r.height > 0;
+        };
+        const all = [...document.querySelectorAll('[data-testid="forced-close-card"]')];
+        const shown = all.filter(visible);
+        const el = shown[0] ?? all[0];
+        if (!el) return null;
         const body = el.querySelector('[data-testid="forced-close-body"]');
         const submit = el.querySelector('[data-testid="forced-close-submit"]');
         // ROUND 18 P2 — VISIBILITY OF THE CONTROL, in the same pass.
@@ -3034,18 +3053,10 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
         // from the copy it is judged against (round 9 P2).
         //
         // Rect AND computed style: `offsetParent` is null for a
-        // `position: fixed` element, which is visible.
-        const visible = (node) => {
-          if (node === null) return false;
-          const cs = getComputedStyle(node);
-          if (cs.display === 'none' || cs.visibility === 'hidden' || cs.visibility === 'collapse') {
-            return false;
-          }
-          if (Number(cs.opacity) === 0) return false;
-          const r = node.getBoundingClientRect();
-          return r.width > 0 && r.height > 0;
-        };
+        // `position: fixed` element, which is visible. The same helper
+        // decides which cards count as shown, above.
         return {
+          visibleCards: shown.length,
           text: el.innerText,
           bodyPresent: body !== null,
           bodyText: body === null ? null : body.innerText,
@@ -3065,7 +3076,6 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
     return {
       mounted: true,
       attached: true,
-      visibleCards,
       text: null,
       bodyText: null,
       bodyPresent: undefined,
@@ -3132,7 +3142,6 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
       return {
         mounted: true,
         attached: true,
-        visibleCards,
         text: null,
         bodyText: null,
         bodyPresent: undefined,
@@ -3148,7 +3157,8 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
     settled = !saysCheckRunning(snap.text ?? '', FORCED_CLOSE_COPY.unknownCopy);
   }
 
-  const { text, bodyPresent, bodyText, submitPresent, submitVisible, submitDisabled } = snap;
+  const { visibleCards, text, bodyPresent, bodyText, submitPresent, submitVisible, submitDisabled } =
+    snap;
 
   // ROUND 2 P2 — a submittable card whose confirmation could NOT be read
   // is `confirmExpected` with `confirmText === null`, which the verdict
