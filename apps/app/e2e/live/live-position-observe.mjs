@@ -96,6 +96,7 @@ import {
   snapshotJumpable,
 } from './jumpability.mjs';
 import {
+  confirmationReady,
   forcedCloseCoverage,
   forcedCloseVerdict,
   reconcileEligibility,
@@ -1617,6 +1618,71 @@ await discovery('installing the provider init script', () =>
 );
 
 /**
+ * The highest block THE PAGE has been seen to know about, per page.
+ *
+ * ROUND 14 P2 — "my client advanced" is not "my client caught up".
+ *
+ * Round 13 made the absence confirmation wait for a strictly newer head
+ * than the snapshot pinned. That proves this observer moved; it proves
+ * nothing about the INDEPENDENT provider the deployed bundle reads,
+ * which can be two or more blocks ahead. A terminalization at N+2
+ * correctly removes the card while this observer, confirming at N+1,
+ * re-reads a still-eligible position and emits the same false
+ * missing-card FAIL the gate exists to prevent — one block further
+ * along, and just as wrong.
+ *
+ * The page is the only authority on its own head, and it discloses it:
+ * its RPC traffic carries `eth_blockNumber` (the steady-state audit
+ * counts them). This records the highest result seen, so the gate can
+ * require the observer to reach what the page had already seen.
+ *
+ * OBSERVATIONAL AND FAIL-QUIET. It never blocks a request, never
+ * rejects, and a body it cannot parse is skipped: a mis-sniffed
+ * response must not turn into a finding about the app. The COST of
+ * seeing nothing is handled where it matters — an absence with no
+ * observed page head is reported as unconfirmed rather than as a
+ * defect, so silence here is conservative rather than permissive.
+ */
+const pageHeads = new WeakMap();
+
+function watchPageHead(page) {
+  pageHeads.set(page, 0n);
+  page.on('response', async (res) => {
+    try {
+      const req = res.request();
+      if (req.method().toUpperCase() !== 'POST') return;
+      const body = req.postData();
+      // Cheap reject before parsing — most POSTs are not this.
+      if (!body || !body.includes('eth_blockNumber')) return;
+      const parsed = JSON.parse(body);
+      const calls = Array.isArray(parsed) ? parsed : [parsed];
+      const wanted = new Set(
+        calls.filter((c) => c?.method === 'eth_blockNumber').map((c) => c?.id),
+      );
+      if (wanted.size === 0) return;
+      const out = await res.json();
+      const items = Array.isArray(out) ? out : [out];
+      for (const item of items) {
+        // A batch answers in any order, so match by id rather than by
+        // position — and accept a lone reply whose id we did not record,
+        // since a single-call body has exactly one answer.
+        if (!wanted.has(item?.id) && !(wanted.size === 1 && items.length === 1)) continue;
+        if (typeof item?.result !== 'string') continue;
+        const seen = BigInt(item.result);
+        if (seen > (pageHeads.get(page) ?? 0n)) pageHeads.set(page, seen);
+      }
+    } catch {
+      // Observational only. See the note above.
+    }
+  });
+}
+
+/** What the page has been seen to know, or 0n if nothing was observed. */
+function pageHeadOf(page) {
+  return pageHeads.get(page) ?? 0n;
+}
+
+/**
  * Load a route and report everything that went wrong on it.
  *
  * `expectChooser` makes the settle CONDITIONAL rather than a fixed sleep.
@@ -1633,6 +1699,13 @@ async function visit(path, { expectChooser = false, loan = null } = {}) {
   // Before anything navigates: a socket opened during the first paint must
   // not be missed — see `wsRpcMethods`.
   watchWebSockets(page);
+  // ROUND 14 P2 — AND NEITHER MUST THE PAGE'S OWN VIEW OF THE CHAIN.
+  //
+  // The absence gate has to know whether THIS observer has caught up
+  // with the provider whose DOM it is judging, and only the page can
+  // answer that. Attached here, before the first navigation, for the
+  // same reason the socket watcher is.
+  watchPageHead(page);
   const pageErrors = [];
   const consoleErrors = [];
   page.on('pageerror', (e) => pageErrors.push(String(e).replace(/\s+/g, ' ').slice(0, 300)));
@@ -1718,6 +1791,9 @@ async function visit(path, { expectChooser = false, loan = null } = {}) {
     forcedCloseVerdict: forcedClose
       ? forcedCloseVerdict(forcedClose, FORCED_CLOSE_COPY)
       : null,
+    // Reported, not judged: evidence about whether the absence gate is
+    // armed on this deployment (round 14).
+    forcedClosePageHead: forcedClose ? (forcedClose.pageHead ?? null) : null,
     // DETAIL PAGES ONLY, gated on `loan` (self-inflicted, caught by
     // running it). The lender card exists only on `/positions/<id>`, and
     // on the LIST route the card locator matches nothing — but a
@@ -2503,6 +2579,12 @@ async function readLenderCardText(page, card) {
  */
 async function observeForcedClose(page, loan) {
   const card = await readForcedCloseCard(page);
+  // BESIDE THE SCRAPE, not at confirmation time (round 14 P2). What
+  // matters is the head the page had reached when it rendered — or
+  // declined to render — the card being judged. Sampling it later would
+  // let the page move on and set a bar this observer must clear for a
+  // render it never looked at.
+  const pageHead = pageHeadOf(page);
   // ROUND 4 P2 — ONE BLOCK FOR ALL THREE FACTS.
   //
   // `Promise.all` makes these concurrent; it does not pin them to a
@@ -2590,13 +2672,23 @@ async function observeForcedClose(page, loan) {
         // never arrives, the confirmation DID NOT HAPPEN, and the honest
         // report is that the absence could not be judged — not an
         // accusation resting on a re-read that never re-read anything.
+        //
+        // ROUND 14 P2 — AND A HEAD THIS OBSERVER HAS CAUGHT UP TO.
+        //
+        // "Strictly newer than the block I pinned" proves only that I
+        // moved. The page reads an INDEPENDENT provider that can be two
+        // or more blocks ahead, so a transition at N+2 correctly removes
+        // the card while a confirmation at N+1 re-reads a still-eligible
+        // position — the same false FAIL, one block further along.
+        // `confirmationReady` requires both, and treats an unobserved
+        // page head as not-ready rather than as satisfied.
         let head = await pub.getBlockNumber({ cacheTime: 0 });
         const until = Date.now() + 20_000;
-        while (head <= pinnedBlock && Date.now() < until) {
+        while (!confirmationReady(head, pinnedBlock, pageHead) && Date.now() < until) {
           await new Promise((r) => setTimeout(r, 1_000));
           head = await pub.getBlockNumber({ cacheTime: 0 });
         }
-        if (head <= pinnedBlock) return { unconfirmed: true };
+        if (!confirmationReady(head, pinnedBlock, pageHead)) return { unconfirmed: true };
         const [status, holder, sale] = await Promise.all([
           pub.readContract({
             address: DIAMOND,
@@ -2636,7 +2728,14 @@ async function observeForcedClose(page, loan) {
     { lenderHoldsActive: pinnedHoldsActive, saleLocked: pinnedSale },
     later,
   );
-  return { ...card, lenderHoldsActive, saleLocked, absenceUnconfirmed };
+  return {
+    ...card,
+    lenderHoldsActive,
+    saleLocked,
+    absenceUnconfirmed,
+    // Carried out for the REPORT only — `forcedCloseVerdict` ignores it.
+    pageHead: pageHead === 0n ? null : String(pageHead),
+  };
 }
 
 async function readForcedCloseCard(page, timeoutMs = 30_000) {
@@ -4027,7 +4126,19 @@ for (const v of visited) {
                   // that panel too, and a reader has no other way to
                   // tell a card-only scan from a full one.
                   ` confirmScanned=${v.forcedCloseVerdict.confirmScanned}`
-                : '')
+                : '') +
+              // ROUND 14 — WHETHER THE ABSENCE GATE COULD HAVE FIRED.
+              //
+              // The gate now requires this observer to have caught up
+              // with the head the PAGE was seen to know, and an
+              // unobserved page head is deliberately not-ready — so a
+              // deployment whose RPC traffic this drive cannot read
+              // would report every absence as incomplete and never
+              // FAIL. That is the safe direction, but it must not be
+              // SILENT: printed on every visit so a reader can tell a
+              // gate that is armed from one that structurally cannot
+              // fire.
+              ` pageHead=${v.forcedClosePageHead ?? 'unobserved'}`
             : '')
         : `      chooser=${v.chooser} handover=${v.handover} offset=${v.offset}` +
         ` holdCard=${v.holdCard} freeHeldBtn=${v.freeHeld}`,

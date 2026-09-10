@@ -362,6 +362,43 @@ export function saysCheckRunning(text, unknownCopy) {
  */
 
 /**
+ * Has this observer caught up far enough to JUDGE an absent card?
+ *
+ * The absence FAIL is the one verdict whose cost is a wrongly accused
+ * product, so it is gated on a re-read that can actually see what the
+ * page saw. Two conditions, and round 13 shipped only the first:
+ *
+ *   1. `observerHead > pinnedBlock` — this client moved at all. Round
+ *      13's fix, and necessary: viem served the head from a 4-second
+ *      cache, so the "later" read was routinely the same block.
+ *   2. `observerHead >= pageHead` — this client reached what the page
+ *      had ALREADY SEEN. Round 14's finding, and the one that makes the
+ *      gate sound: condition 1 proves only that we advanced. A page
+ *      whose provider is two blocks ahead can correctly drop the card
+ *      for a transition at N+2 while we confirm at N+1, re-read a
+ *      still-eligible position, and emit the same false FAIL one block
+ *      further along.
+ *
+ * `pageHead === 0n` means the page's head was never observed, and that
+ * is NOT treated as satisfied. Nothing is known about the relationship
+ * between the two views, and an absence judged on an unknown
+ * relationship is exactly the accusation this gate exists to withhold.
+ * A drive that cannot see the page's head therefore reports every
+ * absence as incomplete — conservative, loudly, rather than confidently
+ * wrong.
+ *
+ * @param {bigint} observerHead  head this drive has reached
+ * @param {bigint} pinnedBlock   block the snapshot was taken at
+ * @param {bigint} pageHead      highest block the PAGE was seen to know
+ * @returns {boolean}
+ */
+export function confirmationReady(observerHead, pinnedBlock, pageHead) {
+  if (typeof observerHead !== 'bigint' || typeof pinnedBlock !== 'bigint') return false;
+  if (typeof pageHead !== 'bigint' || pageHead === 0n) return false;
+  return observerHead > pinnedBlock && observerHead >= pageHead;
+}
+
+/**
  * Fold the CONFIRMING re-read into the pinned snapshot's eligibility.
  *
  * The driver pins status / ownership / sale to one block beside the DOM

@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import enBundle from '../../src/i18n/locales/en.json' with { type: 'json' };
 
 import {
+  confirmationReady,
   forcedCloseCoverage,
   forcedCloseVerdict,
   monetaryAmountsIn,
@@ -1266,5 +1267,63 @@ describe('round 13 review findings', () => {
     );
     expect(v.verdict).toBe('fail');
     expect(v.why).toMatch(/absent/);
+  });
+});
+
+describe('confirmationReady — round 14: caught up, not merely moved', () => {
+  it('is satisfied when the observer reached what the page had seen', () => {
+    expect(confirmationReady(12n, 10n, 11n)).toBe(true);
+    expect(confirmationReady(12n, 10n, 12n)).toBe(true);
+  });
+
+  // THE ROUND-14 DEFECT. Round 13 required only `head > pinned`, so a
+  // page two blocks ahead could correctly drop the card for a
+  // transition at N+2 while the confirmation re-read a still-eligible
+  // position at N+1 — the same false FAIL, one block further along.
+  it('is NOT satisfied by advancing one block behind the page', () => {
+    expect(confirmationReady(11n, 10n, 12n)).toBe(false);
+  });
+
+  it('still requires the observer to have moved at all', () => {
+    // Round 13's condition survives round 14's: a cached head equal to
+    // the pinned block confirms nothing even when the page is level.
+    expect(confirmationReady(10n, 10n, 10n)).toBe(false);
+  });
+
+  it('treats an UNOBSERVED page head as not ready, never as satisfied', () => {
+    // Nothing is known about the relationship between the two views, so
+    // an absence judged on it would be the accusation this gate exists
+    // to withhold. Conservative and loud beats confidently wrong.
+    expect(confirmationReady(99n, 10n, 0n)).toBe(false);
+  });
+
+  it('is false rather than throwing on non-bigint input', () => {
+    expect(confirmationReady(12, 10n, 11n)).toBe(false);
+    expect(confirmationReady(12n, 10n, undefined)).toBe(false);
+    expect(confirmationReady(null, null, null)).toBe(false);
+  });
+
+  it('an unready confirmation reports the absence as incomplete, not as a defect', () => {
+    const out = reconcileEligibility(
+      { lenderHoldsActive: true, saleLocked: false },
+      { unconfirmed: true },
+    );
+    const v = forcedCloseVerdict(
+      {
+        ...out,
+        mounted: false,
+        attached: false,
+        text: null,
+        bodyPresent: false,
+        bodyText: null,
+        confirmText: null,
+        confirmExpected: false,
+        submitDisabled: true,
+        settled: true,
+      },
+      { unknownCopy: FORCED_CLOSE.unknown },
+    );
+    expect(v.verdict).toBe('blocked');
+    expect(v.blockedKind).toBe('incomplete');
   });
 });
