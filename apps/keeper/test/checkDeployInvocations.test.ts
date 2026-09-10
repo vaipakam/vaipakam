@@ -11858,7 +11858,9 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
   // ---- #2084: the rewrite question reads the file AS WRITTEN ----
   //
   // Three transformations were tried and all three withdrawn (#2105 — ten
-  // rounds building and withdrawing, three more correcting the record).
+  // rounds building and withdrawing, then further rounds correcting this
+  // record itself; the PR carries the running count, deliberately not this
+  // file, since every such round would restale a number written here).
   // Nothing transforms the text now, bar two pre-existing exceptions neither
   // of which these fixtures exercise: the Windows normalisation, and a
   // manifest script judged against its declared value. So they pin two
@@ -11920,12 +11922,10 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     //
     // Make expands `$(GENERATE)` before the shell sees the recipe, so this file
     // really does rewrite the config before deploying it — `make -n` prints the
-    // redirection first. This guard does not see it: the rewrite question reads
-    // the file as written, where the write is only a name.
+    // redirection first, and the guard does not report it.
     //
-    // WHY IT IS MISSED IS SOURCE ORDER, not invisibility, and the distinction
-    // matters (#2105 r14). The raw file DOES contain the redirection — it is
-    // right there in the `GENERATE =` line. The guard misses it only because
+    // THE REASON IS SOURCE ORDER, not invisibility. The raw file DOES contain
+    // the redirection — it is right there in the `GENERATE =` line. The guard misses it only because
     // that assignment sits BELOW the deploy, and the write scan compares
     // positions. Move the assignment above the target and the guard reports,
     // with no expansion at all.
@@ -11954,8 +11954,9 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     expect(r.ok).toBe(true);
   });
 
-  it('a runbook sentence naming a write reports the deploy (#2112, stated miss)', () => {
-    // A STATED MISS, asserted so a future fix announces itself.
+  it('a runbook sentence naming a write reports the deploy (#2112, stated false report)', () => {
+    // A STATED FALSE REPORT — the opposite direction from its two siblings,
+    // which are misses. Asserted so a future fix announces itself.
     //
     // Nothing in this file performs a write — the sentence DESCRIBES one — but
     // the guard reads prose as shell and reports the deploy below it. A false

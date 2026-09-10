@@ -8953,7 +8953,9 @@ for (const file of walk(REPO_ROOT)) {
   // Three transformations
   // were tried here and all three withdrawn; this is the record, so the next
   // person does not rebuild one (#2084, #2105 — ten rounds of building and
-  // withdrawing, then three more correcting this record).
+  // withdrawing, then further rounds correcting this record itself; the PR
+  // carries the running count, deliberately not this comment, since every
+  // such round would restale a number written here).
   //
   //   1. A collected "executable image" — the parts of the file believed to
   //      run. SIX ingestion paths reached the file without reaching the
