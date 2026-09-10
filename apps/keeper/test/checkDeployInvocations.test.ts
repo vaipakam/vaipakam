@@ -12074,6 +12074,29 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     expect(r.ok).toBe(false);
   });
 
+  it('a cmd helper folds the same way (#2118, stated false green — the OTHER dialect)', () => {
+    // THE TWO WINDOWS DIALECTS ARE SEPARATE BRANCHES in `forInterpreter`, and
+    // pinning only `.ps1` would let a dialect-specific fix pass this suite
+    // while leaving the `.cmd` false green live — the exact failure the pins
+    // exist to prevent (r22).
+    //
+    // `cmd` treats a trailing backslash as an ordinary character too; its own
+    // continuation is `^`, which `foldCaretContinuations` handles. The fold
+    // here comes from the same shared pass as the pwsh case, so a fix aimed
+    // at one dialect fixes neither of them by itself.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith('apps/agent/d.cmd', 'cd apps/agent\necho --keep-vars \\\nwrangler deploy\n');
+    expect(r.ok).toBe(true);
+  });
+
+  it('the same cmd helper without the backslash IS reported (#2118 cmd control)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith('apps/agent/d.cmd', 'cd apps/agent\necho --keep-vars\nwrangler deploy\n');
+    expect(r.ok).toBe(false);
+  });
+
   it('the same helper with CRLF endings IS reported (#2118 bound)', () => {
     // THE DEFECT IS LF-ONLY, and this pins the boundary rather than leaving
     // the record to imply every checkout is affected. Byte-identical to the
@@ -12166,16 +12189,25 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     // this fixture claimed something it did not show.
     //
     // The manifest fixture above is COUPLED to the extraction: bypass
-    // `jsonValueLines` and it stops reporting. This one is NOT. An inert value
-    // in a data file of the same format reports with the extraction bypassed,
-    // with it scoped to manifests, and normally — the ordinary line scan
-    // reaches it either way, the same shape as #2112.
+    // `jsonValueLines` and it stops reporting. This one depends on HOW the
+    // extraction is narrowed, because the dispatch is a choice — a file that
+    // stops being extracted falls through to `plainLines`:
     //
-    // So it is evidence about the FIX and not about the extraction's scope: a
-    // change that narrows extraction removes the manifest report and leaves
-    // this one standing. The first draft of this test asserted it would fail
-    // under a script-key-scoped fix; the mutant passed, and the claim was
-    // wrong.
+    //   - narrowed BY FILE (manifests only): this still reports, via the
+    //     ordinary line scan, and the message quotes the whole raw line
+    //     rather than the extracted value. Passes.
+    //   - narrowed BY KEY (every file still extracted, non-script values
+    //     yield nothing): no fallback, nothing reports. FAILS.
+    //
+    // Both verified as mutants (r22). #2119 proposes the key-scoped one, so
+    // this fixture is expected to fail under the real fix — which is the
+    // point of pinning it: it announces that the fix reached this case too.
+    //
+    // Two earlier claims here were wrong and are recorded rather than
+    // quietly swapped: first that a script-key-scoped fix would fail it (the
+    // file-scoped mutant passed, so the claim was withdrawn), then that it
+    // reports through a second route REGARDLESS of the narrowing (r22 — only
+    // under the file-scoped one).
     //
     // It still asserts a WRONG VERDICT rather than a bound, which is why it
     // does not say "bound" — the siblings around it pass either way and do.

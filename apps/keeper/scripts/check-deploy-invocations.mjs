@@ -6664,9 +6664,10 @@ function indentedBlocks(lines, indentRe, startAt = 0) {
  *
  * `@`, `-` and `+` are Make's recipe-control prefixes and are stripped either
  * way; they are not part of the command.
- */
-/**
- * A Makefile's recipe lines, with their variable references expanded, as blocks
+ *
+ * ---
+ *
+ * The recipe lines come back with their variable references EXPANDED, as blocks
  * for the DEPLOY SCANNER. This is the only thing Make's variables are modelled
  * for; the rewrite question reads the file as written (see its call site).
  *
@@ -8999,14 +9000,25 @@ for (const file of walk(REPO_ROOT)) {
   //     ways). A fix scoped to "every string" would change that case, which
   //     behaves correctly today.
   //
-  //     AND THE FALSE REPORT HAS TWO ROUTES, which bounds what fixing this
-  //     buys. Only the MANIFEST case is coupled to the extraction — bypass it
-  //     and the inert `description` stops reporting. An inert value in any
-  //     other `.json`/`.jsonc` reports anyway, through the ordinary line scan
-  //     (the #2112 shape), with the extraction bypassed OR scoped to
-  //     manifests. So narrowing extraction removes one route and leaves the
-  //     other; both fixtures are pinned so a partial fix cannot read as a
-  //     whole one.
+  //     WHETHER A SECOND ROUTE EXISTS DEPENDS ON HOW A FIX NARROWS — an
+  //     earlier version of this note said it always does, which is wrong
+  //     (r22). This dispatch is a CHOICE, so a file that stops being extracted
+  //     falls through to `plainLines`:
+  //
+  //       - NARROWED BY FILE (only manifests extracted): `metadata.json`
+  //         falls back to `plainLines`, whose raw line still matches, so it
+  //         STILL reports. The message then quotes the whole
+  //         `{"note":"wrangler deploy"}` instead of the extracted
+  //         `wrangler deploy` — which is how the two routes are told apart,
+  //         and why "it still exits 1" is not by itself evidence of either.
+  //       - NARROWED BY KEY (extraction still runs everywhere, yields nothing
+  //         for a non-script value): no fallback, so the file reports
+  //         NOTHING.
+  //
+  //     Both verified as mutants. The key-scoped one is what #2119 proposes,
+  //     so the likely fix removes BOTH reports; the metadata fixture below
+  //     fails under it and passes under the file-scoped one, which is exactly
+  //     what makes it worth keeping.
   //
   //     It is the EXTRACTION's breadth, not the `lang: 'shell'` label and not
   //     `valueScoped`. Worth stating because the obvious reading blames the

@@ -101,7 +101,7 @@ three of them a silent pass, two a false report:
 | **#2084** | a build file variable holding a write is not seen, when the assignment sits below the deployment — *pinned (miss)* |
 | **#2112** | a runbook sentence naming a write reports the deployment below it — *pinned (false report)* |
 | **#2114** | a recipe marked by something other than a tab is not read as a recipe — *pinned (miss)* |
-| **#2118** | a Windows-shell helper's deployment is lent a safety flag by the unrelated line above it, when that line ends in a character that shell does not treat as a continuation — *pinned (silent pass), with both of its bounds pinned too: it applies only to text read as a shell, and only where the line ends immediately at that character* |
+| **#2118** | a Windows-shell helper's deployment is lent a safety flag by the unrelated line above it, when that line ends in a character that shell does not treat as a continuation — *pinned (silent pass) in BOTH Windows shells, since a fix aimed at one dialect would leave the other live, and with both of its bounds pinned too: it applies only to text read as a shell, and only where the line ends immediately at that character* |
 | **#2119** | a single-text property value in any file of the manifest's format is read as a command, so a description naming the deployment is reported as performing it — *pinned (false report), with its bounds: unrelated files of that format behave the same way, and a value written as a list is not read at all* |
 | **#2110** | a folded workflow scalar's positions are not comparable with the file's |
 | **#2113** | a write assigned by a live conditional branch is not seen |
