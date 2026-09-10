@@ -1110,6 +1110,26 @@ if (dropped > 0) {
   }
 }
 
+// Which Active positions can actually exercise the forced-close card.
+// Resolved ONCE, over every eligible Active loan across all authorities,
+// and consumed by both the authority choice below and the walk order
+// further down — the two used to answer this question separately, or not
+// at all. See the round-29 note in the sort.
+const acceptedSale = new Set();
+if (ROLE === 'lender') {
+  for (const l of eligible.filter((x) => x.status === STATUS_ACTIVE)) {
+    try {
+      if ((await saleLockedOn(l.lenderTokenId, l.id, undefined)) === true) {
+        acceptedSale.add(l.id);
+      }
+    } catch {
+      // Unreadable, so unknown, so still a candidate. Ranking a loan
+      // down on a read that failed would be a decision made on no
+      // evidence, in the direction that costs the run its coverage.
+    }
+  }
+}
+
 // The observed address: whichever authority on the CHOSEN side holds the
 // most eligible loans, so one session covers as many position pages as
 // possible.
@@ -1137,11 +1157,38 @@ if (!observed) {
   // assertions apply to both statuses and are indifferent to which
   // authority is picked. So Active-bearing authorities come first, and
   // the loan count breaks ties within each group.
-  const activeCount = (loans) => loans.filter((l) => l.status === STATUS_ACTIVE).length;
+  // ROUND 29 P2 — AND "ACTIVE" IS STILL NOT "APPLICABLE", HERE TOO.
+  //
+  // Round 28 demoted accepted-sale positions inside the SELECTED
+  // authority's walk. That is the third time this fix has been applied
+  // one level below where the decision is actually made — the comment
+  // directly above says so about round 9, and round 28 did it again.
+  // This sort asks only whether an authority has ANY Active loan, so a
+  // lender whose Active positions all carry an accepted sale outranks a
+  // lender holding one applicable position, and the walk-level partition
+  // cannot recover it: by then `mine` is fixed and the other authority's
+  // loan is out of reach. The run visits three inapplicable positions
+  // and exits 2 saying the assertion never ran.
+  //
+  // So applicability is resolved BEFORE the choice, once, and the same
+  // answer feeds the walk below. Only a positively established accepted
+  // sale counts against a loan — `'unknown'` and a thrown transport
+  // error leave it applicable, because ranking an authority down on a
+  // read that failed would hand the run to a worse candidate on no
+  // evidence.
+  //
+  // The cost is one `positionLock` read per eligible Active loan across
+  // all authorities rather than for one authority. `saleLockedOn`
+  // returns false on that read alone for an unlocked position and only
+  // simulates for a locked one, so the common case stays a single cheap
+  // call.
+  const applicableCount = (loans) =>
+    loans.filter((l) => l.status === STATUS_ACTIVE && !acceptedSale.has(l.id)).length;
   const [best] = [...byAuthority.entries()].sort((a, b) => {
     if (ROLE === 'lender') {
-      const byActive = (activeCount(b[1]) > 0 ? 1 : 0) - (activeCount(a[1]) > 0 ? 1 : 0);
-      if (byActive !== 0) return byActive;
+      const byApplicable =
+        (applicableCount(b[1]) > 0 ? 1 : 0) - (applicableCount(a[1]) > 0 ? 1 : 0);
+      if (byApplicable !== 0) return byApplicable;
     }
     return b[1].length - a[1].length;
   });
@@ -3151,7 +3198,18 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
               return false;
             }
             const box = node.getBoundingClientRect();
-            return box.width > 0 && box.height > 0;
+            if (!(box.width > 0 && box.height > 0)) return false;
+            // ROUND 29 P2 — AND THE CLIPPING TEST, on THIS path too.
+            //
+            // Round 28 added `notClipped` to the fallback's return and
+            // not to this one, so on every engine that HAS
+            // `checkVisibility` — which is to say the browser this drive
+            // actually runs — the clipping fix did nothing at all for
+            // the card, the body and the submit control. The receipt
+            // helper was rewritten wholesale and did get it, which is
+            // why the live run looked like it confirmed the change: the
+            // canary I checked exercised the copy that worked.
+            return notClipped(node);
           }
           const cs = getComputedStyle(node);
           if (cs.display === 'none' || cs.visibility === 'hidden' || cs.visibility === 'collapse') {
@@ -4715,18 +4773,8 @@ let observedDetails = 0;
 // reorder a good candidate to the back and quietly cost the run its
 // coverage, which is the same fail-toward-confident mistake round 12
 // caught in this predicate's other consumer.
-const acceptedSale = new Set();
-if (ROLE === 'lender') {
-  for (const l of mine.filter((x) => x.status === STATUS_ACTIVE)) {
-    try {
-      if ((await saleLockedOn(l.lenderTokenId, l.id, undefined)) === true) {
-        acceptedSale.add(l.id);
-      }
-    } catch {
-      // Unreadable, so unknown, so not demoted. It keeps its place.
-    }
-  }
-}
+// Resolved once, above the authority choice — the walk consumes the same
+// answer rather than asking again against a different candidate set.
 const walkOrder =
   ROLE === 'lender'
     ? [
@@ -4735,10 +4783,15 @@ const walkOrder =
         ...mine.filter((l) => l.status !== STATUS_ACTIVE),
       ]
     : mine;
-if (acceptedSale.size > 0) {
+// Scoped to the OBSERVED authority's own loans. `acceptedSale` is now
+// resolved across every authority so the choice above can use it, and
+// naming its whole contents here would report positions this walk was
+// never going to visit as though they had been passed over in it.
+const demoted = mine.filter((l) => acceptedSale.has(l.id)).map((l) => l.id);
+if (demoted.length > 0) {
   console.log(
-    `\ndeprioritised ${acceptedSale.size} Active position(s) with an accepted sale ` +
-      `awaiting completion: ${[...acceptedSale].join(', ')}` +
+    `\ndeprioritised ${demoted.length} Active position(s) with an accepted sale ` +
+      `awaiting completion: ${demoted.join(', ')}` +
       `\n  → the card is correctly unmounted there, so they cannot exercise it.`,
   );
 }
