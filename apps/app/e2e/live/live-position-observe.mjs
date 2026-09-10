@@ -108,6 +108,7 @@ import { isDetailPath, visitVerdict } from './visitVerdict.mjs';
 import {
   EXECUTION_REVERTED,
   REVERT_BYTES,
+  blockNumberFromRpcPair,
   callsTargetContract,
   classifyRpcFailure,
   codedError,
@@ -1654,23 +1655,13 @@ function watchPageHead(page) {
       const body = req.postData();
       // Cheap reject before parsing — most POSTs are not this.
       if (!body || !body.includes('eth_blockNumber')) return;
-      const parsed = JSON.parse(body);
-      const calls = Array.isArray(parsed) ? parsed : [parsed];
-      const wanted = new Set(
-        calls.filter((c) => c?.method === 'eth_blockNumber').map((c) => c?.id),
-      );
-      if (wanted.size === 0) return;
-      const out = await res.json();
-      const items = Array.isArray(out) ? out : [out];
-      for (const item of items) {
-        // A batch answers in any order, so match by id rather than by
-        // position — and accept a lone reply whose id we did not record,
-        // since a single-call body has exactly one answer.
-        if (!wanted.has(item?.id) && !(wanted.size === 1 && items.length === 1)) continue;
-        if (typeof item?.result !== 'string') continue;
-        const seen = BigInt(item.result);
-        if (seen > (pageHeads.get(page) ?? 0n)) pageHeads.set(page, seen);
-      }
+      // The PARSE is a pure function in `rpc-verdict.mjs`, tested
+      // there. Batches answered out of order, batches mixing methods
+      // and error members where a result was expected are the cases
+      // that matter, and a live chain will not reliably produce any of
+      // them — inline here, none of them could be exercised.
+      const seen = blockNumberFromRpcPair(body, await res.json());
+      if (seen !== null && seen > (pageHeads.get(page) ?? 0n)) pageHeads.set(page, seen);
     } catch {
       // Observational only. See the note above.
     }

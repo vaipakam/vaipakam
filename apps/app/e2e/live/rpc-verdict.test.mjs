@@ -12,6 +12,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
+  blockNumberFromRpcPair,
   callsTargetContract,
   classifyRpcFailure,
   classifyRpcResponse,
@@ -621,5 +622,119 @@ describe('recordRpcResponse + summariseRpcLedger', () => {
       expect(out.unreachable).toHaveLength(1);
       expect(out.unreachable[0].why).toContain('eth_getLogs');
     });
+  });
+});
+
+describe('blockNumberFromRpcPair — the page disclosing its own head', () => {
+  // SHAPED THE WAY VIEM SENDS THEM — `jsonrpc: '2.0'` included. The
+  // first version of these fixtures omitted it and every case returned
+  // null, because `rpcRequestCalls` validates the envelope before the
+  // allowlist. That was the fixtures being unrealistic rather than the
+  // parser being wrong, and it is exactly what extracting this made
+  // visible: inline in the response listener, nothing would have told
+  // me whether the real shape parsed at all.
+  const req = (calls) => {
+    const envelope = calls.map((c) => ({ jsonrpc: '2.0', ...c }));
+    return JSON.stringify(envelope.length === 1 ? envelope[0] : envelope);
+  };
+
+  it('reads a single eth_blockNumber exchange', () => {
+    expect(
+      blockNumberFromRpcPair(req([{ id: 1, method: 'eth_blockNumber' }]), {
+        id: 1,
+        result: '0x2c7a5f2',
+      }),
+    ).toBe(0x2c7a5f2n);
+  });
+
+  // MATCHED BY ID, NOT POSITION. A batch may be answered in any order,
+  // and lining the arrays up would attribute one call's result to a
+  // different method — here, a log count read as a block height.
+  it('does not attribute another method’s result to eth_blockNumber', () => {
+    const body = req([
+      { id: 7, method: 'eth_getLogs', params: [] },
+      { id: 8, method: 'eth_blockNumber' },
+    ]);
+    expect(
+      blockNumberFromRpcPair(body, [
+        { id: 8, result: '0x64' },
+        { id: 7, result: '0xdeadbeef' },
+      ]),
+    ).toBe(0x64n);
+  });
+
+  it('takes the highest when a batch asks more than once', () => {
+    const body = req([
+      { id: 1, method: 'eth_blockNumber' },
+      { id: 2, method: 'eth_blockNumber' },
+    ]);
+    expect(
+      blockNumberFromRpcPair(body, [
+        { id: 1, result: '0x10' },
+        { id: 2, result: '0x12' },
+      ]),
+    ).toBe(0x12n);
+  });
+
+  it('accepts a lone reply whose id does not match', () => {
+    // One call asked, one answer came back: there is nothing else the
+    // reply could be about, so a rewritten or absent id is not a reason
+    // to discard it.
+    expect(
+      blockNumberFromRpcPair(req([{ id: 1, method: 'eth_blockNumber' }]), {
+        result: '0x2a',
+      }),
+    ).toBe(0x2an);
+  });
+
+  it('does NOT apply that leniency inside a batch', () => {
+    const body = req([
+      { id: 1, method: 'eth_getLogs', params: [] },
+      { id: 2, method: 'eth_blockNumber' },
+    ]);
+    expect(blockNumberFromRpcPair(body, [{ id: 99, result: '0x2a' }])).toBeNull();
+  });
+
+  it('ignores an error member where a result was expected', () => {
+    expect(
+      blockNumberFromRpcPair(req([{ id: 1, method: 'eth_blockNumber' }]), {
+        id: 1,
+        error: { code: -32005, message: 'rate limited' },
+      }),
+    ).toBeNull();
+  });
+
+  it('returns null for bodies that disclose nothing', () => {
+    expect(blockNumberFromRpcPair(req([{ id: 1, method: 'eth_call' }]), { id: 1, result: '0x1' }))
+      .toBeNull();
+    expect(blockNumberFromRpcPair(undefined, { result: '0x1' })).toBeNull();
+    expect(blockNumberFromRpcPair('not json', { result: '0x1' })).toBeNull();
+    expect(blockNumberFromRpcPair(req([{ id: 1, method: 'eth_blockNumber' }]), null)).toBeNull();
+  });
+
+  it('does not throw on a non-hex result', () => {
+    expect(
+      blockNumberFromRpcPair(req([{ id: 1, method: 'eth_blockNumber' }]), {
+        id: 1,
+        result: 'later',
+      }),
+    ).toBeNull();
+  });
+});
+
+describe('blockNumberFromRpcPair — envelope strictness', () => {
+  it('discloses nothing for a body missing the JSON-RPC envelope', () => {
+    // `rpcRequestCalls` validates `jsonrpc: "2.0"` before anything else,
+    // and this function inherits that. viem always sets it, so the
+    // production path is unaffected — and the failure direction is the
+    // safe one: no head observed means the absence gate reports
+    // incomplete rather than accusing the app. Pinned because it is a
+    // real constraint on what this can read, not an accident.
+    expect(
+      blockNumberFromRpcPair(JSON.stringify({ id: 1, method: 'eth_blockNumber' }), {
+        id: 1,
+        result: '0x2a',
+      }),
+    ).toBeNull();
   });
 });

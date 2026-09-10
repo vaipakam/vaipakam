@@ -207,6 +207,67 @@ export function rpcCallsFromBody(requestBody) {
 }
 
 /**
+ * The block height a page disclosed in one `eth_blockNumber` exchange.
+ *
+ * The forced-close absence gate has to know whether THIS observer has
+ * caught up with the provider whose DOM it is judging, and the page is
+ * the only authority on its own head. It discloses it here.
+ *
+ * PURE, AND HERE RATHER THAN IN THE DRIVER, because the interesting
+ * cases are the ones a live chain will not reliably produce: a batch
+ * answered out of order, a batch mixing `eth_blockNumber` with other
+ * methods, an error member where a result was expected. Left inline in
+ * the response listener, none of those could be exercised — the same
+ * argument that moved `visitVerdict` and `forcedCloseCard` out.
+ *
+ * MATCHED BY JSON-RPC ID, never by position: a batch may be answered in
+ * any order, and lining the arrays up would silently attribute one
+ * call's result to another method. The single exception is the
+ * degenerate one-call/one-reply body, where a provider that echoes no
+ * usable id still leaves no ambiguity about what it answered.
+ *
+ * Returns null rather than throwing for anything it cannot read. A
+ * mis-parsed response must never become a finding about the app, and the
+ * gate treats "no head observed" as not-ready, so silence is
+ * conservative rather than permissive.
+ *
+ * @param {string|undefined} requestBody   the POST body the page sent
+ * @param {unknown} responseBody           the parsed JSON reply
+ * @returns {bigint|null} the highest height disclosed, or null
+ */
+export function blockNumberFromRpcPair(requestBody, responseBody) {
+  let calls;
+  try {
+    calls = rpcCallsFromBody(requestBody);
+  } catch {
+    return null;
+  }
+  if (!calls) return null;
+  const wanted = new Set(
+    calls.filter((c) => c?.method === 'eth_blockNumber').map((c) => c?.id),
+  );
+  if (wanted.size === 0) return null;
+  const items = Array.isArray(responseBody) ? responseBody : [responseBody];
+  // The degenerate case: one call asked, one answer came back. There is
+  // nothing else the reply could be about, so an absent or rewritten id
+  // is not a reason to discard it.
+  const lone = calls.length === 1 && items.length === 1;
+  let best = null;
+  for (const item of items) {
+    if (!lone && !wanted.has(item?.id)) continue;
+    if (typeof item?.result !== 'string') continue; // an error member, or absent
+    let seen;
+    try {
+      seen = BigInt(item.result);
+    } catch {
+      continue; // not a hex quantity
+    }
+    if (best === null || seen > best) best = seen;
+  }
+  return best;
+}
+
+/**
  * Identity of a LOGICAL read: the same call retried on the same endpoint,
  * or re-sent to a fallback endpoint, carries the same key.
  *
