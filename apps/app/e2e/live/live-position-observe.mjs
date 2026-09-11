@@ -5359,7 +5359,36 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
       // card it comes only from `ConfirmReceipt` — the outer submit is
       // not rendered at all while the panel is open, so a cluster button
       // appearing after the click is the panel and nothing else.
-      const back = card.getByRole('button', { name: /back/i }).first();
+      // SELF-REVIEW AFTER ROUND 76 — AND THIS LOCATOR IS ENGLISH-ONLY.
+      //
+      // Found by checking the shipped copy rather than reasoning about
+      // it. Round 76's finding was that a CONFIRM label containing "back"
+      // would be misread as the Back control; no shipped label does. What
+      // the same check turned up is worse and the other way round: of the
+      // ten locales that carry this panel, only English spells Back with
+      // the ASCII letters `back`. `Zurück`, `Atrás`, `Retour`, `رجوع`,
+      // `वापस`, `戻る`, `뒤로`, `பின் செல்லவும்` and `返回` all fail
+      // `/back/i`.
+      //
+      // So on any non-English run this locator finds nothing:
+      // `backAction.present` reads false and the missing-Back arm reports
+      // a lender with no way to decline, while the in-page filter keeps
+      // BOTH buttons and the duplicate-action arm reports more than one
+      // way to pay. Two false product FAILs, on nine of ten locales, from
+      // a check that only ever ran in English.
+      //
+      // The marker resolves it, and the label stays as the fallback for
+      // builds deployed before the marker ships — the same trade as the
+      // in-page filter, and with the same honest limit: on such a build
+      // this drive remains English-only.
+      const backMarked = await card
+        .locator('[data-testid="confirm-receipt-back"]')
+        .count()
+        .then((n) => n > 0)
+        .catch(() => false);
+      const back = backMarked
+        ? card.locator('[data-testid="confirm-receipt-back"]').first()
+        : card.getByRole('button', { name: /back/i }).first();
       const receiptRow = card
         .locator('[data-testid^="forced-close-receipt"], dl.receipt .receipt-row')
         .first();
