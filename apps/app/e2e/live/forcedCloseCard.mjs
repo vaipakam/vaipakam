@@ -1266,6 +1266,18 @@ export function forcedCloseVerdict(obs, copy) {
     // switched off with nothing to show for it. Now the run prints
     // `submits=undefined` in that state instead of a confident pass.
     visibleSubmits: obs.visibleSubmits,
+    // ROUND 36, SELF-REVIEW — the SAME treatment, for the same reason.
+    //
+    // `visibleCardsPeak` is added to the record OUTSIDE the snapshot
+    // spread, by hand, at three separate exits. That is exactly the
+    // shape that dropped a field twice before round 27 deleted the
+    // projection's field list — and the spread cannot protect a value
+    // the spread does not carry. Its arm FAILS above, so on this path
+    // the number is always 0 or 1 and looks redundant; what it documents
+    // is that the field ARRIVED. A silent regression to `undefined` at
+    // one of those three exits now prints `peak=undefined` instead of a
+    // confident pass.
+    visibleCardsPeak: obs.visibleCardsPeak,
   };
 }
 

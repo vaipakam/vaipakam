@@ -5202,7 +5202,17 @@ for (const v of visited) {
                   // so a future silent regression to `undefined` is
                   // visible in the run output instead of waiting for a
                   // reviewer to read the projection.
-                  ` submits=${v.forcedCloseVerdict.visibleSubmits}`
+                  ` submits=${v.forcedCloseVerdict.visibleSubmits}` +
+                  // ROUND 36, SELF-REVIEW — and the CARD PEAK beside it.
+                  //
+                  // `visibleCardsPeak` is carried by hand at three exits
+                  // rather than through the snapshot spread, which is
+                  // precisely the arrangement that lost `visibleSubmits`
+                  // twice. Printing it is the remedy round 27 settled
+                  // on: the carriage becomes observable in the run
+                  // output instead of resting on a reviewer having read
+                  // all three sites.
+                  ` peak=${v.forcedCloseVerdict.visibleCardsPeak}`
                 : '') +
               // ROUND 14 — WHETHER THE ABSENCE GATE COULD HAVE FIRED.
               //

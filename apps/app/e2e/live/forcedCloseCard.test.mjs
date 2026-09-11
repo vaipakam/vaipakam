@@ -2364,3 +2364,42 @@ describe('round 36: the product and this drive agree on which states are submitt
     expect(new Set([...READY, ...WITHHELD]).size).toBe(9);
   });
 });
+
+describe('round 36 self-review: the peak is reported, not just consumed', () => {
+  const copy = { unknownCopy: FORCED_CLOSE.unknown };
+  const base = {
+    lenderHoldsActive: true,
+    mounted: true,
+    attached: true,
+    submitDisabled: true,
+    saleLocked: false,
+    settled: true,
+    bodyText: 'an explanation',
+    bodyPresent: true,
+    confirmText: null,
+    confirmExpected: false,
+    visibleCards: 1,
+    visibleSubmits: 0,
+    text: FORCED_CLOSE.unknown,
+  };
+
+  // `visibleCardsPeak` is added to the record by hand at three exits,
+  // OUTSIDE the snapshot spread — the arrangement that silently lost
+  // `visibleSubmits` twice. The spread cannot protect a value it does
+  // not carry, so the remedy is round 27's: make the carriage visible in
+  // the run output. That only works if the verdict forwards it.
+  it('forwards the peak on a pass so the run can print it', () => {
+    const v = forcedCloseVerdict({ ...base, visibleCardsPeak: 1 }, copy);
+    expect(v.verdict).toBe('pass');
+    expect(v.visibleCardsPeak).toBe(1);
+  });
+
+  // Absent must stay absent rather than being coerced to 0 — a confident
+  // `peak=0` over a field that never arrived is exactly the silence this
+  // is meant to break.
+  it('passes absence through rather than reporting a confident zero', () => {
+    const v = forcedCloseVerdict(base, copy);
+    expect(v.verdict).toBe('pass');
+    expect(v.visibleCardsPeak).toBeUndefined();
+  });
+});
