@@ -6,8 +6,8 @@ three ways that question reads text which does not correspond to what runs.
 
 **It fixes none of them, and changes no behaviour at all.** Every attempt was
 withdrawn under review. What lands is the record of why, and tests that pin the
-wrong verdicts that remain — twelve silent passes and ten false reports — so a
-later fix announces itself instead of passing unnoticed.
+wrong verdicts that remain — in both directions, silent passes and false
+reports — so a later fix announces itself instead of passing unnoticed.
 
 That is worth landing on its own. Two of these designs are the kind a
 maintainer would reach for again, and one of them looks obviously correct until
@@ -68,38 +68,48 @@ No behaviour change. The check's logic is what it was.
   a later fix fails them and comes back to the question rather than passing
   silently.
 
-  **Twelve assert a silent pass** — the direction this check must never fail in:
+  **How many pins each defect carries is stated once, in the table below, and
+  deliberately not repeated here.** Several defects are pinned more than once,
+  always for the same reason — the faulty step is SHARED, so a fix scoped to
+  one host would satisfy a single fixture and leave every other host wrong —
+  and that reason is worth stating; the arithmetic is not. Four review rounds
+  were spent correcting per-defect counts restated in this prose, each
+  correction landing in one sentence and going stale in the next, which is the
+  same failure the deferral table was stripped of in an earlier round. One
+  record per defect, named from the others.
+
+  **Some assert a silent pass** — the direction this check must never fail in:
   a build file variable holding a write is not seen when its assignment sits
   below the deployment; a recipe marked by something other than a tab is not
   read as a recipe; a deployment that follows an unrelated line ending in a
   backslash is read as one command with it, so a safety flag belonging to the
-  earlier line covers the deployment (pinned four times — two Windows shells,
-  each in a standalone helper and in a continuous-integration step, because the
-  fold is in the shared line splitter and a fix scoped to any one of them
-  leaves the rest live); a script declared in a package manifest is never
-  split at its newlines, so a flag on one of its lines covers a deployment on
-  another; a variable whose name differs only in case is not resolved, though
-  the shell in question resolves it, so the deployment's directory reads as
-  unknown; a binding closed with that shell's ordinary statement terminator is
-  not recognised at all, with the same consequence; and a helper whose file name
-  carries an upper-case extension is never FOUND by the sweep that discovers
-  files to read — though one explicitly named by a file already being read is
-  still opened, so the bypass is in the discovery and not in the reading —
-  pinned three times,
-  for two command-shell families and a POSIX one, because the gate that skips
-  them is shared and a fix scoped to one family would satisfy a single
-  fixture while leaving every other family bypassed.
+  earlier line covers the deployment — across both Windows shells and both
+  hosts, because the fold is in the shared line splitter; a script declared in
+  a package manifest is never split at its newlines, so a flag on one of its
+  lines covers a deployment on another; a variable whose name differs only in
+  case is not resolved, though the shell in question resolves it, so the
+  deployment's directory reads as unknown; a binding closed with that shell's
+  ordinary statement terminator is not recognised at all, with the same
+  consequence; and a helper whose file name carries an upper-case extension is
+  never FOUND by the sweep that discovers files to read — though one explicitly
+  named by a file already being read is still opened, so the bypass is in the
+  discovery and not in the reading — across two command-shell families and a
+  POSIX one, because the gate that skips them is shared.
 
-  **Ten fail the other way and assert the report**: a runbook sentence naming a
-  write reports the deployment below it; a package manifest whose description
-  merely names the command is reported as performing it, as is an unrelated
-  data file of the same format, and as is a list of keywords once the file is
-  written across several lines; and a command named inside a block the shell
-  never executes is reported — twice for what the casing normalisation costs,
+  **The rest fail the other way and assert the report**: a runbook sentence
+  naming a write reports the deployment below it; a package manifest whose
+  description merely names the command is reported as performing it, as is an
+  unrelated data file of the same format, and as is a list of keywords once the
+  file is written across several lines; and a command named inside a block the
+  shell never executes is reported — for what the casing normalisation costs,
   in a helper and in a continuous-integration step since that rewrite runs on
-  both, and once for the same inert text reached instead through the
+  both, and for the same inert text reached instead through the
   path-separator normalisation, which is a report the missing quoting model
-  produces rather than anything either rewrite does wrong; and a line that is COMMENTED OUT, in the variant
+  produces rather than anything either rewrite does wrong; an ASSIGNMENT
+  written in that same unexecuted text is rewritten into a real binding, so a
+  later indirect invocation resolves to a deployment the file never performs —
+  a separate symptom from the command-name one, reached through a different
+  rewrite, which is why both are pinned; and a line that is COMMENTED OUT, in the variant
   of that format permitting comments, is read as a command although it is not a
   property at all; and a Windows normalisation is applied wherever the
   interpreter is a Windows shell, INCLUDING on a runner whose platform those
@@ -108,17 +118,25 @@ No behaviour change. The check's logic is what it was.
 - Two tests pinning that a bare command line and an inline command span in a
   document **are** read as commands — the two shapes that defeated the withdrawn
   designs, so a future attempt cannot quietly reintroduce the erasure.
-- A control beside every pinned defect but one, differing from it by the single
-  character or spelling at issue, so it cannot pass for an unrelated reason.
-  Two pins were uncontrolled until review found them, in successive rounds,
-  each time while this very sentence claimed there was only one: a report
-  whose prose names a write now has a companion differing by a single verb,
-  and a build-file miss now has one differing only in where the assignment
-  sits. The remaining one has NO such control and says so in place of
-  claiming one:
-  for it, the already-normalised spelling is understood without the rewrite
-  and so reports too, meaning no single-character sibling distinguishes them;
-  its coupling rests on a deliberate mutation of the rewrite instead, and a
+- **Every pinned defect carries at least one control**, differing from the pin
+  by the single character or spelling at issue, so the pin cannot pass for an
+  unrelated reason. Three defects were uncontrolled until review found them, in
+  successive rounds, each time while this very sentence claimed the gap was
+  smaller than it was — which is why it now states a PROPERTY that stays true
+  as fixtures are added, rather than a count that does not.
+
+  Controls are per DEFECT, not per pin, and the difference is not cosmetic.
+  Where one defect is pinned several times over shared machinery, a single
+  control can establish the distinction for the whole family; where the hosts
+  differ in what they would have to do to pass, each pin carries its own. So a
+  pin without its own sibling is usually a family sharing one, and reading the
+  two counts as though they should match will suggest gaps that are not there.
+
+  One pin can have **no** control even in principle, and says so in place of
+  claiming one: for the command name reached through the path-separator
+  rewrite, the already-normalised spelling is understood without the rewrite
+  and so reports too, meaning no single-character sibling distinguishes them.
+  Its coupling rests on a deliberate mutation of the rewrite instead, and a
   fixture that passed either way would have been worse than that admission.
   And, where a defect turned out narrower than first written, there is a test
   pinning the BOUND as well. Every one of those bounds was discovered by disproving a
@@ -135,10 +153,15 @@ No behaviour change. The check's logic is what it was.
 Every symptom this work set out to fix, plus the limitations found while proving
 them — including **ten defects surfaced while correcting this record
 itself**, seven of them silent passes and three false reports — is recorded as its
-own issue with a reproduction and what a fix would have to be true of. All are
-behaviour the check already had, so nothing is made worse. Twelve are
-additionally pinned by tests that assert the current verdict — twenty-two such
-tests in all, twelve asserting a silent pass and ten a false report.
+own issue with a reproduction and what a fix would have to be true of. That
+split counts each defect by its PRIMARY direction, which for one of them is not
+the direction its fixture asserts: the casing rule's defect is that a spelling
+is not seen, and the report it also produces is the trade its partial coverage
+creates rather than a second defect. Reconciling the two numbers without that
+said would suggest an error where there is none. All are
+behaviour the check already had, so nothing is made worse. The ones additionally
+pinned by tests that assert the current verdict are marked *pinned* in the table
+below; the totals are stated once, under "What lands".
 
 That the correcting itself surfaced more defects than the original work is the
 most useful thing here, and it is not an accident of effort: each correction
