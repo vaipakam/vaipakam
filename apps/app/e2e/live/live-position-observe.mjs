@@ -3215,11 +3215,62 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
         // inline box, so keying on `clientHeight` would condemn anything
         // inside an ordinary `<span>`.
         const notClipped = (node) => {
+          // ROUND 36 P2 — A CLIPPER DOES NOT HAVE TO BE EXACTLY ZERO to hide
+          // everything inside it. `height: 0` was the only case rounds 28/29
+          // rejected, so `height: 1px; overflow: hidden` walked straight
+          // through: the ancestor is non-zero, every descendant keeps a
+          // full-size rect and passes `checkVisibility`, and `innerText` yields
+          // all of it — so the fee and loss rows of the receipt were recorded
+          // as read while the lender could see a single pixel of them.
+          //
+          // A non-scrollable clipper now has to actually SHOW the element: at
+          // least half of the element's extent must fall inside the clipper's
+          // box on the clipped axis. Half rather than any overlap, because a
+          // 1px clipper DOES overlap — that is exactly how it escaped — and
+          // rather than full containment, which would condemn a row whose
+          // descender is clipped by a pixel. Half a line is the point below
+          // which a figure cannot be read at all.
+          //
+          // SCROLLABLE clippers stay exempt, which is rounds 28/29's deliberate
+          // limit restated: content the lender can scroll to is reachable, and
+          // condemning it is the false-FAIL direction that gets a check
+          // switched off. `auto`/`scroll` WITH something to scroll is the test;
+          // `hidden` and `clip` are not user-scrollable however much they hold.
+          //
+          // OUT-OF-FLOW ELEMENTS GET THE BENEFIT OF THE DOUBT, and only for the
+          // intersection rule. Which clipper applies to an absolutely or fixed
+          // positioned box is a containing-block question — a `position:
+          // absolute` child of a `position: static` `overflow: hidden` ancestor
+          // is NOT clipped by it — and answering it wrongly condemns content
+          // the lender can see. The collapsed-clipper rule still applies to
+          // them. Nothing on this card is out of flow; this is here so the
+          // predicate stays honest if something ever is.
+          const flow = getComputedStyle(node).position;
+          const inFlow = flow === 'static' || flow === 'relative';
+          const r = node.getBoundingClientRect();
           for (let n = node.parentElement; n; n = n.parentElement) {
             const cs = getComputedStyle(n);
+            const clipsY = cs.overflowY !== 'visible';
+            const clipsX = cs.overflowX !== 'visible';
+            if (!clipsY && !clipsX) continue;
             const box = n.getBoundingClientRect();
-            if (cs.overflowY !== 'visible' && box.height === 0) return false;
-            if (cs.overflowX !== 'visible' && box.width === 0) return false;
+            if (clipsY && box.height === 0) return false;
+            if (clipsX && box.width === 0) return false;
+            if (!inFlow) continue;
+            const scrollsY =
+              (cs.overflowY === 'auto' || cs.overflowY === 'scroll') &&
+              n.scrollHeight > n.clientHeight;
+            const scrollsX =
+              (cs.overflowX === 'auto' || cs.overflowX === 'scroll') &&
+              n.scrollWidth > n.clientWidth;
+            if (clipsY && !scrollsY && r.height > 0) {
+              const shown = Math.min(r.bottom, box.bottom) - Math.max(r.top, box.top);
+              if (shown / r.height < 0.5) return false;
+            }
+            if (clipsX && !scrollsX && r.width > 0) {
+              const shown = Math.min(r.right, box.right) - Math.max(r.left, box.left);
+              if (shown / r.width < 0.5) return false;
+            }
           }
           return true;
         };
@@ -3740,11 +3791,62 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
             // than one with a duplicated predicate. Filed as a follow-up
             // rather than attempted mid-review.
             const notClipped = (node) => {
+              // ROUND 36 P2 — A CLIPPER DOES NOT HAVE TO BE EXACTLY ZERO to hide
+              // everything inside it. `height: 0` was the only case rounds 28/29
+              // rejected, so `height: 1px; overflow: hidden` walked straight
+              // through: the ancestor is non-zero, every descendant keeps a
+              // full-size rect and passes `checkVisibility`, and `innerText` yields
+              // all of it — so the fee and loss rows of the receipt were recorded
+              // as read while the lender could see a single pixel of them.
+              //
+              // A non-scrollable clipper now has to actually SHOW the element: at
+              // least half of the element's extent must fall inside the clipper's
+              // box on the clipped axis. Half rather than any overlap, because a
+              // 1px clipper DOES overlap — that is exactly how it escaped — and
+              // rather than full containment, which would condemn a row whose
+              // descender is clipped by a pixel. Half a line is the point below
+              // which a figure cannot be read at all.
+              //
+              // SCROLLABLE clippers stay exempt, which is rounds 28/29's deliberate
+              // limit restated: content the lender can scroll to is reachable, and
+              // condemning it is the false-FAIL direction that gets a check
+              // switched off. `auto`/`scroll` WITH something to scroll is the test;
+              // `hidden` and `clip` are not user-scrollable however much they hold.
+              //
+              // OUT-OF-FLOW ELEMENTS GET THE BENEFIT OF THE DOUBT, and only for the
+              // intersection rule. Which clipper applies to an absolutely or fixed
+              // positioned box is a containing-block question — a `position:
+              // absolute` child of a `position: static` `overflow: hidden` ancestor
+              // is NOT clipped by it — and answering it wrongly condemns content
+              // the lender can see. The collapsed-clipper rule still applies to
+              // them. Nothing on this card is out of flow; this is here so the
+              // predicate stays honest if something ever is.
+              const flow = getComputedStyle(node).position;
+              const inFlow = flow === 'static' || flow === 'relative';
+              const r = node.getBoundingClientRect();
               for (let n = node.parentElement; n; n = n.parentElement) {
                 const cs = getComputedStyle(n);
+                const clipsY = cs.overflowY !== 'visible';
+                const clipsX = cs.overflowX !== 'visible';
+                if (!clipsY && !clipsX) continue;
                 const box = n.getBoundingClientRect();
-                if (cs.overflowY !== 'visible' && box.height === 0) return false;
-                if (cs.overflowX !== 'visible' && box.width === 0) return false;
+                if (clipsY && box.height === 0) return false;
+                if (clipsX && box.width === 0) return false;
+                if (!inFlow) continue;
+                const scrollsY =
+                  (cs.overflowY === 'auto' || cs.overflowY === 'scroll') &&
+                  n.scrollHeight > n.clientHeight;
+                const scrollsX =
+                  (cs.overflowX === 'auto' || cs.overflowX === 'scroll') &&
+                  n.scrollWidth > n.clientWidth;
+                if (clipsY && !scrollsY && r.height > 0) {
+                  const shown = Math.min(r.bottom, box.bottom) - Math.max(r.top, box.top);
+                  if (shown / r.height < 0.5) return false;
+                }
+                if (clipsX && !scrollsX && r.width > 0) {
+                  const shown = Math.min(r.right, box.right) - Math.max(r.left, box.left);
+                  if (shown / r.width < 0.5) return false;
+                }
               }
               return true;
             };

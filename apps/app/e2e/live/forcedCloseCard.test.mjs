@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import enBundle from '../../src/i18n/locales/en.json' with { type: 'json' };
+import { canSubmitFromApp } from '../../src/data/forcedClose.ts';
 
 import {
   confirmationReady,
@@ -2306,5 +2307,60 @@ describe('round 35 self-review: the currency test reaches past punctuation', () 
     expect(monetaryAmountsIn('A 2% treasury share is deducted.')).toEqual([]);
     expect(monetaryAmountsIn('Settles within 5 blocks.')).toEqual([]);
     expect(monetaryAmountsIn('Loan 100 is overdue.')).toEqual([]);
+  });
+});
+
+describe('round 36: the product and this drive agree on which states are submittable', () => {
+  // WHY THIS EXISTS — it is the premise of a refutation, made into a
+  // guard. Round 36 reported that a transiently-observed pairing of
+  // WITHHELD copy with a VISIBLE ENABLED submit control is discarded by
+  // the readiness poll, since only the texts are carried across ticks.
+  //
+  // That pairing is not producible. `ForcedCloseCard` derives the body
+  // copy and the control from ONE `readiness` value in one render — the
+  // copy from the `PRESENTATION` table, the control from
+  // `canSubmitFromApp(readiness)` — and the drive reads both in a single
+  // `page.evaluate` (round 9 P2), so it cannot see a torn pair either.
+  // The control is not merely disabled on a withheld state; it is not
+  // rendered at all.
+  //
+  // But that argument rests entirely on the two classifications agreeing
+  // about the nine states, and they are maintained independently: one in
+  // `src/data/forcedClose.ts`, the other in this drive's `withheldCopy`
+  // / `readyCopy` lists. If they ever disagree the pairing becomes real,
+  // and it would then be a live-run surprise rather than a test failure.
+  // So the premise is asserted rather than believed.
+  const READY = ['ready-in-kind', 'ready-internal-match', 'ready-rental'];
+  const WITHHELD = [
+    'unknown',
+    'not-yet',
+    'blocked-paused',
+    'blocked-sequencer',
+    'blocked-no-consent',
+    'ready-needs-route',
+  ];
+
+  it('offers the control on exactly the states this drive calls ready', () => {
+    for (const r of READY) {
+      expect(canSubmitFromApp(r), `${r} should be submittable`).toBe(true);
+    }
+  });
+
+  it('offers NO control on any state this drive calls withheld', () => {
+    // `ready-needs-route` is the one worth naming: it is READY and
+    // correctly unactionable — the spec's "offers no button it cannot
+    // honour" — which is why it sits in `withheldCopy` rather than
+    // `readyCopy`, and why it must not be submittable.
+    for (const r of WITHHELD) {
+      expect(canSubmitFromApp(r), `${r} must not be submittable`).toBe(false);
+    }
+  });
+
+  it('covers every readiness state the card can be in', () => {
+    // Not vacuous, and not drifting: the nine states here are the nine
+    // in `recognisedCopy`. A tenth state added to the product without
+    // being classified here would leave this suite quietly describing an
+    // incomplete set.
+    expect(new Set([...READY, ...WITHHELD]).size).toBe(9);
   });
 });

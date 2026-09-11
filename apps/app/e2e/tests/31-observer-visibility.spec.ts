@@ -73,10 +73,16 @@ test('both copies of the drive visibility predicate agree, and reject clipped co
     <div id="collapsed" style="height:0; overflow:hidden">
       <p id="clipped">a fee row the lender cannot see</p>
     </div>
+    <div id="slit" style="height:1px; overflow:hidden">
+      <p id="slivered" style="height:20px; margin:0">You can lose: the collateral</p>
+    </div>
     <p id="plain">an ordinary visible row</p>
     <div id="scroller" style="height:40px; overflow:auto">
       <p style="height:200px">tall filler</p>
       <p id="scrolledOut">below the fold, but the lender can scroll to it</p>
+    </div>
+    <div id="trimmer" style="height:19px; overflow:hidden">
+      <p id="trimmed" style="height:20px; margin:0">clipped by one pixel, still readable</p>
     </div>
   `);
 
@@ -91,6 +97,8 @@ test('both copies of the drive visibility predicate agree, and reject clipped co
         const byId = (id: string) => document.getElementById(id);
         return {
           clipped: visible(byId('clipped')),
+          slivered: visible(byId('slivered')),
+          trimmed: visible(byId('trimmed')),
           plain: visible(byId('plain')),
           scrolledOut: visible(byId('scrolledOut')),
           // Recorded so a future failure says WHICH branch ran. The
@@ -113,7 +121,17 @@ test('both copies of the drive visibility predicate agree, and reject clipped co
     expect(result.clipped, `copy ${i}: content inside height:0/overflow:hidden`).toBe(
       false,
     );
+    // A clipper does not have to be exactly zero to hide everything.
+    // `height: 1px` leaves the ancestor non-zero, so the collapsed rule
+    // passed it while the lender saw one pixel of a loss disclosure.
+    expect(result.slivered, `copy ${i}: content inside height:1px/overflow:hidden`).toBe(
+      false,
+    );
     expect(result.plain, `copy ${i}: ordinary content`).toBe(true);
+    // The other end of the same rule, pinned so the threshold cannot be
+    // tightened into a false failure: a row clipped by a single pixel is
+    // still a row the lender can read.
+    expect(result.trimmed, `copy ${i}: clipped by one pixel`).toBe(true);
     // The deliberate limit of the rule, pinned so it cannot be tightened
     // by accident: content merely scrolled out of a scroll container is
     // reachable, and condemning it would be a false failure — the

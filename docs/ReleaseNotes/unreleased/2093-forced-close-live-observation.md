@@ -152,3 +152,27 @@ which network traffic to read for the page's position has no test of its
 own, because it cannot be reached without restructuring the file, and a
 live run cannot distinguish it working from the older path having been
 sufficient on that page. That restructuring is tracked separately.
+
+The check that the pre-signature receipt was actually visible had one
+more gap. It rejected a container collapsed to nothing, but a container
+one pixel tall passed: the rows inside keep their full size, the browser
+reports them as displayed, and their text can still be read
+programmatically — so the run recorded that a lender had been shown the
+fees and the losses when a sliver of a single line was on screen. A
+container that cannot be scrolled must now actually show at least half of
+a row for that row to count. Half, rather than any part of it, because a
+one-pixel window does show a part; and half rather than all of it,
+because a row whose descender is trimmed by a pixel is still perfectly
+readable and failing on that would be the kind of false alarm that gets a
+check switched off. Content merely scrolled out of a scrollable area
+remains fine, as before.
+
+One reported concern was investigated and found not to apply: that the
+card might briefly offer a usable action while still saying its safety
+check was running. The card decides what it says and whether it offers an
+action from the same single value in the same render, so on a state that
+withholds the action the button is not merely disabled — it is not there
+at all. Rather than leave that as an argument, it is now something the
+suite checks, because the two halves of it are maintained in separate
+places and a future disagreement between them would otherwise surface as
+a surprise on a live run rather than as a failing test.
