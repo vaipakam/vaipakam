@@ -70,13 +70,27 @@ No behaviour change. The check's logic is what it was.
 
   **How many pins each defect carries is stated once, in the table below, and
   deliberately not repeated here.** Several defects are pinned more than once,
-  always for the same reason — the faulty step is SHARED, so a fix scoped to
-  one host would satisfy a single fixture and leave every other host wrong —
-  and that reason is worth stating; the arithmetic is not. Four review rounds
-  were spent correcting per-defect counts restated in this prose, each
-  correction landing in one sentence and going stale in the next, which is the
-  same failure the deferral table was stripped of in an earlier round. One
-  record per defect, named from the others.
+  for TWO different reasons, and which applies is recorded at each fixture
+  rather than generalised here:
+
+  - the faulty step is **shared across hosts**, so a fix scoped to one host
+    would satisfy a single fixture and leave every other host wrong; or
+  - the pins are **separately fixable routes** into one defect, where a fix for
+    one genuinely can leave the other standing.
+
+  An earlier draft of this paragraph gave the first as the reason for all of
+  them. It is not: the two symptoms of the here-string defect go through
+  different rewrites, and of the four pins on the manifest-format defect only
+  three share a branch. Stating one universal reason made the multiplicity look
+  like redundancy, when for some of them it is the opposite.
+
+  That over-generalisation is the same failure as the stale arithmetic this
+  paragraph replaced, and it is worth naming as one: **the record kept
+  asserting something broader than what had been verified.** Each fixture
+  carries its scope, its mechanism and its mutation evidence, established with
+  the code in hand; every time the note restated one, the qualifiers fell off.
+  So the note now carries the shape of the finding and points at the fixture
+  for its extent — one record per fact, named from the others.
 
   **Some assert a silent pass** — the direction this check must never fail in:
   a build file variable holding a write is not seen when its assignment sits
@@ -118,12 +132,23 @@ No behaviour change. The check's logic is what it was.
 - Two tests pinning that a bare command line and an inline command span in a
   document **are** read as commands — the two shapes that defeated the withdrawn
   designs, so a future attempt cannot quietly reintroduce the erasure.
-- **Every pinned defect carries at least one control**, differing from the pin
-  by the single character or spelling at issue, so the pin cannot pass for an
+- **Every pinned defect carries at least one control** — a near-identical
+  fixture differing only in the thing at issue, so the pin cannot pass for an
   unrelated reason. Three defects were uncontrolled until review found them, in
   successive rounds, each time while this very sentence claimed the gap was
   smaller than it was — which is why it now states a PROPERTY that stays true
   as fixtures are added, rather than a count that does not.
+
+  **What "the thing at issue" is varies, and calling it a character or a
+  spelling was wrong.** For the build-file miss the control changes only the
+  assignment's POSITION, which is the whole point of that defect — it is not
+  that a variable's value is invisible, but that an assignment's position does
+  not constrain when its value is used. For the here-string assignment the
+  control replaces the string's CONTENTS. Neither is a one-character edit, and
+  describing controls that way made a narrower guarantee than the fixtures
+  give while sounding like a stronger one. Where no such sibling is possible,
+  the coupling rests on a deliberate mutation of the step under test instead,
+  and each fixture records which of the two it relies on.
 
   Controls are per DEFECT, not per pin, and the difference is not cosmetic.
   Where one defect is pinned several times over shared machinery, a single
@@ -175,8 +200,8 @@ writing the reason down at all, rather than only the fix.
 
 **Each row is a one-line symptom and a pointer.** The precise scope and bounds
 of every defect live on its issue, and deliberately not here: this table
-restated them, the restatements went stale as each was corrected, and eight
-review rounds were spent finding a correction that had landed in one place and
+restated them, the restatements went stale as each was corrected, and round
+after round was spent finding a correction that had landed in one place and
 not its siblings. One record per defect, named from the others.
 
 | | |
@@ -191,14 +216,14 @@ not its siblings. One record per defect, named from the others.
 | **#2106** | a build file's prerequisites are ordered as written, not as they run |
 | **#2108** | a step naming another interpreter has its body read as shell |
 | **#2104** | a deployment written as a single-line workflow step whose configuration cannot be read is not reported |
-| **#2115** | a Windows-shell body spelling the command in upper case, or in a mixed case OTHER than title case, is not seen (lowercase and title case are) — and the spelling that IS covered is matched inside a block the shell never executes, *pinned (false report)* in both a standalone helper and a continuous-integration step, as the trade any widening of that rule grows |
+| **#2115** | a body spelling the command in upper case, or in a mixed case OTHER than title case, is not seen (lowercase and title case are) — and the spelling that IS covered is matched inside a block the shell never executes, *pinned (false report)* in both a standalone helper and a continuous-integration step, as the trade any widening of that rule grows. **The miss is scoped by the RUNNER'S PLATFORM, not by the shell**, and an earlier version of this row got that wrong in exactly the way #2126 records: those spellings are only the same command where the platform resolves command names case-insensitively. That shell also runs on POSIX runners, where they are different files — so widening recognition by shell alone would not fix the miss, it would manufacture #2126's false report a second time. Where the platform is undeterminable — an unresolvable or matrix-selected runner — the two directions genuinely conflict: reporting risks naming a command that does not exist, and not reporting risks the silent pass this check must never produce. That choice is not made here; it belongs on the issue with the evidence, and pretending it was settled is how the row went wrong the first time |
 | **#2117** | the PowerShell path has no string state, so text inside a here-string is read as commands — *pinned (false report) twice, once per symptom, because they go through different preprocessing and a fix for one can leave the other*: a command named there is reported, and an assignment there is rewritten into a binding that makes a later indirect invocation resolve to a deployment the file never performs |
 | **#2116** | a manifest script that invokes a sibling does not see that sibling's config write |
 | **#2121** | a script declared in a package manifest is never split at its newlines, so a safety flag on one line covers a deployment on another — *pinned (silent pass)*; the mirror of #2118 |
 | **#2122** | a variable whose name differs only in case is not resolved, though that shell resolves it, so the deployment's directory reads as unknown — *pinned (silent pass)* |
 | **#2123** | a helper whose file name carries an upper-case extension is never found by the sweep that discovers files to read — *pinned (silent pass)*, and the broadest of the three, since a file the sweep never yields is never examined at all — though one named explicitly by a file already being read IS opened, so the gap is in the discovery and not in the reading |
 | **#2124** | a binding closed with that shell's ordinary statement terminator is not recognised, so the deployment's directory reads as unknown — *pinned (silent pass)* |
-| **#2126** | the command-name normalisation for one platform's shells is chosen by the interpreter rather than the platform, so it also applies where that platform's rules do not hold and reports a program that does not exist there — *pinned (false report)*. The check's own comment states this must not happen. A companion claim about the path-separator normalisation was withdrawn: that rewrite matches how the shell itself reads paths on every platform, so the report it produces is correct |
+| **#2126** | the command-name normalisation for one platform's shells is chosen by the interpreter rather than the platform, so it also applies where that platform's rules do not hold and reports a program that does not exist there — *pinned (false report)*. The check's own comment states this must not happen. A companion claim about the path-separator normalisation was withdrawn, and the withdrawal is narrower than "that rewrite is fine": what was checked is a path given to the SHELL'S OWN commands, which reads the same either way on every platform, so the report there is correct. The same documentation warns the alternate separator "may not work when used with native applications that only expect the native directory separator" — and a deployment command is a native application. Nothing pins that case, because nothing demonstrates it; it is an open question, not an approval |
 | **#2085** | whether this detection should be a declaration rather than an inference — the three withdrawals are the strongest evidence yet that it should |
 
 This PR closes none of them.
