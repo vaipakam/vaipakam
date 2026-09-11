@@ -1204,9 +1204,29 @@ export function forcedCloseVerdict(obs, copy) {
   // vanished — and explained away as `inapplicable` if a sale had been
   // accepted meanwhile.
   //
+  // SCOPED TO UNMOUNTED RECORDS, and that is a correction to my own
+  // first version of this fix, found by re-reading it rather than by
+  // review.
+  //
+  // Unscoped, this latch fires on ANY tick of a ~30-second poll — so a
+  // body that reads as present-but-invisible for a single frame and then
+  // paints correctly becomes a FAIL on a card that ends up entirely
+  // right. Round 10 established the opposite convention for precisely
+  // this situation: a transient ready-but-disabled control is a
+  // legitimate intermediate state and the FAIL requires the condition to
+  // PERSIST to the deadline. Applying a stricter rule to the body than
+  // to the control would be an inconsistency with no argument behind it,
+  // and false FAILs on funds checks are what get them switched off.
+  //
+  // The hole the finding actually describes is narrower: evidence
+  // discarded when the card VANISHES, where the settled render can no
+  // longer speak for itself. For a mounted record the settled
+  // `bodyVisible === false` arm above already applies and is the right
+  // test. So this covers exactly the case the settled arm cannot reach.
+  //
   // `=== true`, so a record predating the field says nothing rather than
   // manufacturing a finding.
-  if (obs.bodyHiddenSeen === true) {
+  if (!obs.mounted && obs.bodyHiddenSeen === true) {
     return {
       verdict: 'fail',
       failKind: 'observed',

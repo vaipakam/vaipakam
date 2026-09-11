@@ -2923,6 +2923,59 @@ describe('round 41 review findings', () => {
       const v = forcedCloseVerdict({ ...gone, saleLocked: true }, copy);
       expect(v.verdict).toBe('blocked');
     });
+
+    // THE LIMIT, and it is a correction to my own first version of this
+    // fix. Unscoped, the latch fires on ANY tick of a ~30s poll, so a
+    // body invisible for one frame and then painted correctly would fail
+    // a card that ends up entirely right. Round 10 set the opposite
+    // convention for the control — a transient intermediate state is
+    // legitimate and the FAIL must PERSIST — and a stricter rule for the
+    // body than the control would be an inconsistency with no argument
+    // behind it.
+    //
+    // The settled arm already covers a mounted card, so nothing is lost.
+    it('does NOT fail a mounted card whose body ended up visible', () => {
+      const v = forcedCloseVerdict(
+        {
+          ...gone,
+          mounted: true,
+          attached: true,
+          text: FORCED_CLOSE.unknown,
+          // Recognised copy, not a placeholder: the unrecognised-copy
+          // arm returns BLOCKED, which is neither the pass this case is
+          // about nor the fail it is guarding against. My first fixture
+          // used a placeholder and reported blocked — the assertion was
+          // wrong, not the code.
+          bodyText: FORCED_CLOSE.unknown,
+          bodyPresent: true,
+          bodyVisible: true,
+          settled: true,
+          submitDisabled: true,
+          bodyHiddenSeen: true,
+        },
+        copy,
+      );
+      expect(v.verdict).toBe('pass');
+    });
+
+    it('still fails a mounted card whose SETTLED body is hidden', () => {
+      const v = forcedCloseVerdict(
+        {
+          ...gone,
+          mounted: true,
+          attached: true,
+          text: FORCED_CLOSE.unknown,
+          bodyText: FORCED_CLOSE.unknown,
+          bodyPresent: true,
+          bodyVisible: false,
+          settled: true,
+          submitDisabled: true,
+        },
+        copy,
+      );
+      expect(v.verdict).toBe('fail');
+      expect(v.why).toMatch(/not visible/);
+    });
   });
 
   // "No verdicts" means two different things: on a BORROWER run the card
