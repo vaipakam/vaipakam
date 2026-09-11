@@ -254,3 +254,34 @@ it, which is luck rather than protection. It is recorded as a known
 defect with its own issue, and the test pins what the code actually does
 rather than what it should do, so that fixing it properly is what breaks
 the test.
+
+A later round returned to the confirmation panel and to the same
+principle. The check was only willing to judge the button that sends the
+transaction when it had also succeeded in reading the whole receipt above
+it — so a button that could not be used, alongside a single line of the
+receipt the check could not parse, was reported as an inconclusive run
+rather than as the defect it was. Those are two different kinds of thing:
+an unreadable receipt line is a gap in what the check managed to see, and
+an unusable button is something it saw clearly. The second is no longer
+hidden by the first.
+
+The same round found that the check looked at only the first action
+beside Back. A confirmation offering more than one way to pay is a
+finding in its own right — the receipt explains one decision — and the
+second control was going unexamined. It is now counted, and a second
+action is reported ahead of any question about whether the first one
+works.
+
+It also now asks whether that button can actually receive a click.
+Visible, enabled and labelled are all true of a button sitting under
+something else, or one configured not to accept pointer input; the lender
+cannot use either, and every signal the check had said the route was
+fine. The question is asked in the form that runs the browser's own
+usability checks and stops short of pressing anything, because this check
+watches and must never spend a lender's money.
+
+Finally, a number written after a word like "loan" or "position" was
+treated as a reference rather than as an amount. Those identifiers are
+whole numbers, so a fractional value in that position is not naming
+anything — it is stating a quantity, which is the invented figure the
+rule exists to catch. The exemption now applies only to whole numbers.

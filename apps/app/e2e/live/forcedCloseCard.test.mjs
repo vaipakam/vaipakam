@@ -2160,9 +2160,18 @@ describe('round 35 review findings', () => {
     // The control: the same two strings joined DO exempt it, which is
     // what the code used to do. Asserted directly so the case above is
     // shown to be about the join rather than about the scanner.
+    // FIGURE CHANGED IN ROUND 46, and the reason is worth keeping. The
+    // original control used `1.5`, which the integral-identifier rule
+    // now catches on its own — so the joined form stopped being clean
+    // and the case no longer demonstrated anything about the join.
+    //
+    // That is the control being IMPROVED rather than relaxed: `1.5` was
+    // suppressed by two mechanisms and I only knew about one, so the
+    // case was weaker than it read. An integral figure isolates the
+    // join exactly.
     it('and the join really was what suppressed it', () => {
-      expect(monetaryAmountsIn('1.5 will be returned')).toHaveLength(1);
-      expect(monetaryAmountsIn('Closing out Loan\n1.5 will be returned')).toEqual([]);
+      expect(monetaryAmountsIn('15 will be returned')).toHaveLength(1);
+      expect(monetaryAmountsIn('Closing out Loan\n15 will be returned')).toEqual([]);
     });
 
     // The legitimate direction still holds: a real identifier inside ONE
@@ -3248,15 +3257,119 @@ describe('round 45 review findings', () => {
       expect(forcedCloseVerdict(opened, copy).verdict).toBe('pass');
     });
 
-    // And it must not fire where the panel never rendered — those cases
-    // are reported by the arms around it, not as a missing button.
+    // FIXTURE CORRECTED IN ROUND 46. This asserted that a record with
+    // `confirmText: null` says nothing about the action — which encoded
+    // exactly the defect round 46 found: a broken button plus one
+    // unreadable receipt row suppressed the finding entirely.
+    //
+    // The intent survives; the fixture was wrong for it. "The panel
+    // never opened" is a record with NO `confirmAction` at all, because
+    // the receipt pass runs only after the Back control was seen — so
+    // carrying that field IS the evidence the confirmation rendered.
     it('says nothing when the confirmation never opened', () => {
-      const v = forcedCloseVerdict(
-        { ...opened, confirmText: null, confirmAction: { ...usable, present: false } },
-        copy,
-      );
+      const v = forcedCloseVerdict({ ...opened, confirmText: null }, copy);
       expect(v.verdict).toBe('blocked');
       expect(v.blockedKind).toBe('incomplete');
+    });
+  });
+});
+
+describe('round 46 review findings', () => {
+  const copy = {
+    unknownCopy: FORCED_CLOSE.unknown,
+    readyCopy: [FORCED_CLOSE.readyInKind, FORCED_CLOSE.readyInternalMatch, FORCED_CLOSE.readyRental],
+    withheldCopy: [FORCED_CLOSE.unknown, FORCED_CLOSE.notYet, FORCED_CLOSE.readyNeedsRoute],
+    recognisedCopy: [
+      FORCED_CLOSE.unknown,
+      FORCED_CLOSE.notYet,
+      FORCED_CLOSE.blockedPaused,
+      FORCED_CLOSE.blockedSequencer,
+      FORCED_CLOSE.blockedNoConsent,
+      FORCED_CLOSE.readyInKind,
+      FORCED_CLOSE.readyInternalMatch,
+      FORCED_CLOSE.readyRental,
+      FORCED_CLOSE.readyNeedsRoute,
+    ],
+    receiptLeads: [FORCED_CLOSE.receipt.youReceive, FORCED_CLOSE.rentalReceipt.youReceive],
+  };
+
+  const opened = {
+    lenderHoldsActive: true,
+    mounted: true,
+    attached: true,
+    submitPresent: true,
+    submitVisible: true,
+    submitDisabled: false,
+    visibleSubmits: 1,
+    visibleCards: 1,
+    saleLocked: false,
+    settled: true,
+    bodyPresent: true,
+    bodyText: FORCED_CLOSE.readyInKind,
+    text: FORCED_CLOSE.readyInKind,
+    confirmExpected: true,
+    confirmText: `${FORCED_CLOSE.receipt.youReceive} …`,
+  };
+  const usable = { present: true, visible: true, enabled: true, labelled: true, count: 1, clickable: true };
+
+  describe('an identifier is integral', () => {
+    // Loan, position, offer and token ids are whole numbers. A
+    // fractional value after one of those words is not naming a thing —
+    // it is stating a quantity of one.
+    it('flags a fractional value after an identifier word', () => {
+      expect(monetaryAmountsIn('Loan 1.5 will be returned')).toHaveLength(1);
+      expect(monetaryAmountsIn('Position 2.75 becomes claimable')).toHaveLength(1);
+    });
+
+    it('still exempts a whole-number identifier', () => {
+      expect(monetaryAmountsIn('Closing out Loan 21 now.')).toEqual([]);
+      expect(monetaryAmountsIn('Position 4 is held.')).toEqual([]);
+    });
+
+    it('leaves the other exemptions alone', () => {
+      expect(monetaryAmountsIn('The grace period is 3 days.')).toEqual([]);
+      expect(monetaryAmountsIn('A 2% treasury share is deducted.')).toEqual([]);
+      expect(monetaryAmountsIn('Settles within 5 blocks.')).toEqual([]);
+    });
+  });
+
+  describe('the confirmation action is judged on its own terms', () => {
+    // `confirmText` is null whenever ANY receipt row fails its scan, so
+    // a broken confirm button plus one bad row suppressed the action
+    // finding and reported merely BLOCKED. An incomplete receipt is a
+    // gap in what was READ; an unusable transaction button is a defect
+    // that WAS read.
+    it('FAILS a broken action even when the receipt did not read', () => {
+      const v = forcedCloseVerdict(
+        { ...opened, confirmText: null, confirmAction: { ...usable, enabled: false } },
+        copy,
+      );
+      expect(v.verdict).toBe('fail');
+      expect(v.failKind).toBe('observed');
+      expect(v.why).toMatch(/disabled/);
+    });
+
+    it('FAILS a second action beside Back', () => {
+      const v = forcedCloseVerdict({ ...opened, confirmAction: { ...usable, count: 2 } }, copy);
+      expect(v.verdict).toBe('fail');
+      expect(v.why).toMatch(/2 actions beside Back/);
+    });
+
+    // Visible, enabled and labelled are all true of a button covered by
+    // another element or under `pointer-events: none`.
+    it('FAILS an action that cannot receive a click', () => {
+      const v = forcedCloseVerdict({ ...opened, confirmAction: { ...usable, clickable: false } }, copy);
+      expect(v.verdict).toBe('fail');
+      expect(v.why).toMatch(/cannot receive a click/);
+    });
+
+    it('says nothing when the trial was never run', () => {
+      const { clickable, ...noTrial } = usable;
+      expect(forcedCloseVerdict({ ...opened, confirmAction: noTrial }, copy).verdict).toBe('pass');
+    });
+
+    it('PASSES a usable, single, clickable action', () => {
+      expect(forcedCloseVerdict({ ...opened, confirmAction: usable }, copy).verdict).toBe('pass');
     });
   });
 });

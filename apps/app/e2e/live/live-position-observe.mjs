@@ -4407,18 +4407,35 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
             const backButton = panelButtons.find((b) =>
               /back/i.test((b.innerText ?? '').trim()),
             );
-            const confirmButton =
+            // ROUND 46 P2 — COUNTED, not just found. `find` took the
+            // first non-Back button and a second fee-paying action
+            // beside it went unexamined — the same rule the outer card
+            // already applies to duplicate submit controls, one level
+            // in, and the more dangerous level: these buttons send the
+            // transaction rather than opening a panel.
+            const clusterActions =
               backButton && backButton.parentElement
-                ? [...backButton.parentElement.querySelectorAll('button')].find(
+                ? [...backButton.parentElement.querySelectorAll('button')].filter(
                     (b) => b !== backButton,
                   )
-                : undefined;
+                : [];
+            const confirmButton = clusterActions[0];
             const confirmAction = {
               present: confirmButton !== undefined,
               visible: confirmButton !== undefined && visible(confirmButton),
               enabled: confirmButton !== undefined && confirmButton.disabled === false,
               labelled:
                 confirmButton !== undefined && (confirmButton.innerText ?? '').trim() !== '',
+              count: clusterActions.length,
+              // ROUND 46 P2 — the index among the CARD's buttons, so the
+              // Playwright side can address this exact control for a
+              // trial click without a testid and without mutating the
+              // page. Same technique as `chosenIndex` and
+              // `chosenSubmitIndex`.
+              index:
+                confirmButton === undefined
+                  ? -1
+                  : [...el.querySelectorAll('button')].indexOf(confirmButton),
             };
             const rows = [
               ...el.querySelectorAll(
@@ -4516,6 +4533,32 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
           ? await card.innerText({ timeout: 2_000 }).catch(() => null)
           : null;
         confirmAction = receiptShown?.confirmAction;
+        // ROUND 46 P2 — CAN IT ACTUALLY RECEIVE A CLICK?
+        //
+        // Geometrically visible, natively enabled and labelled is not
+        // the same as actionable: an element covering it, or
+        // `pointer-events: none`, leaves every one of those true while
+        // the lender cannot activate it — and the run reports the route
+        // as covered.
+        //
+        // Playwright's `trial: true` runs the full actionability suite
+        // (visible, stable, receives events, enabled) and returns
+        // WITHOUT dispatching the click. That is what makes it usable
+        // here at all: this drive is watch-only and the real click sends
+        // a fee-paying transaction.
+        //
+        // `undefined` rather than false when there is nothing to try, so
+        // the verdict can tell "could not be clicked" from "was never
+        // tested" — the distinction this file has had to restore three
+        // times under other names.
+        if (confirmAction && confirmAction.index >= 0) {
+          confirmAction.clickable = await card
+            .locator('button')
+            .nth(confirmAction.index)
+            .click({ trial: true, timeout: 3_000 })
+            .then(() => true)
+            .catch(() => false);
+        }
         // Leave the page as it was found. Failing to close it is not a
         // finding and must not fail the drive.
         await back.click({ timeout: 3_000 }).catch(() => {});

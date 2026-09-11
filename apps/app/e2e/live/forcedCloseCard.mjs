@@ -489,7 +489,21 @@ export function monetaryAmountsIn(text) {
       return w ? w[1] : '';
     })();
     const trailingLower = LOWERCASE_ASSET_UNIT.test(firstWordAfter);
-    if (!trailingTicker && !hugsCurrency && !trailingGlyph && !trailingLower) {
+    // ROUND 46 P2 — AN IDENTIFIER IS INTEGRAL.
+    //
+    // `Loan 1.5 will be returned` and `Position 2.75 becomes claimable`
+    // were exempted as reference numbers. Loan, position, offer and
+    // token ids are whole numbers — a fractional value after one of
+    // those words is not naming a thing, it is stating a quantity of
+    // one, which is exactly the invented figure the rule forbids.
+    //
+    // Whole DIGITS, not merely "no decimal point": a grouped `1,000`
+    // after an identifier word is not an id either, and ids are not
+    // rendered with separators. Both roles of `.` and `,` are ambiguous
+    // across locales here, so requiring digits only avoids deciding
+    // which is the decimal mark.
+    const integral = /^\p{Nd}+$/u.test(m[0]);
+    if (!trailingTicker && !hugsCurrency && !trailingGlyph && !trailingLower && integral) {
       if (/[#]\s*$/.test(before)) continue;
       if (IDENTIFIER_LEAD.test(before)) continue;
     }
@@ -1559,8 +1573,35 @@ export function forcedCloseVerdict(obs, copy) {
   // Absent `confirmAction` says nothing: an older record predates the
   // field, and inventing a finding from silence is the failure mode this
   // file guards against everywhere else.
-  if (obs.confirmText !== null && obs.confirmText !== undefined && obs.confirmAction) {
+  // ROUND 46 P2 — GATED ON THE PANEL, not on the receipt reading.
+  //
+  // `confirmText` is null whenever any receipt row fails its scan, so a
+  // BROKEN CONFIRM BUTTON plus one bad row suppressed the action finding
+  // entirely and the visit was downgraded to BLOCKED. An incomplete
+  // receipt is a gap in what was read; an unusable transaction button is
+  // a defect that WAS read, and the second must not be hidden by the
+  // first — the same ordering rule this module applies to amounts and
+  // duplicate controls.
+  //
+  // The presence of `confirmAction` IS the panel evidence: the receipt
+  // pass runs only after the Back control was seen, so a record carrying
+  // this field is a record whose confirmation opened.
+  if (obs.confirmAction) {
     const a = obs.confirmAction;
+    // ROUND 46 P2 — TWO ACTIONS BESIDE BACK is a finding in itself, and
+    // ranked ahead of the usability tests below for the same reason the
+    // duplicate-card arm outranks the content scan: the fields describe
+    // the FIRST control, so a clean reading of it says nothing about the
+    // second. One level in from the duplicate-submit rule and the more
+    // dangerous level — these buttons send the transaction rather than
+    // opening a panel.
+    if (typeof a.count === 'number' && a.count > 1) {
+      return {
+        verdict: 'fail',
+        failKind: 'observed',
+        why: `the confirmation offers ${a.count} actions beside Back — the receipt explains one decision while the lender is given more than one way to pay for it, and this drive inspected only the first`,
+      };
+    }
     if (!a.present || !a.visible || !a.enabled || !a.labelled) {
       const why = !a.present
         ? 'no confirmation action was rendered beside Back'
@@ -1572,7 +1613,25 @@ export function forcedCloseVerdict(obs, copy) {
       return {
         verdict: 'fail',
         failKind: 'observed',
-        why: `the confirmation opened and its receipt rendered, but ${why} — the lender is left one click short of the action the card offered`,
+        why: `the confirmation opened but ${why} — the lender is left one click short of the action the card offered`,
+      };
+    }
+    // ROUND 46 P2 — AND IT MUST BE ABLE TO RECEIVE THE CLICK.
+    //
+    // Visible, enabled and labelled are all true of a button covered by
+    // another element, or one under `pointer-events: none`. The lender
+    // cannot activate either, and every field above says the route is
+    // fine. The drive now asks Playwright the actionability question
+    // directly with a TRIAL click, which runs the checks and dispatches
+    // nothing — the only form of this test a watch-only drive may make,
+    // since the real click sends a fee-paying transaction.
+    //
+    // `=== false`, so a record that never ran the trial says nothing.
+    if (a.clickable === false) {
+      return {
+        verdict: 'fail',
+        failKind: 'observed',
+        why: 'the confirmation action is visible and enabled but cannot receive a click — covered by another element, or not accepting pointer events',
       };
     }
   }
