@@ -11910,8 +11910,10 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
   // SCOPE claim the record got wrong, not because each is a separate
   // ingestion path, and a fix should expect three of them to move together.
   //
-  // COUNT THESE FROM THE TREE, NOT FROM THIS COMMENT. It has gone stale six
-  // times, twice while being corrected. The criterion: every test title
+  // COUNT THESE FROM THE TREE, NOT FROM THIS COMMENT. It has gone stale
+  // repeatedly, including while being corrected — and the tally of HOW often
+  // used to sit right here, which made this sentence an instance of the thing
+  // it warns about. The criterion: every test title
   // asserting a wrong verdict contains the lower-case word s-t-a-t-e-d, and
   // no other title does — so counting the titles that contain it gives the
   // number above.
@@ -12219,8 +12221,16 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     //
     // `cmd` treats a trailing backslash as an ordinary character too; its own
     // continuation is `^`, which `foldCaretContinuations` handles. The fold
-    // here comes from the same shared pass as the pwsh case, so a fix aimed
-    // at one dialect fixes neither of them by itself.
+    // here comes from the same shared pass as the pwsh case.
+    //
+    // THE FOUR #2118 PINS SPAN TWO INDEPENDENT DIMENSIONS — dialect (pwsh /
+    // cmd) and host (standalone helper / workflow step) — and the honest
+    // statement about a partial fix is arithmetic, not rhetoric: a fix gated
+    // on EITHER dimension satisfies the two fixtures on its side and leaves
+    // the two on the other still wrong. An earlier version of this comment
+    // said a dialect-gated fix "fixes neither of them", which overstated it
+    // (r43): such a fix really does fix that dialect's helper AND workflow.
+    // Only a correction at the shared line splitter moves all four.
     seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
     seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
     const r = runWith('apps/agent/d.cmd', 'cd apps/agent\necho --keep-vars \\\nwrangler deploy\n');
@@ -12240,9 +12250,12 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     // `shell: pwsh` folds identically — verified, with the control below
     // differing only by the backslash (r28).
     //
-    // Pinned because a fix scoped to standalone helpers would satisfy every
-    // other #2118 fixture and leave this production path green. Same reasoning
-    // as pinning the defect once per dialect.
+    // Pinned because a fix scoped to standalone helpers would satisfy the two
+    // HELPER pins and leave BOTH workflow pins — this one and its cmd sibling
+    // — still green on a production path. An earlier version said such a fix
+    // would satisfy "every other #2118 fixture", which overstated it (r43):
+    // host and dialect are independent, so a host-gated fix moves two of the
+    // four, exactly as a dialect-gated one does.
     seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
     seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
     const r = runWith(
