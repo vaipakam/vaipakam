@@ -292,7 +292,11 @@ export function deploymentBuildCandidates({ deploymentsDir = DEPLOYMENTS_DIR, ca
     }
   }
   if (existsSync(candidatesFile)) {
-    try { for (const c of JSON.parse(readFileSync(candidatesFile, 'utf8')).candidates ?? []) for (const r of c.reasons ?? []) add(c.commit, r, true); } catch { /* an unreadable candidates file adds nothing; --check reports it */ }
+    // an unreadable or malformed candidates file is a FAILURE (#2095 r16 P2): treating it as empty would let --check pass after every committed candidate silently dropped out
+    let parsed;
+    try { parsed = JSON.parse(readFileSync(candidatesFile, 'utf8')); } catch (err) { throw new Error(`${candidatesFile}: unreadable or malformed (${err.message}) — the census's build candidates cannot be checked; restore the file from version control or regenerate it by re-running the census`); }
+    if (!parsed || !Array.isArray(parsed.candidates)) throw new Error(`${candidatesFile}: carries no candidates[] — not a candidates file`);
+    for (const c of parsed.candidates) for (const r of c.reasons ?? []) add(c.commit, r, true);
   }
   // `required`: derived from COMMITTED inputs (a record's stamp, the census's
   // candidates file) — the same on every checkout, so --check may demand them;

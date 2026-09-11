@@ -7,7 +7,7 @@ import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { extractDeclarations, isPrefix, walkProvenance, stripComments, inlineStructsBefore, layoutFingerprint, layoutShapeFingerprint, storagePositionOf, unacknowledgedViolations, isLayoutViolation } from './storage-layout-provenance.mjs';
+import { extractDeclarations, isPrefix, walkProvenance, stripComments, inlineStructsBefore, layoutFingerprint, layoutShapeFingerprint, storagePositionOf, unacknowledgedViolations, isLayoutViolation, changeEventKey } from './storage-layout-provenance.mjs';
 
 const SRC = (extra = '', rowExtra = '') => `
 // SPDX-License-Identifier: MIT
@@ -192,13 +192,15 @@ test('the layout SHAPE ignores names: a rename keeps it, an insertion or a retyp
 test('only layout changes the rule forbids and nobody acknowledged fail the walk (#2095 r13 P1)', () => {
   const A = 'a'.repeat(40); const B = 'b'.repeat(40); const C = 'c'.repeat(40);
   const events = [
-    { commit: A, struct: 'Storage', kind: 'insertion', firstDifferentIndex: 3 },
-    { commit: B, struct: 'Storage', kind: 'append', firstDifferentIndex: 300 },     // a Storage append is allowed
-    { commit: B, struct: 'ProtocolConfig', kind: 'append', firstDifferentIndex: 9 }, // an inline-struct append shifts fields: forbidden
-    { commit: C, struct: 'Storage', kind: 'removal', firstDifferentIndex: 56 },
+    { commit: A, struct: 'Storage', kind: 'insertion', firstDifferentIndex: 3, before: 'uint256 a', after: 'uint256 x' },
+    { commit: B, struct: 'Storage', kind: 'append', firstDifferentIndex: 300, before: '(end)', after: 'uint256 z' },     // a Storage append is allowed
+    { commit: B, struct: 'ProtocolConfig', kind: 'append', firstDifferentIndex: 9, before: '(end)', after: 'bool f' }, // an inline-struct append shifts fields: forbidden
+    { commit: C, struct: 'Storage', kind: 'removal', firstDifferentIndex: 56, before: 'uint256 g', after: 'uint256 h' },
   ];
   assert.deepEqual(events.map(isLayoutViolation), [true, false, true, true]);
-  const un = unacknowledgedViolations(events, { acknowledged: [{ commit: A, struct: 'Storage', reason: 'historical' }, { commit: C, struct: 'Storage', reason: 'historical' }] });
+  // acknowledgements are keyed by the change's CONTENT, so a squash merge (a new commit, the same change) still matches
+  const ack = { acknowledged: [{ key: changeEventKey(events[0]), reason: 'historical' }, { key: changeEventKey({ ...events[3], commit: 'd'.repeat(40) }), reason: 'historical' }] };
+  const un = unacknowledgedViolations(events, ack);
   assert.deepEqual(un.map((e) => `${e.struct} ${e.kind}`), ['ProtocolConfig append'], 'the inline-struct append at B is the one unacknowledged change');
   assert.equal(unacknowledgedViolations(events, null).length, 3, 'no acknowledgement file: every forbidden change counts');
 });

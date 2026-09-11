@@ -74,9 +74,11 @@ test('deployment build candidates: recorded commits, the main commits around eac
   assert.deepEqual(byCommit[c3].sort(), ['first main commit after x-chain/live\'s deployedAt 2026-05-02T12:00:00Z', 'last main commit at or before y-chain (live)\'s cut at block 5']);
   assert.deepEqual(byCommit[bx], ['last commit at or before, on origin/feat/x x-chain/live\'s deployedAt 2026-05-02T12:00:00Z']);
   assert.deepEqual(out.filter((c) => c.required).map((c) => c.commit).sort(), [c1, c3].sort(), 'the recorded commit and the census\'s candidate are required; ref-derived ones are advisory');
-  // a malformed candidates file adds nothing rather than throwing
+  // a malformed candidates file is a failure, never an empty set (#2095 r16 P2)
   writeFileSync(cf, '{nope');
-  assert.deepEqual(deploymentBuildCandidates({ deploymentsDir: dep, candidatesFile: cf, repo, ref: 'HEAD' }).map((c) => c.commit).sort(), [c1, c2, c3, bx].sort());
+  assert.throws(() => deploymentBuildCandidates({ deploymentsDir: dep, candidatesFile: cf, repo, ref: 'HEAD' }), /unreadable or malformed/);
+  writeFileSync(cf, JSON.stringify({ purpose: 'x' }));
+  assert.throws(() => deploymentBuildCandidates({ deploymentsDir: dep, candidatesFile: cf, repo, ref: 'HEAD' }), /carries no candidates/);
 });
 
 test('a pruned cut block gets an estimated timestamp between two anchors (#2095 r9)', () => {

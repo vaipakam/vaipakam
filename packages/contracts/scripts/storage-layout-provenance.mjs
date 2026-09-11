@@ -397,9 +397,17 @@ export const GATED_CHANGE_KINDS = new Set(['insertion', 'removal', 'retype-or-sw
 export function isLayoutViolation(e) {
   return GATED_CHANGE_KINDS.has(e.kind) || (e.kind === 'append' && e.struct !== 'Storage');
 }
+/**
+ * The squash-stable identity of a change event (#2095 r16 P2): its content —
+ * struct, kind, index, the declaration before and after — never the commit,
+ * which a squash merge rewrites while the change itself is unchanged.
+ */
+export function changeEventKey(e) {
+  return `${e.struct}|${e.kind}|${e.firstDifferentIndex}|${e.before ?? ''}|${e.after ?? ''}`;
+}
 export function unacknowledgedViolations(changeEvents, ack) {
-  const acked = new Set((ack?.acknowledged ?? []).map((a) => `${a.commit}|${a.struct}`));
-  return (changeEvents ?? []).filter((e) => isLayoutViolation(e) && !acked.has(`${e.commit}|${e.struct}`));
+  const acked = new Set((ack?.acknowledged ?? []).map((a) => a.key ?? changeEventKey(a)));
+  return (changeEvents ?? []).filter((e) => isLayoutViolation(e) && !acked.has(changeEventKey(e)));
 }
 
 function main() {

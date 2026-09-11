@@ -439,7 +439,12 @@ function recordBuildCandidates(candidates) {
   if (!candidates.length) return 0;
   let current = { candidates: [] };
   let currentText = null;
-  try { currentText = readFileSync(CANDIDATES_FILE, 'utf8'); current = JSON.parse(currentText); } catch { current = { candidates: [] }; currentText = null; }
+  try { currentText = readFileSync(CANDIDATES_FILE, 'utf8'); } catch { currentText = null; }
+  if (currentText !== null) {
+    // present but unreadable: refuse rather than overwrite committed candidates as if there were none (#2095 r16 P2)
+    try { current = JSON.parse(currentText); } catch (err) { throw new Error(`${CANDIDATES_FILE} is present but malformed (${err.message}); refusing to overwrite it — restore it from version control`); }
+    if (!current || !Array.isArray(current.candidates)) throw new Error(`${CANDIDATES_FILE} carries no candidates[]; refusing to overwrite it`);
+  }
   const canon = (r) => String(r).replace(/'s cut of 0x[0-9a-fA-F]{40} at block/, "'s cut at block");
   const byCommit = new Map((current.candidates ?? []).map((c) => [c.commit, new Set((c.reasons ?? []).map(canon))]));
   let added = 0;
