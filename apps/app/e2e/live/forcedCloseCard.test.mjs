@@ -3008,3 +3008,170 @@ describe('round 41 review findings', () => {
     });
   });
 });
+
+describe('rounds 42–43 review findings', () => {
+  const copy = {
+    unknownCopy: FORCED_CLOSE.unknown,
+    readyCopy: [FORCED_CLOSE.readyInKind, FORCED_CLOSE.readyInternalMatch, FORCED_CLOSE.readyRental],
+    withheldCopy: [FORCED_CLOSE.unknown, FORCED_CLOSE.notYet, FORCED_CLOSE.readyNeedsRoute],
+    recognisedCopy: [
+      FORCED_CLOSE.unknown,
+      FORCED_CLOSE.notYet,
+      FORCED_CLOSE.blockedPaused,
+      FORCED_CLOSE.blockedSequencer,
+      FORCED_CLOSE.blockedNoConsent,
+      FORCED_CLOSE.readyInKind,
+      FORCED_CLOSE.readyInternalMatch,
+      FORCED_CLOSE.readyRental,
+      FORCED_CLOSE.readyNeedsRoute,
+    ],
+    receiptLeads: [FORCED_CLOSE.receipt.youReceive, FORCED_CLOSE.rentalReceipt.youReceive],
+  };
+
+  // I placed the scrape-failed arm FIRST when I added it, reasoning that
+  // every arm below reasons from an observation. True of an INITIAL
+  // failure, false of a mid-poll one: the loop's exit deliberately
+  // carries the texts, both peaks and the hidden-body latch, so evidence
+  // already collected was discarded and a confirmed funds defect became
+  // exit 2 — the very downgrade rounds 38–39 existed to prevent.
+  describe('a scrape that failed AFTER something was seen', () => {
+    const failed = {
+      lenderHoldsActive: true,
+      mounted: true,
+      attached: true,
+      scrapeFailed: true,
+      saleLocked: false,
+      settled: false,
+      text: null,
+      bodyText: null,
+      bodyPresent: undefined,
+      confirmText: null,
+      confirmExpected: false,
+      seenTexts: [],
+      visibleCards: 0,
+    };
+
+    it('reports an amount it had already read', () => {
+      const v = forcedCloseVerdict(
+        { ...failed, seenTexts: ['You will receive 1.5 WETH.'] },
+        copy,
+      );
+      expect(v.verdict).toBe('fail');
+      expect(v.failKind).toBe('observed');
+    });
+
+    it('reports a duplicate control it had already counted', () => {
+      const v = forcedCloseVerdict({ ...failed, visibleSubmitsPeak: 2 }, copy);
+      expect(v.verdict).toBe('fail');
+    });
+
+    it('reports a hidden body it had already seen', () => {
+      const v = forcedCloseVerdict({ ...failed, bodyHiddenSeen: true }, copy);
+      expect(v.verdict).toBe('fail');
+    });
+
+    it('is INCOMPLETE when nothing had been seen', () => {
+      const v = forcedCloseVerdict(failed, copy);
+      expect(v.verdict).toBe('blocked');
+      expect(v.blockedKind).toBe('incomplete');
+    });
+
+    it('is still not turned into a missing-card FAIL', () => {
+      expect(forcedCloseVerdict(failed, copy).why).not.toMatch(/absent/);
+    });
+  });
+
+  describe('a lower-case denomination is an amount, not an identifier', () => {
+    it('flags the denominations `isTicker` cannot reach', () => {
+      expect(monetaryAmountsIn('Loan 100 eth')).toHaveLength(1);
+      expect(monetaryAmountsIn('Position 2 wei')).toHaveLength(1);
+      expect(monetaryAmountsIn('Loan 5 gwei')).toHaveLength(1);
+      expect(monetaryAmountsIn('Token 9 btc')).toHaveLength(1);
+    });
+
+    // The reason the list is short. `isTicker`'s uppercase-run rule is
+    // what separates a ticker from prose; lower case has no such shape,
+    // so only membership distinguishes `eth` from `is`. Reaching further
+    // starts matching ordinary words.
+    it('does not fire on ordinary prose after a figure', () => {
+      expect(monetaryAmountsIn('Loan 100 is overdue.')).toEqual([]);
+      expect(monetaryAmountsIn('The grace period is 3 days.')).toEqual([]);
+      expect(monetaryAmountsIn('Settles within 5 blocks.')).toEqual([]);
+      expect(monetaryAmountsIn('Closing out Loan 21 now.')).toEqual([]);
+    });
+
+    // THE BOUNDARY, and my first version of this fix broke it. I read
+    // the unit from `trailing`, whose `\s*` crosses a newline, and
+    // case-folded it — so `Loan 21\nUSDC is lent` matched `usdc` and
+    // cancelled the exemption on an unrelated next line. Round 24's
+    // existing case caught it immediately.
+    //
+    // The rule now: a WORD may not be attached across a line break,
+    // because it may be ordinary prose there. A SYMBOL may, because it
+    // is never prose — which is why the currency and glyph tests
+    // deliberately do cross one.
+    it('does not attach a denomination across a rendered line break', () => {
+      expect(monetaryAmountsIn('Loan 21\neth is lent')).toEqual([]);
+      expect(monetaryAmountsIn('Loan 21\nUSDC is lent')).toEqual([]);
+      expect(monetaryAmountsIn('Wait 3 days\nUSDC later')).toEqual([]);
+    });
+
+    it('still reaches a denomination past punctuation on the same line', () => {
+      expect(monetaryAmountsIn('Loan 100 (eth)')).toHaveLength(1);
+    });
+  });
+
+  describe('the rental confirmation has its own receipt lead', () => {
+    const shown = {
+      lenderHoldsActive: true,
+      mounted: true,
+      attached: true,
+      submitPresent: true,
+      submitVisible: true,
+      submitDisabled: false,
+      visibleSubmits: 1,
+      visibleCards: 1,
+      saleLocked: false,
+      settled: true,
+      bodyPresent: true,
+      bodyText: FORCED_CLOSE.readyRental,
+      text: FORCED_CLOSE.readyRental,
+      confirmExpected: true,
+    };
+
+    // `ForcedCloseCard` renders `rentalReceipt` on `ready-rental`, and
+    // its `youReceive` is an entirely different sentence. Supplying only
+    // the ordinary lead reported a correct rental confirmation as
+    // incomplete — a FALSE coverage gap on the one route already
+    // recorded as uncovered, where nobody would have questioned it.
+    it('accepts a confirmation carrying the RENTAL lead', () => {
+      const v = forcedCloseVerdict(
+        { ...shown, confirmText: `${FORCED_CLOSE.rentalReceipt.youReceive} …` },
+        copy,
+      );
+      expect(v.verdict).toBe('pass');
+    });
+
+    it('still accepts the ordinary lead', () => {
+      const v = forcedCloseVerdict(
+        { ...shown, confirmText: `${FORCED_CLOSE.receipt.youReceive} …` },
+        copy,
+      );
+      expect(v.verdict).toBe('pass');
+    });
+
+    it('still BLOCKS a confirmation shell carrying neither', () => {
+      const v = forcedCloseVerdict({ ...shown, confirmText: 'Back' }, copy);
+      expect(v.verdict).toBe('blocked');
+      expect(v.blockedKind).toBe('incomplete');
+    });
+
+    it('accepts the singular `receiptLead` from an older record', () => {
+      const v = forcedCloseVerdict(
+        { ...shown, confirmText: `${FORCED_CLOSE.receipt.youReceive} …` },
+        { ...copy, receiptLeads: undefined, receiptLead: FORCED_CLOSE.receipt.youReceive },
+      );
+      expect(v.verdict).toBe('pass');
+    });
+  });
+});

@@ -86,6 +86,9 @@ test('both copies of the drive visibility predicate agree, and reject clipped co
     <div id="trimmer" style="height:19px; overflow:hidden">
       <p id="trimmed" style="height:20px; margin:0">clipped by one pixel, still readable</p>
     </div>
+    <div id="halfLines" style="height:20px; overflow:hidden; width:200px; font:16px/20px monospace">
+      <p id="twoLines" style="margin:0">first line visible<br>second line clipped away</p>
+    </div>
     <dl class="receipt">
       <div class="receipt-row" id="ghostRow">
         <dt style="color: transparent">Fees</dt>
@@ -114,6 +117,7 @@ test('both copies of the drive visibility predicate agree, and reject clipped co
           repaintedChild: visible(byId('repainted')),
           slivered: visible(byId('slivered')),
           trimmed: visible(byId('trimmed')),
+          twoLines: visible(byId('twoLines')),
           plain: visible(byId('plain')),
           scrolledOut: visible(byId('scrolledOut')),
           // Recorded so a future failure says WHICH branch ran. The
@@ -154,6 +158,13 @@ test('both copies of the drive visibility predicate agree, and reject clipped co
     // tightened into a false failure: a row clipped by a single pixel is
     // still a row the lender can read.
     expect(result.trimmed, `copy ${i}: clipped by one pixel`).toBe(true);
+    // Half of a TWO-LINE leaf surviving is not the leaf being readable:
+    // it is one whole line on screen and one whole line gone, and
+    // `innerText` yields both. The element-level ratio accepted this at
+    // exactly 50%; the per-line rule does not.
+    expect(result.twoLines, `copy ${i}: a two-line value with line two clipped`).toBe(
+      false,
+    );
     // The deliberate limit of the rule, pinned so it cannot be tightened
     // by accident: content merely scrolled out of a scroll container is
     // reachable, and condemning it would be a false failure — the

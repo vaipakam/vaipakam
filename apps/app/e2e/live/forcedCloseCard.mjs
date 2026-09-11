@@ -108,6 +108,32 @@ const IDENTIFIER_LEAD = /\b(loan|position|offer|token|id|no|number|nft|item)\s*$
 const ASSET_GLYPH = /[\u039E\u03BE\u0243\u00D0\u25CE]/u;
 
 /**
+ * Lower-case DENOMINATIONS, which `isTicker` cannot reach.
+ *
+ * ROUND 43 P2. `isTicker` requires an internal uppercase RUN, and that
+ * requirement is doing real work: it is what separates `stETH` from the
+ * ordinary words that follow numbers in prose (`1 lender`, `2 rows`).
+ * Lower-case denominations have no such shape, so `Loan 100 eth` and
+ * `Position 2 wei` fell through the identifier exemption as reference
+ * numbers — the commonest way an ether figure is actually written.
+ *
+ * A HAND-LIST, and unlike the ticker test it cannot be anything else.
+ * The module's rule is "a list of shapes rather than a list of assets",
+ * and that rule is about the UPPERCASE test, which has a shape to key
+ * on. Here there is none: `eth` and `is` are the same shape, so only
+ * membership distinguishes them. Kept to DENOMINATIONS and the majors
+ * rather than every ticker, because the further this reaches the closer
+ * it comes to matching ordinary words — `sol` is a Spanish noun, and
+ * Spanish ships.
+ *
+ * The residual is stated rather than hidden: a lower-case unit not
+ * listed is missed. The all-locale calibration is the guard — a shipped
+ * string carrying one fails there, on named copy, rather than
+ * surprising a live run.
+ */
+const LOWERCASE_ASSET_UNIT = /^(eth|weth|wei|gwei|btc|wbtc|sats|usdc|usdt|dai)$/;
+
+/**
  * Wording that asserts the protocol has REFUSED, as opposed to the app
  * not yet knowing. Checked only against a card that is simultaneously
  * reporting a check in flight, so this is a contradiction test rather
@@ -434,7 +460,36 @@ export function monetaryAmountsIn(text) {
     // three locales at once — the false-FAIL direction, on the exemption
     // the spec explicitly protects.
     const trailingGlyph = ASSET_GLYPH.test(after.replace(/^[\s(\[{:,;«»"'‘’“”)\]}\u2013\u2014-]*/, '').slice(0, 2));
-    if (!trailingTicker && !hugsCurrency && !trailingGlyph) {
+    // ROUND 43 P2 — a lower-case denomination counts too, and it is read
+    // from a CLAUSE-BOUNDED lookahead rather than from `trailing`.
+    //
+    // My first version used `trailing[1]` and lower-cased it, which
+    // broke round 24's case on the spot: `trailing`'s `\s*` crosses a
+    // newline, and `innerText` puts a newline between rendered elements
+    // — so `Loan 21\nUSDC is lent` matched `usdc` after case-folding and
+    // cancelled the identifier exemption on an unrelated next line. The
+    // fix for reaching across a boundary, reaching across a boundary.
+    //
+    // Two corrections, and the second is the principled one:
+    //
+    //   - no case folding. The finding is about LOWER-CASE units;
+    //     `USDC` is already `isTicker`'s job, and that path respects the
+    //     clause boundary through `hasTickerNear`.
+    //   - the same clause split `hasTickerNear` uses, because a WORD may
+    //     be ordinary prose on the next line and must not be attached
+    //     across the break.
+    //
+    // That is the line between this and the currency/glyph tests, which
+    // DO cross a newline deliberately: a symbol is never prose, so one
+    // sitting after a figure belongs to it wherever it is rendered. A
+    // word is not, so it does not.
+    const firstWordAfter = (() => {
+      const clause = String(after).split(/[\n.;!?—–]|,\s/)[0] ?? '';
+      const w = clause.match(/^[\s(\[{:,;«»"'‘’“”)\]}\u2013\u2014-]*([A-Za-z][A-Za-z0-9]*)/);
+      return w ? w[1] : '';
+    })();
+    const trailingLower = LOWERCASE_ASSET_UNIT.test(firstWordAfter);
+    if (!trailingTicker && !hugsCurrency && !trailingGlyph && !trailingLower) {
       if (/[#]\s*$/.test(before)) continue;
       if (IDENTIFIER_LEAD.test(before)) continue;
     }
@@ -769,24 +824,6 @@ export function forcedCloseVerdict(obs, copy) {
   // observed — downgrading it to `blocked` because a LATER, narrower
   // read failed reports "we could not check" about something we did
   // check.
-  // 0. THE SCRAPE ITSELF DID NOT RUN (round 41 P2).
-  //
-  // `readForcedCloseCard` used to return the same `null` for "the DOM
-  // pass found no card" and "the DOM pass threw", so a helper error or a
-  // destroyed execution context was judged as a vanished card — accusing
-  // an eligible product of omitting the surface, or being explained away
-  // by an accepted sale. Neither describes the page. Nothing was seen.
-  //
-  // First, because every arm below reasons from an observation and this
-  // record is the absence of one.
-  if (obs.scrapeFailed) {
-    return {
-      verdict: 'blocked',
-      blockedKind: 'incomplete',
-      why: 'the DOM pass over the card could not be completed — nothing was observed, so neither its content nor its absence says anything about the page',
-    };
-  }
-
   // 1-pre. THE AMOUNT EVIDENCE IS GATHERED HERE; WHERE IT IS REPORTED
   //        depends on whether a card rendered (round 33 P2).
   //
@@ -867,7 +904,12 @@ export function forcedCloseVerdict(obs, copy) {
     amounts,
   });
 
-  if (obs.mounted) {
+  // A FAILED SCRAPE IS NOT A MOUNTED CARD WITH UNREADABLE TEXT. Its
+  // record carries `mounted: true` so the absence rules below cannot
+  // turn it into a missing-card FAIL, but arm 1a would describe it as
+  // "the card was visible but its text could not be read" — a statement
+  // about the page, when the truth is that the pass never ran.
+  if (obs.mounted && !obs.scrapeFailed) {
     // 1a. Nothing was read at all. `text: null` is not empty text: the
     //     card can unmount, or the locator read time out, after the
     //     visibility wait. Coercing that to '' reported an empty-card
@@ -1064,13 +1106,13 @@ export function forcedCloseVerdict(obs, copy) {
   // eligibility suppressing a POSITIVE finding is not. The duplicate-card
   // arms are not a concern here — no card rendered, so there is no
   // partly-read surface to misrepresent.
-  if (!obs.mounted && amounts.length > 0) return amountFinding();
+  if ((!obs.mounted || obs.scrapeFailed) && amounts.length > 0) return amountFinding();
 
   // 1-post-2. The duplicate the poll saw, on a record where no card
   //           survived to be counted (round 35 P2). Same reasoning as
   //           the arm inside the mounted block; the card vanishing
   //           afterwards does not unsee it.
-  if (!obs.mounted && typeof obs.visibleCardsPeak === 'number' && obs.visibleCardsPeak > 1) {
+  if ((!obs.mounted || obs.scrapeFailed) && typeof obs.visibleCardsPeak === 'number' && obs.visibleCardsPeak > 1) {
     return {
       verdict: 'fail',
       failKind: 'observed',
@@ -1089,7 +1131,7 @@ export function forcedCloseVerdict(obs, copy) {
   // accepted sale the verdict returned `inapplicable` — reporting nothing
   // to see about a lender who had been offered the same fee-paying action
   // twice.
-  if (!obs.mounted && typeof obs.visibleSubmitsPeak === 'number' && obs.visibleSubmitsPeak > 1) {
+  if ((!obs.mounted || obs.scrapeFailed) && typeof obs.visibleSubmitsPeak === 'number' && obs.visibleSubmitsPeak > 1) {
     return {
       verdict: 'fail',
       failKind: 'observed',
@@ -1226,11 +1268,39 @@ export function forcedCloseVerdict(obs, copy) {
   //
   // `=== true`, so a record predating the field says nothing rather than
   // manufacturing a finding.
-  if (!obs.mounted && obs.bodyHiddenSeen === true) {
+  if ((!obs.mounted || obs.scrapeFailed) && obs.bodyHiddenSeen === true) {
     return {
       verdict: 'fail',
       failKind: 'observed',
       why: 'a render this drive read had its explanatory body present but not visible — the lender was shown the heading and no reason, whether or not the card settled that way',
+    };
+  }
+
+  // 1-post-6. THE SCRAPE ITSELF DID NOT RUN (round 41 P2, REPOSITIONED
+  //           by round 42 P2).
+  //
+  // I put this arm FIRST when I added it, reasoning that every arm below
+  // reasons from an observation and this record is the absence of one.
+  // That is true of an INITIAL scrape failure and false of a mid-poll
+  // one: the loop's exit deliberately carries `seenTexts`, both peaks
+  // and `bodyHiddenSeen`, so a card already observed stating a forbidden
+  // amount, showing duplicate controls, or hiding its body had that
+  // evidence discarded and the run downgraded to exit 2. My own fix
+  // turned a confirmed funds defect into "nothing was learned" — the
+  // exact failure the exit-ranking work of rounds 38–39 was about.
+  //
+  // One position serves both cases. An initial failure carries no
+  // accumulated evidence, so the arms above find nothing and fall
+  // through to here; a later failure is judged on what was seen first.
+  //
+  // Still ABOVE applicability and absence: a scrape that did not run
+  // must never become a missing-card FAIL, and must not be explained
+  // away by an accepted sale either.
+  if (obs.scrapeFailed) {
+    return {
+      verdict: 'blocked',
+      blockedKind: 'incomplete',
+      why: 'the DOM pass over the card could not be completed — nothing further was observed, so neither its content nor its absence says anything about the page',
     };
   }
 
@@ -1425,8 +1495,32 @@ export function forcedCloseVerdict(obs, copy) {
   //
   // The receipt's own `youReceive` line is the positive evidence, taken
   // from the shipped bundle so there is no second copy to drift.
-  if (obs.confirmText !== null && obs.confirmText !== undefined && copy?.receiptLead) {
-    if (!obs.confirmText.includes(copy.receiptLead)) {
+  // ROUND 43 P2 — EITHER LEGITIMATE RECEIPT LEAD, because there are two.
+  //
+  // `ForcedCloseCard` renders `rentalReceipt` rather than `receipt` on
+  // `ready-rental`, and the two `youReceive` strings are entirely
+  // different — one describes collateral or the lent asset, the other
+  // the prepaid rent and an NFT that stays put. Supplying only the
+  // ordinary lead meant a rental confirmation could render all six rows
+  // correctly and still be reported `blocked/incomplete`: a FALSE gap in
+  // coverage on the one route this drive already records as uncovered,
+  // which is the worst place for it — nobody would have questioned an
+  // `incomplete` there.
+  //
+  // Accepting EITHER rather than selecting by readiness, deliberately.
+  // The observation carries no readiness field, and adding one to pick
+  // the lead would make this arm depend on a value the DOM pass infers
+  // from prose. Both strings are legitimate receipt leads; what this arm
+  // establishes is that the panel rendered its receipt at all, and
+  // either one proves that.
+  //
+  // `receiptLeads` plural. The singular `receiptLead` is still accepted
+  // so an older constructed record keeps working.
+  const leads = Array.isArray(copy?.receiptLeads)
+    ? copy.receiptLeads.filter((lead) => typeof lead === 'string' && lead !== '')
+    : [copy?.receiptLead].filter((lead) => typeof lead === 'string' && lead !== '');
+  if (obs.confirmText !== null && obs.confirmText !== undefined && leads.length > 0) {
+    if (!leads.some((lead) => obs.confirmText.includes(lead))) {
       return {
         verdict: 'blocked',
         blockedKind: 'incomplete',

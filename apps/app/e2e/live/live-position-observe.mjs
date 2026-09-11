@@ -508,7 +508,16 @@ const FORCED_CLOSE_COPY = (() => {
     ],
     // ROUND 7 P2 — positive evidence that the RECEIPT rendered, not
     // merely that its shell opened.
-    receiptLead: need(fc.receipt?.youReceive, 'receipt.youReceive'),
+    // ROUND 43 P2 — BOTH receipts. `ready-rental` renders
+    // `rentalReceipt`, whose `youReceive` is an entirely different
+    // sentence, so supplying only the ordinary lead reported a correct
+    // rental confirmation as incomplete. `need` on both, so a missing
+    // one is a loud startup failure rather than a silently narrower
+    // check.
+    receiptLeads: [
+      need(fc.receipt?.youReceive, 'receipt.youReceive'),
+      need(fc.rentalReceipt?.youReceive, 'rentalReceipt.youReceive'),
+    ],
   };
 })();
 /**
@@ -3270,13 +3279,46 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
             const scrollsX =
               (cs.overflowX === 'auto' || cs.overflowX === 'scroll') &&
               n.scrollWidth > n.clientWidth;
-            if (clipsY && !scrollsY && r.height > 0) {
-              const shown = Math.min(r.bottom, box.bottom) - Math.max(r.top, box.top);
-              if (shown / r.height < 0.5) return false;
-            }
-            if (clipsX && !scrollsX && r.width > 0) {
-              const shown = Math.min(r.right, box.right) - Math.max(r.left, box.left);
-              if (shown / r.width < 0.5) return false;
+            // ROUND 43 P2 — PER LINE, not per element.
+            //
+            // The half-of-the-element rule reads a MULTI-LINE leaf as visible
+            // whenever half of it survives — so a two-line value with its second
+            // line entirely clipped passes at exactly 50%, `innerText` yields
+            // both lines, and the run records a lender as having read a
+            // disclosure whose second half is not on screen. On this surface the
+            // clipped half is as likely as not to be the one carrying the
+            // consequence.
+            //
+            // A Range over the node's own text yields one client rect per LINE
+            // BOX, which is the unit a reader actually consumes. Every line must
+            // clear the same half-visible bar the element used to clear as a
+            // whole — so a descender trimmed by a pixel still passes (that line
+            // is ~95% shown) while a line that is wholly outside does not.
+            //
+            // Falls back to the element rect when there is no text to measure —
+            // a spacer, an icon, a wrapper — since a Range over nothing yields
+            // no rects and "no rects" must not read as "nothing is visible".
+            const boxes = (() => {
+              try {
+                const range = document.createRange();
+                range.selectNodeContents(node);
+                const rects = [...range.getClientRects()].filter(
+                  (q) => q.width > 0 && q.height > 0,
+                );
+                return rects.length > 0 ? rects : [r];
+              } catch {
+                return [r];
+              }
+            })();
+            for (const q of boxes) {
+              if (clipsY && !scrollsY && q.height > 0) {
+                const shown = Math.min(q.bottom, box.bottom) - Math.max(q.top, box.top);
+                if (shown / q.height < 0.5) return false;
+              }
+              if (clipsX && !scrollsX && q.width > 0) {
+                const shown = Math.min(q.right, box.right) - Math.max(q.left, box.left);
+                if (shown / q.width < 0.5) return false;
+              }
             }
           }
           return true;
@@ -4039,13 +4081,46 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
                 const scrollsX =
                   (cs.overflowX === 'auto' || cs.overflowX === 'scroll') &&
                   n.scrollWidth > n.clientWidth;
-                if (clipsY && !scrollsY && r.height > 0) {
-                  const shown = Math.min(r.bottom, box.bottom) - Math.max(r.top, box.top);
-                  if (shown / r.height < 0.5) return false;
-                }
-                if (clipsX && !scrollsX && r.width > 0) {
-                  const shown = Math.min(r.right, box.right) - Math.max(r.left, box.left);
-                  if (shown / r.width < 0.5) return false;
+                // ROUND 43 P2 — PER LINE, not per element.
+                //
+                // The half-of-the-element rule reads a MULTI-LINE leaf as visible
+                // whenever half of it survives — so a two-line value with its second
+                // line entirely clipped passes at exactly 50%, `innerText` yields
+                // both lines, and the run records a lender as having read a
+                // disclosure whose second half is not on screen. On this surface the
+                // clipped half is as likely as not to be the one carrying the
+                // consequence.
+                //
+                // A Range over the node's own text yields one client rect per LINE
+                // BOX, which is the unit a reader actually consumes. Every line must
+                // clear the same half-visible bar the element used to clear as a
+                // whole — so a descender trimmed by a pixel still passes (that line
+                // is ~95% shown) while a line that is wholly outside does not.
+                //
+                // Falls back to the element rect when there is no text to measure —
+                // a spacer, an icon, a wrapper — since a Range over nothing yields
+                // no rects and "no rects" must not read as "nothing is visible".
+                const boxes = (() => {
+                  try {
+                    const range = document.createRange();
+                    range.selectNodeContents(node);
+                    const rects = [...range.getClientRects()].filter(
+                      (q) => q.width > 0 && q.height > 0,
+                    );
+                    return rects.length > 0 ? rects : [r];
+                  } catch {
+                    return [r];
+                  }
+                })();
+                for (const q of boxes) {
+                  if (clipsY && !scrollsY && q.height > 0) {
+                    const shown = Math.min(q.bottom, box.bottom) - Math.max(q.top, box.top);
+                    if (shown / q.height < 0.5) return false;
+                  }
+                  if (clipsX && !scrollsX && q.width > 0) {
+                    const shown = Math.min(q.right, box.right) - Math.max(q.left, box.left);
+                    if (shown / q.width < 0.5) return false;
+                  }
                 }
               }
               return true;
