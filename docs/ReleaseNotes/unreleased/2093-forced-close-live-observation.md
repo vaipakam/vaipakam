@@ -134,7 +134,12 @@ reason that was not true, and the run would still pass. The check is
 careful about which wordings it judges: only the ones that assert the
 protocol refuses, never the ones that say the app does not yet know or
 cannot arrange a settlement, because those can be perfectly true at the
-same moment.
+same moment. Both of those readings require the protocol's answer to have
+held still: the check asks before and after it reads the page, and where
+the two answers differ it reports that the window was not quiet rather
+than judging the card on an answer taken at a different moment. That rule
+applied only to cards offering the action until now; it applies to
+withheld ones as well.
 
 The confirmation's Back button is checked as well. It is the one control
 on a pre-signature panel whose whole purpose is to let the lender decide

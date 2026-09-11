@@ -2575,6 +2575,37 @@ export function forcedCloseVerdict(obs, copy) {
       };
     }
   }
+  // SELF-REVIEW — AND A BRACKET THAT ANSWERED TWICE, DIFFERENTLY, IS NOT
+  // A PASS EITHER.
+  //
+  // Found by enumerating the withheld-card arms as a matrix rather than
+  // reading them one at a time. Between them the three arms around this
+  // one cover `true`/`true`, either end `undefined`, and `false`/`false`
+  // — and nothing covers the two DISAGREEING combinations. A card
+  // painting `blocked-paused` while the protocol crossed its grace
+  // deadline mid-observation fell all the way through to `pass`, with
+  // the run exiting clean on a bracket that never settled.
+  //
+  // The `bracketDisagrees` arm further down does not cover it: that one
+  // is scoped to `readyOffered`, which is false by construction here.
+  // This is the withheld mirror of it, and it says the same thing — the
+  // window was not quiet, so the render cannot be paired with a chain
+  // answer, in EITHER direction. Guessing which end was true would
+  // manufacture a verdict out of a race, the error rounds 55 and 56
+  // spent themselves arguing against on the ready side.
+  if (!actionOffered && bracketDisagrees && Array.isArray(copy?.refusalStateCopy)) {
+    const claimed = copy.refusalStateCopy.find((sentence) => paints(sentence));
+    if (claimed) {
+      return {
+        verdict: 'blocked',
+        blockedKind: 'incomplete',
+        why:
+          obs.defaultable === true
+            ? `the card withholds the action and states a specific reason ("${claimed}"), and the protocol went from refusing this close-out to permitting it while the card was being observed — the withheld render cannot be matched to a chain answer taken at the same moment`
+            : `the card withholds the action and states a specific reason ("${claimed}"), and the protocol went from permitting this close-out to refusing it while the card was being observed — the withheld render cannot be matched to a chain answer taken at the same moment`,
+      };
+    }
+  }
   if (
     !actionOffered &&
     obs.defaultable === false &&

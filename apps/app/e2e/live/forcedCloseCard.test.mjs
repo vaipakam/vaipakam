@@ -5506,6 +5506,65 @@ describe('round 67 review findings', () => {
       expect(v.why ?? '').not.toMatch(/establishes THAT and not WHY/);
     });
   });
+
+  // SELF-REVIEW — the withheld arms read as a MATRIX rather than one at
+  // a time. `true`/`true`, either end `undefined` and `false`/`false` are
+  // each covered; the two DISAGREEING combinations were not, and fell
+  // through to a clean pass on a bracket that never settled.
+  describe('a bracket that answered twice, differently', () => {
+    it('reports INCOMPLETE when the protocol became permitting mid-observation', () => {
+      const v = forcedCloseVerdict(
+        card(FORCED_CLOSE.title, FORCED_CLOSE.blockedPaused, {
+          defaultable: true,
+          defaultableBefore: false,
+        }),
+        copy,
+      );
+      expect(v.verdict).toBe('blocked');
+      expect(v.blockedKind).toBe('incomplete');
+      expect(v.why).toMatch(/withholds the action and states a specific reason/);
+      expect(v.why).toMatch(/from refusing this close-out to permitting it/);
+    });
+
+    it('reports INCOMPLETE in the reverse direction too', () => {
+      const v = forcedCloseVerdict(
+        card(FORCED_CLOSE.title, FORCED_CLOSE.blockedPaused, {
+          defaultable: false,
+          defaultableBefore: true,
+        }),
+        copy,
+      );
+      expect(v.verdict).toBe('blocked');
+      expect(v.blockedKind).toBe('incomplete');
+      expect(v.why).toMatch(/from permitting this close-out to refusing it/);
+    });
+
+    it('judges the claim from PAINTED copy', () => {
+      // A refusal erased in the DOM was never made to the lender, so
+      // there is nothing here that went unestablished.
+      const v = forcedCloseVerdict(
+        card(FORCED_CLOSE.title, FORCED_CLOSE.blockedPaused, {
+          visibleText: `${FORCED_CLOSE.title} ${FORCED_CLOSE.unknown}`,
+          bodyVisibleText: FORCED_CLOSE.unknown,
+          defaultable: true,
+          defaultableBefore: false,
+        }),
+        copy,
+      );
+      expect(v.why ?? '').not.toMatch(/withholds the action and states a specific reason/);
+    });
+
+    it('leaves the three settled brackets to their own arms', () => {
+      const at = (defaultable, defaultableBefore) =>
+        forcedCloseVerdict(
+          card(FORCED_CLOSE.title, FORCED_CLOSE.blockedPaused, { defaultable, defaultableBefore }),
+          copy,
+        );
+      expect(at(true, true).why).toMatch(/denied a close-out the protocol accepts/);
+      expect(at(undefined, undefined).why).toMatch(/could not simulate the close-out/);
+      expect(at(false, false).why).toMatch(/establishes THAT and not WHY/);
+    });
+  });
 });
 
 describe('the heading/body contradiction is judged on every render', () => {
