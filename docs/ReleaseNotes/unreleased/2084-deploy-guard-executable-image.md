@@ -96,8 +96,21 @@ No behaviour change. The check's logic is what it was.
   never FOUND by the sweep that discovers files to read — though one explicitly
   named by a file already being read is still opened, so the bypass is in the
   discovery and not in the reading — across EVERY executable family the sweep
-  is meant to yield, shells and script languages and build fragments alike,
-  because the gate that skips them is shared.
+  is meant to yield, because the gate that skips them is shared.
+
+  **That last one carries a distinction the others do not, and it is the
+  difference between a silent pass and a blind spot.** For the shell families,
+  for Python and for a build fragment, the interpreter does not care what the
+  file is called, so a deployment written there really does run and really is
+  missed. For the six JavaScript and TypeScript spellings it does not: invoking
+  such a file by that name fails on the unknown extension before anything
+  executes. What is established for those six is that **the guard never
+  examines the file** — not that a deployment in it would have run. They are
+  pinned all the same, because the gate is shared and a fix aimed only at the
+  runnable families would leave them unexamined, and because a file the sweep
+  never opens is invisible for every purpose rather than only for a deployment.
+  Calling all fifteen a silent pass, as this paragraph did, claimed an outcome
+  that cannot occur for six of them.
 
   **The rest fail the other way and assert the report**: a runbook sentence
   naming a write reports the deployment below it; a package manifest whose

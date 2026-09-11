@@ -11942,7 +11942,7 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
       '# Runbook\n\nFirst regenerate it:\n\ncp generated.jsonc configs/custom.jsonc\n\n' +
         '```bash\nwrangler deploy --config configs/custom.jsonc\n```\n',
     );
-    expect(r.ok).toBe(false);
+    expectReportedAt(r, 'docs/runbook.md');
   });
 
   it('an inline command span in prose is read as written (#2105 r3)', () => {
@@ -11959,7 +11959,7 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
       '# Runbook\n\nFirst run `cp generated.jsonc configs/custom.jsonc` to stage it.\n\n' +
         '```bash\nwrangler deploy --config configs/custom.jsonc\n```\n',
     );
-    expect(r.ok).toBe(false);
+    expectReportedAt(r, 'docs/rb3.md');
   });
 
   it('a Makefile write assigned BELOW the deploy is NOT seen (#2084, stated miss)', () => {
@@ -12027,7 +12027,7 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
       "GENERATE = printf '{}' > configs/custom.jsonc\n\n" +
         'deploy:\n\t$(GENERATE)\n\twrangler deploy --config configs/custom.jsonc\n',
     );
-    expect(r.ok).toBe(false);
+    expectReportedAt(r, 'Makefile');
   });
 
   it('a runbook sentence naming a write reports the deploy (#2112, stated false report)', () => {
@@ -12119,7 +12119,7 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
     seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
     const r = runWith('Makefile', 'noop:\n\tcd apps/agent && $(DEP)\n\nDEP = wrangler deploy\n');
-    expect(r.ok).toBe(false);
+    expectReportedAt(r, 'Makefile');
   });
 
   it('a pwsh trailing backslash lends its flag to the deploy below (#2118, stated false green)', () => {
@@ -12156,7 +12156,7 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
     seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
     const r = runWith('apps/agent/d.ps1', "cd apps/agent\nWrite-Output '--keep-vars'\nwrangler deploy\n");
-    expect(r.ok).toBe(false);
+    expectReportedAt(r, 'apps/agent/d.ps1');
   });
 
   it('the casing rewrite reaches into a here-string nothing runs (#2115, stated false report)', () => {
@@ -12240,7 +12240,7 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
     seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
     const r = runWith('apps/agent/d.cmd', 'cd apps/agent\necho --keep-vars\nwrangler deploy\n');
-    expect(r.ok).toBe(false);
+    expectReportedAt(r, 'apps/agent/d.cmd');
   });
 
   it('a pwsh WORKFLOW body folds the same way (#2118, stated false green)', () => {
@@ -12276,7 +12276,7 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
         "          cd apps/agent\n          Write-Output '--keep-vars'\n          wrangler deploy\n" +
         '        shell: pwsh\n',
     );
-    expect(r.ok).toBe(false);
+    expectReportedAt(r, '.github/workflows/d.yml');
   });
 
   it('a cmd WORKFLOW body folds the same way (#2118, stated false green)', () => {
@@ -12315,7 +12315,7 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
         '          cd apps/agent\n          echo --keep-vars\n          wrangler deploy\n' +
         '        shell: cmd\n',
     );
-    expect(r.ok).toBe(false);
+    expectReportedAt(r, '.github/workflows/d.yml');
   });
 
   it('the casing rewrite reaches into a WORKFLOW here-string too (#2115, stated false report)', () => {
@@ -12400,7 +12400,7 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
     seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
     const r = runWith('.github/workflows/d.yml', posixPwsh('cd apps/agent', 'wrangler deploy'));
-    expect(r.ok).toBe(false);
+    expectReportedAt(r, '.github/workflows/d.yml');
   });
 
   // THE SEPARATOR HALF OF #2126 WAS WITHDRAWN (r35), and this note stands
@@ -12463,7 +12463,7 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
       'apps/agent/d.ps1',
       "cd apps/agent\r\nWrite-Output '--keep-vars' \\\r\nwrangler deploy\r\n",
     );
-    expect(r.ok).toBe(false);
+    expectReportedAt(r, 'apps/agent/d.ps1');
   });
 
   it('a runbook line ending in a backslash does NOT fold (#2118 bound)', () => {
@@ -12479,7 +12479,7 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
       'docs/rb-fold.md',
       "# Runbook\n\necho '--keep-vars' \\\nwrangler deploy --config apps/agent/wrangler.jsonc\n",
     );
-    expect(r.ok).toBe(false);
+    expectReportedAt(r, 'docs/rb-fold.md');
   });
 
   it('an inert manifest description is read as a deploy (#2119, stated false report)', () => {
@@ -12588,7 +12588,7 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
       'apps/agent/package.json',
       '{"name":"@vaipakam/agent","scripts":{"x":"echo hello\\nwrangler deploy"}}\n',
     );
-    expect(r.ok).toBe(false);
+    expectReportedAt(r, 'apps/agent/package.json');
   });
 
   it('a PowerShell variable is matched case-sensitively (#2122, stated false green)', () => {
@@ -12626,7 +12626,7 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
       'scripts/v.ps1',
       "$target = 'apps/agent'\nSet-Location $target\nwrangler deploy\n",
     );
-    expect(r.ok).toBe(false);
+    expectReportedAt(r, 'scripts/v.ps1');
   });
 
   it('a POSIX helper\'s differently-cased variable stays UNRESOLVED (#2122 language boundary)', () => {
@@ -12661,7 +12661,7 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
       'scripts/v.sh',
       "TARGET='apps/agent'\ncd $TARGET\nwrangler deploy\n",
     );
-    expect(r.ok).toBe(false);
+    expectReportedAt(r, 'scripts/v.sh');
   });
 
   it('an upper-case helper extension is never FOUND by the walk (#2123, stated false green)', () => {
@@ -12689,7 +12689,7 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
     seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
     const r = runWith('apps/agent/d.ps1', 'cd apps/agent\nwrangler deploy\n');
-    expect(r.ok).toBe(false);
+    expectReportedAt(r, 'apps/agent/d.ps1');
   });
 
   // EVERY affected helper family, not three representatives (r47). The gate
@@ -12903,7 +12903,7 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
       'scripts/s.ps1',
       "$target = 'apps/agent'\nSet-Location $target\nwrangler deploy\n",
     );
-    expect(r.ok).toBe(false);
+    expectReportedAt(r, 'scripts/s.ps1');
   });
 
   it('a COMMENTED-OUT jsonc property is still read as a command (#2119, stated false report)', () => {
@@ -13050,6 +13050,6 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
         "      - run: printf '{}' > configs/custom.jsonc\n" +
         '      - run: |\n          wrangler deploy --config configs/custom.jsonc\n',
     );
-    expect(r.ok).toBe(false);
+    expectReportedAt(r, '.github/workflows/steps.yml');
   });
 });
