@@ -185,6 +185,19 @@
       ]
     },
     {
+      "commit": "100b754ffd2d2737ac05e97b974ea6b5cf1fa47d",
+      "reasons": [
+        "last commit at or before, on origin/fix/pass2-low-group-1195 arb-sepolia (live)'s cut at block 287877441 (2026-07-15T22:31:17Z)",
+        "last commit at or before, on origin/fix/pass2-low-group-1195 arb-sepolia (live)'s cut at block 287877447 (2026-07-15T22:31:19Z)",
+        "last commit at or before, on origin/fix/pass2-low-group-1195 arb-sepolia (live)'s cut at block 287877453 (2026-07-15T22:31:20Z)",
+        "last commit at or before, on origin/fix/pass2-low-group-1195 arb-sepolia (live)'s cut at block 287877460 (2026-07-15T22:31:22Z)",
+        "last commit at or before, on origin/fix/pass2-low-group-1195 arb-sepolia (live)'s cut at block 287877466 (2026-07-15T22:31:24Z)",
+        "last commit at or before, on origin/fix/pass2-low-group-1195 arb-sepolia (live)'s cut at block 287877471 (2026-07-15T22:31:25Z)",
+        "last commit at or before, on origin/fix/pass2-low-group-1195 arb-sepolia (live)'s cut at block 287877478 (2026-07-15T22:31:27Z)",
+        "last commit at or before, on origin/fix/pass2-low-group-1195 arb-sepolia (live)'s cut at block 287877482 (2026-07-15T22:31:28Z)"
+      ]
+    },
+    {
       "commit": "10e1a357b8ca4c9bc286bbbcc8ebe735bf44ab40",
       "reasons": [
         "last commit at or before, on fix/pass2-d1-rental-maturity-clock-1188 base-sepolia (live)'s cut at block 44100296 (estimated 2026-07-14T00:54:40Z)",
@@ -344,7 +357,24 @@
         "last commit at or before, on chore/848-phase0-flow-script-refresh base-sepolia (live)'s cut at block 43550019 (estimated 2026-07-01T01:12:06Z)",
         "last commit at or before, on chore/848-phase0-flow-script-refresh base-sepolia (live)'s cut at block 43550019 (estimated 2026-07-01T07:12:06Z)",
         "last commit at or before, on chore/848-phase0-flow-script-refresh base-sepolia (live)'s record:live deployedAt 2026-07-01T01:04:28Z",
-        "last commit at or before, on chore/848-phase0-flow-script-refresh bnb-testnet (live)'s record:live deployedAt 2026-07-01T01:55:03Z"
+        "last commit at or before, on chore/848-phase0-flow-script-refresh bnb-testnet (live)'s record:live deployedAt 2026-07-01T01:55:03Z",
+        "last commit at or before, on origin/chore/848-phase0-flow-script-refresh arb-sepolia (live)'s cut at block 282851542 (2026-07-01T01:49:00Z)",
+        "last commit at or before, on origin/chore/848-phase0-flow-script-refresh arb-sepolia (live)'s cut at block 282851554 (2026-07-01T01:49:03Z)",
+        "last commit at or before, on origin/chore/848-phase0-flow-script-refresh arb-sepolia (live)'s cut at block 282851561 (2026-07-01T01:49:04Z)",
+        "last commit at or before, on origin/chore/848-phase0-flow-script-refresh arb-sepolia (live)'s cut at block 282851570 (2026-07-01T01:49:07Z)",
+        "last commit at or before, on origin/chore/848-phase0-flow-script-refresh arb-sepolia (live)'s cut at block 282851576 (2026-07-01T01:49:08Z)",
+        "last commit at or before, on origin/chore/848-phase0-flow-script-refresh arb-sepolia (live)'s cut at block 282851582 (2026-07-01T01:49:10Z)",
+        "last commit at or before, on origin/chore/848-phase0-flow-script-refresh arb-sepolia (live)'s cut at block 282851591 (2026-07-01T01:49:12Z)",
+        "last commit at or before, on origin/chore/848-phase0-flow-script-refresh arb-sepolia (live)'s cut at block 282851601 (2026-07-01T01:49:14Z)",
+        "last commit at or before, on origin/chore/848-phase0-flow-script-refresh arb-sepolia (live)'s cut at block 282851607 (2026-07-01T01:49:16Z)",
+        "last commit at or before, on origin/chore/848-phase0-flow-script-refresh arb-sepolia (live)'s cut at block 282851614 (2026-07-01T01:49:18Z)",
+        "last commit at or before, on origin/chore/848-phase0-flow-script-refresh arb-sepolia (live)'s cut at block 282851623 (2026-07-01T01:49:20Z)",
+        "last commit at or before, on origin/chore/848-phase0-flow-script-refresh arb-sepolia (live)'s cut at block 282851629 (2026-07-01T01:49:21Z)",
+        "last commit at or before, on origin/chore/848-phase0-flow-script-refresh arb-sepolia (live)'s cut at block 282851638 (2026-07-01T01:49:24Z)",
+        "last commit at or before, on origin/chore/848-phase0-flow-script-refresh arb-sepolia (live)'s cut at block 282851644 (2026-07-01T01:49:25Z)",
+        "last commit at or before, on origin/chore/848-phase0-flow-script-refresh arb-sepolia (live)'s cut at block 282851650 (2026-07-01T01:49:27Z)",
+        "last commit at or before, on origin/chore/848-phase0-flow-script-refresh arb-sepolia (live)'s cut at block 282851656 (2026-07-01T01:49:28Z)",
+        "last commit at or before, on origin/chore/848-phase0-flow-script-refresh arb-sepolia (live)'s record:live deployedAt 2026-07-01T01:41:15Z"
       ]
     },
     {
@@ -377,7 +407,26 @@
         "last commit at or before, on chore/safe-governance-handoff base-sepolia (live)'s cut at block 43700367 (estimated 2026-07-04T06:43:42Z)",
         "last commit at or before, on chore/safe-governance-handoff base-sepolia (live)'s cut at block 43700367 (estimated 2026-07-04T12:43:42Z)",
         "last commit at or before, on chore/safe-governance-handoff base-sepolia (live)'s cut at block 43700369 (estimated 2026-07-04T06:43:46Z)",
-        "last commit at or before, on chore/safe-governance-handoff base-sepolia (live)'s cut at block 43700369 (estimated 2026-07-04T12:43:46Z)"
+        "last commit at or before, on chore/safe-governance-handoff base-sepolia (live)'s cut at block 43700369 (estimated 2026-07-04T12:43:46Z)",
+        "last commit at or before, on origin/chore/safe-governance-handoff arb-sepolia (live)'s cut at block 284047211 (2026-07-04T13:01:39Z)",
+        "last commit at or before, on origin/chore/safe-governance-handoff arb-sepolia (live)'s cut at block 284047221 (2026-07-04T13:01:41Z)",
+        "last commit at or before, on origin/chore/safe-governance-handoff arb-sepolia (live)'s cut at block 284047228 (2026-07-04T13:01:43Z)",
+        "last commit at or before, on origin/chore/safe-governance-handoff arb-sepolia (live)'s cut at block 284047236 (2026-07-04T13:01:45Z)",
+        "last commit at or before, on origin/chore/safe-governance-handoff arb-sepolia (live)'s cut at block 284047243 (2026-07-04T13:01:47Z)",
+        "last commit at or before, on origin/chore/safe-governance-handoff arb-sepolia (live)'s cut at block 284047251 (2026-07-04T13:01:49Z)",
+        "last commit at or before, on origin/chore/safe-governance-handoff arb-sepolia (live)'s cut at block 284047259 (2026-07-04T13:01:51Z)"
+      ]
+    },
+    {
+      "commit": "17aa609adefafc54def3a1464b637180e64e804c",
+      "reasons": [
+        "last commit at or before, on origin/docs/998-adjudications-la-li-lj-lo arb-sepolia (live)'s cut at block 287151976 (2026-07-13T19:17:36Z)",
+        "last commit at or before, on origin/docs/998-adjudications-la-li-lj-lo arb-sepolia (live)'s cut at block 287151984 (2026-07-13T19:17:39Z)",
+        "last commit at or before, on origin/docs/998-adjudications-la-li-lj-lo arb-sepolia (live)'s cut at block 287151991 (2026-07-13T19:17:40Z)",
+        "last commit at or before, on origin/docs/998-adjudications-la-li-lj-lo arb-sepolia (live)'s cut at block 287151999 (2026-07-13T19:17:42Z)",
+        "last commit at or before, on origin/docs/998-adjudications-la-li-lj-lo arb-sepolia (live)'s cut at block 287152006 (2026-07-13T19:17:44Z)",
+        "last commit at or before, on origin/docs/998-adjudications-la-li-lj-lo arb-sepolia (live)'s cut at block 287152015 (2026-07-13T19:17:46Z)",
+        "last commit at or before, on origin/docs/998-adjudications-la-li-lj-lo arb-sepolia (live)'s cut at block 287152023 (2026-07-13T19:17:48Z)"
       ]
     },
     {
@@ -438,7 +487,24 @@
         "last commit at or before, on chore/release-notes-0630-and-regress-script base-sepolia (live)'s cut at block 43550017 (estimated 2026-07-01T01:12:02Z)",
         "last commit at or before, on chore/release-notes-0630-and-regress-script base-sepolia (live)'s cut at block 43550019 (estimated 2026-07-01T01:12:06Z)",
         "last commit at or before, on chore/release-notes-0630-and-regress-script base-sepolia (live)'s record:live deployedAt 2026-07-01T01:04:28Z",
-        "last commit at or before, on chore/release-notes-0630-and-regress-script bnb-testnet (live)'s record:live deployedAt 2026-07-01T01:55:03Z"
+        "last commit at or before, on chore/release-notes-0630-and-regress-script bnb-testnet (live)'s record:live deployedAt 2026-07-01T01:55:03Z",
+        "last commit at or before, on origin/chore/release-notes-0630-and-regress-script arb-sepolia (live)'s cut at block 282851542 (2026-07-01T01:49:00Z)",
+        "last commit at or before, on origin/chore/release-notes-0630-and-regress-script arb-sepolia (live)'s cut at block 282851554 (2026-07-01T01:49:03Z)",
+        "last commit at or before, on origin/chore/release-notes-0630-and-regress-script arb-sepolia (live)'s cut at block 282851561 (2026-07-01T01:49:04Z)",
+        "last commit at or before, on origin/chore/release-notes-0630-and-regress-script arb-sepolia (live)'s cut at block 282851570 (2026-07-01T01:49:07Z)",
+        "last commit at or before, on origin/chore/release-notes-0630-and-regress-script arb-sepolia (live)'s cut at block 282851576 (2026-07-01T01:49:08Z)",
+        "last commit at or before, on origin/chore/release-notes-0630-and-regress-script arb-sepolia (live)'s cut at block 282851582 (2026-07-01T01:49:10Z)",
+        "last commit at or before, on origin/chore/release-notes-0630-and-regress-script arb-sepolia (live)'s cut at block 282851591 (2026-07-01T01:49:12Z)",
+        "last commit at or before, on origin/chore/release-notes-0630-and-regress-script arb-sepolia (live)'s cut at block 282851601 (2026-07-01T01:49:14Z)",
+        "last commit at or before, on origin/chore/release-notes-0630-and-regress-script arb-sepolia (live)'s cut at block 282851607 (2026-07-01T01:49:16Z)",
+        "last commit at or before, on origin/chore/release-notes-0630-and-regress-script arb-sepolia (live)'s cut at block 282851614 (2026-07-01T01:49:18Z)",
+        "last commit at or before, on origin/chore/release-notes-0630-and-regress-script arb-sepolia (live)'s cut at block 282851623 (2026-07-01T01:49:20Z)",
+        "last commit at or before, on origin/chore/release-notes-0630-and-regress-script arb-sepolia (live)'s cut at block 282851629 (2026-07-01T01:49:21Z)",
+        "last commit at or before, on origin/chore/release-notes-0630-and-regress-script arb-sepolia (live)'s cut at block 282851638 (2026-07-01T01:49:24Z)",
+        "last commit at or before, on origin/chore/release-notes-0630-and-regress-script arb-sepolia (live)'s cut at block 282851644 (2026-07-01T01:49:25Z)",
+        "last commit at or before, on origin/chore/release-notes-0630-and-regress-script arb-sepolia (live)'s cut at block 282851650 (2026-07-01T01:49:27Z)",
+        "last commit at or before, on origin/chore/release-notes-0630-and-regress-script arb-sepolia (live)'s cut at block 282851656 (2026-07-01T01:49:28Z)",
+        "last commit at or before, on origin/chore/release-notes-0630-and-regress-script arb-sepolia (live)'s record:live deployedAt 2026-07-01T01:41:15Z"
       ]
     },
     {
@@ -519,6 +585,28 @@
       ]
     },
     {
+      "commit": "20ecb6966217496e484fa216a36625fb592a09c2",
+      "reasons": [
+        "last commit at or before, on origin/fix/sanctioned-proceeds-vault-lock-821 arb-sepolia (live)'s cut at block 282851542 (2026-07-01T01:49:00Z)",
+        "last commit at or before, on origin/fix/sanctioned-proceeds-vault-lock-821 arb-sepolia (live)'s cut at block 282851554 (2026-07-01T01:49:03Z)",
+        "last commit at or before, on origin/fix/sanctioned-proceeds-vault-lock-821 arb-sepolia (live)'s cut at block 282851561 (2026-07-01T01:49:04Z)",
+        "last commit at or before, on origin/fix/sanctioned-proceeds-vault-lock-821 arb-sepolia (live)'s cut at block 282851570 (2026-07-01T01:49:07Z)",
+        "last commit at or before, on origin/fix/sanctioned-proceeds-vault-lock-821 arb-sepolia (live)'s cut at block 282851576 (2026-07-01T01:49:08Z)",
+        "last commit at or before, on origin/fix/sanctioned-proceeds-vault-lock-821 arb-sepolia (live)'s cut at block 282851582 (2026-07-01T01:49:10Z)",
+        "last commit at or before, on origin/fix/sanctioned-proceeds-vault-lock-821 arb-sepolia (live)'s cut at block 282851591 (2026-07-01T01:49:12Z)",
+        "last commit at or before, on origin/fix/sanctioned-proceeds-vault-lock-821 arb-sepolia (live)'s cut at block 282851601 (2026-07-01T01:49:14Z)",
+        "last commit at or before, on origin/fix/sanctioned-proceeds-vault-lock-821 arb-sepolia (live)'s cut at block 282851607 (2026-07-01T01:49:16Z)",
+        "last commit at or before, on origin/fix/sanctioned-proceeds-vault-lock-821 arb-sepolia (live)'s cut at block 282851614 (2026-07-01T01:49:18Z)",
+        "last commit at or before, on origin/fix/sanctioned-proceeds-vault-lock-821 arb-sepolia (live)'s cut at block 282851623 (2026-07-01T01:49:20Z)",
+        "last commit at or before, on origin/fix/sanctioned-proceeds-vault-lock-821 arb-sepolia (live)'s cut at block 282851629 (2026-07-01T01:49:21Z)",
+        "last commit at or before, on origin/fix/sanctioned-proceeds-vault-lock-821 arb-sepolia (live)'s cut at block 282851638 (2026-07-01T01:49:24Z)",
+        "last commit at or before, on origin/fix/sanctioned-proceeds-vault-lock-821 arb-sepolia (live)'s cut at block 282851644 (2026-07-01T01:49:25Z)",
+        "last commit at or before, on origin/fix/sanctioned-proceeds-vault-lock-821 arb-sepolia (live)'s cut at block 282851650 (2026-07-01T01:49:27Z)",
+        "last commit at or before, on origin/fix/sanctioned-proceeds-vault-lock-821 arb-sepolia (live)'s cut at block 282851656 (2026-07-01T01:49:28Z)",
+        "last commit at or before, on origin/fix/sanctioned-proceeds-vault-lock-821 arb-sepolia (live)'s record:live deployedAt 2026-07-01T01:41:15Z"
+      ]
+    },
+    {
       "commit": "2b83ebf7769bb50975cf0ad1f2296a99e87cfff7",
       "reasons": [
         "last commit at or before, on feat/indexer-realtime-per-chain-webhook-keys base-sepolia (live)'s cut at block 43549991 (estimated 2026-07-01T07:11:10Z)",
@@ -555,6 +643,18 @@
         "last main commit at or before base-sepolia (live)'s cut at block 44977739 (estimated 2026-08-03T08:22:46Z)",
         "last main commit at or before base-sepolia (live)'s cut at block 44977740 (estimated 2026-08-03T08:22:48Z)",
         "last main commit at or before base-sepolia (live)'s cut at block 44977742 (estimated 2026-08-03T08:22:52Z)"
+      ]
+    },
+    {
+      "commit": "32e2cf7bbabd1c93baf80a447da8dd9ff5b16ac4",
+      "reasons": [
+        "last commit at or before, on origin/fix/940-dashboard-fallbackpending-active arb-sepolia (live)'s cut at block 287151976 (2026-07-13T19:17:36Z)",
+        "last commit at or before, on origin/fix/940-dashboard-fallbackpending-active arb-sepolia (live)'s cut at block 287151984 (2026-07-13T19:17:39Z)",
+        "last commit at or before, on origin/fix/940-dashboard-fallbackpending-active arb-sepolia (live)'s cut at block 287151991 (2026-07-13T19:17:40Z)",
+        "last commit at or before, on origin/fix/940-dashboard-fallbackpending-active arb-sepolia (live)'s cut at block 287151999 (2026-07-13T19:17:42Z)",
+        "last commit at or before, on origin/fix/940-dashboard-fallbackpending-active arb-sepolia (live)'s cut at block 287152006 (2026-07-13T19:17:44Z)",
+        "last commit at or before, on origin/fix/940-dashboard-fallbackpending-active arb-sepolia (live)'s cut at block 287152015 (2026-07-13T19:17:46Z)",
+        "last commit at or before, on origin/fix/940-dashboard-fallbackpending-active arb-sepolia (live)'s cut at block 287152023 (2026-07-13T19:17:48Z)"
       ]
     },
     {
@@ -660,6 +760,32 @@
       ]
     },
     {
+      "commit": "43ca9a3a617c85a01201fd6a70381c947326892f",
+      "reasons": [
+        "last commit at or before, on origin/docs/vpfi-recycling-balance-redesign-1222 arb-sepolia (live)'s cut at block 287877441 (2026-07-15T22:31:17Z)",
+        "last commit at or before, on origin/docs/vpfi-recycling-balance-redesign-1222 arb-sepolia (live)'s cut at block 287877447 (2026-07-15T22:31:19Z)",
+        "last commit at or before, on origin/docs/vpfi-recycling-balance-redesign-1222 arb-sepolia (live)'s cut at block 287877453 (2026-07-15T22:31:20Z)",
+        "last commit at or before, on origin/docs/vpfi-recycling-balance-redesign-1222 arb-sepolia (live)'s cut at block 287877460 (2026-07-15T22:31:22Z)",
+        "last commit at or before, on origin/docs/vpfi-recycling-balance-redesign-1222 arb-sepolia (live)'s cut at block 287877466 (2026-07-15T22:31:24Z)",
+        "last commit at or before, on origin/docs/vpfi-recycling-balance-redesign-1222 arb-sepolia (live)'s cut at block 287877471 (2026-07-15T22:31:25Z)",
+        "last commit at or before, on origin/docs/vpfi-recycling-balance-redesign-1222 arb-sepolia (live)'s cut at block 287877478 (2026-07-15T22:31:27Z)",
+        "last commit at or before, on origin/docs/vpfi-recycling-balance-redesign-1222 arb-sepolia (live)'s cut at block 287877482 (2026-07-15T22:31:28Z)"
+      ]
+    },
+    {
+      "commit": "464191a9c12615ea1497bc3317ff06f89f128ae3",
+      "reasons": [
+        "last commit at or before, on origin/docs/pass2-spec-comment-edits-1196 arb-sepolia (live)'s cut at block 287877441 (2026-07-15T22:31:17Z)",
+        "last commit at or before, on origin/docs/pass2-spec-comment-edits-1196 arb-sepolia (live)'s cut at block 287877447 (2026-07-15T22:31:19Z)",
+        "last commit at or before, on origin/docs/pass2-spec-comment-edits-1196 arb-sepolia (live)'s cut at block 287877453 (2026-07-15T22:31:20Z)",
+        "last commit at or before, on origin/docs/pass2-spec-comment-edits-1196 arb-sepolia (live)'s cut at block 287877460 (2026-07-15T22:31:22Z)",
+        "last commit at or before, on origin/docs/pass2-spec-comment-edits-1196 arb-sepolia (live)'s cut at block 287877466 (2026-07-15T22:31:24Z)",
+        "last commit at or before, on origin/docs/pass2-spec-comment-edits-1196 arb-sepolia (live)'s cut at block 287877471 (2026-07-15T22:31:25Z)",
+        "last commit at or before, on origin/docs/pass2-spec-comment-edits-1196 arb-sepolia (live)'s cut at block 287877478 (2026-07-15T22:31:27Z)",
+        "last commit at or before, on origin/docs/pass2-spec-comment-edits-1196 arb-sepolia (live)'s cut at block 287877482 (2026-07-15T22:31:28Z)"
+      ]
+    },
+    {
       "commit": "483094d116c1479fc43b4b215fc8ecddae7f98b6",
       "reasons": [
         "last commit at or before, on ci/build-docs-warm-from-artifact-1221 arb-sepolia (archived 2026-07-01T01-36-25Z)'s cut at block 287877441 (2026-07-15T22:31:17Z)",
@@ -701,7 +827,15 @@
         "last commit at or before, on ci/build-docs-warm-from-artifact-1221 base-sepolia (live)'s cut at block 44192704 (estimated 2026-07-16T04:14:56Z)",
         "last commit at or before, on ci/build-docs-warm-from-artifact-1221 base-sepolia (live)'s cut at block 44192705 (estimated 2026-07-15T16:14:58Z)",
         "last commit at or before, on ci/build-docs-warm-from-artifact-1221 base-sepolia (live)'s cut at block 44192705 (estimated 2026-07-15T22:14:58Z)",
-        "last commit at or before, on ci/build-docs-warm-from-artifact-1221 base-sepolia (live)'s cut at block 44192705 (estimated 2026-07-16T04:14:58Z)"
+        "last commit at or before, on ci/build-docs-warm-from-artifact-1221 base-sepolia (live)'s cut at block 44192705 (estimated 2026-07-16T04:14:58Z)",
+        "last commit at or before, on origin/ci/build-docs-warm-from-artifact-1221 arb-sepolia (live)'s cut at block 287877441 (2026-07-15T22:31:17Z)",
+        "last commit at or before, on origin/ci/build-docs-warm-from-artifact-1221 arb-sepolia (live)'s cut at block 287877447 (2026-07-15T22:31:19Z)",
+        "last commit at or before, on origin/ci/build-docs-warm-from-artifact-1221 arb-sepolia (live)'s cut at block 287877453 (2026-07-15T22:31:20Z)",
+        "last commit at or before, on origin/ci/build-docs-warm-from-artifact-1221 arb-sepolia (live)'s cut at block 287877460 (2026-07-15T22:31:22Z)",
+        "last commit at or before, on origin/ci/build-docs-warm-from-artifact-1221 arb-sepolia (live)'s cut at block 287877466 (2026-07-15T22:31:24Z)",
+        "last commit at or before, on origin/ci/build-docs-warm-from-artifact-1221 arb-sepolia (live)'s cut at block 287877471 (2026-07-15T22:31:25Z)",
+        "last commit at or before, on origin/ci/build-docs-warm-from-artifact-1221 arb-sepolia (live)'s cut at block 287877478 (2026-07-15T22:31:27Z)",
+        "last commit at or before, on origin/ci/build-docs-warm-from-artifact-1221 arb-sepolia (live)'s cut at block 287877482 (2026-07-15T22:31:28Z)"
       ]
     },
     {
@@ -773,7 +907,15 @@
         "last commit at or before, on chore/testnet-refresh-artifacts-1221 base-sepolia (live)'s cut at block 44192701 (estimated 2026-07-15T22:14:50Z)",
         "last commit at or before, on chore/testnet-refresh-artifacts-1221 base-sepolia (live)'s cut at block 44192703 (estimated 2026-07-15T22:14:54Z)",
         "last commit at or before, on chore/testnet-refresh-artifacts-1221 base-sepolia (live)'s cut at block 44192704 (estimated 2026-07-15T22:14:56Z)",
-        "last commit at or before, on chore/testnet-refresh-artifacts-1221 base-sepolia (live)'s cut at block 44192705 (estimated 2026-07-15T22:14:58Z)"
+        "last commit at or before, on chore/testnet-refresh-artifacts-1221 base-sepolia (live)'s cut at block 44192705 (estimated 2026-07-15T22:14:58Z)",
+        "last commit at or before, on origin/chore/testnet-refresh-artifacts-1221 arb-sepolia (live)'s cut at block 287877441 (2026-07-15T22:31:17Z)",
+        "last commit at or before, on origin/chore/testnet-refresh-artifacts-1221 arb-sepolia (live)'s cut at block 287877447 (2026-07-15T22:31:19Z)",
+        "last commit at or before, on origin/chore/testnet-refresh-artifacts-1221 arb-sepolia (live)'s cut at block 287877453 (2026-07-15T22:31:20Z)",
+        "last commit at or before, on origin/chore/testnet-refresh-artifacts-1221 arb-sepolia (live)'s cut at block 287877460 (2026-07-15T22:31:22Z)",
+        "last commit at or before, on origin/chore/testnet-refresh-artifacts-1221 arb-sepolia (live)'s cut at block 287877466 (2026-07-15T22:31:24Z)",
+        "last commit at or before, on origin/chore/testnet-refresh-artifacts-1221 arb-sepolia (live)'s cut at block 287877471 (2026-07-15T22:31:25Z)",
+        "last commit at or before, on origin/chore/testnet-refresh-artifacts-1221 arb-sepolia (live)'s cut at block 287877478 (2026-07-15T22:31:27Z)",
+        "last commit at or before, on origin/chore/testnet-refresh-artifacts-1221 arb-sepolia (live)'s cut at block 287877482 (2026-07-15T22:31:28Z)"
       ]
     },
     {
@@ -841,6 +983,18 @@
       ]
     },
     {
+      "commit": "5d020a4ded390b46724c051947d2f2fc953f40e5",
+      "reasons": [
+        "last commit at or before, on origin/docs/session-housekeeping-releasenotes-runbook-todo arb-sepolia (live)'s cut at block 287151976 (2026-07-13T19:17:36Z)",
+        "last commit at or before, on origin/docs/session-housekeeping-releasenotes-runbook-todo arb-sepolia (live)'s cut at block 287151984 (2026-07-13T19:17:39Z)",
+        "last commit at or before, on origin/docs/session-housekeeping-releasenotes-runbook-todo arb-sepolia (live)'s cut at block 287151991 (2026-07-13T19:17:40Z)",
+        "last commit at or before, on origin/docs/session-housekeeping-releasenotes-runbook-todo arb-sepolia (live)'s cut at block 287151999 (2026-07-13T19:17:42Z)",
+        "last commit at or before, on origin/docs/session-housekeeping-releasenotes-runbook-todo arb-sepolia (live)'s cut at block 287152006 (2026-07-13T19:17:44Z)",
+        "last commit at or before, on origin/docs/session-housekeeping-releasenotes-runbook-todo arb-sepolia (live)'s cut at block 287152015 (2026-07-13T19:17:46Z)",
+        "last commit at or before, on origin/docs/session-housekeeping-releasenotes-runbook-todo arb-sepolia (live)'s cut at block 287152023 (2026-07-13T19:17:48Z)"
+      ]
+    },
+    {
       "commit": "61430819e441d19c6eba1002e3606c32903e2cae",
       "reasons": [
         "last commit at or before, on feat/keeper-mask-uint16-widen-1221 arb-sepolia (archived 2026-07-01T01-36-25Z)'s cut at block 287877441 (2026-07-15T22:31:17Z)",
@@ -882,7 +1036,15 @@
         "last commit at or before, on feat/keeper-mask-uint16-widen-1221 base-sepolia (live)'s cut at block 44192704 (estimated 2026-07-16T04:14:56Z)",
         "last commit at or before, on feat/keeper-mask-uint16-widen-1221 base-sepolia (live)'s cut at block 44192705 (estimated 2026-07-15T16:14:58Z)",
         "last commit at or before, on feat/keeper-mask-uint16-widen-1221 base-sepolia (live)'s cut at block 44192705 (estimated 2026-07-15T22:14:58Z)",
-        "last commit at or before, on feat/keeper-mask-uint16-widen-1221 base-sepolia (live)'s cut at block 44192705 (estimated 2026-07-16T04:14:58Z)"
+        "last commit at or before, on feat/keeper-mask-uint16-widen-1221 base-sepolia (live)'s cut at block 44192705 (estimated 2026-07-16T04:14:58Z)",
+        "last commit at or before, on origin/feat/keeper-mask-uint16-widen-1221 arb-sepolia (live)'s cut at block 287877441 (2026-07-15T22:31:17Z)",
+        "last commit at or before, on origin/feat/keeper-mask-uint16-widen-1221 arb-sepolia (live)'s cut at block 287877447 (2026-07-15T22:31:19Z)",
+        "last commit at or before, on origin/feat/keeper-mask-uint16-widen-1221 arb-sepolia (live)'s cut at block 287877453 (2026-07-15T22:31:20Z)",
+        "last commit at or before, on origin/feat/keeper-mask-uint16-widen-1221 arb-sepolia (live)'s cut at block 287877460 (2026-07-15T22:31:22Z)",
+        "last commit at or before, on origin/feat/keeper-mask-uint16-widen-1221 arb-sepolia (live)'s cut at block 287877466 (2026-07-15T22:31:24Z)",
+        "last commit at or before, on origin/feat/keeper-mask-uint16-widen-1221 arb-sepolia (live)'s cut at block 287877471 (2026-07-15T22:31:25Z)",
+        "last commit at or before, on origin/feat/keeper-mask-uint16-widen-1221 arb-sepolia (live)'s cut at block 287877478 (2026-07-15T22:31:27Z)",
+        "last commit at or before, on origin/feat/keeper-mask-uint16-widen-1221 arb-sepolia (live)'s cut at block 287877482 (2026-07-15T22:31:28Z)"
       ]
     },
     {
@@ -1007,7 +1169,15 @@
         "last commit at or before, on feat/multicall-facet-claim-all-1212 base-sepolia (live)'s cut at block 44192704 (estimated 2026-07-15T22:14:56Z)",
         "last commit at or before, on feat/multicall-facet-claim-all-1212 base-sepolia (live)'s cut at block 44192704 (estimated 2026-07-16T04:14:56Z)",
         "last commit at or before, on feat/multicall-facet-claim-all-1212 base-sepolia (live)'s cut at block 44192705 (estimated 2026-07-15T22:14:58Z)",
-        "last commit at or before, on feat/multicall-facet-claim-all-1212 base-sepolia (live)'s cut at block 44192705 (estimated 2026-07-16T04:14:58Z)"
+        "last commit at or before, on feat/multicall-facet-claim-all-1212 base-sepolia (live)'s cut at block 44192705 (estimated 2026-07-16T04:14:58Z)",
+        "last commit at or before, on origin/feat/multicall-facet-claim-all-1212 arb-sepolia (live)'s cut at block 287877441 (2026-07-15T22:31:17Z)",
+        "last commit at or before, on origin/feat/multicall-facet-claim-all-1212 arb-sepolia (live)'s cut at block 287877447 (2026-07-15T22:31:19Z)",
+        "last commit at or before, on origin/feat/multicall-facet-claim-all-1212 arb-sepolia (live)'s cut at block 287877453 (2026-07-15T22:31:20Z)",
+        "last commit at or before, on origin/feat/multicall-facet-claim-all-1212 arb-sepolia (live)'s cut at block 287877460 (2026-07-15T22:31:22Z)",
+        "last commit at or before, on origin/feat/multicall-facet-claim-all-1212 arb-sepolia (live)'s cut at block 287877466 (2026-07-15T22:31:24Z)",
+        "last commit at or before, on origin/feat/multicall-facet-claim-all-1212 arb-sepolia (live)'s cut at block 287877471 (2026-07-15T22:31:25Z)",
+        "last commit at or before, on origin/feat/multicall-facet-claim-all-1212 arb-sepolia (live)'s cut at block 287877478 (2026-07-15T22:31:27Z)",
+        "last commit at or before, on origin/feat/multicall-facet-claim-all-1212 arb-sepolia (live)'s cut at block 287877482 (2026-07-15T22:31:28Z)"
       ]
     },
     {
@@ -1058,7 +1228,14 @@
         "last commit at or before, on deploy/testnet-facet-refresh-uups-vault-upgrade-script base-sepolia (live)'s cut at block 44100309 (estimated 2026-07-13T12:55:06Z)",
         "last commit at or before, on deploy/testnet-facet-refresh-uups-vault-upgrade-script base-sepolia (live)'s cut at block 44100309 (estimated 2026-07-13T18:55:06Z)",
         "last commit at or before, on deploy/testnet-facet-refresh-uups-vault-upgrade-script base-sepolia (live)'s cut at block 44100310 (estimated 2026-07-13T12:55:08Z)",
-        "last commit at or before, on deploy/testnet-facet-refresh-uups-vault-upgrade-script base-sepolia (live)'s cut at block 44100310 (estimated 2026-07-13T18:55:08Z)"
+        "last commit at or before, on deploy/testnet-facet-refresh-uups-vault-upgrade-script base-sepolia (live)'s cut at block 44100310 (estimated 2026-07-13T18:55:08Z)",
+        "last commit at or before, on origin/deploy/testnet-facet-refresh-uups-vault-upgrade-script arb-sepolia (live)'s cut at block 287151976 (2026-07-13T19:17:36Z)",
+        "last commit at or before, on origin/deploy/testnet-facet-refresh-uups-vault-upgrade-script arb-sepolia (live)'s cut at block 287151984 (2026-07-13T19:17:39Z)",
+        "last commit at or before, on origin/deploy/testnet-facet-refresh-uups-vault-upgrade-script arb-sepolia (live)'s cut at block 287151991 (2026-07-13T19:17:40Z)",
+        "last commit at or before, on origin/deploy/testnet-facet-refresh-uups-vault-upgrade-script arb-sepolia (live)'s cut at block 287151999 (2026-07-13T19:17:42Z)",
+        "last commit at or before, on origin/deploy/testnet-facet-refresh-uups-vault-upgrade-script arb-sepolia (live)'s cut at block 287152006 (2026-07-13T19:17:44Z)",
+        "last commit at or before, on origin/deploy/testnet-facet-refresh-uups-vault-upgrade-script arb-sepolia (live)'s cut at block 287152015 (2026-07-13T19:17:46Z)",
+        "last commit at or before, on origin/deploy/testnet-facet-refresh-uups-vault-upgrade-script arb-sepolia (live)'s cut at block 287152023 (2026-07-13T19:17:48Z)"
       ]
     },
     {
@@ -1154,7 +1331,24 @@
         "last commit at or before, on fix/t840-depthtier-stale-caps base-sepolia (live)'s cut at block 43550019 (estimated 2026-06-30T19:12:06Z)",
         "last commit at or before, on fix/t840-depthtier-stale-caps base-sepolia (live)'s cut at block 43550019 (estimated 2026-07-01T01:12:06Z)",
         "last commit at or before, on fix/t840-depthtier-stale-caps base-sepolia (live)'s record:live deployedAt 2026-07-01T01:04:28Z",
-        "last commit at or before, on fix/t840-depthtier-stale-caps bnb-testnet (live)'s record:live deployedAt 2026-07-01T01:55:03Z"
+        "last commit at or before, on fix/t840-depthtier-stale-caps bnb-testnet (live)'s record:live deployedAt 2026-07-01T01:55:03Z",
+        "last commit at or before, on origin/fix/t840-depthtier-stale-caps arb-sepolia (live)'s cut at block 282851542 (2026-07-01T01:49:00Z)",
+        "last commit at or before, on origin/fix/t840-depthtier-stale-caps arb-sepolia (live)'s cut at block 282851554 (2026-07-01T01:49:03Z)",
+        "last commit at or before, on origin/fix/t840-depthtier-stale-caps arb-sepolia (live)'s cut at block 282851561 (2026-07-01T01:49:04Z)",
+        "last commit at or before, on origin/fix/t840-depthtier-stale-caps arb-sepolia (live)'s cut at block 282851570 (2026-07-01T01:49:07Z)",
+        "last commit at or before, on origin/fix/t840-depthtier-stale-caps arb-sepolia (live)'s cut at block 282851576 (2026-07-01T01:49:08Z)",
+        "last commit at or before, on origin/fix/t840-depthtier-stale-caps arb-sepolia (live)'s cut at block 282851582 (2026-07-01T01:49:10Z)",
+        "last commit at or before, on origin/fix/t840-depthtier-stale-caps arb-sepolia (live)'s cut at block 282851591 (2026-07-01T01:49:12Z)",
+        "last commit at or before, on origin/fix/t840-depthtier-stale-caps arb-sepolia (live)'s cut at block 282851601 (2026-07-01T01:49:14Z)",
+        "last commit at or before, on origin/fix/t840-depthtier-stale-caps arb-sepolia (live)'s cut at block 282851607 (2026-07-01T01:49:16Z)",
+        "last commit at or before, on origin/fix/t840-depthtier-stale-caps arb-sepolia (live)'s cut at block 282851614 (2026-07-01T01:49:18Z)",
+        "last commit at or before, on origin/fix/t840-depthtier-stale-caps arb-sepolia (live)'s cut at block 282851623 (2026-07-01T01:49:20Z)",
+        "last commit at or before, on origin/fix/t840-depthtier-stale-caps arb-sepolia (live)'s cut at block 282851629 (2026-07-01T01:49:21Z)",
+        "last commit at or before, on origin/fix/t840-depthtier-stale-caps arb-sepolia (live)'s cut at block 282851638 (2026-07-01T01:49:24Z)",
+        "last commit at or before, on origin/fix/t840-depthtier-stale-caps arb-sepolia (live)'s cut at block 282851644 (2026-07-01T01:49:25Z)",
+        "last commit at or before, on origin/fix/t840-depthtier-stale-caps arb-sepolia (live)'s cut at block 282851650 (2026-07-01T01:49:27Z)",
+        "last commit at or before, on origin/fix/t840-depthtier-stale-caps arb-sepolia (live)'s cut at block 282851656 (2026-07-01T01:49:28Z)",
+        "last commit at or before, on origin/fix/t840-depthtier-stale-caps arb-sepolia (live)'s record:live deployedAt 2026-07-01T01:41:15Z"
       ]
     },
     {
@@ -1367,7 +1561,36 @@
         "last commit at or before, on feat/issue-843-adaptive-polling-diagnostics base-sepolia (live)'s cut at block 43550019 (estimated 2026-07-01T01:12:06Z)",
         "last commit at or before, on feat/issue-843-adaptive-polling-diagnostics base-sepolia (live)'s cut at block 43550019 (estimated 2026-07-01T07:12:06Z)",
         "last commit at or before, on feat/issue-843-adaptive-polling-diagnostics base-sepolia (live)'s record:live deployedAt 2026-07-01T01:04:28Z",
-        "last commit at or before, on feat/issue-843-adaptive-polling-diagnostics bnb-testnet (live)'s record:live deployedAt 2026-07-01T01:55:03Z"
+        "last commit at or before, on feat/issue-843-adaptive-polling-diagnostics bnb-testnet (live)'s record:live deployedAt 2026-07-01T01:55:03Z",
+        "last commit at or before, on origin/feat/issue-843-adaptive-polling-diagnostics arb-sepolia (live)'s cut at block 282851542 (2026-07-01T01:49:00Z)",
+        "last commit at or before, on origin/feat/issue-843-adaptive-polling-diagnostics arb-sepolia (live)'s cut at block 282851554 (2026-07-01T01:49:03Z)",
+        "last commit at or before, on origin/feat/issue-843-adaptive-polling-diagnostics arb-sepolia (live)'s cut at block 282851561 (2026-07-01T01:49:04Z)",
+        "last commit at or before, on origin/feat/issue-843-adaptive-polling-diagnostics arb-sepolia (live)'s cut at block 282851570 (2026-07-01T01:49:07Z)",
+        "last commit at or before, on origin/feat/issue-843-adaptive-polling-diagnostics arb-sepolia (live)'s cut at block 282851576 (2026-07-01T01:49:08Z)",
+        "last commit at or before, on origin/feat/issue-843-adaptive-polling-diagnostics arb-sepolia (live)'s cut at block 282851582 (2026-07-01T01:49:10Z)",
+        "last commit at or before, on origin/feat/issue-843-adaptive-polling-diagnostics arb-sepolia (live)'s cut at block 282851591 (2026-07-01T01:49:12Z)",
+        "last commit at or before, on origin/feat/issue-843-adaptive-polling-diagnostics arb-sepolia (live)'s cut at block 282851601 (2026-07-01T01:49:14Z)",
+        "last commit at or before, on origin/feat/issue-843-adaptive-polling-diagnostics arb-sepolia (live)'s cut at block 282851607 (2026-07-01T01:49:16Z)",
+        "last commit at or before, on origin/feat/issue-843-adaptive-polling-diagnostics arb-sepolia (live)'s cut at block 282851614 (2026-07-01T01:49:18Z)",
+        "last commit at or before, on origin/feat/issue-843-adaptive-polling-diagnostics arb-sepolia (live)'s cut at block 282851623 (2026-07-01T01:49:20Z)",
+        "last commit at or before, on origin/feat/issue-843-adaptive-polling-diagnostics arb-sepolia (live)'s cut at block 282851629 (2026-07-01T01:49:21Z)",
+        "last commit at or before, on origin/feat/issue-843-adaptive-polling-diagnostics arb-sepolia (live)'s cut at block 282851638 (2026-07-01T01:49:24Z)",
+        "last commit at or before, on origin/feat/issue-843-adaptive-polling-diagnostics arb-sepolia (live)'s cut at block 282851644 (2026-07-01T01:49:25Z)",
+        "last commit at or before, on origin/feat/issue-843-adaptive-polling-diagnostics arb-sepolia (live)'s cut at block 282851650 (2026-07-01T01:49:27Z)",
+        "last commit at or before, on origin/feat/issue-843-adaptive-polling-diagnostics arb-sepolia (live)'s cut at block 282851656 (2026-07-01T01:49:28Z)",
+        "last commit at or before, on origin/feat/issue-843-adaptive-polling-diagnostics arb-sepolia (live)'s record:live deployedAt 2026-07-01T01:41:15Z"
+      ]
+    },
+    {
+      "commit": "89236551339b2b7ddd99038fc349102c0c5c6c9d",
+      "reasons": [
+        "last commit at or before, on origin/docs/github-auth-setup arb-sepolia (live)'s cut at block 284047211 (2026-07-04T13:01:39Z)",
+        "last commit at or before, on origin/docs/github-auth-setup arb-sepolia (live)'s cut at block 284047221 (2026-07-04T13:01:41Z)",
+        "last commit at or before, on origin/docs/github-auth-setup arb-sepolia (live)'s cut at block 284047228 (2026-07-04T13:01:43Z)",
+        "last commit at or before, on origin/docs/github-auth-setup arb-sepolia (live)'s cut at block 284047236 (2026-07-04T13:01:45Z)",
+        "last commit at or before, on origin/docs/github-auth-setup arb-sepolia (live)'s cut at block 284047243 (2026-07-04T13:01:47Z)",
+        "last commit at or before, on origin/docs/github-auth-setup arb-sepolia (live)'s cut at block 284047251 (2026-07-04T13:01:49Z)",
+        "last commit at or before, on origin/docs/github-auth-setup arb-sepolia (live)'s cut at block 284047259 (2026-07-04T13:01:51Z)"
       ]
     },
     {
@@ -1435,7 +1658,14 @@
         "last commit at or before, on fix/stale-offer-bounds-fixtures-998-s15 base-sepolia (live)'s cut at block 44100309 (estimated 2026-07-13T18:55:06Z)",
         "last commit at or before, on fix/stale-offer-bounds-fixtures-998-s15 base-sepolia (live)'s cut at block 44100309 (estimated 2026-07-14T00:55:06Z)",
         "last commit at or before, on fix/stale-offer-bounds-fixtures-998-s15 base-sepolia (live)'s cut at block 44100310 (estimated 2026-07-13T18:55:08Z)",
-        "last commit at or before, on fix/stale-offer-bounds-fixtures-998-s15 base-sepolia (live)'s cut at block 44100310 (estimated 2026-07-14T00:55:08Z)"
+        "last commit at or before, on fix/stale-offer-bounds-fixtures-998-s15 base-sepolia (live)'s cut at block 44100310 (estimated 2026-07-14T00:55:08Z)",
+        "last commit at or before, on origin/fix/stale-offer-bounds-fixtures-998-s15 arb-sepolia (live)'s cut at block 287151976 (2026-07-13T19:17:36Z)",
+        "last commit at or before, on origin/fix/stale-offer-bounds-fixtures-998-s15 arb-sepolia (live)'s cut at block 287151984 (2026-07-13T19:17:39Z)",
+        "last commit at or before, on origin/fix/stale-offer-bounds-fixtures-998-s15 arb-sepolia (live)'s cut at block 287151991 (2026-07-13T19:17:40Z)",
+        "last commit at or before, on origin/fix/stale-offer-bounds-fixtures-998-s15 arb-sepolia (live)'s cut at block 287151999 (2026-07-13T19:17:42Z)",
+        "last commit at or before, on origin/fix/stale-offer-bounds-fixtures-998-s15 arb-sepolia (live)'s cut at block 287152006 (2026-07-13T19:17:44Z)",
+        "last commit at or before, on origin/fix/stale-offer-bounds-fixtures-998-s15 arb-sepolia (live)'s cut at block 287152015 (2026-07-13T19:17:46Z)",
+        "last commit at or before, on origin/fix/stale-offer-bounds-fixtures-998-s15 arb-sepolia (live)'s cut at block 287152023 (2026-07-13T19:17:48Z)"
       ]
     },
     {
@@ -1501,7 +1731,14 @@
         "last commit at or before, on design/sanctions-closeout-sweep-sale-vehicle base-sepolia (live)'s cut at block 43700367 (estimated 2026-07-04T06:43:42Z)",
         "last commit at or before, on design/sanctions-closeout-sweep-sale-vehicle base-sepolia (live)'s cut at block 43700367 (estimated 2026-07-04T12:43:42Z)",
         "last commit at or before, on design/sanctions-closeout-sweep-sale-vehicle base-sepolia (live)'s cut at block 43700369 (estimated 2026-07-04T06:43:46Z)",
-        "last commit at or before, on design/sanctions-closeout-sweep-sale-vehicle base-sepolia (live)'s cut at block 43700369 (estimated 2026-07-04T12:43:46Z)"
+        "last commit at or before, on design/sanctions-closeout-sweep-sale-vehicle base-sepolia (live)'s cut at block 43700369 (estimated 2026-07-04T12:43:46Z)",
+        "last commit at or before, on origin/design/sanctions-closeout-sweep-sale-vehicle arb-sepolia (live)'s cut at block 284047211 (2026-07-04T13:01:39Z)",
+        "last commit at or before, on origin/design/sanctions-closeout-sweep-sale-vehicle arb-sepolia (live)'s cut at block 284047221 (2026-07-04T13:01:41Z)",
+        "last commit at or before, on origin/design/sanctions-closeout-sweep-sale-vehicle arb-sepolia (live)'s cut at block 284047228 (2026-07-04T13:01:43Z)",
+        "last commit at or before, on origin/design/sanctions-closeout-sweep-sale-vehicle arb-sepolia (live)'s cut at block 284047236 (2026-07-04T13:01:45Z)",
+        "last commit at or before, on origin/design/sanctions-closeout-sweep-sale-vehicle arb-sepolia (live)'s cut at block 284047243 (2026-07-04T13:01:47Z)",
+        "last commit at or before, on origin/design/sanctions-closeout-sweep-sale-vehicle arb-sepolia (live)'s cut at block 284047251 (2026-07-04T13:01:49Z)",
+        "last commit at or before, on origin/design/sanctions-closeout-sweep-sale-vehicle arb-sepolia (live)'s cut at block 284047259 (2026-07-04T13:01:51Z)"
       ]
     },
     {
@@ -1610,6 +1847,23 @@
     {
       "commit": "95854139aa1dac5f630bcb2e172741a935480f40",
       "reasons": [
+        "last commit at or before, on origin/codex/t090-cleanup-closed-cards arb-sepolia (live)'s cut at block 282851542 (2026-07-01T01:49:00Z)",
+        "last commit at or before, on origin/codex/t090-cleanup-closed-cards arb-sepolia (live)'s cut at block 282851554 (2026-07-01T01:49:03Z)",
+        "last commit at or before, on origin/codex/t090-cleanup-closed-cards arb-sepolia (live)'s cut at block 282851561 (2026-07-01T01:49:04Z)",
+        "last commit at or before, on origin/codex/t090-cleanup-closed-cards arb-sepolia (live)'s cut at block 282851570 (2026-07-01T01:49:07Z)",
+        "last commit at or before, on origin/codex/t090-cleanup-closed-cards arb-sepolia (live)'s cut at block 282851576 (2026-07-01T01:49:08Z)",
+        "last commit at or before, on origin/codex/t090-cleanup-closed-cards arb-sepolia (live)'s cut at block 282851582 (2026-07-01T01:49:10Z)",
+        "last commit at or before, on origin/codex/t090-cleanup-closed-cards arb-sepolia (live)'s cut at block 282851591 (2026-07-01T01:49:12Z)",
+        "last commit at or before, on origin/codex/t090-cleanup-closed-cards arb-sepolia (live)'s cut at block 282851601 (2026-07-01T01:49:14Z)",
+        "last commit at or before, on origin/codex/t090-cleanup-closed-cards arb-sepolia (live)'s cut at block 282851607 (2026-07-01T01:49:16Z)",
+        "last commit at or before, on origin/codex/t090-cleanup-closed-cards arb-sepolia (live)'s cut at block 282851614 (2026-07-01T01:49:18Z)",
+        "last commit at or before, on origin/codex/t090-cleanup-closed-cards arb-sepolia (live)'s cut at block 282851623 (2026-07-01T01:49:20Z)",
+        "last commit at or before, on origin/codex/t090-cleanup-closed-cards arb-sepolia (live)'s cut at block 282851629 (2026-07-01T01:49:21Z)",
+        "last commit at or before, on origin/codex/t090-cleanup-closed-cards arb-sepolia (live)'s cut at block 282851638 (2026-07-01T01:49:24Z)",
+        "last commit at or before, on origin/codex/t090-cleanup-closed-cards arb-sepolia (live)'s cut at block 282851644 (2026-07-01T01:49:25Z)",
+        "last commit at or before, on origin/codex/t090-cleanup-closed-cards arb-sepolia (live)'s cut at block 282851650 (2026-07-01T01:49:27Z)",
+        "last commit at or before, on origin/codex/t090-cleanup-closed-cards arb-sepolia (live)'s cut at block 282851656 (2026-07-01T01:49:28Z)",
+        "last commit at or before, on origin/codex/t090-cleanup-closed-cards arb-sepolia (live)'s record:live deployedAt 2026-07-01T01:41:15Z",
         "last commit at or before, on origin/codex/t090-cleanup-closed-cards base-sepolia (live)'s cut at block 43549991 (estimated 2026-06-30T19:11:10Z)",
         "last commit at or before, on origin/codex/t090-cleanup-closed-cards base-sepolia (live)'s cut at block 43549995 (estimated 2026-06-30T19:11:18Z)",
         "last commit at or before, on origin/codex/t090-cleanup-closed-cards base-sepolia (live)'s cut at block 43549997 (estimated 2026-06-30T19:11:22Z)",
@@ -1663,6 +1917,14 @@
     {
       "commit": "9868175acec9f82e869757e40dbdea66c88abf77",
       "reasons": [
+        "last commit at or before, on origin/deploy/contracts-deployed arb-sepolia (live)'s cut at block 287877441 (2026-07-15T22:31:17Z)",
+        "last commit at or before, on origin/deploy/contracts-deployed arb-sepolia (live)'s cut at block 287877447 (2026-07-15T22:31:19Z)",
+        "last commit at or before, on origin/deploy/contracts-deployed arb-sepolia (live)'s cut at block 287877453 (2026-07-15T22:31:20Z)",
+        "last commit at or before, on origin/deploy/contracts-deployed arb-sepolia (live)'s cut at block 287877460 (2026-07-15T22:31:22Z)",
+        "last commit at or before, on origin/deploy/contracts-deployed arb-sepolia (live)'s cut at block 287877466 (2026-07-15T22:31:24Z)",
+        "last commit at or before, on origin/deploy/contracts-deployed arb-sepolia (live)'s cut at block 287877471 (2026-07-15T22:31:25Z)",
+        "last commit at or before, on origin/deploy/contracts-deployed arb-sepolia (live)'s cut at block 287877478 (2026-07-15T22:31:27Z)",
+        "last commit at or before, on origin/deploy/contracts-deployed arb-sepolia (live)'s cut at block 287877482 (2026-07-15T22:31:28Z)",
         "last commit at or before, on origin/deploy/contracts-deployed base-sepolia (live)'s cut at block 44192697 (estimated 2026-07-15T16:14:42Z)",
         "last commit at or before, on origin/deploy/contracts-deployed base-sepolia (live)'s cut at block 44192698 (estimated 2026-07-15T16:14:44Z)",
         "last commit at or before, on origin/deploy/contracts-deployed base-sepolia (live)'s cut at block 44192699 (estimated 2026-07-15T16:14:46Z)",
@@ -1703,7 +1965,14 @@
         "last commit at or before, on feat/951-loan-sale-offer-onchain-fix base-sepolia (live)'s cut at block 43700367 (estimated 2026-07-04T06:43:42Z)",
         "last commit at or before, on feat/951-loan-sale-offer-onchain-fix base-sepolia (live)'s cut at block 43700367 (estimated 2026-07-04T12:43:42Z)",
         "last commit at or before, on feat/951-loan-sale-offer-onchain-fix base-sepolia (live)'s cut at block 43700369 (estimated 2026-07-04T06:43:46Z)",
-        "last commit at or before, on feat/951-loan-sale-offer-onchain-fix base-sepolia (live)'s cut at block 43700369 (estimated 2026-07-04T12:43:46Z)"
+        "last commit at or before, on feat/951-loan-sale-offer-onchain-fix base-sepolia (live)'s cut at block 43700369 (estimated 2026-07-04T12:43:46Z)",
+        "last commit at or before, on origin/feat/951-loan-sale-offer-onchain-fix arb-sepolia (live)'s cut at block 284047211 (2026-07-04T13:01:39Z)",
+        "last commit at or before, on origin/feat/951-loan-sale-offer-onchain-fix arb-sepolia (live)'s cut at block 284047221 (2026-07-04T13:01:41Z)",
+        "last commit at or before, on origin/feat/951-loan-sale-offer-onchain-fix arb-sepolia (live)'s cut at block 284047228 (2026-07-04T13:01:43Z)",
+        "last commit at or before, on origin/feat/951-loan-sale-offer-onchain-fix arb-sepolia (live)'s cut at block 284047236 (2026-07-04T13:01:45Z)",
+        "last commit at or before, on origin/feat/951-loan-sale-offer-onchain-fix arb-sepolia (live)'s cut at block 284047243 (2026-07-04T13:01:47Z)",
+        "last commit at or before, on origin/feat/951-loan-sale-offer-onchain-fix arb-sepolia (live)'s cut at block 284047251 (2026-07-04T13:01:49Z)",
+        "last commit at or before, on origin/feat/951-loan-sale-offer-onchain-fix arb-sepolia (live)'s cut at block 284047259 (2026-07-04T13:01:51Z)"
       ]
     },
     {
@@ -1825,7 +2094,24 @@
         "last commit at or before, on fix/t641-partial-liq-maturity-preserve base-sepolia (live)'s cut at block 43550017 (estimated 2026-07-01T01:12:02Z)",
         "last commit at or before, on fix/t641-partial-liq-maturity-preserve base-sepolia (live)'s cut at block 43550019 (estimated 2026-06-30T19:12:06Z)",
         "last commit at or before, on fix/t641-partial-liq-maturity-preserve base-sepolia (live)'s cut at block 43550019 (estimated 2026-07-01T01:12:06Z)",
-        "last commit at or before, on fix/t641-partial-liq-maturity-preserve base-sepolia (live)'s record:live deployedAt 2026-07-01T01:04:28Z"
+        "last commit at or before, on fix/t641-partial-liq-maturity-preserve base-sepolia (live)'s record:live deployedAt 2026-07-01T01:04:28Z",
+        "last commit at or before, on origin/fix/t641-partial-liq-maturity-preserve arb-sepolia (live)'s cut at block 282851542 (2026-07-01T01:49:00Z)",
+        "last commit at or before, on origin/fix/t641-partial-liq-maturity-preserve arb-sepolia (live)'s cut at block 282851554 (2026-07-01T01:49:03Z)",
+        "last commit at or before, on origin/fix/t641-partial-liq-maturity-preserve arb-sepolia (live)'s cut at block 282851561 (2026-07-01T01:49:04Z)",
+        "last commit at or before, on origin/fix/t641-partial-liq-maturity-preserve arb-sepolia (live)'s cut at block 282851570 (2026-07-01T01:49:07Z)",
+        "last commit at or before, on origin/fix/t641-partial-liq-maturity-preserve arb-sepolia (live)'s cut at block 282851576 (2026-07-01T01:49:08Z)",
+        "last commit at or before, on origin/fix/t641-partial-liq-maturity-preserve arb-sepolia (live)'s cut at block 282851582 (2026-07-01T01:49:10Z)",
+        "last commit at or before, on origin/fix/t641-partial-liq-maturity-preserve arb-sepolia (live)'s cut at block 282851591 (2026-07-01T01:49:12Z)",
+        "last commit at or before, on origin/fix/t641-partial-liq-maturity-preserve arb-sepolia (live)'s cut at block 282851601 (2026-07-01T01:49:14Z)",
+        "last commit at or before, on origin/fix/t641-partial-liq-maturity-preserve arb-sepolia (live)'s cut at block 282851607 (2026-07-01T01:49:16Z)",
+        "last commit at or before, on origin/fix/t641-partial-liq-maturity-preserve arb-sepolia (live)'s cut at block 282851614 (2026-07-01T01:49:18Z)",
+        "last commit at or before, on origin/fix/t641-partial-liq-maturity-preserve arb-sepolia (live)'s cut at block 282851623 (2026-07-01T01:49:20Z)",
+        "last commit at or before, on origin/fix/t641-partial-liq-maturity-preserve arb-sepolia (live)'s cut at block 282851629 (2026-07-01T01:49:21Z)",
+        "last commit at or before, on origin/fix/t641-partial-liq-maturity-preserve arb-sepolia (live)'s cut at block 282851638 (2026-07-01T01:49:24Z)",
+        "last commit at or before, on origin/fix/t641-partial-liq-maturity-preserve arb-sepolia (live)'s cut at block 282851644 (2026-07-01T01:49:25Z)",
+        "last commit at or before, on origin/fix/t641-partial-liq-maturity-preserve arb-sepolia (live)'s cut at block 282851650 (2026-07-01T01:49:27Z)",
+        "last commit at or before, on origin/fix/t641-partial-liq-maturity-preserve arb-sepolia (live)'s cut at block 282851656 (2026-07-01T01:49:28Z)",
+        "last commit at or before, on origin/fix/t641-partial-liq-maturity-preserve arb-sepolia (live)'s record:live deployedAt 2026-07-01T01:41:15Z"
       ]
     },
     {
@@ -1976,6 +2262,28 @@
       ]
     },
     {
+      "commit": "bd39655192bb2daba28468326ec85e18a0900c7b",
+      "reasons": [
+        "last commit at or before, on origin/fix/completion-path-vault-lock-831 arb-sepolia (live)'s cut at block 282851542 (2026-07-01T01:49:00Z)",
+        "last commit at or before, on origin/fix/completion-path-vault-lock-831 arb-sepolia (live)'s cut at block 282851554 (2026-07-01T01:49:03Z)",
+        "last commit at or before, on origin/fix/completion-path-vault-lock-831 arb-sepolia (live)'s cut at block 282851561 (2026-07-01T01:49:04Z)",
+        "last commit at or before, on origin/fix/completion-path-vault-lock-831 arb-sepolia (live)'s cut at block 282851570 (2026-07-01T01:49:07Z)",
+        "last commit at or before, on origin/fix/completion-path-vault-lock-831 arb-sepolia (live)'s cut at block 282851576 (2026-07-01T01:49:08Z)",
+        "last commit at or before, on origin/fix/completion-path-vault-lock-831 arb-sepolia (live)'s cut at block 282851582 (2026-07-01T01:49:10Z)",
+        "last commit at or before, on origin/fix/completion-path-vault-lock-831 arb-sepolia (live)'s cut at block 282851591 (2026-07-01T01:49:12Z)",
+        "last commit at or before, on origin/fix/completion-path-vault-lock-831 arb-sepolia (live)'s cut at block 282851601 (2026-07-01T01:49:14Z)",
+        "last commit at or before, on origin/fix/completion-path-vault-lock-831 arb-sepolia (live)'s cut at block 282851607 (2026-07-01T01:49:16Z)",
+        "last commit at or before, on origin/fix/completion-path-vault-lock-831 arb-sepolia (live)'s cut at block 282851614 (2026-07-01T01:49:18Z)",
+        "last commit at or before, on origin/fix/completion-path-vault-lock-831 arb-sepolia (live)'s cut at block 282851623 (2026-07-01T01:49:20Z)",
+        "last commit at or before, on origin/fix/completion-path-vault-lock-831 arb-sepolia (live)'s cut at block 282851629 (2026-07-01T01:49:21Z)",
+        "last commit at or before, on origin/fix/completion-path-vault-lock-831 arb-sepolia (live)'s cut at block 282851638 (2026-07-01T01:49:24Z)",
+        "last commit at or before, on origin/fix/completion-path-vault-lock-831 arb-sepolia (live)'s cut at block 282851644 (2026-07-01T01:49:25Z)",
+        "last commit at or before, on origin/fix/completion-path-vault-lock-831 arb-sepolia (live)'s cut at block 282851650 (2026-07-01T01:49:27Z)",
+        "last commit at or before, on origin/fix/completion-path-vault-lock-831 arb-sepolia (live)'s cut at block 282851656 (2026-07-01T01:49:28Z)",
+        "last commit at or before, on origin/fix/completion-path-vault-lock-831 arb-sepolia (live)'s record:live deployedAt 2026-07-01T01:41:15Z"
+      ]
+    },
+    {
       "commit": "bda0307b9fadc406c7790efeb27d9ef91d3a3fa3",
       "reasons": [
         "last commit at or before, on fix/1476-archive-baseline-discovery base-sepolia (live)'s cut at block 44977732 (estimated 2026-08-03T02:22:32Z)",
@@ -2062,7 +2370,24 @@
         "last commit at or before, on chore/fix-regression-subdirs-ceiling base-sepolia (live)'s cut at block 43550019 (estimated 2026-07-01T01:12:06Z)",
         "last commit at or before, on chore/fix-regression-subdirs-ceiling base-sepolia (live)'s cut at block 43550019 (estimated 2026-07-01T07:12:06Z)",
         "last commit at or before, on chore/fix-regression-subdirs-ceiling base-sepolia (live)'s record:live deployedAt 2026-07-01T01:04:28Z",
-        "last commit at or before, on chore/fix-regression-subdirs-ceiling bnb-testnet (live)'s record:live deployedAt 2026-07-01T01:55:03Z"
+        "last commit at or before, on chore/fix-regression-subdirs-ceiling bnb-testnet (live)'s record:live deployedAt 2026-07-01T01:55:03Z",
+        "last commit at or before, on origin/chore/fix-regression-subdirs-ceiling arb-sepolia (live)'s cut at block 282851542 (2026-07-01T01:49:00Z)",
+        "last commit at or before, on origin/chore/fix-regression-subdirs-ceiling arb-sepolia (live)'s cut at block 282851554 (2026-07-01T01:49:03Z)",
+        "last commit at or before, on origin/chore/fix-regression-subdirs-ceiling arb-sepolia (live)'s cut at block 282851561 (2026-07-01T01:49:04Z)",
+        "last commit at or before, on origin/chore/fix-regression-subdirs-ceiling arb-sepolia (live)'s cut at block 282851570 (2026-07-01T01:49:07Z)",
+        "last commit at or before, on origin/chore/fix-regression-subdirs-ceiling arb-sepolia (live)'s cut at block 282851576 (2026-07-01T01:49:08Z)",
+        "last commit at or before, on origin/chore/fix-regression-subdirs-ceiling arb-sepolia (live)'s cut at block 282851582 (2026-07-01T01:49:10Z)",
+        "last commit at or before, on origin/chore/fix-regression-subdirs-ceiling arb-sepolia (live)'s cut at block 282851591 (2026-07-01T01:49:12Z)",
+        "last commit at or before, on origin/chore/fix-regression-subdirs-ceiling arb-sepolia (live)'s cut at block 282851601 (2026-07-01T01:49:14Z)",
+        "last commit at or before, on origin/chore/fix-regression-subdirs-ceiling arb-sepolia (live)'s cut at block 282851607 (2026-07-01T01:49:16Z)",
+        "last commit at or before, on origin/chore/fix-regression-subdirs-ceiling arb-sepolia (live)'s cut at block 282851614 (2026-07-01T01:49:18Z)",
+        "last commit at or before, on origin/chore/fix-regression-subdirs-ceiling arb-sepolia (live)'s cut at block 282851623 (2026-07-01T01:49:20Z)",
+        "last commit at or before, on origin/chore/fix-regression-subdirs-ceiling arb-sepolia (live)'s cut at block 282851629 (2026-07-01T01:49:21Z)",
+        "last commit at or before, on origin/chore/fix-regression-subdirs-ceiling arb-sepolia (live)'s cut at block 282851638 (2026-07-01T01:49:24Z)",
+        "last commit at or before, on origin/chore/fix-regression-subdirs-ceiling arb-sepolia (live)'s cut at block 282851644 (2026-07-01T01:49:25Z)",
+        "last commit at or before, on origin/chore/fix-regression-subdirs-ceiling arb-sepolia (live)'s cut at block 282851650 (2026-07-01T01:49:27Z)",
+        "last commit at or before, on origin/chore/fix-regression-subdirs-ceiling arb-sepolia (live)'s cut at block 282851656 (2026-07-01T01:49:28Z)",
+        "last commit at or before, on origin/chore/fix-regression-subdirs-ceiling arb-sepolia (live)'s record:live deployedAt 2026-07-01T01:41:15Z"
       ]
     },
     {
@@ -2099,7 +2424,15 @@
         "last commit at or before, on ci/bump-forge-doc-contracts-fast-timeouts base-sepolia (live)'s cut at block 44192704 (estimated 2026-07-15T16:14:56Z)",
         "last commit at or before, on ci/bump-forge-doc-contracts-fast-timeouts base-sepolia (live)'s cut at block 44192704 (estimated 2026-07-15T22:14:56Z)",
         "last commit at or before, on ci/bump-forge-doc-contracts-fast-timeouts base-sepolia (live)'s cut at block 44192705 (estimated 2026-07-15T16:14:58Z)",
-        "last commit at or before, on ci/bump-forge-doc-contracts-fast-timeouts base-sepolia (live)'s cut at block 44192705 (estimated 2026-07-15T22:14:58Z)"
+        "last commit at or before, on ci/bump-forge-doc-contracts-fast-timeouts base-sepolia (live)'s cut at block 44192705 (estimated 2026-07-15T22:14:58Z)",
+        "last commit at or before, on origin/ci/bump-forge-doc-contracts-fast-timeouts arb-sepolia (live)'s cut at block 287877441 (2026-07-15T22:31:17Z)",
+        "last commit at or before, on origin/ci/bump-forge-doc-contracts-fast-timeouts arb-sepolia (live)'s cut at block 287877447 (2026-07-15T22:31:19Z)",
+        "last commit at or before, on origin/ci/bump-forge-doc-contracts-fast-timeouts arb-sepolia (live)'s cut at block 287877453 (2026-07-15T22:31:20Z)",
+        "last commit at or before, on origin/ci/bump-forge-doc-contracts-fast-timeouts arb-sepolia (live)'s cut at block 287877460 (2026-07-15T22:31:22Z)",
+        "last commit at or before, on origin/ci/bump-forge-doc-contracts-fast-timeouts arb-sepolia (live)'s cut at block 287877466 (2026-07-15T22:31:24Z)",
+        "last commit at or before, on origin/ci/bump-forge-doc-contracts-fast-timeouts arb-sepolia (live)'s cut at block 287877471 (2026-07-15T22:31:25Z)",
+        "last commit at or before, on origin/ci/bump-forge-doc-contracts-fast-timeouts arb-sepolia (live)'s cut at block 287877478 (2026-07-15T22:31:27Z)",
+        "last commit at or before, on origin/ci/bump-forge-doc-contracts-fast-timeouts arb-sepolia (live)'s cut at block 287877482 (2026-07-15T22:31:28Z)"
       ]
     },
     {
@@ -2144,7 +2477,15 @@
         "last commit at or before, on feature/vpfi-recycle-ledger-phase-a1-1217 base-sepolia (live)'s cut at block 44192704 (estimated 2026-07-16T04:14:56Z)",
         "last commit at or before, on feature/vpfi-recycle-ledger-phase-a1-1217 base-sepolia (live)'s cut at block 44192705 (estimated 2026-07-15T16:14:58Z)",
         "last commit at or before, on feature/vpfi-recycle-ledger-phase-a1-1217 base-sepolia (live)'s cut at block 44192705 (estimated 2026-07-15T22:14:58Z)",
-        "last commit at or before, on feature/vpfi-recycle-ledger-phase-a1-1217 base-sepolia (live)'s cut at block 44192705 (estimated 2026-07-16T04:14:58Z)"
+        "last commit at or before, on feature/vpfi-recycle-ledger-phase-a1-1217 base-sepolia (live)'s cut at block 44192705 (estimated 2026-07-16T04:14:58Z)",
+        "last commit at or before, on origin/feature/vpfi-recycle-ledger-phase-a1-1217 arb-sepolia (live)'s cut at block 287877441 (2026-07-15T22:31:17Z)",
+        "last commit at or before, on origin/feature/vpfi-recycle-ledger-phase-a1-1217 arb-sepolia (live)'s cut at block 287877447 (2026-07-15T22:31:19Z)",
+        "last commit at or before, on origin/feature/vpfi-recycle-ledger-phase-a1-1217 arb-sepolia (live)'s cut at block 287877453 (2026-07-15T22:31:20Z)",
+        "last commit at or before, on origin/feature/vpfi-recycle-ledger-phase-a1-1217 arb-sepolia (live)'s cut at block 287877460 (2026-07-15T22:31:22Z)",
+        "last commit at or before, on origin/feature/vpfi-recycle-ledger-phase-a1-1217 arb-sepolia (live)'s cut at block 287877466 (2026-07-15T22:31:24Z)",
+        "last commit at or before, on origin/feature/vpfi-recycle-ledger-phase-a1-1217 arb-sepolia (live)'s cut at block 287877471 (2026-07-15T22:31:25Z)",
+        "last commit at or before, on origin/feature/vpfi-recycle-ledger-phase-a1-1217 arb-sepolia (live)'s cut at block 287877478 (2026-07-15T22:31:27Z)",
+        "last commit at or before, on origin/feature/vpfi-recycle-ledger-phase-a1-1217 arb-sepolia (live)'s cut at block 287877482 (2026-07-15T22:31:28Z)"
       ]
     },
     {
@@ -2288,7 +2629,24 @@
         "last commit at or before, on docs/843-release-fragment base-sepolia (live)'s cut at block 43550019 (estimated 2026-07-01T01:12:06Z)",
         "last commit at or before, on docs/843-release-fragment base-sepolia (live)'s cut at block 43550019 (estimated 2026-07-01T07:12:06Z)",
         "last commit at or before, on docs/843-release-fragment base-sepolia (live)'s record:live deployedAt 2026-07-01T01:04:28Z",
-        "last commit at or before, on docs/843-release-fragment bnb-testnet (live)'s record:live deployedAt 2026-07-01T01:55:03Z"
+        "last commit at or before, on docs/843-release-fragment bnb-testnet (live)'s record:live deployedAt 2026-07-01T01:55:03Z",
+        "last commit at or before, on origin/docs/843-release-fragment arb-sepolia (live)'s cut at block 282851542 (2026-07-01T01:49:00Z)",
+        "last commit at or before, on origin/docs/843-release-fragment arb-sepolia (live)'s cut at block 282851554 (2026-07-01T01:49:03Z)",
+        "last commit at or before, on origin/docs/843-release-fragment arb-sepolia (live)'s cut at block 282851561 (2026-07-01T01:49:04Z)",
+        "last commit at or before, on origin/docs/843-release-fragment arb-sepolia (live)'s cut at block 282851570 (2026-07-01T01:49:07Z)",
+        "last commit at or before, on origin/docs/843-release-fragment arb-sepolia (live)'s cut at block 282851576 (2026-07-01T01:49:08Z)",
+        "last commit at or before, on origin/docs/843-release-fragment arb-sepolia (live)'s cut at block 282851582 (2026-07-01T01:49:10Z)",
+        "last commit at or before, on origin/docs/843-release-fragment arb-sepolia (live)'s cut at block 282851591 (2026-07-01T01:49:12Z)",
+        "last commit at or before, on origin/docs/843-release-fragment arb-sepolia (live)'s cut at block 282851601 (2026-07-01T01:49:14Z)",
+        "last commit at or before, on origin/docs/843-release-fragment arb-sepolia (live)'s cut at block 282851607 (2026-07-01T01:49:16Z)",
+        "last commit at or before, on origin/docs/843-release-fragment arb-sepolia (live)'s cut at block 282851614 (2026-07-01T01:49:18Z)",
+        "last commit at or before, on origin/docs/843-release-fragment arb-sepolia (live)'s cut at block 282851623 (2026-07-01T01:49:20Z)",
+        "last commit at or before, on origin/docs/843-release-fragment arb-sepolia (live)'s cut at block 282851629 (2026-07-01T01:49:21Z)",
+        "last commit at or before, on origin/docs/843-release-fragment arb-sepolia (live)'s cut at block 282851638 (2026-07-01T01:49:24Z)",
+        "last commit at or before, on origin/docs/843-release-fragment arb-sepolia (live)'s cut at block 282851644 (2026-07-01T01:49:25Z)",
+        "last commit at or before, on origin/docs/843-release-fragment arb-sepolia (live)'s cut at block 282851650 (2026-07-01T01:49:27Z)",
+        "last commit at or before, on origin/docs/843-release-fragment arb-sepolia (live)'s cut at block 282851656 (2026-07-01T01:49:28Z)",
+        "last commit at or before, on origin/docs/843-release-fragment arb-sepolia (live)'s record:live deployedAt 2026-07-01T01:41:15Z"
       ]
     },
     {
@@ -2329,7 +2687,14 @@
         "last commit at or before, on feat/957-fee-bps-snapshot base-sepolia (live)'s cut at block 43700367 (estimated 2026-07-04T12:43:42Z)",
         "last commit at or before, on feat/957-fee-bps-snapshot base-sepolia (live)'s cut at block 43700367 (estimated 2026-07-04T18:43:42Z)",
         "last commit at or before, on feat/957-fee-bps-snapshot base-sepolia (live)'s cut at block 43700369 (estimated 2026-07-04T12:43:46Z)",
-        "last commit at or before, on feat/957-fee-bps-snapshot base-sepolia (live)'s cut at block 43700369 (estimated 2026-07-04T18:43:46Z)"
+        "last commit at or before, on feat/957-fee-bps-snapshot base-sepolia (live)'s cut at block 43700369 (estimated 2026-07-04T18:43:46Z)",
+        "last commit at or before, on origin/feat/957-fee-bps-snapshot arb-sepolia (live)'s cut at block 284047211 (2026-07-04T13:01:39Z)",
+        "last commit at or before, on origin/feat/957-fee-bps-snapshot arb-sepolia (live)'s cut at block 284047221 (2026-07-04T13:01:41Z)",
+        "last commit at or before, on origin/feat/957-fee-bps-snapshot arb-sepolia (live)'s cut at block 284047228 (2026-07-04T13:01:43Z)",
+        "last commit at or before, on origin/feat/957-fee-bps-snapshot arb-sepolia (live)'s cut at block 284047236 (2026-07-04T13:01:45Z)",
+        "last commit at or before, on origin/feat/957-fee-bps-snapshot arb-sepolia (live)'s cut at block 284047243 (2026-07-04T13:01:47Z)",
+        "last commit at or before, on origin/feat/957-fee-bps-snapshot arb-sepolia (live)'s cut at block 284047251 (2026-07-04T13:01:49Z)",
+        "last commit at or before, on origin/feat/957-fee-bps-snapshot arb-sepolia (live)'s cut at block 284047259 (2026-07-04T13:01:51Z)"
       ]
     },
     {
@@ -2373,6 +2738,13 @@
     {
       "commit": "e2a653334f74f3f79c0637e8ab48df8418058ba2",
       "reasons": [
+        "last commit at or before, on origin/agent/alpha02-functional-spec-docs arb-sepolia (live)'s cut at block 287151976 (2026-07-13T19:17:36Z)",
+        "last commit at or before, on origin/agent/alpha02-functional-spec-docs arb-sepolia (live)'s cut at block 287151984 (2026-07-13T19:17:39Z)",
+        "last commit at or before, on origin/agent/alpha02-functional-spec-docs arb-sepolia (live)'s cut at block 287151991 (2026-07-13T19:17:40Z)",
+        "last commit at or before, on origin/agent/alpha02-functional-spec-docs arb-sepolia (live)'s cut at block 287151999 (2026-07-13T19:17:42Z)",
+        "last commit at or before, on origin/agent/alpha02-functional-spec-docs arb-sepolia (live)'s cut at block 287152006 (2026-07-13T19:17:44Z)",
+        "last commit at or before, on origin/agent/alpha02-functional-spec-docs arb-sepolia (live)'s cut at block 287152015 (2026-07-13T19:17:46Z)",
+        "last commit at or before, on origin/agent/alpha02-functional-spec-docs arb-sepolia (live)'s cut at block 287152023 (2026-07-13T19:17:48Z)",
         "last commit at or before, on origin/agent/alpha02-functional-spec-docs base-sepolia (live)'s cut at block 44100296 (estimated 2026-07-13T12:54:40Z)",
         "last commit at or before, on origin/agent/alpha02-functional-spec-docs base-sepolia (live)'s cut at block 44100298 (estimated 2026-07-13T12:54:44Z)",
         "last commit at or before, on origin/agent/alpha02-functional-spec-docs base-sepolia (live)'s cut at block 44100302 (estimated 2026-07-13T12:54:52Z)",
@@ -2444,7 +2816,14 @@
         "last commit at or before, on audit/954-sanctions-gate-sweep base-sepolia (live)'s cut at block 43700367 (estimated 2026-07-04T12:43:42Z)",
         "last commit at or before, on audit/954-sanctions-gate-sweep base-sepolia (live)'s cut at block 43700367 (estimated 2026-07-04T18:43:42Z)",
         "last commit at or before, on audit/954-sanctions-gate-sweep base-sepolia (live)'s cut at block 43700369 (estimated 2026-07-04T12:43:46Z)",
-        "last commit at or before, on audit/954-sanctions-gate-sweep base-sepolia (live)'s cut at block 43700369 (estimated 2026-07-04T18:43:46Z)"
+        "last commit at or before, on audit/954-sanctions-gate-sweep base-sepolia (live)'s cut at block 43700369 (estimated 2026-07-04T18:43:46Z)",
+        "last commit at or before, on origin/audit/954-sanctions-gate-sweep arb-sepolia (live)'s cut at block 284047211 (2026-07-04T13:01:39Z)",
+        "last commit at or before, on origin/audit/954-sanctions-gate-sweep arb-sepolia (live)'s cut at block 284047221 (2026-07-04T13:01:41Z)",
+        "last commit at or before, on origin/audit/954-sanctions-gate-sweep arb-sepolia (live)'s cut at block 284047228 (2026-07-04T13:01:43Z)",
+        "last commit at or before, on origin/audit/954-sanctions-gate-sweep arb-sepolia (live)'s cut at block 284047236 (2026-07-04T13:01:45Z)",
+        "last commit at or before, on origin/audit/954-sanctions-gate-sweep arb-sepolia (live)'s cut at block 284047243 (2026-07-04T13:01:47Z)",
+        "last commit at or before, on origin/audit/954-sanctions-gate-sweep arb-sepolia (live)'s cut at block 284047251 (2026-07-04T13:01:49Z)",
+        "last commit at or before, on origin/audit/954-sanctions-gate-sweep arb-sepolia (live)'s cut at block 284047259 (2026-07-04T13:01:51Z)"
       ]
     },
     {
@@ -2615,7 +2994,14 @@
         "last commit at or before, on chore/testnet-mock-assets base-sepolia (live)'s cut at block 43700367 (estimated 2026-07-04T06:43:42Z)",
         "last commit at or before, on chore/testnet-mock-assets base-sepolia (live)'s cut at block 43700367 (estimated 2026-07-04T12:43:42Z)",
         "last commit at or before, on chore/testnet-mock-assets base-sepolia (live)'s cut at block 43700369 (estimated 2026-07-04T06:43:46Z)",
-        "last commit at or before, on chore/testnet-mock-assets base-sepolia (live)'s cut at block 43700369 (estimated 2026-07-04T12:43:46Z)"
+        "last commit at or before, on chore/testnet-mock-assets base-sepolia (live)'s cut at block 43700369 (estimated 2026-07-04T12:43:46Z)",
+        "last commit at or before, on origin/chore/testnet-mock-assets arb-sepolia (live)'s cut at block 284047211 (2026-07-04T13:01:39Z)",
+        "last commit at or before, on origin/chore/testnet-mock-assets arb-sepolia (live)'s cut at block 284047221 (2026-07-04T13:01:41Z)",
+        "last commit at or before, on origin/chore/testnet-mock-assets arb-sepolia (live)'s cut at block 284047228 (2026-07-04T13:01:43Z)",
+        "last commit at or before, on origin/chore/testnet-mock-assets arb-sepolia (live)'s cut at block 284047236 (2026-07-04T13:01:45Z)",
+        "last commit at or before, on origin/chore/testnet-mock-assets arb-sepolia (live)'s cut at block 284047243 (2026-07-04T13:01:47Z)",
+        "last commit at or before, on origin/chore/testnet-mock-assets arb-sepolia (live)'s cut at block 284047251 (2026-07-04T13:01:49Z)",
+        "last commit at or before, on origin/chore/testnet-mock-assets arb-sepolia (live)'s cut at block 284047259 (2026-07-04T13:01:51Z)"
       ]
     },
     {
@@ -2657,7 +3043,15 @@
         "last commit at or before, on feature/e1-yield-fee-direct-reduction-1203 base-sepolia (live)'s cut at block 44192701 (estimated 2026-07-15T16:14:50Z)",
         "last commit at or before, on feature/e1-yield-fee-direct-reduction-1203 base-sepolia (live)'s cut at block 44192703 (estimated 2026-07-15T16:14:54Z)",
         "last commit at or before, on feature/e1-yield-fee-direct-reduction-1203 base-sepolia (live)'s cut at block 44192704 (estimated 2026-07-15T16:14:56Z)",
-        "last commit at or before, on feature/e1-yield-fee-direct-reduction-1203 base-sepolia (live)'s cut at block 44192705 (estimated 2026-07-15T16:14:58Z)"
+        "last commit at or before, on feature/e1-yield-fee-direct-reduction-1203 base-sepolia (live)'s cut at block 44192705 (estimated 2026-07-15T16:14:58Z)",
+        "last commit at or before, on origin/feature/e1-yield-fee-direct-reduction-1203 arb-sepolia (live)'s cut at block 287877441 (2026-07-15T22:31:17Z)",
+        "last commit at or before, on origin/feature/e1-yield-fee-direct-reduction-1203 arb-sepolia (live)'s cut at block 287877447 (2026-07-15T22:31:19Z)",
+        "last commit at or before, on origin/feature/e1-yield-fee-direct-reduction-1203 arb-sepolia (live)'s cut at block 287877453 (2026-07-15T22:31:20Z)",
+        "last commit at or before, on origin/feature/e1-yield-fee-direct-reduction-1203 arb-sepolia (live)'s cut at block 287877460 (2026-07-15T22:31:22Z)",
+        "last commit at or before, on origin/feature/e1-yield-fee-direct-reduction-1203 arb-sepolia (live)'s cut at block 287877466 (2026-07-15T22:31:24Z)",
+        "last commit at or before, on origin/feature/e1-yield-fee-direct-reduction-1203 arb-sepolia (live)'s cut at block 287877471 (2026-07-15T22:31:25Z)",
+        "last commit at or before, on origin/feature/e1-yield-fee-direct-reduction-1203 arb-sepolia (live)'s cut at block 287877478 (2026-07-15T22:31:27Z)",
+        "last commit at or before, on origin/feature/e1-yield-fee-direct-reduction-1203 arb-sepolia (live)'s cut at block 287877482 (2026-07-15T22:31:28Z)"
       ]
     },
     {

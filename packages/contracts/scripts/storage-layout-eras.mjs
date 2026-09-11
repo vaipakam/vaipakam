@@ -500,7 +500,7 @@ export function main(argv = process.argv.slice(2)) {
   // rebuilds the per-build maps.
   const index = []; const idOf = new Map();
   const idsFor = (map) => Object.entries(map ?? {}).map(([h, name]) => { const k = `${h}|${name}`; if (!idOf.has(k)) { idOf.set(k, index.length); index.push([h, name]); } return idOf.get(k); }).sort((a, b) => a - b);
-  const compact = (b) => { const { bytecode, ...rest } = b; return { ...rest, bytecodeIds: idsFor(bytecode) }; };
+  const compact = (b) => { const { bytecode, reasons, ...rest } = b; return { ...rest, ...(reasons ? { reasons: reasons.slice(0, 3), reasonsTotal: reasons.length } : {}), bytecodeIds: idsFor(bytecode) }; };
   const distinct = {};
   for (const f of FIELDS) distinct[f] = [...new Set(built.map((b) => b.fields[f]?.slot).filter(Boolean))];
   const result = {
@@ -522,7 +522,8 @@ export function main(argv = process.argv.slice(2)) {
     distinctSlots: distinct,
   };
   mkdirSync(resolvePath(out, '..'), { recursive: true });
-  writeFileSync(out, JSON.stringify(result, null, 2) + '\n');
+  // one-space indent: the drift gate refuses to scan a tracked file above 2 MiB, and a readable diff needs no more
+  writeFileSync(out, JSON.stringify(result, null, 1) + '\n');
   log(`written ${out}: ${built.length} era(s) built, ${unavailable.length} unavailable; distinct intentCommits slots: ${distinct.intentCommits.length}`);
   return result.complete ? 0 : 1;
 }
