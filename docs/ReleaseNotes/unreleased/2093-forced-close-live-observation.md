@@ -464,3 +464,29 @@ counts only what is actually shown, which is the rule the card's own
 duplicate check has always used. A check that condemns a correct page is
 worse than one that misses a rare bad one, because it is the kind of
 result that gets the whole check switched off.
+
+Three more, and the first is about what the check is entitled to claim.
+If every position it looks at happens to be in a state where the card is
+shown but not yet actionable, the check would finish successfully —
+having never opened the confirmation panel, and so having never looked at
+the receipt, the amounts, or the button that spends money. It reported
+clean over a surface nobody had seen. It now says plainly that the
+confirmation was never opened and that the run establishes nothing about
+it. That is a gap rather than a fault: nothing was wrong, the chain
+simply did not offer one to look at, and saying so is the honest answer.
+
+An endpoint that answers the same question twice with two different
+chains in a single reply was being believed on whichever answer came
+first. One that contradicts itself cannot be relied on for either, which
+is exactly the case the existing distrust rule was written for. It is now
+excluded outright, and a contradiction is recorded as a different thing
+from having no answer at all — because "no answer" lets the endpoint be
+accepted on other evidence, and a contradiction must not.
+
+The last is about blame. One early step deliberately re-raises failures
+it cannot attribute to the chain, so that a fault in the check itself is
+loud rather than quietly degrading the run. But it did so outside the
+part of the run that knows such failures happened before anything was
+observed, so the run ended by reporting a product regression for
+something no page had yet been looked at. It is still loud; it now ends
+by saying nothing could be checked, which is what actually happened.

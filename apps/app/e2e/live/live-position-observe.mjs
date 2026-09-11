@@ -112,6 +112,7 @@ import {
   blockNumberFromWsFrame,
   callsTargetContract,
   chainIdFromRpcPair,
+  CHAIN_ID_CONFLICT,
   classifyRpcFailure,
   codedError,
   isTransportFailure,
@@ -1161,34 +1162,53 @@ if (dropped > 0) {
 // at all. See the round-29 note in the sort.
 const acceptedSale = new Set();
 if (ROLE === 'lender') {
-  for (const l of eligible.filter((x) => x.status === STATUS_ACTIVE)) {
-    try {
-      if ((await saleLockedOn(l.lenderTokenId, l.id, undefined, l.authority)) === true) {
-        acceptedSale.add(l.id);
+  // ROUND 52 P2 — THROUGH `discovery()`, so the one error this loop
+  // deliberately rethrows exits BLOCKED rather than FAIL.
+  //
+  // The rethrow below is right and stays: a failure this file cannot
+  // attribute to the chain must be loud rather than silently degrading
+  // the ranking. But it happened OUTSIDE `discovery()`, so it became an
+  // uncaught top-level rejection — which exits 1, which the batch reads
+  // as a product regression. At this point no browser observation has
+  // happened at all, so blaming the deployed page is the one thing the
+  // exit contract forbids.
+  //
+  // A provider answering JSON-RPC `-32700` is enough to reach it:
+  // `classifyRpcFailure` calls that a `client-fault`, `isTransportFailure`
+  // therefore returns false, and the loop rethrows into nothing.
+  //
+  // Loud AND correctly classified: `discovery()` prints what failed and
+  // exits 2.
+  await discovery('ranking loans by accepted sale', async () => {
+    for (const l of eligible.filter((x) => x.status === STATUS_ACTIVE)) {
+      try {
+        if ((await saleLockedOn(l.lenderTokenId, l.id, undefined, l.authority)) === true) {
+          acceptedSale.add(l.id);
+        }
+      } catch (err) {
+        // ROUND 30 P2 — a chain that could not answer, NOT a bug in this
+        // file.
+        //
+        // This catch was written for transport failures and silently ate a
+        // `ReferenceError` for a whole round: every locked position came
+        // back "unreadable, still a candidate", so the ordering fix above
+        // did nothing while reading as though it worked. A catch that
+        // cannot tell a dead endpoint from a programming error will keep
+        // reporting the programming error as a chain condition.
+        //
+        // The two are now separated, and by an ALLOWLIST: a failure is
+        // swallowed only when the error chain positively names a transport
+        // fault. Everything else — this drive being wrong about itself, in
+        // any of the ways it can be — is rethrown so the run reports it
+        // instead of quietly degrading. Round 31 corrected an earlier
+        // denylist here that named two error classes and missed the rest.
+        if (!isTransportFailure(err)) throw err;
+        // Unreadable, so unknown, so still a candidate. Ranking a loan
+        // down on a read that failed would be a decision made on no
+        // evidence, in the direction that costs the run its coverage.
       }
-    } catch (err) {
-      // ROUND 30 P2 — a chain that could not answer, NOT a bug in this
-      // file.
-      //
-      // This catch was written for transport failures and silently ate a
-      // `ReferenceError` for a whole round: every locked position came
-      // back "unreadable, still a candidate", so the ordering fix above
-      // did nothing while reading as though it worked. A catch that
-      // cannot tell a dead endpoint from a programming error will keep
-      // reporting the programming error as a chain condition.
-      //
-      // The two are now separated, and by an ALLOWLIST: a failure is
-      // swallowed only when the error chain positively names a transport
-      // fault. Everything else — this drive being wrong about itself, in
-      // any of the ways it can be — is rethrown so the run reports it
-      // instead of quietly degrading. Round 31 corrected an earlier
-      // denylist here that named two error classes and missed the rest.
-      if (!isTransportFailure(err)) throw err;
-      // Unreadable, so unknown, so still a candidate. Ranking a loan
-      // down on a read that failed would be a decision made on no
-      // evidence, in the direction that costs the run its coverage.
     }
-  }
+  });
 }
 
 // The observed address: whichever authority on the CHOSEN side holds the
@@ -1867,6 +1887,20 @@ function watchPageHead(page) {
       // chain is excluded before the heuristic can mistake it.
       if (responseBody !== undefined) {
         const id = chainIdFromRpcPair(body, responseBody);
+        // ROUND 52 P2 — A CONTRADICTION IS EVIDENCE, and it excludes.
+        //
+        // One batch answering `eth_chainId` twice with different chains
+        // used to be resolved by whichever reply came first, so the
+        // endpoint could be admitted as deployment-serving on half of
+        // its own answer and have its later heights trusted. An endpoint
+        // that gives two answers has told us it can be relied on for
+        // neither — which is precisely what round 51's permanent
+        // exclusion is for, arriving by an earlier door.
+        if (id === CHAIN_ID_CONFLICT) {
+          foreign.add(key);
+          diamond.delete(key);
+          return;
+        }
         if (id !== null) {
           if (id === CHAIN_ID) {
             // ROUND 51 P2 — AND THE EXCLUSION IS PERMANENT, so this

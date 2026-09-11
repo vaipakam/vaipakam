@@ -2136,6 +2136,38 @@ export function forcedCloseCoverage(visits, role) {
   const applicable = judged.filter((v) =>
     ['pass', 'fail'].includes(v.forcedCloseVerdict.verdict),
   );
+  // ROUND 52 P2 — AN APPLICABLE VISIT IS NOT THE SAME AS A SCANNED
+  // CONFIRMATION.
+  //
+  // A chain state where every eligible position renders a clean
+  // NON-SUBMITTABLE card — `not-yet`, paused, sequencer-blocked,
+  // `ready-needs-route` — produces `pass` on each one and let the run
+  // exit 0. But the whole pre-sign receipt, and the fee-paying control
+  // beside it, were never opened: the amounts, the fees, the loss line,
+  // and every arm this PR has spent twenty rounds adding to that panel.
+  // "Routes clean" over a funds-facing surface nobody looked at.
+  //
+  // A GAP rather than a failure, and exit 2 rather than exit 1, because
+  // nothing is wrong — the sampled chain simply offered no confirmation
+  // to observe. That is the honest report, and it is the same answer
+  // `judged.length === 0` already gives for the outer assertion.
+  //
+  // On a FAIL the coverage gate is not reached at all, so this cannot
+  // mask a defect: the drive exits on the finding first.
+  //
+  // LENDER runs only, matching the rule above it: a borrower run never
+  // advertises this surface.
+  if (applicable.length > 0 && role === 'lender') {
+    const scanned = applicable.filter((v) => v.forcedCloseVerdict.confirmScanned === true);
+    if (scanned.length === 0) {
+      return (
+        `the forced-close confirmation was never opened on any of ` +
+        `${applicable.length} applicable position(s) — the receipt and its ` +
+        `fee-paying action went unobserved, so this run establishes nothing ` +
+        `about them`
+      );
+    }
+  }
   if (applicable.length > 0) return null;
   return (
     `forced-close card was never observed on an applicable position ` +

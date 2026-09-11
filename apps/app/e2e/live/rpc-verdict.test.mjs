@@ -13,6 +13,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   blockNumberFromRpcPair,
+  CHAIN_ID_CONFLICT,
   blockNumberFromWsFrame,
   chainIdFromRpcPair,
   callsTargetContract,
@@ -796,6 +797,70 @@ describe('round 50 P2 — a QUANTITY is hex, everywhere it is read', () => {
     const idReply = (result) => ({ id: 7, result });
     expect(chainIdFromRpcPair(idReq, idReply('0x14a34'))).toBe(84532);
     expect(chainIdFromRpcPair(idReq, idReply('84532'))).toBeNull();
+  });
+});
+
+describe('round 52 P2 — an endpoint that answers with two chains', () => {
+  // Returning on the FIRST match ignored a batch answering `eth_chainId`
+  // twice with different chains, so the endpoint could be admitted as
+  // deployment-serving on half of its own answer and its later heights
+  // trusted — exactly the endpoint round 51's permanent exclusion is
+  // for, reaching the same wrong-chain bound by an earlier door.
+  const batch = (...calls) =>
+    JSON.stringify(calls.map((c) => ({ jsonrpc: '2.0', ...c })));
+
+  it('reads a single consistent answer', () => {
+    expect(
+      chainIdFromRpcPair(batch({ id: 1, method: 'eth_chainId' }), [{ id: 1, result: '0x14a34' }]),
+    ).toBe(84532);
+  });
+
+  it('reads agreeing answers as that one chain', () => {
+    expect(
+      chainIdFromRpcPair(
+        batch({ id: 1, method: 'eth_chainId' }, { id: 2, method: 'eth_chainId' }),
+        [
+          { id: 1, result: '0x14a34' },
+          { id: 2, result: '0x14a34' },
+        ],
+      ),
+    ).toBe(84532);
+  });
+
+  it('reports a CONFLICT when they disagree', () => {
+    expect(
+      chainIdFromRpcPair(
+        batch({ id: 1, method: 'eth_chainId' }, { id: 2, method: 'eth_chainId' }),
+        [
+          { id: 1, result: '0x14a34' },
+          { id: 2, result: '0x1' },
+        ],
+      ),
+    ).toBe(CHAIN_ID_CONFLICT);
+  });
+
+  it('reports it whichever order the replies arrive in', () => {
+    // The defect was order-dependent: the expected chain first made the
+    // endpoint look fine. Both orders must reach the same answer.
+    expect(
+      chainIdFromRpcPair(
+        batch({ id: 1, method: 'eth_chainId' }, { id: 2, method: 'eth_chainId' }),
+        [
+          { id: 2, result: '0x1' },
+          { id: 1, result: '0x14a34' },
+        ],
+      ),
+    ).toBe(CHAIN_ID_CONFLICT);
+  });
+
+  // A CONFLICT is not `null`, and the distinction is the whole fix:
+  // `null` means "no chain evidence here", which lets the caller fall
+  // through to its address heuristic and ADMIT the endpoint.
+  it('is distinguishable from having no evidence at all', () => {
+    expect(
+      chainIdFromRpcPair(batch({ id: 1, method: 'eth_blockNumber' }), [{ id: 1, result: '0x1' }]),
+    ).toBeNull();
+    expect(CHAIN_ID_CONFLICT).not.toBeNull();
   });
 });
 

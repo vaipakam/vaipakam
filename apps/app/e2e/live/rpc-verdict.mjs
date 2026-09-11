@@ -425,6 +425,22 @@ export function blockNumberFromRpcPair(requestBody, responseBody) {
 }
 
 /**
+ * Returned by `chainIdFromRpcPair` when one exchange carried MORE THAN
+ * ONE chain id (round 52 P2).
+ *
+ * A distinct value rather than `null`, because the two mean opposite
+ * things to the caller. `null` is "no chain evidence here", which lets
+ * the endpoint be admitted on other grounds; this is "positive evidence
+ * that the endpoint contradicts itself", which must exclude it — the
+ * same permanent distrust round 51 established for an endpoint that
+ * reports a foreign chain, reached by an earlier door.
+ *
+ * A symbol so it can never be confused with a chain id, however the
+ * caller compares.
+ */
+export const CHAIN_ID_CONFLICT = Symbol('conflicting chain ids');
+
+/**
  * The chain id an endpoint reported in one `eth_chainId` exchange.
  *
  * THE RIGHT EVIDENCE for scoping observed block heights, because heights
@@ -455,6 +471,22 @@ export function chainIdFromRpcPair(requestBody, responseBody) {
   if (wanted.size === 0) return null;
   const items = Array.isArray(responseBody) ? responseBody : [responseBody];
   const lone = calls.length === 1 && items.length === 1;
+  // ROUND 52 P2 — EVERY ANSWER, not the first one.
+  //
+  // Returning on the first match ignored a batch that answers
+  // `eth_chainId` twice with DIFFERENT chains. The endpoint is then
+  // admitted as deployment-serving on the strength of one of its two
+  // replies, and its later heights are trusted — which is exactly the
+  // endpoint round 51's permanent exclusion exists to distrust, reaching
+  // the same wrong-chain bound by an earlier door.
+  //
+  // A contradiction is reported as `'conflict'` rather than as `null`,
+  // and the distinction is the whole fix: `null` means "this exchange
+  // carried no chain evidence", which lets the caller fall through to
+  // its address heuristic and ADMIT the endpoint. An endpoint that gave
+  // two answers has given positive evidence — that it cannot be relied
+  // on for either — and the caller must be able to act on it.
+  const seen = new Set();
   for (const item of items) {
     if (!lone && !wanted.has(item?.id)) continue;
     // A CHAIN ID IS A QUANTITY TOO (round 50 P2, the same rule one
@@ -464,9 +496,11 @@ export function chainIdFromRpcPair(requestBody, responseBody) {
     const id = hexQuantity(item?.result);
     if (id === null) continue;
     const n = Number(id);
-    if (Number.isSafeInteger(n)) return n;
+    if (Number.isSafeInteger(n)) seen.add(n);
   }
-  return null;
+  if (seen.size === 0) return null;
+  if (seen.size > 1) return CHAIN_ID_CONFLICT;
+  return [...seen][0];
 }
 
 /**

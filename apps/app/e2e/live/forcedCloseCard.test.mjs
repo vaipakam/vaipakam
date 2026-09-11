@@ -3007,12 +3007,75 @@ describe('round 41 review findings', () => {
       expect(forcedCloseCoverage([{ path: '/positions/1' }])).toBeNull();
     });
 
+    // FIXTURE GAINED `confirmScanned` IN ROUND 52, and the reason is the
+    // rule rather than the case. A pass that does not say it scanned the
+    // confirmation no longer proves coverage of it — absent is treated
+    // as NOT scanned, deliberately, because a coverage gate must not
+    // claim a surface it cannot show was observed. This case is about
+    // the round-41 no-verdicts rule, so it now carries a verdict that
+    // is complete in the way the round-41 rule assumes.
     it('is unaffected when verdicts ARE present', () => {
       expect(
         forcedCloseCoverage(
-          [{ path: '/positions/1', forcedCloseVerdict: { verdict: 'pass' } }],
+          [
+            {
+              path: '/positions/1',
+              forcedCloseVerdict: { verdict: 'pass', confirmScanned: true },
+            },
+          ],
           'lender',
         ),
+      ).toBeNull();
+    });
+
+    // ROUND 52 P2 — AN APPLICABLE VISIT IS NOT A SCANNED CONFIRMATION.
+    //
+    // A chain state where every eligible position renders a clean
+    // non-submittable card produces `pass` on each and used to exit 0,
+    // with the whole pre-sign receipt and its fee-paying control never
+    // opened. "Routes clean" over a funds-facing surface nobody looked
+    // at.
+    it('reports a gap when no applicable visit opened the confirmation', () => {
+      const gap = forcedCloseCoverage(
+        [
+          { path: '/positions/1', forcedCloseVerdict: { verdict: 'pass', confirmScanned: false } },
+          { path: '/positions/2', forcedCloseVerdict: { verdict: 'pass', confirmScanned: false } },
+        ],
+        'lender',
+      );
+      expect(gap).toMatch(/confirmation was never opened/);
+      expect(gap).toMatch(/2 applicable position/);
+    });
+
+    it('is satisfied by ONE scanned confirmation among many', () => {
+      expect(
+        forcedCloseCoverage(
+          [
+            { path: '/positions/1', forcedCloseVerdict: { verdict: 'pass', confirmScanned: false } },
+            { path: '/positions/2', forcedCloseVerdict: { verdict: 'pass', confirmScanned: true } },
+          ],
+          'lender',
+        ),
+      ).toBeNull();
+    });
+
+    // A borrower run never advertises this surface, and an unknown role
+    // stays permissive — the same leniency the rule above it carries,
+    // for the same reason.
+    it('does not ask a borrower run to scan a confirmation', () => {
+      expect(
+        forcedCloseCoverage(
+          [{ path: '/positions/1', forcedCloseVerdict: { verdict: 'pass', confirmScanned: false } }],
+          'borrower',
+        ),
+      ).toBeNull();
+    });
+
+    it('stays permissive about the scan when no role is supplied', () => {
+      expect(
+        forcedCloseCoverage([
+          { path: '/positions/1', forcedCloseVerdict: { verdict: 'pass', confirmScanned: false } },
+        ]),
       ).toBeNull();
     });
   });
