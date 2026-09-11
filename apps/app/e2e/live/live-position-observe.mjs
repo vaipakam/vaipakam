@@ -3264,6 +3264,20 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
           const flow = getComputedStyle(node).position;
           const inFlow = flow === 'static' || flow === 'relative';
           const r = node.getBoundingClientRect();
+          // TRUNCATED TEXT IS CONDEMNED, DELIBERATELY, and this note exists so
+          // it is not "fixed" later as a false positive. `text-overflow:
+          // ellipsis` with `white-space: nowrap` gives a line box wider than its
+          // clipping box, so a heavily truncated line fails the ratio below.
+          // That is the right answer HERE even though it would be wrong on a
+          // chrome label: a fee value cut off mid-number, or an explanation cut
+          // off mid-sentence, is exactly what this drive exists to catch, and a
+          // reader seeing an ellipsis does not make the missing half readable.
+          //
+          // Checked rather than assumed — the only ellipsis rules in
+          // `global.css` are `.connect-addr`/`.connect-label` and the two
+          // `.select-menu-*` classes, which are the header wallet button and the
+          // select menus. Nothing observed by this drive is truncated today.
+          //
           // One Range per NODE, not per clipping ancestor: this predicate runs
           // for the card, the body, the control and every receipt leaf on every
           // poll tick, and rebuilding the range inside the walk was pure waste.
@@ -4100,6 +4114,20 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
               const flow = getComputedStyle(node).position;
               const inFlow = flow === 'static' || flow === 'relative';
               const r = node.getBoundingClientRect();
+              // TRUNCATED TEXT IS CONDEMNED, DELIBERATELY, and this note exists so
+              // it is not "fixed" later as a false positive. `text-overflow:
+              // ellipsis` with `white-space: nowrap` gives a line box wider than its
+              // clipping box, so a heavily truncated line fails the ratio below.
+              // That is the right answer HERE even though it would be wrong on a
+              // chrome label: a fee value cut off mid-number, or an explanation cut
+              // off mid-sentence, is exactly what this drive exists to catch, and a
+              // reader seeing an ellipsis does not make the missing half readable.
+              //
+              // Checked rather than assumed — the only ellipsis rules in
+              // `global.css` are `.connect-addr`/`.connect-label` and the two
+              // `.select-menu-*` classes, which are the header wallet button and the
+              // select menus. Nothing observed by this drive is truncated today.
+              //
               // One Range per NODE, not per clipping ancestor: this predicate runs
               // for the card, the body, the control and every receipt leaf on every
               // poll tick, and rebuilding the range inside the walk was pure waste.
