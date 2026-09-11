@@ -12781,31 +12781,31 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
    * under `.github/workflows`.
    */
   const WALK_HELPER_FAMILIES: ReadonlyArray<
-    readonly [ext: string, body: string, dir: string]
+    readonly [ext: string, body: string, dir: string, upperCaseStillRuns: boolean]
   > = [
-    ['ps1', SHELL_BODY, 'apps/agent'],
-    ['cmd', SHELL_BODY, 'apps/agent'],
-    ['bat', SHELL_BODY, 'apps/agent'],
-    ['sh', SHELL_BODY, 'apps/agent'],
-    ['bash', SHELL_BODY, 'apps/agent'],
-    ['zsh', SHELL_BODY, 'apps/agent'],
-    ['ksh', SHELL_BODY, 'apps/agent'],
+    ['ps1', SHELL_BODY, 'apps/agent', true],
+    ['cmd', SHELL_BODY, 'apps/agent', true],
+    ['bat', SHELL_BODY, 'apps/agent', true],
+    ['sh', SHELL_BODY, 'apps/agent', true],
+    ['bash', SHELL_BODY, 'apps/agent', true],
+    ['zsh', SHELL_BODY, 'apps/agent', true],
+    ['ksh', SHELL_BODY, 'apps/agent', true],
     // ESM: `.mjs`/`.mts` by extension, and `.js`/`.ts` because the seeded
     // manifest declares `"type": "module"` exactly as apps/agent does.
-    ['js', ARGV_ESM, 'apps/agent'],
-    ['mjs', ARGV_ESM, 'apps/agent'],
-    ['ts', ARGV_ESM, 'apps/agent'],
-    ['mts', ARGV_ESM, 'apps/agent'],
+    ['js', ARGV_ESM, 'apps/agent', false],
+    ['mjs', ARGV_ESM, 'apps/agent', false],
+    ['ts', ARGV_ESM, 'apps/agent', false],
+    ['mts', ARGV_ESM, 'apps/agent', false],
     // CommonJS by extension, whatever the manifest says.
-    ['cjs', ARGV_CJS, 'apps/agent'],
-    ['cts', ARGV_CJS, 'apps/agent'],
-    ['py', ARGV_PY, 'apps/agent'],
-    ['mk', MAKE_BODY, 'apps/agent'],
-    ['md', RUNBOOK_BODY, 'apps/agent'],
-    ['mdx', RUNBOOK_BODY, 'apps/agent'],
+    ['cjs', ARGV_CJS, 'apps/agent', false],
+    ['cts', ARGV_CJS, 'apps/agent', false],
+    ['py', ARGV_PY, 'apps/agent', true],
+    ['mk', MAKE_BODY, 'apps/agent', true],
+    ['md', RUNBOOK_BODY, 'apps/agent', true],
+    ['mdx', RUNBOOK_BODY, 'apps/agent', true],
     // A workflow is only READ as one under this directory.
-    ['yml', WORKFLOW_BODY, '.github/workflows'],
-    ['yaml', WORKFLOW_BODY, '.github/workflows'],
+    ['yml', WORKFLOW_BODY, '.github/workflows', false],
+    ['yaml', WORKFLOW_BODY, '.github/workflows', false],
     // THESE TWO PIN DISCOVERY ONLY, and the distinction is sharper than the
     // Node one (r2). Their body is an inert `note` value, so the lower-case
     // REPORT is itself #2119's false report — reading every scalar as a
@@ -12820,8 +12820,8 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     // lower-case report would be CORRECT — is not available while
     // value-by-value reading is itself the defect, so the harmful-consequence
     // question for these two is OPEN, not answered here.
-    ['json', JSON_VALUE_BODY, 'apps/agent'],
-    ['jsonc', JSON_VALUE_BODY, 'apps/agent'],
+    ['json', JSON_VALUE_BODY, 'apps/agent', false],
+    ['jsonc', JSON_VALUE_BODY, 'apps/agent', false],
   ];
 
   it('walk yields exactly these families — parity with EXTENSIONS (#2123 guard)', () => {
@@ -12843,9 +12843,20 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     // time, so a test that imported it would end the test process. Exporting
     // the list would change the guard's executable code, which this work
     // deliberately leaves byte-identical.
+    // LOCATE ON THE RAW SOURCE, STRIP INSIDE THE ARRAY (r3). The previous
+    // version stripped the whole file first and anchored `//` to the start of
+    // a line, so a TRAILING comment survived — `'.json', // '.toml' unsupported`
+    // put `toml` in the production set and failed parity against an array that
+    // had not changed. Stripping `//` anywhere in the whole file would instead
+    // maul any `https://` elsewhere in it, including inside the very
+    // declarations this needs to find.
+    //
+    // Doing it in this order keeps both problems away: the locators run on
+    // untouched source, and the stripping applies only to the array bodies,
+    // which contain no URLs — just quoted suffixes and prose.
+    const src = readFileSync(SCRIPT, 'utf8');
     const stripComments = (t: string) =>
-      t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|\n)\s*\/\/[^\n]*/g, '$1');
-    const src = stripComments(readFileSync(SCRIPT, 'utf8'));
+      t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
     const shell = /const SHELL_EXTENSIONS = \[([^\]]*)\]/.exec(src);
     const rest = /const EXTENSIONS = \[([\s\S]*?)\n\];/.exec(src);
     expect(shell, 'SHELL_EXTENSIONS should be locatable').not.toBeNull();
@@ -12853,8 +12864,8 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     const pick = (blob: string) =>
       [...blob.matchAll(/'\.([A-Za-z0-9]+)'/g)].map((m) => m[1]);
     const production = new Set([
-      ...pick(shell![1]),
-      ...pick(rest![1]),
+      ...pick(stripComments(shell![1])),
+      ...pick(stripComments(rest![1])),
     ]);
     const covered = new Set(WALK_HELPER_FAMILIES.map(([e]) => e));
     const missing = [...production].filter((e) => !covered.has(e)).sort();
@@ -12923,27 +12934,33 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     // shells. The gate is the shared case-sensitive extension test in `walk`,
     // so it is about every family the walk is supposed to yield.
     //
-    // WHAT IS PINNED IS THE VERDICT: the file is never examined. The
-    // CONSEQUENCE differs by family and the distinction is recorded rather
-    // than smoothed over (r53).
+    // WHAT IS PINNED IS THE VERDICT: the file is never examined. THE
+    // CONSEQUENCE IS A PER-FAMILY FACT AND IS DECLARED AS ONE — the fourth
+    // tuple field, `upperCaseStillRuns` (r3). It was prose here for three
+    // rounds and went stale twice, because each new family changed the
+    // partition and the sentence did not.
     //
-    //   - Shell families, `.py` and `.mk`: the interpreter does not care what
-    //     the file is called. `bash D.SH`, `python D.PY`, `make -f D.MK` all
-    //     run, so an unsafe deployment really does pass silently.
-    //   - The Node families: `node D.JS` does NOT run. It exits
-    //     `ERR_UNKNOWN_FILE_EXTENSION` before executing anything, for every
-    //     one of `.JS .MJS .TS .MTS .CJS .CTS` — verified on the Node in this
-    //     tree. So for those six, "an unsafe deployment passes silently"
-    //     overstates it: what is established is that the guard never looks at
-    //     the file, not that a deployment written there would run when
-    //     invoked by that name.
+    //   - `true`  — something runs the file despite the name. `bash D.SH`,
+    //               `python D.PY`, `make -f D.MK` all work, and a human reads
+    //               `RUNBOOK.MD` and copies the command out of it. Here the
+    //               bypass really is a SILENT PASS: an unsafe deployment
+    //               survives.
+    //   - `false` — nothing runs it under that name. `node D.JS` exits
+    //               ERR_UNKNOWN_FILE_EXTENSION; the workflow engine matches
+    //               only the lower-case `.yml`/`.yaml` suffixes; and the JSON
+    //               pair's body is inert, so the lower-case REPORT is #2119's
+    //               false report rather than a correct one. For these the
+    //               fixture establishes a DISCOVERY BLIND SPOT — the guard
+    //               never examines the file — and nothing about an unsafe
+    //               deployment slipping through.
     //
-    // They are pinned anyway, and not as a courtesy: the gate is SHARED, so a
-    // correction that special-cased the runnable families would leave these
-    // six unscanned — and a file the guard never opens is invisible for every
-    // purpose, not just for the deploy it might contain. What the pin must
-    // not do is claim a deployment that cannot happen, which is the
-    // right-verdict-impossible-premise trap this suite has now hit twice.
+    // Every family is pinned either way, because the gate is SHARED: a fix
+    // aimed only at the runnable ones would leave the rest unexamined, and a
+    // file the sweep never opens is invisible for every purpose, config
+    // writes included. What the pin must not do is claim a deployment that
+    // cannot happen — the right-verdict-impossible-premise trap this suite
+    // has now hit twice. A new family must state which column it is in, and
+    // that is why the field exists rather than another sentence.
     for (const [ext, body, dir] of WALK_HELPER_FAMILIES) {
       const r = runFamilyAlone(`${dir}/D.${ext.toUpperCase()}`, body);
       expect(r.ok, `.${ext.toUpperCase()} should be bypassed by the walk`).toBe(
