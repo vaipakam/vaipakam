@@ -7432,10 +7432,14 @@ visited.push(await visit('/positions'));
 // if every sliced row raced out it reported BLOCKED while eligible
 // candidates sat untried behind the slice (#1529 review round 9).
 let observedDetails = 0;
-// WHICH CANDIDATES GO FIRST — the rules, their four rounds of history and
-// the reasoning are in `walkOrder.mjs`, where they are a pure function
-// with tests rather than four comment blocks around one expression. This
-// file supplies the ANSWERS and does the asking.
+// WHICH CANDIDATES GO FIRST — the three bands, their history and the
+// reasoning are in `walkOrder.mjs`, where they are a pure function with
+// tests rather than three comment blocks around one expression. This file
+// supplies the ANSWERS and does the asking.
+//
+// Round 74 added no band. It moved WHERE the answers are resolved, which
+// is this file's business and not that module's — so the two are counted
+// differently on purpose, and neither is a stale copy of the other.
 //
 // BOTH answers are resolved once, above the authority choice, so the walk
 // consumes exactly what the choice did rather than asking again against a
