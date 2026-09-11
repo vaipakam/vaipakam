@@ -36,10 +36,10 @@ import { fileURLToPath } from 'node:url';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DRIVE = path.join(HERE, '..', 'live', 'live-position-observe.mjs');
 
-/** Every `const <name> = (node) => { … };` in the drive, by brace match. */
-function arrowBlocks(src: string, name: string): string[] {
+/** Every `const <name> = (<arg>) => { … };` in the drive, by brace match. */
+function arrowBlocks(src: string, name: string, arg = 'node'): string[] {
   const out: string[] = [];
-  const re = new RegExp(`const ${name} = \\(node\\) => \\{`, 'g');
+  const re = new RegExp(`const ${name} = \\(${arg}\\) => \\{`, 'g');
   let m: RegExpExecArray | null;
   while ((m = re.exec(src))) {
     const open = src.indexOf('{', m.index);
@@ -231,4 +231,84 @@ test('the drive addresses the card its own predicate judged, not Playwright’s'
 
   expect(chosenIndex, 'the predicate skips the transparent card').toBe(1);
   await expect(cards.nth(chosenIndex)).toHaveAttribute('id', 'real');
+});
+
+/** #2093 round 40 P2 — a receipt LEAF must carry text, not just space.
+ *
+ *  `paintsText` deliberately passes a node with no own text: `color`
+ *  inherits, so judging wrappers would condemn a whole card whose rows
+ *  repaint themselves. That exemption reaches the receipt's leaves, and
+ *  a leaf without text is itself the defect there.
+ *
+ *  The shipped CSS is what makes it reachable rather than theoretical:
+ *  `.receipt-row dt` is `width: 118px; flex-shrink: 0` inside a flex
+ *  row, so an EMPTY label keeps its full width and stretches to the
+ *  value's height. Non-zero rect, `checkVisibility` positive, clipping
+ *  walk clean, paint check exempt — six rows of unlabelled figures would
+ *  have recorded a successful confirmation scan, with nothing telling a
+ *  lender which figure is the fee and which is the loss.
+ *
+ *  Exercised in a real engine because every one of those four tests is a
+ *  layout or style question, and because the deployed page cannot show
+ *  this: its labels are populated, so a live run is green either way.
+ */
+test('a receipt row with a blank label is not a readable row', async ({ page }) => {
+  const src = fs.readFileSync(DRIVE, 'utf8');
+  const clipSrc = arrowBlocks(src, 'notClipped')[0];
+  const paintSrc = arrowBlocks(src, 'paintsText')[0];
+  const visSrc = arrowBlocks(src, 'visible')[0];
+  const textSrc = arrowBlocks(src, 'hasText', 'el')[0];
+  const rowSrc = arrowBlocks(src, 'rowShown', 'row')[0];
+
+  // One `rowShown` and one `hasText`: unlike `visible`, these are not
+  // duplicated. If that changes this test is describing a shape that no
+  // longer exists.
+  expect(arrowBlocks(src, 'rowShown', 'row')).toHaveLength(1);
+  expect(arrowBlocks(src, 'hasText', 'el')).toHaveLength(1);
+
+  await page.setContent(`
+    <style>
+      .receipt-row { display: flex; gap: 12px; padding: 12px 16px; font-size: .9rem; }
+      .receipt-row dt { flex-shrink: 0; width: 118px; margin: 0; font-weight: 600; }
+      .receipt-row dd { margin: 0; }
+    </style>
+    <dl class="receipt">
+      <div class="receipt-row" id="good"><dt>Fees</dt><dd>2% of interest</dd></div>
+      <div class="receipt-row" id="blankLabel"><dt></dt><dd>2% of interest</dd></div>
+      <div class="receipt-row" id="spaceLabel"><dt>   </dt><dd>2% of interest</dd></div>
+      <div class="receipt-row" id="blankValue"><dt>Fees</dt><dd></dd></div>
+    </dl>
+  `);
+
+  const result = await page.evaluate(
+    ([clip, paint, vis, text, row]) => {
+      const scope = new Function(
+        `${clip}\n${paint}\n${vis}\n${text}\n${row}\nreturn { rowShown, visible };`,
+      )() as { rowShown: (r: Element) => boolean; visible: (n: Element | null) => boolean };
+      const byId = (id: string) => document.getElementById(id)!;
+      return {
+        good: scope.rowShown(byId('good')),
+        blankLabel: scope.rowShown(byId('blankLabel')),
+        spaceLabel: scope.rowShown(byId('spaceLabel')),
+        blankValue: scope.rowShown(byId('blankValue')),
+        // The reason this was reachable: geometry alone accepts the
+        // empty label, because the fixed width and the flex stretch give
+        // it a full-size box.
+        emptyLabelLooksVisible: scope.visible(byId('blankLabel').querySelector('dt')),
+      };
+    },
+    [clipSrc, paintSrc, visSrc, textSrc, rowSrc] as const,
+  );
+
+  expect(result.good, 'a populated row').toBe(true);
+  expect(result.blankLabel, 'an empty label').toBe(false);
+  expect(result.spaceLabel, 'a whitespace-only label').toBe(false);
+  expect(result.blankValue, 'an empty value').toBe(false);
+  // Recorded rather than assumed: if this ever becomes false the rows
+  // are being rejected by geometry and the text rule is no longer the
+  // thing under test.
+  expect(
+    result.emptyLabelLooksVisible,
+    'the empty label still passes the visibility predicate — which is why the text rule is needed',
+  ).toBe(true);
 });

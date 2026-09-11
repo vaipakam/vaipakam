@@ -2756,3 +2756,53 @@ describe('round 39 review findings', () => {
     });
   });
 });
+
+describe('round 40 review findings', () => {
+  const copy = { unknownCopy: FORCED_CLOSE.unknown };
+
+  // The submit peak got its mounted arm in round 39 and not its
+  // unmounted twin, though the CARD peak has had one since round 35 —
+  // the fourth time in this PR a fix landed on one of two parallel
+  // sites. The consequence is the one that ordering exists to prevent:
+  // both poll exits carry the peak and set `mounted: false`, so the
+  // check was skipped, and an accepted sale found by the pinned snapshot
+  // then returned `inapplicable`.
+  describe('a duplicate control seen before the card vanished', () => {
+    const gone = {
+      lenderHoldsActive: true,
+      mounted: false,
+      attached: false,
+      saleLocked: false,
+      settled: false,
+      text: null,
+      bodyText: null,
+      bodyPresent: undefined,
+      confirmText: null,
+      confirmExpected: false,
+      seenTexts: [],
+      visibleCards: 0,
+      visibleCardsPeak: 1,
+    };
+
+    it('FAILS even though the card is gone', () => {
+      const v = forcedCloseVerdict({ ...gone, visibleSubmitsPeak: 2 }, copy);
+      expect(v.verdict).toBe('fail');
+      expect(v.failKind).toBe('observed');
+    });
+
+    // The case that makes it a P2 rather than a tidy-up: eligibility
+    // qualifying an ABSENCE is correct, eligibility suppressing a
+    // POSITIVE observation is not.
+    it('FAILS even when an accepted sale explains the disappearance', () => {
+      const v = forcedCloseVerdict({ ...gone, visibleSubmitsPeak: 2, saleLocked: true }, copy);
+      expect(v.verdict).toBe('fail');
+      expect(v.why).toMatch(/offered the same fee-paying action twice/);
+    });
+
+    it('still reports an ordinary explained disappearance as inapplicable', () => {
+      const v = forcedCloseVerdict({ ...gone, visibleSubmitsPeak: 1, saleLocked: true }, copy);
+      expect(v.verdict).toBe('blocked');
+      expect(v.blockedKind).toBe('inapplicable');
+    });
+  });
+});

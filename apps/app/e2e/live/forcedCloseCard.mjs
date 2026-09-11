@@ -1049,6 +1049,25 @@ export function forcedCloseVerdict(obs, copy) {
     };
   }
 
+  // 1-post-3. THE CONTROL PEAK, on the same path (round 40 P2).
+  //
+  // Round 39 added the submit peak inside the mounted block and I did not
+  // add its unmounted twin, though the card peak has had one since round
+  // 35 — the fourth time in this PR a fix has landed on one of two
+  // parallel sites. The consequence is the one this ordering exists to
+  // prevent: both poll exits carry the peak and set `mounted: false`, so
+  // the check was skipped, and if the pinned snapshot then found an
+  // accepted sale the verdict returned `inapplicable` — reporting nothing
+  // to see about a lender who had been offered the same fee-paying action
+  // twice.
+  if (!obs.mounted && typeof obs.visibleSubmitsPeak === 'number' && obs.visibleSubmitsPeak > 1) {
+    return {
+      verdict: 'fail',
+      failKind: 'observed',
+      why: `${obs.visibleSubmitsPeak} forced-close submit controls were visible at once during the readiness wait, and the card is now gone — the lender was offered the same fee-paying action twice and this drive clicked only the first`,
+    };
+  }
+
   // ---- 2. Was this position one the assertion could apply to? ------
   if (!obs.lenderHoldsActive) {
     return {

@@ -4138,11 +4138,42 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
             // Emptiness needs no separate test: `visible` requires a
             // non-zero rect, and a `dd` with no content collapses to
             // zero height, so a blank value fails on geometry.
+            // ROUND 40 P2 — A LEAF MUST CARRY TEXT, not merely occupy
+            // space. `paintsText` deliberately passes a node with no own
+            // text (colour inherits, so judging wrappers would condemn a
+            // whole card) — and that exemption reaches the receipt's
+            // LEAVES, which are the one place a node without text is
+            // itself the defect.
+            //
+            // `.receipt-row dt` is `width: 118px; flex-shrink: 0` and a
+            // flex item, so an EMPTY label keeps its full width and
+            // stretches to the value's height: non-zero rect,
+            // `checkVisibility` positive, clipping walk clean, paint
+            // check exempt. Six rows of unlabelled figures would have
+            // recorded `confirmScanned=true` — a lender shown amounts
+            // with nothing saying which is the fee and which is the loss.
+            //
+            // Asserted HERE rather than inside `visible`, deliberately.
+            // "Must contain text" is true of a receipt leaf and false of
+            // the card, the body wrapper and the submit control, so
+            // pushing it into the shared predicate would condemn nodes
+            // that are correct.
+            // A block body rather than a concise one, deliberately:
+            // `31-observer-visibility.spec.ts` extracts these helpers
+            // from this source by brace-matching, and a concise arrow is
+            // invisible to it. Writing it the short way silently left the
+            // spec unable to inject it — which the spec caught, because
+            // it asserts it found exactly one.
+            const hasText = (el) => {
+              return (el.innerText ?? '').trim() !== '';
+            };
             const rowShown = (row) => {
               if (!visible(row)) return false;
               const dt = row.querySelector('dt');
               const dd = row.querySelector('dd');
-              return dt !== null && dd !== null && visible(dt) && visible(dd);
+              if (dt === null || dd === null) return false;
+              if (!visible(dt) || !visible(dd)) return false;
+              return hasText(dt) && hasText(dd);
             };
             return rows.length === 6 && rows.every(rowShown);
           })
