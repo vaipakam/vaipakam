@@ -12074,6 +12074,29 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     expect(r.ok).toBe(false);
   });
 
+  it('the casing rewrite reaches into a here-string nothing runs (#2115, the trade)', () => {
+    // WHAT THE CASING RULE COSTS, pinned rather than described — promised on
+    // #2115 when its proposed fix was being argued, and owed because that fix
+    // WIDENS this.
+    //
+    // A here-string is inert data; nothing here deploys anything. The rule
+    // lowers the title-case spelling so a REAL `Wrangler deploy` is caught on
+    // a platform that resolves either spelling to the same program — and the
+    // same rewrite carries this mention into the report.
+    //
+    // IT IS NOT THE REWRITE'S FAULT, and the record says so: the lower-case
+    // spelling is already reported here with no rewrite involved, because the
+    // scanner has no PowerShell string state (#2117, #2118). So the rule
+    // WIDENS an existing fallible reading rather than adding a fault. Kept
+    // because #2115 proposes making the replacement case-insensitive, which
+    // widens it further — a fix that should land with this visible, not
+    // described as a pure tightening.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith('apps/agent/doc.ps1', "$doc = @'\nWrangler deploy\n'@\nWrite-Output $doc\n");
+    expect(r.ok).toBe(false);
+  });
+
   it('a cmd helper folds the same way (#2118, stated false green — the OTHER dialect)', () => {
     // THE TWO WINDOWS DIALECTS ARE SEPARATE BRANCHES in `forInterpreter`, and
     // pinning only `.ps1` would let a dialect-specific fix pass this suite
