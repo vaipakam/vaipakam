@@ -11883,45 +11883,24 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
   // position moved and the pointer sent readers to unrelated tests (r27).
   //
   // So they pin two things: the shapes that defeated the withdrawn designs,
-  // and TWENTY-TWO WRONG VERDICTS across TWELVE defects, asserted so a later fix
-  // fails them and comes back to the question instead of passing unnoticed.
+  // and a set of WRONG VERDICTS across the defects below, asserted so a later
+  // fix fails them and comes back to the question instead of passing
+  // unnoticed.
   //
-  // The direction matters and is not decoration. TWELVE assert a SILENT PASS
-  // — #2084, #2114 and #2124 as misses; #2118 FOUR times (two shells times a
-  // standalone helper and a workflow body, because the fold is in the shared
-  // splitter and a fix scoped to any one of the four leaves the others live);
-  // #2121, #2122; and #2123 three times (two command-shell families and a
-  // POSIX one, because that gate is shared too) — and TEN fail the opposite
-  // way, so their fixtures assert a REPORT: #2112, #2119 four times (manifest,
-  // data file, multi-line list and a COMMENTED-OUT line), #2115 TWICE (the
-  // casing rewrite in a helper and in a workflow body — NOT the separator
-  // fixture, which the r39 reattribution moved and this sentence went on
-  // counting in both places until r40), #2117 twice (a command named inside
-  // an inert here-string, reached via the separator rewrite; and an
-  // ASSIGNMENT there, rewritten into a binding that makes a later `& $cmd
-  // deploy` resolve), and #2126, the casing normalisation applied on a runner
-  // whose case-sensitive command lookup makes the normalised spelling a
-  // different program — the LOOKUP, not the platform family, being the
-  // discriminator (r46).
-  // #2126's separator half was withdrawn in r35; see the note where those
-  // fixtures were. A fixture that pinned the wrong direction would pass
-  // while the guard did the wrong thing.
+  // HOW MANY, AND WHICH DEFECT EACH BELONGS TO, IS NOT WRITTEN HERE (r48).
+  // A per-defect enumeration used to sit in this spot, and an identical one
+  // sat in the release note until it was deleted for the same reason: every
+  // restatement of a per-defect fact is a new place for that fact to drift
+  // from the fixture establishing it. That enumeration went stale in the very
+  // round that consolidated the #2123 fixtures, saying twenty-two where the
+  // tree held twenty-one and "three times" for a defect now pinned once.
+  // The titles are the source; each fixture states its own scope.
   //
-  // NOT "four different routes" for the #2119 group, which overstated their
-  // independence (r26). Three of them — the manifest description, the
-  // non-manifest scalar and the commented-out line — take the SAME scalar
-  // branch of `jsonValueLines`; only the multi-line array reaches the
-  // raw-line fallback. They are kept as four because each fixes a different
-  // SCOPE claim the record got wrong, not because each is a separate
-  // ingestion path, and a fix should expect three of them to move together.
-  //
-  // COUNT THESE FROM THE TREE, NOT FROM THIS COMMENT. It has gone stale
-  // repeatedly, including while being corrected — and the tally of HOW often
-  // used to sit right here, which made this sentence an instance of the thing
-  // it warns about. The criterion: every test title
-  // asserting a wrong verdict contains the lower-case word s-t-a-t-e-d, and
-  // no other title does — so counting the titles that contain it gives the
-  // number above.
+  // COUNT THESE FROM THE TREE, NOT FROM THIS COMMENT. The criterion: every
+  // test title asserting a wrong verdict contains the lower-case word
+  // s-t-a-t-e-d, and no other title does — so counting the titles that
+  // contain it gives the total, and grouping those titles by the issue they
+  // name gives the per-defect split.
   //
   // Spelled out like that on purpose. The first version of this rule said to
   // count the titles carrying that word, which was FALSE when written (ten of
@@ -12714,29 +12693,48 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
   // special-caseable, which is exactly why representatives were the wrong
   // shape: the stated defect covers the family, so the fixture must too.
   //
-  // These are the `EXTENSIONS` entries a bare `cd` + deploy body exercises.
-  // The list is written out rather than imported so that an extension REMOVED
-  // from the guard shows up here as a failure to investigate rather than
-  // silently shrinking the fixture's reach.
-  const WALK_HELPER_FAMILIES = [
-    'ps1',
-    'cmd',
-    'bat',
-    'sh',
-    'bash',
-    'zsh',
-    'ksh',
+  // EVERY EXECUTABLE FAMILY, WHICH IS NOT THE SAME AS EVERY SHELL FAMILY
+  // (r48). The first version of this table covered only the shell suffixes
+  // and still said "every affected helper family" — overclaiming inside the
+  // fix for overclaiming. `EXTENSIONS` also admits the JavaScript/TypeScript
+  // families and `.py`, and a helper in any of them can carry an argv deploy
+  // that `ARGV_DEPLOY_RE` recognises. Verified for all thirteen: lower-case
+  // reported, upper-case silently skipped.
+  //
+  // Each family therefore carries the BODY ITS OWN LANGUAGE NEEDS. Reusing
+  // the shell body everywhere would have made the script families pass for
+  // the wrong reason — an unrecognised body is not reported either, so the
+  // pin would have been vacuous and the control would have failed.
+  const ARGV_JS =
+    "const {spawnSync}=require('child_process');spawnSync('wrangler',['deploy']);\n";
+  const ARGV_PY = "import subprocess\nsubprocess.check_call(['wrangler','deploy'])\n";
+  const SHELL_BODY = 'cd apps/agent\nwrangler deploy\n';
+
+  const WALK_HELPER_FAMILIES: ReadonlyArray<readonly [string, string]> = [
+    ['ps1', SHELL_BODY],
+    ['cmd', SHELL_BODY],
+    ['bat', SHELL_BODY],
+    ['sh', SHELL_BODY],
+    ['bash', SHELL_BODY],
+    ['zsh', SHELL_BODY],
+    ['ksh', SHELL_BODY],
+    ['js', ARGV_JS],
+    ['mjs', ARGV_JS],
+    ['cjs', ARGV_JS],
+    ['ts', ARGV_JS],
+    ['mts', ARGV_JS],
+    ['cts', ARGV_JS],
+    ['py', ARGV_PY],
   ];
 
-  it('EVERY helper family is skipped by the walk when upper-cased (#2123, stated false green)', () => {
-    // #2123 IS NOT ABOUT `.ps1`, and it is not about three families either.
-    for (const ext of WALK_HELPER_FAMILIES) {
+  it('EVERY executable helper family is skipped by the walk when upper-cased (#2123, stated false green)', () => {
+    // #2123 IS NOT ABOUT `.ps1`, not about three families, and not about
+    // shells. The gate is the shared case-sensitive extension test in `walk`,
+    // so it is about every family the walk is supposed to yield.
+    for (const [ext, body] of WALK_HELPER_FAMILIES) {
       seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
       seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
-      const r = runWith(
-        `apps/agent/D.${ext.toUpperCase()}`,
-        'cd apps/agent\nwrangler deploy\n',
-      );
+      const r = runWith(`apps/agent/D.${ext.toUpperCase()}`, body);
       expect(r.ok, `.${ext.toUpperCase()} should be bypassed by the walk`).toBe(
         true,
       );
@@ -12744,13 +12742,12 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
   });
 
   it('the same bytes under each lower-case name ARE scanned (#2123 family control)', () => {
-    for (const ext of WALK_HELPER_FAMILIES) {
+    // Load-bearing beyond the usual control role: it is what proves each pin
+    // above fails for the EXTENSION and not for an unrecognised body.
+    for (const [ext, body] of WALK_HELPER_FAMILIES) {
       seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
       seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
-      const r = runWith(
-        `apps/agent/d.${ext}`,
-        'cd apps/agent\nwrangler deploy\n',
-      );
+      const r = runWith(`apps/agent/d.${ext}`, body);
       expect(r.ok, `.${ext} should be scanned and reported`).toBe(false);
     }
   });
