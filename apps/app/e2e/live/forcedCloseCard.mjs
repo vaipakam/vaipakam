@@ -1091,6 +1091,49 @@ function receiptRowFault(obs, copy) {
         (value, i) => rowsSeen[i].includes(labels[i]) && rowsSeen[i].includes(value),
       );
     };
+    // ROUND 68 P2 — AND THE ROWS MUST NOT ALSO CARRY THE OTHER ROUTE.
+    //
+    // `covers` is a substring test, so it validates that the REQUIRED
+    // content is present and says nothing about what else is. Append
+    // every rental value to the corresponding standard row and the panel
+    // still has six distinct rows, still satisfies all six expected
+    // label/value pairs, and the wrong-route arm below is never reached
+    // — while the lender reads two incompatible sets of funds terms on
+    // one receipt. Round 54 made the panel prove it says the right
+    // thing; it could not notice the panel also saying the wrong one.
+    //
+    // Checked ONLY against the other route's values, not against
+    // "anything extra": a receipt legitimately carries its labels, its
+    // heading and whatever prose the row wraps its value in, and
+    // demanding that a row contain nothing but its expected pair would
+    // fail every real panel. The other route's values are the one thing
+    // that cannot be there innocently.
+    //
+    // SCOPED TO A RECEIPT THAT ALREADY SATISFIES THE EXPECTED SET, and
+    // the first version was not — it ran above the coverage test and
+    // promptly stole the wrong-route arm's cases, because a receipt that
+    // is WHOLLY the other route naturally contains the other route's
+    // values. Its three tests caught it. A receipt showing the wrong
+    // route is that defect and is named that way; this arm is for the
+    // one that says both.
+    if (covers(expected) && Array.isArray(other) && other.length === 6) {
+      const strayIndex = rowsSeen.findIndex((rowText) =>
+        other.some(
+          (value) =>
+            typeof value === 'string' &&
+            value !== '' &&
+            !expected.includes(value) &&
+            rowText.includes(value),
+        ),
+      );
+      if (strayIndex !== -1) {
+        return {
+          verdict: 'fail',
+          failKind: 'observed',
+          why: `the confirmation's receipt carries terms from BOTH settlement routes — row ${strayIndex + 1} states the ${isRental ? 'collateral' : 'rental'} outcome beside the ${isRental ? 'rental' : 'collateral'} one, so the lender is reading two incompatible sets of funds terms on one panel`,
+        };
+      }
+    }
     if (!covers(expected)) {
       if (covers(other)) {
         return {
@@ -1830,6 +1873,90 @@ export function forcedCloseVerdict(obs, copy) {
   // out of a race — the error this file refuses everywhere else. Those
   // two stay below, where an applicability change can still explain
   // them away.
+  // ROUND 68 P2 — HOISTED, with the other render evidence.
+  //
+  // Round 59 established that faults NO STATE CHANGE CAN EXPLAIN belong
+  // above the applicability exits, and this one was written below them:
+  // a contradictory heading/body pair captured by the scrape was
+  // discarded as `inapplicable` whenever the pinned re-read happened to
+  // find the loan terminal, the token transferred or a sale accepted.
+  // A lifecycle change afterwards cannot unshow copy the lender was
+  // already shown.
+  //
+  // It passes round 59's own test for what may be hoisted: both halves
+  // come from ONE render of ONE `view`, so no state change explains them
+  // disagreeing.
+  // ROUND 67 P2 — THE HEADING MUST NOT CONTRADICT THE BODY.
+  //
+  // `ForcedCloseCard` picks its heading on `view.overdue` alone: "This
+  // loan is overdue", or "If this loan is not repaid" when it is not.
+  // Every state check in this module reads the BODY, so a card whose
+  // heading regressed showed the lender "This loan is overdue" above a
+  // body saying the borrower still has time — two statements about the
+  // same fact, both painted, and nothing looked at the pair.
+  //
+  // JUDGED ONLY WHERE THE BODY DETERMINES THE ANSWER, which is the whole
+  // care in this arm. `not-yet` means the deadline has NOT passed, so the
+  // overdue heading contradicts it. A ready state means it HAS, so the
+  // pending heading contradicts that. The blocked states do not settle
+  // it — a paused protocol or an unreachable sequencer is perfectly
+  // compatible with an overdue loan — and `unknown` settles nothing at
+  // all, so neither is judged here. Reading them as contradictions would
+  // accuse a card that is telling the truth.
+  //
+  // Both headings must be DISTINGUISHABLE and the card must paint
+  // exactly one of them; anything else is not a comparison this can make.
+  // `observed`, because both halves are read off the page.
+  //
+  // JUDGED ON EVERY RENDER THIS DRIVE READ, not only the settled one —
+  // checked proactively rather than waiting for the next round to point
+  // at the parallel site, which is this PR's most frequent finding.
+  //
+  // A transient mismatch here is a real one, and that is NOT the general
+  // rule in this file: round 10 forgives a transiently disabled control
+  // because it is a legitimate intermediate state. This pair is
+  // different. `ForcedCloseCard` derives the heading and the body from
+  // ONE `view` in ONE render, so they cannot legitimately disagree even
+  // for a frame; any render showing both is a contradiction the lender
+  // was shown.
+  if (
+    typeof copy?.overdueTitleCopy === 'string' &&
+    typeof copy?.pendingTitleCopy === 'string' &&
+    copy.overdueTitleCopy !== '' &&
+    copy.pendingTitleCopy !== '' &&
+    copy.overdueTitleCopy !== copy.pendingTitleCopy
+  ) {
+    const headingFault = (cardText, bodyText) => {
+      const head = cardText ?? '';
+      const saysOverdue = head.includes(copy.overdueTitleCopy);
+      const saysPending = head.includes(copy.pendingTitleCopy);
+      // Exactly one heading painted, or there is no comparison to make.
+      if (saysOverdue === saysPending) return null;
+      const body = bodyText ?? cardText ?? '';
+      const has = (sentence) =>
+        typeof sentence === 'string' && sentence !== '' && body.includes(sentence);
+      if (has(copy?.notYetCopy) && saysOverdue) {
+        return 'the card is headed "this loan is overdue" while its body says the borrower still has time — two statements about the same deadline, both on screen, disagreeing';
+      }
+      if (
+        saysPending &&
+        Array.isArray(copy?.readyCopy) &&
+        copy.readyCopy.some((sentence) => has(sentence))
+      ) {
+        return 'the card offers a close-out that is ready while its heading still says the loan is only approaching its deadline — two statements about the same deadline, both on screen, disagreeing';
+      }
+      return null;
+    };
+    const why =
+      headingFault(obs.visibleText ?? obs.text, obs.bodyVisibleText ?? obs.bodyText) ??
+      (Array.isArray(obs.seenRenders)
+        ? obs.seenRenders
+            .map((r) => headingFault(r?.visibleText ?? r?.text, r?.bodyVisibleText ?? r?.bodyText))
+            .find((hit) => hit)
+        : undefined);
+    if (why) return { verdict: 'fail', failKind: 'observed', why };
+  }
+
   const structuralFault = definiteConfirmActionFault(obs.confirmAction);
   if (structuralFault) {
     return { verdict: 'fail', failKind: 'observed', why: structuralFault };
@@ -2307,76 +2434,28 @@ export function forcedCloseVerdict(obs, copy) {
       why: 'the confirmation renders a Back control the lender cannot activate — the only way out of a pre-signature panel is to leave the page',
     };
   }
-
-  // ROUND 67 P2 — THE HEADING MUST NOT CONTRADICT THE BODY.
+  // ROUND 68 P2 — AND A BACK CONTROL THAT IS NOT PAINTED.
   //
-  // `ForcedCloseCard` picks its heading on `view.overdue` alone: "This
-  // loan is overdue", or "If this loan is not repaid" when it is not.
-  // Every state check in this module reads the BODY, so a card whose
-  // heading regressed showed the lender "This loan is overdue" above a
-  // body saying the borrower still has time — two statements about the
-  // same fact, both painted, and nothing looked at the pair.
+  // Playwright's actionability suite ignores ancestor opacity, so a Back
+  // button under `opacity: 0`, or with transparent label text, passes
+  // the trial above while being invisible to the lender. Round 65
+  // recorded presence and clickability and stopped there — unlike the
+  // two fee-paying controls, which have carried painted evidence since
+  // rounds 46 and 54. The one control whose job is to stop a payment had
+  // the weakest check on the panel.
   //
-  // JUDGED ONLY WHERE THE BODY DETERMINES THE ANSWER, which is the whole
-  // care in this arm. `not-yet` means the deadline has NOT passed, so the
-  // overdue heading contradicts it. A ready state means it HAS, so the
-  // pending heading contradicts that. The blocked states do not settle
-  // it — a paused protocol or an unreachable sequencer is perfectly
-  // compatible with an overdue loan — and `unknown` settles nothing at
-  // all, so neither is judged here. Reading them as contradictions would
-  // accuse a card that is telling the truth.
+  // A separate arm from `clickable`, because they are different defects:
+  // an unclickable Back is a trap the lender can see, an unpainted one
+  // is a way out they never know exists.
   //
-  // Both headings must be DISTINGUISHABLE and the card must paint
-  // exactly one of them; anything else is not a comparison this can make.
-  // `observed`, because both halves are read off the page.
-  //
-  // JUDGED ON EVERY RENDER THIS DRIVE READ, not only the settled one —
-  // checked proactively rather than waiting for the next round to point
-  // at the parallel site, which is this PR's most frequent finding.
-  //
-  // A transient mismatch here is a real one, and that is NOT the general
-  // rule in this file: round 10 forgives a transiently disabled control
-  // because it is a legitimate intermediate state. This pair is
-  // different. `ForcedCloseCard` derives the heading and the body from
-  // ONE `view` in ONE render, so they cannot legitimately disagree even
-  // for a frame; any render showing both is a contradiction the lender
-  // was shown.
-  if (
-    typeof copy?.overdueTitleCopy === 'string' &&
-    typeof copy?.pendingTitleCopy === 'string' &&
-    copy.overdueTitleCopy !== '' &&
-    copy.pendingTitleCopy !== '' &&
-    copy.overdueTitleCopy !== copy.pendingTitleCopy
-  ) {
-    const headingFault = (cardText, bodyText) => {
-      const head = cardText ?? '';
-      const saysOverdue = head.includes(copy.overdueTitleCopy);
-      const saysPending = head.includes(copy.pendingTitleCopy);
-      // Exactly one heading painted, or there is no comparison to make.
-      if (saysOverdue === saysPending) return null;
-      const body = bodyText ?? cardText ?? '';
-      const has = (sentence) =>
-        typeof sentence === 'string' && sentence !== '' && body.includes(sentence);
-      if (has(copy?.notYetCopy) && saysOverdue) {
-        return 'the card is headed "this loan is overdue" while its body says the borrower still has time — two statements about the same deadline, both on screen, disagreeing';
-      }
-      if (
-        saysPending &&
-        Array.isArray(copy?.readyCopy) &&
-        copy.readyCopy.some((sentence) => has(sentence))
-      ) {
-        return 'the card offers a close-out that is ready while its heading still says the loan is only approaching its deadline — two statements about the same deadline, both on screen, disagreeing';
-      }
-      return null;
+  // `=== false`, so a record predating the field and a probe that could
+  // not answer (`null`) both say nothing.
+  if (obs.backAction?.present === true && obs.backAction.painted === false) {
+    return {
+      verdict: 'fail',
+      failKind: 'observed',
+      why: 'the confirmation renders a Back control that is not painted — the lender is asked to confirm a forced close-out with no visible way to decline',
     };
-    const why =
-      headingFault(obs.visibleText ?? obs.text, obs.bodyVisibleText ?? obs.bodyText) ??
-      (Array.isArray(obs.seenRenders)
-        ? obs.seenRenders
-            .map((r) => headingFault(r?.visibleText ?? r?.text, r?.bodyVisibleText ?? r?.bodyText))
-            .find((hit) => hit)
-        : undefined);
-    if (why) return { verdict: 'fail', failKind: 'observed', why };
   }
 
   // ROUND 65 P2 — AND THE REVERSE DIRECTION, which nothing checked.

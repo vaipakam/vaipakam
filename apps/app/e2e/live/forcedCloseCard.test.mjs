@@ -5613,3 +5613,136 @@ describe('the heading/body contradiction is judged on every render', () => {
     expect(v.why ?? '').not.toMatch(/both on screen, disagreeing/);
   });
 });
+
+describe('round 68 — the heading contradiction survives a lifecycle change', () => {
+  // Round 59's rule, applied to the round-67 arm: a fault NO STATE
+  // CHANGE CAN EXPLAIN belongs above the applicability exits. A
+  // contradictory heading/body pair was captured by the scrape; the loan
+  // terminating, transferring or gaining an accepted sale before the
+  // pinned re-read cannot unshow it.
+  //
+  // It passes round 59's own test for what may be hoisted: both halves
+  // come from ONE render of ONE `view`, so no state change explains them
+  // disagreeing.
+  const copy = {
+    unknownCopy: FORCED_CLOSE.unknown,
+    notYetCopy: FORCED_CLOSE.notYet,
+    overdueTitleCopy: FORCED_CLOSE.title,
+    pendingTitleCopy: FORCED_CLOSE.titlePending,
+    readyCopy: [FORCED_CLOSE.readyInKind, FORCED_CLOSE.readyInternalMatch, FORCED_CLOSE.readyRental],
+    recognisedCopy: [FORCED_CLOSE.unknown, FORCED_CLOSE.notYet, FORCED_CLOSE.readyInKind],
+  };
+  const contradictory = {
+    lenderHoldsActive: true,
+    mounted: true,
+    attached: true,
+    submitPresent: true,
+    submitVisible: true,
+    submitDisabled: true,
+    visibleSubmits: 1,
+    visibleCards: 1,
+    saleLocked: false,
+    settled: true,
+    bodyPresent: true,
+    bodyVisible: true,
+    confirmExpected: false,
+    confirmText: null,
+    defaultable: false,
+    defaultableBefore: false,
+    text: `${FORCED_CLOSE.title} ${FORCED_CLOSE.notYet}`,
+    visibleText: `${FORCED_CLOSE.title} ${FORCED_CLOSE.notYet}`,
+    bodyText: FORCED_CLOSE.notYet,
+    bodyVisibleText: FORCED_CLOSE.notYet,
+  };
+
+  it('reports it on a position that has gone', () => {
+    const v = forcedCloseVerdict({ ...contradictory, lenderHoldsActive: false }, copy);
+    expect(v.verdict).toBe('fail');
+    expect(v.why).toMatch(/both on screen, disagreeing/);
+  });
+
+  it('reports it on a position that has an accepted sale', () => {
+    const v = forcedCloseVerdict({ ...contradictory, saleLocked: true }, copy);
+    expect(v.verdict).toBe('fail');
+    expect(v.why).toMatch(/both on screen, disagreeing/);
+  });
+});
+
+describe('round 68 — a receipt stating BOTH settlement routes', () => {
+  // `covers` is a substring test: it validates that the required content
+  // is present and says nothing about what else is. Appending every
+  // rental value to the corresponding standard row keeps six distinct
+  // rows, satisfies all six expected label/value pairs, and never
+  // reaches the wrong-route arm — while the lender reads two
+  // incompatible sets of funds terms on one panel.
+  const LABELS = [
+    enBundle.copy.receipt.youReceive,
+    enBundle.copy.receipt.youLock,
+    enBundle.copy.receipt.youMayOwe,
+    enBundle.copy.receipt.youCanLose,
+    enBundle.copy.receipt.fees,
+    enBundle.copy.receipt.whenThisEnds,
+  ];
+  const STANDARD = Object.values(FORCED_CLOSE.receipt);
+  const RENTAL = Object.values(FORCED_CLOSE.rentalReceipt);
+  const copy = {
+    unknownCopy: FORCED_CLOSE.unknown,
+    readyCopy: [FORCED_CLOSE.readyInKind, FORCED_CLOSE.readyInternalMatch, FORCED_CLOSE.readyRental],
+    recognisedCopy: [FORCED_CLOSE.unknown, FORCED_CLOSE.readyInKind, FORCED_CLOSE.readyRental],
+    receiptLeads: [FORCED_CLOSE.receipt.youReceive, FORCED_CLOSE.rentalReceipt.youReceive],
+    receiptRowSets: { standard: STANDARD, rental: RENTAL },
+    receiptRowLabels: LABELS,
+    rentalReadyCopy: FORCED_CLOSE.readyRental,
+  };
+  const rows = (values) => values.map((v, i) => `${LABELS[i]}\n${v}`);
+  const base = {
+    lenderHoldsActive: true,
+    mounted: true,
+    attached: true,
+    submitPresent: true,
+    submitVisible: true,
+    submitDisabled: false,
+    visibleSubmits: 1,
+    visibleCards: 1,
+    saleLocked: false,
+    settled: true,
+    bodyPresent: true,
+    bodyVisible: true,
+    bodyText: FORCED_CLOSE.readyInKind,
+    bodyVisibleText: FORCED_CLOSE.readyInKind,
+    text: FORCED_CLOSE.readyInKind,
+    visibleText: FORCED_CLOSE.readyInKind,
+    confirmExpected: true,
+    confirmText: 'x',
+  };
+
+  it('reports a row carrying the other route’s terms as well as its own', () => {
+    const both = STANDARD.map((v, i) => `${LABELS[i]}\n${v} ${RENTAL[i]}`);
+    const v = forcedCloseVerdict({ ...base, confirmRowsText: both }, copy);
+    expect(v.verdict).toBe('fail');
+    expect(v.failKind).toBe('observed');
+    expect(v.why).toMatch(/BOTH settlement routes/);
+  });
+
+  it('names which row it found', () => {
+    const one = rows(STANDARD).map((t, i) => (i === 3 ? `${t} ${RENTAL[3]}` : t));
+    const v = forcedCloseVerdict({ ...base, confirmRowsText: one }, copy);
+    expect(v.why).toMatch(/row 4 states/);
+  });
+
+  it('says nothing about a clean receipt', () => {
+    const v = forcedCloseVerdict({ ...base, confirmRowsText: rows(STANDARD) }, copy);
+    expect(v.why ?? '').not.toMatch(/BOTH settlement routes/);
+  });
+
+  it('leaves a WHOLLY wrong-route receipt to the arm that names it', () => {
+    // The first version of this rule ran above the coverage test and
+    // stole these cases, because a receipt that is wholly the other
+    // route naturally contains the other route's values. A wrong receipt
+    // and a doubled one are different defects and the lender's
+    // experience of them differs.
+    const v = forcedCloseVerdict({ ...base, confirmRowsText: rows(RENTAL) }, copy);
+    expect(v.verdict).toBe('fail');
+    expect(v.why).toMatch(/shows the rental receipt/);
+  });
+});

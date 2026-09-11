@@ -6107,6 +6107,35 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
             .click({ trial: true, timeout: 3_000 })
             .then(() => true)
             .catch(() => false);
+          // ROUND 68 P2 — AND IS IT PAINTED?
+          //
+          // Playwright's actionability suite does not consider ancestor
+          // opacity — `31-observer-visibility.spec.ts` exists because
+          // this drive's predicate and Playwright's disagree on exactly
+          // that — so a Back button under `opacity: 0`, or with
+          // transparent label text, still accepts a trial click and the
+          // confirmation passed with no cancel control the lender can
+          // SEE. The two fee-paying controls have carried painted
+          // evidence since rounds 46 and 54; the one control that exists
+          // to stop a payment had none.
+          //
+          // `visible` for the button itself and the leaf rule for its
+          // label, mirroring `submitLabelPainted` exactly rather than
+          // inventing a second way to ask the same question.
+          backAction.painted = await back
+            .evaluate((el, [clipSrc, paintSrc, boxSrc, visSrc]) => {
+              const scope = new Function(
+                `${clipSrc}\n${paintSrc}\n${boxSrc}\n${visSrc}\nreturn { visible, paintsText };`,
+              )();
+              if (!scope.visible(el)) return false;
+              const leaves = [el, ...el.querySelectorAll('*')].filter((n) =>
+                [...n.childNodes].some(
+                  (c) => c.nodeType === 3 && c.textContent.trim() !== '',
+                ),
+              );
+              return leaves.length === 0 || leaves.some((n) => scope.visible(n));
+            }, VISIBILITY_HELPER_SOURCES)
+            .catch(() => null);
         }
         // Leave the page as it was found. Failing to close it is not a
         // finding and must not fail the drive.

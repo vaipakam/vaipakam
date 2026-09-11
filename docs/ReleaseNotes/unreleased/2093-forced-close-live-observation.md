@@ -196,6 +196,28 @@ explicitly rather than taken as "anything numeric-ish", since the wider
 category also contains superscript footnote markers, and treating those
 as amounts would invent findings on correct copy.
 
+Several refinements concern the difference between a fault and a moment.
+The card legitimately withdraws its whole confirmation panel when
+readiness changes while the panel is open, and the check had been reading
+that as a panel rendered without its action — a failure invented out of a
+change that happened between two looks. It now records whether the panel
+was still there in the same look, so the fault and its explanation come
+from one observation rather than two.
+
+The check also now refuses to pass what it could not establish. Where a
+reading of the protocol fails — an unavailable endpoint, an unreadable
+answer — the visit is reported as incomplete rather than clean, both for
+the settlement route and for the reason a withheld card gives. A run that
+exits clean should mean the checks ran, not that they were skipped.
+
+And two surfaces gained checks they had been missing. The confirmation's
+Back button is now required to be visible as well as usable — the
+automation's own idea of "usable" does not consider transparency, so a
+button nobody can see was passing — and a receipt is rejected if it
+carries the terms of both settlement routes at once, which the previous
+rule could not notice because it only checked that the right terms were
+present, not that the wrong ones were absent.
+
 ### Stated limits
 
 Three, and the first two are gaps in coverage rather than in the
