@@ -542,7 +542,7 @@ async function applyLayoutProvenance(result, { client, censusBlock, atBlock, dia
   // an address the cut history names with empty code now is unreadable, not
   // "never wrote" (#2095 r15/r17 P1) — see refuseUnreadableCutSources
   refuseUnreadableCutSources(attribution);
-  const population = cutHistoryCompleteness({ verdict: cut.verdict.split(' ')[0], cuts: cut.cuts, constructorCutSeen: cut.constructorCutSeen, addresses: cut.addresses, loupe, cutFacetHost, loupeReadFailed });
+  const population = cutHistoryCompleteness({ verdict: cut.verdict.split(' ')[0], cuts: cut.cuts, constructorCutSeen: cut.constructorCutSeen, addresses: cut.addresses, loupe, cutFacetHost, loupeReadFailed, recordedFacets: recorded.facets.map((f) => f.address) });
   // For every unattributed facet: the commits around the moments it was cut
   // (block timestamps, hash-pinned by number under the census block) and
   // around the deployedAt of every record that names it — the era tool builds

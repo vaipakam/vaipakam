@@ -317,6 +317,10 @@ test('the facet population is exhaustive only with a read history that holds the
   assert.match(cutHistoryCompleteness({ verdict: 'read', cuts: 2, constructorCutSeen: true, addresses: ['0xa'], loupe: ['0xa', '0xc'] }).reasons.join(' '), /1 facet\(s\) the loupe routes today never appear/);
   assert.equal(cutHistoryCompleteness({ verdict: 'read', cuts: 1, constructorCutSeen: true, addresses: [], loupe: null }).complete, true, 'a shell with no loupe: the history alone decides');
   assert.match(cutHistoryCompleteness({ verdict: 'read', cuts: 1, constructorCutSeen: true, addresses: [], loupe: null, loupeReadFailed: true }).reasons.join(' '), /facets\(\) but the call failed/, 'a loupe that failed to answer is an incomplete population (#2095 r17)');
+  // a recorded facet the history never added: on a routed Diamond the endpoint omitted a cut; on a shell it was never cut (#2095 r18)
+  assert.match(cutHistoryCompleteness({ verdict: 'read', cuts: 2, constructorCutSeen: true, addresses: ['0xa'], loupe: ['0xa'], recordedFacets: ['0xA', '0xOLD'] }).reasons.join(' '), /1 facet\(s\) the records name were never added/);
+  assert.equal(cutHistoryCompleteness({ verdict: 'read', cuts: 2, constructorCutSeen: true, addresses: ['0xa'], loupe: ['0xa', '0xcut'], cutFacetHost: '0xcut', recordedFacets: ['0xa', '0xcut'] }).complete, true, 'the constructor-installed cut facet is exempt here too');
+  assert.equal(cutHistoryCompleteness({ verdict: 'read', cuts: 1, constructorCutSeen: true, addresses: [], loupe: null, recordedFacets: ['0xnever'] }).complete, true, 'a shell: recorded facets absent from a complete history were never cut');
   // an address the cut history names with empty code is unreadable, not "never wrote"; a record-only one may be
   const att = { attributed: [], unattributed: [], noCode: [{ address: '0x1', sources: ['cut-history'] }, { address: '0x2', sources: ['record:live'] }, { address: '0x3', sources: ['cut-history:initializer'] }], verdict: 'attributed' };
   refuseUnreadableCutSources(att);

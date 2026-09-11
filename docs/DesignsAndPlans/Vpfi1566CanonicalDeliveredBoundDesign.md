@@ -6327,8 +6327,13 @@ names with empty code now is unreadable rather than "never wrote" — a cut
 proves the facet had code, and a contract created and destroyed in one
 transaction can still vanish; and the intent-only storage read scans
 `1..nextLoanId` from storage, never the routed pagination, which a partially
-refreshed metrics facet may skip an older loan of. Run 36 re-reads every
-deployment with all of it.
+refreshed metrics facet may skip an older loan of. Round 18 added the
+recorded facets to the gate: on a Diamond that routes today, a facet its
+records name that the history never added is a cut the endpoint omitted —
+and an endpoint that omitted one cut may have omitted a transient writer —
+so the population is not exhaustive; on a shell whose cut never ran, the same
+absence is exactly what the record says. Run 37 re-reads every deployment
+with all of it.
 
 ### 7a. What the provenance walk found, and how the design changes (2026-09-09)
 

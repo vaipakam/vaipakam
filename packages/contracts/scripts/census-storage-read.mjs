@@ -445,8 +445,19 @@ export const DIAMOND_CUT_SELECTOR = '0x1f931c1c';
  * PAIR inside a returned window is undetectable by any test over logs and is
  * the stated residual. Pure; exported for the test.
  */
-export function cutHistoryCompleteness({ verdict, cuts, constructorCutSeen, addresses, loupe, cutFacetHost, loupeReadFailed = false }) {
+export function cutHistoryCompleteness({ verdict, cuts, constructorCutSeen, addresses, loupe, cutFacetHost, loupeReadFailed = false, recordedFacets = [] }) {
   const reasons = [];
+  // #2095 r18 P1 — a record's facets were cut by the deploy that wrote the
+  // record, so on a Diamond that routes today a recorded facet the history
+  // never added is a cut the endpoint omitted (and it may have omitted
+  // another writer). On a Diamond that routes nothing — a shell whose cut
+  // never ran — a recorded facet absent from the history is exactly that.
+  if (Array.isArray(loupe)) {
+    const known = new Set((addresses ?? []).map((a) => a.toLowerCase()));
+    const exempt = cutFacetHost ? String(cutFacetHost).toLowerCase() : null;
+    const omitted = [...new Set((recordedFacets ?? []).map((a) => String(a).toLowerCase()))].filter((a) => a !== exempt && !known.has(a));
+    if (omitted.length) reasons.push(`${omitted.length} facet(s) the records name were never added in the returned history — the endpoint omitted cuts`);
+  }
   // #2095 r17 P1 — a loupe that answered the selector probe but not facets()
   // (a rate-limited replica) leaves the current facet set unknown: that is an
   // incomplete population, never a skipped check
