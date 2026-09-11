@@ -3371,5 +3371,28 @@ describe('round 46 review findings', () => {
     it('PASSES a usable, single, clickable action', () => {
       expect(forcedCloseVerdict({ ...opened, confirmAction: usable }, copy).verdict).toBe('pass');
     });
+
+    // SELF-REVIEW AFTER ROUND 46 — the pass REPORTS whether the trial
+    // ran. `undefined` is a legitimate outcome (the re-read label did
+    // not match the control the snapshot described) and is otherwise
+    // indistinguishable from the check having quietly stopped running,
+    // which is the failure this file keeps finding in its own guards.
+    it('reports that the trial ran', () => {
+      expect(forcedCloseVerdict({ ...opened, confirmAction: usable }, copy).confirmClickable).toBe(
+        true,
+      );
+    });
+
+    it('reports that it did not, rather than implying it did', () => {
+      const { clickable, ...noTrial } = usable;
+      expect(
+        forcedCloseVerdict({ ...opened, confirmAction: noTrial }, copy).confirmClickable,
+      ).toBeUndefined();
+    });
+
+    it('and says nothing at all where no action was recorded', () => {
+      const { confirmAction, ...noField } = { ...opened, confirmAction: usable };
+      expect(forcedCloseVerdict(noField, copy).confirmClickable).toBeUndefined();
+    });
   });
 });

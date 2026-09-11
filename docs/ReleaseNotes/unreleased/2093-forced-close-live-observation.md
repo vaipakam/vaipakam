@@ -285,3 +285,20 @@ treated as a reference rather than as an amount. Those identifiers are
 whole numbers, so a fractional value in that position is not naming
 anything — it is stating a quantity, which is the invented figure the
 rule exists to catch. The exemption now applies only to whole numbers.
+
+Reviewing that last change afterwards turned up a way it could have made
+things worse rather than better. The check finds the confirmation button
+by its position among the buttons on the card, and then goes back to the
+page to try it. If the page had redrawn in between, that position could
+have been the Back button instead — which can always be clicked — so a
+confirmation button that did not work would have been reported as fine.
+That is the precise kind of false reassurance the whole check exists to
+prevent, on the one control that spends money. The check now remembers
+the button's wording and confirms it is looking at the same control
+before trying it, and where it cannot confirm that, it says the button
+was not tested rather than guessing either way.
+
+The run also now states, in its own output, whether that test actually
+ran. "Not tested" is a legitimate result, and from the outside it looks
+exactly like a check that has quietly stopped working — so it is said out
+loud instead of left to be assumed.

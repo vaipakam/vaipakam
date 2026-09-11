@@ -4436,6 +4436,20 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
                 confirmButton === undefined
                   ? -1
                   : [...el.querySelectorAll('button')].indexOf(confirmButton),
+              // AND ITS LABEL, so the Playwright side can CHECK that the
+              // index still addresses this control before trialling it.
+              //
+              // An index is a snapshot of a DOM that the trial then
+              // re-queries. If the panel re-rendered in between, `nth(i)`
+              // can land on BACK — which is always clickable — and the
+              // run would report a broken confirm control as usable. A
+              // false pass on the fee-paying button is the exact failure
+              // this probe exists to prevent, so the cheap identity check
+              // is worth its line.
+              label:
+                confirmButton === undefined
+                  ? null
+                  : (confirmButton.innerText ?? '').trim(),
             };
             const rows = [
               ...el.querySelectorAll(
@@ -4551,13 +4565,27 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
         // the verdict can tell "could not be clicked" from "was never
         // tested" — the distinction this file has had to restore three
         // times under other names.
+        //
+        // AND IT IS TRIALLED ONLY IF THE INDEX STILL ADDRESSES IT. The
+        // index came from a snapshot; the trial re-queries the DOM. A
+        // re-render in between can leave `nth(i)` on BACK, which is
+        // always clickable — so a broken confirm control would be
+        // reported as usable. The label is re-read and compared first,
+        // and a mismatch leaves `clickable` undefined: the control was
+        // not tested, which is a different statement from "it could not
+        // be clicked" and must not be collapsed into it.
         if (confirmAction && confirmAction.index >= 0) {
-          confirmAction.clickable = await card
-            .locator('button')
-            .nth(confirmAction.index)
-            .click({ trial: true, timeout: 3_000 })
-            .then(() => true)
-            .catch(() => false);
+          const target = card.locator('button').nth(confirmAction.index);
+          const labelNow = await target
+            .innerText({ timeout: 2_000 })
+            .then((t) => t.trim())
+            .catch(() => null);
+          if (labelNow !== null && labelNow === confirmAction.label) {
+            confirmAction.clickable = await target
+              .click({ trial: true, timeout: 3_000 })
+              .then(() => true)
+              .catch(() => false);
+          }
         }
         // Leave the page as it was found. Failing to close it is not a
         // finding and must not fail the drive.
@@ -5815,7 +5843,22 @@ for (const v of visited) {
                   // those sites shows in the output instead of passing
                   // confidently. I claimed on the review thread that this
                   // was printed before it was; it is now.
-                  ` submitPeak=${v.forcedCloseVerdict.visibleSubmitsPeak}`
+                  ` submitPeak=${v.forcedCloseVerdict.visibleSubmitsPeak}` +
+                  // SELF-REVIEW AFTER ROUND 46 — and WHETHER THE TRIAL
+                  // CLICK RAN. `untested` is a legitimate outcome (the
+                  // re-read label did not match the control the snapshot
+                  // described, so nothing is claimed about it) and is
+                  // therefore indistinguishable, from the outside, from
+                  // the check having stopped running. Printed so the
+                  // difference is in the run output rather than in a
+                  // reviewer's head.
+                  ` confirmClickable=${
+                    v.forcedCloseVerdict.confirmClickable === undefined
+                      ? 'untested'
+                      : v.forcedCloseVerdict.confirmClickable
+                        ? 'yes'
+                        : 'no'
+                  }`
                 : '') +
               // ROUND 14 — WHETHER THE ABSENCE GATE COULD HAVE FIRED.
               //

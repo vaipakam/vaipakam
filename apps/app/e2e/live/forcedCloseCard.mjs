@@ -1773,6 +1773,22 @@ export function forcedCloseVerdict(obs, copy) {
     // confident pass.
     visibleCardsPeak: obs.visibleCardsPeak,
     visibleSubmitsPeak: obs.visibleSubmitsPeak,
+    // SELF-REVIEW AFTER ROUND 46 — round 27's remedy, applied to the
+    // trial click, and needed here for a reason the other three do not
+    // have: this field can legitimately be absent.
+    //
+    // `clickable === false` FAILS above, so on this path the value is
+    // `true` or `undefined`, and `undefined` means the trial was never
+    // run — which now happens on purpose, when the re-read label does
+    // not match the control the snapshot described. That is the honest
+    // outcome, but it is also indistinguishable from the check having
+    // silently stopped running, and a usability test that quietly
+    // switched itself off is the failure mode this file keeps finding.
+    //
+    // So the run SAYS which: `true` means the fee-paying button was put
+    // through Playwright's actionability suite, `undefined` means it was
+    // not and nothing is claimed about it.
+    confirmClickable: obs.confirmAction?.clickable,
   };
 }
 
