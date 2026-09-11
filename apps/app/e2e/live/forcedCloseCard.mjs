@@ -1478,6 +1478,68 @@ export function forcedCloseVerdict(obs, copy) {
     };
   }
 
+  // ROUND 51 P2 — AND SO DOES AN UNSAFE RENDER, for the same reason.
+  //
+  // Round 50 taught this arm to read `seenRenders`, and then left it in
+  // section 4 where the applicability exits still reached it first. So a
+  // tick that caught withheld copy beside a live, pressable, fee-paying
+  // button — now correctly preserved — was still discarded as
+  // `inapplicable` the moment the loan terminated, transferred or gained
+  // an accepted sale. The fix preserved the evidence and the ordering
+  // threw it away.
+  //
+  // It passes round 49's own test for what may be hoisted: no state
+  // change explains it. The copy and the control come from ONE atomic
+  // DOM pass (round 9), and the app renders both from the same
+  // `readiness` value, so a render carrying withheld copy AND an enabled
+  // submit is internally inconsistent rather than a transition artefact.
+  // The lender could have pressed it; what the chain said a moment later
+  // does not un-press it.
+  // ROUND 50 P2 — ON EVERY RENDER SEEN, not only the settled one.
+  //
+  // `seenTexts` kept the copy from intermediate ticks and the peaks kept
+  // the control counts, and nothing kept the PAIR. So a render showing
+  // withheld copy beside a live button — the safety check still running,
+  // the fee-paying action already pressable — was positively observed
+  // and then discarded the moment the card settled into a clean ready
+  // state, because this arm matched the FINAL copy against the FINAL
+  // control and found nothing wrong.
+  //
+  // Round 10's exemption does not cover this and was never meant to: it
+  // forgives a transiently DISABLED control, an intermediate state that
+  // costs the lender nothing. A transiently ENABLED one beside copy
+  // saying the decision is not yet safe is the expensive direction, and
+  // it is exactly what this arm exists for. Briefly is long enough — a
+  // click is instantaneous.
+  //
+  // The settled render is judged as one of the renders rather than
+  // separately, so there is one rule rather than two that can drift.
+  const renders = [
+    { text: obs.text, submitVisible: obs.submitVisible, submitDisabled: obs.submitDisabled },
+    ...(Array.isArray(obs.seenRenders) ? obs.seenRenders : []),
+  ];
+  if (Array.isArray(copy?.withheldCopy)) {
+    const unsafe = renders.find(
+      (r) =>
+        r &&
+        // Same `!== false` reading as `actionOffered` below: an older
+        // record that carries no visibility says nothing about it.
+        r.submitVisible !== false &&
+        !r.submitDisabled &&
+        copy.withheldCopy.some(
+          (sentence) =>
+            typeof sentence === 'string' && sentence && (r.text ?? '').includes(sentence),
+        ),
+    );
+    if (unsafe) {
+      return {
+        verdict: 'fail',
+        failKind: 'observed',
+        why: 'card renders a NON-ACTIONABLE state yet offers an enabled action — the user would pay a fee for a refusal',
+      };
+    }
+  }
+
   // ROUND 49 P2 — THE CONFIRMATION'S STRUCTURAL FAULTS BELONG UP HERE.
   //
   // Round 9 settled the principle — "definite content failures are
@@ -1646,50 +1708,6 @@ export function forcedCloseVerdict(obs, copy) {
   // silence as "hidden" would invent findings on every older record.
   const actionOffered = obs.submitVisible !== false && !obs.submitDisabled;
 
-  // ROUND 50 P2 — ON EVERY RENDER SEEN, not only the settled one.
-  //
-  // `seenTexts` kept the copy from intermediate ticks and the peaks kept
-  // the control counts, and nothing kept the PAIR. So a render showing
-  // withheld copy beside a live button — the safety check still running,
-  // the fee-paying action already pressable — was positively observed
-  // and then discarded the moment the card settled into a clean ready
-  // state, because this arm matched the FINAL copy against the FINAL
-  // control and found nothing wrong.
-  //
-  // Round 10's exemption does not cover this and was never meant to: it
-  // forgives a transiently DISABLED control, an intermediate state that
-  // costs the lender nothing. A transiently ENABLED one beside copy
-  // saying the decision is not yet safe is the expensive direction, and
-  // it is exactly what this arm exists for. Briefly is long enough — a
-  // click is instantaneous.
-  //
-  // The settled render is judged as one of the renders rather than
-  // separately, so there is one rule rather than two that can drift.
-  const renders = [
-    { text: obs.text, submitVisible: obs.submitVisible, submitDisabled: obs.submitDisabled },
-    ...(Array.isArray(obs.seenRenders) ? obs.seenRenders : []),
-  ];
-  if (Array.isArray(copy?.withheldCopy)) {
-    const unsafe = renders.find(
-      (r) =>
-        r &&
-        // Same `!== false` reading as `actionOffered` below: an older
-        // record that carries no visibility says nothing about it.
-        r.submitVisible !== false &&
-        !r.submitDisabled &&
-        copy.withheldCopy.some(
-          (sentence) =>
-            typeof sentence === 'string' && sentence && (r.text ?? '').includes(sentence),
-        ),
-    );
-    if (unsafe) {
-      return {
-        verdict: 'fail',
-        failKind: 'observed',
-        why: 'card renders a NON-ACTIONABLE state yet offers an enabled action — the user would pay a fee for a refusal',
-      };
-    }
-  }
 
   const checkRunning = saysCheckRunning(obs.text ?? '', copy?.unknownCopy ?? '');
 

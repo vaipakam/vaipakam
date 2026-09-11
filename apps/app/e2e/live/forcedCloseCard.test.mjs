@@ -3274,6 +3274,102 @@ describe('round 45 review findings', () => {
   });
 });
 
+describe('round 51 review findings', () => {
+  const copy = {
+    unknownCopy: FORCED_CLOSE.unknown,
+    readyCopy: [FORCED_CLOSE.readyInKind, FORCED_CLOSE.readyInternalMatch, FORCED_CLOSE.readyRental],
+    withheldCopy: [FORCED_CLOSE.unknown, FORCED_CLOSE.notYet, FORCED_CLOSE.readyNeedsRoute],
+    recognisedCopy: [
+      FORCED_CLOSE.unknown,
+      FORCED_CLOSE.notYet,
+      FORCED_CLOSE.blockedPaused,
+      FORCED_CLOSE.blockedSequencer,
+      FORCED_CLOSE.blockedNoConsent,
+      FORCED_CLOSE.readyInKind,
+      FORCED_CLOSE.readyInternalMatch,
+      FORCED_CLOSE.readyRental,
+      FORCED_CLOSE.readyNeedsRoute,
+    ],
+    receiptLeads: [FORCED_CLOSE.receipt.youReceive, FORCED_CLOSE.rentalReceipt.youReceive],
+  };
+
+  const base = {
+    lenderHoldsActive: true,
+    mounted: true,
+    attached: true,
+    submitPresent: true,
+    submitVisible: true,
+    submitDisabled: false,
+    visibleSubmits: 1,
+    visibleCards: 1,
+    saleLocked: false,
+    settled: true,
+    bodyPresent: true,
+    bodyText: FORCED_CLOSE.readyInKind,
+    text: FORCED_CLOSE.readyInKind,
+    confirmExpected: true,
+    confirmText: `${FORCED_CLOSE.receipt.youReceive} …`,
+  };
+
+  describe('an unsafe render outranks a lifecycle change', () => {
+    // Round 50 taught this arm to read `seenRenders` and left it below
+    // the applicability exits, so the evidence it had just learned to
+    // preserve was still discarded the moment the loan terminated,
+    // transferred or gained an accepted sale.
+    //
+    // It passes round 49's own test for what may be hoisted: the copy
+    // and the control come from ONE atomic DOM pass, and the app renders
+    // both from the same readiness value — so withheld copy beside an
+    // enabled submit is internally inconsistent rather than a transition
+    // artefact. The lender could have pressed it.
+    const unsafe = [
+      { text: FORCED_CLOSE.unknown, submitVisible: true, submitDisabled: false },
+      { text: FORCED_CLOSE.readyInKind, submitVisible: true, submitDisabled: false },
+    ];
+
+    it('reports it on a position that has since gone', () => {
+      const v = forcedCloseVerdict(
+        { ...base, lenderHoldsActive: false, seenRenders: unsafe },
+        copy,
+      );
+      expect(v.verdict).toBe('fail');
+      expect(v.failKind).toBe('observed');
+      expect(v.why).toMatch(/NON-ACTIONABLE state yet offers an enabled action/);
+    });
+
+    it('reports it on a position that has since sold', () => {
+      const v = forcedCloseVerdict({ ...base, saleLocked: true, seenRenders: unsafe }, copy);
+      expect(v.verdict).toBe('fail');
+      expect(v.failKind).toBe('observed');
+    });
+
+    // The limit is unchanged: round 10's transiently DISABLED control is
+    // still forgiven, and a clean reading on a position that has gone is
+    // still refused rather than banked.
+    it('still forgives a transiently disabled control after the position goes', () => {
+      const v = forcedCloseVerdict(
+        {
+          ...base,
+          lenderHoldsActive: false,
+          seenRenders: [
+            { text: FORCED_CLOSE.unknown, submitVisible: true, submitDisabled: true },
+            { text: FORCED_CLOSE.readyInKind, submitVisible: true, submitDisabled: false },
+          ],
+        },
+        copy,
+      );
+      expect(v.verdict).toBe('blocked');
+      expect(v.blockedKind).toBe('inapplicable');
+    });
+
+    it('still refuses to bank a clean reading once the position has gone', () => {
+      const v = forcedCloseVerdict({ ...base, lenderHoldsActive: false }, copy);
+      expect(v.verdict).toBe('blocked');
+      expect(v.blockedKind).toBe('inapplicable');
+    });
+  });
+});
+
 describe('round 50 review findings', () => {
   const copy = {
     unknownCopy: FORCED_CLOSE.unknown,

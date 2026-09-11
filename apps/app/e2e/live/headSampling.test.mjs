@@ -90,3 +90,50 @@ describe('the head sample waits for the readings in flight', () => {
     expect(fn.slice(0, 400)).toContain('[...pending]');
   });
 });
+
+describe('an endpoint that lied about its chain stays untrusted', () => {
+  // SAME SUBJECT as the file above it: which heights the drive is
+  // willing to treat as the page's view of the chain. Round 19
+  // established that an endpoint identifying itself as a DIFFERENT chain
+  // is excluded "for the rest of the run", and round 51 P2 found the one
+  // door left open — the `foreign` check sat BELOW the admission, so an
+  // inconsistent endpoint answering with the expected id afterwards was
+  // added straight back.
+  //
+  // That matters because the exclusion exists for exactly the
+  // inconsistent case: an endpoint that reports two chain ids has told
+  // us it cannot say which chain a height belongs to, and a wrong-chain
+  // bound reaching the absence gate lets a degraded page be blamed for
+  // omitting a card it was right to omit.
+  const src = fs.readFileSync(DRIVE, 'utf8');
+
+  it('checks the exclusion before re-admitting', () => {
+    expect(src).toContain('if (!foreign.has(key)) diamond.add(key);');
+  });
+
+  it('admits nothing UNGUARDED ahead of the exclusion check', () => {
+    // The precise invariant, and the first version of this case got it
+    // wrong by asserting there are no bare admissions at all. There are
+    // two, and both are correct: they sit BELOW
+    // `if (foreign.has(key)) return;`, which guards them already.
+    //
+    // What must hold is that nothing admits the key *before* that line
+    // without testing `foreign` itself — which is exactly the defect
+    // round 51 found, and exactly what a later tidy-up would restore by
+    // deleting the inline guard as redundant.
+    const gate = src.indexOf('if (foreign.has(key)) return;');
+    expect(gate, 'the exclusion check was not found').toBeGreaterThan(-1);
+    const before = src.slice(0, gate);
+    const admissions = [...before.matchAll(/diamond\.add\(key\)/g)];
+    expect(admissions.length, 'an admission ahead of the gate').toBe(1);
+    for (const m of admissions) {
+      const line = before.slice(before.lastIndexOf('\n', m.index) + 1, m.index);
+      expect(line, 'that admission must test `foreign` itself').toContain('!foreign.has(key)');
+    }
+  });
+
+  it('still records the exclusion and revokes an earlier admission', () => {
+    expect(src).toContain('foreign.add(key);');
+    expect(src).toContain('diamond.delete(key);');
+  });
+});

@@ -1869,7 +1869,24 @@ function watchPageHead(page) {
         const id = chainIdFromRpcPair(body, responseBody);
         if (id !== null) {
           if (id === CHAIN_ID) {
-            diamond.add(key);
+            // ROUND 51 P2 — AND THE EXCLUSION IS PERMANENT, so this
+            // cannot re-admit.
+            //
+            // The `foreign.has(key)` return sits BELOW this line, so an
+            // endpoint that had already identified itself as another
+            // chain and then answered with the expected id was added
+            // back to `diamond` on the way past. Round 19 wrote "once an
+            // endpoint has identified itself as a different chain, that
+            // is settled for the rest of the run" and then left one door
+            // open — the door where the endpoint is inconsistent, which
+            // is precisely the endpoint the rule exists for.
+            //
+            // An endpoint reporting two different chain ids has told us
+            // it cannot be trusted to say which chain a height belongs
+            // to. Trusting its heights again lets a wrong-chain bound
+            // reach the absence gate, where a degraded page can be
+            // blamed for omitting a card it was right to omit.
+            if (!foreign.has(key)) diamond.add(key);
           } else {
             // A DIFFERENT chain is positive evidence the other way, and
             // it outranks the address heuristics below — an ENS endpoint
@@ -3146,26 +3163,33 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
   // Waiting on the locator's `visible` state without `.first()` is
   // satisfied by ANY match becoming visible, which is the question
   // actually being asked.
-  const mounted = await cards
+  // ROUND 51 P2 — ONE WAIT, ON THE QUESTION ACTUALLY BEING ASKED.
+  //
+  // Round 23 said "wait for ANY visible match, not for the first node"
+  // and then implemented it as a SEQUENCE: the full 30 seconds on
+  // `.first()`, and only once that timed out, five seconds on the
+  // `:visible` locator. So the stated fix only began after half a minute
+  // of watching the wrong element — and this page is live and mutable.
+  // A visible card can state an amount it cannot know, or offer an
+  // enabled action beside withheld copy, and then settle or disappear
+  // inside that blind interval; none of its renders reach `seenTexts` or
+  // `seenRenders`, and a lifecycle change then explains the whole visit
+  // away as `inapplicable`.
+  //
+  // `[data-testid="forced-close-card"]:visible` is satisfied by ANY
+  // match becoming visible, including the first one — so the two-stage
+  // version had no case the single wait does not cover, and the fallback
+  // was pure delay. Round 24's note survives because its lesson does:
+  // `:visible` is the CSS pseudo-class Playwright supports; the earlier
+  // `visible=true` was not a selector at all, the engine threw, `.catch`
+  // swallowed it, and `mounted` stayed false while reading as if the fix
+  // had worked.
+  const mounted = await page
+    .locator('[data-testid="forced-close-card"]:visible')
     .first()
     .waitFor({ state: 'visible', timeout: timeoutMs })
     .then(() => true)
-    .catch(async () =>
-      // The first node is hidden: give any other match the remaining
-      // chance rather than concluding from the wrong element.
-      //
-      // ROUND 24 P2 — `:visible`, the CSS pseudo-class Playwright
-      // supports and the rest of this repo uses. My first attempt wrote
-      // `visible=true`, which is not a selector at all: the engine threw,
-      // `.catch` swallowed it, and `mounted` stayed false — so the fix
-      // for this exact case did nothing while reading as if it had.
-      page
-        .locator('[data-testid="forced-close-card"]:visible')
-        .first()
-        .waitFor({ state: 'visible', timeout: 5_000 })
-        .then(() => true)
-        .catch(() => false),
-    );
+    .catch(() => false);
   const attached = mounted ? true : (await cards.count()) > 0;
   // ROUND 19 P2 — HOW MANY CARDS, not just whether one is there.
   //
@@ -3601,8 +3625,6 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
             ) {
               return false;
             }
-            const box = node.getBoundingClientRect();
-            if (!(box.width > 0 && box.height > 0)) return false;
             // ROUND 29 P2 — AND THE CLIPPING TEST, on THIS path too.
             //
             // Round 28 added `notClipped` to the fallback's return and
@@ -3613,14 +3635,69 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
             // helper was rewritten wholesale and did get it, which is
             // why the live run looked like it confirmed the change: the
             // canary I checked exercised the copy that worked.
-            return notClipped(node) && paintsText(node);
+            //
+            // ROUND 51 P2 — AND THE SAME SPLIT BIT AGAIN, so the branch
+            // no longer RETURNS. Round 29 fixed the symptom by copying
+            // `notClipped` into this arm and left the shape that caused
+            // it: an early return here meant everything below — the
+            // ancestor walk included — ran only on an engine without
+            // `checkVisibility`, which is to say never.
+            //
+            // That was free while the walk only tested `opacity`, since
+            // `checkVisibility({opacityProperty: true})` already covers
+            // it, and that is precisely why nobody noticed. It stops
+            // being free the moment the walk carries something
+            // `checkVisibility` does not know about — `filter` is that
+            // thing, and the fix for it would have landed in dead code
+            // in one of the two copies.
+            //
+            // Restructured to match the twin rather than patched inside
+            // the branch, so the copies converge instead of diverging
+            // further (#2102).
+          } else {
+            const cs = getComputedStyle(node);
+            if (
+              cs.display === 'none' ||
+              cs.visibility === 'hidden' ||
+              cs.visibility === 'collapse'
+            ) {
+              return false;
+            }
           }
-          const cs = getComputedStyle(node);
-          if (cs.display === 'none' || cs.visibility === 'hidden' || cs.visibility === 'collapse') {
+          // ROUND 51 P2 — A FILTER ERASES CONTENT THE SAME WAY OPACITY DOES,
+          // and nothing above looks at it.
+          //
+          // `filter: opacity(0)` leaves the geometry, the computed `opacity`,
+          // the text colour and `checkVisibility` all untouched while Chromium
+          // paints nothing — so the explanation, or a fee and loss row, could be
+          // vouched for from `innerText` with none of it on screen. Same class
+          // as rounds 37, 43, 44, 45 and 48: a property that hides the CONTENT
+          // rather than the box.
+          //
+          // Checked on the same ANCESTOR WALK as `opacity`, because a filter
+          // applies to the element and everything inside it exactly as opacity
+          // does — one walk, one rule, rather than a second traversal to drift.
+          //
+          // ONLY a zero `opacity()` component, and only where it is stated as a
+          // number. `brightness(0)` paints black rather than nothing, a `url()`
+          // reference is an arbitrary SVG filter, and deciding in general what a
+          // filter chain renders is not something this predicate can do — so
+          // anything else counts as painted. The residual is a missed defect,
+          // never an invented one.
+          const filterErases = (cs) => {
+            const f = cs.filter;
+            if (!f || f === 'none') return false;
+            for (const m of String(f).matchAll(/opacity\(([^)]*)\)/gi)) {
+              const t = m[1].trim();
+              const v = t.endsWith('%') ? Number(t.slice(0, -1)) / 100 : Number(t);
+              if (Number.isFinite(v) && v === 0) return true;
+            }
             return false;
-          }
+          };
           for (let n = node; n; n = n.parentElement) {
-            if (Number(getComputedStyle(n).opacity) === 0) return false;
+            const cs = getComputedStyle(n);
+            if (Number(cs.opacity) === 0) return false;
+            if (filterErases(cs)) return false;
           }
           const r = node.getBoundingClientRect();
           if (!(r.width > 0 && r.height > 0)) return false;
@@ -4594,8 +4671,40 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
                   return false;
                 }
               }
+              // ROUND 51 P2 — A FILTER ERASES CONTENT THE SAME WAY OPACITY DOES,
+              // and nothing above looks at it.
+              //
+              // `filter: opacity(0)` leaves the geometry, the computed `opacity`,
+              // the text colour and `checkVisibility` all untouched while Chromium
+              // paints nothing — so the explanation, or a fee and loss row, could be
+              // vouched for from `innerText` with none of it on screen. Same class
+              // as rounds 37, 43, 44, 45 and 48: a property that hides the CONTENT
+              // rather than the box.
+              //
+              // Checked on the same ANCESTOR WALK as `opacity`, because a filter
+              // applies to the element and everything inside it exactly as opacity
+              // does — one walk, one rule, rather than a second traversal to drift.
+              //
+              // ONLY a zero `opacity()` component, and only where it is stated as a
+              // number. `brightness(0)` paints black rather than nothing, a `url()`
+              // reference is an arbitrary SVG filter, and deciding in general what a
+              // filter chain renders is not something this predicate can do — so
+              // anything else counts as painted. The residual is a missed defect,
+              // never an invented one.
+              const filterErases = (cs) => {
+                const f = cs.filter;
+                if (!f || f === 'none') return false;
+                for (const m of String(f).matchAll(/opacity\(([^)]*)\)/gi)) {
+                  const t = m[1].trim();
+                  const v = t.endsWith('%') ? Number(t.slice(0, -1)) / 100 : Number(t);
+                  if (Number.isFinite(v) && v === 0) return true;
+                }
+                return false;
+              };
               for (let n = node; n; n = n.parentElement) {
-                if (Number(getComputedStyle(n).opacity) === 0) return false;
+                const cs = getComputedStyle(n);
+                if (Number(cs.opacity) === 0) return false;
+                if (filterErases(cs)) return false;
               }
               const r = node.getBoundingClientRect();
               if (!(r.width > 0 && r.height > 0)) return false;

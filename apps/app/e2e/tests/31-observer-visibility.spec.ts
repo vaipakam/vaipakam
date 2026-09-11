@@ -119,6 +119,18 @@ test('both copies of the drive visibility predicate agree, and reject clipped co
     <p id="clipPathPartial" style="clip-path: inset(10%)">trimmed at the edges, still readable</p>
     <p id="clipPathRounded" style="clip-path: inset(10% round 4px)">rounded corners are not an extent</p>
     <p id="clipPathCircle" style="clip-path: circle(0)">a shape this predicate does not judge</p>
+    <dl class="receipt">
+      <div class="receipt-row">
+        <dt id="filterLeaf" style="filter: opacity(0)">Fees</dt>
+        <dd id="filterPct" style="filter: opacity(0%)">the treasury share</dd>
+        <dd id="filterChain" style="filter: blur(1px) opacity(0)">chained onto another filter</dd>
+      </div>
+    </dl>
+    <div id="filterAncestor" style="filter: opacity(0)">
+      <p id="underFilter">a loss disclosure under an erased filter</p>
+    </div>
+    <p id="filterPartial" style="filter: opacity(0.4)">faint on purpose, still readable</p>
+    <p id="filterOther" style="filter: brightness(0)">black, but painted</p>
   `);
 
   for (const [i, predicate] of predicates.entries()) {
@@ -168,6 +180,15 @@ test('both copies of the drive visibility predicate agree, and reject clipped co
           clipPathPartial: visible(byId('clipPathPartial')),
           clipPathRounded: visible(byId('clipPathRounded')),
           clipPathCircle: visible(byId('clipPathCircle')),
+          // ROUND 51 — a FILTER erases content the same way opacity
+          // does, leaving geometry, computed `opacity`, text colour and
+          // `checkVisibility` all untouched.
+          filterLeaf: visible(byId('filterLeaf')),
+          filterPct: visible(byId('filterPct')),
+          filterChain: visible(byId('filterChain')),
+          underFilter: visible(byId('underFilter')),
+          filterPartial: visible(byId('filterPartial')),
+          filterOther: visible(byId('filterOther')),
           // Recorded so a future failure says WHICH branch ran. The
           // round-28 defect was invisible precisely because the branch
           // under test was not the branch in use.
@@ -251,6 +272,19 @@ test('both copies of the drive visibility predicate agree, and reject clipped co
     expect(result.clipPathPartial, `copy ${i}: a partial inset`).toBe(true);
     expect(result.clipPathRounded, `copy ${i}: an inset with a corner radius`).toBe(true);
     expect(result.clipPathCircle, `copy ${i}: a shape function, not judged`).toBe(true);
+    // ROUND 51 P2 — `filter: opacity(0)` paints nothing while every
+    // other signal stays green, and it is checked on the same ancestor
+    // walk as `opacity` because a filter applies to the subtree the same
+    // way.
+    expect(result.filterLeaf, `copy ${i}: a dt under filter: opacity(0)`).toBe(false);
+    expect(result.filterPct, `copy ${i}: the same stated as a percentage`).toBe(false);
+    expect(result.filterChain, `copy ${i}: zero opacity inside a filter chain`).toBe(false);
+    expect(result.underFilter, `copy ${i}: content under an erased ancestor`).toBe(false);
+    // The limits, pinned in the direction that matters more: a partial
+    // opacity is a deliberate design choice, and a filter this cannot
+    // reason about counts as painted.
+    expect(result.filterPartial, `copy ${i}: filter: opacity(0.4)`).toBe(true);
+    expect(result.filterOther, `copy ${i}: a filter that is not opacity`).toBe(true);
   }
 });
 

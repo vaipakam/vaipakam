@@ -423,3 +423,33 @@ would have supplied a chain position far lower than the real one, which
 in the worse direction turns a correctly absent card into a reported
 regression. The format is now checked, in all three places the check
 reads a number of that kind.
+
+The round after that brought four more, and one of them uncovered
+something larger than itself.
+
+A page can erase an element with a CSS filter, leaving its size, its
+colour and every other signal intact while the browser paints nothing —
+the same trick as the clipping one found earlier, by a different
+property. Adding that check revealed that the check's two copies of its
+own visibility rule had drifted apart: one of them returned early, so
+everything written after that point had only ever run on browsers that
+lack a feature every modern browser has. It had cost nothing until now,
+because the only thing below the early return was something the browser
+feature already covered. The new check would have gone straight into dead
+code in one of the two copies. Both copies now have the same shape.
+
+The check also waited for the wrong thing when a hidden copy of the card
+sits before the real one: it watched the first one for a full thirty
+seconds before considering any other. The page is live, so a card can say
+something wrong and then settle or disappear inside that window, with
+nothing recorded. It now watches for any visible card from the start.
+
+An endpoint that had once reported the wrong chain could be trusted
+again if it later answered correctly — which is precisely the endpoint
+the rule was written to distrust, since one that gives two different
+answers cannot be relied on for either. It now stays excluded.
+
+And the moment-by-moment safety check from the previous round was still
+being thrown away when the loan ended, transferred, or was sold. What the
+lender could have clicked, they could have clicked; what the chain says
+afterwards does not undo it.
