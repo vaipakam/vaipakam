@@ -519,6 +519,39 @@ const FORCED_CLOSE_COPY = (() => {
       need(fc.receipt?.youReceive, 'receipt.youReceive'),
       need(fc.rentalReceipt?.youReceive, 'rentalReceipt.youReceive'),
     ],
+    // ROUND 53 P2 — THE WHOLE RECEIPT, per route, not just its lead.
+    //
+    // Six `.receipt-row` elements with non-blank leaves used to be the
+    // entire completeness test, so six copies of one row — the fees and
+    // loss disclosures gone — satisfied it, and satisfied the lead check
+    // six times over. And accepting EITHER lead let a collateral card
+    // render the rental receipt, or the reverse: a confirmation
+    // describing a different transaction from the one it confirms.
+    //
+    // `need` on every value, so a copy key that moves is a loud startup
+    // failure rather than a silently narrower check — the same rule the
+    // leads above already follow.
+    receiptRowSets: {
+      standard: [
+        need(fc.receipt?.youReceive, 'receipt.youReceive'),
+        need(fc.receipt?.youLock, 'receipt.youLock'),
+        need(fc.receipt?.youMayOwe, 'receipt.youMayOwe'),
+        need(fc.receipt?.youCanLose, 'receipt.youCanLose'),
+        need(fc.receipt?.fees, 'receipt.fees'),
+        need(fc.receipt?.whenThisEnds, 'receipt.whenThisEnds'),
+      ],
+      rental: [
+        need(fc.rentalReceipt?.youReceive, 'rentalReceipt.youReceive'),
+        need(fc.rentalReceipt?.youLock, 'rentalReceipt.youLock'),
+        need(fc.rentalReceipt?.youMayOwe, 'rentalReceipt.youMayOwe'),
+        need(fc.rentalReceipt?.youCanLose, 'rentalReceipt.youCanLose'),
+        need(fc.rentalReceipt?.fees, 'rentalReceipt.fees'),
+        need(fc.rentalReceipt?.whenThisEnds, 'rentalReceipt.whenThisEnds'),
+      ],
+    },
+    // Which readiness copy means the RENTAL route, so the verdict can
+    // pick the receipt the card is supposed to be showing.
+    rentalReadyCopy: need(fc.readyRental, 'readyRental'),
   };
 })();
 /**
@@ -4296,6 +4329,9 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
   // carried separately from `confirmText` so an amount on a visible row
   // is scanned even when another row is not.
   let confirmRowsText = null;
+  // ROUND 53 P2 — visible text on the confirmation OUTSIDE the receipt
+  // rows: a warning banner, a gas note, the confirm control's own label.
+  let confirmOtherText = null;
   // ROUND 50 P2 — CAN THE OUTER SUBMIT ACTUALLY BE CLICKED?
   //
   // The real click below already fails when it cannot, and that `false`
@@ -4345,6 +4381,22 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
       .click({ timeout: 5_000 })
       .then(() => true)
       .catch(() => false);
+    // ROUND 53 P2 — A SUCCESSFUL REAL CLICK SETTLES IT.
+    //
+    // The trial is a three-second probe and the real click gets five
+    // more immediately after, so a control that was covered or still
+    // animating during the trial can be perfectly actionable by the
+    // time the real click lands. `submitClickable` stayed latched at
+    // `false`, and the verdict then reported that the lender cannot
+    // reach the confirmation — while the very same observation had
+    // opened it and scanned the whole receipt.
+    //
+    // The trial exists to catch a control that is UNREACHABLE. A click
+    // that actually worked is stronger evidence than a probe that did
+    // not, and refusing it would be reporting a defect the run itself
+    // disproved. The trial's `false` is kept only when the real click
+    // also failed — which is the case the finding is for.
+    if (opened) submitClickable = true;
     if (opened) {
       // ROUND 4 P2 — CONFIRM THE CONFIRMATION RENDERED.
       //
@@ -5010,10 +5062,41 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
             // context for another's digits, and the scanner's exemptions
             // are all context.
             const shown = rows.filter(rowShown);
+            // ROUND 53 P2 — AND EVERYTHING ELSE ON THE PANEL THAT IS
+            // VISIBLE, which round 50's fix left behind.
+            //
+            // Carrying only the readable ROWS still discarded every other
+            // visible region of the confirmation whenever one row failed:
+            // a warning banner, a gas note, the confirm control's own
+            // label. `Confirm 100 USDC` beside five readable rows and one
+            // hidden row was reported as an incomplete reading rather
+            // than as the invented figure it is. Half the fix, again.
+            //
+            // Own-text nodes only, and each carried SEPARATELY: `visible`
+            // is the drive's full predicate, and joining renders is what
+            // round 35 forbids because every exemption in the scanner is
+            // context.
+            const inRow = (n) => rows.some((r) => r === n || r.contains(n));
+            const otherText = [...el.querySelectorAll('*')]
+              .filter(
+                (n) =>
+                  !inRow(n) &&
+                  [...n.childNodes].some(
+                    (c) => c.nodeType === 3 && c.textContent.trim() !== '',
+                  ) &&
+                  visible(n),
+              )
+              .map((n) => n.innerText ?? '')
+              .filter((t) => t.trim() !== '');
             return {
               rowsOk: rows.length === 6 && shown.length === rows.length,
               confirmAction,
+              // SEPARATE from `otherText`, deliberately: the amount scan
+              // wants both, and the row-identity check (round 53) wants
+              // the rows alone. Merging them would make "six rows" mean
+              // "six of anything on the panel".
               rowsText: shown.map((r) => r.innerText ?? '').filter((t) => t.trim() !== ''),
+              otherText,
             };
           })
           .catch(() => null);
@@ -5025,6 +5108,10 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
         // row the lender COULD see is scanned even when a different row
         // was unreadable.
         confirmRowsText = receiptShown?.rowsText ?? null;
+        // ROUND 53 P2 — the panel's OTHER visible text, carried beside
+        // the rows rather than inside them: the amount scan wants both,
+        // the row-identity check wants the rows alone.
+        confirmOtherText = receiptShown?.otherText ?? null;
         // ROUND 46 P2 — CAN IT ACTUALLY RECEIVE A CLICK?
         //
         // Geometrically visible, natively enabled and labelled is not
@@ -5105,6 +5192,7 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
     // than as an unread confirmation.
     submitClickable,
     confirmRowsText,
+    confirmOtherText,
     settled,
     // Every render read during the readiness wait, including the ones
     // the poll superseded (round 31 P2).

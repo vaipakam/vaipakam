@@ -470,7 +470,23 @@ export function monetaryAmountsIn(text) {
     // A unit word immediately after. `2%` and `3 days` are fine; a
     // ticker is not. Parsed BEFORE the exemptions below, because every
     // exemption has to be able to consult it.
-    const trailing = after.match(/^\s*([A-Za-z%][A-Za-z0-9]*)\s*([A-Za-z][A-Za-z0-9]*)?/);
+    // ROUND 53 P2 — A HYPHEN IS PART OF A COMPOUND DURATION.
+    //
+    // `Wait 3-day grace period` and its en-dash form stopped this parse
+    // dead: the unit word was never reached, no duration exemption
+    // applied, and the `3` was reported as an amount the card cannot
+    // know. `docs/FunctionalSpecs/Alpha02ConnectedApp.md` explicitly
+    // permits showing the grace window, so that is a correct deployed
+    // card exiting as a product FAIL — the false direction this file
+    // says gets a whole check switched off.
+    //
+    // Only the separator widens. The duration-context guard downstream
+    // is untouched, so `3-day` is exempt for the same reason `3 days`
+    // is and for no new one: a compound adjective is how English writes
+    // that phrase, not a different claim about the number.
+    const trailing = after.match(
+      /^[\s‐-―-]*([A-Za-z%][A-Za-z0-9]*)\s*([A-Za-z][A-Za-z0-9]*)?/,
+    );
     // ROUND 11 P2 — LOOK PAST PUNCTUATION, not only whitespace.
     //
     // `1m (USDC)` and `Loan 100: USDC principal` put a bracket or a
@@ -1062,6 +1078,12 @@ export function forcedCloseVerdict(obs, copy) {
     obs.bodyText,
     obs.confirmText,
     ...(Array.isArray(obs.confirmRowsText) ? obs.confirmRowsText : []),
+    // ROUND 53 P2 — and the panel's other visible regions. Round 50's
+    // fix kept the readable ROWS and still discarded a warning banner, a
+    // gas note, or the confirm control's own label, so `Confirm 100
+    // USDC` beside one hidden row read as an incomplete scan rather than
+    // an invented figure.
+    ...(Array.isArray(obs.confirmOtherText) ? obs.confirmOtherText : []),
     ...(Array.isArray(obs.seenTexts) ? obs.seenTexts : []),
   ].filter((part) => typeof part === 'string' && part !== '');
   //
@@ -1774,6 +1796,72 @@ export function forcedCloseVerdict(obs, copy) {
         verdict: 'blocked',
         blockedKind: 'incomplete',
         why: 'the confirmation shell opened but its receipt content did not render — nothing was observed about what it claims',
+      };
+    }
+  }
+  // ROUND 53 P2 — SIX ROWS, BUT ARE THEY THE SIX?
+  //
+  // `rowsOk` counted six `.receipt-row` elements with non-blank leaves.
+  // Six copies of "You receive", with the fees and loss disclosures
+  // gone, satisfied every part of that — and the receipt-lead check
+  // above, since the lead was present six times over — so the run could
+  // claim the whole funds receipt was scanned while the two rows that
+  // most matter were absent.
+  //
+  // ROUND 53 P2, the same rule's other half — AND THE SIX FOR THIS
+  // ROUTE. Round 43 accepted either receipt because "the observation
+  // carries no readiness field", which was true of the record and not of
+  // the verdict: the readiness copy is already matched here, so the
+  // route IS known. Accepting either let a collateral card render the
+  // rental receipt, and a rental card the collateral one — each a
+  // confirmation describing a different transaction from the one it
+  // confirms.
+  //
+  // TWO OUTCOMES, and the split is the honest part:
+  //
+  //   - DUPLICATED rows FAIL. That is structural: it needs no
+  //     vocabulary, so a stale copy bundle cannot explain it.
+  //   - Rows that match the OTHER route's receipt exactly also FAIL —
+  //     the drive recognised the copy, it is simply the wrong receipt.
+  //   - Rows matching NEITHER set are BLOCKED, not failed. This drive's
+  //     copy comes from the repo and the page's from the deployed
+  //     bundle, so a divergence is a gap in the drive's vocabulary as
+  //     readily as a defect. Round 11 settled that direction for the
+  //     body copy; the same reasoning applies here.
+  const rowsSeen = Array.isArray(obs.confirmRowsText) ? obs.confirmRowsText : null;
+  const routeSets = copy?.receiptRowSets;
+  if (rowsSeen !== null && rowsSeen.length === 6 && routeSets) {
+    const distinct = new Set(rowsSeen.map((t) => t.trim()));
+    if (distinct.size !== rowsSeen.length) {
+      return {
+        verdict: 'fail',
+        failKind: 'observed',
+        why: `the confirmation rendered six receipt rows but only ${distinct.size} distinct one(s) — a duplicated row means a disclosure the lender needs is not on the panel at all`,
+      };
+    }
+    const stateText = obs.bodyText ?? obs.text ?? '';
+    const isRental =
+      typeof copy.rentalReadyCopy === 'string' &&
+      copy.rentalReadyCopy !== '' &&
+      stateText.includes(copy.rentalReadyCopy);
+    const expected = isRental ? routeSets.rental : routeSets.standard;
+    const other = isRental ? routeSets.standard : routeSets.rental;
+    const covers = (set) =>
+      Array.isArray(set) &&
+      set.length === 6 &&
+      set.every((value) => rowsSeen.some((t) => t.includes(value)));
+    if (!covers(expected)) {
+      if (covers(other)) {
+        return {
+          verdict: 'fail',
+          failKind: 'observed',
+          why: `the card renders the ${isRental ? 'rental' : 'collateral'} route and its confirmation shows the ${isRental ? 'collateral' : 'rental'} receipt — the lender is being asked to confirm one transaction while reading the terms of another`,
+        };
+      }
+      return {
+        verdict: 'blocked',
+        blockedKind: 'incomplete',
+        why: 'the confirmation rendered six rows this drive could not identify as either receipt — its copy may have moved ahead of this drive, so nothing is claimed about what they say',
       };
     }
   }

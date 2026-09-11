@@ -3224,7 +3224,22 @@ describe('rounds 42–43 review findings', () => {
       expect(v.verdict).toBe('pass');
     });
 
-    it('still accepts the ordinary lead', () => {
+    // AMENDED IN ROUND 53, and the reason matters more than the case.
+    //
+    // This pinned the ORDINARY lead as a pass on a RENTAL observation,
+    // which round 43 accepted deliberately — the record carried no
+    // readiness field, so the lead could not be chosen by route. That
+    // reasoning was true of the RECORD and not of the VERDICT: the
+    // readiness copy is matched here, so the route is known, and
+    // accepting either let a confirmation describe a different
+    // transaction from the one it confirms.
+    //
+    // The LEAD check still accepts either — it establishes only that a
+    // receipt rendered at all — and the route binding is enforced by the
+    // row-set rule, which needs the six rows to judge. So this case
+    // keeps its original shape and the route rule is pinned separately
+    // below, where the rows are supplied.
+    it('still accepts the ordinary lead as EVIDENCE A RECEIPT RENDERED', () => {
       const v = forcedCloseVerdict(
         { ...shown, confirmText: `${FORCED_CLOSE.receipt.youReceive} …` },
         copy,
@@ -3333,6 +3348,169 @@ describe('round 45 review findings', () => {
       const v = forcedCloseVerdict({ ...opened, confirmText: null }, copy);
       expect(v.verdict).toBe('blocked');
       expect(v.blockedKind).toBe('incomplete');
+    });
+  });
+});
+
+describe('round 53 review findings', () => {
+  const ROWS = {
+    standard: Object.values(FORCED_CLOSE.receipt),
+    rental: Object.values(FORCED_CLOSE.rentalReceipt),
+  };
+  const copy = {
+    unknownCopy: FORCED_CLOSE.unknown,
+    readyCopy: [FORCED_CLOSE.readyInKind, FORCED_CLOSE.readyInternalMatch, FORCED_CLOSE.readyRental],
+    withheldCopy: [FORCED_CLOSE.unknown, FORCED_CLOSE.notYet, FORCED_CLOSE.readyNeedsRoute],
+    recognisedCopy: [
+      FORCED_CLOSE.unknown,
+      FORCED_CLOSE.notYet,
+      FORCED_CLOSE.blockedPaused,
+      FORCED_CLOSE.blockedSequencer,
+      FORCED_CLOSE.blockedNoConsent,
+      FORCED_CLOSE.readyInKind,
+      FORCED_CLOSE.readyInternalMatch,
+      FORCED_CLOSE.readyRental,
+      FORCED_CLOSE.readyNeedsRoute,
+    ],
+    receiptLeads: [FORCED_CLOSE.receipt.youReceive, FORCED_CLOSE.rentalReceipt.youReceive],
+    receiptRowSets: ROWS,
+    rentalReadyCopy: FORCED_CLOSE.readyRental,
+  };
+
+  const base = {
+    lenderHoldsActive: true,
+    mounted: true,
+    attached: true,
+    submitPresent: true,
+    submitVisible: true,
+    submitDisabled: false,
+    visibleSubmits: 1,
+    visibleCards: 1,
+    saleLocked: false,
+    settled: true,
+    bodyPresent: true,
+    bodyText: FORCED_CLOSE.readyInKind,
+    text: FORCED_CLOSE.readyInKind,
+    confirmExpected: true,
+    confirmText: `${FORCED_CLOSE.receipt.youReceive} …`,
+  };
+
+  describe('six rows must be THE six', () => {
+    it('passes the real collateral receipt', () => {
+      expect(
+        forcedCloseVerdict({ ...base, confirmRowsText: ROWS.standard }, copy).verdict,
+      ).toBe('pass');
+    });
+
+    // The finding's own example: six copies of one row, with the fees
+    // and loss disclosures gone. Every leaf non-blank, the lead present
+    // six times over, and `rowsOk` satisfied.
+    it('FAILS six copies of the same row', () => {
+      const v = forcedCloseVerdict(
+        { ...base, confirmRowsText: Array(6).fill(FORCED_CLOSE.receipt.youReceive) },
+        copy,
+      );
+      expect(v.verdict).toBe('fail');
+      expect(v.failKind).toBe('observed');
+      expect(v.why).toMatch(/only 1 distinct/);
+    });
+
+    it('FAILS a partial duplication too', () => {
+      const rows = [...ROWS.standard];
+      rows[5] = rows[0];
+      const v = forcedCloseVerdict({ ...base, confirmRowsText: rows }, copy);
+      expect(v.verdict).toBe('fail');
+      expect(v.why).toMatch(/5 distinct/);
+    });
+  });
+
+  describe('the receipt must describe the route being confirmed', () => {
+    const rental = { ...base, bodyText: FORCED_CLOSE.readyRental, text: FORCED_CLOSE.readyRental };
+
+    it('passes the rental receipt on a rental card', () => {
+      expect(
+        forcedCloseVerdict({ ...rental, confirmRowsText: ROWS.rental }, copy).verdict,
+      ).toBe('pass');
+    });
+
+    // Recognised copy, wrong receipt: the drive knows exactly what it is
+    // looking at, so this is a defect rather than a vocabulary gap.
+    it('FAILS the collateral receipt on a rental card', () => {
+      const v = forcedCloseVerdict({ ...rental, confirmRowsText: ROWS.standard }, copy);
+      expect(v.verdict).toBe('fail');
+      expect(v.failKind).toBe('observed');
+      expect(v.why).toMatch(/rental route and its confirmation shows the collateral receipt/);
+    });
+
+    it('FAILS the rental receipt on a collateral card', () => {
+      const v = forcedCloseVerdict({ ...base, confirmRowsText: ROWS.rental }, copy);
+      expect(v.verdict).toBe('fail');
+      expect(v.why).toMatch(/collateral route and its confirmation shows the rental receipt/);
+    });
+
+    // UNRECOGNISED copy is BLOCKED, not failed: this drive's copy comes
+    // from the repo and the page's from the deployed bundle, so a
+    // divergence is a gap in the drive's vocabulary as readily as a
+    // defect. Round 11 settled that direction for the body copy.
+    it('BLOCKS six rows matching neither receipt', () => {
+      const v = forcedCloseVerdict(
+        { ...base, confirmRowsText: ['a', 'b', 'c', 'd', 'e', 'f'] },
+        copy,
+      );
+      expect(v.verdict).toBe('blocked');
+      expect(v.blockedKind).toBe('incomplete');
+      expect(v.why).toMatch(/could not identify as either receipt/);
+    });
+
+    it('says nothing when the rows were not recorded', () => {
+      expect(forcedCloseVerdict(base, copy).verdict).toBe('pass');
+    });
+
+    it('says nothing to a caller that supplies no row sets', () => {
+      const { receiptRowSets, ...older } = copy;
+      expect(
+        forcedCloseVerdict({ ...base, confirmRowsText: Array(6).fill('x') }, older).verdict,
+      ).toBe('pass');
+    });
+  });
+
+  describe('the panel other visible text is scanned too', () => {
+    // Round 50 kept the readable ROWS and still discarded a banner, a
+    // gas note, or the confirm control's own label.
+    it('FAILS an invented amount in the confirm action label', () => {
+      const v = forcedCloseVerdict(
+        { ...base, confirmText: null, confirmRowsText: [], confirmOtherText: ['Confirm 100 USDC'] },
+        copy,
+      );
+      expect(v.verdict).toBe('fail');
+      expect(v.why).toMatch(/states an amount it cannot know/);
+    });
+
+    it('leaves a clean panel alone', () => {
+      const v = forcedCloseVerdict(
+        { ...base, confirmText: null, confirmRowsText: [], confirmOtherText: ['Confirm', 'Back'] },
+        copy,
+      );
+      expect(v.verdict).toBe('blocked');
+      expect(v.blockedKind).toBe('incomplete');
+    });
+  });
+
+  describe('a compound duration is still a duration', () => {
+    // `docs/FunctionalSpecs/Alpha02ConnectedApp.md` permits showing the
+    // grace window, so flagging `3-day` made a correct deployed card
+    // exit as a product FAIL.
+    it('exempts a hyphenated grace window', () => {
+      expect(monetaryAmountsIn('Wait 3-day grace period')).toEqual([]);
+      expect(monetaryAmountsIn('Wait 3–day grace period')).toEqual([]);
+      expect(monetaryAmountsIn('Loan 21-day term')).toEqual([]);
+    });
+
+    // The separator widened and nothing else did: a ticker across a
+    // hyphen is still an amount.
+    it('still flags an asset amount across the same separator', () => {
+      expect(monetaryAmountsIn('You receive 100-USDC')).toHaveLength(1);
+      expect(monetaryAmountsIn('Pays 250-ETH now')).toHaveLength(1);
     });
   });
 });

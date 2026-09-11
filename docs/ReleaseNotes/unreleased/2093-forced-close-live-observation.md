@@ -490,3 +490,32 @@ part of the run that knows such failures happened before anything was
 observed, so the run ended by reporting a product regression for
 something no page had yet been looked at. It is still loud; it now ends
 by saying nothing could be checked, which is what actually happened.
+
+Five more, and two of them are about the confirmation receipt being the
+right one.
+
+The check counted six rows and, finding six, concluded the whole receipt
+had been read. Six copies of the same row would have satisfied that — with
+the fee and loss disclosures simply absent — and the run would have
+reported the full receipt as scanned. It now checks that the six rows are
+the six rows, and that they are the ones belonging to the route the card
+is actually offering: a collateral close-out showing the rental receipt,
+or the reverse, is a confirmation describing a different transaction from
+the one it confirms.
+
+The line between reporting that as a fault and reporting it as a gap is
+drawn deliberately. Duplicated rows are a fault: no wording is involved,
+so nothing about the check's own vocabulary can explain them. Rows that
+match the other route's receipt exactly are also a fault, because the
+check recognised them — it is simply the wrong receipt. Rows matching
+neither are reported as a gap instead, because the check's copy comes
+from this repository and the page's from whatever is deployed, and a
+difference between them is as likely to be the check being out of date.
+
+The other three: text elsewhere on the confirmation — a banner, a note,
+the button's own label — is now read as well, having been discarded
+whenever any row failed to render; a button that could not be tried but
+then could be clicked is treated as reachable, since a click that worked
+outranks a probe that did not; and a grace window written as "3-day"
+rather than "3 days" is no longer read as an invented amount, which had
+made correct copy the specification explicitly permits fail the check.
