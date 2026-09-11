@@ -12307,9 +12307,21 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     // above while `windowsSeparators` still rewrote this path.
     //
     // On Linux a backslash in a path is an ordinary character, so this step
-    // does NOT change into the package directory — the deploy runs from the
-    // repository root and is not the agent's deploy at all. The check rewrites
-    // the path, models the directory as `apps/agent`, and reports.
+    // does NOT change into the package directory. The check rewrites the path,
+    // models the directory as `apps/agent`, and attributes the deployment to a
+    // package the step never entered — which is the defect, and it is an error
+    // of ATTRIBUTION rather than of inventing a command name (contrast the
+    // casing pin above, where `Wrangler` is a program the platform lacks).
+    //
+    // WHAT HAPPENS AFTER THE FAILED `Set-Location` IS DELIBERATELY NOT STATED
+    // (r34). An earlier version said the deploy then runs from the repository
+    // root; a reviewer said the runner's PowerShell wrapper sets an
+    // error preference that ends the step first, so it never runs at all. I
+    // could not confirm that from the documentation cited — two fetches of it
+    // show only the command template — so rather than swap one unverified
+    // execution path for another, the comment now claims neither. The pin does
+    // not depend on it: the attribution is wrong whether the deployment then
+    // runs elsewhere or not at all.
     //
     // Mutation-checked: disabling only the separator replacement flips this
     // and leaves the forward-slash control reporting; disabling the casing

@@ -97,10 +97,14 @@ No behaviour change. The check's logic is what it was.
   since that rewrite runs on both; and a line that is COMMENTED OUT, in the variant
   of that format permitting comments, is read as a command although it is not a
   property at all; and a Windows normalisation is applied wherever the
-  interpreter is a Windows shell, INCLUDING on a runner whose platform makes
-  the normalised spelling a different program, so the check reports a command
-  that does not exist there — pinned once for each of the two normalisations,
-  since a correction gating only one of them would satisfy the other's test.
+  interpreter is a Windows shell, INCLUDING on a runner whose platform those
+  rules do not describe — pinned once for each of the two
+  normalisations, since a correction gating only one of them would satisfy the
+  other's test, and the two produce DIFFERENT wrong outcomes. One reports a
+  program that does not exist on that platform. The other leaves the program
+  alone and invents a change of directory that did not happen, so the
+  deployment is attributed to a package the step never entered — which is the
+  input to every later judgement about it, and the worse of the two.
 - Two tests pinning that a bare command line and an inline command span in a
   document **are** read as commands — the two shapes that defeated the withdrawn
   designs, so a future attempt cannot quietly reintroduce the erasure.
@@ -166,7 +170,7 @@ not its siblings. One record per defect, named from the others.
 | **#2122** | a variable whose name differs only in case is not resolved, though that shell resolves it, so the deployment's directory reads as unknown — *pinned (silent pass)* |
 | **#2123** | a helper whose file name carries an upper-case extension is never opened at all — *pinned (silent pass)*, and the broadest of the three, since no later rule can compensate for a file that was never read |
 | **#2124** | a binding closed with that shell's ordinary statement terminator is not recognised, so the deployment's directory reads as unknown — *pinned (silent pass)* |
-| **#2126** | a normalisation for one platform's shells is chosen by the interpreter rather than the platform, so it also applies where that platform's rules do not hold and reports a program that does not exist there — *pinned (false report)*; the check's own comment states this must not happen |
+| **#2126** | a normalisation for one platform's shells is chosen by the interpreter rather than the platform, so it also applies where that platform's rules do not hold — *pinned (false report) twice, once per normalisation, because they fail differently*: one reports a program that does not exist there, the other invents a directory change that did not happen and attributes the deployment to the wrong package. The check's own comment states this must not happen |
 | **#2085** | whether this detection should be a declaration rather than an inference — the three withdrawals are the strongest evidence yet that it should |
 
 This PR closes none of them.
