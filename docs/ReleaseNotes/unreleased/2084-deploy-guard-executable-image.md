@@ -111,7 +111,9 @@ No behaviour change. The check's logic is what it was.
   pinning the BOUND as well. Every one of those bounds was discovered by disproving a
   sentence in this record: the folding applies only where a body is split into
   lines at all, and only where the line ends immediately at the offending
-  character; the value-by-value reading passes over a list only when the file
+  character — the latter being a fact about the bytes in the file rather than
+  about anyone's platform, since this repository normalises tracked text to one
+  line convention everywhere; the value-by-value reading passes over a list only when the file
   is written compactly. Bounds are pinned because a fix aimed at the overstated
   version would change cases that behave correctly today.
 

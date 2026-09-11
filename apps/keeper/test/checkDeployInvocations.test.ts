@@ -12231,6 +12231,13 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     // the trade it makes is not helper-only either (r28). Nothing here
     // deploys anything; the here-string is inert.
     //
+    // `windows-latest`, NOT ubuntu (r30): this check's own contract says
+    // `Wrangler` on a POSIX runner is a DIFFERENT executable, so pinning the
+    // trade on a Linux runner would rest on applying a Windows rewrite where
+    // the rewrite's own reasoning says it should not apply — and a
+    // runner-aware correction could then flip this fixture for a reason that
+    // has nothing to do with the casing widening it exists to announce.
+    //
     // NOTE ON THE PROBE THAT FOUND THIS: a first attempt used no `cd`, so
     // nothing scoped the deploy to the package and BOTH casings passed —
     // which looked like a refutation and was not. The scope is what makes the
@@ -12239,7 +12246,7 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
     const r = runWith(
       '.github/workflows/d.yml',
-      'name: d\non: push\njobs:\n  d:\n    runs-on: ubuntu-latest\n    steps:\n      - run: |\n' +
+      'name: d\non: push\njobs:\n  d:\n    runs-on: windows-latest\n    steps:\n      - run: |\n' +
         "          cd apps/agent\n          $doc = @'\n          Wrangler deploy\n          '@\n" +
         '          Write-Output $doc\n        shell: pwsh\n',
     );
@@ -12253,14 +12260,14 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
     const r = runWith(
       '.github/workflows/d.yml',
-      'name: d\non: push\njobs:\n  d:\n    runs-on: ubuntu-latest\n    steps:\n      - run: |\n' +
+      'name: d\non: push\njobs:\n  d:\n    runs-on: windows-latest\n    steps:\n      - run: |\n' +
         "          cd apps/agent\n          $doc = @'\n          WRANGLER deploy\n          '@\n" +
         '          Write-Output $doc\n        shell: pwsh\n',
     );
     expect(r.ok).toBe(true);
   });
 
-  it('the same helper with CRLF endings IS reported (#2118 bound)', () => {
+  it('a CRLF-ending helper IS reported (#2118 input-level bound)', () => {
     // THE DEFECT IS LF-ONLY, and this pins the boundary rather than leaving
     // the record to imply every checkout is affected. Byte-identical to the
     // fixture above but for the line endings: the `\r` survives into the
@@ -12268,9 +12275,17 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     // is correctly reported — even though both shells treat the backslash as
     // an ordinary character either way.
     //
-    // So a Windows checkout storing helpers with CRLF never saw #2118, which
-    // bounds who a fix affects. Worth pinning because it is the sort of
-    // condition a later fix would silently widen.
+    // AN INPUT-LEVEL CONDITION, NOT AN OPERATIONAL BOUND, and an earlier
+    // version of this comment claimed the latter (r30). `.gitattributes` sets
+    // `* text=auto eol=lf` and says in its own comment that Windows
+    // contributors get LF in the working copy — so a TRACKED `.ps1` on
+    // Windows has LF and is fully exposed to #2118. "Windows checkouts are
+    // unaffected" was simply false, and it was stated in four places.
+    //
+    // What it still pins: a helper that reaches the tree with CRLF — one that
+    // is generated, vendored, or otherwise not covered by that attribute —
+    // escapes the fold. Worth keeping, because a later fix could widen the
+    // splitter to CRLF and change this silently.
     seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
     seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
     const r = runWith(
