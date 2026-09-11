@@ -945,7 +945,26 @@ async function saleLockedOn(lenderTokenId, loanId, blockNumber, account) {
     const name = revertNameOf(err);
     if (name === 'NoStaleSaleListing') return true; // locked + no stale → accepted
     if (name === 'SaleListingLoanStillLive') return false; // live listing
-    if (name === null) throw err; // not a revert — BLOCKED, not a verdict
+    // ROUND 83 P2 — "I CANNOT NAME THIS REVERT" IS NOT "THIS WAS NOT A
+    // REVERT", and this arm conflated them.
+    //
+    // `revertNameOf` reads `data.errorName`, which viem fills in only for
+    // a custom error it could decode against the ABI. A BARE `revert()`
+    // carries no data to name, and a custom error the deployment has but
+    // this ABI does not carries a selector viem cannot resolve — both are
+    // the EVM answering, and both returned `null` here and were rethrown.
+    // `discovery()` then aborts the WHOLE run, so one locked position in
+    // an undecodable state stops every other position from being observed
+    // — an unread run reported as a failure of the drive, over a reply the
+    // chain did give us.
+    //
+    // Decided by `isRevert`, which is the same test the `positionLock`
+    // catch twenty lines above already uses for exactly this split, so the
+    // two catches in one function now answer the question the same way.
+    // Anything that is NOT a revert still throws: a dead endpoint or a
+    // programming error in this drive must stay loud, which is round 75's
+    // lesson and the reason this arm existed at all.
+    if (!isRevert(err)) throw err;
     // ROUND 12 P2 — AN UNRECOGNISED REVERT IS `unknown`, NOT `true`.
     //
     // Returning `true` here read downstream as a SUBSTANTIATED accepted
@@ -961,8 +980,17 @@ async function saleLockedOn(lenderTokenId, loanId, blockNumber, account) {
   }
 }
 
-/** The custom-error NAME from a viem simulate failure, or null when the
- *  failure did not decode as a contract revert. */
+/**
+ * The custom-error NAME from a viem simulate failure, or null when no name
+ * could be decoded.
+ *
+ * `null` DOES NOT MEAN "not a revert", and the previous wording here said
+ * it did — which is how a caller came to rethrow on one (round 83). viem
+ * fills `data.errorName` only for a custom error it could resolve against
+ * the ABI, so a bare `revert()` with no data, and a custom error this ABI
+ * does not carry, both answer `null` while being the EVM answering. A
+ * caller that needs "did the chain reply at all" asks `isRevert`.
+ */
 function revertNameOf(err) {
   const seen = new Set();
   let cur = err;
