@@ -108,6 +108,19 @@ JSON-RPC error, so the same three-way split has to decide here too, with
 every healthy run. A batch is judged member by member and reported as
 ONE entry per verdict, because the count is of page requests.
 
+That revert exemption is scoped to the methods that RUN EVM CODE (round
+72 P2). A revert is a statement about execution, so `eth_blockNumber`,
+`eth_getBlockByNumber`, `eth_getTransactionReceipt`, `eth_getLogs` and
+`eth_chainId` cannot legitimately answer with one — a revert-shaped error
+from any of them is a provider response the page could not read. Recorded
+as `ok` it left the ledger reporting no infrastructure failure while the
+page held an error and could render a degraded surface, and the generic
+page checks would then exit 1 against the PRODUCT for something the
+provider did, which inverts the blocker-outranks-inference ordering the
+whole drive is built on. Decided PER CALL rather than per response, since
+one whole-request error attributes to every call in a batch and those
+calls need not share a method.
+
 The unit of judgement is the CALL, not the HTTP envelope, and three
 things go wrong when the envelope is treated as the unit. A non-2xx is
 not automatically "no answer": a provider returning 400 with a

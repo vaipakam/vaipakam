@@ -195,6 +195,19 @@ about which chain a provider speaks for is worse than being wrong about a
 single height, because it buys trust in everything that provider says
 afterwards. Those exchanges are refused rather than guessed at.
 
+The check also keeps a ledger of the requests the page itself made, so
+that a surface missing because its data never arrived is reported as the
+provider failing rather than as the product failing. One kind of error is
+deliberately exempt from that ledger — a contract call that reverts is an
+ordinary answer the app is built to handle, and recording it would make
+every healthy run look broken. That exemption now applies only to the
+requests that actually run contract code. A revert is a statement about
+execution, so the same error shape coming back to a request for a block
+number or a receipt is not an answer at all; treating it as one left the
+ledger reporting a clean fetch while the page held an error, and the
+later checks would then blame the product for a surface the provider had
+failed to fill.
+
 Amounts written as fractions — "½ ETH" rather than "0.5 ETH" — are now
 recognised. They are a different kind of character from ordinary digits,
 so the scanner had been finding no number at all and reporting such a

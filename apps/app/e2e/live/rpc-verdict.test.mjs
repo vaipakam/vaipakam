@@ -140,6 +140,80 @@ describe('classifyRpcResponse', () => {
     expect(verdicts(out)).toEqual(['ok']);
   });
 
+  // ROUND 72 P2 — a revert answers a CALL, not a head or a receipt.
+  describe('the revert exemption is scoped to methods that execute code', () => {
+    for (const method of [
+      'eth_blockNumber',
+      'eth_getBlockByNumber',
+      'eth_getTransactionReceipt',
+      'eth_getLogs',
+      'eth_chainId',
+    ]) {
+      it(`records a revert-shaped error from ${method} as unreachable`, () => {
+        const out = classifyRpcResponse(
+          200,
+          errBody(1, { code: 3, message: 'reverted' }),
+          rpcReq(call(1, method)),
+        );
+        expect(verdicts(out)).toEqual(['unreachable']);
+        expect(out[0].why).toMatch(/executes no code/);
+      });
+    }
+
+    it('still exempts every method that does execute code', () => {
+      for (const method of [
+        'eth_call',
+        'eth_estimateGas',
+        'eth_createAccessList',
+        'eth_sendRawTransaction',
+        'eth_sendTransaction',
+        'debug_traceCall',
+      ]) {
+        const out = classifyRpcResponse(
+          200,
+          errBody(1, { code: 3, message: 'reverted' }),
+          rpcReq(call(1, method)),
+        );
+        expect(verdicts(out)).toEqual(['ok']);
+      }
+    });
+
+    it('decides PER CALL when one whole-request error covers a mixed batch', () => {
+      // An error carrying no id attributes to every call, and the calls
+      // in a batch need not share a method — so the exemption cannot be
+      // resolved once for the response.
+      const out = classifyRpcResponse(
+        200,
+        JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: 3, message: 'reverted' } }),
+        rpcReq(call(1, 'eth_call'), call(2, 'eth_blockNumber')),
+      );
+      expect(verdicts(out)).toEqual(['ok', 'unreachable']);
+    });
+
+    it('decides PER MEMBER in an ordinary batch too', () => {
+      const out = classifyRpcResponse(
+        200,
+        JSON.stringify([
+          { jsonrpc: '2.0', id: 1, error: { code: 3, message: 'reverted' } },
+          { jsonrpc: '2.0', id: 2, error: { code: 3, message: 'reverted' } },
+        ]),
+        rpcReq(call(1, 'eth_getLogs'), call(2, 'eth_estimateGas')),
+      );
+      expect(verdicts(out)).toEqual(['unreachable', 'ok']);
+    });
+
+    it('is decided by the method, not by how the revert was labelled', () => {
+      // The bytes path reaches `answered` without code 3 at all, and it
+      // must be scoped identically or the exemption simply moves.
+      const out = classifyRpcResponse(
+        200,
+        errBody(1, { code: -32000, message: 'reverted', data: '0x7e273289' }),
+        rpcReq(call(1, 'eth_getBlockByNumber')),
+      );
+      expect(verdicts(out)).toEqual(['unreachable']);
+    });
+  });
+
   it('calls a rate-limited read unreachable, naming the method', () => {
     const out = classifyRpcResponse(200, errBody(1, rpcErr(-32005)), rpcReq(call(1, 'eth_getLogs')));
     expect(out).toEqual([

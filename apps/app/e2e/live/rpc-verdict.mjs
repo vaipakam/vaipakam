@@ -51,6 +51,39 @@ export const EXECUTION_REVERTED = 3;
 export const REVERT_BYTES = /^0x([0-9a-fA-F]{2})+$/;
 
 /**
+ * The JSON-RPC methods that RUN EVM CODE, and therefore the only ones a
+ * revert can be a legitimate answer to (round 72 P2).
+ *
+ * A revert is a statement about execution. `eth_blockNumber`,
+ * `eth_getBlockByNumber`, `eth_getTransactionReceipt`, `eth_getLogs` and
+ * `eth_chainId` execute nothing, so a revert-shaped error from one of
+ * them is not the application-level answer the exemption below exists
+ * for — it is a provider response the page could not read.
+ *
+ * The distinction decides who gets blamed. `classifyRpcResponse` records
+ * `ok` for an answered call, which means the response ledger reports no
+ * infrastructure failure; the page meanwhile got an error and can render
+ * a degraded or missing surface, and the generic page checks then exit 1
+ * against the PRODUCT for something the provider did. Blockers outranking
+ * inferred conclusions is the whole ordering this drive is built on, and
+ * this was a hole in it.
+ *
+ * `eth_sendRawTransaction` and `eth_sendTransaction` are in the set
+ * because several providers pre-simulate and answer a would-be-reverting
+ * transaction with the revert itself. This drive is watch-only and sends
+ * neither, but the classifier is general and the omission would be a
+ * trap for the first caller that does.
+ */
+export const EXECUTING_METHODS = new Set([
+  'eth_call',
+  'eth_estimateGas',
+  'eth_createAccessList',
+  'eth_sendRawTransaction',
+  'eth_sendTransaction',
+  'debug_traceCall',
+]);
+
+/**
  * JSON-RPC 2.0 codes that mean the server parsed the request and found it
  * malformed. Each is positive evidence that the endpoint answered.
  */
@@ -708,11 +741,26 @@ export function classifyRpcResponse(status, body, requestBody) {
   // error is the canonical case, since the server never got far enough to
   // read the ids. Attributing it to every call beats also reporting each
   // one as "omitted", which would be the same fact told twice.
+  // ROUND 72 P2 — an `answered` verdict is an EVM answer, so it only
+  // exempts a method that runs EVM code. Per call, not per response: one
+  // whole-request error attributes to every call in the batch, and those
+  // calls need not share a method.
+  const answeredOutcome = (c, code) =>
+    EXECUTING_METHODS.has(String(c.method))
+      ? out(c, 'ok', `json-rpc ${code}`)
+      : out(
+          c,
+          'unreachable',
+          `json-rpc ${code} — a revert-shaped error from ${c.method}, which executes no code`,
+        );
+
   const whole = members.find((m) => m?.error && (m.id === null || m.id === undefined));
   if (whole) {
     const verdict = classifyRpcFailure(whole.error);
     return calls.map((c) =>
-      out(c, verdict === 'answered' ? 'ok' : verdict, `json-rpc ${whole.error?.code}`),
+      verdict === 'answered'
+        ? answeredOutcome(c, whole.error?.code)
+        : out(c, verdict, `json-rpc ${whole.error?.code}`),
     );
   }
 
@@ -726,7 +774,9 @@ export function classifyRpcResponse(status, body, requestBody) {
       // nothing we can classify.
       if (typeof err.code !== 'number') return out(c, 'unreachable', 'malformed json-rpc error');
       const verdict = classifyRpcFailure(err);
-      return out(c, verdict === 'answered' ? 'ok' : verdict, `json-rpc ${err.code}`);
+      return verdict === 'answered'
+        ? answeredOutcome(c, err.code)
+        : out(c, verdict, `json-rpc ${err.code}`);
     }
     // Neither a result nor a usable error — `{"jsonrpc":"2.0","id":1}`, or
     // a member whose only error field is `null`. Absence of an error is
