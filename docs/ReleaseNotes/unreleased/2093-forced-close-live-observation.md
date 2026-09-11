@@ -82,6 +82,17 @@ arbitrary filter chain, a contrast judgement needing the background — the
 check treats it as painted, because condemning legible copy is the error
 that gets a check switched off.
 
+One refinement of that rule came from reviewing it rather than from the
+page. Deciding that text is readable involves two separate questions —
+whether the box is on screen at all, and whether a particular element's
+own words are painted — and an earlier version of the rule collapsed
+them. Because text colour is inherited, a container is deliberately not
+judged by its own colour; but the collapsed rule discarded a whole
+subtree whenever the container's own stray text happened to be invisible,
+including a child that explicitly repaints itself. The result would have
+been a reported failure on a card whose explanation is plainly on screen.
+The two questions are now asked separately.
+
 ### Asking the protocol rather than re-deriving it
 
 A card can be perfectly rendered and still be offering an action that

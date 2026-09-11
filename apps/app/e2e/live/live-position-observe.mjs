@@ -3548,6 +3548,19 @@ async function observeForcedClose(page, loan) {
 const VISIBILITY_HELPER_SOURCES = (() => {
   const self = fs.readFileSync(fileURLToPath(import.meta.url), 'utf8');
   const block = (name) => {
+    // `visible` is now a CONCISE arrow over the other three, so the
+    // brace-matching below cannot find it by a `=> {` needle. Taken to
+    // the end of its statement instead.
+    if (name === 'visible') {
+      const start = self.indexOf('const visible = (node) => shownBox(node) && paintsText(node);');
+      if (start === -1) {
+        throw new Error(
+          'the visibility predicate `visible` could not be found in this file — ' +
+            'the mount wait cannot use the same predicate as the scrape without it.',
+        );
+      }
+      return self.slice(start, self.indexOf(';', start) + 1);
+    }
     const needle = `const ${name} = (node) => {`;
     const start = self.indexOf(needle);
     if (start === -1) {
@@ -3579,7 +3592,15 @@ const VISIBILITY_HELPER_SOURCES = (() => {
     }
     return self.slice(start, i + 2);
   };
-  return [block('notClipped'), block('paintsText'), block('visible')];
+  // ROUND 66 P2 — `shownBox` TOO, because `visible` now calls it.
+  //
+  // The split made `visible` a one-liner over the other two, so an
+  // extraction that omitted `shownBox` would compile to a function
+  // referencing an undefined name — and `new Function` throwing inside
+  // the mount wait's `catch` is exactly the silent false-absence the
+  // round-60 self-review added the balance check for. Ordered so each
+  // name is defined before the one that uses it.
+  return [block('notClipped'), block('paintsText'), block('shownBox'), block('visible')];
 })();
 
 /**
@@ -3702,10 +3723,16 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
   let mountFault = null;
   const mounted = await page
     .waitForFunction(
-      ([clipSrc, paintSrc, visSrc]) => {
-        const visible = new Function(
-          `${clipSrc}\n${paintSrc}\n${visSrc}\nreturn visible;`,
-        )();
+      // SPREAD, not a fixed arity. The first version of this destructured
+      // exactly three names, so when round 66 split the predicate into
+      // four the fourth was silently dropped and `return visible` threw
+      // `ReferenceError` inside the wait's own catch — a false absence,
+      // which is the precise failure the round-60 self-review added the
+      // balance check to prevent, re-entered by the door it does not
+      // cover. Joining whatever the array holds cannot go out of step
+      // with it.
+      (sources) => {
+        const visible = new Function(`${sources.join('\n')}\nreturn visible;`)();
         return [...document.querySelectorAll('[data-testid="forced-close-card"]')].some(visible);
       },
       VISIBILITY_HELPER_SOURCES,
@@ -4203,7 +4230,7 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
           };
           return !(alphaOf(fill) === 0);
         };
-        const visible = (node) => {
+        const shownBox = (node) => {
           if (node === null) return false;
           // ROUND 23 P2 — SUPPLEMENTS the geometry test, never replaces
           // it. `checkVisibility` answers about display, visibility,
@@ -4296,8 +4323,20 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
           }
           const r = node.getBoundingClientRect();
           if (!(r.width > 0 && r.height > 0)) return false;
-          return notClipped(node) && paintsText(node);
+          return notClipped(node);
         };
+        // ROUND 66 P2 — TWO QUESTIONS, SEPARATED. `shownBox` above answers
+        // whether the BOX is on screen: display, visibility, opacity, an
+        // erasing filter, geometry and clipping, each of which hides
+        // everything inside it. `paintsText` answers whether an element's
+        // OWN text is painted, which affects only that element's own text
+        // nodes — `color` inherits, and a descendant may repaint itself.
+        //
+        // `visible` is unchanged: it is both, and every existing caller
+        // asking "can the lender read THIS element" still gets the same
+        // answer. The split exists so `visibleTextOf` can stop discarding a
+        // painted descendant because its container's own text is not.
+        const visible = (node) => shownBox(node) && paintsText(node);
         const all = [...document.querySelectorAll('[data-testid="forced-close-card"]')];
         const shown = all.filter(visible);
         if (all.length === 0) return null;
@@ -4376,16 +4415,27 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
           // text node directly under a hidden root would be collected as
           // painted. The two copies are asserted identical by
           // `31-observer-visibility.spec.ts`.
-          if (!visible(root)) return '';
+          if (!shownBox(root)) return '';
           const unpainted = /^(script|style|template|title|noscript)$/i;
           const parts = [];
+          // ROUND 66 P2 — AN ELEMENT'S OWN TEXT AND ITS SUBTREE ARE JUDGED
+          // SEPARATELY.
+          //
+          // `paintsText` gates only the element's OWN text nodes, because
+          // `color` inherits and a descendant may repaint itself. Descent
+          // is gated on `shownBox` alone: a container whose own text is
+          // transparent still SHOWS a child that sets its own colour, and
+          // gating descent on the full `visible` discarded that child — a
+          // product FAIL on a card whose explanation is painted, which is
+          // the direction this file refuses everywhere else.
           const walk = (node) => {
+            const ownPainted = paintsText(node);
             for (const child of node.childNodes) {
               if (child.nodeType === 3) {
-                parts.push(child.textContent);
+                if (ownPainted) parts.push(child.textContent);
               } else if (child.nodeType === 1) {
                 if (unpainted.test(child.tagName)) continue;
-                if (!visible(child)) continue;
+                if (!shownBox(child)) continue;
                 walk(child);
               }
             }
@@ -4459,7 +4509,7 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
           // zero-height box — so this is defence in depth, and the
           // fixture says which of the two is doing the work.)
           bodyVisible:
-            visible(body) &&
+            shownBox(body) &&
             ((body?.innerText ?? '').trim() === '' || bodyVisibleText !== ''),
           // The text the lender can actually READ, which is what the
           // verdict recognises the card's state from. `bodyText` stays
@@ -5417,7 +5467,7 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
               };
               return !(alphaOf(fill) === 0);
             };
-            const visible = (node) => {
+            const shownBox = (node) => {
               if (!node) return false;
               if (typeof node.checkVisibility === 'function') {
                 if (
@@ -5467,8 +5517,20 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
               }
               const r = node.getBoundingClientRect();
               if (!(r.width > 0 && r.height > 0)) return false;
-              return notClipped(node) && paintsText(node);
+              return notClipped(node);
             };
+            // ROUND 66 P2 — TWO QUESTIONS, SEPARATED. `shownBox` above answers
+            // whether the BOX is on screen: display, visibility, opacity, an
+            // erasing filter, geometry and clipping, each of which hides
+            // everything inside it. `paintsText` answers whether an element's
+            // OWN text is painted, which affects only that element's own text
+            // nodes — `color` inherits, and a descendant may repaint itself.
+            //
+            // `visible` is unchanged: it is both, and every existing caller
+            // asking "can the lender read THIS element" still gets the same
+            // answer. The split exists so `visibleTextOf` can stop discarding a
+            // painted descendant because its container's own text is not.
+            const visible = (node) => shownBox(node) && paintsText(node);
             // ROUND 24 P2 — THE RECEIPT, not anything with text in it.
             //
             // My first version fell back to any `p`/`dd`/`dt`/`span` in
@@ -5760,16 +5822,27 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
               // which is exactly why this would have gone unnoticed: the
               // helper's own answer was wrong while every use of it was
               // right. Found by self-review.
-              if (!visible(root)) return '';
+              if (!shownBox(root)) return '';
               const unpainted = /^(script|style|template|title|noscript)$/i;
               const parts = [];
+              // ROUND 66 P2 — AN ELEMENT'S OWN TEXT AND ITS SUBTREE ARE JUDGED
+              // SEPARATELY.
+              //
+              // `paintsText` gates only the element's OWN text nodes, because
+              // `color` inherits and a descendant may repaint itself. Descent
+              // is gated on `shownBox` alone: a container whose own text is
+              // transparent still SHOWS a child that sets its own colour, and
+              // gating descent on the full `visible` discarded that child — a
+              // product FAIL on a card whose explanation is painted, which is
+              // the direction this file refuses everywhere else.
               const walk = (node) => {
+                const ownPainted = paintsText(node);
                 for (const child of node.childNodes) {
                   if (child.nodeType === 3) {
-                    parts.push(child.textContent);
+                    if (ownPainted) parts.push(child.textContent);
                   } else if (child.nodeType === 1) {
                     if (unpainted.test(child.tagName)) continue;
-                    if (!visible(child)) continue;
+                    if (!shownBox(child)) continue;
                     walk(child);
                   }
                 }

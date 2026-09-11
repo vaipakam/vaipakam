@@ -220,7 +220,15 @@ describe('a reading that did not happen is never reported as an absence', () => 
     // silent false absence.
     const i = at("const block = (name) => {");
     expect(i, 'the extractor was not found').toBeGreaterThan(-1);
-    expect(src.slice(i, i + 1600)).toContain('if (depth !== 0) {');
+    // WINDOWED TO THE WHOLE FUNCTION, not to a character count. The first
+    // version sliced 1600 characters and passed until round 66 added a
+    // special case to the extractor and pushed the guard past the
+    // window — a test failing because the file grew, which teaches
+    // nothing and trains a reader to widen the number. Bounded by the
+    // next declaration instead.
+    const end = src.indexOf('const SCRAPE_FAILED', i);
+    expect(end, 'the extractor is no longer followed by SCRAPE_FAILED').toBeGreaterThan(i);
+    expect(src.slice(i, end)).toContain('if (depth !== 0) {');
   });
 
   it('builds the nothing-established shape in exactly ONE place', () => {
@@ -240,6 +248,26 @@ describe('a reading that did not happen is never reported as an absence', () => 
     const declarations = [...src.matchAll(/function nothingEstablished\(/g)];
     expect(declarations, 'exactly one definition').toHaveLength(1);
     expect(all.length - declarations.length, 'every site goes through it').toBe(5);
+  });
+
+  it('passes the helper sources by SPREAD, not by a fixed arity', () => {
+    // ROUND 66, and this one was caught by a live run rather than by a
+    // test, which is why it is pinned now.
+    //
+    // The wait destructured exactly three source strings. Splitting the
+    // predicate into four left the fourth silently dropped, so the
+    // composed function referenced an undefined name and threw
+    // `ReferenceError` inside the wait's own `catch` — recorded as "no
+    // card was ever visible". A false absence, which is the precise
+    // failure the balance check above exists to prevent, re-entered by
+    // the one door it does not cover.
+    //
+    // Joining whatever the array holds cannot go out of step with it.
+    expect(src).toContain('(sources) => {');
+    expect(src).toContain("new Function(`${sources.join('\\n')}\\nreturn visible;`)");
+    expect(src, 'a fixed arity is exactly the regression').not.toContain(
+      '([clipSrc, paintSrc, visSrc]) => {',
+    );
   });
 
   it('keeps `bodyPresent` undefined there, which is what the verdict reads', () => {

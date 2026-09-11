@@ -61,7 +61,11 @@ test('both copies of the drive visibility predicate agree, and reject clipped co
   const src = fs.readFileSync(DRIVE, 'utf8');
   const clipHelpers = arrowBlocks(src, 'notClipped');
   const paintHelpers = arrowBlocks(src, 'paintsText');
-  const predicates = arrowBlocks(src, 'visible');
+  // ROUND 66 P2 — the predicate is now `shownBox` (the box) composed with
+  // `paintsText` (the element's own text), and `visible` is a one-liner
+  // over them. `arrowBlocks` only finds `=> {` forms, so the pair under
+  // test is `shownBox`; `visible` is reconstructed in-page below.
+  const predicates = arrowBlocks(src, 'shownBox');
 
   // Pinned counts, deliberately. If the drive grows a third copy, or
   // unifies down to one (#2102), this test is describing a shape that no
@@ -155,7 +159,7 @@ test('both copies of the drive visibility predicate agree, and reject clipped co
         // One shared scope for the pair: `visible` calls `notClipped`,
         // and `eval` of a `const` would not leak either into scope here.
         const visible = new Function(
-          `${clipSrc}\n${paintSrc}\n${visSrc}\nreturn visible;`,
+          `${clipSrc}\n${paintSrc}\n${visSrc}\nreturn (n) => shownBox(n) && paintsText(n);`,
         )() as (n: Element | null) => boolean;
         const byId = (id: string) => document.getElementById(id);
         return {
@@ -360,7 +364,9 @@ test('the drive addresses the card its own predicate judged, not Playwright’s'
   const src = fs.readFileSync(DRIVE, 'utf8');
   const clipSrc = arrowBlocks(src, 'notClipped')[0];
   const paintSrc = arrowBlocks(src, 'paintsText')[0];
-  const visSrc = arrowBlocks(src, 'visible')[0];
+  // ROUND 66 P2 — `shownBox` is the block-bodied half; `visible` is
+  // composed from it and `paintsText` in-page, exactly as the drive does.
+  const visSrc = arrowBlocks(src, 'shownBox')[0];
 
   await page.setContent(`
     <div style="opacity:0">
@@ -390,7 +396,9 @@ test('the drive addresses the card its own predicate judged, not Playwright’s'
       // `ReferenceError` inside the page — which is how this was caught:
       // adding `paintsText` to the drive broke this second injection
       // while the first, already updated, went on passing.
-      const visible = new Function(`${clip}\n${paint}\n${vis}\nreturn visible;`)() as (
+      const visible = new Function(
+        `${clip}\n${paint}\n${vis}\nreturn (n) => shownBox(n) && paintsText(n);`,
+      )() as (
         n: Element | null,
       ) => boolean;
       const all = [...document.querySelectorAll('[data-testid="forced-close-card"]')];
@@ -427,7 +435,9 @@ test('a receipt row with a blank label is not a readable row', async ({ page }) 
   const src = fs.readFileSync(DRIVE, 'utf8');
   const clipSrc = arrowBlocks(src, 'notClipped')[0];
   const paintSrc = arrowBlocks(src, 'paintsText')[0];
-  const visSrc = arrowBlocks(src, 'visible')[0];
+  // ROUND 66 P2 — `shownBox` is the block-bodied half; `visible` is
+  // composed from it and `paintsText` in-page, exactly as the drive does.
+  const visSrc = arrowBlocks(src, 'shownBox')[0];
   // ROUND 62 P2 — `hasText` is GONE. It asked `innerText` of the
   // `dt`/`dd` WRAPPER, and `visible` on a wrapper is deliberately
   // lenient, so a label in a transparent child passed both. Replaced by
@@ -468,7 +478,7 @@ test('a receipt row with a blank label is not a readable row', async ({ page }) 
   const result = await page.evaluate(
     ([clip, paint, vis, text, row]) => {
       const scope = new Function(
-        `${clip}\n${paint}\n${vis}\n${text}\n${row}\nreturn { rowShown, visible, visibleTextOf };`,
+        `${clip}\n${paint}\n${vis}\nconst visible = (n) => shownBox(n) && paintsText(n);\n${text}\n${row}\nreturn { rowShown, visible, visibleTextOf };`,
       )() as {
         rowShown: (r: Element) => boolean;
         visible: (n: Element | null) => boolean;
@@ -590,7 +600,9 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
   const src = fs.readFileSync(DRIVE, 'utf8');
   const clipSrc = arrowBlocks(src, 'notClipped')[0];
   const paintSrc = arrowBlocks(src, 'paintsText')[0];
-  const visSrc = arrowBlocks(src, 'visible')[0];
+  // ROUND 66 P2 — `shownBox` is the block-bodied half; `visible` is
+  // composed from it and `paintsText` in-page, exactly as the drive does.
+  const visSrc = arrowBlocks(src, 'shownBox')[0];
   // ROUND 62 P2 — `textLeavesOf` became `visibleTextOf`. "At least one
   // visible leaf" accepted an unrelated leaf while the sentence the
   // verdict MATCHES was erased; reporting the painted TEXT and
@@ -651,6 +663,11 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
         <p>You can change your mind until you confirm.</p>
       </div>
       <div class="body transparent" id="rootErased">This loan can be closed out now.</div>
+      <!-- ROUND 66 P2 — a container whose OWN text is transparent, with a
+           descendant that repaints itself. The readable sentence must
+           survive; discarding it was a product FAIL on a card whose
+           explanation is painted. -->
+      <div class="body transparent" id="repaintedChild">hidden filler<p style="color:#111">This loan can be closed out now.</p></div>
       <div class="body" id="styleOnly"><style>.x { color: red; }</style></div>
       <div class="body" id="styleBeside"><style>.x { color: red; }</style><p>This loan can be closed out now.</p></div>
       <div class="body" id="withSrOnly">
@@ -663,15 +680,19 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
   const result = await page.evaluate(
     ([clip, paint, vis, leaf]) => {
       const scope = new Function(
-        `${clip}\n${paint}\n${vis}\n${leaf}\nreturn { visible, visibleTextOf };`,
+        `${clip}\n${paint}\n${vis}\nconst visible = (n) => shownBox(n) && paintsText(n);\n${leaf}\nreturn { visible, shownBox, visibleTextOf };`,
       )() as {
         visible: (n: Element | null) => boolean;
+        shownBox: (n: Element | null) => boolean;
         visibleTextOf: (r: Element | null) => string;
       };
       const byId = (id: string) => document.getElementById(id)!;
-      // EXACTLY the expression the drive assigns to `bodyVisible`.
+      // EXACTLY the expression the drive assigns to `bodyVisible` — and
+      // it is `shownBox`, not `visible`, since round 66: a container
+      // whose own text is transparent still SHOWS a repainted child, and
+      // the text rule below is what decides whether anything is readable.
       const bodyVisible = (b: Element | null) =>
-        scope.visible(b) &&
+        scope.shownBox(b) &&
         (((b as HTMLElement | null)?.innerText ?? '').trim() === '' ||
           scope.visibleTextOf(b) !== '');
       return {
@@ -693,6 +714,8 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
         // judges only the elements it DESCENDS INTO, so without a root
         // check the sentence would be collected as painted.
         rootErasedPaintedText: scope.visibleTextOf(byId('rootErased')),
+        repaintedChildVisible: bodyVisible(byId('repaintedChild')),
+        repaintedChildPaintedText: scope.visibleTextOf(byId('repaintedChild')),
         rootErasedInnerText: (byId('rootErased') as HTMLElement).innerText.trim(),
         twoLeavesVisible: bodyVisible(byId('twoLeaves')),
         twoLeavesPaintedText: scope.visibleTextOf(byId('twoLeaves')),
@@ -772,6 +795,24 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
   // `innerText` still yields it, which is exactly the disagreement the
   // finding is about.
   expect(result.rootErasedPaintedText, 'text erased at the root’s own level').toBe('');
+
+  // ROUND 66 P2 — AND A DESCENDANT THAT REPAINTS ITSELF SURVIVES.
+  //
+  // This is the defect the round-65 self-review introduced: gating the
+  // whole traversal on `visible(root)` meant a container with
+  // transparent OWN text discarded a painted child with it, and the
+  // verdict then reported a product failure on a card whose explanation
+  // is on screen. `paintsText` deliberately judges only an element's own
+  // text, because `color` inherits — so the box and the text are two
+  // questions and had been collapsed into one.
+  expect(result.repaintedChildVisible, 'the body is readable').toBe(true);
+  expect(result.repaintedChildPaintedText, 'the repainted sentence is carried').toBe(
+    'This loan can be closed out now.',
+  );
+  expect(
+    result.repaintedChildPaintedText,
+    'and the transparent filler beside it is not',
+  ).not.toContain('hidden filler');
   expect(result.rootErasedInnerText, 'which innerText still yields').toBe(
     'This loan can be closed out now.',
   );
