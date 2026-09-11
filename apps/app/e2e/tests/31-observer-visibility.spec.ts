@@ -454,6 +454,7 @@ test('a receipt row with a blank label is not a readable row', async ({ page }) 
         // and the projection then recorded its raw `innerText`, so the
         // erased label still satisfied the expected label/value pairing.
         // All six pairs matched while the lender read filler.
+        wrappedOkPaintedText: scope.visibleTextOf(byId('wrappedOk')),
         fillerRowReadable: scope.rowShown(byId('fillerRow')),
         fillerRowPaintedText: scope.visibleTextOf(byId('fillerRow')),
         fillerRowInnerText: (byId('fillerRow') as HTMLElement).innerText
@@ -495,6 +496,23 @@ test('a receipt row with a blank label is not a readable row', async ({ page }) 
   expect(result.fillerRowPaintedText, 'the painted runs, joined').toBe('—2% of interest');
   expect(result.fillerRowPaintedText, 'and NOT the erased label').not.toContain('Fees');
   expect(result.fillerRowInnerText, 'while innerText still carries it').toContain('Fees');
+
+  // AND THE SHAPE THE VERDICT NEEDS, which nothing else pins.
+  //
+  // The verdict pairs each row with its label by substring
+  // (`rowsSeen[i].includes(label) && rowsSeen[i].includes(value)`), and
+  // the unit fixtures build those strings by hand with a newline between
+  // label and value — so they cannot notice if the DRIVE stops producing
+  // a string of that shape. Switching `rowsText` from `innerText` to
+  // painted text changed exactly that: `innerText` puts a newline
+  // between the `dt` and the `dd`, this joins with nothing and collapses
+  // whitespace.
+  //
+  // Substring pairing survives that, and the live run confirmed it on
+  // the real card — but only a run that is not in CI did. This is the
+  // assertion that says the two halves still agree without one.
+  expect(result.wrappedOkPaintedText, 'the label is findable').toContain('Fees');
+  expect(result.wrappedOkPaintedText, 'and so is the value').toContain('2% of interest');
   // Recorded rather than assumed: if this ever becomes false the rows
   // are being rejected by geometry and the text rule is no longer the
   // thing under test.
