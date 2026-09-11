@@ -18,6 +18,7 @@
  * indeterminate with the reason recorded.
  */
 import { rowSlot, memberSlot } from './storage-slots.mjs';
+import { expandBytecode } from './storage-layout-eras.mjs';
 
 export const CLASSES = ['vpfiHeldCustody', 'rebateRows', 'fallbackSnapshotCustody', 'liveIntentCommits'];
 /** The member offsets the reads rely on; every era must agree or the read is refused. */
@@ -33,11 +34,12 @@ export const MAX_STORAGE_LOAN_SCAN = 5000;
  * Validate the two tables against each other and against the offsets above,
  * and derive the distinct slot set per field. Returns `{ ok, reason?, ... }`.
  */
-export function prepareStorageRead({ slots, eras }) {
+export function prepareStorageRead({ slots, eras: rawEras }) {
   const refuse = (reason) => ({ ok: false, reason });
   if (!slots?.fields || !slots?.storagePosition) return refuse('storage-slots.json is missing or has no fields');
-  if (!eras?.eras?.length) return refuse('storage-slot-eras.json is missing or has no eras');
-  if (eras.eras.some((e) => !e.bytecode)) return refuse('an era carries no bytecode catalogue — regenerate the era table (#2095 r9)');
+  if (!rawEras?.eras?.length) return refuse('storage-slot-eras.json is missing or has no eras');
+  const eras = expandBytecode(rawEras);
+  if (eras.eras.some((e) => !e.bytecode || !Object.keys(e.bytecode).length)) return refuse('an era carries no bytecode catalogue — regenerate the era table (#2095 r9)');
   if (!eras.complete) return refuse(`the era table is INCOMPLETE — ${eras.unavailable?.length ?? '?'} era(s) could not be built (${(eras.unavailable ?? []).map((u) => u.commit.slice(0, 9)).join(', ')}); a "zero at every era" claim needs every era`);
   const head = eras.eras.find((e) => e.commit === eras.head);
   if (!head) return refuse('the era table carries no HEAD era');
@@ -91,9 +93,9 @@ export function prepareStorageRead({ slots, eras }) {
     // build, and every deployment build whose layout an era holds
     eras: [
       ...eras.eras.map((e) => ({ commit: e.commit, date: e.date, bytecode: e.bytecode, kind: 'era' })),
-      ...(eras.deploymentBuilds ?? []).filter((b) => b.bytecode && b.layoutInTable !== false && !b.sameAsEra).map((b) => ({ commit: b.commit, date: b.date, bytecode: b.bytecode, kind: 'deployment build', reasons: b.reasons })),
+      ...(eras.deploymentBuilds ?? []).filter((b) => b.bytecode && b.layoutInTable === true && !b.sameAsEra).map((b) => ({ commit: b.commit, date: b.date, bytecode: b.bytecode, kind: 'deployment build', reasons: b.reasons, layoutEra: b.layoutEra })),
     ],
-    deploymentBuildsOutsideTable: (eras.deploymentBuilds ?? []).filter((b) => b.layoutInTable === false).map((b) => b.commit),
+    deploymentBuildsOutsideTable: (eras.deploymentBuilds ?? []).filter((b) => b.layoutInTable !== true).map((b) => b.commit),
     erasBuilt: eras.eras.length,
     generatedAt: eras.generatedAt,
     eraSlots,
@@ -414,4 +416,43 @@ export function downgradeProvenClasses(classes, reason) {
     out[name] = c.status !== 'proven' ? c : { ...c, status: 'indeterminate', provenBy: undefined, indeterminateReason: reason };
   }
   return out;
+}
+
+/**
+ * #2095 r10 P1 — a state response must be hex DATA. A replica that answers
+ * `null` (or anything but `0x…`) for a failed lookup would otherwise become
+ * `0n` or "empty code" and certify absence from incomplete state; the read
+ * throws instead. Pure; exported for the test.
+ */
+export function requireHexData(value, what) {
+  if (typeof value !== 'string' || !/^0x([0-9a-fA-F]{2})*$/.test(value)) {
+    throw new Error(`${what}: malformed state response ${value === null ? 'null' : value === undefined ? 'undefined' : JSON.stringify(String(value).slice(0, 40))} — not hex data; refusing to read it as a value`);
+  }
+  return value;
+}
+
+/** The EIP-2535 `diamondCut(...)` selector — every Diamond's constructor cuts it, so its Add marks the deploy-time cut. */
+export const DIAMOND_CUT_SELECTOR = '0x1f931c1c';
+
+/**
+ * #2095 r10 P1 — whether the facet POPULATION is exhaustive. The cut history
+ * is the only source that sees a facet cut in and out between records, and a
+ * pruned endpoint returns an empty history without an error. The history
+ * counts as complete only when it was read, it contains the deploy-time cut
+ * (an Add of the `diamondCut` selector — the constructor's own cut, which sits
+ * at the very first block and is therefore the first thing pruning removes),
+ * and every facet the loupe routes today appears in it. An omitted Add/Remove
+ * PAIR inside a returned window is undetectable by any test over logs and is
+ * the stated residual. Pure; exported for the test.
+ */
+export function cutHistoryCompleteness({ verdict, cuts, addedDiamondCut, addresses, loupe }) {
+  const reasons = [];
+  if (verdict !== 'read' || !cuts) reasons.push(`the cut history was ${verdict === 'read' ? 'empty' : verdict}`);
+  else if (!addedDiamondCut) reasons.push('the deploy-time cut (the Add of diamondCut) is not in the returned history — its first blocks are pruned');
+  if (Array.isArray(loupe)) {
+    const known = new Set((addresses ?? []).map((a) => a.toLowerCase()));
+    const missing = loupe.map((a) => a.toLowerCase()).filter((a) => !known.has(a));
+    if (missing.length) reasons.push(`${missing.length} facet(s) the loupe routes today never appear as an Add in the returned history`);
+  }
+  return { complete: reasons.length === 0, reasons };
 }

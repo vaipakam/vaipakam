@@ -1,14 +1,14 @@
 // census-storage-read.test.mjs — the era-complete storage read's rules (#1566 §7/§7a), over fake readers.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { prepareStorageRead, readCountersByStorage, scanRowsByStorage, intentVerdictFromStorage, eraSlotsExcept, mergeHistoricalRows, aliasOf, classifyEarlierCounters, markAliasedRows, splitByHeadSlot, getterAgreement, downgradeWithoutEraRead, attributeCounters, attributeFacetCode, downgradeProvenClasses, ROW } from './census-storage-read.mjs';
+import { prepareStorageRead, readCountersByStorage, scanRowsByStorage, intentVerdictFromStorage, eraSlotsExcept, mergeHistoricalRows, aliasOf, classifyEarlierCounters, markAliasedRows, splitByHeadSlot, getterAgreement, downgradeWithoutEraRead, attributeCounters, attributeFacetCode, downgradeProvenClasses, requireHexData, cutHistoryCompleteness, ROW } from './census-storage-read.mjs';
 import { memberSlot, rowSlot } from './storage-slots.mjs';
 
 const H = (n) => '0x' + n.toString(16).padStart(64, '0');
 const base = 0x1000n;
 const slotOf = (rel) => H(base + BigInt(rel));
 const era = (commit, date, rel, withRows = true) => ({
-  commit, date, storagePosition: H(base), bytecode: {},
+  commit, date, storagePosition: H(base), bytecode: { '0xfixture': 'FixtureFacet' },
   ...(commit === 'headhead1' ? { occupied: OCCUPIED_FOR_HEAD } : {}),
   fields: Object.fromEntries(Object.entries(rel).map(([f, r]) => [f, r === null ? null : { slot: slotOf(r), relative: r, offset: 0 }])),
   rows: withRows ? {
@@ -300,4 +300,20 @@ test('a facet is attributed to the era whose catalogue holds its code hash; unkn
   assert.equal(attributeFacetCode({ facets: [{ address: '0xA', codeHash: '0x11', sources: [] }], eras: erasT }).verdict, 'attributed');
   const d = downgradeProvenClasses({ a: { status: 'proven', provenBy: 'x' }, b: { status: 'indeterminate', indeterminateReason: 'kept' } }, 'why');
   assert.deepEqual(d, { a: { status: 'indeterminate', provenBy: undefined, indeterminateReason: 'why' }, b: { status: 'indeterminate', indeterminateReason: 'kept' } });
+});
+
+test('a state response that is not hex data throws instead of reading as zero or empty (#2095 r10 P1)', () => {
+  assert.equal(requireHexData('0x', 'code'), '0x');
+  assert.equal(requireHexData('0x00ff', 'slot'), '0x00ff');
+  for (const bad of [null, undefined, '', '0x0', 'ff', 0, {}, '0xzz']) assert.throws(() => requireHexData(bad, 'slot'), /malformed state response/, `${JSON.stringify(bad)}`);
+});
+
+test('the facet population is exhaustive only with a read history that holds the deploy-time cut and every routed facet (#2095 r10 P1)', () => {
+  const ok = cutHistoryCompleteness({ verdict: 'read', cuts: 3, addedDiamondCut: true, addresses: ['0xa', '0xb'], loupe: ['0xA', '0xb'] });
+  assert.deepEqual(ok, { complete: true, reasons: [] });
+  assert.match(cutHistoryCompleteness({ verdict: 'empty', cuts: 0, addedDiamondCut: false, addresses: [], loupe: ['0xa'] }).reasons.join(' '), /empty/);
+  assert.match(cutHistoryCompleteness({ verdict: 'unreadable', cuts: 0, addedDiamondCut: false, addresses: [], loupe: null }).reasons.join(' '), /unreadable/);
+  assert.match(cutHistoryCompleteness({ verdict: 'read', cuts: 2, addedDiamondCut: false, addresses: ['0xa'], loupe: ['0xa'] }).reasons.join(' '), /deploy-time cut/);
+  assert.match(cutHistoryCompleteness({ verdict: 'read', cuts: 2, addedDiamondCut: true, addresses: ['0xa'], loupe: ['0xa', '0xc'] }).reasons.join(' '), /1 facet\(s\) the loupe routes today never appear/);
+  assert.equal(cutHistoryCompleteness({ verdict: 'read', cuts: 1, addedDiamondCut: true, addresses: [], loupe: null }).complete, true, 'a shell with no loupe: the history alone decides');
 });

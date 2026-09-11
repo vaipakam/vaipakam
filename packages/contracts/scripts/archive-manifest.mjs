@@ -84,6 +84,11 @@ export function readManifest(manifestPath) {
 export function entryFromArtifact({ slug, stamp, addrPath }) {
   const a = JSON.parse(readFileSync(addrPath, 'utf8'));
   if (!a.diamond) return null;
+  // #2095 r10 P1 — the facets an archived record names are the only record
+  // of the facets that wrote before an in-place refresh, and `.archive/` is
+  // gitignored: the manifest carries them so a clean checkout attributes the
+  // same facet population the operator's checkout does.
+  const facets = [...new Set(Object.values(a.facets ?? {}).filter((v) => typeof v === 'string' && /^0x[0-9a-fA-F]{40}$/.test(v)).map((v) => v.toLowerCase()))].sort();
   return {
     slug,
     stamp,
@@ -91,6 +96,8 @@ export function entryFromArtifact({ slug, stamp, addrPath }) {
     diamond: a.diamond,
     deployBlock: a.deployBlock ?? null,
     vpfiToken: a.vpfiToken ?? a.vpfiMirror ?? null,
+    deployedAt: a.deployedAt ?? null,
+    facets,
   };
 }
 

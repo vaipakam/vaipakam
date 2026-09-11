@@ -48,13 +48,17 @@ test('deployment build candidates: recorded commits, the main commits around eac
   assert.equal(deployedAtIso('garbage'), null);
   // a moment between two and three: the last main commit at or before, and the first after
   assert.deepEqual(commitsAround('2026-05-02T12:00:00Z', { repo, ref: 'HEAD', branches: false }).map((c) => [c.commit, c.relation]), [[c2, 'last main commit at or before'], [c3, 'first main commit after']]);
-  // a branch active around the moment contributes its last commit at or before it; main's own tip is not repeated
+  // a branch active around the moment contributes its last commit at or before it — but only refs every checkout
+  // shares (origin's branches, tags), never a local head (#2095 r10); main's own tip is not repeated
   g('checkout', '-q', '-b', 'feat/x', c2);
   const bx = commit('branch work', '2026-05-02T06:00:00Z');
   g('checkout', '-q', 'main');
-  const withBranch = commitsAround('2026-05-02T12:00:00Z', { repo, ref: 'main' });
   const subject = (c) => g('log', '-1', '--format=%s', c).trim();
-  assert.deepEqual(withBranch.map((c) => `${subject(c.commit)} | ${c.relation}`), ['two | last main commit at or before', 'three | first main commit after', 'branch work | last commit at or before, on feat/x'], 'main before, main after, then the branch tip at or before the moment');
+  assert.deepEqual(commitsAround('2026-05-02T12:00:00Z', { repo, ref: 'main' }).map((c) => subject(c.commit)), ['two', 'three'], 'a local head alone contributes nothing');
+  g('update-ref', 'refs/remotes/origin/feat/x', bx);
+  g('update-ref', 'refs/remotes/origin/feat/x-copy', bx); // the same tip under two refs is one candidate
+  const withBranch = commitsAround('2026-05-02T12:00:00Z', { repo, ref: 'main' });
+  assert.deepEqual(withBranch.map((c) => `${subject(c.commit)} | ${c.relation}`), ['two | last main commit at or before', 'three | first main commit after', 'branch work | last commit at or before, on origin/feat/x'], 'main before, main after, then the branch tip at or before the moment');
   // records: a live artifact deployed at that moment with a recorded (dirty) commit, and a candidates file from the census
   const dep = mkdtempSync(join(tmpdir(), 'cand-dep-'));
   mkdirSync(join(dep, 'x-chain'));
@@ -68,7 +72,8 @@ test('deployment build candidates: recorded commits, the main commits around eac
   assert.deepEqual(byCommit[c1], ['recorded by x-chain/live']);
   assert.deepEqual(byCommit[c2], ['last main commit at or before x-chain/live\'s deployedAt 2026-05-02T12:00:00Z']);
   assert.deepEqual(byCommit[c3].sort(), ['first main commit after x-chain/live\'s deployedAt 2026-05-02T12:00:00Z', 'last main commit at or before y-chain (live)\'s cut at block 5']);
-  assert.deepEqual(byCommit[bx], ['last commit at or before, on feat/x x-chain/live\'s deployedAt 2026-05-02T12:00:00Z']);
+  assert.deepEqual(byCommit[bx], ['last commit at or before, on origin/feat/x x-chain/live\'s deployedAt 2026-05-02T12:00:00Z']);
+  assert.deepEqual(out.filter((c) => c.required).map((c) => c.commit).sort(), [c1, c3].sort(), 'the recorded commit and the census\'s candidate are required; ref-derived ones are advisory');
   // a malformed candidates file adds nothing rather than throwing
   writeFileSync(cf, '{nope');
   assert.deepEqual(deploymentBuildCandidates({ deploymentsDir: dep, candidatesFile: cf, repo, ref: 'HEAD' }).map((c) => c.commit).sort(), [c1, c2, c3, bx].sort());

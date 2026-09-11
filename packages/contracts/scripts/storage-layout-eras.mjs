@@ -142,6 +142,18 @@ export function bytecodeCatalogueFrom(outDir) {
   return { catalogue, count };
 }
 
+/** Rebuild per-era and per-build `bytecode` maps (hash → name) from a table's compact `bytecodeIndex` + `bytecodeIds`. Pure. */
+export function expandBytecode(table) {
+  const index = table?.bytecodeIndex ?? [];
+  const expand = (b) => {
+    if (!b || b.bytecode || !Array.isArray(b.bytecodeIds)) return b;
+    const bytecode = {};
+    for (const i of b.bytecodeIds) { const [h, name] = index[i] ?? []; if (h) bytecode[h] = name; }
+    return { ...b, bytecode };
+  };
+  return { ...table, eras: (table?.eras ?? []).map(expand), deploymentBuilds: (table?.deploymentBuilds ?? []).map(expand) };
+}
+
 /** Parse `git ls-tree <rev> <dir>/` into { path: { mode, type, hash } }. Pure. */
 export function parseLsTree(text) {
   const out = {};
@@ -225,10 +237,15 @@ export function commitsAround(iso, { repo = REPO_ROOT, ref = mainRef(repo), bran
     const lo = t - 3 * 86400e3; const hi = t + 86400e3;
     let refs = [];
     try {
-      refs = sh('git', ['for-each-ref', '--format=%(committerdate:iso8601-strict)\t%(refname)', 'refs/heads', 'refs/remotes', 'refs/tags'], repo).trim().split('\n')
-        .map((l) => { const [d, r] = l.split('\t'); return { r, t: Date.parse(d) }; })
+      // only refs every checkout shares — origin's branches and the tags, never
+      // local heads — deduplicated by tip, so the operator's checkout and CI
+      // derive the same candidates (#2095 r10)
+      const seenTip = new Set();
+      refs = sh('git', ['for-each-ref', '--format=%(committerdate:iso8601-strict)\t%(objectname)\t%(refname)', 'refs/remotes/origin', 'refs/tags'], repo).trim().split('\n')
+        .map((l) => { const [d, tip, r] = l.split('\t'); return { r, tip, t: Date.parse(d) }; })
         .filter((x) => x.r && !Number.isNaN(x.t) && x.t >= lo && x.t <= hi && !/\/HEAD$/.test(x.r))
-        .sort((a, b) => Math.abs(a.t - t) - Math.abs(b.t - t))
+        .sort((a, b) => Math.abs(a.t - t) - Math.abs(b.t - t) || a.r.localeCompare(b.r))
+        .filter((x) => (seenTip.has(x.tip) ? false : (seenTip.add(x.tip), true)))
         .slice(0, maxBranches);
     } catch { refs = []; }
     for (const { r } of refs) {
@@ -248,17 +265,19 @@ export function commitsAround(iso, { repo = REPO_ROOT, ref = mainRef(repo), bran
  */
 export function deploymentBuildCandidates({ deploymentsDir = DEPLOYMENTS_DIR, candidatesFile = CANDIDATES_FILE, repo = REPO_ROOT, ref = mainRef(repo) } = {}) {
   const byCommit = new Map();
-  const add = (commit, reason) => {
+  const required = new Set();
+  const add = (commit, reason, isRequired = false) => {
     if (!/^[0-9a-f]{40}$/.test(commit ?? '')) return;
     if (!byCommit.has(commit)) byCommit.set(commit, new Set());
     byCommit.get(commit).add(reason);
+    if (isRequired) required.add(commit);
   };
   const record = (file, label, slug) => {
     if (!existsSync(file)) return;
     let a; try { a = JSON.parse(readFileSync(file, 'utf8')); } catch { return; }
     const src = join(file, '..', 'deployment_source.json');
     if (existsSync(src)) {
-      try { const m = /^([0-9a-f]{40})/.exec(String(JSON.parse(readFileSync(src, 'utf8')).monorepoCommit ?? '')); if (m) add(m[1], `recorded by ${slug}/${label}`); } catch { /* unreadable record */ }
+      try { const m = /^([0-9a-f]{40})/.exec(String(JSON.parse(readFileSync(src, 'utf8')).monorepoCommit ?? '')); if (m) add(m[1], `recorded by ${slug}/${label}`, true); } catch { /* unreadable record */ }
     }
     const iso = deployedAtIso(a.deployedAt);
     if (iso) for (const c of commitsAround(iso, { repo, ref })) add(c.commit, `${c.relation} ${slug}/${label}'s deployedAt ${iso}`);
@@ -273,9 +292,12 @@ export function deploymentBuildCandidates({ deploymentsDir = DEPLOYMENTS_DIR, ca
     }
   }
   if (existsSync(candidatesFile)) {
-    try { for (const c of JSON.parse(readFileSync(candidatesFile, 'utf8')).candidates ?? []) for (const r of c.reasons ?? []) add(c.commit, r); } catch { /* an unreadable candidates file adds nothing; --check reports it */ }
+    try { for (const c of JSON.parse(readFileSync(candidatesFile, 'utf8')).candidates ?? []) for (const r of c.reasons ?? []) add(c.commit, r, true); } catch { /* an unreadable candidates file adds nothing; --check reports it */ }
   }
-  return [...byCommit.entries()].map(([commit, reasons]) => ({ commit, reasons: [...reasons].sort() })).sort((x, y) => x.commit.localeCompare(y.commit));
+  // `required`: derived from COMMITTED inputs (a record's stamp, the census's
+  // candidates file) — the same on every checkout, so --check may demand them;
+  // ref-derived candidates depend on which refs a checkout has and are advisory
+  return [...byCommit.entries()].map(([commit, reasons]) => ({ commit, reasons: [...reasons].sort(), required: required.has(commit) })).sort((x, y) => x.commit.localeCompare(y.commit));
 }
 
 export function buildEra(sha, { repo = REPO_ROOT, keep = false, log = () => {} } = {}) {
@@ -347,7 +369,7 @@ export function checkEraTable({ tablePath = OUT_DEFAULT, since = DEFAULT_SINCE, 
   const missing = needed.filter((e) => !have.has(fingerprintAt(e.sha)));
   const problems = [];
   if ((table.eras ?? []).some((e) => !e.fingerprint)) problems.push('an era carries no fingerprint — regenerate the table');
-  if ((table.eras ?? []).some((e) => !e.bytecode || !Object.keys(e.bytecode).length)) problems.push('an era carries no bytecode catalogue — regenerate the table (#2095 r9)');
+  if ((table.eras ?? []).some((e) => !(Array.isArray(e.bytecodeIds) ? e.bytecodeIds.length : Object.keys(e.bytecode ?? {}).length))) problems.push('an era carries no bytecode catalogue — regenerate the table (#2095 r9)');
   if (!table.complete) problems.push(`the table is incomplete (${(table.unavailable ?? []).length} era(s) unavailable${table.partial ? `; ${table.partial}` : ''})`);
   // Freshness is a CONTENT identity, never a commit SHA: the table's HEAD era
   // must have been built from the layout inputs HEAD has now (#2095 r2 P1 — a
@@ -356,9 +378,15 @@ export function checkEraTable({ tablePath = OUT_DEFAULT, since = DEFAULT_SINCE, 
   if (table.headFingerprint !== walk.headFingerprint) problems.push(`the table's HEAD era was built from a different layout (fingerprint ${String(table.headFingerprint).slice(0, 12)} vs ${walk.headFingerprint.slice(0, 12)} now) — regenerate`);
   for (const m of missing) problems.push(`era ${m.sha.slice(0, 9)} (${m.date.slice(0, 10)}, ${m.event}) is not in the table`);
   // every commit a deployed facet may have been built from must be catalogued (#2095 r9 P1)
-  const haveBuilds = new Set([...(table.eras ?? []).map((e) => e.commit), ...(table.deploymentBuilds ?? []).filter((b) => b.bytecode).map((b) => b.commit)]);
-  for (const c of deploymentBuildCandidates()) if (!haveBuilds.has(c.commit)) problems.push(`deployment build ${c.commit.slice(0, 9)} (${c.reasons[0]}) is not in the table — regenerate`);
-  for (const b of table.deploymentBuilds ?? []) if (b.layoutInTable === false) problems.push(`deployment build ${b.commit.slice(0, 9)} carries a layout no era holds — the walk is incomplete`);
+  const haveBuilds = new Set([...(table.eras ?? []).map((e) => e.commit), ...(table.deploymentBuilds ?? []).filter((b) => b.bytecode || b.bytecodeIds).map((b) => b.commit)]);
+  const advisory = [];
+  for (const c of deploymentBuildCandidates()) {
+    if (haveBuilds.has(c.commit)) continue;
+    if (c.required) problems.push(`deployment build ${c.commit.slice(0, 9)} (${c.reasons[0]}) is not in the table — regenerate`);
+    else advisory.push(`${c.commit.slice(0, 9)} (${c.reasons[0]})`);
+  }
+  if (advisory.length) log(`storage-layout-eras --check: ${advisory.length} ref-derived candidate(s) not catalogued (advisory — they depend on this checkout's refs): ${advisory.slice(0, 5).join('; ')}${advisory.length > 5 ? '; …' : ''}`);
+  if ((table.eras ?? []).some((e) => e.origin === 'deployment build' && !e.fields)) problems.push('an era promoted from a deployment build carries no slots — regenerate');
   log(`storage-layout-eras --check: ${problems.length ? 'STALE' : 'OK'} — ${needed.length} era(s) implied by the walk, ${have.size} in the table${problems.length ? '\n  ' + problems.join('\n  ') : ''}`);
   return { ok: problems.length === 0, problems, needed: needed.length, inTable: have.size };
 }
@@ -378,8 +406,10 @@ export function main(argv = process.argv.slice(2)) {
   // --reuse <path>: eras already built (same commit) in a previous output are copied, not rebuilt
   const reusePath = arg('--reuse', null);
   const reusable = new Map();
+  let reuseTable = null;
   if (reusePath && existsSync(reusePath)) {
-    for (const e of JSON.parse(readFileSync(reusePath, 'utf8')).eras ?? []) reusable.set(e.commit, e);
+    reuseTable = JSON.parse(readFileSync(reusePath, 'utf8'));
+    for (const e of expandBytecode(reuseTable).eras ?? []) if (e.origin !== 'deployment build') reusable.set(e.commit, e);
   }
   const log = (m) => process.stderr.write(m + '\n');
   const walk = walkProvenance({ since, fields: FIELDS });
@@ -413,9 +443,15 @@ export function main(argv = process.argv.slice(2)) {
   // Deployment builds (#2095 r9 P1): the commits deployed facets were most
   // plausibly compiled from, catalogued so the census can attribute a facet's
   // code to a layout the table holds. An era commit needs no second build.
-  const eraShapes = new Set(built.map((b) => b.layoutShape));
+  // Membership is by the NAMED compiler layout the census reads (#2095 r10
+  // P1): every target field's slot and every row member's slot/offset/type.
+  // A names-free shape would let two same-typed members swap unseen. A build
+  // whose layout no era holds is PROMOTED to an era — its slots were computed
+  // by the same probe — so the era-complete read covers it.
+  const layoutKey = (b) => JSON.stringify({ f: Object.fromEntries(FIELDS.map((f) => [f, b.fields?.[f]?.slot ?? null])), r: b.rows ?? null, p: b.storagePosition });
+  const eraLayouts = new Map(built.map((b) => [layoutKey(b), b.commit]));
   const reusableBuilds = new Map();
-  if (reusePath && existsSync(reusePath)) for (const b of JSON.parse(readFileSync(reusePath, 'utf8')).deploymentBuilds ?? []) reusableBuilds.set(b.commit, b);
+  if (reuseTable) for (const b of expandBytecode(reuseTable).deploymentBuilds ?? []) reusableBuilds.set(b.commit, b);
   const deploymentBuilds = [];
   const candidates = onlyHead ? [] : deploymentBuildCandidates();
   log(`storage-layout-eras: ${candidates.length} deployment build candidate(s)`);
@@ -428,20 +464,39 @@ export function main(argv = process.argv.slice(2)) {
     const date = sh('git', ['show', '-s', '--format=%cI', cand.commit], REPO_ROOT).trim();
     // membership is by SHAPE: a rename between two change events leaves the
     // layout in the table while the content fingerprint differs
-    const base = { commit: cand.commit, date, reasons: cand.reasons, layoutFingerprint: fingerprint, layoutShape, layoutInTable: eraShapes.has(layoutShape) };
-    if (era) { deploymentBuilds.push({ ...base, sameAsEra: true, bytecode: era.bytecode, bytecodeCount: era.bytecodeCount, profile: era.profile, dependencies: era.dependencies }); log(`  ${cand.commit.slice(0, 9)} ${date.slice(0, 10)} deployment build = era`); continue; }
-    if (reusableBuilds.has(cand.commit) && reusableBuilds.get(cand.commit).bytecode) { const r = reusableBuilds.get(cand.commit); deploymentBuilds.push({ ...base, bytecode: r.bytecode, bytecodeCount: r.bytecodeCount, profile: r.profile, dependencies: r.dependencies }); log(`  ${cand.commit.slice(0, 9)} ${date.slice(0, 10)} deployment build reused`); continue; }
+    const base = { commit: cand.commit, date, reasons: cand.reasons, layoutFingerprint: fingerprint, layoutShape };
+    if (era) { deploymentBuilds.push({ ...base, sameAsEra: true, layoutInTable: true, layoutEra: era.commit, bytecode: era.bytecode, bytecodeCount: era.bytecodeCount, profile: era.profile, dependencies: era.dependencies }); log(`  ${cand.commit.slice(0, 9)} ${date.slice(0, 10)} deployment build = era`); continue; }
+    const reusableBuild = reusableBuilds.get(cand.commit);
+    const finish = (r, how) => {
+      const key = layoutKey(r);
+      let layoutEra = eraLayouts.get(key);
+      if (!layoutEra) {
+        // promote: this build's layout becomes an era of its own
+        built.push({ commit: cand.commit, date, event: 'deployment build', origin: 'deployment build', fingerprint, layoutShape, ...r });
+        eraLayouts.set(key, cand.commit);
+        layoutEra = cand.commit;
+        log(`  ${cand.commit.slice(0, 9)} ${date.slice(0, 10)} deployment build ${how}: layout held by NO era — promoted to an era`);
+      } else log(`  ${cand.commit.slice(0, 9)} ${date.slice(0, 10)} deployment build ${how} (${r.bytecodeCount} contracts; layout = era ${layoutEra.slice(0, 9)})`);
+      deploymentBuilds.push({ ...base, layoutInTable: true, layoutEra, bytecode: r.bytecode, bytecodeCount: r.bytecodeCount, profile: r.profile, dependencies: r.dependencies, fields: r.fields, rows: r.rows, storagePosition: r.storagePosition });
+    };
+    if (reusableBuild && reusableBuild.bytecode && reusableBuild.fields) { finish(reusableBuild, 'reused'); continue; }
     const t0 = Date.now();
     try {
       const r = buildEra(cand.commit, { keep, log });
-      deploymentBuilds.push({ ...base, bytecode: r.bytecode, bytecodeCount: r.bytecodeCount, profile: r.profile, dependencies: r.dependencies });
-      log(`  ${cand.commit.slice(0, 9)} ${date.slice(0, 10)} deployment build ok in ${Math.round((Date.now() - t0) / 1000)}s (${r.bytecodeCount} contracts${base.layoutInTable ? '' : '; LAYOUT NOT IN THE TABLE'})`);
+      finish(r, `ok in ${Math.round((Date.now() - t0) / 1000)}s`);
     } catch (err) {
       const reason = String(err.stderr || err.message).split('\n').slice(0, 3).join(' | ').slice(0, 300);
       unavailable.push({ commit: cand.commit, date, event: 'deployment build', reason });
       log(`  ${cand.commit.slice(0, 9)} ${date.slice(0, 10)} deployment build FAILED: ${reason.slice(0, 160)}`);
     }
   }
+  // Compact catalogue (#2095 r10 — the drift gate refuses to scan a tracked
+  // file above 2 MB): every distinct runtime-code hash once, in a global
+  // index; each era and build lists ids. `expandBytecode` in the census
+  // rebuilds the per-build maps.
+  const index = []; const idOf = new Map();
+  const idsFor = (map) => Object.entries(map ?? {}).map(([h, name]) => { const k = `${h}|${name}`; if (!idOf.has(k)) { idOf.set(k, index.length); index.push([h, name]); } return idOf.get(k); }).sort((a, b) => a - b);
+  const compact = (b) => { const { bytecode, ...rest } = b; return { ...rest, bytecodeIds: idsFor(bytecode) }; };
   const distinct = {};
   for (const f of FIELDS) distinct[f] = [...new Set(built.map((b) => b.fields[f]?.slot).filter(Boolean))];
   const result = {
@@ -456,8 +511,9 @@ export function main(argv = process.argv.slice(2)) {
     // the occupied-slot map is what an EARLIER era's slot may alias TODAY, so
     // only HEAD's is read; carrying it for every era multiplied the table's
     // size by nine for nothing
-    eras: built.map((b) => (b.commit === head ? b : { ...b, occupied: undefined })),
-    deploymentBuilds,
+    eras: built.map((b) => compact(b.commit === head ? b : { ...b, occupied: undefined })),
+    deploymentBuilds: deploymentBuilds.map(compact),
+    bytecodeIndex: index,
     unavailable,
     distinctSlots: distinct,
   };

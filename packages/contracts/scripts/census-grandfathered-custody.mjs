@@ -92,7 +92,7 @@ import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync, rename
 import { readManifest, regenerateEntries, withManifestLock, writeSnapshotGuarded, livePublicationsInProgress } from './archive-manifest.mjs';
 import { loadSlots, loadEras } from './storage-slots.mjs';
 import { commitsAround, deployedAtIso, interpolateTimestamp, CANDIDATES_FILE } from './storage-layout-eras.mjs';
-import { prepareStorageRead, readCountersByStorage, scanRowsByStorage, intentVerdictFromStorage, mergeHistoricalRows, markAliasedRows, splitByHeadSlot, getterAgreement, downgradeWithoutEraRead, attributeCounters, attributeFacetCode, downgradeProvenClasses, MAX_STORAGE_LOAN_SCAN } from './census-storage-read.mjs';
+import { prepareStorageRead, readCountersByStorage, scanRowsByStorage, intentVerdictFromStorage, mergeHistoricalRows, markAliasedRows, splitByHeadSlot, getterAgreement, downgradeWithoutEraRead, attributeCounters, attributeFacetCode, downgradeProvenClasses, requireHexData, cutHistoryCompleteness, DIAMOND_CUT_SELECTOR, MAX_STORAGE_LOAN_SCAN } from './census-storage-read.mjs';
 
 /** Sum a row field as a decimal string. A function declaration, so it is hoisted above every branch that returns early (#2095 r1 P2). */
 function sum(rows, field) {
@@ -309,7 +309,8 @@ async function callAtHash(client, block, { address, abi, functionName, args = []
   } catch (err) {
     throw revertErrorLikeViem(err, abi, functionName) ?? err;
   }
-  if (!raw || raw === '0x') {
+  requireHexData(raw, `eth_call ${functionName}`);
+  if (raw === '0x') {
     const e = new Error(`The contract function "${functionName}" returned no data ("0x").`);
     e.shortMessage = e.message;
     throw e;
@@ -321,11 +322,11 @@ async function codeAtHash(client, block, address) {
 }
 /** A raw storage slot at the census block, hash-pinned like every other state read (design §7 question 4). */
 async function storageAtHash(client, block, address, slot) {
-  return BigInt(await client.request({ method: 'eth_getStorageAt', params: [address, slot, blockRef(block)] }));
+  return BigInt(requireHexData(await client.request({ method: 'eth_getStorageAt', params: [address, slot, blockRef(block)] }), `eth_getStorageAt ${slot.slice(0, 12)}`));
 }
 /** keccak256 of an account's runtime code at the census block (hash-pinned) — the key into each era's bytecode catalogue. */
 async function codeHashAtHash(client, block, address) {
-  return keccak256((await client.request({ method: 'eth_getCode', params: [address, blockRef(block)] })) ?? '0x');
+  return keccak256(requireHexData(await client.request({ method: 'eth_getCode', params: [address, blockRef(block)] }), `eth_getCode ${address}`));
 }
 
 /**
@@ -336,7 +337,7 @@ async function codeHashAtHash(client, block, address) {
  * wrote BEFORE the refresh. `.archive/` is gitignored, so on a checkout
  * without it the recorded sources are fewer — that is reported, never assumed.
  */
-function recordedFacetAddresses(slug, diamond) {
+function recordedFacetAddresses(slug, diamond, manifest = null) {
   const out = new Map();
   const add = (a, src) => {
     if (typeof a !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(a)) return;
@@ -346,7 +347,6 @@ function recordedFacetAddresses(slug, diamond) {
   };
   const records = [];
   const consider = (file, src) => {
-    if (!existsSync(file)) return;
     let a;
     try { a = JSON.parse(readFileSync(file, 'utf8')); } catch { return; }
     if (`${a.diamond ?? ''}`.toLowerCase() !== diamond.toLowerCase()) return;
@@ -356,6 +356,10 @@ function recordedFacetAddresses(slug, diamond) {
     if (iso) deployedAt.push({ record: src, iso });
   };
   const deployedAt = [];
+  // the COMMITTED manifest's facet set for this record (#2095 r10 P1) — what a
+  // clean checkout has; the local .archive/ record, when present, adds nothing
+  // beyond it but is read too
+  if (manifest?.facets?.length) { for (const a of manifest.facets) add(a, `manifest:${manifest.stamp}`); records.push(`manifest:${manifest.stamp}`); const iso = deployedAtIso(manifest.deployedAt); if (iso) deployedAt.push({ record: `manifest:${manifest.stamp}`, iso }); }
   consider(join(DEPLOYMENTS, slug, 'addresses.json'), 'record:live');
   const archiveDir = join(DEPLOYMENTS, slug, '.archive');
   if (existsSync(archiveDir)) for (const stamp of readdirSync(archiveDir).sort()) consider(join(archiveDir, stamp, 'addresses.json'), `record:${stamp}`);
@@ -367,7 +371,7 @@ function recordedFacetAddresses(slug, diamond) {
 function sourceRecordFor(slug, label) {
   const dir = label === 'live' ? join(DEPLOYMENTS, slug) : label.startsWith('archived ') ? join(DEPLOYMENTS, slug, '.archive', label.slice('archived '.length)) : null;
   const file = dir ? join(dir, 'deployment_source.json') : null;
-  if (!file || !existsSync(file)) return { recorded: false };
+  if (!file) return { recorded: false };
   try {
     const d = JSON.parse(readFileSync(file, 'utf8'));
     const m = /^([0-9a-f]{40})(\s*\(dirty\))?/.exec(`${d.monorepoCommit ?? ''}`);
@@ -387,17 +391,30 @@ async function facetsFromCutHistory(client, diamond, fromBlock, toBlock) {
   try {
     const logs = await getLogsChunked(client, { address: diamond, events: [DIAMOND_CUT_EVENT], fromBlock, toBlock });
     const blocksOf = new Map();
+    let addedDiamondCut = false;
     for (const log of logs) for (const cut of log.args?._diamondCut ?? []) {
       if (Number(cut.action) === 2 || typeof cut.facetAddress !== 'string') continue;
+      if (Number(cut.action) === 0 && (cut.functionSelectors ?? []).some((x) => String(x).toLowerCase() === DIAMOND_CUT_SELECTOR)) addedDiamondCut = true;
       const k = cut.facetAddress.toLowerCase();
       if (!blocksOf.has(k)) blocksOf.set(k, new Set());
       if (log.blockNumber !== undefined && log.blockNumber !== null) blocksOf.get(k).add(BigInt(log.blockNumber));
     }
-    return { addresses: [...blocksOf.keys()], blocksOf, cuts: logs.length, verdict: logs.length ? 'read' : 'empty (proves nothing — a pruned endpoint returns empty)' };
+    return { addresses: [...blocksOf.keys()], blocksOf, cuts: logs.length, addedDiamondCut, verdict: logs.length ? 'read' : 'empty (proves nothing — a pruned endpoint returns empty)' };
   } catch (err) {
-    return { addresses: [], blocksOf: new Map(), cuts: 0, verdict: 'unreadable', reason: String(err?.shortMessage ?? err?.message ?? err).slice(0, 200) };
+    return { addresses: [], blocksOf: new Map(), cuts: 0, addedDiamondCut: false, verdict: 'unreadable', reason: String(err?.shortMessage ?? err?.message ?? err).slice(0, 200) };
   }
 }
+
+/**
+ * The PROOF STANDARD (#2095 r9/r10 — decision put to the owner on #1566):
+ *   provenance (default) — a routed read certifies only when every facet that
+ *     ever wrote is attributed to a catalogued layout AND the facet
+ *     population is exhaustive (a complete cut history);
+ *   routed — the programme's ratified standard: a routed-getter enumeration
+ *     is a sound proof; provenance and population are recorded, never gating.
+ * Recorded on the artifact and on every result.
+ */
+const PROOF_STANDARD = (() => { const v = arg('--proof-standard', 'provenance'); if (!['provenance', 'routed'].includes(v)) throw new Error(`--proof-standard must be provenance or routed, got ${v}`); return v; })();
 
 /** Candidates written this run, for the closing report. */
 let CANDIDATES_WRITTEN = 0;
@@ -412,7 +429,8 @@ let CANDIDATES_WRITTEN = 0;
 function recordBuildCandidates(candidates) {
   if (!candidates.length) return 0;
   let current = { candidates: [] };
-  if (existsSync(CANDIDATES_FILE)) { try { current = JSON.parse(readFileSync(CANDIDATES_FILE, 'utf8')); } catch { current = { candidates: [] }; } }
+  let currentText = null;
+  try { currentText = readFileSync(CANDIDATES_FILE, 'utf8'); current = JSON.parse(currentText); } catch { current = { candidates: [] }; currentText = null; }
   const canon = (r) => String(r).replace(/'s cut of 0x[0-9a-fA-F]{40} at block/, "'s cut at block");
   const byCommit = new Map((current.candidates ?? []).map((c) => [c.commit, new Set((c.reasons ?? []).map(canon))]));
   let added = 0;
@@ -425,7 +443,7 @@ function recordBuildCandidates(candidates) {
     candidates: [...byCommit.entries()].map(([commit, reasons]) => ({ commit, reasons: [...reasons].sort() })).sort((x, y) => x.commit.localeCompare(y.commit)),
   };
   const text = JSON.stringify(next, null, 2) + '\n';
-  if (!existsSync(CANDIDATES_FILE) || readFileSync(CANDIDATES_FILE, 'utf8') !== text) writeFileSync(CANDIDATES_FILE, text);
+  if (currentText !== text) writeFileSync(CANDIDATES_FILE, text);
   CANDIDATES_WRITTEN += added;
   return added;
 }
@@ -440,8 +458,9 @@ function recordBuildCandidates(candidates) {
  * the loupe's current facets, every local record naming this Diamond, and
  * the cut history (refutation-only). Empty code never wrote (EIP-6780).
  */
-async function applyLayoutProvenance(result, { client, censusBlock, atBlock, diamond, slug, label, deployBlock, readFacets, who }) {
+async function applyLayoutProvenance(result, { client, censusBlock, atBlock, diamond, slug, label, deployBlock, readFacets, who, manifestEntry = null }) {
   result.scanned.sourceRecord = sourceRecordFor(slug, label);
+  result.proofStandard = PROOF_STANDARD;
   if (result.scanned.notADiamond) {
     result.scanned.layoutProvenance = { verdict: 'not-a-diamond', reason: 'the record names no Vaipakam Diamond; there are no facets of this protocol to attribute' };
     return result;
@@ -450,7 +469,7 @@ async function applyLayoutProvenance(result, { client, censusBlock, atBlock, dia
     result.scanned.layoutProvenance = { verdict: 'not-checked', reason: STORAGE_READ.reason };
     return result;
   }
-  const recorded = recordedFacetAddresses(slug, diamond);
+  const recorded = recordedFacetAddresses(slug, diamond, manifestEntry);
   let loupe = null;
   if (result.scanned.loupeRouted && readFacets) {
     try {
@@ -473,6 +492,7 @@ async function applyLayoutProvenance(result, { client, censusBlock, atBlock, dia
     facets.push({ address, sources: [...sources], codeHash });
   }
   const attribution = attributeFacetCode({ facets, eras: STORAGE_READ.eras });
+  const population = cutHistoryCompleteness({ verdict: cut.verdict.split(' ')[0], cuts: cut.cuts, addedDiamondCut: cut.addedDiamondCut, addresses: cut.addresses, loupe });
   // For every unattributed facet: the commits around the moments it was cut
   // (block timestamps, hash-pinned by number under the census block) and
   // around the deployedAt of every record that names it — the era tool builds
@@ -527,6 +547,9 @@ async function applyLayoutProvenance(result, { client, censusBlock, atBlock, dia
   const newCandidates = recordBuildCandidates(candidateList);
   result.scanned.layoutProvenance = {
     verdict: facets.length ? attribution.verdict : 'no-facet-known',
+    standard: PROOF_STANDARD,
+    populationComplete: population.complete,
+    populationIncompleteBecause: population.complete ? undefined : population.reasons,
     facetsChecked: facets.length,
     attributed: attribution.attributed.map((a) => ({ address: a.address, name: a.name, eras: a.eras.map((e) => e.date), sources: a.sources })),
     unattributed: attribution.unattributed,
@@ -537,16 +560,24 @@ async function applyLayoutProvenance(result, { client, censusBlock, atBlock, dia
     residual: 'a facet cut in and replaced with no local record and no readable cut history is not seen here; the cut history can only refute',
   };
   process.stderr.write(`census: ${who} — layout provenance: ${facets.length} facet address(es) (${recorded.records.length} record(s), loupe ${loupe ? loupe.length : 'unrouted'}, cut history ${cut.verdict.split(' ')[0]}): ${attribution.attributed.length} attributed, ${attribution.unattributed.length} unattributed, ${attribution.noCode.length} without code${candidateList.length ? `; ${candidateList.length} build candidate(s) proposed (${newCandidates} new in the candidates file)` : ''}\n`);
-  if (attribution.unattributed.length) {
-    // What the classes said BEFORE this rule — the routed-read standard the
-    // programme ratified — is kept beside the refusal, so the owner can see
-    // exactly what the layout-provenance rule withdrew and decide on it.
+  const refusals = [];
+  if (attribution.unattributed.length) refusals.push(`${attribution.unattributed.length} facet(s) of this Diamond carry code no layout era's build produced (${attribution.unattributed.slice(0, 4).map((u) => `${u.address} via ${u.sources.join('+')}`).join('; ')}${attribution.unattributed.length > 4 ? '; …' : ''}) — compiled from sources the walk never saw (a dirty tree, an unmerged branch), so the era-complete read cannot claim to cover their layout`);
+  if (!population.complete) refusals.push(`the facet population is not exhaustive — ${population.reasons.join('; ')} — so a writer cut in and out between the records could be missing from the set`);
+  result.scanned.layoutProvenance.unattributedSeenOnlyInRecords = attribution.unattributed.filter((u) => u.sources.every((x) => /^(record|manifest):/.test(x))).length;
+  if (refusals.length) {
+    // What the classes say under the ROUTED standard is kept beside the
+    // provenance verdict either way, so the owner can see exactly what the
+    // rule withdraws (or would withdraw) and decide on it (#1566).
     result.scanned.layoutProvenance.withoutProvenanceRule = Object.fromEntries(Object.entries(result.classes).map(([k, v]) => [k, v.status]));
-    result.scanned.layoutProvenance.unattributedSeenOnlyInRecords = attribution.unattributed.filter((u) => u.sources.every((x) => x.startsWith('record:'))).length;
-    const why = `${attribution.unattributed.length} facet(s) of this Diamond carry code no layout era's build produced (${attribution.unattributed.slice(0, 4).map((u) => `${u.address} via ${u.sources.join('+')}`).join('; ')}${attribution.unattributed.length > 4 ? '; …' : ''}) — compiled from sources the walk never saw (a dirty tree, an unmerged branch), so the era-complete read cannot claim to cover their layout; refusing to certify`;
-    result.provenBy = undefined;
-    result.classes = downgradeProvenClasses(result.classes, why);
-    result.scanned.layoutProvenanceContradiction = why;
+    const why = `${refusals.join('; and ')}; refusing to certify under the provenance standard`;
+    result.scanned.layoutProvenance.provenanceRefusal = why;
+    if (PROOF_STANDARD === 'provenance') {
+      result.provenBy = undefined;
+      result.classes = downgradeProvenClasses(result.classes, why);
+      result.scanned.layoutProvenanceContradiction = why;
+    } else {
+      result.scanned.layoutProvenance.wouldRefuseUnderProvenanceStandard = true;
+    }
   }
   return result;
 }
@@ -815,7 +846,9 @@ function localArchivedDiamonds() {
   // inventory is most likely to be short.
   const push = (slug, stamp, a) => {
     if (!a.diamond) return; // an archive entry without a Diamond has nothing on-chain to census
-    out.push({ slug, stamp, chainId: a.chainId ?? null, diamond: a.diamond, deployBlock: a.deployBlock ?? null, vpfiToken: a.vpfiToken ?? a.vpfiMirror ?? null });
+    // the facet set and deploy time travel with the entry (#2095 r10 P1): a clean checkout has no .archive/ to read them from
+    const facets = [...new Set(Object.values(a.facets ?? {}).filter((v) => typeof v === 'string' && /^0x[0-9a-fA-F]{40}$/.test(v)).map((v) => v.toLowerCase()))].sort();
+    out.push({ slug, stamp, chainId: a.chainId ?? null, diamond: a.diamond, deployBlock: a.deployBlock ?? null, vpfiToken: a.vpfiToken ?? a.vpfiMirror ?? null, deployedAt: a.deployedAt ?? null, facets });
   };
   for (const slug of chainsWithLocalArchives()) {
     const archiveDir = join(DEPLOYMENTS, slug, '.archive');
@@ -941,6 +974,7 @@ function deployedDiamondsUnderLock() {
         slug,
         label: `archived ${e.stamp}`,
         addresses: { chainId: e.chainId, diamond: e.diamond, deployBlock: e.deployBlock, vpfiToken: e.vpfiToken },
+        manifestEntry: { stamp: e.stamp, facets: e.facets ?? [], deployedAt: e.deployedAt ?? null },
       });
     }
   }
@@ -2072,7 +2106,7 @@ async function censusDeployment(dep) {
       scanned: { loanIdsEnumerated: storage?.scan?.loansScanned ?? 0, totalLoansEverCreated: storage ? storage.counters.totalLoansEverCreated.map((x) => x.value.toString()).join('|') : 'n/a', loanIdRange: storage?.scan?.loansScanned ? `1..${storage.scan.loansScanned}` : 'none', enumerable: false, noCode: false, custodySurfaceUnrouted, notADiamond, loupeRouted, producersMayBeLive: !notADiamond, storageRead: storageEvidence, storageReadUnavailable: STORAGE_READ.ok ? undefined : STORAGE_READ.reason },
       classes,
     };
-    return applyLayoutProvenance(shellResult, { client, censusBlock, atBlock, diamond, slug, label, deployBlock: BigInt(addresses.deployBlock ?? 0), readFacets: loupeRouted ? () => read('facets') : null, who });
+    return applyLayoutProvenance(shellResult, { client, censusBlock, atBlock, diamond, slug, label, deployBlock: BigInt(addresses.deployBlock ?? 0), readFacets: loupeRouted ? () => read('facets') : null, who, manifestEntry: dep.manifestEntry ?? null });
   }
 
   const stats = await read('getProtocolStats');
@@ -2593,7 +2627,7 @@ async function censusDeployment(dep) {
     result.provenBy = undefined;
     result.classes = downgradeWithoutEraRead(result.classes, STORAGE_READ.reason);
   }
-  return applyLayoutProvenance(result, { client, censusBlock, atBlock, diamond, slug, label, deployBlock, readFacets: loupeRouted ? () => read('facets') : null, who });
+  return applyLayoutProvenance(result, { client, censusBlock, atBlock, diamond, slug, label, deployBlock, readFacets: loupeRouted ? () => read('facets') : null, who, manifestEntry: dep.manifestEntry ?? null });
 }
 
 /**
@@ -2870,6 +2904,7 @@ async function main() {
   // the scan, or isolation already deployed); this run can see neither, so the
   // verdict says what it establishes and what it does not.
   const liveProducerDeployments = results.filter((r) => r.scanned?.producersMayBeLive).map((r) => `${r.chainSlug}/${r.deployment}`);
+  report.proofStandard = PROOF_STANDARD;
   report.migrationRetirable = report.allClassesEmpty === true && liveProducerDeployments.length === 0;
   report.migrationRetirableReason =
     report.allClassesEmpty !== true

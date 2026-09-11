@@ -6228,6 +6228,48 @@ attributable but leaves the old one's custody where it is. Run 31 carries
 the strict verdict: ten of twenty proven, 2,330 facet addresses checked,
 1,328 attributed, 1,002 not, zero rows, zero disagreements.
 
+**Review round 10 made the provenance rule honest about its own inputs, and
+made the standard a recorded switch.** Three doors. The facet population the
+rule attributes was not exhaustive: the archived records that name the
+facets of a Diamond later refreshed in place live in a gitignored directory,
+so a clean checkout attributed fewer facets than the operator's, and a
+transient writer — cut in and out between two records — appears in no record
+at all; the cut history is the only source that sees it, and a pruned
+endpoint returns an empty history without an error. The committed archive
+manifest now carries each record's facet set and deploy time, and the
+population counts as exhaustive only when the cut history was read, holds
+the deploy-time cut (the constructor's Add of `diamondCut`, which sits at the
+first block and is the first thing pruning removes), and names every facet
+the loupe routes today; an omitted Add/Remove pair inside a returned window
+is undetectable by any test over logs and stays the stated residual. Then
+the names-free shape of round 9 could not see two same-typed members swapped,
+so a build's layout now counts as held by an era only when the compiler puts
+every census field at the same slot and every row member at the same slot,
+offset and type — and a build whose layout no era holds is promoted to an
+era of its own, its slots computed by the same probe, so the era-complete
+read covers it rather than refusing it. Then a replica answering `null` for
+a state lookup had become a zero or an empty code: every state read now
+demands hex data and throws otherwise. Beside those, the era table's
+catalogue is a global hash index with per-build id lists (the drift gate
+refuses to scan a tracked file above two megabytes), candidate refs are
+origin's branches and the tags only — never a local head — so the operator's
+checkout and CI derive the same candidates, and the check demands only the
+candidates derived from committed inputs (a record's stamp, the census's
+candidates file), reporting ref-derived ones as advisory. And the standard
+itself is now `--proof-standard provenance|routed`, recorded on the artifact
+and every result: `provenance` (the default this PR ships) withholds a
+verdict on an unattributed facet or an incomplete population; `routed` —
+the programme's ratified standard — records the same provenance verdict
+beside a routed proof without gating on it. Ratifying one is a flag, not a
+change of evidence. The first smoke of the population gate showed its
+cost on a public endpoint: sepolia's three records attribute every facet,
+yet their cut histories come back empty or without the deploy-time cut —
+the endpoint prunes old logs — so the population is not exhaustive and the
+provenance standard withholds them too, with the routed verdict recorded
+beside the refusal. Exhaustiveness on a pruned endpoint needs an archive
+node or an operator attestation, which is the other half of the decision on
+#1566. Run 32 re-reads every deployment under `provenance`.
+
 ### 7a. What the provenance walk found, and how the design changes (2026-09-09)
 
 The walk in question 2 was built first, and it answered before a single slot

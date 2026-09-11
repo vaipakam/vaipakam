@@ -30,7 +30,11 @@ what moves the census's headline from seventeen of twenty deployments proven
 empty to ten: the live testnet Diamonds of base-sepolia and arb-sepolia have
 run facets built from working trees no commit reproduces, and whether the
 routed reads alone may certify such a Diamond is a decision the design puts
-to the owner, with each withheld verdict recorded beside its refusal.
+to the owner, with each withheld verdict recorded beside its refusal; the
+standard is a recorded switch on the census, so ratifying either is a flag
+rather than a change of evidence. The archive manifest now carries each
+archived record's facet set, so a clean checkout attributes the same
+population the operator's checkout does.
 A bare shell is settled the same way from its loan counter, whose slot never
 moved.
 
