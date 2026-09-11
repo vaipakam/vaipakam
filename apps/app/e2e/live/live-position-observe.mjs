@@ -4443,12 +4443,27 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
           // glyphs and let a visible child vouch for an indented-out
           // parent.
           //
-          // A SCROLLED ANCESTOR CANNOT TRIP THIS, which is why no scroll
+          // THIS ADDS NO NEW SCROLL EXPOSURE, which is why no scroll
           // exemption sits beside it: scrolling moves the box and its
           // glyphs together, and both drive call sites (`visible` and
           // `visibleTextOf`) run `shownBox` first, so a box carried before
-          // the origin is already condemned there. What reaches here is
-          // text that left its own box behind.
+          // the origin is condemned there first. What reaches here is text
+          // that left its own box behind.
+          //
+          // That is NOT the same as saying a scrolled ancestor cannot
+          // produce a false condemnation, and the stronger sentence stood
+          // here until it was measured. It can: a row inside an INNER
+          // scroll container near the top of the document, scrolled above
+          // that container's own slit, has a negative rect while
+          // `window.scrollY` is 0, so the document-origin test condemns
+          // content the lender can scroll back to. Measured in a browser
+          // rather than argued — `shownBox` returns false for it, and has
+          // since round 81 added the box test; the glyph rule inherits the
+          // question rather than introducing it. Nothing this drive reads
+          // is inside such a container today (the page itself scrolls,
+          // which `window.scrollY` accounts for), so it is a latent gap in
+          // both copies rather than a live one, tracked separately instead
+          // of being patched mid-review.
           const glyphs = [];
           for (const c of node.childNodes) {
             if (c.nodeType !== 3 || c.textContent.trim() === '') continue;
