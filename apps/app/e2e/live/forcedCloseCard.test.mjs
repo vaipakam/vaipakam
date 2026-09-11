@@ -5224,6 +5224,36 @@ describe('round 64 P2 — the settlement route the card promises', () => {
       );
     });
 
+    it('reads a render carrying NEITHER submit fact as offered', () => {
+      // Pinning the documented reading rather than leaving it to a
+      // comment — the note here previously claimed the opposite. The
+      // scrape sets both fields on every render, so this is a
+      // hand-written record, and admitting it is the deliberate choice.
+      const v = forcedCloseVerdict(
+        {
+          ...base,
+          submitDisabled: true,
+          text: FORCED_CLOSE.unknown,
+          bodyText: FORCED_CLOSE.unknown,
+          visibleText: FORCED_CLOSE.unknown,
+          bodyVisibleText: FORCED_CLOSE.unknown,
+          internalMatch: true,
+          internalMatchBefore: true,
+          seenRenders: [
+            {
+              text: FORCED_CLOSE.readyInKind,
+              bodyText: FORCED_CLOSE.readyInKind,
+              visibleText: FORCED_CLOSE.readyInKind,
+              bodyVisibleText: FORCED_CLOSE.readyInKind,
+            },
+          ],
+        },
+        copy,
+      );
+      expect(v.verdict).toBe('fail');
+      expect(v.why).toMatch(/would dispatch that instead/);
+    });
+
     it('still reports a promise on the settled render', () => {
       const v = forcedCloseVerdict(
         { ...inKind, internalMatch: false, internalMatchBefore: true },

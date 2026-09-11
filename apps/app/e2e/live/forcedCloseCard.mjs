@@ -2681,9 +2681,21 @@ export function forcedCloseVerdict(obs, copy) {
   // arm exists for. The unsafe-control arm does not cover it either: its
   // copy is a READY state, not a withheld one.
   //
-  // Same `!== false` reading the unsafe-control arm uses, so a record
-  // that carries no visibility says nothing about it rather than being
-  // assumed offered.
+  // Exactly the expression `actionOffered` uses, so one render is judged
+  // by one rule wherever it appears.
+  //
+  // SELF-REVIEW — AND SAY WHAT IT DOES WITH SILENCE, since the earlier
+  // note here claimed the opposite. A render carrying NEITHER field is
+  // read as OFFERED: `!== false` passes and `!undefined` passes. That is
+  // the same default `actionOffered` takes for the same reason — silence
+  // is not evidence AGAINST the offer — but the two arms it feeds have
+  // opposite senses, so it is worth being exact. On the withheld-copy
+  // arm the default suppresses a finding; here it admits one.
+  //
+  // It is confined to hand-written records either way: the scrape sets
+  // both fields on every render unconditionally, and an absent control
+  // yields `submitVisible: false` with `submitDisabled: true` rather
+  // than silence.
   const offeredIn = (r) => r?.submitVisible !== false && !r?.submitDisabled;
   const routeRenders = [
     {
