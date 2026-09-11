@@ -11880,7 +11880,7 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
   // position moved and the pointer sent readers to unrelated tests (r27).
   //
   // So they pin two things: the shapes that defeated the withdrawn designs,
-  // and TWENTY-ONE WRONG VERDICTS across ELEVEN defects, asserted so a later fix
+  // and TWENTY-ONE WRONG VERDICTS across TWELVE defects, asserted so a later fix
   // fails them and comes back to the question instead of passing unnoticed.
   //
   // The direction matters and is not decoration. TWELVE assert a SILENT PASS
@@ -11892,9 +11892,11 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
   // way, so their fixtures assert a REPORT: #2112, #2119 four times (manifest,
   // data file, multi-line list and a COMMENTED-OUT line), #2115 three times
   // (the casing rewrite in a helper and in a workflow body, and the separator
-  // rewrite), and #2126 — the CASING normalisation applied on a runner whose
-  // platform makes the normalised spelling a different program. Its separator
-  // half was withdrawn in r35; see the note where those fixtures were. A fixture that pinned the wrong direction would pass
+  // rewrite), #2117 — an inert here-string read as a command, reached via the
+  // separator rewrite, which was miscounted as a #2115 pin until r39 — and
+  // #2126, the CASING normalisation applied on a runner whose platform makes
+  // the normalised spelling a different program. #2126's separator half was
+  // withdrawn in r35; see the note where those fixtures were. A fixture that pinned the wrong direction would pass
   // while the guard did the wrong thing.
   //
   // NOT "four different routes" for the #2119 group, which overstated their
@@ -12283,6 +12285,23 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     expect(r.ok).toBe(true);
   });
 
+  it('the same cmd workflow body without the backslash IS reported (#2118 cmd workflow control)', () => {
+    // THE FOURTH ROUTE'S CONTROL (r39). Without it the pin above stays green
+    // if the cmd workflow path stops reaching this block for any unrelated
+    // reason — an invisible body and a folded one are indistinguishable from
+    // a silent pass. The other three #2118 routes each had one; this, the
+    // sole pin for its route, did not.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith(
+      '.github/workflows/d.yml',
+      'name: d\non: push\njobs:\n  d:\n    runs-on: windows-latest\n    steps:\n      - run: |\n' +
+        '          cd apps/agent\n          echo --keep-vars\n          wrangler deploy\n' +
+        '        shell: cmd\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
   it('the casing rewrite reaches into a WORKFLOW here-string too (#2115, stated false report)', () => {
     // The casing normalisation runs on workflow bodies as well as helpers, so
     // the trade it makes is not helper-only either (r28). Nothing here
@@ -12446,8 +12465,10 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     // and neither is the value-scoped rewrite coordinate.
     //
     // Not "manifests" and not "every string" (r21): it applies to ANY file of
-    // that format, and an ARRAY value is passed over — the sibling fixture
-    // below pins that half, so a fix scoped either way fails one of them.
+    // that format, and an ARRAY value is passed over ONLY where its line also
+    // carries a scalar — written one element per line the same array IS read
+    // (r23). The two sibling fixtures below pin both layouts, so a fix scoped
+    // either way fails one of them.
     //
     // This is the guard's own restraint inverted: it would rather miss an
     // exotic spelling than report text that performs no write, and here it
@@ -12670,14 +12691,20 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     expect(r.ok).toBe(false);
   });
 
-  it('the separator rewrite also changes a verdict (#2115, stated false report)', () => {
-    // WHAT THIS PINS IS ONE FALSE REPORT, and nothing more. Nothing in this
-    // file deploys anything — the here-string is inert data — but the
-    // separator rewrite turns `apps\agent` into a path the reader
+  it('an inert here-string is reported, reached via the separator rewrite (#2117, stated false report)', () => {
+    // WHAT THIS PINS IS ONE FALSE REPORT, and it belongs to #2117 — the
+    // missing model of that shell's quoting — NOT to #2115 (r39). The command
+    // here is spelled in lower case, so the casing rewrite cannot change the
+    // verdict at all: mutation-checked, disabling that fold leaves this green.
+    //
+    // Nothing in this file deploys anything; the here-string is inert data.
+    // The separator rewrite turns `apps\agent` into a path the reader
     // understands, the modelled directory carries into the deploy below, and
-    // the file is reported. Verified as a mutant: disabling ONLY the
-    // separator replacement makes this same file pass, so the report is
-    // coupled to that rewrite.
+    // the file is reported. Disabling ONLY the separator replacement makes it
+    // pass, so that rewrite is what makes this spelling REACHABLE — the same
+    // relationship casing has to the title-case spelling, and the same reason
+    // neither rewrite is the defect. What is read as a command inside inert
+    // text is #2117.
     //
     // IT DOES NOT SHOW THE SEPARATOR RULE ERRING IN BOTH DIRECTIONS, which
     // this comment claimed until r37 and the spec until r36. No

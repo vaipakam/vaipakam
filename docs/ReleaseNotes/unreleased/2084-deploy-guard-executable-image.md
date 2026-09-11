@@ -64,7 +64,7 @@ No behaviour change. The check's logic is what it was.
 - The reasoning above, recorded beside the code that would have to change, in
   the functional specification, and here — so the next person does not rebuild
   one of these designs without knowing what happened to it.
-- Tests that **assert twenty-one current wrong verdicts across eleven defects**, so
+- Tests that **assert twenty-one current wrong verdicts across twelve defects**, so
   a later fix fails them and comes back to the question rather than passing
   silently.
 
@@ -95,9 +95,11 @@ No behaviour change. The check's logic is what it was.
   merely names the command is reported as performing it, as is an unrelated
   data file of the same format, and as is a list of keywords once the file is
   written across several lines; and a command named inside a block the shell
-  never executes is reported — which is what the two Windows normalisations
-  cost, and the casing one is pinned in a workflow body as well as a helper,
-  since that rewrite runs on both; and a line that is COMMENTED OUT, in the variant
+  never executes is reported — twice for what the casing normalisation costs,
+  in a helper and in a continuous-integration step since that rewrite runs on
+  both, and once for the same inert text reached instead through the
+  path-separator normalisation, which is a report the missing quoting model
+  produces rather than anything either rewrite does wrong; and a line that is COMMENTED OUT, in the variant
   of that format permitting comments, is read as a command although it is not a
   property at all; and a Windows normalisation is applied wherever the
   interpreter is a Windows shell, INCLUDING on a runner whose platform those
@@ -134,7 +136,7 @@ Every symptom this work set out to fix, plus the limitations found while proving
 them — including **ten defects surfaced while correcting this record
 itself**, seven of them silent passes and three false reports — is recorded as its
 own issue with a reproduction and what a fix would have to be true of. All are
-behaviour the check already had, so nothing is made worse. Eleven are
+behaviour the check already had, so nothing is made worse. Twelve are
 additionally pinned by tests that assert the current verdict — twenty-one such
 tests in all, twelve asserting a silent pass and nine a false report.
 
@@ -167,7 +169,7 @@ not its siblings. One record per defect, named from the others.
 | **#2108** | a step naming another interpreter has its body read as shell |
 | **#2104** | a deployment written as a single-line workflow step whose configuration cannot be read is not reported |
 | **#2115** | a Windows-shell body spelling the command in upper case, or in a mixed case OTHER than title case, is not seen (lowercase and title case are) — and the spelling that IS covered is matched inside a block the shell never executes, *pinned (false report)* in both a standalone helper and a continuous-integration step, as the trade any widening of that rule grows |
-| **#2117** | the PowerShell assignment rewrite has no string state, so an assignment inside a here-string can invent a deployment |
+| **#2117** | the PowerShell path has no string state, so text inside a here-string is read as commands — an assignment there can invent a deployment, and a command named there is reported — *pinned (false report)* |
 | **#2116** | a manifest script that invokes a sibling does not see that sibling's config write |
 | **#2121** | a script declared in a package manifest is never split at its newlines, so a safety flag on one line covers a deployment on another — *pinned (silent pass)*; the mirror of #2118 |
 | **#2122** | a variable whose name differs only in case is not resolved, though that shell resolves it, so the deployment's directory reads as unknown — *pinned (silent pass)* |
