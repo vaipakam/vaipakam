@@ -208,6 +208,27 @@ function definiteConfirmActionFault(a) {
 const ASSET_GLYPH = /[\u039E\u03BE\u0243\u00D0\u25CE]/u;
 
 /**
+ * ROUND 60 P2 — SPELLED-OUT DENOMINATIONS COUNT TOO.
+ *
+ * `Loan 100 ether will be returned` and `Token 5 bitcoins` walked
+ * through the identifier exemption: the trailing word is a denomination,
+ * but it was not a ticker and not on this list, so nothing objected and
+ * an ordinary monetary phrase was read as a reference number.
+ *
+ * This is the third vocabulary in this file (the others being
+ * `MAGNITUDE_WORD` and the duration words) and it carries their
+ * weakness: a denomination nobody listed walks through, and the app
+ * ships twenty locale bundles. Round 49 argued the case for why a
+ * vocabulary is unavoidable where the distinction is semantic — `Loan
+ * 21 will be returned` and `Loan 100 ether will be returned` differ only
+ * in what the following word MEANS — and that argument applies here
+ * unchanged. Tracked with its siblings in #2125.
+ *
+ * The residual direction is deliberate and the same as everywhere else:
+ * a denomination this does not know is a MISSED amount, never an
+ * invented one.
+ */
+/**
  * Lower-case DENOMINATIONS, which `isTicker` cannot reach.
  *
  * ROUND 43 P2. `isTicker` requires an internal uppercase RUN, and that
@@ -231,7 +252,8 @@ const ASSET_GLYPH = /[\u039E\u03BE\u0243\u00D0\u25CE]/u;
  * string carrying one fails there, on named copy, rather than
  * surprising a live run.
  */
-const LOWERCASE_ASSET_UNIT = /^(eth|weth|wei|gwei|btc|wbtc|sats|usdc|usdt|dai)$/;
+const LOWERCASE_ASSET_UNIT =
+  /^(eth|weth|wei|gwei|btc|wbtc|sats|usdc|usdt|dai|ether|ethers|bitcoin|bitcoins|satoshi|satoshis|szabo|finney)$/;
 
 /**
  * Wording that asserts the protocol has REFUSED, as opposed to the app
@@ -2129,7 +2151,25 @@ export function forcedCloseVerdict(obs, copy) {
   if (obs.defaultable === false && !bracketDisagrees && readyOffered) {
     return {
       verdict: 'fail',
-      failKind: 'observed',
+      // ROUND 60 P2 — `inferred`, NOT `observed`, and the distinction is
+      // the whole point of the tag.
+      //
+      // Every other arm tagged `observed` is something read off the
+      // page: a figure, a control, a duplicated row. This one is a
+      // DISAGREEMENT BETWEEN TWO PROVIDERS — the page's endpoint and
+      // `OBSERVE_RPC` — and the most ordinary cause of that is the
+      // deployment being pointed at another chain, where the same loan
+      // id means something else or nothing at all.
+      //
+      // `observed` bypasses the infrastructure gates by design (round
+      // 38), so tagging it that way made an operational wrong-chain
+      // state exit 1 as a product regression before `pageChainWrong`
+      // could report it as BLOCKED. The card itself may be perfectly
+      // correct for the chain it is actually talking to.
+      //
+      // `inferred` keeps the finding and lets the chain gate go first,
+      // which is exactly what that ranking was built for.
+      failKind: 'inferred',
       why: 'the card renders a READY route and offers the action, but simulating that exact transaction against the protocol shows it would be refused — the lender would pay a network fee for a call that cannot succeed',
     };
   }

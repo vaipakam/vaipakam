@@ -3352,6 +3352,33 @@ describe('round 45 review findings', () => {
   });
 });
 
+describe('round 60 review findings', () => {
+  describe('spelled-out denominations are amounts', () => {
+    // `Loan 100 ether will be returned` walked through the identifier
+    // exemption: the trailing word IS a denomination, but it was not a
+    // ticker and not on the lower-case unit list, so nothing objected
+    // and an ordinary monetary phrase read as a reference number.
+    it('flags a spelled-out denomination after an identifier word', () => {
+      expect(monetaryAmountsIn('Loan 100 ether will be returned')).toHaveLength(1);
+      expect(monetaryAmountsIn('Token 5 bitcoins')).toHaveLength(1);
+      expect(monetaryAmountsIn('Position 2 satoshis remain')).toHaveLength(1);
+    });
+
+    it('leaves a bare identifier alone', () => {
+      expect(monetaryAmountsIn('Loan 21 will be returned')).toEqual([]);
+      expect(monetaryAmountsIn('Closing out Loan 21 now.')).toEqual([]);
+    });
+
+    // The other vocabularies are untouched — this is a third list, not a
+    // replacement for them.
+    it('leaves the duration and percent exemptions alone', () => {
+      expect(monetaryAmountsIn('Wait 3-day grace period')).toEqual([]);
+      expect(monetaryAmountsIn('The grace period is 3 days.')).toEqual([]);
+      expect(monetaryAmountsIn('A 2% treasury share is deducted.')).toEqual([]);
+    });
+  });
+});
+
 describe('round 59 review findings', () => {
   const ROWS = {
     standard: Object.values(FORCED_CLOSE.receipt),
@@ -3840,7 +3867,14 @@ describe('round 54 review findings', () => {
     it('FAILS ready copy with an enabled action on a non-defaultable loan', () => {
       const v = forcedCloseVerdict({ ...base, defaultable: false }, copy);
       expect(v.verdict).toBe('fail');
-      expect(v.failKind).toBe('observed');
+      // `inferred` SINCE ROUND 60, and the tag change is the fix rather
+      // than a detail. This arm is a disagreement between two providers
+      // — the page's endpoint and `OBSERVE_RPC` — and the most ordinary
+      // cause of that is the deployment pointing at another chain.
+      // `observed` bypasses the infrastructure gates by design (round
+      // 38), so it made an operational wrong-chain state exit 1 as a
+      // product regression before `pageChainWrong` could report it.
+      expect(v.failKind).toBe('inferred');
       expect(v.why).toMatch(/would be refused/);
     });
 

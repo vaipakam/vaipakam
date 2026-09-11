@@ -3407,6 +3407,47 @@ async function observeForcedClose(page, loan) {
  * and finding no card (round 41 P2). A unique object so it can never be
  * confused with a value the page produced.
  */
+/**
+ * The visibility predicate's SOURCE, so the mount wait can run the same
+ * one the scrape runs (round 60 P2).
+ *
+ * Read out of this file rather than written a third time. `notClipped`,
+ * `paintsText` and `visible` already exist twice — once for the card
+ * scrape and once for the confirmation receipt, a duplication #2102
+ * tracks — and adding a hand-written third copy for the wait would mean
+ * three definitions that agree until they do not. That is precisely the
+ * failure this fix is for: the wait was using Playwright's `:visible`,
+ * which disagrees with these on opacity, clipping and filters.
+ *
+ * The same brace-matching `31-observer-visibility.spec.ts` uses to
+ * extract them for its fixtures, for the same reason, and the CARD
+ * copy (index 0) because that is the predicate the card scrape applies.
+ */
+const VISIBILITY_HELPER_SOURCES = (() => {
+  const self = fs.readFileSync(fileURLToPath(import.meta.url), 'utf8');
+  const block = (name) => {
+    const needle = `const ${name} = (node) => {`;
+    const start = self.indexOf(needle);
+    if (start === -1) {
+      throw new Error(
+        `the visibility helper \`${name}\` could not be found in this file — ` +
+          'the mount wait cannot use the same predicate as the scrape without it.',
+      );
+    }
+    let depth = 0;
+    let i = self.indexOf('{', start);
+    for (; i < self.length; i += 1) {
+      if (self[i] === '{') depth += 1;
+      else if (self[i] === '}') {
+        depth -= 1;
+        if (depth === 0) break;
+      }
+    }
+    return self.slice(start, i + 2);
+  };
+  return [block('notClipped'), block('paintsText'), block('visible')];
+})();
+
 const SCRAPE_FAILED = Symbol('forced-close scrape failed');
 
 async function readForcedCloseCard(page, timeoutMs = 30_000) {
@@ -3457,10 +3498,41 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
   // `visible=true` was not a selector at all, the engine threw, `.catch`
   // swallowed it, and `mounted` stayed false while reading as if the fix
   // had worked.
+  //
+  // ROUND 60 P2 — AND THE WAIT ASKS THE DRIVE'S OWN QUESTION, not
+  // Playwright's weaker one.
+  //
+  // `:visible` is a non-empty box plus a computed `visibility`. It does
+  // not consider opacity, and since rounds 51 and 57 this drive also
+  // rejects a clipped box and a filter-erased one. So a ghost card —
+  // `opacity: 0`, or under `filter: opacity(0)` — attached before the
+  // real card mounts satisfies `:visible`, the wait resolves
+  // immediately, the in-page pass then finds nothing IT calls visible,
+  // and the drive records an absence without ever waiting for the real
+  // card that was going to appear well inside the timeout. On an
+  // otherwise healthy loan that is a false missing-card FAIL.
+  //
+  // `31-observer-visibility.spec.ts` has asserted that these two
+  // predicates disagree since round 33 — that disagreement is the whole
+  // subject of one of its cases — and the mount gate was still using the
+  // weaker one. Third time on this PR that Playwright's `:visible` and
+  // this drive's `visible` have been mixed up (rounds 33 and 38 were the
+  // others), and the first where the wait itself was the site.
+  //
+  // `waitForFunction` runs the SAME predicate the scrape uses, built
+  // from the same helper sources, so there is one definition of visible
+  // rather than two that agree until they do not.
   const mounted = await page
-    .locator('[data-testid="forced-close-card"]:visible')
-    .first()
-    .waitFor({ state: 'visible', timeout: timeoutMs })
+    .waitForFunction(
+      ([clipSrc, paintSrc, visSrc]) => {
+        const visible = new Function(
+          `${clipSrc}\n${paintSrc}\n${visSrc}\nreturn visible;`,
+        )();
+        return [...document.querySelectorAll('[data-testid="forced-close-card"]')].some(visible);
+      },
+      VISIBILITY_HELPER_SOURCES,
+      { timeout: timeoutMs, polling: 250 },
+    )
     .then(() => true)
     .catch(() => false);
   const attached = mounted ? true : (await cards.count()) > 0;
@@ -5321,7 +5393,23 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
             // is the drive's full predicate, and joining renders is what
             // round 35 forbids because every exemption in the scanner is
             // context.
-            const inRow = (n) => rows.some((r) => r === n || r.contains(n));
+            // ROUND 60 P2 — EXCLUDE THE ROWS ALREADY CARRIED, not every
+            // row.
+            //
+            // Excluding membership in ANY receipt row dropped the
+            // visible leaves of rows that failed `rowShown`. A row whose
+            // LABEL is hidden or clipped while its value is on screen
+            // stating `100 USDC` was therefore removed from `rowsText`
+            // (the row failed) and from `otherText` (it is in a row) —
+            // and `rowsOk` then made `confirmText` null, so the figure
+            // reached no scan at all and the visit reported merely an
+            // incomplete observation.
+            //
+            // `shown` is what is already carried, so it is what must be
+            // excluded. Everything else visible on the panel, wherever
+            // it sits, is scanned — which is what round 53's
+            // whole-panel fix was for, one level finer.
+            const inRow = (n) => shown.some((r) => r === n || r.contains(n));
             const otherText = [...el.querySelectorAll('*')]
               .filter(
                 (n) =>

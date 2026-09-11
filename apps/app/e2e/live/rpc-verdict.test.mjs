@@ -800,6 +800,49 @@ describe('round 50 P2 — a QUANTITY is hex, everywhere it is read', () => {
   });
 });
 
+describe('round 60 P2 — a reused JSON-RPC id names no call', () => {
+  // `wanted` was a Set, so a batch reusing one id for `eth_blockNumber`
+  // and something else collapsed the two into a single identity: every
+  // member carrying that id became eligible as a head result. A lone
+  // `eth_chainId` answer of `0x14a34` was recorded as page block 84532
+  // — an artificially LOW absence bound, the direction that lets a
+  // correctly absent card be reported as a regression.
+  const batch = (...calls) => JSON.stringify(calls.map((c) => ({ jsonrpc: '2.0', ...c })));
+
+  it('reads a well-formed batch with distinct ids', () => {
+    expect(
+      blockNumberFromRpcPair(
+        batch({ id: 1, method: 'eth_chainId' }, { id: 2, method: 'eth_blockNumber' }),
+        [
+          { id: 1, result: '0x14a34' },
+          { id: 2, result: '0x2c8a1f' },
+        ],
+      ),
+    ).toBe(0x2c8a1fn);
+  });
+
+  it('refuses a height from a REUSED id', () => {
+    expect(
+      blockNumberFromRpcPair(
+        batch({ id: 1, method: 'eth_chainId' }, { id: 1, method: 'eth_blockNumber' }),
+        [{ id: 1, result: '0x14a34' }],
+      ),
+    ).toBeNull();
+  });
+
+  // Refused rather than repaired: an id naming two calls names neither,
+  // and picking one would be a guess. "No height" is already handled as
+  // not-ready.
+  it('refuses even when the reused id carries a plausible height', () => {
+    expect(
+      blockNumberFromRpcPair(
+        batch({ id: 7, method: 'eth_getLogs', params: [] }, { id: 7, method: 'eth_blockNumber' }),
+        [{ id: 7, result: '0x2c8a1f' }],
+      ),
+    ).toBeNull();
+  });
+});
+
 describe('round 52 P2 — an endpoint that answers with two chains', () => {
   // Returning on the FIRST match ignored a batch answering `eth_chainId`
   // twice with different chains, so the endpoint could be admitted as

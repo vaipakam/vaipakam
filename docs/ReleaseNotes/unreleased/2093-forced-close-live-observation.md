@@ -642,3 +642,29 @@ And the fallback used when the page never reveals its chain position was
 still being taken after the page had been examined rather than before,
 so on that path the timing fix from the previous round had not actually
 taken effect.
+
+Five more. The most consequential concerns how the check waits for the
+card to appear. It was using the browser automation library's idea of
+"visible", which is a box with size and a visibility setting — while the
+check's own idea, built up over many rounds, also rejects transparency,
+clipping and erasing filters. A decorative or leftover node that looks
+visible to the weaker test but not the stricter one could satisfy the
+wait immediately, after which the check would look, find nothing it
+considered visible, and report the card missing — on a page where the
+real card was about to appear well within the time allowed. The wait now
+asks the same question the rest of the check asks.
+
+A related correction: when the check disagrees with the page about
+whether a close-out would be accepted, that disagreement is now treated
+as something inferred rather than something seen. The commonest cause is
+the deployment talking to a different chain than the check is, and the
+run should report that as a configuration problem rather than blaming the
+page for it.
+
+The others: a receipt line whose label is hidden but whose value is on
+screen is now read, where previously the whole line was discarded and an
+amount stated in plain sight reached no check at all; a reply from the
+chain that reuses one identifier for two different questions is refused
+rather than guessed at; and amounts written with the denomination spelled
+out — "100 ether" rather than "100 ETH" — are now recognised after words
+like "loan", where they had been read as reference numbers.

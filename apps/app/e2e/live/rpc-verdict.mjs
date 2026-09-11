@@ -390,7 +390,30 @@ export function blockNumberFromRpcPair(requestBody, responseBody) {
     (c?.method === 'eth_getBlockByNumber' &&
       Array.isArray(c?.params) &&
       c.params[0] === 'latest');
-  const wanted = new Set(calls.filter(wantsHead).map((c) => c?.id));
+  // ROUND 60 P2 — A REUSED ID IS NOT AN IDENTITY.
+  //
+  // `wanted` is a Set, so a batch reusing one JSON-RPC id for
+  // `eth_blockNumber` and something else collapses the two calls into a
+  // single identity: every response member carrying that id becomes
+  // eligible as a head result. A lone `eth_chainId` answer of `0x14a34`
+  // is then recorded as page block 84532 — an artificially LOW absence
+  // bound, which is the direction that lets the confirming observer
+  // settle below what the DOM was showing and report a correctly absent
+  // card as a regression.
+  //
+  // Neither existing gate objects: the request is well-formed and the
+  // response is present, so the malformed-request and unreachable
+  // classifiers both pass it.
+  //
+  // Refused rather than repaired. An id that names two calls names
+  // neither, and picking one would be a guess — the honest answer is
+  // that this exchange carried no height, which the caller already
+  // handles as not-ready.
+  const ids = calls.map((c) => c?.id);
+  const duplicated = new Set(ids.filter((id, i) => ids.indexOf(id) !== i));
+  const wanted = new Set(
+    calls.filter(wantsHead).map((c) => c?.id).filter((id) => !duplicated.has(id)),
+  );
   if (wanted.size === 0) return null;
   const items = Array.isArray(responseBody) ? responseBody : [responseBody];
   // The degenerate case: one call asked, one answer came back. There is
