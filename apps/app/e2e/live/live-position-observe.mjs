@@ -847,6 +847,42 @@ function isRevert(err) {
 }
 
 /**
+ * The WEAKER question: did viem classify this as a contract revert at all?
+ *
+ * ROUND 84 P2 — and it exists because `isRevert` above is deliberately
+ * strict about an AMBIGUOUS shape, which is right for some callers and
+ * wrong for others.
+ *
+ * A bare `revert()` reported by a provider under an internal-error code
+ * gives `raw === '0x'` and `code === -32603`: empty bytes fail the byte
+ * test and the code is not 3, so `isRevert` says no. Its own comment
+ * argues that honestly — empty `0x` is evidence of nothing, since a bare
+ * revert produces it and so does a provider filling the field with
+ * nothing on an outage. The ambiguity is real and the strictness stays.
+ *
+ * What differs is THE COST OF ANSWERING "no" at each call site:
+ *
+ *   - Where the revert branch yields an UNKNOWN — `saleLockedOn`'s two
+ *     catches — a "no" throws, and since those run inside `discovery()`
+ *     the whole run aborts. One position in an ambiguous state then stops
+ *     every other position from being observed, over a reply the chain
+ *     may well have given us. Those sites ask THIS predicate.
+ *   - Where the revert branch ASSERTS something — `offsetLockedOn`
+ *     returns "locked, skip the loan", `tokenOwnerOf` returns "the token
+ *     does not exist" — a loosened test would let a dead backend make
+ *     positions quietly vanish from the pool. There, aborting is the
+ *     honest outcome for an ambiguous reply, and those sites keep
+ *     `isRevert`.
+ *
+ * Round 75's rule is untouched either way: a programming error in this
+ * drive, and a transport failure, carry no `ContractFunctionRevertedError`
+ * anywhere in the chain, so both still throw from every one of the four.
+ */
+function answeredWithRevert(err) {
+  return Boolean(err?.walk?.((e) => e instanceof ContractFunctionRevertedError));
+}
+
+/**
  * Does the LENDER position token carry the early-withdrawal SALE lock?
  *
  * ROUND 1 P2. `PositionDetails` renders the forced-close card behind
@@ -910,7 +946,11 @@ async function saleLockedOn(lenderTokenId, loanId, blockNumber, account) {
     });
     locked = Number(lock) === LOCK_EARLY_WITHDRAWAL_SALE;
   } catch (err) {
-    if (!isRevert(err)) throw err;
+    // `answeredWithRevert`, not `isRevert` — see its note. The revert
+    // branch here yields an UNKNOWN, so the cost of refusing an ambiguous
+    // bare revert is aborting the whole run rather than reading one
+    // position as unestablished.
+    if (!answeredWithRevert(err)) throw err;
     return 'unknown';
   }
   if (!locked) return false;
@@ -958,13 +998,20 @@ async function saleLockedOn(lenderTokenId, loanId, blockNumber, account) {
     // — an unread run reported as a failure of the drive, over a reply the
     // chain did give us.
     //
-    // Decided by `isRevert`, which is the same test the `positionLock`
-    // catch twenty lines above already uses for exactly this split, so the
-    // two catches in one function now answer the question the same way.
-    // Anything that is NOT a revert still throws: a dead endpoint or a
-    // programming error in this drive must stay loud, which is round 75's
-    // lesson and the reason this arm existed at all.
-    if (!isRevert(err)) throw err;
+    // Decided by the same test the `positionLock` catch twenty lines above
+    // uses for exactly this split, so the two catches in one function
+    // answer the question the same way. Anything that is NOT a revert
+    // still throws: a dead endpoint or a programming error in this drive
+    // must stay loud, which is round 75's lesson and the reason this arm
+    // existed at all.
+    //
+    // ROUND 84 P2 — and asked with `answeredWithRevert`, because
+    // `isRevert` refuses the ambiguous shape this arm most needs to
+    // admit: a bare `revert()` under an internal-error code carries empty
+    // bytes and a code that is not 3, so the round-83 guard still
+    // rethrew on the very case it was written for. The predicate's own
+    // note carries the argument for why the two sites differ.
+    if (!answeredWithRevert(err)) throw err;
     // ROUND 12 P2 — AN UNRECOGNISED REVERT IS `unknown`, NOT `true`.
     //
     // Returning `true` here read downstream as a SUBSTANTIATED accepted
@@ -2066,6 +2113,11 @@ await discovery('installing the provider init script', () =>
  * that height would be the too-low failure above.
  */
 const pageRpcHeads = new WeakMap(); // page -> Map<key, bigint>
+// ROUND 84 P2 — the LOWEST head each endpoint announced, beside the
+// highest. See `pageHeadFloorOf`: the bracket needs a block the card's own
+// queries cannot predate, and the maximum is the one thing it certainly
+// can.
+const pageRpcHeadFloors = new WeakMap(); // page -> Map<key, bigint>
 const pageDiamondKeys = new WeakMap(); // page -> Set<key>
 /**
  * Response handlers that have STARTED but not finished parsing.
@@ -2101,13 +2153,21 @@ function watchPageHead(page) {
   // that is settled for the rest of the run.
   const foreign = new Set();
   const pending = new Set();
+  const floors = new Map();
   pageRpcHeads.set(page, heads);
+  pageRpcHeadFloors.set(page, floors);
   pageDiamondKeys.set(page, diamond);
   pageHeadPending.set(page, pending);
 
   const recordHead = (key, seen) => {
     if (seen === null || seen === undefined) return;
     if (seen > (heads.get(key) ?? 0n)) heads.set(key, seen);
+    // The floor is recorded in the same call as the ceiling, deliberately:
+    // two passes over the same events is how one of them ends up missing
+    // the WebSocket path, which is a live source of head announcements and
+    // easy to forget because the HTTP one is what a reader looks at.
+    const low = floors.get(key);
+    if (low === undefined || seen < low) floors.set(key, seen);
   };
   // An endpoint counts as serving the deployment when the page ASKS IT
   // ABOUT THE DIAMOND. Two tests, because one is not enough:
@@ -2367,6 +2427,54 @@ function pageHeadOf(page) {
 }
 
 /**
+ * The LOWEST head an endpoint serving the Diamond announced on this page,
+ * or 0n if none was observed.
+ *
+ * ROUND 84 P2 — because "the page reached block N" is not "the card read
+ * block N", and the bracket was treating it as though it were.
+ *
+ * `pageHeadOf` returns the highest head seen ANYWHERE on the page, and the
+ * app announces heads far more often than the card refetches: a block
+ * watcher ticks every few seconds while the card's own queries poll on a
+ * much slower cadence. So the pre-render end of the bracket was routinely
+ * pinned to a block NEWER than the data the card was rendering. Around a
+ * grace transition that is exactly wrong — the card can legitimately still
+ * be showing the block-N `not yet` state while both simulations at N+1
+ * answer `true`, and the verdict then reports the product for withholding
+ * a close-out the protocol had only just started accepting. A false FAIL
+ * on the one card this drive exists to judge, manufactured out of the
+ * page's own polling cadence.
+ *
+ * This drive cannot tie a render to a block — nothing in the DOM says
+ * which one a query consumed, and re-deriving the app's refetch interval
+ * would be exactly the second copy of app config this file refuses to keep
+ * elsewhere. What it CAN establish is a block the card's data cannot
+ * predate: the first head the page was seen to reach. Bracketing from
+ * there to the post-scrape head spans every block the card could possibly
+ * have read, so when both ends agree the answer did not change anywhere in
+ * that span and the disagreement with the card is real whichever block it
+ * used. When they differ the observation is INCOMPLETE — which is the
+ * outcome Codex asked for, reached by widening the window rather than by
+ * abandoning the check.
+ *
+ * The cost is stated: a grace crossing inside the page's lifetime now
+ * yields `incomplete` where the old bracket would have accused. That is
+ * the honest answer, since in that window this drive genuinely cannot tell
+ * a stale render from a wrong one.
+ */
+function pageHeadFloorOf(page) {
+  const floors = pageRpcHeadFloors.get(page);
+  const diamond = pageDiamondKeys.get(page);
+  if (!floors || !diamond) return 0n;
+  let low = 0n;
+  for (const [key, seen] of floors) {
+    if (!diamond.has(key)) continue;
+    if (low === 0n || seen < low) low = seen;
+  }
+  return low;
+}
+
+/**
  * Load a route and report everything that went wrong on it.
  *
  * `expectChooser` makes the settle CONDITIONAL rather than a fixed sleep.
@@ -2478,6 +2586,9 @@ async function visit(path, { expectChooser = false, loan = null } = {}) {
     // Reported, not judged: evidence about whether the absence gate is
     // armed on this deployment (round 14).
     forcedClosePageHead: forcedClose ? (forcedClose.pageHead ?? null) : null,
+    // The bracket's lower end, reported beside its upper one so the span
+    // the protocol comparison was made over is visible (round 84).
+    forcedCloseHeadFloor: forcedClose ? (forcedClose.headFloor ?? null) : null,
     // DETAIL PAGES ONLY, gated on `loan` (self-inflicted, caught by
     // running it). The lender card exists only on `/positions/<id>`, and
     // on the LIST route the card locator matches nothing — but a
@@ -3471,6 +3582,23 @@ async function observeForcedClose(page, loan) {
   // is the right answer. Two samples, two different questions.
   await settleHeadReads(page);
   const headAtRender = pageHeadOf(page);
+  // ROUND 84 P2 — AND THE PRE-RENDER END GOES TO THE FLOOR, not to the
+  // newest head the page happened to have reached.
+  //
+  // Round 58 moved this sample ahead of the DOM read, which was right and
+  // did not go far enough: `pageHeadOf` is the highest head seen ANYWHERE
+  // on the page, and the app announces heads far more often than the card
+  // refetches. The sample was therefore still routinely NEWER than the
+  // data being judged — the same defect round 58 fixed, one cadence
+  // further in.
+  //
+  // `pageHeadFloorOf` carries the full argument. In short: this drive
+  // cannot tie a render to a block, so it brackets from a block the
+  // card's data cannot predate to one it cannot postdate, and a
+  // disagreement anywhere in that span makes the observation incomplete
+  // rather than an accusation.
+  const headFloor = pageHeadFloorOf(page);
+  const headBefore = headFloor === 0n ? headAtRender : headFloor;
   // ROUND 57 P2 — THE OTHER END OF THE BRACKET, AT THE PAGE'S OWN HEAD.
   //
   // Round 55 took a pre-read on `OBSERVE_RPC` at wall-clock `latest`,
@@ -3498,9 +3626,7 @@ async function observeForcedClose(page, loan) {
   const defaultableBefore = await discovery(
     `simulating the close-out for loan ${loan.id} before the scrape`,
     () =>
-      headAtRender === 0n
-        ? probeCloseOut(loan.id)
-        : probeCloseOut(loan.id, headAtRender),
+      headBefore === 0n ? probeCloseOut(loan.id) : probeCloseOut(loan.id, headBefore),
   );
   // ROUND 64 P2 — AND WHICH SETTLEMENT, bracketed the same way and for
   // the same reason. A match candidate can appear or be consumed inside
@@ -3511,9 +3637,9 @@ async function observeForcedClose(page, loan) {
   const matchBefore = await discovery(
     `reading the settlement route for loan ${loan.id} before the scrape`,
     () =>
-      headAtRender === 0n
+      headBefore === 0n
         ? probeInternalMatch(loan.id)
-        : probeInternalMatch(loan.id, headAtRender),
+        : probeInternalMatch(loan.id, headBefore),
   );
   //
   // ROUND 59 P2 — AND THE PROBE ITSELF RUNS BEFORE THE OBSERVATION, not
@@ -3767,6 +3893,11 @@ async function observeForcedClose(page, loan) {
     absenceUnconfirmedWhy,
     // Carried out for the REPORT only — `forcedCloseVerdict` ignores it.
     pageHead: pageHead === 0n ? null : String(pageHead),
+    // ROUND 84 P2 — the OTHER end of the bracket, reported for the same
+    // reason: the run should say which span of blocks its protocol
+    // comparison was made over, rather than leaving a reader to assume it
+    // was a point read at the head. Also report-only.
+    headFloor: headBefore === 0n ? null : String(headBefore),
   };
 }
 
@@ -8168,7 +8299,7 @@ for (const v of visited) {
               // SILENT: printed on every visit so a reader can tell a
               // gate that is armed from one that structurally cannot
               // fire.
-              ` pageHead=${v.forcedClosePageHead ?? 'unobserved'}`
+              ` heads=${v.forcedCloseHeadFloor ?? 'unobserved'}..${v.forcedClosePageHead ?? 'unobserved'}`
             : '')
         : `      chooser=${v.chooser} handover=${v.handover} offset=${v.offset}` +
         ` holdCard=${v.holdCard} freeHeldBtn=${v.freeHeld}`,

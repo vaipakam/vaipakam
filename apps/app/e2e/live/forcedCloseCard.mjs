@@ -2441,6 +2441,50 @@ export function forcedCloseVerdict(obs, copy) {
     }
   }
 
+  // ROUND 84 P2 — AND AN UNESTABLISHED BACK TRIAL IS NOT A PASS EITHER.
+  //
+  // Round 75 taught the producer to write `null` when readiness withdrew
+  // the confirmation mid-pass: a trial that fails because the panel went
+  // away is not evidence that the control is unusable. That was right
+  // about the producer and left the verdict with no arm for it — the Back
+  // arms above test `=== false`, so `null` fell through to `pass` and a
+  // visit could report `confirmScanned=true` having never established
+  // that the lender can leave a pre-signature panel.
+  //
+  // The asymmetry is the tell: `confirmAction.clickable` has carried an
+  // explicit `null` → incomplete arm since round 47, on exactly this
+  // argument — an untested control is not a tested one, and BLOCKED says
+  // "re-run, this did not establish what it advertises" where `pass`
+  // claims it did. The Back control's result is identically meaningful
+  // and had no such arm.
+  //
+  // BOTH null-shaped outcomes, not only the one that was named. `present:
+  // null` is the same sentence one step earlier — the panel was gone
+  // before Back could be counted, so whether there is a way out went
+  // unread — and this PR's most repeated finding is a fix applied to one
+  // of several parallel sites. They differ only in what evidence each
+  // needs: `present === true` already proves the panel was up, while
+  // `present === null` proves nothing on its own and so requires the same
+  // positive panel evidence the round-70 missing-Back arm demands.
+  //
+  // `=== null` and never falsy, for the reason every arm in this file
+  // says: `undefined` means a record predating the field, and accusing
+  // one of a gap it could not have filled is inventing a finding from
+  // silence.
+  const panelWasUp =
+    obs.confirmAction?.present === true ||
+    (Array.isArray(obs.confirmRowsText) && obs.confirmRowsText.length > 0);
+  if (
+    (obs.backAction?.present === true && obs.backAction.clickable === null) ||
+    (obs.backAction?.present === null && panelWasUp)
+  ) {
+    return {
+      verdict: 'blocked',
+      blockedKind: 'incomplete',
+      why: 'the confirmation withdrew while its Back control was being read, so whether the lender can leave a pre-signature panel went untested',
+    };
+  }
+
   // ROUND 54 P2 — A READY ROUTE THE PROTOCOL WOULD REFUSE.
   //
   // The card's readiness copy was allowed to substantiate itself: the

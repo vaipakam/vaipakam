@@ -49,6 +49,16 @@ navigating away mid-check, a browser-side rule that could not be
 evaluated — is reported as an incomplete observation rather than as a
 missing card.
 
+The same rule governs the one control on the confirmation whose job is to
+let the lender walk away. The check trials that control rather than
+clicking it, and the card is allowed to withdraw the whole confirmation
+the moment the position's readiness changes — so a trial can fail because
+the panel went away rather than because the control was unusable. That is
+correctly not treated as a defect, and it is now also not treated as a
+pass: the run says it never established whether the lender could leave,
+and asks to be re-run. A tested control and an untested one must not
+report the same thing.
+
 That last distinction is the one the check turns on most often. A wait
 that times out has genuinely looked and kept finding nothing, and
 reporting an absence is right. A wait that never got to ask has
@@ -146,6 +156,19 @@ refusal would let a defect in the checking tool be reported as a defect
 in the card — an accusation that the card offers an action that cannot
 succeed, built out of a question that was never asked. Those replies now
 fail loudly as a fault in the tool instead.
+
+Which block that question is asked at turned out to matter as much as the
+question. A page announces new blocks far more often than a card refetches
+its own data, so "the latest block the page has seen" is routinely newer
+than the state the card is showing — and around the moment a grace period
+expires, that difference is the whole subject. A card still displaying the
+earlier state would have been reported as withholding an action the
+protocol had only just started accepting. The check cannot tell which
+block a rendered card read, so it no longer pretends to: it asks the
+protocol at a block the card's data cannot predate as well as at one it
+cannot postdate, and only treats a disagreement as real when the answer
+was the same across that whole span. Otherwise the observation is
+incomplete. The run prints the span it used.
 
 Where that answer and the page disagree, the check reports it as
 something inferred rather than something seen, because the commonest

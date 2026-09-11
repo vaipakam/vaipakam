@@ -82,12 +82,42 @@ describe('the head sample waits for the readings in flight', () => {
     expect(settle).toBeLessThan(at('const headAtRender = pageHeadOf(page);'));
   });
 
-  it('pins the pre-render simulation to the render-time head', () => {
+  // AMENDED IN ROUND 84. The case asserted that the pre-render probe was
+  // pinned to `headAtRender`, which was the round-58 fix and turned out to
+  // be the round-58 defect one cadence further in: `pageHeadOf` is the
+  // HIGHEST head seen anywhere on the page, and the app announces heads
+  // far more often than the card refetches, so the "render-time" sample
+  // was routinely newer than the data being judged. Around a grace
+  // transition that accuses the product of withholding a close-out the
+  // protocol had only just started accepting.
+  //
+  // The pin is now the FLOOR — the first head the page was seen to reach,
+  // which the card's data cannot predate — so the bracket spans every
+  // block the card could have read. `headAtRender` remains the fallback
+  // for a page that announced only one head, which is why both names still
+  // appear.
+  it('pins the pre-render simulation to a head the card cannot predate', () => {
     // Not to `pageHead` — that is the round-57 fix keeping the round-58
     // defect, and the two identifiers differ by one word.
     const decl = src.slice(at('const defaultableBefore ='), at('const defaultableBefore =') + 400);
-    expect(decl).toContain('headAtRender');
+    expect(decl).toContain('headBefore');
     expect(decl).not.toContain('pageHead ===');
+  });
+
+  it('derives that head from the floor, falling back to the render-time sample', () => {
+    // The floor is the whole point: pinning to the render-time sample is
+    // what round 84 found wrong. A refactor that quietly restored
+    // `headAtRender` as the primary would pass the case above.
+    const decl = src.slice(at('const headFloor ='), at('const headFloor =') + 300);
+    expect(decl).toContain('pageHeadFloorOf(page)');
+    expect(decl).toMatch(/headBefore\s*=\s*headFloor === 0n \? headAtRender : headFloor/);
+  });
+
+  it('brackets the settlement-route read the same way', () => {
+    // Both pre-render probes answer questions about the same render, so a
+    // fix applied to one of them is this PR's most repeated finding.
+    const decl = src.slice(at('const matchBefore ='), at('const matchBefore =') + 400);
+    expect(decl).toContain('headBefore');
   });
 
   // AMENDED IN ROUND 58, and the guard earned its place by failing.

@@ -5547,10 +5547,67 @@ describe('round 65 review findings', () => {
       // `null` is "not tested" and `undefined` is "a record predating the
       // field". Neither is a defect, and collapsing either into one would
       // invent a finding out of a re-render.
+      //
+      // AMENDED IN ROUND 84, and the amendment is the finding. "Not a
+      // defect" is right and was implemented as "not anything": `null`
+      // fell through to `pass`, so a visit could report the confirmation
+      // scanned while never having established that the lender can leave
+      // a pre-signature panel. It is now an INCOMPLETE observation — the
+      // same verdict `confirmAction.clickable === null` has carried since
+      // round 47 — which is still not a defect, and no longer a pass.
       for (const backAction of [{ present: true, clickable: null }, undefined]) {
         const v = forcedCloseVerdict({ ...base, backAction }, copy);
-        expect(v.why ?? '').not.toMatch(/Back control/);
+        expect(v.verdict, 'an unestablished trial is never a FAIL').not.toBe('fail');
       }
+      const untested = forcedCloseVerdict(
+        { ...base, backAction: { present: true, clickable: null } },
+        copy,
+      );
+      expect(untested.verdict).toBe('blocked');
+      expect(untested.blockedKind).toBe('incomplete');
+      // A record predating the field still says nothing at all — accusing
+      // it of a gap it could not have filled is inventing a finding from
+      // silence, which is the half of this case that has not changed.
+      const legacy = forcedCloseVerdict({ ...base, backAction: undefined }, copy);
+      expect(legacy.why ?? '').not.toMatch(/Back control/);
+    });
+
+    // ROUND 84 P2 — the sibling null, which the finding did not name and
+    // which means the same thing one step earlier: the panel was gone
+    // before Back could be counted, so whether there is a way out went
+    // unread. It needs the panel evidence `present === false` needs,
+    // since unlike `present === true` it proves nothing on its own.
+    it('is equally incomplete when the panel went before Back was counted', () => {
+      const v = forcedCloseVerdict(
+        {
+          ...base,
+          backAction: { present: null, clickable: null },
+          // A structurally sound confirm action, so the panel evidence is
+          // positive and nothing above this arm fires first.
+          confirmAction: {
+            present: true,
+            visible: true,
+            labelled: true,
+            painted: true,
+            enabled: true,
+            clickable: true,
+            count: 1,
+          },
+        },
+        copy,
+      );
+      expect(v.verdict).toBe('blocked');
+      expect(v.blockedKind).toBe('incomplete');
+      // With no evidence the confirmation ever opened, THIS arm stays
+      // silent. Asserted on the reason rather than on the verdict: such a
+      // record is already incomplete for an unread confirmation, and a
+      // blanket `not.toBe('blocked')` would pass or fail on that unrelated
+      // arm instead of on this one.
+      const noPanel = forcedCloseVerdict(
+        { ...base, backAction: { present: null, clickable: null } },
+        copy,
+      );
+      expect(noPanel.why ?? '').not.toMatch(/Back control/);
     });
   });
 });
