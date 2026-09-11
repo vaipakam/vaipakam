@@ -8948,12 +8948,23 @@ for (const file of walk(REPO_ROOT)) {
   //     runs it (a false green on main too, #2115).
   //
   //     AND IT IS CHOSEN BY INTERPRETER, NOT BY PLATFORM (#2126). `pwsh` runs
-  //     on Linux, where `Wrangler` and `wrangler` are different files, yet
-  //     `forInterpreter` applies this fold there too — so the check reports a
-  //     program that platform does not have. The comment on
-  //     `windowsSeparators` states this must not happen and the code does it
-  //     anyway; a correction must not preserve the platform-blind behaviour
-  //     just because this note calls the exception established. The SEPARATOR
+  //     on Linux, and on a runner whose executable lookup is CASE-SENSITIVE
+  //     — which is what the fixture pins, on `ubuntu-latest` — `Wrangler` and
+  //     `wrangler` are different files, yet `forInterpreter` applies this
+  //     fold there too, so the check reports a program that runner does not
+  //     have. The comment on `windowsSeparators` states this must not happen
+  //     and the code does it anyway; a correction must not preserve the
+  //     platform-blind behaviour just because this note calls the exception
+  //     established.
+  //
+  //     SCOPE THAT NARROWLY, AND DO NOT WIDEN IT TO "POSIX" (r43/r44). The
+  //     discriminator is how the runner RESOLVES COMMAND NAMES, not the
+  //     platform family: a POSIX host with case-INSENSITIVE lookup resolves
+  //     both spellings to one executable, and there the #2115 miss is real
+  //     again. A fix that stops recognising the upper-case spelling
+  //     wherever the platform is not Windows would therefore introduce a
+  //     silent pass on such a runner — the direction this check must never
+  //     fail in. Other resolution modes are OPEN here, not decided. The SEPARATOR
   //     half is NOT affected IN THE CASE THAT WAS CHECKED (r35): a path given
   //     to one of that shell's own commands, such as the directory change,
   //     reads the same with either separator on every platform, so
