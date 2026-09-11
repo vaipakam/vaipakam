@@ -1343,11 +1343,37 @@ const acceptsCloseOut = new Set();
     perAuthority.set(k, (perAuthority.get(k) ?? 0) + 1);
   }
   const capBinds = [...perAuthority.values()].some((n) => n > MAX_POSITIONS);
+  // ROUND 76 P2 — AND ONLY THE REQUESTED LENDER WHEN ONE WAS NAMED.
+  //
+  // With `OBSERVE_ADDRESS` set there is no authority choice to inform, so
+  // probing every authority's loans buys nothing and costs a sequential
+  // simulate per eligible Active position across the whole chain —
+  // unbounded by the visit cap, and enough to hit a rate limit or stall
+  // the run before the browser even launches. The walk-order promotion
+  // still needs answers for the loans that WILL be visited, so the
+  // pre-pass narrows rather than disappears.
+  const requested = process.env.OBSERVE_ADDRESS?.toLowerCase();
+  const candidates = requested
+    ? eligible.filter((l) => l.authority.toLowerCase() === requested)
+    : eligible;
+  // ROUND 76 P2 — INSIDE `discovery`, so a rethrow is BLOCKED and not a
+  // product FAIL.
+  //
+  // Round 75 made these probes rethrow what is not a transport fault,
+  // which was right — and left the rethrow escaping to the top level,
+  // where an unhandled rejection exits 1. That code is reserved for a
+  // regression in the deployed product, so the loud failure I added would
+  // have blamed the app for this drive being wrong about itself. `exit 2`
+  // is the honest outcome, and `discovery` is what produces it.
   if (ROLE === 'lender' && (authorities.size > 1 || capBinds)) {
-    for (const l of eligible) {
-      if (l.status !== STATUS_ACTIVE || acceptedSale.has(l.id)) continue;
-      if ((await probeCloseOut(l.id, undefined, l.authority)) === true) acceptsCloseOut.add(l.id);
-    }
+    await discovery('probing which positions the protocol would close out', async () => {
+      for (const l of candidates) {
+        if (l.status !== STATUS_ACTIVE || acceptedSale.has(l.id)) continue;
+        if ((await probeCloseOut(l.id, undefined, l.authority)) === true) {
+          acceptsCloseOut.add(l.id);
+        }
+      }
+    });
   }
 }
 
@@ -3246,19 +3272,41 @@ async function probeInternalMatch(loanId, blockNumber) {
     const found = Array.isArray(out) ? out[0] : out?.found;
     return typeof found === 'boolean' ? found : undefined;
   } catch (err) {
-    // ROUND 75 P2 — the same guard as its sibling. A bare `catch` here
-    // would swallow a programming error just as silently, and this
-    // probe's answer gates the settlement-route arms.
-    if (!isTransportFailure(err)) throw err;
-    // UNDEFINED EITHER WAY, and deliberately not a `classifyRpcFailure`
-    // branch. That helper distinguishes "the contract answered with a
-    // revert" from "nothing answered", which matters for a SIMULATION —
-    // a revert there is the protocol saying no. This is a `view`: a
-    // revert from it is the view declining to answer, not an answer of
-    // `false`. Both outcomes are a failure to determine, so both assert
-    // nothing, and writing that as a ternary whose arms are identical
-    // would only look like a branch that had been got wrong.
-    return undefined;
+    // UNDEFINED FOR EVERY WAY THE CHAIN CAN DECLINE, and deliberately not
+    // a `classifyRpcFailure` branch that returns `false`. That helper
+    // distinguishes "the contract answered with a revert" from "nothing
+    // answered", which matters for a SIMULATION — a revert there is the
+    // protocol saying no. This is a `view`: a revert from it is the view
+    // declining to answer, not an answer of `false`.
+    //
+    // ROUND 76 P2 — AND THE ROUND-75 GUARD WAS PUT ABOVE THIS, WHICH
+    // BROKE IT.
+    //
+    // I added `if (!isTransportFailure(err)) throw err` here to stop a
+    // programming error being swallowed, and a view REVERT is not a
+    // transport failure — so the guard threw on exactly the case the
+    // paragraph beneath it says must return `undefined`. An older
+    // deployment without `hasInternalMatchCandidate`, or a custom revert,
+    // would have aborted the whole run instead of reporting the route as
+    // unread. A guard that contradicts the comment directly below it.
+    //
+    // The order is now: every shape that is the CHAIN declining comes
+    // first and answers `undefined`; only what is left — this drive being
+    // wrong about itself — is rethrown. The decode names are enumerated
+    // on the SAFE side, so a shape not listed is rethrown and loud rather
+    // than quietly absorbed.
+    if (classifyRpcFailure(err) === 'answered') return undefined;
+    if (isTransportFailure(err)) return undefined;
+    const decodeShaped = (e) => {
+      for (let cur = e, hops = 0; cur && hops < 12; cur = cur.cause, hops += 1) {
+        if (/ZeroData|DecodingData|AbiDecoding|ContractFunctionZeroData/.test(cur?.name ?? '')) {
+          return true;
+        }
+      }
+      return false;
+    };
+    if (decodeShaped(err)) return undefined;
+    throw err;
   }
 }
 
@@ -3348,20 +3396,30 @@ async function observeForcedClose(page, loan) {
   // ordering rather than a head) but no weaker than what it replaces.
   // Saying which one was used is left to the verdict, which reports an
   // unanswerable probe as an incomplete observation either way.
-  const defaultableBefore =
-    headAtRender === 0n
-      ? await probeCloseOut(loan.id)
-      : await probeCloseOut(loan.id, headAtRender);
+  // ROUND 76 P2 — the pre-render bracket reads take the same cover. They
+  // run outside `visit()`'s navigation catch, so a rethrown programming
+  // error here escaped as an unhandled rejection and exited 1 against the
+  // product, and could skip the browser cleanup `discovery` performs.
+  const defaultableBefore = await discovery(
+    `simulating the close-out for loan ${loan.id} before the scrape`,
+    () =>
+      headAtRender === 0n
+        ? probeCloseOut(loan.id)
+        : probeCloseOut(loan.id, headAtRender),
+  );
   // ROUND 64 P2 — AND WHICH SETTLEMENT, bracketed the same way and for
   // the same reason. A match candidate can appear or be consumed inside
   // the observation window, so one read cannot distinguish "the card is
   // promising the wrong settlement" from "the answer changed while we
   // watched". Both ends agreeing is what makes the comparison a finding;
   // a disagreement is reported as incomplete.
-  const matchBefore =
-    headAtRender === 0n
-      ? await probeInternalMatch(loan.id)
-      : await probeInternalMatch(loan.id, headAtRender);
+  const matchBefore = await discovery(
+    `reading the settlement route for loan ${loan.id} before the scrape`,
+    () =>
+      headAtRender === 0n
+        ? probeInternalMatch(loan.id)
+        : probeInternalMatch(loan.id, headAtRender),
+  );
   //
   // ROUND 59 P2 — AND THE PROBE ITSELF RUNS BEFORE THE OBSERVATION, not
   // only its PIN.
@@ -5818,7 +5876,30 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
             // `disabled === false` are all observable without touching
             // it.
             const panelButtons = [...el.querySelectorAll('button')];
-            const isBack = (b) => /back/i.test((b?.innerText ?? '').trim());
+            // ROUND 76 P2 — THE MARKER FIRST, THE LABEL ONLY AS A FALLBACK.
+            //
+            // Round 75 excluded every control whose label reads as Back,
+            // which closed the two-Back hole and left identity coupled to
+            // COPY: a confirm label containing the word — "Pay back and
+            // close" — would be excluded as a Back control and the panel
+            // reported as having no fee-paying action at all. That is a
+            // false FAIL waiting on a copy change, and it is worse in the
+            // nine translated bundles, where the heuristic does not even
+            // apply.
+            //
+            // `ConfirmReceipt` now marks both controls, so identity comes
+            // from the markup. The label heuristic stays as a FALLBACK
+            // rather than being deleted: this drive runs against the
+            // DEPLOYED build, which will not carry the markers until this
+            // change ships, and a check that goes blind between merge and
+            // deploy is worse than one with a known-imperfect fallback.
+            // On a build carrying the markers the labels are never
+            // consulted.
+            const marked = el.querySelector('[data-testid="confirm-receipt-confirm"]') !== null;
+            const isBack = (b) =>
+              marked
+                ? b?.dataset?.testid === 'confirm-receipt-back'
+                : /back/i.test((b?.innerText ?? '').trim());
             const backButton = panelButtons.find(isBack);
             // ROUND 46 P2 — COUNTED, not just found. `find` took the
             // first non-Back button and a second fee-paying action
@@ -6334,6 +6415,19 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
         // Assigned on every path below, unconditionally, for the reason
         // this file keeps relearning: a field written at some exits and
         // not others is how `visibleSubmits` went missing twice.
+        // Either marker proves the panel, matching the detection gate
+        // above rather than inventing a second notion of "still open".
+        const panelStillUp = async () => {
+          const [rows, action] = await Promise.all([
+            card
+              .locator('[data-testid^="forced-close-receipt"], dl.receipt .receipt-row')
+              .count()
+              .catch(() => 0),
+            card.locator('.cluster button').count().catch(() => 0),
+          ]);
+          return rows > 0 || action > 0;
+        };
+
         if (confirmAction) {
           if (confirmAction.index >= 0) {
             const target = card.locator('button').nth(confirmAction.index);
@@ -6341,13 +6435,26 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
               .innerText({ timeout: 2_000 })
               .then((t) => t.trim())
               .catch(() => null);
-            confirmAction.clickable =
-              labelNow !== null && labelNow === confirmAction.label
-                ? await target
-                    .click({ trial: true, timeout: 3_000 })
-                    .then(() => true)
-                    .catch(() => false)
-                : null;
+            // ROUND 76 P2 — AND A WITHDRAWN PANEL IS NOT AN UNUSABLE
+            // CONTROL, here as well as on Back.
+            //
+            // The label re-read protects the identity of the control; it
+            // does not survive the panel going away DURING the trial,
+            // which `ForcedCloseCard` is explicitly allowed to do when
+            // readiness changes. The detached locator then rejects and
+            // this recorded `false` — an unusable fee-paying action, from
+            // a render that never existed. Round 75 fixed exactly this on
+            // the Back control and left its sibling, which is this PR's
+            // most frequent finding once more.
+            if (labelNow === null || labelNow !== confirmAction.label) {
+              confirmAction.clickable = null;
+            } else {
+              const trialled = await target
+                .click({ trial: true, timeout: 3_000 })
+                .then(() => true)
+                .catch(() => false);
+              confirmAction.clickable = trialled ? true : (await panelStillUp()) ? false : null;
+            }
           } else {
             // No control to trial. The verdict FAILS this above on
             // `present`, so this is unreachable on the passing path —
@@ -6399,18 +6506,6 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
         // `confirmAction` trial has carried since round 47, for the same
         // reason.
         //
-        // Either marker proves the panel, matching the detection gate
-        // above rather than inventing a second notion of "still open".
-        const panelStillUp = async () => {
-          const [rows, action] = await Promise.all([
-            card
-              .locator('[data-testid^="forced-close-receipt"], dl.receipt .receipt-row')
-              .count()
-              .catch(() => 0),
-            card.locator('.cluster button').count().catch(() => 0),
-          ]);
-          return rows > 0 || action > 0;
-        };
         const backCount = await back.count().catch(() => 0);
         backAction = {
           present: backCount > 0 ? true : (await panelStillUp()) ? false : null,

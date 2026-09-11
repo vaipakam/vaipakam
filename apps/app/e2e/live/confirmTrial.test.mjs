@@ -73,7 +73,14 @@ describe('the trial click is aimed at the control it reported on', () => {
     const block = src.slice(at(TRIAL_GATE), trialCall());
     expect(block.length, 'the slice must not be empty').toBeGreaterThan(0);
     expect(block).toContain('labelNow');
-    expect(block).toContain('labelNow === confirmAction.label');
+    // ROUND 76 P2 — either polarity. The guard became an early `!==`
+    // return when the trial gained a panel-presence recheck; what this
+    // pins is that the re-read label is COMPARED before the trial, not
+    // which way round the comparison is written.
+    expect(
+      /labelNow\s*[!=]==\s*confirmAction\.label/.test(block),
+      'the re-read label must be compared with the snapshot label',
+    ).toBe(true);
   });
 
   it('records the label in the snapshot the comparison reads', () => {

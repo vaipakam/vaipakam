@@ -180,6 +180,15 @@ on a pre-signature panel whose whole purpose is to let the lender decide
 not to spend money, and a Back button that cannot be activated leaves
 leaving the page as the only way out.
 
+Telling those two buttons apart used to mean reading their labels — the
+fee-paying one was "the button not labelled Back". That ties the check to
+the wording, which breaks in any of the nine translated bundles and can
+misfire in English on a confirm label that happens to contain the word.
+The confirmation panel now marks both controls in its markup, so the
+check identifies them by what they are rather than by what they say. This
+is the one change here that touches the product rather than the checking,
+and it changes nothing a user sees.
+
 Two statements about the same fact are compared where the card makes
 them. The heading and the explanation are chosen independently, so a card
 could be headed "this loan is overdue" above a body saying the borrower
