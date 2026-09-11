@@ -82,7 +82,10 @@ No behaviour change. The check's logic is what it was.
   the shell in question resolves it, so the deployment's directory reads as
   unknown; a binding closed with that shell's ordinary statement terminator is
   not recognised at all, with the same consequence; and a helper whose file name
-  carries an upper-case extension is never opened at all — pinned three times,
+  carries an upper-case extension is never FOUND by the sweep that discovers
+  files to read — though one explicitly named by a file already being read is
+  still opened, so the bypass is in the discovery and not in the reading —
+  pinned three times,
   for two command-shell families and a POSIX one, because the gate that skips
   them is shared and a fix scoped to one family would satisfy a single
   fixture while leaving every other family bypassed.
@@ -103,9 +106,12 @@ No behaviour change. The check's logic is what it was.
 - Two tests pinning that a bare command line and an inline command span in a
   document **are** read as commands — the two shapes that defeated the withdrawn
   designs, so a future attempt cannot quietly reintroduce the erasure.
-- A control beside almost every pinned defect, differing from it by the single
+- A control beside every pinned defect but one, differing from it by the single
   character or spelling at issue, so it cannot pass for an unrelated reason.
-  One pinned report has NO such control and says so in place of claiming one:
+  A second report was uncontrolled until review found it, and the record had
+  claimed there was only one; that one now has a companion differing by a
+  single verb. The remaining one has NO such control and says so in place of
+  claiming one:
   for it, the already-normalised spelling is understood without the rewrite
   and so reports too, meaning no single-character sibling distinguishes them;
   its coupling rests on a deliberate mutation of the rewrite instead, and a
@@ -163,7 +169,7 @@ not its siblings. One record per defect, named from the others.
 | **#2116** | a manifest script that invokes a sibling does not see that sibling's config write |
 | **#2121** | a script declared in a package manifest is never split at its newlines, so a safety flag on one line covers a deployment on another — *pinned (silent pass)*; the mirror of #2118 |
 | **#2122** | a variable whose name differs only in case is not resolved, though that shell resolves it, so the deployment's directory reads as unknown — *pinned (silent pass)* |
-| **#2123** | a helper whose file name carries an upper-case extension is never opened at all — *pinned (silent pass)*, and the broadest of the three, since no later rule can compensate for a file that was never read |
+| **#2123** | a helper whose file name carries an upper-case extension is never found by the sweep that discovers files to read — *pinned (silent pass)*, and the broadest of the three, since no later rule can compensate for a file that was never read |
 | **#2124** | a binding closed with that shell's ordinary statement terminator is not recognised, so the deployment's directory reads as unknown — *pinned (silent pass)* |
 | **#2126** | the command-name normalisation for one platform's shells is chosen by the interpreter rather than the platform, so it also applies where that platform's rules do not hold and reports a program that does not exist there — *pinned (false report)*. The check's own comment states this must not happen. A companion claim about the path-separator normalisation was withdrawn: that rewrite matches how the shell itself reads paths on every platform, so the report it produces is correct |
 | **#2085** | whether this detection should be a declaration rather than an inference — the three withdrawals are the strongest evidence yet that it should |

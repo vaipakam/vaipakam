@@ -12042,6 +12042,27 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     expect(r.ok).toBe(false);
   });
 
+  it('the same runbook whose sentence names a READ passes (#2112 control)', () => {
+    // THE CONTROL #2112 LACKED (r36). Byte-identical but for the verb: the
+    // sentence names a read rather than a write, and the deployment is the
+    // same safe one. It passes, so the report above is caused by the
+    // write-shaped prose and not by anything else in the file.
+    //
+    // Without this, the pin could have been satisfied by an unrelated report
+    // on the deployment itself — which is exactly the failure mode a control
+    // exists to exclude, and the record had claimed only ONE pinned report
+    // was uncontrolled when there were two.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'docs/rb-prose.md',
+      '# Runbook\n\nBefore deploying, the release tool calls\n' +
+        'readFileSync("configs/custom.jsonc", generated) for you.\n\n' +
+        '```bash\nwrangler deploy --config configs/custom.jsonc\n```\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
   it('a settable recipe prefix is NOT followed (#2114, stated miss)', () => {
     // A STATED MISS, and the verdict depends on RECIPE MEMBERSHIP ALONE.
     //
