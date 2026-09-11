@@ -214,11 +214,39 @@ jobs:
           # this job fails, the log should say whether it ran out of
           # points or hit something else. `rate_limit` is REST and is not
           # itself metered.
+          #
+          # THE PREFLIGHT ALONE DID NOT MEET THAT INTENT, so the failure
+          # branch below exists (#2129). Four consecutive scheduled runs
+          # died here reporting exactly two things: `5000` points remaining
+          # and `unknown owner type`. That pair says neither "out of points"
+          # nor what else it hit — the number looks healthy and the message
+          # names no cause — and two different explanations were argued from
+          # it and withdrawn before the run that settled anything.
+          #
+          # The reading is taken BEFORE the call and covers ONE resource, so
+          # it cannot speak for the moment of failure and cannot see a limit
+          # binding anywhere else. Both gaps are closed where it matters:
+          # on failure, re-read the whole table.
           remaining=$(gh api rate_limit --jq '.resources.graphql.remaining')
           echo "GraphQL points remaining: $remaining"
 
-          gh project item-list "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" \
-            --format json --limit "$LIST_LIMIT" > board.json
+          if ! gh project item-list "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" \
+                 --format json --limit "$LIST_LIMIT" > board.json 2> list-err.txt; then
+            echo "::group::gh project item-list — stderr"
+            cat list-err.txt || true
+            echo "::endgroup::"
+            # EVERY resource, read AFTER the failure. `unknown owner type` is
+            # what gh prints when it cannot classify the owner as a user or an
+            # organisation, which a refused lookup and a token that may not
+            # carry project scope both produce. The two need opposite
+            # responses — wait, or fix the secret — and nothing in the old log
+            # told them apart.
+            echo "::group::rate_limit at the moment of failure (all resources)"
+            gh api rate_limit || echo "(rate_limit itself failed)"
+            echo "::endgroup::"
+            echo "::error::listing the board failed — see the stderr and rate_limit groups above"
+            exit 1
+          fi
           items=$(jq '.items | length' board.json)
           total=$(jq '.totalCount // (.items | length)' board.json)
           echo "board items: $items (totalCount $total)"
