@@ -159,19 +159,35 @@ other.
 | **Command-name casing** | how the RUNNER resolves command names — case-sensitively or not | the platform family |
 | **Variable-name binding** | the SHELL LANGUAGE; PowerShell binds case-insensitively on every platform it runs on | the runner at all |
 
-For casing, the verified case is a runner with **case-sensitive** lookup, which
-is what the fixtures' `ubuntu-latest` provides. A host resolving
-case-insensitively maps both spellings to one program, and there the *missed*
-spelling is a genuine unsafe deployment. **Other resolution modes are open, not
-decided** — an implementation must establish which applies rather than infer it
-from the platform, and a correction keyed on "not Windows" would convert a
-false report into a silent pass.
+For casing, the case the fixtures cover is a runner with **case-sensitive**
+lookup. **What the fixtures establish is only the check's verdict on that
+input** — they name `ubuntu-latest` in their YAML, and the harness scans that
+YAML without ever provisioning a runner or resolving an executable. That the
+image in question resolves command names case-sensitively is a property of the
+runner image rather than anything this suite demonstrates, and it is stated
+here as an external fact so it is not mistaken for a tested one. Anyone
+depending on it should confirm it against the runner documentation for the
+image they actually target.
+
+A host resolving case-insensitively maps both spellings to one program, and
+there the *missed* spelling is a genuine unsafe deployment. **Other resolution
+modes are open, not decided** — an implementation must establish which applies
+rather than infer it from the platform, and a correction keyed on "not Windows"
+would convert a false report into a silent pass.
 
 Where the mode cannot be determined — an unresolvable or matrix-selected
-runner — the two directions genuinely conflict: reporting risks naming a
-command that does not exist, and not reporting risks the silent pass. **That
-choice is deliberately not made here.** It needs evidence about how often each
-shape occurs, which nobody has gathered.
+runner — the two directions conflict: reporting risks naming a command that
+does not exist, and not reporting risks the silent pass.
+
+**That conflict is now RESOLVED, and the specification is where it was
+resolved**, so this record no longer describes the choice as open. The answer
+is neither of the two bad directions: the check should stop relying on the
+normalisation for that deployment and judge the command **on its own terms**,
+exactly as it already does for a configuration whose contents cannot be
+trusted. The deployment must then be safe whatever it targets. That removes the
+dependence on the unknown instead of choosing which way to be wrong, and it is
+the same move #2085 argues for generally — a declaration rather than an
+inference.
 
 ### The path-separator rewrite: what is settled and what is not
 

@@ -12716,9 +12716,15 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
   // not reported either, so the pin would be vacuous and the control would
   // fail.
   //
-  // THE MODULE SPLIT IS NOT PEDANTRY (r50). A `require` call is a syntax
-  // error under ESM, so a `.mjs` or `.mts` helper written that way throws
-  // before it can spawn anything — and `apps/agent` really does declare
+  // THE MODULE SPLIT IS NOT PEDANTRY (r50). A `require` call under ESM is a
+  // RUNTIME BINDING FAILURE, not a syntax error — the module parses, then
+  // throws `ReferenceError: require is not defined in ES module scope` the
+  // moment that line runs. The distinction matters precisely here (r52):
+  // `node --check` PASSES on such a file, so parse-validation would have
+  // "confirmed" a helper that cannot deploy, which is the same
+  // right-verdict-impossible-premise trap this split exists to close. Either
+  // way a `.mjs` or `.mts` helper written that way throws before it can spawn
+  // anything — and `apps/agent` really does declare
   // `"type": "module"`, which makes a plain `.js` helper there ESM too. The
   // scanner never executes the fixture, so the verdicts would have been
   // identical either way; what would have been wrong is the CLAIM. A pin
@@ -12802,9 +12808,26 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     // Load-bearing beyond the usual control role: it is what proves each pin
     // above fails for the EXTENSION and not for an unrecognised body — which
     // is only true while each iteration runs ALONE. See `runFamilyAlone`.
+    //
+    // `ok: false` ALONE IS NOT ENOUGH HERE (r52). `runWith` maps EVERY
+    // `execFileSync` failure to `ok: false`, so a guard that CRASHED or timed
+    // out on one family would satisfy a bare `toBe(false)` — and the
+    // upper-case sibling could not catch it either, since its file is skipped
+    // before any family-specific processing could throw. Both tests would
+    // stay green while a lower-case helper broke the guard rather than being
+    // reported, which is the opposite of what this control claims to show.
+    //
+    // So it asserts the REPORT ITSELF: the violation banner, and the file at
+    // the line the deploy sits on. A crash produces neither.
     for (const [ext, body] of WALK_HELPER_FAMILIES) {
       const r = runFamilyAlone(`apps/agent/d.${ext}`, body);
       expect(r.ok, `.${ext} should be scanned and reported`).toBe(false);
+      expect(r.out, `.${ext} should produce a violation report`).toContain(
+        'missing --keep-vars',
+      );
+      expect(r.out, `.${ext} should name the offending helper`).toContain(
+        `apps/agent/d.${ext}`,
+      );
     }
   });
 
