@@ -12640,17 +12640,23 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
   });
 
   it('the separator rewrite also changes a verdict (#2115, stated false report)', () => {
-    // THE CASING RULE IS NOT THE ONLY ONE THAT ERRS BOTH WAYS, which the
-    // record claimed until r23. Nothing in this file deploys anything — the
-    // here-string is inert data — but the separator rewrite turns
-    // `apps\agent` into a path the reader understands, the modelled directory
-    // carries into the deploy below, and the file is reported.
+    // WHAT THIS PINS IS ONE FALSE REPORT, and nothing more. Nothing in this
+    // file deploys anything — the here-string is inert data — but the
+    // separator rewrite turns `apps\agent` into a path the reader
+    // understands, the modelled directory carries into the deploy below, and
+    // the file is reported. Verified as a mutant: disabling ONLY the
+    // separator replacement makes this same file pass, so the report is
+    // coupled to that rewrite.
     //
-    // Verified as a mutant: disabling ONLY the separator replacement makes
-    // this same file pass. So this rewrite is the difference between a report
-    // and no report, not merely between two spellings of one — a stronger
-    // effect than the casing rule's, which only widens which spellings reach
-    // an already-fallible reading.
+    // IT DOES NOT SHOW THE SEPARATOR RULE ERRING IN BOTH DIRECTIONS, which
+    // this comment claimed until r37 and the spec until r36. No
+    // separator-caused MISS is demonstrated anywhere, and the claim that the
+    // rewrite misattributes a directory was withdrawn in r35 — that shell
+    // reads either separator the same way on every platform. A future fix
+    // must not read this fixture as licence to remove the normalisation: the
+    // report here comes from the missing model of that shell's quoting, which
+    // reports the already-normalised spelling in the same position with no
+    // rewrite involved at all.
     //
     // THIS PIN HAS NO SIBLING CONTROL, deliberately, and the release note
     // says so rather than claiming one (r26). A control would have to hold
