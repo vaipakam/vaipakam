@@ -2266,3 +2266,45 @@ describe('round 35 review findings', () => {
     });
   });
 });
+
+describe('round 35 self-review: the currency test reaches past punctuation', () => {
+  // Found by PROBING the `\p{Sc}` widening's edges rather than by
+  // reading it, and it turned out the sign set was only half of why
+  // `Loan 100 ₽` escaped. The other half was a two-character window, so
+  // anything between the figure and its sign — a second space, a
+  // bracket, a colon — put the sign out of reach, and the figure then
+  // left through the IDENTIFIER exemption as a loan number.
+  //
+  // Round 11 fixed exactly this for TICKERS and named
+  // `Loan 100: USDC principal` in its comment. The currency branch was
+  // left on the old window; these are the same sentences with a sign.
+  it('flags a figure whose sign is a space, a bracket or a colon away', () => {
+    expect(monetaryAmountsIn('Loan 100  ₽')).toHaveLength(1);
+    expect(monetaryAmountsIn('Loan 100  $')).toHaveLength(1);
+    expect(monetaryAmountsIn('Loan 100 ($)')).toHaveLength(1);
+    expect(monetaryAmountsIn('Loan 100: ₽')).toHaveLength(1);
+  });
+
+  it('reads a sign BEFORE the figure past the same separators', () => {
+    expect(monetaryAmountsIn('₽ 100')).toHaveLength(1);
+    expect(monetaryAmountsIn('(₽) 100')).toHaveLength(1);
+  });
+
+  // THE REASON THIS IS A SEPARATOR RUN AND NOT `hasTickerNear`'s CLAUSE
+  // SCAN, pinned so nobody "unifies" the two later. `hugsCurrency`
+  // short-circuits to a HIT above the duration check, so admitting a
+  // sign anywhere in the clause would report the `3` here — a false FAIL
+  // on the grace window the card is explicitly allowed to show, which is
+  // the direction that gets a check switched off.
+  it('does NOT let an unrelated sign later in the sentence cancel a duration', () => {
+    expect(monetaryAmountsIn('Wait 3 days and fees are paid in $')).toEqual([]);
+  });
+
+  it('leaves every other exemption intact', () => {
+    expect(monetaryAmountsIn('The grace period is 3 days.')).toEqual([]);
+    expect(monetaryAmountsIn('Closing out Loan 21 now.')).toEqual([]);
+    expect(monetaryAmountsIn('A 2% treasury share is deducted.')).toEqual([]);
+    expect(monetaryAmountsIn('Settles within 5 blocks.')).toEqual([]);
+    expect(monetaryAmountsIn('Loan 100 is overdue.')).toEqual([]);
+  });
+});

@@ -339,8 +339,34 @@ export function monetaryAmountsIn(text) {
     // exemptions consult the trailing symbol, and this widens what
     // counts as reaching it.
     const trailingTicker = hasTickerNear(after);
-    const hugsCurrency =
-      CURRENCY_MARK.test(before.slice(-2)) || CURRENCY_MARK.test(after.slice(0, 2));
+    // ROUND 35, SELF-REVIEW — LOOK PAST PUNCTUATION HERE TOO.
+    //
+    // Found while verifying the `\p{Sc}` widening above, by probing its
+    // edges rather than by reading: the sign set was only half of why
+    // `Loan 100 ₽` escaped. The other half is that this test read a
+    // TWO-CHARACTER window, so the sign had to be immediately adjacent.
+    // `Loan 100  ₽` (two spaces), `Loan 100 ($)` and `Loan 100: ₽` all
+    // still returned clean after the widening — and, as above, not
+    // merely unflagged: `hugsCurrency` guards the identifier exemption,
+    // so each was read as a loan NUMBER.
+    //
+    // This is round 11's finding one branch over. That round taught the
+    // TICKER lookahead to see past a bracket or a colon — its comment
+    // names `Loan 100: USDC principal` specifically — and left the
+    // currency test on its original window. Two exemptions asking the
+    // same question again needed the same answer.
+    //
+    // Deliberately NOT `hasTickerNear`'s clause scan. A ticker anywhere
+    // in the clause is evidence, but a currency sign later in the same
+    // sentence is not: `hugsCurrency` short-circuits to a HIT above the
+    // duration check, so scanning a whole clause would make
+    // `3 days and fees in $` report the `3` — a false FAIL on the grace
+    // window this card is explicitly allowed to show. Only SEPARATORS
+    // may intervene; no word may.
+    const SEP = '[\\s(\\[{:«»"\'‘’“”)\\]}-]*';
+    const currencyAfter = new RegExp(`^${SEP}\\p{Sc}`, 'u');
+    const currencyBefore = new RegExp(`\\p{Sc}${SEP}$`, 'u');
+    const hugsCurrency = currencyBefore.test(before) || currencyAfter.test(after);
 
     // An IDENTIFIER, never an amount — UNLESS a symbol follows it.
     //
