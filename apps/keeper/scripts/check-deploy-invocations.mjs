@@ -8970,6 +8970,22 @@ for (const file of walk(REPO_ROOT)) {
   //     `buf.endsWith('\\')`, so the defect is LF-only. Both limits matter for
   //     the blast radius of a fix, not just for accuracy here.
   //
+  //     NOR "everything read AS A SHELL" (r23) — and that phrasing was wrong
+  //     in the DANGEROUS direction. A manifest script value is shell text by
+  //     every test this reader applies, and `jsonValueLines` appends it
+  //     WITHOUT `logicalLines`, so it is never split at newlines either. A
+  //     decoded `"echo --keep-vars\nwrangler deploy"` is two commands to the
+  //     package manager and one here, so the flag on the first line blesses
+  //     the deploy on the second: exit 0, where the same value with `hello`
+  //     in place of the flag exits 1 (#2121, a false green on main too).
+  //
+  //     SO THE REAL SHAPE IS ONE DEFECT SEEN FROM TWO SIDES: line splitting
+  //     is a property of the READER a body passes through, not of the body.
+  //     #2118 joins lines that should stay apart; #2121 never separates lines
+  //     that were always apart. A fix that gives each body the splitting its
+  //     own language defines settles both; fixing either alone leaves the
+  //     other, and leaves this note wrong again.
+  //
   //     THE PWSH REWRITE IS NOT PURELY SEMANTICS-PRESERVING, and an earlier
   //     version of this note claimed it was. It has no string state, so an
   //     assignment inside a here-string is rewritten as if it ran — which can
@@ -9274,9 +9290,16 @@ for (const file of walk(REPO_ROOT)) {
     // BEFORE a continued deploy read as after it and the rewrite was blessed
     // (r27). Entries from the readers that do not fold carry no `folds` and
     // are unaffected.
-    // Positions are taken in `text`, the same text the write scan reads, so
-    // both ends of the ordering comparison are measured in one coordinate
-    // system. That is the whole requirement, and it is why the LATER TWO #2084
+    // Both ends of the ordering comparison are measured in ONE coordinate
+    // system. That is the whole requirement — and stating it as "positions are
+    // taken in `text`" was too strong (r23), because it excludes the
+    // value-scoped path documented at the call site: for an entry from
+    // `jsonValueLines`, `rewriteCtx` measures both ends against the extracted
+    // VALUE instead, which is a different space that agrees with itself. The
+    // invariant is the agreement, not the choice of space, and writing it the
+    // other way would point a future transformation at preserving raw-file
+    // lines where a local mapping is what is actually used. It is why the
+    // LATER TWO #2084
     // transformations — Make expansion and Markdown blanking — had to preserve
     // line count while they existed. The first, the collected executable image,
     // did not: it translated coordinates through `containerImage.at(...)`

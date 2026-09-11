@@ -64,20 +64,30 @@ No behaviour change. The check's logic is what it was.
 - The reasoning above, recorded beside the code that would have to change, in
   the functional specification, and here — so the next person does not rebuild
   one of these designs without knowing what happened to it.
-- Tests that **assert eight current wrong verdicts across six defects**, so a
-  later fix fails them and comes back to the question rather than passing
-  silently. Four assert a **silent pass**: a build file variable holding a write
-  is not seen when its assignment sits below the deployment; a recipe marked by
-  something other than a tab is not read as a recipe; and — once per Windows
-  shell, since the two are separate branches and a fix aimed at one would leave
-  the other live — a helper whose deployment follows an unrelated line ending in
-  a backslash is read as one command, so a safety flag belonging to the earlier
-  line is taken to cover the deployment. Four fail the other way and assert the
-  **report**: a runbook sentence naming a write reports the deployment below it;
-  a package manifest whose description merely names the command is reported as
-  performing it, and so is an unrelated data file of the same format; and a
-  command named inside a block the shell never executes is reported, which is
-  what the casing normalisation costs.
+- Tests that **assert thirteen current wrong verdicts across nine defects**, so
+  a later fix fails them and comes back to the question rather than passing
+  silently.
+
+  **Seven assert a silent pass** — the direction this check must never fail in:
+  a build file variable holding a write is not seen when its assignment sits
+  below the deployment; a recipe marked by something other than a tab is not
+  read as a recipe; a helper whose deployment follows an unrelated line ending
+  in a backslash is read as one command, so a safety flag belonging to the
+  earlier line covers the deployment (pinned once per Windows shell, since the
+  two are separate branches); a script declared in a package manifest is never
+  split at its newlines, so a flag on one of its lines covers a deployment on
+  another; a variable whose name differs only in case is not resolved, though
+  the shell in question resolves it, so the deployment's directory reads as
+  unknown; and a helper whose file name carries an upper-case extension is
+  never opened at all.
+
+  **Six fail the other way and assert the report**: a runbook sentence naming a
+  write reports the deployment below it; a package manifest whose description
+  merely names the command is reported as performing it, as is an unrelated
+  data file of the same format, and as is a list of keywords once the file is
+  written across several lines; and a command named inside a block the shell
+  never executes is reported — which is what the two Windows normalisations
+  cost, pinned once for each.
 - Two tests pinning that a bare command line and an inline command span in a
   document **are** read as commands — the two shapes that defeated the withdrawn
   designs, so a future attempt cannot quietly reintroduce the erasure.
@@ -93,12 +103,18 @@ No behaviour change. The check's logic is what it was.
 ### What is deferred
 
 Every symptom this work set out to fix, plus the limitations found while proving
-them — including five defects surfaced while correcting this record itself,
-three of them silent passes and two false reports —
-is recorded as its own issue with a reproduction and what a fix would have
-to be true of. All are behaviour the check already had, so nothing is made
-worse. Six are additionally pinned by tests that assert the current verdict —
-eight such tests in all, four asserting a silent pass and four a false report:
+them — including **eight defects surfaced while correcting this record
+itself**, six of them silent passes and two false reports — is recorded as its
+own issue with a reproduction and what a fix would have to be true of. All are
+behaviour the check already had, so nothing is made worse. Nine are
+additionally pinned by tests that assert the current verdict — thirteen such
+tests in all, seven asserting a silent pass and six a false report.
+
+That the correcting itself surfaced more defects than the original work is the
+most useful thing here, and it is not an accident of effort: each correction
+had to be REPRODUCED before it could be written down, and reproducing a claim
+is what finds the case the claim gets wrong. Three of the eight were found by
+disproving sentences this very document had asserted.
 
 | | |
 | --- | --- |
@@ -115,6 +131,9 @@ eight such tests in all, four asserting a silent pass and four a false report:
 | **#2115** | a Windows helper spelling the command in upper or mixed case is not seen (lowercase and title case are) — and the spelling that IS covered is matched inside a block the shell never executes, *pinned (false report)* as the trade any widening of that rule grows |
 | **#2117** | the PowerShell assignment rewrite has no string state, so an assignment inside a here-string can invent a deployment |
 | **#2116** | a manifest script that invokes a sibling does not see that sibling's config write |
+| **#2121** | a script declared in a package manifest is never split at its newlines, so a safety flag on one line covers a deployment on another — *pinned (silent pass)*; the mirror of #2118, and the same root: line splitting belongs to the reader a body passes through, not to the body |
+| **#2122** | a variable whose name differs only in case is not resolved, though that shell resolves it, so the deployment's directory reads as unknown — *pinned (silent pass)* |
+| **#2123** | a helper whose file name carries an upper-case extension is never opened at all — *pinned (silent pass)*, and the broadest of the three, since no later rule can compensate for a file that was never read |
 | **#2085** | whether this detection should be a declaration rather than an inference — the three withdrawals are the strongest evidence yet that it should |
 
 This PR closes none of them.
