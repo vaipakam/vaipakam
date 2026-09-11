@@ -121,3 +121,68 @@ test('both copies of the drive visibility predicate agree, and reject clipped co
     expect(result.scrolledOut, `copy ${i}: scrolled out of a scroller`).toBe(true);
   }
 });
+
+/** #2093 round 33 P2 — the interaction target and the judged card.
+ *
+ *  The drive scrapes whichever card its own `visible()` predicate picks
+ *  and then CLICKS through a Playwright locator. Those are two different
+ *  definitions of visible: `:visible` is a non-empty box plus a computed
+ *  `visibility`, and it does not consider opacity at all, while the
+ *  predicate above rejects ancestor opacity because round 22 established
+ *  that a transparent card is one the lender cannot see.
+ *
+ *  So a transparent card ahead of the real one splits the two halves: the
+ *  copy, the submit state and the duplicate count describe the genuine
+ *  card while the click, the Back wait and the receipt scan land on the
+ *  transparent one — a healthy card reported incomplete.
+ *
+ *  This runs in a real engine for the same reason the case above does: a
+ *  unit test cannot tell you what Playwright's `:visible` resolves to, and
+ *  that resolution IS the finding. The disagreement is asserted directly
+ *  rather than assumed, so if Playwright ever changes what `:visible`
+ *  means, this says so instead of silently vouching for a fix aimed at a
+ *  problem that no longer exists.
+ */
+test('the drive addresses the card its own predicate judged, not Playwright’s', async ({
+  page,
+}) => {
+  const src = fs.readFileSync(DRIVE, 'utf8');
+  const clipSrc = arrowBlocks(src, 'notClipped')[0];
+  const visSrc = arrowBlocks(src, 'visible')[0];
+
+  await page.setContent(`
+    <div style="opacity:0">
+      <div data-testid="forced-close-card" id="ghost">the transparent one</div>
+    </div>
+    <div data-testid="forced-close-card" id="real">the card the lender sees</div>
+  `);
+
+  const cards = page.getByTestId('forced-close-card');
+  await expect(cards).toHaveCount(2);
+
+  // The mismatch itself. If this ever stops being true the fix below is
+  // no longer needed, and a reader should be told that rather than left
+  // with a workaround whose reason has evaporated.
+  const playwrightPick = await page
+    .locator('[data-testid="forced-close-card"]:visible')
+    .first()
+    .getAttribute('id');
+  expect(playwrightPick, 'Playwright `:visible` ignores ancestor opacity').toBe('ghost');
+
+  // What the DOM pass actually chooses, and the index it now reports so
+  // the interaction can address the same element.
+  const chosenIndex = await page.evaluate(
+    ([clip, vis]) => {
+      const visible = new Function(`${clip}\n${vis}\nreturn visible;`)() as (
+        n: Element | null,
+      ) => boolean;
+      const all = [...document.querySelectorAll('[data-testid="forced-close-card"]')];
+      const shown = all.filter(visible);
+      return all.indexOf(shown[0]);
+    },
+    [clipSrc, visSrc] as const,
+  );
+
+  expect(chosenIndex, 'the predicate skips the transparent card').toBe(1);
+  await expect(cards.nth(chosenIndex)).toHaveAttribute('id', 'real');
+});

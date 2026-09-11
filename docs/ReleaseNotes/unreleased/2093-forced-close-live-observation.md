@@ -68,3 +68,52 @@ flagged-lender case, the one the spec deliberately requires the card to
 survive, are both uncovered. The run prints a note naming whichever gap
 the chain actually exhibits on the day, and a follow-up tracks widening
 the pool.
+
+A late round of review found five ways the drive could reach a confident
+verdict about something other than what it had looked at, and the theme
+running through four of them is the same: it judged one thing and then
+acted on another.
+
+The clearest was the amount rule, which is the one absolute claim this
+check makes — nothing on that surface states a figure it cannot
+substantiate. That rule was only being applied to cards that were still
+on screen when the drive stopped watching. A card that named a figure
+while its readiness checks were still running, on a position that then
+went terminal, changed hands, or picked up an accepted sale, had the
+observation thrown away on the way out; and if the sale explained the
+card's disappearance, the run went on to report that there had been
+nothing to see. A figure a lender was shown is a finding whether or not
+the card outlived it, so the evidence is now kept and reported on both
+paths. Relatedly, a card that vanished mid-check used to be recorded as
+still present, which sent an ordinary lifecycle race out as a reported
+defect and skipped the re-read that exists to tell the two apart.
+
+The drive also read one card and clicked another. It picks the card a
+lender can actually see — which includes rejecting a card rendered fully
+transparent — but the click, the confirmation wait and the receipt scan
+were addressed through a different rule that does not consider
+transparency at all. A transparent card sitting ahead of the real one
+therefore had its copy judged from one element and its behaviour driven
+from another, and a healthy card came back as unreadable. Both halves now
+resolve the same card.
+
+Two checks were being satisfied by the first thing that matched. The
+card's explanatory body is meant to be in exactly one state, and the
+drive accepted any one match, so a body carrying two states at once —
+telling a lender both that they recover the collateral and that they
+recover the asset they lent — would have passed. It is now a failure,
+which is only safe because no shipped sentence contains another in any
+translation, and that is checked directly rather than assumed. And a
+chain read that failed because the drive itself had asked wrongly was
+being filed as the chain being unavailable, since the two arrive wearing
+the same label; a self-inflicted error now says so instead of leaving the
+position quietly ranked as fine.
+
+Finally, the safeguard that stops a missing card being blamed on the
+product depends on watching what block the page says it is on. The page
+usually announces this by asking for the latest block rather than for its
+number, and only the second form was being read — so on the pages that
+matter the safeguard was not merely weaker, it was inert. Both forms now
+count, and only the current block does: an older one is not the page's
+position and a not-yet-mined one would overstate it, which is the
+direction that produces false accusations.

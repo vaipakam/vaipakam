@@ -880,13 +880,34 @@ describe('the calibration covers EVERY shipped locale, not only English', () => 
 
   it('scans every translated forced-close string for an amount', () => {
     let checked = 0;
+    // ROUND 33 P2 — PER BUNDLE, not one pooled total.
+    //
+    // A single `checked > 30` floor is cleared by the English bundle
+    // alone, so nine of the ten shipped translations could have dropped
+    // out of this loop — a key renamed, a file emptied during a merge —
+    // and the case would still have passed while covering exactly the one
+    // locale the drive already runs. That is the same vacuous-loop shape
+    // this file guards against two cases up, one level out: the guard was
+    // on the aggregate rather than on each member of it.
+    //
+    // The finding that prompted this asserted the calibration was
+    // English-only. It is not, and has not been since round 11 — but the
+    // floor was weak enough that it could have BECOME English-only
+    // without failing, which is the defensible half of the concern.
+    const perBundle = new Map();
     for (const [file, fc] of bundles) {
+      let here = 0;
       for (const [key, value] of walk(fc, 'forcedClose')) {
         expect(monetaryAmountsIn(value), `${file} ${key}: ${value}`).toEqual([]);
+        here += 1;
         checked += 1;
       }
+      perBundle.set(file, here);
     }
-    expect(checked).toBeGreaterThan(30);
+    for (const [file, here] of perBundle) {
+      expect(here, `${file} contributed only ${here} strings`).toBeGreaterThanOrEqual(30);
+    }
+    expect(checked).toBeGreaterThan(30 * bundles.length);
   });
 });
 
@@ -1864,5 +1885,228 @@ describe('round 31 review findings', () => {
       forcedCloseVerdict({ ...held, seenTexts: 'You receive 1 USDC' }, copy)
         .verdict,
     ).toBe('pass');
+  });
+});
+
+describe('round 33 review findings', () => {
+  const LOCALES_DIR = path.join(
+    path.dirname(fileURLToPath(import.meta.url)),
+    '../../src/i18n/locales',
+  );
+
+  const copy = {
+    unknownCopy: FORCED_CLOSE.unknown,
+    readyCopy: [FORCED_CLOSE.readyInKind, FORCED_CLOSE.readyInternalMatch, FORCED_CLOSE.readyRental],
+    withheldCopy: [FORCED_CLOSE.unknown, FORCED_CLOSE.notYet, FORCED_CLOSE.readyNeedsRoute],
+    recognisedCopy: [
+      FORCED_CLOSE.unknown,
+      FORCED_CLOSE.notYet,
+      FORCED_CLOSE.blockedPaused,
+      FORCED_CLOSE.blockedSequencer,
+      FORCED_CLOSE.blockedNoConsent,
+      FORCED_CLOSE.readyInKind,
+      FORCED_CLOSE.readyInternalMatch,
+      FORCED_CLOSE.readyRental,
+      FORCED_CLOSE.readyNeedsRoute,
+    ],
+    receiptLead: FORCED_CLOSE.receipt.youReceive,
+  };
+
+  // ---- the amount scan no longer depends on the card surviving -------
+  describe('an amount seen mid-poll survives the card vanishing', () => {
+    // The drive polls a card until it settles, and both of that loop's
+    // early exits used to drop the accumulated renders. So a card that
+    // stated a figure while its readiness reads were outstanding, and
+    // then vanished, had the one piece of evidence this drive exists to
+    // collect thrown away — and if an accepted sale explained the
+    // disappearance, the verdict went on to report `inapplicable`.
+    const vanished = {
+      lenderHoldsActive: true,
+      mounted: false,
+      attached: false,
+      saleLocked: false,
+      settled: false,
+      text: null,
+      bodyText: null,
+      bodyPresent: undefined,
+      confirmText: null,
+      confirmExpected: false,
+      seenTexts: [`${FORCED_CLOSE.readyInKind} You will receive 1.5 WETH.`],
+    };
+
+    it('FAILS on the amount even though the card is gone', () => {
+      const v = forcedCloseVerdict(vanished, copy);
+      expect(v.verdict).toBe('fail');
+      expect(v.why).toMatch(/amount it cannot know/);
+      expect(v.amounts).toHaveLength(1);
+    });
+
+    // The case that made this a P2 rather than a tidy-up: eligibility
+    // legitimately explains an ABSENCE, and it was being allowed to
+    // suppress a POSITIVE observation as well. This file says at length
+    // that the two are different.
+    it('FAILS on the amount even when an accepted sale explains the absence', () => {
+      const v = forcedCloseVerdict({ ...vanished, saleLocked: true }, copy);
+      expect(v.verdict).toBe('fail');
+      expect(v.why).toMatch(/amount it cannot know/);
+    });
+
+    it('FAILS on the amount even on a position that is no longer the lender’s', () => {
+      const v = forcedCloseVerdict({ ...vanished, lenderHoldsActive: false }, copy);
+      expect(v.verdict).toBe('fail');
+    });
+
+    // And the scan must not have become a hair trigger: an unmounted
+    // record that saw nothing is still an ordinary absence question.
+    it('does not invent a finding from an unmounted record with no texts', () => {
+      const v = forcedCloseVerdict({ ...vanished, seenTexts: [] }, copy);
+      expect(v.verdict).toBe('fail');
+      expect(v.why).toMatch(/absent/);
+    });
+  });
+
+  // ---- a vanished card is classified as absence, not as incomplete ---
+  describe('a card that vanishes mid-poll reaches the eligibility rules', () => {
+    // It used to report `mounted: true, attached: true` for a DOM pass
+    // that found nothing, so the verdict took the mounted branch, hit
+    // `text: null`, and returned blocked/incomplete before eligibility
+    // was consulted at all — `forcedCloseCoverage` then exited 2 for a
+    // loan going terminal while the drive was looking.
+    const vanished = {
+      lenderHoldsActive: true,
+      mounted: false,
+      attached: false,
+      saleLocked: false,
+      settled: false,
+      text: null,
+      bodyText: null,
+      bodyPresent: undefined,
+      confirmText: null,
+      confirmExpected: false,
+      seenTexts: [],
+    };
+
+    it('reports an explained disappearance as INAPPLICABLE', () => {
+      const v = forcedCloseVerdict({ ...vanished, saleLocked: true }, copy);
+      expect(v.verdict).toBe('blocked');
+      expect(v.blockedKind).toBe('inapplicable');
+    });
+
+    it('still FAILS a confirmed absence on an eligible position', () => {
+      const v = forcedCloseVerdict(vanished, copy);
+      expect(v.verdict).toBe('fail');
+      expect(v.why).toMatch(/absent/);
+    });
+
+    // `attached` had to move with `mounted`, and this is why: section 3
+    // reads it, and `true` would have produced a confidently wrong
+    // sentence about a card that is not in the DOM at all.
+    it('does not describe the vanished card as present-but-hidden', () => {
+      const v = forcedCloseVerdict(vanished, copy);
+      expect(v.why).not.toMatch(/in the DOM/);
+    });
+
+    it('reports an unconfirmed absence as INCOMPLETE, not as a FAIL', () => {
+      const v = forcedCloseVerdict({ ...vanished, absenceUnconfirmed: true }, copy);
+      expect(v.verdict).toBe('blocked');
+      expect(v.blockedKind).toBe('incomplete');
+    });
+  });
+
+  // ---- two readiness states at once ---------------------------------
+  describe('the body states exactly one recognised readiness state', () => {
+    // A READY card with its action OFFERED. The first draft of these
+    // fixtures left the control disabled, and round 7's
+    // ready-without-action arm fired before any of this — a reminder that
+    // these records are only meaningful as whole states, not as the one
+    // field a case happens to be about.
+    const base = {
+      lenderHoldsActive: true,
+      mounted: true,
+      attached: true,
+      submitPresent: true,
+      submitVisible: true,
+      submitDisabled: false,
+      visibleSubmits: 1,
+      saleLocked: false,
+      settled: true,
+      bodyPresent: true,
+      confirmText: null,
+      confirmExpected: false,
+      visibleCards: 1,
+    };
+
+    it('PASSES a body in exactly one state', () => {
+      const v = forcedCloseVerdict(
+        { ...base, bodyText: FORCED_CLOSE.readyInKind, text: FORCED_CLOSE.readyInKind },
+        copy,
+      );
+      expect(v.verdict).toBe('pass');
+    });
+
+    // The nine states are alternatives — `ForcedCloseCard` maps one
+    // readiness to one body string — so two together is the surface
+    // telling a lender two different things about the same decision.
+    it('FAILS a body carrying two of them', () => {
+      const v = forcedCloseVerdict(
+        {
+          ...base,
+          bodyText: `${FORCED_CLOSE.readyInKind} ${FORCED_CLOSE.readyInternalMatch}`,
+          text: FORCED_CLOSE.readyInKind,
+        },
+        copy,
+      );
+      expect(v.verdict).toBe('fail');
+      expect(v.why).toMatch(/two different things|recognised readiness states at once/);
+    });
+
+    it('still reports UNRECOGNISED copy as a gap rather than a defect', () => {
+      const v = forcedCloseVerdict(
+        { ...base, bodyText: 'Something went wrong.', text: 'Something went wrong.' },
+        copy,
+      );
+      expect(v.verdict).toBe('blocked');
+      expect(v.blockedKind).toBe('incomplete');
+    });
+
+    // THE FALSE-FAIL GUARD, and the reason this arm is safe to make a
+    // FAIL at all. It can only misfire if one shipped state's sentence
+    // is a substring of another's, so that is pinned directly — in every
+    // translated bundle, not only in the one the drive happens to run.
+    it('no shipped readiness state contains another, in any locale', () => {
+      const STATES = [
+        'unknown',
+        'notYet',
+        'blockedPaused',
+        'blockedSequencer',
+        'blockedNoConsent',
+        'readyInKind',
+        'readyInternalMatch',
+        'readyRental',
+        'readyNeedsRoute',
+      ];
+      const bundles = fs
+        .readdirSync(LOCALES_DIR)
+        .filter((f) => f.endsWith('.json'))
+        .map((f) => [f, JSON.parse(fs.readFileSync(path.join(LOCALES_DIR, f), 'utf8'))])
+        .map(([f, json]) => [f, json?.copy?.forcedClose])
+        .filter(([, fc]) => fc && typeof fc === 'object');
+      expect(bundles.length).toBeGreaterThan(1);
+      let compared = 0;
+      for (const [file, fc] of bundles) {
+        for (const a of STATES) {
+          for (const b of STATES) {
+            if (a === b) continue;
+            const sa = fc[a];
+            const sb = fc[b];
+            if (typeof sa !== 'string' || typeof sb !== 'string' || !sa || !sb) continue;
+            expect(sb.includes(sa), `${file}: ${b} contains ${a}`).toBe(false);
+            compared += 1;
+          }
+        }
+      }
+      // Not vacuous: nine states, ordered pairs, across every bundle.
+      expect(compared).toBeGreaterThan(bundles.length * 50);
+    });
   });
 });

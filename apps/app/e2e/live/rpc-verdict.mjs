@@ -85,6 +85,86 @@ export function classifyRpcFailure(e) {
   return 'unreachable';
 }
 
+/**
+ * Is this failure the CHAIN failing to answer, rather than this file
+ * being wrong?
+ *
+ * ROUND 31 P2 — an ALLOWLIST, because the denylist I wrote last round
+ * was the same mistake this file argues against thirty lines further
+ * down. `classifyRpcFailure`'s note says it outright: a denylist has to
+ * enumerate every operational code a provider might return, and the ones
+ * it misses are waved through. My `err instanceof ReferenceError ||
+ * TypeError` had to enumerate every way this drive can be wrong about
+ * itself, and it missed most of them — a malformed `account` surfaces as
+ * `ContractFunctionExecutionError`, bad ABI arguments as
+ * `AbiEncodingLengthMismatchError`, and neither would have been
+ * reported. The inert-ordering failure could have recurred exactly as
+ * before, with the same silence.
+ *
+ * The chain is WALKED rather than the outer error inspected, because
+ * viem wraps: `simulateContract` reports a dead endpoint as a
+ * `ContractFunctionExecutionError` whose `cause` is the
+ * `HttpRequestError`. Testing only the outer name would classify every
+ * transport failure as a bug and make the drive throw on a flaky RPC,
+ * which is the opposite error and a far noisier one.
+ *
+ * An undecodable revert counts as transport on purpose. `saleLockedOn`
+ * resolves the reverts it recognises and rethrows only what it could not
+ * read, and "the EVM answered something I cannot parse" is a failure to
+ * determine, not a defect to report.
+ *
+ * ROUND 33 P2 — AND `classifyRpcFailure` OUTRANKS THE NAME WALK.
+ *
+ * `RpcRequestError` in the list below was quietly re-opening the
+ * laundering the list exists to close. viem builds the specific class
+ * from the JSON-RPC code and passes the generic `RpcRequestError` as its
+ * `cause`, so EVERY error REPLY carries that name somewhere in its chain
+ * — including the ones this drive causes by sending a malformed request.
+ * Walking for names therefore matched all of them, and a `-32602 invalid
+ * params` from a bad `account` or a wrong argument list was filed as the
+ * chain failing to answer. The probe then left the loan ranked usable and
+ * said nothing, which is the same silence that let two inert fixes ride
+ * for a round each.
+ *
+ * The fix is a PRECEDENCE rule over the EXISTING classifier, not a second
+ * list. `classifyRpcFailure` already decides this question, already reads
+ * the CODE off the chain rather than trusting a class name, and already
+ * carries the argued line about which codes count — including why
+ * `-32601` is NOT a client fault. Restating any of that here would have
+ * been a second copy to drift, which is the shape this PR has been caught
+ * on twice already.
+ *
+ * Only `'client-fault'` overrides. `'answered'` deliberately does not: an
+ * undecodable revert stays transport for the reason stated above.
+ */
+export const TRANSPORT_ERROR_NAMES = new Set([
+  'HttpRequestError',
+  'TimeoutError',
+  'WebSocketRequestError',
+  'SocketClosedError',
+  'LimitExceededRpcError',
+  'ResourceUnavailableRpcError',
+  'InternalRpcError',
+  'UnknownRpcError',
+  'RpcRequestError',
+]);
+
+export function isTransportFailure(err) {
+  // A DEFECTIVE REQUEST OUTRANKS EVERY TRANSPORT NAME IN THE CHAIN: the
+  // node answered, and what it answered is that this drive asked wrongly.
+  // Decided by the classifier above so there is one rule, one code set,
+  // and one place to argue about membership.
+  if (classifyRpcFailure(err) === 'client-fault') return false;
+  const seen = new Set();
+  let cur = err;
+  while (cur && typeof cur === 'object' && !seen.has(cur)) {
+    seen.add(cur);
+    if (typeof cur.name === 'string' && TRANSPORT_ERROR_NAMES.has(cur.name)) return true;
+    cur = cur.cause;
+  }
+  return false;
+}
+
 /** Parse, tolerating a Buffer, a string, or nothing at all. */
 function parseJson(body) {
   if (body === undefined || body === null) return undefined;
@@ -243,22 +323,59 @@ export function blockNumberFromRpcPair(requestBody, responseBody) {
     return null;
   }
   if (!calls) return null;
-  const wanted = new Set(
-    calls.filter((c) => c?.method === 'eth_blockNumber').map((c) => c?.id),
-  );
+  // ROUND 33 P2 — `eth_getBlockByNumber('latest')` ANNOUNCES A HEAD TOO,
+  // and reading only `eth_blockNumber` threw away the exact one the page
+  // had just been told.
+  //
+  // The app asks for the head as a BLOCK far more often than as a number:
+  // `getBlock({ blockTag: 'latest' })` appears throughout the position
+  // reads — `loanLive.ts`, `loanSalePending.ts`, and every flow that pins
+  // a write to a height — and viem sends each of those as
+  // `eth_getBlockByNumber`. On a page whose head arrives that way,
+  // `pageHeadOf` stayed at zero or at some older value, and the
+  // forced-close absence gate is built on it: at zero the confirmation
+  // never runs and a missing card is permanently `incomplete` — the new
+  // assertion disabled outright — while a stale value confirms against
+  // too low a bound and can blame the product for a card the page was
+  // right to have removed.
+  //
+  // ONLY `'latest'`. A historical `eth_getBlockByNumber('0x…')` returns a
+  // number that is not the head, and `'pending'` returns one ABOVE it for
+  // a block nobody has mined — recording either would overstate what the
+  // page announced, which on this gate is the direction that manufactures
+  // accusations. `'safe'` and `'finalized'` lag the head and are excluded
+  // for tidiness rather than safety.
+  const wantsHead = (c) =>
+    c?.method === 'eth_blockNumber' ||
+    (c?.method === 'eth_getBlockByNumber' &&
+      Array.isArray(c?.params) &&
+      c.params[0] === 'latest');
+  const wanted = new Set(calls.filter(wantsHead).map((c) => c?.id));
   if (wanted.size === 0) return null;
   const items = Array.isArray(responseBody) ? responseBody : [responseBody];
   // The degenerate case: one call asked, one answer came back. There is
   // nothing else the reply could be about, so an absent or rewritten id
   // is not a reason to discard it.
   const lone = calls.length === 1 && items.length === 1;
+  // A height can arrive as the whole result (`eth_blockNumber`) or as the
+  // `number` field of a block header. Nothing else on a header is read —
+  // guessing at another field is how a log count gets recorded as a block
+  // number, which `blockNumberFromWsFrame` already says at length.
+  const heightOf = (result) => {
+    if (typeof result === 'string') return result;
+    if (result && typeof result === 'object' && typeof result.number === 'string') {
+      return result.number;
+    }
+    return null; // an error member, a null block, or a shape not read here
+  };
   let best = null;
   for (const item of items) {
     if (!lone && !wanted.has(item?.id)) continue;
-    if (typeof item?.result !== 'string') continue; // an error member, or absent
+    const raw = heightOf(item?.result);
+    if (raw === null) continue;
     let seen;
     try {
-      seen = BigInt(item.result);
+      seen = BigInt(raw);
     } catch {
       continue; // not a hex quantity
     }

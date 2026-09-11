@@ -114,6 +114,7 @@ import {
   chainIdFromRpcPair,
   classifyRpcFailure,
   codedError,
+  isTransportFailure,
   recordRpcResponse,
   rpcCallsFromBody,
   rpcRequestCalls,
@@ -868,56 +869,12 @@ function revertNameOf(err) {
   return null;
 }
 
-/**
- * Is this failure the CHAIN failing to answer, rather than this file
- * being wrong?
- *
- * ROUND 31 P2 — an ALLOWLIST, because the denylist I wrote last round
- * was the same mistake this file argues against thirty lines further
- * down. `classifyRpcFailure`'s note says it outright: a denylist has to
- * enumerate every operational code a provider might return, and the ones
- * it misses are waved through. My `err instanceof ReferenceError ||
- * TypeError` had to enumerate every way this drive can be wrong about
- * itself, and it missed most of them — a malformed `account` surfaces as
- * `ContractFunctionExecutionError`, bad ABI arguments as
- * `AbiEncodingLengthMismatchError`, and neither would have been
- * reported. The inert-ordering failure could have recurred exactly as
- * before, with the same silence.
- *
- * The chain is WALKED rather than the outer error inspected, because
- * viem wraps: `simulateContract` reports a dead endpoint as a
- * `ContractFunctionExecutionError` whose `cause` is the
- * `HttpRequestError`. Testing only the outer name would classify every
- * transport failure as a bug and make the drive throw on a flaky RPC,
- * which is the opposite error and a far noisier one.
- *
- * An undecodable revert counts as transport on purpose. `saleLockedOn`
- * resolves the reverts it recognises and rethrows only what it could not
- * read, and "the EVM answered something I cannot parse" is a failure to
- * determine, not a defect to report.
- */
-const TRANSPORT_ERROR_NAMES = new Set([
-  'HttpRequestError',
-  'TimeoutError',
-  'WebSocketRequestError',
-  'SocketClosedError',
-  'LimitExceededRpcError',
-  'ResourceUnavailableRpcError',
-  'InternalRpcError',
-  'UnknownRpcError',
-  'RpcRequestError',
-]);
-
-function isTransportFailure(err) {
-  const seen = new Set();
-  let cur = err;
-  while (cur && typeof cur === 'object' && !seen.has(cur)) {
-    seen.add(cur);
-    if (typeof cur.name === 'string' && TRANSPORT_ERROR_NAMES.has(cur.name)) return true;
-    cur = cur.cause;
-  }
-  return false;
-}
+// `isTransportFailure` lives in `rpc-verdict.mjs` — a pure predicate with
+// its own tests, for the reason this file has now learned four times: a
+// branch that runs only inside a live drive is a branch nothing has
+// executed, and the two most recent inert fixes were both in exactly that
+// position. Round 31 wrote this classifier here and nothing could reach
+// it; round 33 found it wrong and moved it out.
 
 async function offsetLockedOn(borrowerTokenId) {
   try {
@@ -1961,12 +1918,20 @@ function watchPageHead(page) {
       const key = res.url();
       // One `res.json()` for both questions: a response body can only be
       // consumed once cheaply, and the chain-id evidence needs it.
-      const parsed = body.includes('eth_chainId') || body.includes('eth_blockNumber')
+      // ROUND 33 P2 — `eth_getBlockByNumber` IS A HEAD ANNOUNCEMENT too,
+      // so both gates below have to admit it or the parser never sees the
+      // body it was just taught to read. The cheap string test stays a
+      // string test: `blockNumberFromRpcPair` is the one that decides
+      // whether the block tag was actually `'latest'`, and duplicating
+      // that judgement here would be a second rule to drift.
+      const announcesHead =
+        body.includes('eth_blockNumber') || body.includes('eth_getBlockByNumber');
+      const parsed = body.includes('eth_chainId') || announcesHead
         ? await res.json().catch(() => undefined)
         : undefined;
       markDiamond(key, body, parsed);
       // Cheap reject before parsing — most POSTs are not this.
-      if (!body.includes('eth_blockNumber')) return;
+      if (!announcesHead) return;
       // The PARSE is a pure function in `rpc-verdict.mjs`, tested
       // there. Batches answered out of order, batches mixing methods
       // and error members where a result was expected are the cases
@@ -3080,23 +3045,6 @@ async function observeForcedClose(page, loan) {
 
 async function readForcedCloseCard(page, timeoutMs = 30_000) {
   const cards = page.getByTestId('forced-close-card');
-  // ROUND 25 P2 — THE INTERACTION TARGETS THE CARD THE SCRAPE JUDGED.
-  //
-  // Round 23 taught the WAIT to accept any visible match, and round 24
-  // made that fallback actually run — but both only produced a boolean.
-  // `card` stayed `cards.first()`, so with a hidden node ahead of the
-  // real one the drive read the visible card's copy and then clicked,
-  // waited and scanned the HIDDEN one: the submit click times out,
-  // `confirmText` stays null, and a perfectly healthy card is reported
-  // BLOCKED. Two rounds of fixing which element we wait on, while every
-  // later interaction went on addressing the wrong one.
-  //
-  // `:visible` is re-resolved by Playwright at each action, so this
-  // addresses whichever card is being shown at the moment of the action
-  // rather than pinning a node captured earlier. A second visible card
-  // is not this locator's problem to arbitrate — `visibleCards > 1`
-  // already fails the verdict outright.
-  const card = page.locator('[data-testid="forced-close-card"]:visible').first();
   // ROUND 3 P2 — VISIBLE, not merely ATTACHED.
   //
   // A CSS regression that leaves the card in the DOM under
@@ -3373,6 +3321,11 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
         // decides which cards count as shown, above.
         return {
           visibleCards: shown.length,
+          // ROUND 33 P2 — WHICH card this snapshot describes, so the
+          // interaction can address the same one. See the note on
+          // `card` below for why a `:visible` locator is not the same
+          // element as `shown[0]`.
+          chosenIndex: all.indexOf(el),
           text: el.innerText,
           bodyPresent: body !== null,
           // ROUND 21 P2 — the BODY's own visibility, separately. A CSS
@@ -3423,12 +3376,37 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
   }
   // The evaluate is atomic, so a null means the card went between the
   // visibility wait and this pass — round 7's vanished case, detected by
-  // the capture itself. `bodyPresent: undefined` is what the verdict
-  // reads as "incomplete".
+  // the capture itself.
+  //
+  // ROUND 33 P2 — A VANISHED CARD IS UNMOUNTED AND UNATTACHED, and
+  // saying otherwise sent an ordinary lifecycle race out as a product
+  // accusation. This record claimed `mounted: true, attached: true` for a
+  // pass in which `querySelectorAll` found NOTHING, so `forcedCloseVerdict`
+  // took the mounted branch, hit `text: null`, and returned
+  // blocked/incomplete before ever consulting eligibility — a run exiting
+  // 2 because a loan went terminal, a token transferred, or a sale was
+  // accepted while the drive was looking. All three of those are states
+  // the eligibility reconciliation exists to classify, and it was never
+  // reached; `observeForcedClose` only confirms at a later head when
+  // `!card.mounted`, so this flag was also what suppressed the confirming
+  // re-read itself.
+  //
+  // `attached` matters as much as `mounted` here and is the reason this
+  // is two changes rather than one: with `mounted: false` alone, section
+  // 3 reads `attached: true` and FAILS with "card is in the DOM but not
+  // visible" — a confidently wrong sentence about a card that is not in
+  // the DOM at all. The hidden-card case keeps `attached: true` because
+  // there the nodes really are present; this one does not.
+  //
+  // What is NOT weakened: an absence on a still-eligible position still
+  // FAILS at section 3, and still only after the later-block confirmation
+  // this unlocks. The vanish is explained or it is a finding.
   if (snap === null) {
     return {
-      mounted: true,
-      attached: true,
+      mounted: false,
+      attached: false,
+      visibleCards: 0,
+      bodyVisible: false,
       text: null,
       bodyText: null,
       bodyPresent: undefined,
@@ -3523,6 +3501,9 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
         submitVisible: false,
         submitDisabled: true,
         settled: false,
+        // ROUND 33 P2 — see the note on the vanished return below. Every
+        // exit from this loop carries what the loop saw.
+        seenTexts,
       };
     }
     // ROUND 13 P2 — A CARD THAT VANISHES MID-POLL IS THE VANISHED CASE,
@@ -3539,19 +3520,44 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
     // The SAME shape the initial null returns, deliberately: one event,
     // one classification. Two spellings of the vanished card were how it
     // came to be handled two different ways.
+    // ROUND 33 P2 — TWO CHANGES, AND THEY ONLY WORK TOGETHER.
+    //
+    // (1) `mounted`/`attached` now describe what the DOM pass actually
+    //     found — nothing. See the matching note on the first-pass null
+    //     above for why the old `true/true` turned an ordinary lifecycle
+    //     race into a blocked/incomplete exit, and why `attached` has to
+    //     move with `mounted` rather than after it.
+    //
+    // (2) `seenTexts` travels out with it. Both of this loop's early
+    //     exits used to drop the accumulated renders on the floor, which
+    //     is where the two findings meet: a card that stated a figure
+    //     mid-poll and then vanished had the evidence discarded HERE, and
+    //     if an accepted sale then explained the disappearance the
+    //     verdict returned `inapplicable` — a run reporting nothing to
+    //     see about an amount a lender was shown. Carrying the texts is
+    //     also what makes (1) safe, since the verdict's amount scan now
+    //     runs ahead of the mounted gate and has something to read.
+    //
+    // The flags are still deliberately NOT carried: a transiently
+    // disabled control is a legitimate intermediate state (round 10) and
+    // must not be reported from a render the page has discarded. Only
+    // the texts are evidence of what was said.
     if (again === null) {
       return {
-        mounted: true,
-        attached: true,
+        mounted: false,
+        attached: false,
+        visibleCards: 0,
         text: null,
         bodyText: null,
         bodyPresent: undefined,
+        bodyVisible: false,
         confirmText: null,
         confirmExpected: false,
         submitPresent: false,
         submitVisible: false,
         submitDisabled: true,
         settled: false,
+        seenTexts,
       };
     }
     snap = again;
@@ -3581,6 +3587,50 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
   // verdict because there is no longer a list that can fail to mention
   // it. `snap.hiddenNow` cannot leak in — that case returns above.
   const text = snap.text;
+
+  // ROUND 25 P2 — THE INTERACTION TARGETS THE CARD THE SCRAPE JUDGED.
+  //
+  // Round 23 taught the WAIT to accept any visible match, and round 24
+  // made that fallback actually run — but both only produced a boolean.
+  // `card` stayed `cards.first()`, so with a hidden node ahead of the
+  // real one the drive read the visible card's copy and then clicked,
+  // waited and scanned the HIDDEN one: the submit click times out,
+  // `confirmText` stays null, and a perfectly healthy card is reported
+  // BLOCKED. Two rounds of fixing which element we wait on, while every
+  // later interaction went on addressing the wrong one.
+  //
+  // ROUND 33 P2 — AND `:visible` IS NOT THE SAME PREDICATE AS `visible`,
+  // so round 25's fix left the two halves pointing at different cards
+  // again, one refinement further in.
+  //
+  // Playwright's `:visible` means a non-empty bounding box and a computed
+  // `visibility` that is not hidden. It says NOTHING about opacity —
+  // deliberately, and it is documented that way. The in-page `visible`
+  // predicate this drive judges with rejects ancestor opacity, because
+  // round 22 established that a card under `opacity: 0` is a card the
+  // lender cannot see. So an invisible-but-transparent card sitting ahead
+  // of the real one is `shown`-rejected by the snapshot and `:visible`-
+  // accepted by the locator: the copy, the submit state and the duplicate
+  // count all describe the genuine card, while the click, the Back wait
+  // and the receipt scan all land on the transparent one. The click times
+  // out, `confirmText` stays null, and a healthy card is reported
+  // incomplete — the exact failure round 25 fixed, reintroduced by the
+  // narrower definition round 22 adopted for the scrape alone.
+  //
+  // Addressed by INDEX from the snapshot instead, so there is one
+  // predicate deciding which card this is: `nth()` re-resolves at each
+  // action the way `:visible` did, and the index comes from the pass that
+  // chose `shown[0]`. The residual race is that the DOM order changes
+  // between the final snapshot and the click, which is the same window
+  // every other fact in that snapshot already lives in — and far narrower
+  // than judging one card and clicking another by construction.
+  //
+  // Falls back to the first card only for a record that carries no index
+  // at all — `indexOf` cannot miss, since `el` is drawn from `all`, so
+  // this is defending against a stale shape rather than a real case.
+  const card = cards.nth(
+    Number.isInteger(snap.chosenIndex) && snap.chosenIndex >= 0 ? snap.chosenIndex : 0,
+  );
 
   // ROUND 2 P2 — a submittable card whose confirmation could NOT be read
   // is `confirmExpected` with `confirmText === null`, which the verdict

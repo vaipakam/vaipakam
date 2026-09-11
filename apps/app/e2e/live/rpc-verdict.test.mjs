@@ -18,6 +18,7 @@ import {
   callsTargetContract,
   classifyRpcFailure,
   classifyRpcResponse,
+  isTransportFailure,
   recordRpcResponse,
   rpcRequestCalls,
   summariseRpcLedger,
@@ -817,5 +818,160 @@ describe('chainIdFromRpcPair — which chain an endpoint speaks for', () => {
       .toBeNull();
     expect(chainIdFromRpcPair(req([{ id: 1, method: 'eth_chainId' }]), { id: 1, result: 'soon' }))
       .toBeNull();
+  });
+});
+
+describe('blockNumberFromRpcPair — a head announced as a BLOCK (round 33 P2)', () => {
+  const req = (calls) => {
+    const envelope = calls.map((c) => ({ jsonrpc: '2.0', ...c }));
+    return JSON.stringify(envelope.length === 1 ? envelope[0] : envelope);
+  };
+
+  // The app asks for its head this way far more often than it asks for a
+  // number: `getBlock({ blockTag: 'latest' })` is what `loanLive.ts` and
+  // every pending-state read use, and viem sends it as
+  // `eth_getBlockByNumber`. Reading only `eth_blockNumber` left
+  // `pageHeadOf` at zero on those pages, which does not weaken the
+  // forced-close absence gate so much as switch it off.
+  it('reads the head out of eth_getBlockByNumber(latest)', () => {
+    expect(
+      blockNumberFromRpcPair(
+        req([{ id: 1, method: 'eth_getBlockByNumber', params: ['latest', false] }]),
+        { id: 1, result: { number: '0x2c7a5f2', hash: '0xabc' } },
+      ),
+    ).toBe(0x2c7a5f2n);
+  });
+
+  it('ignores a HISTORICAL block, whose number is not the head', () => {
+    expect(
+      blockNumberFromRpcPair(
+        req([{ id: 1, method: 'eth_getBlockByNumber', params: ['0x1234', false] }]),
+        { id: 1, result: { number: '0x1234' } },
+      ),
+    ).toBeNull();
+  });
+
+  // `pending` is the one that would be WRONG in the dangerous direction:
+  // it reports a height above the chain's, for a block nobody has mined,
+  // and this value is the lower bound an absence is confirmed against.
+  it('ignores a PENDING block, which would overstate the head', () => {
+    expect(
+      blockNumberFromRpcPair(
+        req([{ id: 1, method: 'eth_getBlockByNumber', params: ['pending', false] }]),
+        { id: 1, result: { number: '0x2c7a5f3' } },
+      ),
+    ).toBeNull();
+  });
+
+  it('still matches by id inside a batch, and takes the highest', () => {
+    const body = req([
+      { id: 4, method: 'eth_getLogs', params: [] },
+      { id: 5, method: 'eth_getBlockByNumber', params: ['latest', false] },
+      { id: 6, method: 'eth_blockNumber' },
+    ]);
+    expect(
+      blockNumberFromRpcPair(body, [
+        { id: 4, result: ['0xdeadbeef'] },
+        { id: 6, result: '0x10' },
+        { id: 5, result: { number: '0x11' } },
+      ]),
+    ).toBe(0x11n);
+  });
+
+  it('reads nothing from a null block or a headerless result', () => {
+    const body = req([{ id: 1, method: 'eth_getBlockByNumber', params: ['latest', false] }]);
+    expect(blockNumberFromRpcPair(body, { id: 1, result: null })).toBeNull();
+    expect(blockNumberFromRpcPair(body, { id: 1, result: {} })).toBeNull();
+    expect(blockNumberFromRpcPair(body, { id: 1, result: { number: 12345 } })).toBeNull();
+    expect(blockNumberFromRpcPair(body, { id: 1, error: { code: -32000 } })).toBeNull();
+  });
+});
+
+describe('isTransportFailure — an outage, or this drive asking wrongly (round 33 P2)', () => {
+  // SHAPED THE WAY VIEM DELIVERS THEM. `buildRequest` maps the JSON-RPC
+  // code to a specific class and passes the generic `RpcRequestError` as
+  // its `cause`, so the generic name is present in the chain of EVERY
+  // error reply — which is what made walking for it accept a malformed
+  // request as an outage.
+  const err = (name, extra = {}) => Object.assign(new Error(name), { name, ...extra });
+  const wrap = (outer, cause) => Object.assign(outer, { cause });
+  // viem's BaseError exposes `walk`; `classifyRpcFailure` uses it when it
+  // is there and falls back to the object itself when it is not.
+  const withWalk = (top) => {
+    top.walk = (fn) => {
+      for (let cur = top; cur; cur = cur.cause) if (fn(cur)) return cur;
+      return undefined;
+    };
+    return top;
+  };
+
+  it('calls a dead endpoint a transport failure', () => {
+    const e = withWalk(
+      wrap(err('ContractFunctionExecutionError'), err('HttpRequestError')),
+    );
+    expect(isTransportFailure(e)).toBe(true);
+  });
+
+  it('calls a rate limit a transport failure', () => {
+    expect(isTransportFailure(withWalk(err('LimitExceededRpcError', { code: -32005 })))).toBe(true);
+  });
+
+  // THE DEFECT THIS ROUND FIXED. `-32602` is the node telling this file
+  // its request was malformed — a bad `account`, a wrong argument list.
+  // Classifying it as an outage left the loan ranked usable and said
+  // nothing, and silence on a self-inflicted error is how two inert
+  // fixes rode for a round each.
+  it('does NOT launder a malformed request as an outage', () => {
+    const e = withWalk(
+      wrap(
+        err('InvalidParamsRpcError'),
+        wrap(err('RpcRequestError'), { code: -32602, message: 'invalid params' }),
+      ),
+    );
+    expect(isTransportFailure(e)).toBe(false);
+  });
+
+  it('does not launder a parse error or an invalid request either', () => {
+    for (const code of [-32700, -32600]) {
+      const e = withWalk(wrap(err('RpcRequestError'), { code, message: 'bad' }));
+      expect(isTransportFailure(e), `code ${code}`).toBe(false);
+    }
+  });
+
+  // The boundary the existing classifier already argues, kept rather than
+  // re-litigated: a method the endpoint does not implement describes the
+  // SERVER's capability surface, not a defect in what was asked.
+  it('keeps method-not-found on the transport side', () => {
+    const e = withWalk(wrap(err('RpcRequestError'), { code: -32601, message: 'no method' }));
+    expect(isTransportFailure(e)).toBe(true);
+  });
+
+  // Deliberate: `saleLockedOn` rethrows only the reverts it could not
+  // read, and "the EVM answered something I cannot parse" is a failure to
+  // determine rather than a defect to report.
+  it('leaves an undecodable revert classified as transport', () => {
+    const e = withWalk(wrap(err('ContractFunctionExecutionError'), err('RpcRequestError', { code: 3, data: '0xdeadbeef' })));
+    expect(isTransportFailure(e)).toBe(true);
+  });
+
+  it('calls a plain programming error what it is', () => {
+    expect(isTransportFailure(new TypeError('saleLockedOn: account is required'))).toBe(false);
+    expect(isTransportFailure(new ReferenceError("Cannot access 'observed' before initialization"))).toBe(false);
+    expect(isTransportFailure(withWalk(err('AbiEncodingLengthMismatchError')))).toBe(false);
+  });
+
+  // NO `withWalk` HERE, and that is the point rather than an omission.
+  // The guard under test is this function's OWN `seen` set. Handing the
+  // cyclic chain to the `walk` stand-in instead hangs the whole suite —
+  // it did, for three runs — because neither that stand-in nor viem's
+  // real `BaseError.walk` carries a cycle guard. viem never builds one,
+  // so this is a statement about the loop written here, not a claim that
+  // the classifier above survives a cycle.
+  it('does not loop on a cyclic cause chain', () => {
+    const a = err('SomethingElse');
+    const b = err('AlsoNotTransport');
+    a.cause = b;
+    b.cause = a;
+    expect(isTransportFailure(a)).toBe(false);
   });
 });

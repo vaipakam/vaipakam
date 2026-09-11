@@ -650,6 +650,67 @@ export function forcedCloseVerdict(obs, copy) {
   // observed — downgrading it to `blocked` because a LATER, narrower
   // read failed reports "we could not check" about something we did
   // check.
+  // 1-pre. THE AMOUNT EVIDENCE IS GATHERED HERE; WHERE IT IS REPORTED
+  //        depends on whether a card rendered (round 33 P2).
+  //
+  // This arm used to live inside the `obs.mounted` block below, which
+  // made the drive's one ABSOLUTE claim conditional on the card still
+  // being there when the poll stopped. A card that stated a figure while
+  // its readiness reads were outstanding and then VANISHED — the loan
+  // went terminal, the token transferred, a sale was accepted — was
+  // positively observed stating it, and every one of those exits skipped
+  // the scan. Worse, the accepted-sale case then returns `inapplicable`
+  // at section 2, so the run reported "nothing to see here" about a
+  // figure a lender had actually been shown.
+  //
+  // It is also what makes it safe for a vanished card to report
+  // `mounted: false` — without this, classifying the vanish honestly
+  // would have silently disarmed the scan for exactly the records that
+  // carry the evidence.
+  //
+  // THE EVIDENCE IS GATHERED HERE AND REPORTED IN TWO PLACES, and the
+  // first draft of this fix got that wrong in a way the existing suite
+  // caught immediately. Returning the FAIL from here outranks the
+  // duplicate-card and duplicate-control arms, and those deliberately
+  // outrank the content scan: the scan only ever read the FIRST card, so
+  // a finding drawn from it must not be handed to a reader as the verdict
+  // on a surface this drive has only partly interrogated. That ordering
+  // is round 19's and round 26's, and it stands.
+  //
+  // So the scan runs twice from one computation: inside the mounted
+  // block, in its original position BELOW the duplicate arms, and again
+  // for records where no card rendered — the branch that had no scan at
+  // all and is the whole point of this round's finding.
+  //
+  // ROUND 8 P2 — `bodyText` is scanned TOO. It is captured independently,
+  // a moment after the whole-card read, so the card can update in between
+  // and the body can positively carry a figure the card text does not.
+  // Scanning only `text` and `confirmText` ignored a value this drive had
+  // actually read.
+  //
+  // ROUND 31 P2 — INCLUDING the renders the readiness poll superseded.
+  // `obs.text` / `obs.bodyText` are the SETTLED render; `seenTexts`
+  // carries every render the drive actually read.
+  //
+  // Absent on records that predate the field, and on every path that
+  // never polls, so it is spread defensively rather than assumed — the
+  // same `typeof` discipline the duplicate-control arm uses, and for the
+  // same reason: a record without the field must not change the verdict.
+  const scanned = [
+    obs.text,
+    obs.bodyText,
+    obs.confirmText,
+    ...(Array.isArray(obs.seenTexts) ? obs.seenTexts : []),
+  ]
+    .filter((part) => typeof part === 'string' && part !== '')
+    .join('\n');
+  const amounts = monetaryAmountsIn(scanned);
+  const amountFinding = () => ({
+    verdict: 'fail',
+    why: `states an amount it cannot know: ${amounts.join(' | ')}`,
+    amounts,
+  });
+
   if (obs.mounted) {
     // 1a. Nothing was read at all. `text: null` is not empty text: the
     //     card can unmount, or the locator read time out, after the
@@ -708,43 +769,11 @@ export function forcedCloseVerdict(obs, copy) {
     }
 
     // 1b. THE DEFINITE FINDING, before anything that might be missing.
-    //
-    // ROUND 8 P2 — `bodyText` is scanned TOO. It is captured
-    // independently, a moment after the whole-card read, so the card
-    // can update in between and the body can positively carry a figure
-    // the card text does not. Scanning only `text` and `confirmText`
-    // ignored a value this drive had actually read.
-    // ROUND 31 P2 — INCLUDING the renders the readiness poll superseded.
-    //
-    // `obs.text` / `obs.bodyText` are the SETTLED render. A card that
-    // stated an amount while its readiness reads were outstanding, and
-    // then settled into clean copy, was positively observed stating it —
-    // and scanning only the final text turned that observation into a
-    // pass. The amount rule is this drive's one absolute claim, so
-    // "clean at the moment we stopped looking" is not a substitute for
-    // it. `seenTexts` carries every render the drive actually read.
-    //
-    // Absent on records that predate the field, and on every path that
-    // never polls, so it is spread defensively rather than assumed —
-    // the same `typeof` discipline the duplicate-control arm uses, and
-    // for the same reason: a record without the field must not change
-    // the verdict.
-    const scanned = [
-      obs.text,
-      obs.bodyText,
-      obs.confirmText,
-      ...(Array.isArray(obs.seenTexts) ? obs.seenTexts : []),
-    ]
-      .filter((part) => typeof part === 'string' && part !== '')
-      .join('\n');
-    const amounts = monetaryAmountsIn(scanned);
-    if (amounts.length > 0) {
-      return {
-        verdict: 'fail',
-        why: `states an amount it cannot know: ${amounts.join(' | ')}`,
-        amounts,
-      };
-    }
+    //     Gathered at `1-pre`, reported here — below the duplicate arms
+    //     above, which outrank it, and above the body reads below, which
+    //     it outranks. Do not move either boundary without reading the
+    //     note at `1-pre`: both directions have been wrong once.
+    if (amounts.length > 0) return amountFinding();
 
     // 1c. Read, and genuinely empty.
     if (obs.text.trim() === '') {
@@ -820,6 +849,23 @@ export function forcedCloseVerdict(obs, copy) {
       };
     }
   }
+
+  // 1-post. THE SAME FINDING, for a record where no card rendered.
+  //
+  // This is the branch the round-33 P2 was about. A card that stated a
+  // figure while its readiness reads were outstanding and then VANISHED —
+  // the loan went terminal, the token transferred, a sale was accepted —
+  // was positively observed stating it, and every unmounted path skipped
+  // the scan entirely. Worse, an accepted sale then returns `inapplicable`
+  // just below, so the run reported nothing to see about an amount a
+  // lender had actually been shown.
+  //
+  // Above section 2 for the reason that section already states about
+  // mounted cards: eligibility qualifying an ABSENCE is correct,
+  // eligibility suppressing a POSITIVE finding is not. The duplicate-card
+  // arms are not a concern here — no card rendered, so there is no
+  // partly-read surface to misrepresent.
+  if (!obs.mounted && amounts.length > 0) return amountFinding();
 
   // ---- 2. Was this position one the assertion could apply to? ------
   if (!obs.lenderHoldsActive) {
@@ -1060,14 +1106,44 @@ export function forcedCloseVerdict(obs, copy) {
     // so matching against the card text let a broken readiness body be
     // vouched for by a history line (round 12 P2).
     const stateText = obs.bodyText ?? obs.text ?? '';
-    const known = copy.recognisedCopy.some(
+    const known = copy.recognisedCopy.filter(
       (sentence) => typeof sentence === 'string' && sentence && stateText.includes(sentence),
     );
-    if (!known) {
+    if (known.length === 0) {
       return {
         verdict: 'blocked',
         blockedKind: 'incomplete',
         why: 'the card rendered text this drive does not recognise as any known state — it establishes that something was said, not that the lender was told what is known or blocking',
+      };
+    }
+    // ROUND 33 P2 — EXACTLY ONE, because these nine are ALTERNATIVES.
+    //
+    // `.some()` stopped at the first match, so a body carrying TWO of
+    // them satisfied recognition on the strength of either. The states
+    // are mutually exclusive by construction — `ForcedCloseCard`'s
+    // `PRESENTATION` table maps one readiness to one `body` string, and
+    // exactly one is rendered — so two at once is a composition or
+    // merge regression, and it is the worst-shaped one this card can
+    // have: the surface would tell the lender both that they recover the
+    // collateral and that they recover the asset they lent. With an
+    // enabled control, both action-consistency arms below agree and the
+    // generic receipt supplies the expected lead, so nothing else here
+    // would have caught it.
+    //
+    // FAIL rather than the BLOCKED used for unrecognised copy, and the
+    // distinction is the usual one: unrecognised text may be a state
+    // this drive has not learned, which is a gap in its vocabulary;
+    // two recognised states TOGETHER is the product contradicting
+    // itself about what a lender is owed, which is a defect.
+    //
+    // This cannot fire on correct copy by accident: it would take one
+    // shipped state's sentence to be a substring of another's, and
+    // `forcedCloseCard.test.mjs` pins that non-containment across every
+    // translated bundle rather than leaving it to English and to luck.
+    if (known.length > 1) {
+      return {
+        verdict: 'fail',
+        why: `the card's body states ${known.length} recognised readiness states at once — they are alternatives, so the lender is being told two different things about the same decision`,
       };
     }
   }
