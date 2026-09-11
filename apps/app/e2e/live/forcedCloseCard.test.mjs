@@ -3352,6 +3352,145 @@ describe('round 45 review findings', () => {
   });
 });
 
+describe('round 56 review findings', () => {
+  const copy = {
+    unknownCopy: FORCED_CLOSE.unknown,
+    readyCopy: [FORCED_CLOSE.readyInKind, FORCED_CLOSE.readyInternalMatch, FORCED_CLOSE.readyRental],
+    withheldCopy: [FORCED_CLOSE.unknown, FORCED_CLOSE.notYet, FORCED_CLOSE.readyNeedsRoute],
+    recognisedCopy: [
+      FORCED_CLOSE.unknown,
+      FORCED_CLOSE.notYet,
+      FORCED_CLOSE.blockedPaused,
+      FORCED_CLOSE.blockedSequencer,
+      FORCED_CLOSE.blockedNoConsent,
+      FORCED_CLOSE.readyInKind,
+      FORCED_CLOSE.readyInternalMatch,
+      FORCED_CLOSE.readyRental,
+      FORCED_CLOSE.readyNeedsRoute,
+    ],
+    receiptLeads: [FORCED_CLOSE.receipt.youReceive, FORCED_CLOSE.rentalReceipt.youReceive],
+  };
+  const ready = {
+    lenderHoldsActive: true,
+    mounted: true,
+    attached: true,
+    submitPresent: true,
+    submitVisible: true,
+    submitDisabled: false,
+    visibleSubmits: 1,
+    visibleCards: 1,
+    saleLocked: false,
+    settled: true,
+    bodyPresent: true,
+    bodyText: FORCED_CLOSE.readyInKind,
+    text: FORCED_CLOSE.readyInKind,
+    confirmExpected: true,
+    confirmText: `${FORCED_CLOSE.receipt.youReceive} …`,
+  };
+  // A CORRECT withheld card, as the drive actually records one:
+  // `ForcedCloseCard` renders no submit when `submittable` is false, so
+  // the DOM pass sees an empty visible-submit set and `some` over it
+  // yields `false` for both label fields.
+  const withheld = {
+    ...ready,
+    text: FORCED_CLOSE.notYet,
+    bodyText: FORCED_CLOSE.notYet,
+    submitPresent: false,
+    submitVisible: false,
+    submitDisabled: true,
+    visibleSubmits: 0,
+    confirmExpected: false,
+    confirmText: null,
+    submitLabelled: false,
+    submitLabelPainted: false,
+  };
+
+  describe('label faults need a control to be offered', () => {
+    // THE WORST FALSE FAIL ON THIS PR, and it is mine: every ordinary
+    // non-actionable position — `not-yet`, paused, sequencer-blocked,
+    // `ready-needs-route` — would have exited as a product failure
+    // claiming a blank action the card never rendered.
+    //
+    // The live run could not catch it: the one fixture loan IS
+    // submittable, so the only shape the drive exercises end to end is
+    // the only shape the bug could not reach.
+    it('passes a correct withheld card that renders no submit', () => {
+      expect(forcedCloseVerdict(withheld, copy).verdict).toBe('pass');
+    });
+
+    it('passes the other withheld states too', () => {
+      for (const state of [
+        FORCED_CLOSE.blockedPaused,
+        FORCED_CLOSE.blockedSequencer,
+        FORCED_CLOSE.readyNeedsRoute,
+      ]) {
+        expect(
+          forcedCloseVerdict({ ...withheld, text: state, bodyText: state }, copy).verdict,
+          state.slice(0, 40),
+        ).toBe('pass');
+      }
+    });
+
+    // …while the rule still bites where a control IS offered, so the
+    // gate is about the offer and not a weakening of the check.
+    it('still FAILS a blank control that IS offered', () => {
+      const v = forcedCloseVerdict({ ...ready, submitLabelled: false }, copy);
+      expect(v.verdict).toBe('fail');
+      expect(v.why).toMatch(/no label at all/);
+    });
+
+    it('still FAILS an unpainted label on an offered control', () => {
+      const v = forcedCloseVerdict({ ...ready, submitLabelPainted: false }, copy);
+      expect(v.verdict).toBe('fail');
+      expect(v.why).toMatch(/reads as blank/);
+    });
+  });
+
+  describe('both bracket directions are ambiguous', () => {
+    // Round 55 treated `false`-to-`true` as unpairable and left the
+    // reverse falling through to a FAIL — so a protocol PAUSING between
+    // the DOM observation and the pinned re-read accused a card whose
+    // ready action was valid when it was observed.
+    it('BLOCKS a permitting-to-refusing crossing rather than accusing', () => {
+      const v = forcedCloseVerdict(
+        { ...ready, defaultableBefore: true, defaultable: false },
+        copy,
+      );
+      expect(v.verdict).toBe('blocked');
+      expect(v.blockedKind).toBe('incomplete');
+      expect(v.why).toMatch(/permitting this close-out to refusing it/);
+    });
+
+    it('still BLOCKS the refusing-to-permitting crossing', () => {
+      const v = forcedCloseVerdict(
+        { ...ready, defaultableBefore: false, defaultable: true },
+        copy,
+      );
+      expect(v.verdict).toBe('blocked');
+      expect(v.why).toMatch(/refusing this close-out to permitting it/);
+    });
+
+    // A window that was refusing THROUGHOUT is not ambiguous at all.
+    it('still FAILS when both ends refuse', () => {
+      const v = forcedCloseVerdict(
+        { ...ready, defaultableBefore: false, defaultable: false },
+        copy,
+      );
+      expect(v.verdict).toBe('fail');
+      expect(v.why).toMatch(/not yet defaultable/);
+    });
+
+    // An older record carries no bracket, so the single reading still
+    // decides — otherwise this fix would silently disable the round-54
+    // check for every pre-bracket observation.
+    it('still FAILS on a single refusing reading with no bracket', () => {
+      const v = forcedCloseVerdict({ ...ready, defaultable: false }, copy);
+      expect(v.verdict).toBe('fail');
+      expect(v.why).toMatch(/not yet defaultable/);
+    });
+  });
+});
+
 describe('round 55 review findings', () => {
   const copy = {
     unknownCopy: FORCED_CLOSE.unknown,

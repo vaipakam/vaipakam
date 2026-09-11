@@ -569,3 +569,24 @@ window, the run reports that it could not match the two rather than
 guessing: the card may legitimately have become ready mid-observation,
 and the check cannot tell that from the fault without asking the chain
 once per redraw, which it does not do.
+
+The next round caught two faults in those same fixes, and both were of
+the worst kind: the check condemning a page that was behaving correctly.
+
+The requirement that the card's button carry a readable label was applied
+even to cards that deliberately show no button at all. A position that is
+simply not yet closeable shows an explanation and withholds the action —
+which is exactly right — and the check would have reported every one of
+them as offering a blank control. The single position the live run
+exercises does offer the button, so the one case the check runs against
+end to end was the one case the fault could not appear in. The rule now
+applies only where an action is actually being offered.
+
+The second: the check had been taught that a loan becoming closeable
+while the page was being watched makes the reading ambiguous, and had not
+been taught the reverse. If the protocol pauses during that window, the
+action the page offered was valid when it was offered — and the check
+would have called the page faulty on the strength of something that
+happened afterwards. Both directions are now reported as an
+unmatchable reading. A window in which the protocol refuses throughout is
+still a fault, because there is nothing ambiguous about it.

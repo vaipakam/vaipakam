@@ -2008,17 +2008,40 @@ export function forcedCloseVerdict(obs, copy) {
   // arms: a loan that terminalises between the DOM pass and the pinned
   // re-read is no longer defaultable, and reporting that as a product
   // defect would be a false FAIL invented out of a race.
-  if (obs.defaultable === false && actionOffered && Array.isArray(copy?.readyCopy)) {
-    const ready = copy.readyCopy.find(
+  //
+  // ROUND 56 P2 — AND BOTH ENDS OF THE BRACKET MUST AGREE BEFORE THIS
+  // ACCUSES.
+  //
+  // Round 55 treated a `false`-to-`true` crossing as ambiguous and left
+  // the reverse to fall through to this FAIL. The reverse is just as
+  // unpairable: the protocol pausing, or the sequencer going unhealthy,
+  // between the DOM observation and the pinned re-read makes
+  // `defaultableBefore === true` and `defaultable === false` — and the
+  // ready action the card offered WAS valid when it was observed. That
+  // is a correct card reported as a product failure on the strength of
+  // something that happened afterwards, which is the error round 55 had
+  // just finished arguing against in the other direction.
+  //
+  // So the accusation requires the window to have been quiet AND
+  // refusing throughout. A disagreement of either kind is reported
+  // below as an incomplete observation.
+  const readyOffered =
+    actionOffered &&
+    Array.isArray(copy?.readyCopy) &&
+    copy.readyCopy.some(
       (sentence) => typeof sentence === 'string' && sentence && (obs.text ?? '').includes(sentence),
     );
-    if (ready) {
-      return {
-        verdict: 'fail',
-        failKind: 'observed',
-        why: 'the card renders a READY route and offers the action, but the protocol reports this loan is not yet defaultable — the lender would pay a network fee for a transaction that is guaranteed to be refused',
-      };
-    }
+  const bracketDisagrees =
+    'defaultableBefore' in obs &&
+    obs.defaultableBefore !== undefined &&
+    obs.defaultable !== undefined &&
+    obs.defaultableBefore !== obs.defaultable;
+  if (obs.defaultable === false && !bracketDisagrees && readyOffered) {
+    return {
+      verdict: 'fail',
+      failKind: 'observed',
+      why: 'the card renders a READY route and offers the action, but the protocol reports this loan is not yet defaultable — the lender would pay a network fee for a transaction that is guaranteed to be refused',
+    };
   }
   // ROUND 55 P2 — AND THE WINDOW HAS TO HAVE BEEN QUIET.
   //
@@ -2034,19 +2057,18 @@ export function forcedCloseVerdict(obs, copy) {
   // inside the window, and telling that from the defect would need a
   // chain answer per render, which this drive does not take. Saying so
   // is the honest outcome; either guess would be an invention.
-  if (
-    obs.defaultableBefore === false &&
-    obs.defaultable === true &&
-    actionOffered &&
-    Array.isArray(copy?.readyCopy) &&
-    copy.readyCopy.some(
-      (sentence) => typeof sentence === 'string' && sentence && (obs.text ?? '').includes(sentence),
-    )
-  ) {
+  //
+  // ROUND 56 P2 — EITHER DIRECTION. The reverse crossing is no more
+  // pairable than the forward one, and letting it fall through to the
+  // FAIL above accused a card that was correct when it was observed.
+  if (bracketDisagrees && readyOffered) {
     return {
       verdict: 'blocked',
       blockedKind: 'incomplete',
-      why: 'the protocol went from refusing this close-out to permitting it while the card was being observed — the ready render cannot be matched to a chain answer taken at the same moment',
+      why:
+        obs.defaultable === true
+          ? 'the protocol went from refusing this close-out to permitting it while the card was being observed — the ready render cannot be matched to a chain answer taken at the same moment'
+          : 'the protocol went from permitting this close-out to refusing it while the card was being observed — the ready render cannot be matched to a chain answer taken at the same moment',
     };
   }
   // And where the drive could not ASK, it says so rather than passing.
@@ -2060,11 +2082,7 @@ export function forcedCloseVerdict(obs, copy) {
   if (
     (('defaultable' in obs && obs.defaultable === undefined) ||
       ('defaultableBefore' in obs && obs.defaultableBefore === undefined)) &&
-    actionOffered &&
-    Array.isArray(copy?.readyCopy) &&
-    copy.readyCopy.some(
-      (sentence) => typeof sentence === 'string' && sentence && (obs.text ?? '').includes(sentence),
-    )
+    readyOffered
   ) {
     return {
       verdict: 'blocked',
@@ -2089,14 +2107,33 @@ export function forcedCloseVerdict(obs, copy) {
   //
   // `=== false`, so a record predating either field says nothing. Kept
   // with the other control faults, below the applicability exits.
-  if (obs.submitLabelled === false) {
+  //
+  // ROUND 56 P2 — GATED ON THERE BEING A CONTROL AT ALL, which round 54
+  // forgot and which made this the worst false FAIL on the PR.
+  //
+  // Both fields are computed with `some` over the VISIBLE submits, and
+  // `some` on an empty array is `false`. A correct withheld card —
+  // `not-yet`, paused, sequencer-blocked, `ready-needs-route` — renders
+  // no submit at all (`ForcedCloseCard` does not render one when
+  // `submittable` is false), so both arrived `false` and every one of
+  // those ordinary, correct positions would have exited as a product
+  // failure claiming a blank action the card never offered.
+  //
+  // The live run did not catch it because the fixture loan IS
+  // submittable: the one shape this drive exercises end to end is the
+  // one shape the bug could not reach.
+  //
+  // `actionOffered` is the same gate the withheld-copy arm uses, so the
+  // label rules now say what they were always meant to say: a control
+  // the lender is BEING OFFERED must be readable.
+  if (actionOffered && obs.submitLabelled === false) {
     return {
       verdict: 'fail',
       failKind: 'observed',
       why: 'the card offers a visible, enabled action with no label at all — the lender is asked to open a forced close-out from a blank control',
     };
   }
-  if (obs.submitLabelPainted === false) {
+  if (actionOffered && obs.submitLabelPainted === false) {
     return {
       verdict: 'fail',
       failKind: 'observed',
