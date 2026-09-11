@@ -91,6 +91,9 @@ import { join, relative } from 'node:path';
 // did mutate the repo and its cleanup reverted a real fix mid-run; scanning a
 // temp directory removes that whole class of accident.
 import { parseJsonc } from './lib/jsonc.mjs';
+// Moved to a side-effect-free module so the fixture-parity test can IMPORT
+// the real values instead of pattern-matching this file for them (#2132 r7).
+import { SHELL_EXTENSIONS, EXTENSIONS } from './lib/deployScanExtensions.mjs';
 
 /** Collapse `.`, `..` and repeated separators in a repo-relative path. */
 function normalizeRel(p) {
@@ -357,41 +360,6 @@ const SKIP_PATHS = new Set(['contracts/lib']);
 // `looksExecutable` rejects anything containing a dot, so a shebang-bearing
 // `apps/keeper/release.bash` with a bare deploy was never opened
 // (Codex #1924 r38).
-const SHELL_EXTENSIONS = ['.sh', '.bash', '.zsh', '.ksh'];
-const EXTENSIONS = [
-  ...SHELL_EXTENSIONS,
-  '.md',
-  // `.mdx` is handled everywhere `.md` is — the markdown branch tests for it —
-  // but `walk` never yielded the file, so that handling was unreachable and an
-  // MDX runbook was not opened at all (#1995 r16).
-  '.mdx',
-  '.ts',
-  '.mts',
-  '.cts',
-  '.mjs',
-  '.cjs',
-  '.js',
-  '.json',
-  '.jsonc',
-  '.yml',
-  '.yaml',
-  // Windows deployment helpers. `walk` never yielded these, so a
-  // `deploy.ps1` beside a protected worker was not opened at all — even
-  // though workflow BODIES under pwsh/cmd were already modelled (#1995 r17).
-  // A standalone `.py` helper can carry an argv deploy that `ARGV_DEPLOY_RE`
-  // already recognises — the detector existed, the walk simply never yielded
-  // the file (#1995 r22).
-  '.py',
-  // `makefileBlocks` has always matched `*.mk`, and the walk never yielded one
-  // — so that branch was unreachable and an included deploy fragment was read
-  // as prose, while the identical content named `Makefile` was rejected
-  // (#1995 r23). The third time a handled extension was not a WALKED one, after
-  // `.mdx` and `.py`.
-  '.mk',
-  '.ps1',
-  '.cmd',
-  '.bat',
-];
 
 /**
  * DEFAULT-DENY. Every keeper-scoped `wrangler deploy` without `--keep-vars`

@@ -22,6 +22,10 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import {
+  SHELL_EXTENSIONS,
+  EXTENSIONS,
+} from '../scripts/lib/deployScanExtensions.mjs';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 const SCRIPT = new URL('../scripts/check-deploy-invocations.mjs', import.meta.url).pathname;
@@ -12852,64 +12856,22 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
   ];
 
   it('walk yields exactly these families — parity with EXTENSIONS (#2123 guard)', () => {
-    // THE FIX FOR SEVEN ROUNDS OF SUBSETS. Reads the production list rather
-    // than trusting the table above, and fails in BOTH directions: an
-    // extension added to the guard and not here, or dropped there and left
-    // here. Either way the suite says so instead of quietly covering less.
-    // COMMENTS ARE STRIPPED FIRST, and that is not fussiness (r2). Reading the
-    // raw source made this check follow TEXT rather than runtime membership in
-    // both directions: a suffix merely MENTIONED in a comment — `// '.toml' is
-    // intentionally unsupported` — counted as production and demanded a
-    // fixture, and a genuinely COMMENTED-OUT entry stayed in the production set
-    // so the parity assertion passed while `EXTENSIONS` had actually shrunk,
-    // leaving the behavioural control to fail later for an unrelated-looking
-    // reason.
+    // THE LIST IS IMPORTED, NOT LOCATED (r7). Six versions of this guard tried
+    // to find the scanner's extension arrays by reading its source: a regex
+    // over quoted strings, then comment-stripping, then stripping trailing
+    // comments too, then evaluating the initialiser. Each fixed the previous
+    // corner and left a new one — quote style, then a commented-out
+    // `const EXTENSIONS = [...]` shadowing the live declaration, which the
+    // evaluator evaluated instead while the real array grew unchecked.
     //
-    // Importing the list would be better still and is not available: the guard
-    // is a script with no exports that scans and calls `process.exit` at import
-    // time, so a test that imported it would end the test process. Exporting
-    // the list would change the guard's executable code, which this work
-    // deliberately leaves byte-identical.
-    // LOCATE ON THE RAW SOURCE, STRIP INSIDE THE ARRAY (r3). The previous
-    // version stripped the whole file first and anchored `//` to the start of
-    // a line, so a TRAILING comment survived — `'.json', // '.toml' unsupported`
-    // put `toml` in the production set and failed parity against an array that
-    // had not changed. Stripping `//` anywhere in the whole file would instead
-    // maul any `https://` elsewhere in it, including inside the very
-    // declarations this needs to find.
-    //
-    // THE VALUES ARE EVALUATED, NOT PATTERN-MATCHED (r6). Every earlier
-    // version of this read the source SPELLING and was wrong about membership
-    // in a new way each round: comments at line start, then trailing
-    // comments, then — caught by mutation — a double-quoted `".toml"`, which
-    // a single-quote regex silently ignores while the table stays a subset.
-    // That is the same trap this whole suite is about, now five deep: reading
-    // text is not observing behaviour, and a narrower regex is not a fix for
-    // a regex being the wrong instrument.
-    //
-    // So the array initialisers are EXECUTED. Any literal form JavaScript
-    // accepts — single, double, backtick, a concatenation — yields the same
-    // members the guard itself gets, because it is the same expression. The
-    // `...SHELL_EXTENSIONS` spread is handled by evaluating that array first
-    // and passing it in, rather than relying on both blobs being scanned,
-    // which is how the old version got the spread right by accident.
-    //
-    // Importing the module would still be better and is still unavailable:
-    // it has no exports and calls `process.exit` at import time.
-    const src = readFileSync(SCRIPT, 'utf8');
-    const shell = /const SHELL_EXTENSIONS = (\[[^\]]*\])/.exec(src);
-    const rest = /const EXTENSIONS = (\[[\s\S]*?\n\])/.exec(src);
-    expect(shell, 'SHELL_EXTENSIONS should be locatable').not.toBeNull();
-    expect(rest, 'EXTENSIONS should be locatable').not.toBeNull();
-    const evalArray = (literal: string, shellExts: string[] = []): string[] =>
-      // eslint-disable-next-line no-new-func
-      new Function('SHELL_EXTENSIONS', `return ${literal};`)(
-        shellExts,
-      ) as string[];
-    const shellExts = evalArray(shell![1]);
-    const allExts = evalArray(rest![1], shellExts);
+    // Evaluation fixed value SPELLING and not declaration SELECTION, which is
+    // the same lesson one level in: reading text is not observing behaviour.
+    // So the values moved to a side-effect-free module and both sides import
+    // them. There is no longer a "list the test checks" and a "list the
+    // scanner reads" — it is one object, and this guard can only fail for the
+    // reason it exists.
     const production = new Set(
-      [...shellExts, ...allExts].map((e) => e.replace(/^\./, '')),
+      [...SHELL_EXTENSIONS, ...EXTENSIONS].map((e) => e.replace(/^\./, '')),
     );
     const covered = new Set(WALK_HELPER_FAMILIES.map(([e]) => e));
     const missing = [...production].filter((e) => !covered.has(e)).sort();
