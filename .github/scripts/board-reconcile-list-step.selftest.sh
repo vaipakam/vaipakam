@@ -66,9 +66,16 @@ check() { # check <label> <condition-description> <0|1 result>
   fi
 }
 
-run_step() { # run_step <scenario-env...> ; stdout+stderr captured, rc echoed last
+run_step() { # run_step <scenario-env...> ; output lands in "$work/out.txt"
+  # RUN IT IN THE TEMPORARY DIRECTORY. The step writes `board.json` and
+  # `list-trace.txt` relative to the working directory — in the real job that
+  # is the runner's checkout and they are discarded with it, but a fixture
+  # inheriting the caller's directory drops both into the repository every
+  # time anyone runs it. Caught by the repo's own untracked-file check after
+  # the first run here.
   set +e
-  ( export PATH="$work/bin:$PATH" PROJECT_NUMBER=1 PROJECT_OWNER=vaipakam LIST_LIMIT=4000 "$@"
+  ( cd "$work"
+    export PATH="$work/bin:$PATH" PROJECT_NUMBER=1 PROJECT_OWNER=vaipakam LIST_LIMIT=4000 "$@"
     bash "$work/step.sh" ) > "$work/out.txt" 2>&1
   rc=$?
   set -e
