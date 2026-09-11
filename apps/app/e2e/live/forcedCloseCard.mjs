@@ -2450,6 +2450,30 @@ export function forcedCloseVerdict(obs, copy) {
   //
   // `=== false`, so a record predating the field and a probe that could
   // not answer (`null`) both say nothing.
+  // ROUND 70 P2 — AND A CONFIRMATION WITH NO BACK CONTROL AT ALL.
+  //
+  // Until now the panel was DETECTED by its Back button, so a
+  // confirmation whose receipt and fee-paying action render perfectly
+  // while Back is missing was never scanned — reported as
+  // `blocked/incomplete` from a null `confirmText` rather than as what
+  // it is: the lender given a fee-paying action and no way to decline
+  // without leaving the page.
+  //
+  // Requires POSITIVE evidence that the panel was up, so a visit that
+  // never opened a confirmation says nothing. Either the action or the
+  // rows will do — the same two independent markers the scrape now uses
+  // to detect the panel.
+  if (
+    obs.backAction?.present === false &&
+    (obs.confirmAction?.present === true ||
+      (Array.isArray(obs.confirmRowsText) && obs.confirmRowsText.length > 0))
+  ) {
+    return {
+      verdict: 'fail',
+      failKind: 'observed',
+      why: 'the confirmation renders its receipt and its fee-paying action with no Back control at all — the lender is asked to commit with no way to decline short of leaving the page',
+    };
+  }
   if (obs.backAction?.present === true && obs.backAction.painted === false) {
     return {
       verdict: 'fail',
@@ -2646,11 +2670,29 @@ export function forcedCloseVerdict(obs, copy) {
   //
   // Same `renders` list the unsafe-control arm uses, so there is one
   // notion of "what this drive saw" rather than two.
+  //
+  // ROUND 70 P2 — EACH RENDER CARRIES ITS OWN SUBMIT FACTS.
+  //
+  // `actionOffered` describes the SETTLED snapshot only, so gating the
+  // whole traversal on it skipped the entire history whenever the card
+  // ended up withheld — and an earlier render that exposed an ENABLED
+  // submit beside the wrong settlement promise is exactly the case this
+  // arm exists for. The unsafe-control arm does not cover it either: its
+  // copy is a READY state, not a withheld one.
+  //
+  // Same `!== false` reading the unsafe-control arm uses, so a record
+  // that carries no visibility says nothing about it rather than being
+  // assumed offered.
+  const offeredIn = (r) => r?.submitVisible !== false && !r?.submitDisabled;
   const routeRenders = [
-    { visibleText: obs.bodyVisibleText ?? obs.bodyText ?? obs.visibleText ?? obs.text },
+    {
+      visibleText: obs.bodyVisibleText ?? obs.bodyText ?? obs.visibleText ?? obs.text,
+      offered: actionOffered,
+    },
     ...(Array.isArray(obs.seenRenders)
       ? obs.seenRenders.map((r) => ({
           visibleText: r?.bodyVisibleText ?? r?.bodyText ?? r?.visibleText ?? r?.text,
+          offered: offeredIn(r),
         }))
       : []),
   ];
@@ -2659,8 +2701,12 @@ export function forcedCloseVerdict(obs, copy) {
     sentence !== '' &&
     typeof renderText === 'string' &&
     renderText.includes(sentence);
-  if (matchKnown && actionOffered) {
+  if (matchKnown) {
     const wrongRender = routeRenders.find((r) => {
+      // Each render on its OWN action state: a promise the lender could
+      // not act on is not this arm's business, and a promise they COULD
+      // act on is, whatever the card settled into afterwards.
+      if (!r.offered) return false;
       const m = paintedIn(r.visibleText, copy?.internalMatchReadyCopy);
       const k = paintedIn(r.visibleText, copy?.inKindReadyCopy);
       if (m === k) return false;

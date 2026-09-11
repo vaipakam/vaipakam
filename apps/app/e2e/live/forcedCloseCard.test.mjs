@@ -5840,3 +5840,211 @@ describe('round 69 — the settlement route is judged on every render', () => {
     expect(v.why ?? '').not.toMatch(/throughout the observation/);
   });
 });
+
+describe('round 70 review findings', () => {
+  const copy = {
+    unknownCopy: FORCED_CLOSE.unknown,
+    notYetCopy: FORCED_CLOSE.notYet,
+    readyCopy: [FORCED_CLOSE.readyInKind, FORCED_CLOSE.readyInternalMatch, FORCED_CLOSE.readyRental],
+    withheldCopy: [FORCED_CLOSE.unknown, FORCED_CLOSE.notYet, FORCED_CLOSE.readyNeedsRoute],
+    recognisedCopy: [
+      FORCED_CLOSE.unknown,
+      FORCED_CLOSE.notYet,
+      FORCED_CLOSE.readyInKind,
+      FORCED_CLOSE.readyInternalMatch,
+    ],
+    receiptLeads: [enBundle.copy.receipt.youReceive],
+    receiptRowSets: {
+      standard: Object.values(FORCED_CLOSE.receipt),
+      rental: Object.values(FORCED_CLOSE.rentalReceipt),
+    },
+    rentalReadyCopy: FORCED_CLOSE.readyRental,
+    internalMatchReadyCopy: FORCED_CLOSE.readyInternalMatch,
+    inKindReadyCopy: FORCED_CLOSE.readyInKind,
+  };
+
+  // EACH RENDER ON ITS OWN ACTION STATE. `actionOffered` describes the
+  // SETTLED snapshot, so gating the traversal on it skipped the whole
+  // history whenever the card ended up withheld — and an earlier render
+  // exposing an enabled submit beside the wrong settlement promise is
+  // exactly what this arm is for. The unsafe-control arm does not cover
+  // it either: that render's copy is a READY state, not a withheld one.
+  it('reports a wrong route that was ACTIONABLE in an earlier render', () => {
+    const v = forcedCloseVerdict(
+      {
+        lenderHoldsActive: true,
+        mounted: true,
+        attached: true,
+        submitPresent: true,
+        // Settled: withheld, no action.
+        submitVisible: true,
+        submitDisabled: true,
+        visibleSubmits: 1,
+        visibleCards: 1,
+        saleLocked: false,
+        settled: true,
+        bodyPresent: true,
+        bodyVisible: true,
+        confirmExpected: false,
+        confirmText: null,
+        defaultable: false,
+        defaultableBefore: false,
+        internalMatch: true,
+        internalMatchBefore: true,
+        text: FORCED_CLOSE.unknown,
+        visibleText: FORCED_CLOSE.unknown,
+        bodyText: FORCED_CLOSE.unknown,
+        bodyVisibleText: FORCED_CLOSE.unknown,
+        seenRenders: [
+          {
+            // Earlier: the WRONG promise, and pressable.
+            text: FORCED_CLOSE.readyInKind,
+            visibleText: FORCED_CLOSE.readyInKind,
+            bodyText: FORCED_CLOSE.readyInKind,
+            bodyVisibleText: FORCED_CLOSE.readyInKind,
+            submitVisible: true,
+            submitDisabled: false,
+          },
+        ],
+      },
+      copy,
+    );
+    expect(v.verdict).toBe('fail');
+    expect(v.why).toMatch(/throughout the observation/);
+  });
+
+  it('says nothing about a wrong promise the lender could not act on', () => {
+    const v = forcedCloseVerdict(
+      {
+        lenderHoldsActive: true,
+        mounted: true,
+        attached: true,
+        submitPresent: true,
+        submitVisible: true,
+        submitDisabled: true,
+        visibleSubmits: 1,
+        visibleCards: 1,
+        saleLocked: false,
+        settled: true,
+        bodyPresent: true,
+        bodyVisible: true,
+        confirmExpected: false,
+        confirmText: null,
+        defaultable: false,
+        defaultableBefore: false,
+        internalMatch: true,
+        internalMatchBefore: true,
+        text: FORCED_CLOSE.unknown,
+        visibleText: FORCED_CLOSE.unknown,
+        bodyText: FORCED_CLOSE.unknown,
+        bodyVisibleText: FORCED_CLOSE.unknown,
+        seenRenders: [
+          {
+            text: FORCED_CLOSE.readyInKind,
+            visibleText: FORCED_CLOSE.readyInKind,
+            bodyText: FORCED_CLOSE.readyInKind,
+            bodyVisibleText: FORCED_CLOSE.readyInKind,
+            submitVisible: true,
+            submitDisabled: true,
+          },
+        ],
+      },
+      copy,
+    );
+    expect(v.why ?? '').not.toMatch(/throughout the observation/);
+  });
+
+  // A CONFIRMATION WITH NO BACK CONTROL AT ALL. The panel used to be
+  // DETECTED by its Back button, so this rendered as an unread scan
+  // rather than as the defect it is.
+  describe('a confirmation with no way to decline', () => {
+    const panel = (backAction) => ({
+      lenderHoldsActive: true,
+      mounted: true,
+      attached: true,
+      submitPresent: true,
+      submitVisible: true,
+      submitDisabled: false,
+      visibleSubmits: 1,
+      visibleCards: 1,
+      saleLocked: false,
+      settled: true,
+      bodyPresent: true,
+      bodyVisible: true,
+      defaultable: true,
+      defaultableBefore: true,
+      internalMatch: false,
+      internalMatchBefore: false,
+      text: FORCED_CLOSE.readyInKind,
+      visibleText: FORCED_CLOSE.readyInKind,
+      bodyText: FORCED_CLOSE.readyInKind,
+      bodyVisibleText: FORCED_CLOSE.readyInKind,
+      confirmExpected: true,
+      // The WHOLE panel's text, as the drive actually records it —
+      // `'x'` was my first value and the receipt-content arm fired on it
+      // instead, so the test measured a different defect. Two fixture
+      // realism errors in one case; the arms are ordered correctly and I
+      // was describing a panel that could not exist.
+      confirmText: `${enBundle.copy.receipt.youReceive} ${FORCED_CLOSE.receipt.youReceive}`,
+      // A COMPLETE action record, as the in-page pass builds one. My
+      // first three attempts at this fixture each omitted a field and
+      // each fired a different, earlier arm — receipt content, then the
+      // lead, then `enabled`. The arms are ordered correctly; I was
+      // describing a panel that could not exist, and iterating on the
+      // error message instead of on the shape.
+      confirmAction: {
+        present: true,
+        visible: true,
+        enabled: true,
+        labelled: true,
+        labelPainted: true,
+        clickable: true,
+        panelPresent: true,
+        count: 1,
+        index: 1,
+        label: 'Confirm',
+      },
+      // The finding's scenario: the receipt and the fee-paying action
+      // render NORMALLY and only Back is missing. My first fixture
+      // omitted the rows, so the receipt-content arm fired first and the
+      // test was measuring a different defect.
+      confirmRowsText: Object.values(FORCED_CLOSE.receipt).map(
+        (v, i) =>
+          `${
+            [
+              enBundle.copy.receipt.youReceive,
+              enBundle.copy.receipt.youLock,
+              enBundle.copy.receipt.youMayOwe,
+              enBundle.copy.receipt.youCanLose,
+              enBundle.copy.receipt.fees,
+              enBundle.copy.receipt.whenThisEnds,
+            ][i]
+          }\n${v}`,
+      ),
+      backAction,
+    });
+
+    it('reports a panel whose Back control is absent', () => {
+      const v = forcedCloseVerdict(panel({ present: false, clickable: null }), copy);
+      expect(v.verdict).toBe('fail');
+      expect(v.failKind).toBe('observed');
+      expect(v.why).toMatch(/no way to decline/);
+    });
+
+    it('says nothing when no confirmation was ever opened', () => {
+      // Positive evidence that the panel was up is required, or every
+      // visit that never opened one becomes a finding.
+      const v = forcedCloseVerdict(
+        {
+          ...panel({ present: false, clickable: null }),
+          confirmExpected: false,
+          confirmText: null,
+          confirmAction: undefined,
+          confirmRowsText: undefined,
+        },
+        copy,
+      );
+      expect(v.why ?? '').not.toMatch(/no way to decline/);
+    });
+  });
+});

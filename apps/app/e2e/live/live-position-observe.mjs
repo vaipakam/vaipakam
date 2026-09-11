@@ -5121,11 +5121,37 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
       // on the card otherwise, so its appearance is the evidence that
       // the panel is up. No Back, no scan: `confirmText` stays null and
       // the verdict blocks.
+      //
+      // ROUND 70 P2 — THE PANEL IS DETECTED INDEPENDENTLY OF ITS BACK
+      // CONTROL.
+      //
+      // Gating the whole scrape on Back meant a confirmation whose
+      // receipt and fee-paying action render perfectly, but whose Back
+      // button is missing, was never scanned at all: `confirmText`
+      // stayed null and the verdict reported `blocked/incomplete`. The
+      // directly observable defect — the lender has no way to decline
+      // without leaving the page — was reported as a gap in the reading.
+      //
+      // Either marker proves the panel is up, and they fail
+      // independently: Back is the control, the rows are the content.
+      // Awaited together rather than raced, because a race is won by
+      // whichever rejects first and would make a missing Back look like
+      // a missing panel again.
       const back = card.getByRole('button', { name: /back/i }).first();
-      const rendered = await back
-        .waitFor({ state: 'visible', timeout: 5_000 })
-        .then(() => true)
-        .catch(() => false);
+      const receiptRow = card
+        .locator('[data-testid^="forced-close-receipt"], dl.receipt .receipt-row')
+        .first();
+      const [backUp, rowsUp] = await Promise.all([
+        back
+          .waitFor({ state: 'visible', timeout: 5_000 })
+          .then(() => true)
+          .catch(() => false),
+        receiptRow
+          .waitFor({ state: 'visible', timeout: 5_000 })
+          .then(() => true)
+          .catch(() => false),
+      ]);
+      const rendered = backUp || rowsUp;
       if (rendered) {
         // ROUND 23 P2 — THE RECEIPT'S OWN ROWS, not the shell plus DOM
         // text.
@@ -6003,7 +6029,13 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
               // exactly the regression that removes everything else.
               // Rows are CONTENT, and content going missing is the
               // defect rather than the excuse for it.
-              panelPresent: backButton !== undefined && visible(backButton),
+              //
+              // ROUND 70 P2 — EITHER MARKER. Back-only conflated "no Back
+              // control" with "no panel", which is round 69's own
+              // correction by the opposite door: the rows are the other
+              // half of the evidence and they fail independently.
+              panelPresent:
+                (backButton !== undefined && visible(backButton)) || rows.length > 0,
               rowsText: shown.map((r) => visibleTextOf(r)).filter((t) => t.trim() !== ''),
               otherText,
               // ROUND 64 P2 — the WHOLE panel's painted text, carried

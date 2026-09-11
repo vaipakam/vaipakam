@@ -225,6 +225,15 @@ appear; a conclusion drawn from something missing now ranks behind that
 explanation, while anything the check actually read still ranks ahead of
 everything.
 
+One more on the confirmation panel. The check had been recognising that
+panel by its Back button, which meant a panel rendered without one was
+not examined at all — reported as something the check failed to read
+rather than as what it is: a lender shown a fee-paying action with no way
+to decline short of leaving the page. The panel is now recognised by
+either its Back control or its receipt lines, which fail independently,
+and a missing Back on a panel that did render is reported in its own
+right.
+
 ### Stated limits
 
 Three, and the first two are gaps in coverage rather than in the
