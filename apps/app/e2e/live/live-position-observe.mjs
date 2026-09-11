@@ -2461,6 +2461,26 @@ function pageHeadOf(page) {
  * yields `incomplete` where the old bracket would have accused. That is
  * the honest answer, since in that window this drive genuinely cannot tell
  * a stale render from a wrong one.
+ *
+ * TWO BOUNDS WORTH KNOWING, found by reviewing this rather than by
+ * running it:
+ *
+ *   - HOW FAR BACK THIS PINS is the page's own lifetime before the card is
+ *     read — a navigation, a settle and at most the chooser wait, so tens
+ *     of seconds and a few tens of blocks. That matters because a pin
+ *     outside a node's state window answers with a `-32000` this drive
+ *     rethrows, and the whole run would abort. Well inside any node's
+ *     window at this depth; recorded because the depth is what makes it
+ *     safe, and a future change that widened the floor further would not
+ *     obviously be changing that.
+ *   - THE FLOOR IS A LOWER BOUND ON WHAT THE PAGE ANNOUNCED, not on what
+ *     it read. A contract read that resolved before the first head
+ *     announcement could have used an earlier block, so the bracket can
+ *     miss by the blocks between page load and that first announcement —
+ *     normally none, since the app's block watcher mounts with everything
+ *     else. The alternative is subtracting a safety margin, which would be
+ *     a magic number standing in for a fact, and this file does not keep
+ *     those.
  */
 function pageHeadFloorOf(page) {
   const floors = pageRpcHeadFloors.get(page);
