@@ -100,12 +100,30 @@ export function isDetailPath(path) {
  * already caught here — two places deciding overlapping things, one
  * quietly erasing the other.
  *
- * @returns {Array<{why: string, kind: 'observed' | 'absence'}>}
+ * @returns {Array<{why: string, kind: 'observed' | 'absence',
+ *                   blockable: boolean}>}
  */
 function visitProblemList(v, role) {
   const problems = [];
-  const observed = (why) => problems.push({ why, kind: 'observed' });
-  const absence = (why) => problems.push({ why, kind: 'absence' });
+  // TWO QUESTIONS, TWO FIELDS, and each stated at the site rather than
+  // inferred later (self-review after round 79).
+  //
+  // `kind` answers "could an unknown CHAIN explain this". `blockable`
+  // answers "could a blocked REQUEST explain this" — the question the
+  // promotion above the infrastructure gates turns on. They are not the
+  // same: a mis-ordered row is neither, while a hooks-order crash is
+  // read directly and yet is a plausible consequence of this drive's own
+  // allowlist refusing something.
+  //
+  // I first wrote that promotion as a REGEX OVER THE `why` STRING, thirty
+  // lines below the paragraph in the drive that says the verdict must
+  // state its own kind "rather than this filter guessing from the `why`
+  // string" and that every arm must tag itself "instead of inheriting
+  // whichever default happened to be there". Both halves, immediately
+  // under the rule.
+  const read = (why) => problems.push({ why, kind: 'observed', blockable: false });
+  const observed = (why) => problems.push({ why, kind: 'observed', blockable: true });
+  const absence = (why) => problems.push({ why, kind: 'absence', blockable: true });
   if (v.nav) observed(`nav: ${v.nav}`);
   // A 404/500 does not throw and does not fire `pageerror`: page.goto
   // resolves and the status is merely recorded. Unchecked, a route that
@@ -148,7 +166,7 @@ function visitProblemList(v, role) {
   if (v.forcedCloseVerdict?.verdict === 'fail') {
     // The card's verdict already states which kind it is, at each
     // return site, so this reads the tag rather than deciding again.
-    (v.forcedCloseVerdict.failKind === 'observed' ? observed : absence)(
+    (v.forcedCloseVerdict.failKind === 'observed' ? read : absence)(
       `forced-close card: ${v.forcedCloseVerdict.why}`,
     );
   }
@@ -177,7 +195,9 @@ function visitProblemList(v, role) {
   if (!v.listRow) absence('listing row MISSING from the lender card');
   // `null` = not enough rows rendered to have an order; the missing row
   // is already reported above and must not be double-counted.
-  if (v.waitFirst === false) observed('wait row is NOT first on the lender card');
+  // `null`, never `false`, when a row it needs is absent — so a blocked
+  // read can only erase this defect, never manufacture one.
+  if (v.waitFirst === false) read('wait row is NOT first on the lender card');
 
   // A PRODUCER THAT SAW A DEFECT SAYS SO (Codex #1853 r27). Every arm
   // below infers failure from a PATTERN of fields — a dead entry in
@@ -218,7 +238,10 @@ function visitProblemList(v, role) {
     // the first and printed only the expected id, which on a swapped
     // binding — both anchors present — sends a reader looking for a
     // missing element that exists.
-    observed(
+    // The entry exists only because its jump BUTTON rendered, and button
+    // and target section come from one component, so missing data removes
+    // the entry rather than leaving a live button pointing at nothing.
+    read(
       'a lender jump button did not reach its own anchor: ' +
         deadAnchors.map((a) => `${a.target} → ${a.reached ?? 'nowhere'}`).join(', '),
     );

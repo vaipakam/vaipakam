@@ -87,18 +87,18 @@ describe('a funds defect that was READ outranks every blocker', () => {
     expect(at(OBSERVED_NOW_EXIT)).toBeLessThan(at(CHAIN_EXIT));
   });
 
-  it('promotes only defects a blocked request cannot explain', () => {
-    // The tags answer "could an unknown CHAIN explain this"; promotion
-    // answers "could a blocked REQUEST explain this". A hooks crash, an
-    // uncaught error and a nav failure are all plausible consequences of
-    // this drive's own allowlist refusing something, so they stay behind
-    // the blockers — round 69 added that gate because the drive can break
-    // the page it is judging.
-    const decl = src.slice(at('const PROMOTED_OBSERVED ='), at(OBSERVED_NOW_EXIT));
-    expect(decl).toContain('did not reach its own anchor');
-    expect(decl).toContain('is NOT first on the lender card');
-    expect(decl).not.toContain('HOOKS-ORDER');
-    expect(decl).not.toContain('uncaught');
+  // SELF-REVIEW AFTER ROUND 79 — the filter must read the TAG.
+  //
+  // Its first version matched the `why` string with a regex, thirty lines
+  // under the paragraph saying the verdict states its own kind "rather
+  // than this filter guessing from the `why` string". A reworded message
+  // would have dropped out of the promotion silently, and a new arm would
+  // have defaulted to unpromoted with nothing to notice.
+  it('promotes from the tag, never from the message', () => {
+    const decl = src.slice(at('const observedNow ='), at(OBSERVED_NOW_EXIT));
+    expect(decl).toContain('pr.blockable === false');
+    expect(decl).not.toMatch(/did not reach|NOT first|test\(pr\.why\)/);
+    expect(src).not.toContain('PROMOTED_OBSERVED');
   });
 
   it('reports the observed defect before the transport blocker', () => {

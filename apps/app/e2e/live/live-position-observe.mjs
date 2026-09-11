@@ -8149,9 +8149,9 @@ if (malformedRpc.length) {
 // was not applied to.
 //
 // NOT EVERY `observed` TAG IS PROMOTED, and the line is deliberate rather
-// than convenient. The tags answer "could an unknown CHAIN explain this";
-// promotion answers the harder "could a blocked REQUEST explain this".
-// Those differ:
+// than convenient. `kind` answers "could an unknown CHAIN explain this";
+// `blockable` answers the harder "could a blocked REQUEST explain this",
+// and both are now stated at the problem's own site. Those differ:
 //
 //   promoted   a dead jump anchor, a mis-ordered row, and the card's own
 //              observed findings — DOM facts about a page that rendered.
@@ -8175,10 +8175,18 @@ if (malformedRpc.length) {
 // So the residual is a real defect reported as BLOCKED on a run that also
 // had a transport failure — loud, re-runnable, and the direction this
 // file chooses every time.
-const PROMOTED_OBSERVED = /did not reach its own anchor|is NOT first on the lender card/;
+//
+// SELF-REVIEW — READ OFF THE TAG, NOT THE MESSAGE. The first version of
+// this filter was a regex over the `why` string, written thirty lines
+// below the paragraph above that says the verdict must state its own kind
+// "rather than this filter guessing from the `why` string", and that
+// every arm must tag itself "instead of inheriting whichever default
+// happened to be there". A reworded message would have silently dropped
+// out of the promotion, and a new arm would have defaulted to unpromoted
+// with nothing to notice it.
 const observedNow = visited.flatMap((v) =>
   visitProblemKinds(v, ROLE)
-    .filter((pr) => pr.kind === 'observed' && PROMOTED_OBSERVED.test(pr.why))
+    .filter((pr) => pr.blockable === false)
     .map((pr) => ({ path: v.path, why: pr.why })),
 );
 if (observedNow.length) {

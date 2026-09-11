@@ -500,6 +500,27 @@ describe('visitProblemKinds', () => {
     expect(kindOf(inferred, 'forced-close card')).toBe('absence');
   });
 
+  // SELF-REVIEW AFTER ROUND 79 — `blockable` is the second question, and
+  // every arm answers it at its own site.
+  it('marks what a blocked request could explain', () => {
+    const blockable = (v, why) =>
+      visitProblemKinds(v, 'lender').find((p) => p.why.includes(why))?.blockable;
+    // Read directly AND structurally immune to a missing read.
+    expect(blockable(detail({ waitFirst: false }), 'NOT first')).toBe(false);
+    expect(
+      blockable(
+        detail({ advancedAnchors: [{ target: '#x', present: false, reached: null }] }),
+        'did not reach its own anchor',
+      ),
+    ).toBe(false);
+    // Read directly, but a refused request is a plausible cause — round
+    // 69 added the allowlist gate because this drive can break the page.
+    expect(blockable(detail({ hooks: true }), 'HOOKS-ORDER')).toBe(true);
+    expect(blockable(detail({ pageErrors: ['x'] }), 'uncaught error')).toBe(true);
+    // An absence is always explicable by a blocker.
+    expect(blockable(detail({ chooser: false }), 'chooser MISSING')).toBe(true);
+  });
+
   it('reports the same strings as visitProblems, in the same order', () => {
     // One decision site, two views — the property that keeps the tags
     // from drifting away from the text they describe.
