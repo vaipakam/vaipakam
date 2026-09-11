@@ -6342,7 +6342,14 @@ storage holds no row for that loan at HEAD's slot — otherwise the getter is
 reading HEAD's row and the older one is a distinct liability; and two
 records naming the same Diamond reuse a result only when their facet
 populations and deploy times are identical too, since provenance is a
-per-record verdict. Run 38 re-reads every deployment with all of it.
+per-record verdict. Round 21 closed two more: an acknowledgement covers one
+occurrence of a change, in walk order, so a change reverted and reintroduced
+needs its own entry with its own redeploy plan; and a layout's identity
+carries each census field's normalized compiler type and offset beside its
+slot, and the census refuses any era whose field is not the plain counter or
+the `mapping(uint256 => Row)` its readers decode — a mapping whose key or
+value shape changed keeps its name and head slot but is a layout the row
+formula cannot read. Run 38 re-reads every deployment with all of it.
 
 ### 7a. What the provenance walk found, and how the design changes (2026-09-09)
 

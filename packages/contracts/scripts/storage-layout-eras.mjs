@@ -154,6 +154,11 @@ export function expandBytecode(table) {
   return { ...table, eras: (table?.eras ?? []).map(expand), deploymentBuilds: (table?.deploymentBuilds ?? []).map(expand) };
 }
 
+/** A compiler type with the per-build struct ids stripped (`t_struct(Row)206950_storage` → `t_struct(Row)_storage`), so layouts compare across builds. Pure. */
+export function normalizeFieldType(t) {
+  return String(t ?? '').replace(/(t_struct\([^)]*\))\d+/g, '$1');
+}
+
 /** Parse `git ls-tree <rev> <dir>/` into { path: { mode, type, hash } }. Pure. */
 export function parseLsTree(text) {
   const out = {};
@@ -452,7 +457,10 @@ export function main(argv = process.argv.slice(2)) {
   // A names-free shape would let two same-typed members swap unseen. A build
   // whose layout no era holds is PROMOTED to an era — its slots were computed
   // by the same probe — so the era-complete read covers it.
-  const layoutKey = (b) => JSON.stringify({ f: Object.fromEntries(FIELDS.map((f) => [f, b.fields?.[f]?.slot ?? null])), r: b.rows ?? null, p: b.storagePosition });
+  // each field's slot AND its normalized compiler type and offset (#2095 r21
+  // P1): a mapping whose key/value shape changed keeps its name and head slot
+  // but is a different layout the row formula cannot read
+  const layoutKey = (b) => JSON.stringify({ f: Object.fromEntries(FIELDS.map((f) => [f, b.fields?.[f] ? { s: b.fields[f].slot, t: normalizeFieldType(b.fields[f].type), o: b.fields[f].offset ?? 0 } : null])), r: b.rows ?? null, p: b.storagePosition });
   const eraLayouts = new Map(built.map((b) => [layoutKey(b), b.commit]));
   const reusableBuilds = new Map();
   if (reuseTable) for (const b of expandBytecode(reuseTable).deploymentBuilds ?? []) reusableBuilds.set(b.commit, b);

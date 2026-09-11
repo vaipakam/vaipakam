@@ -18,7 +18,7 @@
  * indeterminate with the reason recorded.
  */
 import { rowSlot, memberSlot } from './storage-slots.mjs';
-import { expandBytecode } from './storage-layout-eras.mjs';
+import { expandBytecode, normalizeFieldType } from './storage-layout-eras.mjs';
 
 export const CLASSES = ['vpfiHeldCustody', 'rebateRows', 'fallbackSnapshotCustody', 'liveIntentCommits'];
 /** The member offsets the reads rely on; every era must agree or the read is refused. */
@@ -56,7 +56,23 @@ export function prepareStorageRead({ slots, eras: rawEras }) {
   // and a mapping that EXISTS in an era must carry its row layout (#2095 r1
   // P1) — a null row beside a live mapping is a lookup miss, not an absent
   // struct, and reading it with today's offsets would misattribute that era.
+  // #2095 r21 P1 — only the schemas the readers decode are accepted: a plain
+  // uint256 counter, and a mapping(uint256 => Row) whose row the ROW table
+  // describes. A nested mapping or a retyped counter is a layout the row
+  // formula cannot read, whatever its head slot
+  const SUPPORTED = {
+    nextLoanId: /^t_uint256$/, totalLoansEverCreated: /^t_uint256$/, intentLiveCommitCount: /^t_uint256$/,
+    intentCommits: /^t_mapping\(t_uint256,t_struct\(SwapToRepayIntentCommit\)_storage\)$/,
+    borrowerLifRebate: /^t_mapping\(t_uint256,t_struct\(BorrowerLifRebate\)_storage\)$/,
+    fallbackSnapshot: /^t_mapping\(t_uint256,t_struct\(FallbackSnapshot\)_storage\)$/,
+  };
   for (const e of eras.eras) {
+    for (const [field, re] of Object.entries(SUPPORTED)) {
+      const f = e.fields?.[field];
+      if (!f?.slot) continue;
+      if (f.type !== undefined && !re.test(normalizeFieldType(f.type))) return refuse(`era ${e.commit.slice(0, 9)} (${e.date.slice(0, 10)}) declares ${field} as ${f.type}, a schema the census cannot read`);
+      if ((f.offset ?? 0) !== 0) return refuse(`era ${e.commit.slice(0, 9)} (${e.date.slice(0, 10)}) places ${field} at offset ${f.offset}, not 0 — a packed field the readers do not decode`);
+    }
     for (const [field, struct] of Object.entries(FIELD_TO_ROW)) {
       if (e.fields?.[field]?.slot && !e.rows?.[struct]) return refuse(`era ${e.commit.slice(0, 9)} (${e.date.slice(0, 10)}) carries the ${field} mapping but no ${struct} row layout — the era table cannot say how that era laid its rows out`);
     }

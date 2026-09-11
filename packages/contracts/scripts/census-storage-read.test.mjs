@@ -281,6 +281,20 @@ test('a slot table missing a census field is refused (#2095 r20 P1)', () => {
   assert.match(r.reason, /lacks the pinned slot of fallbackSnapshot/);
 });
 
+test('an era whose census field has an unsupported schema or a packed offset is refused (#2095 r21 P1)', () => {
+  const nested = JSON.parse(JSON.stringify(eras));
+  const e = nested.eras.find((x) => x.commit !== nested.head);
+  e.fields.intentCommits.type = 't_mapping(t_uint256,t_mapping(t_address,t_struct(SwapToRepayIntentCommit)1234_storage))';
+  assert.match(prepareStorageRead({ slots, eras: nested }).reason, /declares intentCommits as .* a schema the census cannot read/);
+  const typed = JSON.parse(JSON.stringify(eras));
+  typed.eras[0].fields.intentCommits.type = 't_mapping(t_uint256,t_struct(SwapToRepayIntentCommit)99_storage)'; // a per-build struct id is fine
+  typed.eras[0].fields.nextLoanId.type = 't_uint256';
+  assert.equal(prepareStorageRead({ slots, eras: typed }).ok, true);
+  const packed = JSON.parse(JSON.stringify(eras));
+  packed.eras[0].fields.totalLoansEverCreated.offset = 16;
+  assert.match(prepareStorageRead({ slots, eras: packed }).reason, /at offset 16/);
+});
+
 test('an era whose row member has the same slot but a narrower type is refused (#2095 r9 P2)', () => {
   const ok = prepareStorageRead({ slots, eras });
   assert.equal(ok.ok, true, ok.reason);

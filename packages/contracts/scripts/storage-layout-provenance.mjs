@@ -406,8 +406,18 @@ export function changeEventKey(e) {
   return `${e.struct}|${e.kind}|${e.firstDifferentIndex}|${e.before ?? ''}|${e.after ?? ''}`;
 }
 export function unacknowledgedViolations(changeEvents, ack) {
-  const acked = new Set((ack?.acknowledged ?? []).map((a) => a.key ?? changeEventKey(a)));
-  return (changeEvents ?? []).filter((e) => isLayoutViolation(e) && !acked.has(changeEventKey(e)));
+  // a MULTISET (#2095 r21 P1): each acknowledgement covers ONE occurrence, in
+  // walk order, so a change reverted and reintroduced needs its own entry
+  const budget = new Map();
+  for (const a of ack?.acknowledged ?? []) { const k = a.key ?? changeEventKey(a); budget.set(k, (budget.get(k) ?? 0) + 1); }
+  const out = [];
+  for (const e of changeEvents ?? []) {
+    if (!isLayoutViolation(e)) continue;
+    const k = changeEventKey(e);
+    const left = budget.get(k) ?? 0;
+    if (left > 0) budget.set(k, left - 1); else out.push(e);
+  }
+  return out;
 }
 
 function main() {

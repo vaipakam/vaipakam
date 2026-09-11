@@ -203,4 +203,9 @@ test('only layout changes the rule forbids and nobody acknowledged fail the walk
   const un = unacknowledgedViolations(events, ack);
   assert.deepEqual(un.map((e) => `${e.struct} ${e.kind}`), ['ProtocolConfig append'], 'the inline-struct append at B is the one unacknowledged change');
   assert.equal(unacknowledgedViolations(events, null).length, 3, 'no acknowledgement file: every forbidden change counts');
+  // a multiset: the same change reverted and reintroduced is a second occurrence that needs its own acknowledgement (#2095 r21)
+  const again = [...events, { ...events[0], commit: 'e'.repeat(40) }];
+  const once = { acknowledged: [{ key: changeEventKey(events[0]) }, { key: changeEventKey(events[2]) }, { key: changeEventKey(events[3]) }] };
+  assert.deepEqual(unacknowledgedViolations(again, once).map((e) => e.commit), ['e'.repeat(40)], 'the second occurrence is unacknowledged');
+  assert.equal(unacknowledgedViolations(again, { acknowledged: [...once.acknowledged, { key: changeEventKey(events[0]) }] }).length, 0, 'a second entry covers it');
 });
