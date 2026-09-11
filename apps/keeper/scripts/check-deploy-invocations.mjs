@@ -6664,17 +6664,58 @@ function indentedBlocks(lines, indentRe, startAt = 0) {
  *
  * `@`, `-` and `+` are Make's recipe-control prefixes and are stripped either
  * way; they are not part of the command.
+ *
+ * ---
+ *
+ * The recipe lines come back with their variable references EXPANDED, as blocks
+ * for the DEPLOY SCANNER. This is the only thing Make's variables are modelled
+ * for; the rewrite question reads the file as written (see its call site).
+ *
+ * `WORKER := apps/agent` then `cd $(WORKER)` deploys from the protected
+ * package — Make expands the variable before the shell sees the recipe, but the
+ * scanner received `$(WORKER)` and modelled an unknown directory, so the bare
+ * deploy under it passed (#1995 r17). Literal values only, last assignment
+ * wins, `?=` yields to an existing one, and a computed value CLEARS the name —
+ * the same rules the shell-variable model follows. Collected over the whole
+ * file because recursive `=` variables resolve at use, not at definition.
+ *
+ * THIS MODEL IS KNOWN TO BE WRONG ABOUT MAKE IN SEVERAL WAYS, and #2105 is the
+ * record of what happened when it was made more faithful. Four rounds and
+ * fifteen findings: conditionals in both directions, `undefine`, `undefine`
+ * inside a dead branch, a settable recipe marker, that marker moving mid-file,
+ * `define` bodies, indented assignments, mismatched `$(NAME}` delimiters, `?=`
+ * after a computed value. Every round's findings were edges of the previous
+ * round's fix.
+ *
+ * TWO CORRECTIONS THAT LOOKED OBVIOUSLY SAFE WERE ALSO WITHDRAWN, and they
+ * failed in OPPOSITE directions, which is why neither is a template for the
+ * other:
+ *
+ *   - Treating `$$` as an escaped dollar, hence inert. It is inert TO MAKE,
+ *     which then hands a single `$` to the SHELL — so `$${DEPLOY} deploy` with
+ *     `DEPLOY` exported really runs, and skipping it HID THE DEPLOY. A false
+ *     GREEN, from a rule adopted precisely because it was "purely lexical".
+ *   - Adding `GNUmakefile` to the files scanned as Makefiles. Correct about
+ *     Make, but it routes those files through this model, spreading its false
+ *     REDS to files that previously escaped them.
+ *
+ * So the lesson is not "err toward reporting" — one erred each way. It is that
+ * THE MODEL'S IMPERFECTION IS LOAD-BEARING: its one consumer is calibrated
+ * around it, so making it locally more faithful, or widening the set of files
+ * it judges, can each be a regression. `main` expanding `$${DEPLOY}` from the
+ * second dollar is strictly a bug, and that bug is what keeps the deploy
+ * visible.
+ *
+ * Recipe membership is `^\t`. Following a settable prefix was tried and
+ * withdrawn (#2105 r7 then r8): read over the whole file, a late
+ * `.RECIPEPREFIX` applied retroactively and DROPPED an earlier tab recipe,
+ * turning a stated miss into a silent one. #2114.
  */
 function makefileBlocks(text) {
   const oneshell = /^\s*\.ONESHELL:/m.test(text);
-  // `WORKER := apps/agent` then `cd $(WORKER)` deploys from the protected
-  // package — Make expands the variable before the shell sees the recipe, but
-  // the scanner received `$(WORKER)` and modelled an unknown directory, so the
-  // bare deploy under it passed (#1995 r17). Literal values only, last
-  // assignment wins, `?=` yields to an existing one, and a computed value
-  // CLEARS the name — the same rules the shell-variable model follows.
-  // Collected over the whole file because recursive `=` variables resolve at
-  // use, not at definition.
+  // The variable rules and their limits are on this function's JSDoc; there is
+  // ONE consumer of them, this scanner. Recipe membership is `^\t` — following
+  // a settable prefix was tried and withdrawn (#2114).
   const mkVars = new Map();
   for (const l of text.split('\n')) {
     if (/^\t/.test(l)) continue;
@@ -8895,6 +8936,189 @@ for (const file of walk(REPO_ROOT)) {
   // Shell semantics apply to SHELL files. A redirection is a redirection in
   // shell text; in JavaScript the same character is a comparison (#2066 r10).
   const fileIsShell = Boolean(winInterp) || isShellFile(rel, text);
+  // THE RECORD FOR ALL OF THIS lives in ONE place —
+  // docs/DesignsAndPlans/DeployGuardRewriteScanRecord.md: the designs tried
+  // and withdrawn, the defect catalogue, and the interpreter/runner/language
+  // distinctions. What follows is deliberately NOT a copy of it. These are
+  // the warnings that belong at THIS call site because they are about the
+  // code immediately below, and a reader editing `forInterpreter` or
+  // `logicalLines` needs them here rather than one hop away. Scope claims
+  // about a defect belong to its fixtures, which is where they are checked.
+  //
+  // THE REWRITE QUESTION IS ASKED OF THE FILE ESSENTIALLY AS WRITTEN. Two
+  // exceptions predate this and stand — but the first of them is applied more
+  // widely than its own justification reaches (r38), so read the note on the
+  // runner below before preserving any of its behaviour:
+  //
+  //   - a Windows helper, which `forInterpreter` has already normalised above
+  //     into the same form its workflow-body equivalent takes. Both dialects
+  //     get separators, and the TITLE-CASE spelling of the command lowered —
+  //     only that one, so `WRANGLER deploy` is still missed although Windows
+  //     runs it (a false green on main too, #2115).
+  //
+  //     AND IT IS CHOSEN BY INTERPRETER, NOT BY PLATFORM (#2126). `pwsh` runs
+  //     on Linux, and on a runner whose executable lookup is CASE-SENSITIVE
+  //     — which is what the fixture pins, on `ubuntu-latest` — `Wrangler` and
+  //     `wrangler` are different files, yet `forInterpreter` applies this
+  //     fold there too, so the check reports a program that runner does not
+  //     have. The comment on `windowsSeparators` states this must not happen
+  //     and the code does it anyway; a correction must not preserve the
+  //     platform-blind behaviour just because this note calls the exception
+  //     established.
+  //
+  //     SCOPE THAT NARROWLY, AND DO NOT WIDEN IT TO "POSIX" (r43/r44). The
+  //     discriminator is how the runner RESOLVES COMMAND NAMES, not the
+  //     platform family: a POSIX host with case-INSENSITIVE lookup resolves
+  //     both spellings to one executable, and there the #2115 miss is real
+  //     again. A fix that stops recognising the upper-case spelling
+  //     wherever the platform is not Windows would therefore introduce a
+  //     silent pass on such a runner — the direction this check must never
+  //     fail in. Other resolution modes are OPEN here, not decided. The SEPARATOR
+  //     half is NOT affected IN THE CASE THAT WAS CHECKED (r35): a path given
+  //     to one of that shell's own commands, such as the directory change,
+  //     reads the same with either separator on every platform, so
+  //     normalising it asserts nothing there.
+  //
+  //     THAT IS NARROWER THAN "the separator half is fine" (r40). The same
+  //     source warns the alternate separator "may not work when used with
+  //     native applications that only expect the native directory separator"
+  //     — and this rewrite also touches path-shaped ARGUMENTS handed to the
+  //     deploy tool itself, which is such an application. Nothing here
+  //     demonstrates that case either way; it is an open question, not a
+  //     cleared one, and a #2126 fix should settle it rather than inherit
+  //     this note's silence as approval.
+  //
+  //     The casing rule errs BOTH ways:
+  //     the spelling it does cover is also matched inside a here-string the
+  //     shell never runs. Not a fault of the rewrite — the lower-case spelling
+  //     is already reported there, no rewrite involved — so it WIDENS the
+  //     reach of the missing string state below rather than adding a fault
+  //     (#2115). Beyond that the two dialects DIFFER:
+  //     `cmd` folds caret continuations, `pwsh` rewrites `$x = 'v'` into `x=v`
+  //     so the shared variable model resolves it, and neither gets the other's
+  //     rule.
+  //
+  //     "AND NO CONTINUATION FOLDING HAPPENS FOR PWSH" WAS WRONG — it was
+  //     true of `forInterpreter` and false of the pipeline. `logicalLines`
+  //     runs AFTER this and folds a trailing backslash, which pwsh does not
+  //     treat as a continuation at all, so an unrelated line ending in one
+  //     merges with the deploy below it and lends it a `--keep-vars` it never
+  //     had. A false GREEN on main too (#2118) — the direction this check must
+  //     not fail in.
+  //
+  //     NOT "for every language", which overstated it (r21). `logicalLines`
+  //     reads SHELL-derived entries — shell files, Windows helpers, and the
+  //     shell/Make blocks lifted out of other files; a `.md`, `.js` or `.py`
+  //     line goes through `plainLines` and is not folded. Verified: the same
+  //     shape in a runbook reports, in a `.sh` it is blessed. It also needs
+  //     the line to END at the backslash — with CRLF the retained `\r` breaks
+  //     `buf.endsWith('\\')`, so the defect is LF-only. Both limits matter for
+  //     the blast radius of a fix, not just for accuracy here.
+  //
+  //     NOR "everything read AS A SHELL" (r23) — and that phrasing was wrong
+  //     in the DANGEROUS direction. A manifest script value is shell text by
+  //     every test this reader applies, and `jsonValueLines` appends it
+  //     WITHOUT `logicalLines`, so it is never split at newlines either. A
+  //     decoded `"echo --keep-vars\nwrangler deploy"` is two commands to the
+  //     package manager and one here, so the flag on the first line blesses
+  //     the deploy on the second: exit 0, where the same value with `hello`
+  //     in place of the flag exits 1 (#2121, a false green on main too).
+  //
+  //     SO THE REAL SHAPE IS ONE DEFECT SEEN FROM TWO SIDES: line splitting
+  //     is a property of the READER a body passes through, not of the body.
+  //     #2118 joins lines that should stay apart; #2121 never separates lines
+  //     that were always apart. A fix that gives each body the splitting its
+  //     own language defines settles both; fixing either alone leaves the
+  //     other, and leaves this note wrong again.
+  //
+  //     THE PWSH REWRITE IS NOT PURELY SEMANTICS-PRESERVING, and an earlier
+  //     version of this note claimed it was. It has no string state, so an
+  //     assignment inside a here-string is rewritten as if it ran — which can
+  //     INVENT a deploy (#2117, a false red on main too). Recognising an
+  //     assignment needs a model of PowerShell's quoting, so it does not
+  //     actually clear the bar the rest of this note sets.
+  //     A SEMANTICS-PRESERVING NORMALISATION: a total, deterministic rewriting
+  //     of one spelling into another, deciding nothing about what runs. (It
+  //     removes and replaces characters, so "only additive transformations are
+  //     safe" is NOT the rule — see the spec.)
+  //   - a manifest script, where `rewriteCtx`'s `valueScoped` branch asks the
+  //     question of the DECLARED VALUE rather than the whole file, because an
+  //     UNRELATED sibling script's write is not part of the script being
+  //     judged. A selection — but of a boundary the FORMAT draws, not of "the
+  //     parts that look executable", which is the selection that failed.
+  //
+  //     THE REASON DOES NOT MATCH THE CODE'S SHAPE, and this note claimed it
+  //     did. `jsonValueLines` runs for EVERY `.json`/`.jsonc` file and turns
+  //     each colon-introduced SCALAR string into its own scanned command line
+  //     — a `description`, a `wrangler.jsonc` var, an unrelated data file —
+  //     not the `scripts` map. So a manifest whose description merely NAMES
+  //     the command is reported as deploying it. A false RED on main too
+  //     (#2119).
+  //
+  //     Neither "manifests" nor "every string", and the second half is about
+  //     LAYOUT rather than the value's kind (r23/r27): the regex is
+  //     `:\s*"…"`, so an ARRAY element is dropped only when its line ALSO
+  //     carries a scalar property — `{"keywords":["wrangler deploy"],…}` on
+  //     one line does not report, the same array written one element per line
+  //     DOES, because that line has no scalar match and the raw line is
+  //     returned instead. Both layouts are pinned. See #2119, which carries
+  //     the full scope; do not restate it here.
+  //
+  //     WHETHER A SECOND ROUTE EXISTS DEPENDS ON HOW A FIX NARROWS — an
+  //     earlier version of this note said it always does, which is wrong
+  //     (r22). This dispatch is a CHOICE, so a file that stops being extracted
+  //     falls through to `plainLines`:
+  //
+  //       - NARROWED BY FILE (only manifests extracted): `metadata.json`
+  //         falls back to `plainLines`, whose raw line still matches, so it
+  //         STILL reports. The message then quotes the whole
+  //         `{"note":"wrangler deploy"}` instead of the extracted
+  //         `wrangler deploy` — which is how the two routes are told apart,
+  //         and why "it still exits 1" is not by itself evidence of either.
+  //       - NARROWED BY KEY (extraction still runs everywhere, yields nothing
+  //         for a non-script value): no fallback, so the file reports
+  //         NOTHING.
+  //
+  //     Both verified as mutants. The key-scoped one is what #2119 proposes,
+  //     so the likely fix removes BOTH reports; the metadata fixture below
+  //     fails under it and passes under the file-scoped one, which is exactly
+  //     what makes it worth keeping.
+  //
+  //     It is the EXTRACTION's breadth, not the `lang: 'shell'` label and not
+  //     `valueScoped`. Worth stating because the obvious reading blames the
+  //     label: relabelling these entries leaves the false report standing,
+  //     while bypassing the extraction removes it. The label is right and
+  //     load-bearing for redirections inside script values (r13), and
+  //     `valueScoped` only picks the coordinate space for the rewrite
+  //     question. Fixing either would not touch this.
+  //
+  //     Not every sibling is unrelated, and this scope misses the ones that
+  //     are not: `release: pnpm run generate && wrangler deploy` really does
+  //     run `generate`'s write first, and the scan never sees it. A false
+  //     GREEN, present on main too. #2116.
+  //
+  //     DO NOT "JUST FOLLOW THE INVOCATION" — see the note below, which
+  //     records that exact traversal being tried in #2066 r17 and withdrawn
+  //     after NINE findings over five rounds. #2116 records the miss; #2085
+  //     (a declaration) is the remedy that does not need the call graph.
+  //
+  // THREE TRANSFORMATIONS WERE TRIED HERE AND ALL THREE WITHDRAWN, as were
+  // two smaller "obviously safe" corrections that outlived them. What each
+  // was, what it cost, and why none can be rebuilt is recorded ONCE, in
+  // docs/DesignsAndPlans/DeployGuardRewriteScanRecord.md.
+  //
+  // It used to be recorded here as well, at length. That second copy was
+  // removed (#2105 r49) because it was the drift mechanism the single-source
+  // document exists to eliminate: history duplicated beside code diverges
+  // from it, and this file's copy had already outlived two corrections made
+  // elsewhere. What stays here is only what constrains the expressions below.
+  //
+  // The one line of it that IS a local constraint, because it governs what
+  // may be added to this function: a transformation is admissible only as a
+  // semantics-preserving normalisation of a known notation, never where it
+  // must infer WHICH TEXT IS EXECUTABLE or WHAT A NAME DENOTES. All three
+  // withdrawn designs failed that test; adding or removing characters is not
+  // the test and never was.
   // AN EXTENSIONLESS HELPER HAS A SHEBANG, NOT A SUFFIX. `walk` yields
   // extensionless executables deliberately, and keying the language on `.py`
   // alone classified `#!/usr/bin/env python3` as `other` — where an f-string
@@ -9081,6 +9305,22 @@ for (const file of walk(REPO_ROOT)) {
     // BEFORE a continued deploy read as after it and the rewrite was blessed
     // (r27). Entries from the readers that do not fold carry no `folds` and
     // are unaffected.
+    // Both ends of the ordering comparison are measured in ONE coordinate
+    // system. That is the whole requirement — and stating it as "positions are
+    // taken in `text`" was too strong (r23), because it excludes the
+    // value-scoped path documented at the call site: for an entry from
+    // `jsonValueLines`, `rewriteCtx` measures both ends against the extracted
+    // VALUE instead, which is a different space that agrees with itself. The
+    // invariant is the agreement, not the choice of space, and writing it the
+    // other way would point a future transformation at preserving raw-file
+    // lines where a local mapping is what is actually used. It is why the
+    // LATER TWO #2084
+    // transformations — Make expansion and Markdown blanking — had to preserve
+    // line count while they existed. The first, the collected executable image,
+    // did not: it translated coordinates through `containerImage.at(...)`
+    // instead, which is a different way to satisfy the same requirement and one
+    // reason it was harder to reason about. All three were withdrawn (#2105),
+    // so the only adjustment left here is the fold compensation above.
     const rawAt = (within) =>
       lineStartOffset(
         text,

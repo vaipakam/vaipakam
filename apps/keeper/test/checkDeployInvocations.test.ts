@@ -4710,9 +4710,12 @@ describe('check-deploy-invocations — apps/agent scope (#1933)', () => {
     expect(r.ok).toBe(true);
   });
 
-  it('but on a POSIX path Wrangler is a different file (#1995 r16 control)', () => {
+  it('but under case-sensitive lookup Wrangler is a different file (#1995 r16 control)', () => {
     // Case-folding belongs where the interpreter is known; doing it everywhere
-    // would invent a command that does not exist on a POSIX runner.
+    // would invent a command that does not exist on a runner whose executable
+    // lookup is case-SENSITIVE — which is the discriminator, not the platform
+    // family (r45). A case-insensitive host resolves both spellings to one
+    // program, and this control says nothing about that case.
     expect(runWith('cs.sh', 'cd apps/agent\nWrangler deploy\n').ok).toBe(true);
   });
 
@@ -11850,5 +11853,1203 @@ describe('check-deploy-invocations — #1996 config identity', () => {
         'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
     );
     expect(r.ok).toBe(false);
+  });
+
+});
+
+describe('check-deploy-invocations — #2084 the rewrite model, and three withdrawn designs', () => {
+  // ---- #2084: the rewrite question reads the file AS WRITTEN ----
+  //
+  // Three transformations were tried and all three withdrawn (#2105 — ten
+  // rounds building and withdrawing, then further rounds correcting this
+  // record itself; the PR carries the running count, deliberately not this
+  // file, since every such round would restale a number written here).
+  // Nothing transforms the text now, bar two pre-existing exceptions: the
+  // Windows normalisation, and a manifest script judged against its declared
+  // value. An earlier version of this note said no fixture here exercises
+  // those two. Both are exercised, and each turned out to carry a wrong
+  // verdict of its own (r20): the Windows normalisation by the #2115, #2122,
+  // #2124 and #2126 fixtures, and the manifest exception by the #2119 and
+  // #2121 ones. #2118 is NOT one of them either, and was listed here until
+  // r35: `forInterpreter` makes no relevant change to those bodies, and the
+  // unsafe pass arrives later, when the SHARED line splitter folds the
+  // trailing backslash. A correction to `windowsSeparators`,
+  // `powershellAssignments` or `foldCaretContinuations` would leave #2118
+  // exactly as it is. #2123 is NOT one of them and was listed here by mistake
+  // (r28) — its gate is the shared extension test in `walk`, which skips the
+  // file before any interpreter is chosen, and one of its fixtures is a
+  // POSIX helper that is not a Windows file at all. Attributing it to the
+  // normalisation would point a fix at the wrong subsystem. Named by defect rather than by position, because the
+  // position moved and the pointer sent readers to unrelated tests (r27).
+  //
+  // So they pin two things: the shapes that defeated the withdrawn designs,
+  // and a set of WRONG VERDICTS across the defects below, asserted so a later
+  // fix fails them and comes back to the question instead of passing
+  // unnoticed.
+  //
+  // HOW MANY, AND WHICH DEFECT EACH BELONGS TO, IS NOT WRITTEN HERE (r48).
+  // A per-defect enumeration used to sit in this spot, and an identical one
+  // sat in the release note until it was deleted for the same reason: every
+  // restatement of a per-defect fact is a new place for that fact to drift
+  // from the fixture establishing it. That enumeration went stale in the very
+  // round that consolidated the #2123 fixtures — both its total and its
+  // per-defect counts.
+  //
+  // The sentence that replaced it then described the drift USING the drifted
+  // numbers, and was wrong again within two rounds (r51): it said that defect
+  // was "now pinned once" when the consolidation left TWO marked titles, the
+  // standalone one and the table. Which is the lesson stated twice over —
+  // naming the specific is what goes stale, including inside the note
+  // explaining that naming the specific goes stale. The titles are the
+  // source; each fixture states its own scope.
+  //
+  // COUNT THESE FROM THE TREE, NOT FROM THIS COMMENT. The criterion: every
+  // test title asserting a wrong verdict contains the lower-case word
+  // s-t-a-t-e-d, and no other title does — so counting the titles that
+  // contain it gives the total, and grouping those titles by the issue they
+  // name gives the per-defect split.
+  //
+  // Spelled out like that on purpose. The first version of this rule said to
+  // count the titles carrying that word, which was FALSE when written (ten of
+  // fifteen were marked); the second gave a grep pattern that MATCHED ITSELF,
+  // since the pattern appeared in this comment, and returned one too many.
+  // A self-verifying instruction has to survive being read by the thing it
+  // describes.
+  //
+  //   - COLLECTING the executable parts. Six ingestion paths missed, every
+  //     omission a false green; two enumerations of "all the paths" incomplete.
+  //   - BLANKING Markdown prose. Six commands erased. The rule cannot exist:
+  //     this guard treats a bare, unindented line as an actionable command —
+  //     the first two fixtures below pin that — and a prose sentence naming a
+  //     write has the same shape.
+  //   - EXPANDING Makefile recipe variables. Fifteen findings over four rounds,
+  //     each round's edges of the last round's fix.
+
+  it('a standalone runbook command is read as written (#2105 r6)', () => {
+    // NO SUBTRACTION HAPPENS TO MARKDOWN, and this is the fixture that says so.
+    // A bare, unindented line in a runbook IS an actionable command to this
+    // guard — which is the whole reason `cp a b` before a deploy is reported.
+    // Blanking "plain prose" therefore erased real commands: this exact shape
+    // exited 0 with blanking in place and 1 without it, a false green on the
+    // hazard the guard exists for. It also shows why the rule could not be
+    // repaired: a PROSE SENTENCE naming a write has the same shape as this
+    // line, so telling them apart IS the classifier whose answer produced the
+    // false red in the first place (#2112).
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'docs/runbook.md',
+      '# Runbook\n\nFirst regenerate it:\n\ncp generated.jsonc configs/custom.jsonc\n\n' +
+        '```bash\nwrangler deploy --config configs/custom.jsonc\n```\n',
+    );
+    expectReportedAt(r, 'docs/runbook.md');
+  });
+
+  it('an inline command span in prose is read as written (#2105 r3)', () => {
+    // The second shape that killed a design. A code span sits INSIDE prose and
+    // is an instruction — "first run `cp a b`" tells the operator to run it —
+    // so the withdrawn selection, which kept only whole blocks, dropped it and
+    // turned a runbook into a false green. Kept as a companion to the fixture
+    // above: between them they cover both spellings any future attempt to
+    // subtract Markdown text would have to preserve.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'docs/rb3.md',
+      '# Runbook\n\nFirst run `cp generated.jsonc configs/custom.jsonc` to stage it.\n\n' +
+        '```bash\nwrangler deploy --config configs/custom.jsonc\n```\n',
+    );
+    expectReportedAt(r, 'docs/rb3.md');
+  });
+
+  it('a Makefile write assigned BELOW the deploy is NOT seen (#2084, stated miss)', () => {
+    // A STATED MISS, asserted so that a future fix announces itself.
+    //
+    // Make expands `$(GENERATE)` before the shell sees the recipe, so this file
+    // really does rewrite the config before deploying it — `make -n` prints the
+    // redirection first, and the guard does not report it.
+    //
+    // THE REASON IS SOURCE ORDER, not invisibility. The raw file DOES contain
+    // the redirection — it is right there in the `GENERATE =` line. The guard misses it only because
+    // that assignment sits BELOW the deploy, and the write scan compares
+    // positions. Move the assignment above the target and the guard reports,
+    // with no expansion at all.
+    //
+    // So #2084 is narrower than "a variable's value is invisible": it is that
+    // a Make assignment's POSITION does not constrain when its value is used,
+    // because `=` resolves at use.
+    //
+    // THAT DOES NOT MAKE IT CHEAP TO FIX, and an earlier version of this
+    // comment suggested it did — "just relax the ordering comparison for
+    // Makefiles". It would trade this miss for false reports: an `UNUSED =
+    // printf '{}' > configs/custom.jsonc` that no recipe references would then
+    // invalidate an earlier deploy, though Make never expands it. Knowing the
+    // later write belongs BEFORE this deploy means relating the recipe's
+    // reference to the assignment — the variable model withdrawn above. #2105
+    // r19.
+    //
+    // Expanding the recipe was implemented and withdrawn over four review
+    // rounds and fifteen findings (see the note at the rewrite question's call
+    // site). It failed the way the other two withdrawn designs did: it had to
+    // infer WHAT A NAME DENOTES.
+    //
+    // The miss is `main`'s miss, so nothing regressed. #2084 stays open.
+    // If someone makes this work, THIS FIXTURE FAILS — that is the signal to
+    // reopen the discussion, not a breakage.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'Makefile',
+      'deploy:\n\t$(GENERATE)\n\twrangler deploy --config configs/custom.jsonc\n\n' +
+        "GENERATE = printf '{}' > configs/custom.jsonc\n",
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('the same Makefile with the assignment ABOVE the deploy IS reported (#2084 control)', () => {
+    // THE CONTROL #2084 LACKED (r38). Same bytes, only the assignment's
+    // POSITION differs, and the verdict flips — which is what the pin above
+    // claims and, until now, only asserted in prose.
+    //
+    // THE MECHANISM IS THE LITERAL SCAN, NOT EXPANSION, and that is worth
+    // stating because round 6 recorded a trap here: a control placed above
+    // reports because the `GENERATE = printf … > …` LINE ITSELF is a write in
+    // the raw file, now positioned before the deploy. Mutation-checked —
+    // disabling the recipe-variable expansion entirely leaves this reporting.
+    //
+    // So the pair pins exactly what #2084 is: not "a variable's value is
+    // invisible", but "an assignment's position does not constrain when its
+    // value is used".
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'Makefile',
+      "GENERATE = printf '{}' > configs/custom.jsonc\n\n" +
+        'deploy:\n\t$(GENERATE)\n\twrangler deploy --config configs/custom.jsonc\n',
+    );
+    expectReportedAt(r, 'Makefile');
+  });
+
+  it('a runbook sentence naming a write reports the deploy (#2112, stated false report)', () => {
+    // A STATED FALSE REPORT — the opposite direction from its two siblings,
+    // which are misses. Asserted so a future fix announces itself.
+    //
+    // Nothing in this file performs a write — the sentence DESCRIBES one — but
+    // the guard reports the deploy below it anyway. A false RED, in a check
+    // that runs inside typecheck, so it blocks correct work.
+    //
+    // NOT because prose is read as SHELL: a `.md` is not a shell file, and
+    // this line classifies as `other`. The report comes from the GENERIC write
+    // matcher recognising the JavaScript-shaped `writeFileSync(...)` in prose.
+    // Worth stating precisely — attributing it to shell parsing sends a future
+    // fix to the wrong classifier (#2105 r19).
+    //
+    // Blanking the prose was tried three times and withdrawn (#2105 r4-r6).
+    // The rule cannot exist: this guard treats a bare, unindented line as an
+    // actionable command — the two fixtures above pin that, and it is why a
+    // runbook's `cp a b` is reported at all — and a prose sentence naming a
+    // write has that same shape.
+    //
+    // `r.ok` is FALSE when the guard reports, which is what this asserts — the
+    // report is the current, wrong behaviour being pinned. If someone fixes
+    // #2112 this fixture fails and they come back to the question.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'docs/rb-prose.md',
+      '# Runbook\n\nBefore deploying, the release tool calls\n' +
+        'writeFileSync("configs/custom.jsonc", generated) for you.\n\n' +
+        '```bash\nwrangler deploy --config configs/custom.jsonc\n```\n',
+    );
+    expectReportedAt(r, 'docs/rb-prose.md');
+  });
+
+  it('the same runbook whose sentence names a READ passes (#2112 control)', () => {
+    // THE CONTROL #2112 LACKED (r36). Byte-identical but for the verb: the
+    // sentence names a read rather than a write, and the deployment is the
+    // same safe one. It passes, so the report above is caused by the
+    // write-shaped prose and not by anything else in the file.
+    //
+    // Without this, the pin could have been satisfied by an unrelated report
+    // on the deployment itself — which is exactly the failure mode a control
+    // exists to exclude, and the record had claimed only ONE pinned report
+    // was uncontrolled when there were two.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'docs/rb-prose.md',
+      '# Runbook\n\nBefore deploying, the release tool calls\n' +
+        'readFileSync("configs/custom.jsonc", generated) for you.\n\n' +
+        '```bash\nwrangler deploy --config configs/custom.jsonc\n```\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a settable recipe prefix is NOT followed (#2114, stated miss)', () => {
+    // A STATED MISS, and the verdict depends on RECIPE MEMBERSHIP ALONE.
+    //
+    // `.RECIPEPREFIX := >` makes `>`-prefixed lines recipes, so `make -n` runs
+    // `cd apps/agent && wrangler deploy`. This guard's membership is `^\t`, so
+    // it finds no recipe, never expands `$(DEP)`, and sees no deploy at all.
+    //
+    // THE DEPLOY IS WRITTEN THROUGH A VARIABLE DELIBERATELY, and the sibling
+    // fixture below is the control. Spelled out, the ordinary line scan finds
+    // `wrangler deploy` whatever membership says — and an earlier version of
+    // this fixture did exactly that, so a partial #2114 fix could land without
+    // failing it (#2105 r12). Only `makefileBlocks` expands `$(DEP)`, so only
+    // this shape's verdict is coupled to the prefix.
+    //
+    // Asserting the miss means a correct fix FAILS this fixture and comes back
+    // to #2114 rather than passing unnoticed.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith(
+      'Makefile',
+      '.RECIPEPREFIX := >\nnoop:\n>cd apps/agent && $(DEP)\n\nDEP = wrangler deploy\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('the same recipe under a tab IS found (#2114 control)', () => {
+    // The control for the fixture above: identical but tab-indented. Found and
+    // reported, which proves the miss there is about the recipe MARKER and not
+    // about the deploy being undiscoverable in principle. Without this, the
+    // stated-miss fixture could pass for a reason that has nothing to do with
+    // #2114.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith('Makefile', 'noop:\n\tcd apps/agent && $(DEP)\n\nDEP = wrangler deploy\n');
+    expectReportedAt(r, 'Makefile');
+  });
+
+  it('a pwsh trailing backslash lends its flag to the deploy below (#2118, stated false green)', () => {
+    // A STATED FALSE GREEN, and the most dangerous verdict this file pins.
+    //
+    // PowerShell's continuation character is the BACKTICK. A trailing
+    // backslash is an ordinary argument, so these are TWO commands and the
+    // deploy carries no flag — it really would delete every dashboard-managed
+    // var. `forInterpreter` applies no folding for pwsh, but `logicalLines`
+    // runs afterwards and folds backslash-newline, so `--keep-vars` from the
+    // unrelated `Write-Output` attaches to the deploy beside it.
+    //
+    // TWO CONDITIONS BOUND THIS, and both are pinned rather than described
+    // (r21). It is not "every language": `logicalLines` reads shell-derived
+    // entries, so a runbook line ending in a backslash does NOT fold. And it
+    // needs LF — the CRLF control below is byte-identical but for the line
+    // endings and comes out the other way, because the retained `\r` defeats
+    // the `endsWith('\\')` test.
+    //
+    // The backslash is the ONLY difference from the first control. Asserting
+    // the pass means a fix fails here and comes back to #2118 — and a fix is
+    // a behaviour change with a blast radius, since every deploy currently
+    // blessed this way starts reporting.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith('apps/agent/d.ps1', "cd apps/agent\nWrite-Output '--keep-vars' \\\nwrangler deploy\n");
+    expect(r.ok).toBe(true);
+  });
+
+  it('the same helper without the backslash IS reported (#2118 control)', () => {
+    // The control: identical but for the trailing backslash. Reported, which
+    // proves the pass above is about the FOLDING and not about a `.ps1`
+    // helper's deploy being invisible in principle.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith('apps/agent/d.ps1', "cd apps/agent\nWrite-Output '--keep-vars'\nwrangler deploy\n");
+    expectReportedAt(r, 'apps/agent/d.ps1');
+  });
+
+  it('the casing rewrite reaches into a here-string nothing runs (#2115, stated false report)', () => {
+    // WHAT THE CASING RULE COSTS, pinned rather than described — promised on
+    // #2115 when its proposed fix was being argued, and owed because that fix
+    // WIDENS this.
+    //
+    // A here-string is inert data; nothing here deploys anything. The rule
+    // lowers the title-case spelling so a REAL `Wrangler deploy` is caught on
+    // a platform that resolves either spelling to the same program — and the
+    // same rewrite carries this mention into the report.
+    //
+    // IT IS NOT THE REWRITE'S FAULT, and the record says so: the lower-case
+    // spelling is already reported here with no rewrite involved, because the
+    // scanner has no PowerShell string state (#2117). So the rule WIDENS an
+    // existing fallible reading rather than adding a fault.
+    //
+    // NOT #2118, which an earlier version of this comment also cited (r31).
+    // There is no trailing backslash and no line joining here, so changing
+    // the folding would leave this case exactly as it is. Two independent
+    // remedies, and naming the wrong one sends a fix at the wrong subsystem. Kept
+    // because #2115 proposes making the replacement case-insensitive, which
+    // widens it further — a fix that should land with this visible, not
+    // described as a pure tightening.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith('apps/agent/doc.ps1', "$doc = @'\nWrangler deploy\n'@\nWrite-Output $doc\n");
+    expectReportedAt(r, 'apps/agent/doc.ps1');
+  });
+
+  it('an UPPER-case mention is not reported — the half a widening would flip (#2115 control)', () => {
+    // WITHOUT THIS, THE FIXTURE ABOVE DOES NOT PIN THE TRADE IT CLAIMS (r24).
+    // That one spells the command in title case, which the CURRENT rule
+    // already normalises — so making the replacement case-insensitive, which
+    // is #2115's proposed fix, leaves it green and announces nothing.
+    //
+    // This is the half that moves. Today an upper-case mention inside the
+    // same inert here-string is NOT reported, because the rule covers only
+    // title case. Under the widening it starts being reported, and this
+    // fixture flips — which is the trade becoming visible at the moment it is
+    // made, rather than afterwards.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith('apps/agent/doc.ps1', "$doc = @'\nWRANGLER deploy\n'@\nWrite-Output $doc\n");
+    expect(r.ok).toBe(true);
+  });
+
+  it('a cmd helper folds the same way (#2118, stated false green — the OTHER dialect)', () => {
+    // THE TWO WINDOWS DIALECTS ARE SEPARATE BRANCHES in `forInterpreter`, and
+    // pinning only `.ps1` would let a dialect-specific fix pass this suite
+    // while leaving the `.cmd` false green live — the exact failure the pins
+    // exist to prevent (r22).
+    //
+    // `cmd` treats a trailing backslash as an ordinary character too; its own
+    // continuation is `^`, which `foldCaretContinuations` handles. The fold
+    // here comes from the same shared pass as the pwsh case.
+    //
+    // THE FOUR #2118 PINS SPAN TWO INDEPENDENT DIMENSIONS — dialect (pwsh /
+    // cmd) and INGESTION SURFACE (standalone helper / workflow body) — and
+    // the honest statement about a partial fix is arithmetic, not rhetoric: a
+    // fix gated on EITHER dimension satisfies the two fixtures on its side
+    // and leaves the two on the other still wrong.
+    //
+    // "INGESTION SURFACE", NOT "HOST" (r46). `host` is used elsewhere in this
+    // file for the MACHINE a workflow runs on, which is the axis #2126 turns
+    // on — and the second dimension here has nothing to do with the runner:
+    // the same runner processes both a standalone helper and a workflow body.
+    // Calling it a host points a fix at runner gating instead of at the
+    // helper/workflow dispatch paths, which is the very category error the
+    // #2126 work exists to record. An earlier version of this comment
+    // said a dialect-gated fix "fixes neither of them", which overstated it
+    // (r43): such a fix really does fix that dialect's helper AND workflow.
+    // Only a correction at the shared line splitter moves all four.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith('apps/agent/d.cmd', 'cd apps/agent\necho --keep-vars \\\nwrangler deploy\n');
+    expect(r.ok).toBe(true);
+  });
+
+  it('the same cmd helper without the backslash IS reported (#2118 cmd control)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith('apps/agent/d.cmd', 'cd apps/agent\necho --keep-vars\nwrangler deploy\n');
+    expectReportedAt(r, 'apps/agent/d.cmd');
+  });
+
+  it('a pwsh WORKFLOW body folds the same way (#2118, stated false green)', () => {
+    // #2118 IS NOT A HELPER-FILE DEFECT. The workflow ingestion paths call
+    // the same `logicalLines(forInterpreter(...))`, so a `run: |` block with
+    // `shell: pwsh` folds identically — verified, with the control below
+    // differing only by the backslash (r28).
+    //
+    // Pinned because a fix scoped to standalone helpers would satisfy the two
+    // HELPER pins and leave BOTH workflow pins — this one and its cmd sibling
+    // — still green on a production path. An earlier version said such a fix
+    // would satisfy "every other #2118 fixture", which overstated it (r43):
+    // ingestion surface and dialect are independent, so a surface-gated fix
+    // moves two of the four, exactly as a dialect-gated one does. Surface,
+    // not "host" — see the note at the cmd helper pin (r46).
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith(
+      '.github/workflows/d.yml',
+      'name: d\non: push\njobs:\n  d:\n    runs-on: ubuntu-latest\n    steps:\n      - run: |\n' +
+        "          cd apps/agent\n          Write-Output '--keep-vars' \\\n          wrangler deploy\n" +
+        '        shell: pwsh\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('the same workflow body without the backslash IS reported (#2118 workflow control)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith(
+      '.github/workflows/d.yml',
+      'name: d\non: push\njobs:\n  d:\n    runs-on: ubuntu-latest\n    steps:\n      - run: |\n' +
+        "          cd apps/agent\n          Write-Output '--keep-vars'\n          wrangler deploy\n" +
+        '        shell: pwsh\n',
+    );
+    expectReportedAt(r, '.github/workflows/d.yml');
+  });
+
+  it('a cmd WORKFLOW body folds the same way (#2118, stated false green)', () => {
+    // The second dialect on the workflow path. Four #2118 defect fixtures in
+    // all — two file kinds times two shells — because the fold is in the
+    // shared splitter and a fix scoped to any one of the four would leave the
+    // other three live.
+    //
+    // `runs-on: windows-latest`, NOT ubuntu: `shell: cmd` on a Linux runner
+    // has no command processor, so the job would fail before reaching the
+    // deploy and the guard's silence would not be a false green for anything
+    // executable (r29). A pin whose scenario cannot run pins nothing — the
+    // other cmd workflow fixtures in this file already use windows-latest.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith(
+      '.github/workflows/d.yml',
+      'name: d\non: push\njobs:\n  d:\n    runs-on: windows-latest\n    steps:\n      - run: |\n' +
+        '          cd apps/agent\n          echo --keep-vars \\\n          wrangler deploy\n' +
+        '        shell: cmd\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('the same cmd workflow body without the backslash IS reported (#2118 cmd workflow control)', () => {
+    // THE FOURTH ROUTE'S CONTROL (r39). Without it the pin above stays green
+    // if the cmd workflow path stops reaching this block for any unrelated
+    // reason — an invisible body and a folded one are indistinguishable from
+    // a silent pass. The other three #2118 routes each had one; this, the
+    // sole pin for its route, did not.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith(
+      '.github/workflows/d.yml',
+      'name: d\non: push\njobs:\n  d:\n    runs-on: windows-latest\n    steps:\n      - run: |\n' +
+        '          cd apps/agent\n          echo --keep-vars\n          wrangler deploy\n' +
+        '        shell: cmd\n',
+    );
+    expectReportedAt(r, '.github/workflows/d.yml');
+  });
+
+  it('the casing rewrite reaches into a WORKFLOW here-string too (#2115, stated false report)', () => {
+    // The casing normalisation runs on workflow bodies as well as helpers, so
+    // the trade it makes is not helper-only either (r28). Nothing here
+    // deploys anything; the here-string is inert.
+    //
+    // `windows-latest`, NOT ubuntu (r30): this check's own contract says
+    // `Wrangler` is a DIFFERENT executable where the runner resolves names
+    // case-sensitively, as `ubuntu-latest` does, so pinning the
+    // trade on a CASE-SENSITIVE runner would rest on applying a Windows
+    // rewrite where the rewrite's own reasoning says it should not apply —
+    // and a lookup-aware correction could then flip this fixture for a reason
+    // that has nothing to do with the casing widening it exists to announce.
+    //
+    // NOT "a Linux runner" (r46): a Linux host with case-INSENSITIVE lookup
+    // resolves `Wrangler` to the real command, so pinning the trade there
+    // would be perfectly valid. It is this fixture's case-sensitive mode that
+    // makes the rewrite inappropriate, and nothing broader.
+    //
+    // NOTE ON THE PROBE THAT FOUND THIS: a first attempt used no `cd`, so
+    // nothing scoped the deploy to the package and BOTH casings passed —
+    // which looked like a refutation and was not. The scope is what makes the
+    // report possible; the casing is what makes it reachable.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith(
+      '.github/workflows/d.yml',
+      'name: d\non: push\njobs:\n  d:\n    runs-on: windows-latest\n    steps:\n      - run: |\n' +
+        "          cd apps/agent\n          $doc = @'\n          Wrangler deploy\n          '@\n" +
+        '          Write-Output $doc\n        shell: pwsh\n',
+    );
+    expectReportedAt(r, '.github/workflows/d.yml');
+  });
+
+  const posixPwsh = (cd: string, cmd: string) =>
+    'name: d\non: push\njobs:\n  d:\n    runs-on: ubuntu-latest\n    steps:\n      - run: |\n' +
+    `          ${cd}\n          ${cmd}\n` +
+    '        shell: pwsh\n';
+
+  it('the CASING normalisation runs on a case-sensitive runner (#2126, stated false report)', () => {
+    // THE CASE I DISCARDED WHEN FIXING THE RUNNER, recorded instead of thrown
+    // away (r31). PowerShell runs on Linux, and this fixture's runner —
+    // `ubuntu-latest` — resolves executables CASE-SENSITIVELY, so `Wrangler`
+    // and `wrangler` are different files and the check reports a command
+    // that runner does not have.
+    //
+    // THE DISCRIMINATOR IS THE LOOKUP, NOT THE PLATFORM FAMILY (r45). Do not
+    // read this fixture as "POSIX" or "Linux" categorically: a host that
+    // resolves executables case-INSENSITIVELY maps both spellings to one
+    // program, and there the #2115 miss is genuine, so a fix keyed on
+    // "not Windows" would turn this false report into a silent pass — the
+    // worse direction. Nothing in this suite exercises such a host; that
+    // mode is OPEN, not decided.
+    //
+    // The sharp part: `windowsSeparators` carries a comment reaching for
+    // exactly this point — that matching the capitalised spelling where the
+    // runner would not resolve it "would invent a command" — and then keys
+    // on the INTERPRETER rather than on the runner. `pwsh` is
+    // cross-platform, so the rationale and the implementation disagree.
+    // Quoted as the evidence of that disagreement and NOT as an authority on
+    // scope: that comment says "POSIX runner", which is the same
+    // over-generalisation corrected here.
+    //
+    // AN EXECUTABLE LINE, NOT A HERE-STRING (r33). The first version put the
+    // mention inside an inert here-string, where the report comes from the
+    // missing PowerShell string state (#2117) — so fixing THAT would have
+    // flipped this pin while leaving the platform-blind normalisation
+    // untouched. Mutation-checked both ways: disabling the casing fold flips
+    // this and leaves the lower-case control reporting; disabling the
+    // separator rewrite leaves this unchanged.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith('.github/workflows/d.yml', posixPwsh('cd apps/agent', 'Wrangler deploy'));
+    expectReportedAt(r, '.github/workflows/d.yml');
+  });
+
+  it('the lower-case spelling on the same runner genuinely runs (#2126 casing control)', () => {
+    // The control: on Linux THIS is the real command, so the report is
+    // correct and must survive any #2126 fix. Without it, a fix could stop
+    // reporting the whole step and still satisfy the pin above.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith('.github/workflows/d.yml', posixPwsh('cd apps/agent', 'wrangler deploy'));
+    expectReportedAt(r, '.github/workflows/d.yml');
+  });
+
+  // THE SEPARATOR HALF OF #2126 WAS WITHDRAWN (r35), and this note stands
+  // where its two fixtures were. I had pinned `cd apps\\agent` in a POSIX
+  // pwsh step as a false report, on the reasoning that a backslash is an
+  // ordinary character there so the step never enters the package directory.
+  // That reasoning is WRONG: PowerShell accepts either separator on every
+  // platform — "PowerShell allows you to use backslash or forward slash for
+  // compatibility with PowerShell on other platforms" (about_Path_Syntax) —
+  // and `Set-Location` is a cmdlet, so the directory change happens and the
+  // attribution is correct.
+  //
+  // So the rewrite matches real behaviour here and the report it produces is
+  // RIGHT. The fixtures asserted a correct verdict while calling it a defect,
+  // which is worse than a missing pin: it would have sent someone to "fix"
+  // working behaviour. #2126 is now the casing rule alone.
+  //
+  // The caveat that survives, and why the rewrite is not simply harmless: the
+  // same documentation warns the two separators are interchangeable for
+  // PowerShell commands but "may not work when used with native applications
+  // that only expect the native directory separator". Nothing here pins that,
+  // because nothing here demonstrates it.
+
+  it('an UPPER-case mention in the same workflow body is not reported (#2115 workflow control)', () => {
+    // The half that flips under #2115's proposed widening, on the workflow
+    // path — so the trade announces itself there too, not only for helpers.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith(
+      '.github/workflows/d.yml',
+      'name: d\non: push\njobs:\n  d:\n    runs-on: windows-latest\n    steps:\n      - run: |\n' +
+        "          cd apps/agent\n          $doc = @'\n          WRANGLER deploy\n          '@\n" +
+        '          Write-Output $doc\n        shell: pwsh\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a CRLF-ending helper IS reported (#2118 input-level bound)', () => {
+    // THE DEFECT IS LF-ONLY, and this pins the boundary rather than leaving
+    // the record to imply every checkout is affected. Byte-identical to the
+    // fixture above but for the line endings: the `\r` survives into the
+    // buffer, `buf.endsWith('\\')` is false, no fold happens, and the deploy
+    // is correctly reported — even though both shells treat the backslash as
+    // an ordinary character either way.
+    //
+    // AN INPUT-LEVEL CONDITION, NOT AN OPERATIONAL BOUND, and an earlier
+    // version of this comment claimed the latter (r30). `.gitattributes` sets
+    // `* text=auto eol=lf` and says in its own comment that Windows
+    // contributors get LF in the working copy — so a TRACKED `.ps1` on
+    // Windows has LF and is fully exposed to #2118. "Windows checkouts are
+    // unaffected" was simply false, and it was stated in four places.
+    //
+    // What it still pins: a helper that reaches the tree with CRLF — one that
+    // is generated, vendored, or otherwise not covered by that attribute —
+    // escapes the fold. Worth keeping, because a later fix could widen the
+    // splitter to CRLF and change this silently.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith(
+      'apps/agent/d.ps1',
+      "cd apps/agent\r\nWrite-Output '--keep-vars' \\\r\nwrangler deploy\r\n",
+    );
+    expectReportedAt(r, 'apps/agent/d.ps1');
+  });
+
+  it('a runbook line ending in a backslash does NOT fold (#2118 bound)', () => {
+    // THE FOLD IS FOR SHELL-DERIVED TEXT, not for every file. `logicalLines`
+    // reads shell files, Windows helpers and the shell blocks lifted out of
+    // other files; a document's own lines go through `plainLines` and are
+    // read whole. So the shape that is blessed in a `.ps1` is still reported
+    // here, and "for every language" — which this record said until r21 —
+    // would have sent a fix into readers that never fold.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith(
+      'docs/rb-fold.md',
+      "# Runbook\n\necho '--keep-vars' \\\nwrangler deploy --config apps/agent/wrangler.jsonc\n",
+    );
+    expectReportedAt(r, 'docs/rb-fold.md');
+  });
+
+  it('an inert manifest description is read as a deploy (#2119, stated false report)', () => {
+    // A STATED FALSE REPORT, in the opposite direction to #2118 above.
+    //
+    // Every declared script here is correct — `deploy` carries the flag. The
+    // block comes from `description`, which nothing executes.
+    //
+    // THE MECHANISM IS THE EXTRACTION, NOT THE LABEL, and the mutation check
+    // is what settled it: `jsonValueLines` turns each colon-introduced SCALAR
+    // string in a `.json`/`.jsonc` file into its own scanned command line, so
+    // any such value naming the command is read as one. Relabelling those
+    // entries away from `shell` leaves this fixture passing unchanged;
+    // bypassing `jsonValueLines` altogether is what flips it. So the
+    // `lang: 'shell'` label — which is right, and load-bearing for
+    // redirections inside script values (r13) — is NOT what produces this,
+    // and neither is the value-scoped rewrite coordinate.
+    //
+    // Not "manifests" and not "every string" (r21): it applies to ANY file of
+    // that format, and an ARRAY value is passed over ONLY where its line also
+    // carries a scalar — written one element per line the same array IS read
+    // (r23). The two sibling fixtures below pin both layouts, so a fix scoped
+    // either way fails one of them.
+    //
+    // This is the guard's own restraint inverted: it would rather miss an
+    // exotic spelling than report text that performs no write, and here it
+    // reports text that runs nothing at all.
+    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith(
+      'apps/agent/package.json',
+      '{"name":"@vaipakam/agent","description":"wrangler deploy",' +
+        '"scripts":{"deploy":"wrangler deploy --keep-vars"}}\n',
+    );
+    expectReportedAt(r, 'apps/agent/package.json');
+  });
+
+  it('an ARRAY value is passed over when the line also carries a scalar (#2119 bound)', () => {
+    // THE OTHER HALF OF #2119's SCOPE — and the bound is about LAYOUT, not
+    // about the value being a list, which is what an earlier version of this
+    // fixture and the record both claimed (r23).
+    //
+    // The extraction matches a colon followed by a quoted scalar. Here the
+    // COMPACT line carries scalars too, so the match succeeds and the
+    // unmatched array element is dropped with them. That is the whole of the
+    // exception: an array is passed over ONLY in this layout, and the
+    // multi-line sibling below shows the same array being read. Written across
+    // several lines the element sits on a line with no colon-introduced
+    // scalar, the extraction returns that raw line, and the command IS read —
+    // the sibling fixture below pins that, and the two only make sense
+    // together. Full scope on #2119; not restated here.
+    //
+    // So "a list value is not read at all" was false, and this fixture passed
+    // only because it was compact. Kept, with the layout named.
+    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith(
+      'apps/agent/package.json',
+      '{"name":"@vaipakam/agent","keywords":["wrangler deploy"],' +
+        '"scripts":{"deploy":"wrangler deploy --keep-vars"}}\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('the SAME array across several lines IS read (#2119, stated false report)', () => {
+    // THE SIBLING THAT MAKES THE BOUND HONEST. Identical manifest content to
+    // the fixture above, written across lines with one element per line. The
+    // element's line carries no colon-introduced scalar, so the extraction
+    // returns the raw line and the inert keyword is reported as a deploy.
+    //
+    // Without this, the compact fixture reads as "lists are safe" — which is
+    // what the record said for two rounds. With it, the pair says what is
+    // actually true: the same bytes are read or not read depending on where
+    // the newlines fall.
+    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith(
+      'apps/agent/package.json',
+      '{\n "name":"@vaipakam/agent",\n "keywords":[\n  "wrangler deploy"\n ],\n' +
+        ' "scripts":{"deploy":"wrangler deploy --keep-vars"}\n}\n',
+    );
+    expectReportedAt(r, 'apps/agent/package.json');
+  });
+
+  it('a newline inside a manifest script is not a command boundary (#2121, stated false green)', () => {
+    // A STATED FALSE GREEN. The package manager runs these as TWO commands;
+    // the guard reads them as one, so `--keep-vars` on the `echo` line is
+    // taken to cover the deploy on the next.
+    //
+    // `jsonValueLines` appends each value WITHOUT `logicalLines`, which is
+    // what splits a body at newlines — so a manifest script is shell text
+    // that is never split. The control below differs only in whether the
+    // first line carries the flag.
+    //
+    // The mirror of #2118: that one JOINS lines that should stay apart, this
+    // one never SEPARATES lines that were always apart. Same root — splitting
+    // belongs to the reader a body passes through, not to the body.
+    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith(
+      'apps/agent/package.json',
+      '{"name":"@vaipakam/agent","scripts":{"x":"echo --keep-vars\\nwrangler deploy"}}\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('the same script without the flag IS reported (#2121 control)', () => {
+    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith(
+      'apps/agent/package.json',
+      '{"name":"@vaipakam/agent","scripts":{"x":"echo hello\\nwrangler deploy"}}\n',
+    );
+    expectReportedAt(r, 'apps/agent/package.json');
+  });
+
+  it('a PowerShell variable is matched case-sensitively (#2122, stated false green)', () => {
+    // A STATED FALSE GREEN. PowerShell resolves `$TARGET` and `$target` as
+    // one variable, so it really does deploy from apps/agent. The rewrite
+    // preserves the spelling and the shared variable model — correct for
+    // POSIX-SHELL VARIABLE SEMANTICS, where they ARE two variables — looks it
+    // up exactly, so the directory reads as unknown and the deploy is not
+    // attributed.
+    //
+    // THE DISCRIMINATOR IS THE SHELL LANGUAGE, NOT THE HOST (r46), and the
+    // distinction is the opposite of #2126's: PowerShell binds variable
+    // names case-INSENSITIVELY on EVERY platform it runs on, so unlike
+    // command lookup this owes nothing to the runner. A fix gated on the
+    // host would therefore be wrong in both directions — it would leave this
+    // defect live wherever the host looked POSIX, and would mis-resolve a
+    // POSIX shell's genuinely distinct variables wherever it looked Windows.
+    // What the shared model needs is per-language name-matching.
+    //
+    // This defeats the pwsh rewrite in its main use: resolving the directory
+    // a deploy runs from. The control differs only in the spelling.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith(
+      'scripts/v.ps1',
+      "$TARGET = 'apps/agent'\nSet-Location $target\nwrangler deploy\n",
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('the same helper spelled consistently IS reported (#2122 control)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith(
+      'scripts/v.ps1',
+      "$target = 'apps/agent'\nSet-Location $target\nwrangler deploy\n",
+    );
+    expectReportedAt(r, 'scripts/v.ps1');
+  });
+
+  it('a POSIX helper\'s differently-cased variable stays UNRESOLVED (#2122 language boundary)', () => {
+    // THE OTHER SIDE OF THE BOUNDARY, and the control above does not cover it
+    // (r47). Both #2122 fixtures above keep the PowerShell assignment and its
+    // use identically cased, so the cheapest fix for that defect — lowering
+    // every key in the shared `shellVars` map — would flip the pin, keep the
+    // control reporting, and pass the suite while silently MERGING `$TARGET`
+    // and `$target` in POSIX shells, where they are two variables. That is a
+    // false report manufactured in the language this guard reads most often.
+    //
+    // So the boundary is pinned from the POSIX side too: here the deploy must
+    // stay unattributed, because `$TARGET` genuinely never received a value.
+    //
+    // NOT A DEFECT PIN — it asserts CORRECT behaviour, and it passes today.
+    // It is a regression guard for one specific wrong fix, which is why it is
+    // titled for the boundary rather than for a wrong verdict, and why it
+    // carries no `stated`.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith(
+      'scripts/v.sh',
+      "TARGET='apps/agent'\ncd $target\nwrangler deploy\n",
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('the same POSIX helper spelled consistently IS reported (#2122 language-boundary control)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith(
+      'scripts/v.sh',
+      "TARGET='apps/agent'\ncd $TARGET\nwrangler deploy\n",
+    );
+    expectReportedAt(r, 'scripts/v.sh');
+  });
+
+  it('an upper-case helper extension is never FOUND by the walk (#2123, stated false green)', () => {
+    // A STATED FALSE GREEN, and the broadest of this family: the file is not
+    // misread, it is never DISCOVERED. `walk` tests the filename against
+    // lower-case extensions with a case-sensitive comparison, so `.PS1` is
+    // never yielded by the sweep and nothing downstream gets a chance to
+    // compensate.
+    //
+    // SCOPED TO THE WALK (r38). A helper named explicitly by a file already
+    // being read is a different matter: `sourcedDeploys` resolves and reads
+    // that path directly, so `source D.SH` from a scanned shell IS opened and
+    // the deploy reported. The gap is in the discovery, not the reading, and
+    // a fix aimed at the sourced path would be aimed at working behaviour.
+    //
+    // Windows runs `D.PS1` and `d.ps1` alike. The control below is the same
+    // bytes under the lower-case name.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith('apps/agent/D.PS1', 'cd apps/agent\nwrangler deploy\n');
+    expect(r.ok).toBe(true);
+  });
+
+  it('the same bytes under a lower-case name ARE scanned (#2123 control)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith('apps/agent/d.ps1', 'cd apps/agent\nwrangler deploy\n');
+    expectReportedAt(r, 'apps/agent/d.ps1');
+  });
+
+  // EVERY affected helper family, not three representatives (r47). The gate
+  // is the shared case-sensitive extension test in `walk`, so the bypass is
+  // the same for each of these — and pinning three of them let a correction
+  // limited to the tested suffixes satisfy all three pins while leaving the
+  // rest silently undiscovered. Each entry here is independently
+  // special-caseable, which is exactly why representatives were the wrong
+  // shape: the stated defect covers the family, so the fixture must too.
+  //
+  // EVERY EXECUTABLE FAMILY, WHICH IS NOT THE SAME AS EVERY SHELL FAMILY
+  // (r48). The first version of this table covered only the shell suffixes
+  // and still said "every affected helper family" — overclaiming inside the
+  // fix for overclaiming. `EXTENSIONS` also admits the JavaScript/TypeScript
+  // families and `.py`, and a helper in any of them can carry an argv deploy
+  // that `ARGV_DEPLOY_RE` recognises. Every entry below was probed directly:
+  // lower-case reported, upper-case silently skipped. The count is not
+  // restated here — it is the length of the table, and writing it out went
+  // stale the first time the table grew (r50).
+  //
+  // Each family carries the BODY ITS OWN LANGUAGE NEEDS, and the MODULE
+  // SYSTEM ITS OWN EXTENSION IMPLIES. Reusing one body everywhere would make
+  // the script families pass for the wrong reason — an unrecognised body is
+  // not reported either, so the pin would be vacuous and the control would
+  // fail.
+  //
+  // THE MODULE SPLIT IS NOT PEDANTRY (r50). A `require` call under ESM is a
+  // RUNTIME BINDING FAILURE, not a syntax error — the module parses, then
+  // throws `ReferenceError: require is not defined in ES module scope` the
+  // moment that line runs. The distinction matters precisely here (r52):
+  // `node --check` PASSES on such a file, so parse-validation would have
+  // "confirmed" a helper that cannot deploy, which is the same
+  // right-verdict-impossible-premise trap this split exists to close. Either
+  // way a `.mjs` or `.mts` helper written that way throws before it can spawn
+  // anything — and `apps/agent` really does declare
+  // `"type": "module"`, which makes a plain `.js` helper there ESM too. The
+  // scanner never executes the fixture, so the verdicts would have been
+  // identical either way; what would have been wrong is the CLAIM. A pin
+  // labelled "an unsafe deployment passes silently" has to describe a body
+  // that would actually deploy, or it pins the right verdict about a
+  // deployment that could never happen.
+  const ARGV_ESM =
+    "import {spawnSync} from 'node:child_process';\nspawnSync('wrangler',['deploy']);\n";
+  const ARGV_CJS =
+    "const {spawnSync}=require('node:child_process');\nspawnSync('wrangler',['deploy']);\n";
+  const ARGV_PY = "import subprocess\nsubprocess.check_call(['wrangler','deploy'])\n";
+  const SHELL_BODY = 'cd apps/agent\nwrangler deploy\n';
+  // A Make FRAGMENT is executable too — `makefileBlocks` has always matched
+  // `*.mk` and runs its recipes — and it was missing from the first two
+  // versions of this table (r51). The recipe line needs a real tab.
+  const MAKE_BODY = 'deploy:\n\tcd apps/agent && wrangler deploy\n';
+
+  const WALK_HELPER_FAMILIES: ReadonlyArray<readonly [string, string]> = [
+    ['ps1', SHELL_BODY],
+    ['cmd', SHELL_BODY],
+    ['bat', SHELL_BODY],
+    ['sh', SHELL_BODY],
+    ['bash', SHELL_BODY],
+    ['zsh', SHELL_BODY],
+    ['ksh', SHELL_BODY],
+    // ESM: `.mjs`/`.mts` by extension, and `.js`/`.ts` because the seeded
+    // manifest below declares `"type": "module"` exactly as apps/agent does.
+    ['js', ARGV_ESM],
+    ['mjs', ARGV_ESM],
+    ['ts', ARGV_ESM],
+    ['mts', ARGV_ESM],
+    // CommonJS by extension, whatever the manifest says.
+    ['cjs', ARGV_CJS],
+    ['cts', ARGV_CJS],
+    ['py', ARGV_PY],
+    ['mk', MAKE_BODY],
+  ];
+
+  /**
+   * Run one family's helper with NO OTHER HELPER PRESENT.
+   *
+   * `beforeEach` resets the temporary tree once per `it`, not once per loop
+   * iteration, so a bare loop leaves every previously written helper in
+   * place. That made the lower-case control VACUOUS from its second
+   * iteration (r49): `d.ps1` kept reporting, so `ok` stayed false whatever
+   * the current family did, and the control would have passed with `.cmd`,
+   * `.bat`, `.sh`, `.bash`, `.zsh`, `.ksh` and every script family silently
+   * unscanned. Verified directly — a `.zsh` file containing no deploy at all
+   * still yields exit 1 while `d.ps1` sits beside it.
+   *
+   * The upper-case pin did not have the bug, because nothing it writes is
+   * ever scanned, but it is run through the same helper so neither loop can
+   * regrow the problem.
+   */
+  /**
+   * A FALSE-REPORT PIN MUST ASSERT THE REPORT, NOT MERELY A NON-ZERO EXIT
+   * (r53). `runWith` maps EVERY `execFileSync` failure to `ok: false` — a
+   * crash, a timeout, a guard that threw on this specific input — which is
+   * the same value a genuine violation produces. So `expect(r.ok).toBe(false)`
+   * alone lets a pin claim "the check wrongly reports this" while the check
+   * actually fell over and reported nothing.
+   *
+   * The silent-pass pins do not need this: they assert `ok === true`, and a
+   * crash would flip that to false and FAIL them. The exposure is one-sided,
+   * which is why it survived until the family control was fixed the same way
+   * one round earlier and the question was asked of the rest.
+   */
+  const expectReportedAt = (
+    r: { ok: boolean; out: string },
+    rel: string,
+  ): void => {
+    expect(r.ok, `${rel} should be reported`).toBe(false);
+    expect(r.out, `${rel} should produce a violation report`).toContain(
+      'missing --keep-vars',
+    );
+    expect(r.out, `${rel} should be named in the report`).toContain(rel);
+  };
+
+  const runFamilyAlone = (rel: string, body: string) => {
+    // `"type": "module"` mirrors the real apps/agent manifest, so `.js` and
+    // `.ts` helpers here are ESM exactly as they would be in the tree (r50).
+    seed(
+      'apps/agent/package.json',
+      '{"name":"@vaipakam/agent","type":"module"}\n',
+    );
+    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith(rel, body);
+    rmSync(join(root, rel), { force: true });
+    return r;
+  };
+
+  it('EVERY executable helper family is skipped by the walk when upper-cased (#2123, stated false green)', () => {
+    // #2123 IS NOT ABOUT `.ps1`, not about three families, and not about
+    // shells. The gate is the shared case-sensitive extension test in `walk`,
+    // so it is about every family the walk is supposed to yield.
+    //
+    // WHAT IS PINNED IS THE VERDICT: the file is never examined. The
+    // CONSEQUENCE differs by family and the distinction is recorded rather
+    // than smoothed over (r53).
+    //
+    //   - Shell families, `.py` and `.mk`: the interpreter does not care what
+    //     the file is called. `bash D.SH`, `python D.PY`, `make -f D.MK` all
+    //     run, so an unsafe deployment really does pass silently.
+    //   - The Node families: `node D.JS` does NOT run. It exits
+    //     `ERR_UNKNOWN_FILE_EXTENSION` before executing anything, for every
+    //     one of `.JS .MJS .TS .MTS .CJS .CTS` — verified on the Node in this
+    //     tree. So for those six, "an unsafe deployment passes silently"
+    //     overstates it: what is established is that the guard never looks at
+    //     the file, not that a deployment written there would run when
+    //     invoked by that name.
+    //
+    // They are pinned anyway, and not as a courtesy: the gate is SHARED, so a
+    // correction that special-cased the runnable families would leave these
+    // six unscanned — and a file the guard never opens is invisible for every
+    // purpose, not just for the deploy it might contain. What the pin must
+    // not do is claim a deployment that cannot happen, which is the
+    // right-verdict-impossible-premise trap this suite has now hit twice.
+    for (const [ext, body] of WALK_HELPER_FAMILIES) {
+      const r = runFamilyAlone(`apps/agent/D.${ext.toUpperCase()}`, body);
+      expect(r.ok, `.${ext.toUpperCase()} should be bypassed by the walk`).toBe(
+        true,
+      );
+    }
+  });
+
+  it('the same bytes under each lower-case name ARE scanned (#2123 family control)', () => {
+    // Load-bearing beyond the usual control role: it is what proves each pin
+    // above fails for the EXTENSION and not for an unrecognised body — which
+    // is only true while each iteration runs ALONE. See `runFamilyAlone`.
+    //
+    // `ok: false` ALONE IS NOT ENOUGH HERE (r52). `runWith` maps EVERY
+    // `execFileSync` failure to `ok: false`, so a guard that CRASHED or timed
+    // out on one family would satisfy a bare `toBe(false)` — and the
+    // upper-case sibling could not catch it either, since its file is skipped
+    // before any family-specific processing could throw. Both tests would
+    // stay green while a lower-case helper broke the guard rather than being
+    // reported, which is the opposite of what this control claims to show.
+    //
+    // So it asserts the REPORT ITSELF: the violation banner, and the file at
+    // the line the deploy sits on. A crash produces neither.
+    for (const [ext, body] of WALK_HELPER_FAMILIES) {
+      const r = runFamilyAlone(`apps/agent/d.${ext}`, body);
+      expect(r.ok, `.${ext} should be scanned and reported`).toBe(false);
+      expect(r.out, `.${ext} should produce a violation report`).toContain(
+        'missing --keep-vars',
+      );
+      expect(r.out, `.${ext} should name the offending helper`).toContain(
+        `apps/agent/d.${ext}`,
+      );
+    }
+  });
+
+  it('a semicolon-terminated pwsh assignment is not recognised (#2124, stated miss)', () => {
+    // A STATED MISS. A trailing `;` is an ordinary PowerShell statement
+    // terminator; the rewrite's pattern requires the closing quote to run to
+    // end of line, so the binding is never recognised, the directory stays
+    // unknown, and the unsafe deploy is not attributed. The control differs
+    // only by that character.
+    //
+    // Filed apart from #2122 deliberately: that one is about how a recognised
+    // binding is LOOKED UP, this is about whether it is recognised at all.
+    // Different code, either can land alone.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith(
+      'scripts/s.ps1',
+      "$target = 'apps/agent';\nSet-Location $target\nwrangler deploy\n",
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('the same helper without the semicolon IS reported (#2124 control)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith(
+      'scripts/s.ps1',
+      "$target = 'apps/agent'\nSet-Location $target\nwrangler deploy\n",
+    );
+    expectReportedAt(r, 'scripts/s.ps1');
+  });
+
+  it('a COMMENTED-OUT jsonc property is still read as a command (#2119, stated false report)', () => {
+    // THE EXTRACTION DOES NOT STRIP COMMENTS, so a commented-out pseudo-
+    // property in a format that permits comments is read and reported. There
+    // is no property here at all, live or otherwise.
+    //
+    // Pinned because #2119's sketched fix is expressed in terms of WHICH KEYS
+    // hold scripts — and a commented line has no key, so a key-based fix can
+    // pass its own tests and leave this reporting. Recorded on #2119 rather
+    // than as its own issue: same regex, same direction, same predicate.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent","scripts":{"deploy":"wrangler deploy --keep-vars"}}\n');
+    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith('apps/agent/metadata.jsonc', '{"name":"x"}\n// "note": "wrangler deploy"\n');
+    expectReportedAt(r, 'apps/agent/metadata.jsonc');
+  });
+
+  it('an inert here-string is reported, reached via the separator rewrite (#2117, stated false report)', () => {
+    // WHAT THIS PINS IS ONE FALSE REPORT, and it belongs to #2117 — the
+    // missing model of that shell's quoting — NOT to #2115 (r39). The command
+    // here is spelled in lower case, so the casing rewrite cannot change the
+    // verdict at all: mutation-checked, disabling that fold leaves this green.
+    //
+    // Nothing in this file deploys anything; the here-string is inert data.
+    // The separator rewrite turns `apps\agent` into a path the reader
+    // understands, the modelled directory carries into the deploy below, and
+    // the file is reported. Disabling ONLY the separator replacement makes it
+    // pass, so that rewrite is what makes this spelling REACHABLE — the same
+    // relationship casing has to the title-case spelling, and the same reason
+    // neither rewrite is the defect. What is read as a command inside inert
+    // text is #2117.
+    //
+    // IT DOES NOT SHOW THE SEPARATOR RULE ERRING IN BOTH DIRECTIONS, which
+    // this comment claimed until r37 and the spec until r36. No
+    // separator-caused MISS is demonstrated anywhere, and the claim that the
+    // rewrite misattributes a directory was withdrawn in r35 — that shell
+    // reads either separator the same way on every platform. A future fix
+    // must not read this fixture as licence to remove the normalisation: the
+    // report here comes from the missing model of that shell's quoting, which
+    // reports the already-normalised spelling in the same position with no
+    // rewrite involved at all.
+    //
+    // THIS PIN HAS NO SIBLING CONTROL, deliberately, and the release note
+    // says so rather than claiming one (r26). A control would have to hold
+    // the inert here-string constant and vary only the separator — but the
+    // already-normalised spelling (`apps/agent`) is understood WITHOUT the
+    // rewrite, so it reports too and flips nothing. There is no
+    // single-character sibling that distinguishes them; the coupling is
+    // established by the mutant above and by nothing else. Writing a
+    // passing-either-way fixture and calling it a control would be worse than
+    // admitting that.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith('scripts/sep.ps1', "$doc = @'\ncd apps\\agent\nwrangler deploy\n'@\nWrite-Output $doc\n");
+    expectReportedAt(r, 'scripts/sep.ps1');
+  });
+
+  it('an inert here-string ASSIGNMENT invents the binding (#2117, stated false report)', () => {
+    // #2117's OTHER SYMPTOM, unpinned until r40. The fixture above covers a
+    // COMMAND named inside a here-string; this covers an ASSIGNMENT there.
+    //
+    // `powershellAssignments` rewrites `$cmd = 'wrangler'` into the ordinary
+    // binding shape without any model of quoting, so an assignment that is
+    // inert data becomes a real binding — and the later `& $cmd deploy`
+    // resolves to a deploy the file never performs. The control differs only
+    // in the here-string's contents and passes, so the report comes from the
+    // invented binding and nothing else.
+    //
+    // Pinned separately because a fix that suppressed command detection
+    // inside here-strings would flip the fixture above and leave this one
+    // reporting: the two symptoms go through different preprocessing.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith(
+      'scripts/a.ps1',
+      "cd apps/agent\n$doc = @'\n$cmd = 'wrangler'\n'@\nWrite-Output $doc\n& $cmd deploy\n",
+    );
+    expectReportedAt(r, 'scripts/a.ps1');
+  });
+
+  it('the same helper without the inert assignment passes (#2117 assignment control)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith(
+      'scripts/a.ps1',
+      "cd apps/agent\n$doc = @'\nnothing here\n'@\nWrite-Output $doc\n& $cmd deploy\n",
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('an inert value in a NON-manifest JSON file is reported too (#2119, stated false report)', () => {
+    // A SECOND, INDEPENDENT ROUTE TO THE SAME WRONG VERDICT — and the
+    // mutation check is what established that, after an earlier version of
+    // this fixture claimed something it did not show.
+    //
+    // The manifest fixture above is COUPLED to the extraction: bypass
+    // `jsonValueLines` and it stops reporting. This one depends on HOW the
+    // extraction is narrowed, because the dispatch is a choice — a file that
+    // stops being extracted falls through to `plainLines`:
+    //
+    //   - narrowed BY FILE (manifests only): this still reports, via the
+    //     ordinary line scan, and the message quotes the whole raw line
+    //     rather than the extracted value. Passes.
+    //   - narrowed BY KEY (every file still extracted, non-script values
+    //     yield nothing): no fallback, nothing reports. FAILS.
+    //
+    // Both verified as mutants (r22). #2119 proposes the key-scoped one, so
+    // this fixture is expected to fail under the real fix — which is the
+    // point of pinning it: it announces that the fix reached this case too.
+    //
+    // Two earlier claims here were wrong and are recorded rather than
+    // quietly swapped: first that a script-key-scoped fix would fail it (the
+    // file-scoped mutant passed, so the claim was withdrawn), then that it
+    // reports through a second route REGARDLESS of the narrowing (r22 — only
+    // under the file-scoped one).
+    //
+    // It still asserts a WRONG VERDICT rather than a bound, which is why it
+    // does not say "bound" — the siblings around it pass either way and do.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent","scripts":{"deploy":"wrangler deploy --keep-vars"}}\n');
+    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith('apps/agent/metadata.json', '{"note":"wrangler deploy"}\n');
+    expectReportedAt(r, 'apps/agent/metadata.json');
+  });
+
+  it('the same manifest with an ordinary description passes (#2119 control)', () => {
+    // The control: identical but for the description text. Passing, which
+    // proves the report above comes from that value and not from the scripts.
+    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith(
+      'apps/agent/package.json',
+      '{"name":"@vaipakam/agent","description":"publishes the worker",' +
+        '"scripts":{"deploy":"wrangler deploy --keep-vars"}}\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a write in an earlier step counts against a later one (#2084 bounds)', () => {
+    // BOUNDS GUARD: ordering across steps, unchanged by the transformations.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      '.github/workflows/steps.yml',
+      'name: deploy\non: push\njobs:\n  d:\n    runs-on: ubuntu-latest\n    steps:\n' +
+        "      - run: printf '{}' > configs/custom.jsonc\n" +
+        '      - run: |\n          wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expectReportedAt(r, '.github/workflows/steps.yml');
   });
 });
