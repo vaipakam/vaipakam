@@ -8937,13 +8937,27 @@ for (const file of walk(REPO_ROOT)) {
   // shell text; in JavaScript the same character is a comparison (#2066 r10).
   const fileIsShell = Boolean(winInterp) || isShellFile(rel, text);
   // THE REWRITE QUESTION IS ASKED OF THE FILE ESSENTIALLY AS WRITTEN. Two
-  // exceptions predate this and stand:
+  // exceptions predate this and stand — but the first of them is applied more
+  // widely than its own justification reaches (r38), so read the note on the
+  // runner below before preserving any of its behaviour:
   //
   //   - a Windows helper, which `forInterpreter` has already normalised above
   //     into the same form its workflow-body equivalent takes. Both dialects
   //     get separators, and the TITLE-CASE spelling of the command lowered —
   //     only that one, so `WRANGLER deploy` is still missed although Windows
-  //     runs it (a false green on main too, #2115). That rule errs BOTH ways:
+  //     runs it (a false green on main too, #2115).
+  //
+  //     AND IT IS CHOSEN BY INTERPRETER, NOT BY PLATFORM (#2126). `pwsh` runs
+  //     on Linux, where `Wrangler` and `wrangler` are different files, yet
+  //     `forInterpreter` applies this fold there too — so the check reports a
+  //     program that platform does not have. The comment on
+  //     `windowsSeparators` states this must not happen and the code does it
+  //     anyway; a correction must not preserve the platform-blind behaviour
+  //     just because this note calls the exception established. The SEPARATOR
+  //     half is NOT affected: that shell reads either separator the same way
+  //     everywhere, so normalising it asserts nothing (r35).
+  //
+  //     The casing rule errs BOTH ways:
   //     the spelling it does cover is also matched inside a here-string the
   //     shell never runs. Not a fault of the rewrite — the lower-case spelling
   //     is already reported there, no rewrite involved — so it WIDENS the

@@ -12008,6 +12008,30 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     expect(r.ok).toBe(true);
   });
 
+  it('the same Makefile with the assignment ABOVE the deploy IS reported (#2084 control)', () => {
+    // THE CONTROL #2084 LACKED (r38). Same bytes, only the assignment's
+    // POSITION differs, and the verdict flips — which is what the pin above
+    // claims and, until now, only asserted in prose.
+    //
+    // THE MECHANISM IS THE LITERAL SCAN, NOT EXPANSION, and that is worth
+    // stating because round 6 recorded a trap here: a control placed above
+    // reports because the `GENERATE = printf … > …` LINE ITSELF is a write in
+    // the raw file, now positioned before the deploy. Mutation-checked —
+    // disabling the recipe-variable expansion entirely leaves this reporting.
+    //
+    // So the pair pins exactly what #2084 is: not "a variable's value is
+    // invisible", but "an assignment's position does not constrain when its
+    // value is used".
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'Makefile',
+      "GENERATE = printf '{}' > configs/custom.jsonc\n\n" +
+        'deploy:\n\t$(GENERATE)\n\twrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
   it('a runbook sentence naming a write reports the deploy (#2112, stated false report)', () => {
     // A STATED FALSE REPORT — the opposite direction from its two siblings,
     // which are misses. Asserted so a future fix announces itself.
@@ -12445,7 +12469,8 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     // The extraction matches a colon followed by a quoted scalar. Here the
     // COMPACT line carries scalars too, so the match succeeds and the
     // unmatched array element is dropped with them. That is the whole of the
-    // exception: an array is passed over ONLY in this layout. Written across
+    // exception: an array is passed over ONLY in this layout, and the
+    // multi-line sibling below shows the same array being read. Written across
     // several lines the element sits on a line with no colon-introduced
     // scalar, the extraction returns that raw line, and the command IS read —
     // the sibling fixture below pins that, and the two only make sense
@@ -12539,12 +12564,18 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     expect(r.ok).toBe(false);
   });
 
-  it('an upper-case helper extension is never scanned (#2123, stated false green)', () => {
+  it('an upper-case helper extension is never FOUND by the walk (#2123, stated false green)', () => {
     // A STATED FALSE GREEN, and the broadest of this family: the file is not
-    // misread, it is never OPENED. `walk` tests the filename against
+    // misread, it is never DISCOVERED. `walk` tests the filename against
     // lower-case extensions with a case-sensitive comparison, so `.PS1` is
-    // never yielded and the case-insensitive interpreter detection downstream
-    // never gets a chance to compensate.
+    // never yielded by the sweep and nothing downstream gets a chance to
+    // compensate.
+    //
+    // SCOPED TO THE WALK (r38). A helper named explicitly by a file already
+    // being read is a different matter: `sourcedDeploys` resolves and reads
+    // that path directly, so `source D.SH` from a scanned shell IS opened and
+    // the deploy reported. The gap is in the discovery, not the reading, and
+    // a fix aimed at the sourced path would be aimed at working behaviour.
     //
     // Windows runs `D.PS1` and `d.ps1` alike. The control below is the same
     // bytes under the lower-case name.
@@ -12561,7 +12592,7 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     expect(r.ok).toBe(false);
   });
 
-  it('the command shell is bypassed the same way (#2123, stated false green)', () => {
+  it('the command shell is skipped by the walk the same way (#2123, stated false green)', () => {
     // #2123 IS NOT ABOUT `.ps1`. The gate is the shared, case-sensitive
     // extension test in `walk`, so EVERY helper family is bypassed by an
     // upper-case name — verified for `.CMD`, `.BAT`, `.SH`, `.JS` and `.PY`,
@@ -12578,7 +12609,7 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     expect(r.ok).toBe(true);
   });
 
-  it('a POSIX helper is bypassed the same way (#2123, stated false green)', () => {
+  it('a POSIX helper is skipped by the walk the same way (#2123, stated false green)', () => {
     // The non-Windows representative, and the one that shows the defect has
     // nothing to do with the Windows normalisation it was found beside: a
     // `.SH` helper is skipped for the same reason, on every platform.

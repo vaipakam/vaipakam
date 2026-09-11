@@ -108,9 +108,11 @@ No behaviour change. The check's logic is what it was.
   designs, so a future attempt cannot quietly reintroduce the erasure.
 - A control beside every pinned defect but one, differing from it by the single
   character or spelling at issue, so it cannot pass for an unrelated reason.
-  A second report was uncontrolled until review found it, and the record had
-  claimed there was only one; that one now has a companion differing by a
-  single verb. The remaining one has NO such control and says so in place of
+  Two pins were uncontrolled until review found them, in successive rounds,
+  each time while this very sentence claimed there was only one: a report
+  whose prose names a write now has a companion differing by a single verb,
+  and a build-file miss now has one differing only in where the assignment
+  sits. The remaining one has NO such control and says so in place of
   claiming one:
   for it, the already-normalised spelling is understood without the rewrite
   and so reports too, meaning no single-character sibling distinguishes them;
@@ -132,7 +134,7 @@ Every symptom this work set out to fix, plus the limitations found while proving
 them — including **ten defects surfaced while correcting this record
 itself**, seven of them silent passes and three false reports — is recorded as its
 own issue with a reproduction and what a fix would have to be true of. All are
-behaviour the check already had, so nothing is made worse. Ten are
+behaviour the check already had, so nothing is made worse. Eleven are
 additionally pinned by tests that assert the current verdict — twenty-one such
 tests in all, twelve asserting a silent pass and nine a false report.
 
