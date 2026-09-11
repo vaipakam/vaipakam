@@ -12929,61 +12929,77 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     return r;
   };
 
-  it('EVERY executable helper family is skipped by the walk when upper-cased (#2123, stated false green)', () => {
-    // #2123 IS NOT ABOUT `.ps1`, not about three families, and not about
-    // shells. The gate is the shared case-sensitive extension test in `walk`,
-    // so it is about every family the walk is supposed to yield.
-    //
-    // WHAT IS PINNED IS THE VERDICT: the file is never examined. THE
-    // CONSEQUENCE IS A PER-FAMILY FACT AND IS DECLARED AS ONE — the fourth
-    // tuple field, `upperCaseStillRuns` (r3). It was prose here for three
-    // rounds and went stale twice, because each new family changed the
-    // partition and the sentence did not.
-    //
-    //   - `true`  — something runs the file despite the name. `bash D.SH`,
-    //               `python D.PY`, `make -f D.MK` all work, and a human reads
-    //               `RUNBOOK.MD` and copies the command out of it. Here the
-    //               bypass really is a SILENT PASS: an unsafe deployment
-    //               survives.
-    //   - `false` — nothing runs it under that name. `node D.JS` exits
-    //               ERR_UNKNOWN_FILE_EXTENSION; the workflow engine matches
-    //               only the lower-case `.yml`/`.yaml` suffixes; and the JSON
-    //               pair's body is inert, so the lower-case REPORT is #2119's
-    //               false report rather than a correct one. For these the
-    //               fixture establishes a DISCOVERY BLIND SPOT — the guard
-    //               never examines the file — and nothing about an unsafe
-    //               deployment slipping through.
-    //
-    // Every family is pinned either way, because the gate is SHARED: a fix
-    // aimed only at the runnable ones would leave the rest unexamined, and a
-    // file the sweep never opens is invisible for every purpose, config
-    // writes included. What the pin must not do is claim a deployment that
-    // cannot happen — the right-verdict-impossible-premise trap this suite
-    // has now hit twice. A new family must state which column it is in, and
-    // that is why the field exists rather than another sentence.
-    for (const [ext, body, dir] of WALK_HELPER_FAMILIES) {
+  // THE DECLARED CONSEQUENCE IS CONSUMED, NOT JUST DOCUMENTED (r4). The field
+  // was required by the type and read by nothing, so flipping a row changed no
+  // test — dead metadata wearing the shape of a check. It now PARTITIONS the
+  // pins, so a wrong declaration moves a family into a test that claims
+  // something different about it, and the partition guard below refuses a
+  // degenerate split.
+  //
+  // WHAT THIS CANNOT DO, stated because the gap is the whole lesson of this
+  // suite: the harness never executes a fixture, so nothing here can verify
+  // that `bash D.SH` runs or that `node D.JS` does not. The field is a
+  // DECLARATION resting on evidence gathered outside — each `false` above
+  // cites what was observed and where. Making it partition the pins is the
+  // strongest thing available: it cannot catch a wrong declaration, but it
+  // stops one being FREE, since the family then sits under a title asserting
+  // a consequence nobody checked. Treating that as verification would be the
+  // same mistake, one level up.
+  const RUNNABLE = WALK_HELPER_FAMILIES.filter(([, , , runs]) => runs);
+  const DISCOVERY_ONLY = WALK_HELPER_FAMILIES.filter(([, , , runs]) => !runs);
+
+  it('both consequence classes are populated (#2123 partition guard)', () => {
+    // Without this, declaring every row `false` would empty the silent-pass
+    // pin and leave the suite green while claiming nothing at all.
+    expect(RUNNABLE.length).toBeGreaterThan(0);
+    expect(DISCOVERY_ONLY.length).toBeGreaterThan(0);
+    expect(RUNNABLE.length + DISCOVERY_ONLY.length).toBe(
+      WALK_HELPER_FAMILIES.length,
+    );
+  });
+
+  // AN EXPLICIT TIMEOUT, because each of these spawns the guard once per
+  // family and vitest's default is 5 s (r4). Measured near 1.1 s here, but a
+  // loaded runner reproduced a timeout — and a timeout in THIS test reads as
+  // a deploy-guard regression rather than as a slow machine, which is the
+  // expensive way to find out. Splitting by consequence roughly halves each
+  // one; the budget covers the rest.
+  const FAMILY_TIMEOUT_MS = 60_000;
+
+  it('every family something STILL RUNS is skipped by the walk (#2123, stated false green)', () => {
+    // The genuine silent passes: `bash D.SH`, `python D.PY`, `make -f D.MK`,
+    // and a runbook a human reads and copies from. An unsafe deployment
+    // survives here, which is the direction this check must never fail in.
+    for (const [ext, body, dir] of RUNNABLE) {
       const r = runFamilyAlone(`${dir}/D.${ext.toUpperCase()}`, body);
       expect(r.ok, `.${ext.toUpperCase()} should be bypassed by the walk`).toBe(
         true,
       );
     }
-  });
+  }, FAMILY_TIMEOUT_MS);
+
+  it('every family nothing runs is skipped too — discovery only (#2123)', () => {
+    // NOT titled as a wrong verdict, deliberately: nothing runs these under
+    // that name, so the bypass is a DISCOVERY BLIND SPOT and not a deployment
+    // slipping through. Pinned because the gate is shared and a file the
+    // sweep never opens is invisible for every purpose.
+    for (const [ext, body, dir] of DISCOVERY_ONLY) {
+      const r = runFamilyAlone(`${dir}/D.${ext.toUpperCase()}`, body);
+      expect(r.ok, `.${ext.toUpperCase()} should be bypassed by the walk`).toBe(
+        true,
+      );
+    }
+  }, FAMILY_TIMEOUT_MS);
 
   it('the same bytes under each lower-case name ARE scanned (#2123 family control)', () => {
     // Load-bearing beyond the usual control role: it is what proves each pin
     // above fails for the EXTENSION and not for an unrecognised body — which
     // is only true while each iteration runs ALONE. See `runFamilyAlone`.
     //
-    // `ok: false` ALONE IS NOT ENOUGH HERE (r52). `runWith` maps EVERY
-    // `execFileSync` failure to `ok: false`, so a guard that CRASHED or timed
-    // out on one family would satisfy a bare `toBe(false)` — and the
-    // upper-case sibling could not catch it either, since its file is skipped
-    // before any family-specific processing could throw. Both tests would
-    // stay green while a lower-case helper broke the guard rather than being
-    // reported, which is the opposite of what this control claims to show.
-    //
-    // So it asserts the REPORT ITSELF: the violation banner, and the file at
-    // the line the deploy sits on. A crash produces neither.
+    // `ok: false` ALONE IS NOT ENOUGH HERE (r52 on #2105). `runWith` maps
+    // EVERY `execFileSync` failure to `ok: false`, so a guard that CRASHED on
+    // one family would satisfy a bare `toBe(false)`. So it asserts the REPORT
+    // ITSELF: the violation banner, and the offending path.
     for (const [ext, body, dir] of WALK_HELPER_FAMILIES) {
       const r = runFamilyAlone(`${dir}/d.${ext}`, body);
       expect(r.ok, `.${ext} should be scanned and reported`).toBe(false);
@@ -12994,7 +13010,7 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
         `${dir}/d.${ext}`,
       );
     }
-  });
+  }, FAMILY_TIMEOUT_MS);
 
   it('a semicolon-terminated pwsh assignment is not recognised (#2124, stated miss)', () => {
     // A STATED MISS. A trailing `;` is an ordinary PowerShell statement
