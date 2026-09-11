@@ -2518,6 +2518,30 @@ async function visit(path, { expectChooser = false, loan = null } = {}) {
   // answer that. Attached here, before the first navigation, for the
   // same reason the socket watcher is.
   watchPageHead(page);
+  // ROUND 85 P2 — A BLOCK THE PAGE HAD NOT BEEN BORN AT.
+  //
+  // The bracket's lower end is the first head the PAGE announced, and a
+  // contract read that resolved before that announcement could have used
+  // an earlier block — the residual round 84's self-review stated and this
+  // round was asked to close. There is no way to learn which block a
+  // render consumed, but there IS a block it can hardly precede: the
+  // chain's height before this page started loading at all.
+  //
+  // Sampled uncached, for round 13's reason — a cached height from an
+  // earlier visit would be a number this drive already had rather than
+  // one the chain just gave it.
+  //
+  // NOT A PROOF, and the code should not imply one: the page has its own
+  // provider, and a lagging node can serve `latest` from below a height
+  // this observer has already seen. It is a strictly better bound than the
+  // first announcement, bought for one call, and the span it adds is the
+  // page's boot time — a block or two.
+  //
+  // `discovery` so a failure here is a blocked run rather than an
+  // unhandled rejection: this sits outside the navigation catch below.
+  const headBeforeNav = await discovery('sampling the chain head before navigating', () =>
+    pub.getBlockNumber({ cacheTime: 0 }),
+  ).catch(() => null);
   const pageErrors = [];
   const consoleErrors = [];
   page.on('pageerror', (e) => pageErrors.push(String(e).replace(/\s+/g, ' ').slice(0, 300)));
@@ -2563,7 +2587,7 @@ async function visit(path, { expectChooser = false, loan = null } = {}) {
   // product is right about — the same class of error `stillEligible`
   // exists to avoid for the lender card.
   const forcedClose =
-    ROLE === 'lender' && loan ? await observeForcedClose(page, loan) : null;
+    ROLE === 'lender' && loan ? await observeForcedClose(page, loan, headBeforeNav) : null;
   const holdCard = await page.getByTestId('sale-listing-hold-card').count();
   const freeHeld = await page.getByTestId('free-held-options').count();
   const out = {
@@ -3482,6 +3506,67 @@ async function probeCloseOut(loanId, blockNumber, account) {
  * chain answering, `undefined` is a failure to determine and asserts
  * nothing.
  */
+/**
+ * How many blocks of a bracket this drive will probe exhaustively.
+ *
+ * An operational budget, not a rule about the chain, and stated as one.
+ * The span it bounds is the page's own lifetime before the scrape — three
+ * or four blocks on the live deployment — so this is generous by an order
+ * of magnitude. A span past it reports `null` (not established) rather
+ * than being sampled and declared, because sampling is exactly the
+ * inference this replaces.
+ */
+const SPAN_PROBE_BUDGET = 32n;
+
+/**
+ * Was the protocol's answer the SAME at every block of this bracket?
+ *
+ * ROUND 85 P2 — because two matching endpoint samples do not establish
+ * what happened between them, and this drive was treating them as if they
+ * did.
+ *
+ * The bracket's job is to say the window was quiet, so that a card
+ * disagreeing with the protocol is a defect in the card rather than a
+ * state change the drive watched happen. Equality at the two ends is
+ * strong evidence of that for a MONOTONE answer and no evidence at all for
+ * one that can round-trip: an internal-match candidate can appear and be
+ * consumed inside the observation, leaving both ends `false` while a
+ * render truthfully painted the match route — and the verdict then accused
+ * the product of promising a settlement "no candidate existed for", which
+ * two endpoint reads cannot say.
+ *
+ * So the interior is READ rather than assumed. State is per block, so an
+ * answer equal at every block of the span did not change during it — a
+ * fact, where the endpoint comparison was an inference.
+ *
+ * THREE OUTCOMES, the discipline every probe in this file carries:
+ * `true` — every block agreed; `false` — one did not, so the window was
+ * not quiet; `null` — this could not be established, because the span is
+ * unknown, inverted, over budget, or a probe declined to answer. `null`
+ * must never read as `true`: it is the old two-point evidence, which is
+ * what the finding is about.
+ *
+ * The ENDPOINTS are the caller's — they are already read and already
+ * compared — so only the interior is probed here.
+ */
+async function stableAcross(from, to, expected, probe) {
+  if (expected === undefined || expected === null) return null;
+  if (typeof from !== 'bigint' || typeof to !== 'bigint') return null;
+  if (from === 0n || to === 0n) return null;
+  // `to < from` means the page announced a head ahead of the block this
+  // drive's own provider pinned. That is two providers disagreeing about
+  // the chain's height, not a span, and answering `true` for it would
+  // vouch for a window never examined.
+  if (to < from) return null;
+  if (to - from > SPAN_PROBE_BUDGET) return null;
+  for (let b = from + 1n; b < to; b += 1n) {
+    const seen = await probe(b);
+    if (seen === undefined || seen === null) return null;
+    if (seen !== expected) return false;
+  }
+  return true;
+}
+
 async function probeInternalMatch(loanId, blockNumber) {
   try {
     const out = await pub.readContract({
@@ -3558,7 +3643,7 @@ async function probeInternalMatch(loanId, blockNumber) {
  * reserves for a PRODUCT REGRESSION. A prerequisite read that could not
  * answer is BLOCKED, never a finding about the app.
  */
-async function observeForcedClose(page, loan) {
+async function observeForcedClose(page, loan, headBeforeNav) {
   // ROUND 55 P2 — BRACKET THE OBSERVATION, because the answer that
   // validates a render must not come from after it.
   //
@@ -3617,8 +3702,27 @@ async function observeForcedClose(page, loan) {
   // card's data cannot predate to one it cannot postdate, and a
   // disagreement anywhere in that span makes the observation incomplete
   // rather than an accusation.
+  // ROUND 85 P2 — AND BELOW THE FIRST ANNOUNCEMENT, to the height the
+  // chain had before this page existed.
+  //
+  // Round 84's floor is the first head the PAGE announced, and its own
+  // note stated the residual this closes: a contract read that resolved
+  // before that announcement could have used an earlier block, so the
+  // bracket could sit entirely above the state being judged. `headBeforeNav`
+  // is sampled from this drive's provider before `page.goto`, so it is a
+  // height the page's reads can hardly precede — bought for one call, and
+  // widening the span only by the page's boot time.
+  //
+  // The lower of the two, never one or the other: the page's own first
+  // announcement is the better evidence where it is lower (the two
+  // providers can disagree, and a lagging page provider is exactly the
+  // case `headBeforeNav` cannot cover), so taking the minimum keeps
+  // whichever is further back rather than trusting either source.
   const headFloor = pageHeadFloorOf(page);
-  const headBefore = headFloor === 0n ? headAtRender : headFloor;
+  const announced = headFloor === 0n ? headAtRender : headFloor;
+  const preNav = typeof headBeforeNav === 'bigint' ? headBeforeNav : 0n;
+  const headBefore =
+    announced === 0n ? preNav : preNav === 0n ? announced : announced < preNav ? announced : preNav;
   // ROUND 57 P2 — THE OTHER END OF THE BRACKET, AT THE PAGE'S OWN HEAD.
   //
   // Round 55 took a pre-read on `OBSERVE_RPC` at wall-clock `latest`,
@@ -3878,6 +3982,39 @@ async function observeForcedClose(page, loan) {
         };
   }
 
+  // ROUND 85 P2 — THE INTERIOR OF THE BRACKET IS READ, not inferred from
+  // its ends.
+  //
+  // `stableAcross` carries the argument. Only asked where the ends already
+  // AGREE, because a disagreement is reported in its own words by the
+  // verdict and probing the interior would change nothing about it — and
+  // because these are extra RPC calls that should be spent only where they
+  // can change an answer.
+  //
+  // Both questions, deliberately: the settlement route is the one that can
+  // round-trip inside an observation, and the close-out answer is the one
+  // an accusation about a withheld card rests on. A fix applied to one of
+  // several parallel sites is this PR's most repeated finding.
+  const defaultableStable =
+    defaultableBefore !== undefined && defaultableBefore === pinnedDefaultable
+      ? await discovery(
+          `checking the close-out answer held across the bracket for loan ${loan.id}`,
+          () =>
+            stableAcross(headBefore, pinnedBlock, pinnedDefaultable, (b) =>
+              probeCloseOut(loan.id, b),
+            ),
+        )
+      : null;
+  const internalMatchStable =
+    matchBefore !== undefined && matchBefore === pinnedMatch
+      ? await discovery(
+          `checking the settlement route held across the bracket for loan ${loan.id}`,
+          () =>
+            stableAcross(headBefore, pinnedBlock, pinnedMatch, (b) =>
+              probeInternalMatch(loan.id, b),
+            ),
+        )
+      : null;
   const { lenderHoldsActive, saleLocked, absenceUnconfirmed, absenceUnconfirmedWhy } =
     reconcileEligibility(
     { lenderHoldsActive: pinnedHoldsActive, saleLocked: pinnedSale },
@@ -3895,6 +4032,13 @@ async function observeForcedClose(page, loan) {
     // observation, so an answer taken afterwards cannot validate a
     // render that preceded it. The verdict compares the two.
     defaultableBefore,
+    // ROUND 85 P2 — and whether that answer HELD AT EVERY BLOCK between
+    // them, which is what the two ends agreeing was being read as and
+    // never established. `true` / `false` / `null` for "not established";
+    // an older record carries neither field and the verdict leaves its
+    // behaviour unchanged.
+    defaultableStable,
+    internalMatchStable,
     // ROUND 64 P2 — WHICH SETTLEMENT the protocol would perform, both
     // ends of the same bracket. `triggerDefault` succeeding says the
     // close-out would run; it does not say whether the lender receives
@@ -5797,7 +5941,33 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
       const receiptRow = card
         .locator('[data-testid^="forced-close-receipt"], dl.receipt .receipt-row')
         .first();
-      const clusterAction = card.locator('.cluster button').first();
+      // ROUND 85 P2 — THE THIRD MARKER HAS TO BE A DIFFERENT CONTROL.
+      //
+      // `.cluster button` first-match IS the Back button: it comes first in
+      // the cluster's DOM order, so this "independent" panel signal was the
+      // same element the `back` wait above already looks at. The failure it
+      // was added to catch therefore still slipped through — a CSS
+      // regression that takes Back and every receipt row out of layout
+      // while the fee-paying Confirm stays visible made all three waits
+      // false, the receipt evaluation was skipped, and the run reported an
+      // incomplete scan instead of the panel it was looking straight at:
+      // a lender shown a payment button with no visible receipt and no
+      // visible way out.
+      //
+      // The confirm marker names the OTHER control, so the three waits are
+      // three facts again. `.last()` as the fallback for builds deployed
+      // before the marker: within the cluster the confirm action is the
+      // trailing button, which is the same ordering assumption the old
+      // `.first()` relied on — used deliberately at the other end rather
+      // than left pointing at Back.
+      const confirmMarked = await card
+        .locator('[data-testid="confirm-receipt-confirm"]')
+        .count()
+        .then((n) => n > 0)
+        .catch(() => false);
+      const clusterAction = confirmMarked
+        ? card.locator('[data-testid="confirm-receipt-confirm"]').first()
+        : card.locator('.cluster button').last();
       const [backUp, rowsUp, actionUp] = await Promise.all([
         back
           .waitFor({ state: 'visible', timeout: 5_000 })

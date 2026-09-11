@@ -170,6 +170,18 @@ cannot postdate, and only treats a disagreement as real when the answer
 was the same across that whole span. Otherwise the observation is
 incomplete. The run prints the span it used.
 
+"The same across the span" is then read rather than assumed. Asking at
+the two ends and finding the same answer proves nothing about what
+happened between them — and one of the things being asked can come and go
+inside a single observation, because another position can be matched
+against this one and then settled. A card that told the lender the truth
+at the moment it was drawn could therefore be reported as promising an
+outcome the protocol "would not take", on the strength of two readings
+that never looked at the moment in question. The check now asks at every
+block of the window it watched, which is a handful of readings, and says
+so plainly when it could not cover the window instead of treating two
+matching ends as proof.
+
 Where that answer and the page disagree, the check reports it as
 something inferred rather than something seen, because the commonest
 cause is a deployment pointed at a different chain — a configuration

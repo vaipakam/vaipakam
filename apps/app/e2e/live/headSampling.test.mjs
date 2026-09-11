@@ -108,9 +108,45 @@ describe('the head sample waits for the readings in flight', () => {
     // The floor is the whole point: pinning to the render-time sample is
     // what round 84 found wrong. A refactor that quietly restored
     // `headAtRender` as the primary would pass the case above.
-    const decl = src.slice(at('const headFloor ='), at('const headFloor =') + 300);
+    //
+    // AMENDED IN ROUND 85 — the floor now has TWO sources and takes the
+    // lower. Round 84's floor was the first head the PAGE announced, and
+    // its own note stated the gap: a contract read resolving before that
+    // announcement could have used an earlier block. `headBeforeNav` is
+    // this drive's own head sampled before the navigation, so it is a
+    // height the page's reads can hardly precede. Neither source is
+    // trusted over the other — the page's announcement is the better
+    // evidence where it is lower, since a lagging page provider is the one
+    // case `headBeforeNav` cannot cover.
+    const decl = src.slice(at('const headFloor ='), at('const headFloor =') + 500);
     expect(decl).toContain('pageHeadFloorOf(page)');
-    expect(decl).toMatch(/headBefore\s*=\s*headFloor === 0n \? headAtRender : headFloor/);
+    expect(decl).toContain('headBeforeNav');
+    expect(decl).toMatch(/announced === 0n \? preNav/);
+    expect(decl).toMatch(/announced < preNav \? announced : preNav/);
+  });
+
+  // ROUND 85 P2 — and the pre-navigation sample has to be taken BEFORE the
+  // navigation, which is the only property that makes it a lower bound.
+  it('samples the pre-navigation head before the page is loaded', () => {
+    const sample = at('const headBeforeNav = await discovery(');
+    const goto = at('await page.goto(SITE + path');
+    expect(sample, 'the pre-navigation sample was not found').toBeGreaterThan(-1);
+    expect(goto, 'the navigation was not found').toBeGreaterThan(-1);
+    expect(sample).toBeLessThan(goto);
+    // Uncached, for round 13's reason: a height viem answered from a cache
+    // filled by an earlier visit is a number this drive already had.
+    const decl = src.slice(sample, sample + 200);
+    expect(decl).toContain('cacheTime: 0');
+  });
+
+  // ROUND 85 P2 — the interior of the bracket is READ, not inferred from
+  // its ends. Two matching endpoint samples say nothing about a value that
+  // can round-trip inside the window.
+  it('checks the protocol answer held at every block of the span', () => {
+    expect(at('async function stableAcross(')).toBeGreaterThan(-1);
+    const both = src.slice(at('const defaultableStable ='), at('const defaultableStable =') + 1400);
+    expect(both).toContain('stableAcross(headBefore, pinnedBlock, pinnedDefaultable');
+    expect(both).toContain('stableAcross(headBefore, pinnedBlock, pinnedMatch');
   });
 
   it('brackets the settlement-route read the same way', () => {

@@ -3165,6 +3165,23 @@ describe('rounds 42–43 review findings', () => {
     // what separates a ticker from prose; lower case has no such shape,
     // so only membership distinguishes `eth` from `is`. Reaching further
     // starts matching ordinary words.
+    // ROUND 85 P2 — AND NO LENGTH CAP ON THE SYMBOL.
+    //
+    // `isTicker` carried a twelve-character bound, which is a guess about
+    // other people's tokens: ERC-20 places no limit on `symbol()`. It
+    // failed in the expensive direction — with the symbol unrecognised the
+    // identifier exemption read the figure as a loan NUMBER and the
+    // scanner certified an unsubstantiated amount as clean.
+    it('recognises a symbol longer than any cap', () => {
+      expect(monetaryAmountsIn('Loan 100 LONGTOKENABCDE principal')).toHaveLength(1);
+      expect(monetaryAmountsIn('Position 2 SUPERLONGSYMBOL')).toHaveLength(1);
+      // The discriminator that does the work is the uppercase RUN, which
+      // is why removing the cap does not start matching prose: these long
+      // words have none.
+      expect(monetaryAmountsIn('Loan 100 outstanding today')).toEqual([]);
+      expect(monetaryAmountsIn('Position 2 Settlement')).toEqual([]);
+    });
+
     it('does not fire on ordinary prose after a figure', () => {
       expect(monetaryAmountsIn('Loan 100 is overdue.')).toEqual([]);
       expect(monetaryAmountsIn('The grace period is 3 days.')).toEqual([]);
@@ -6653,5 +6670,171 @@ describe('self-review of round 70 — the unread-route arm takes the same sweep'
       copy,
     );
     expect(v.why ?? '').not.toMatch(/could not read which route/);
+  });
+});
+
+// ROUND 85 P2 — TWO MATCHING ENDS OF A BRACKET DO NOT SAY WHAT HAPPENED
+// BETWEEN THEM.
+//
+// Three arms accused the card on the strength of the bracket's ENDS
+// agreeing. That is strong evidence for an answer that moves one way and
+// none at all for one that can round-trip: an internal-match candidate can
+// appear and be consumed inside the observation, leaving both ends `false`
+// while a render truthfully painted the match route — and the message the
+// arm printed claimed the protocol "held no match candidate throughout",
+// which two endpoint reads cannot establish.
+//
+// The drive now reads the INTERIOR, one probe per block of the span, and
+// reports a tri-state. These cases pin what the verdict does with it:
+// `true` accuses as before, `false` and `null` report an incomplete
+// observation, and a record carrying neither field behaves exactly as it
+// did — the `undefined`-predates-the-field rule every arm in this module
+// follows.
+describe('round 85 review findings', () => {
+  const copy = {
+    unknownCopy: FORCED_CLOSE.unknown,
+    notYetCopy: FORCED_CLOSE.notYet,
+    overdueTitleCopy: FORCED_CLOSE.title,
+    pendingTitleCopy: FORCED_CLOSE.titlePending,
+    readyCopy: [FORCED_CLOSE.readyInKind, FORCED_CLOSE.readyInternalMatch, FORCED_CLOSE.readyRental],
+    withheldCopy: [FORCED_CLOSE.unknown, FORCED_CLOSE.notYet, FORCED_CLOSE.readyNeedsRoute],
+    refusalStateCopy: [
+      FORCED_CLOSE.notYet,
+      FORCED_CLOSE.blockedPaused,
+      FORCED_CLOSE.blockedSequencer,
+      FORCED_CLOSE.blockedNoConsent,
+    ],
+    recognisedCopy: [
+      FORCED_CLOSE.unknown,
+      FORCED_CLOSE.notYet,
+      FORCED_CLOSE.readyInKind,
+      FORCED_CLOSE.readyInternalMatch,
+      FORCED_CLOSE.readyRental,
+      FORCED_CLOSE.readyNeedsRoute,
+    ],
+    receiptLeads: [FORCED_CLOSE.receipt.youReceive, FORCED_CLOSE.rentalReceipt.youReceive],
+    receiptRowSets: {
+      standard: Object.values(FORCED_CLOSE.receipt),
+      rental: Object.values(FORCED_CLOSE.rentalReceipt),
+    },
+    rentalReadyCopy: FORCED_CLOSE.readyRental,
+    internalMatchReadyCopy: FORCED_CLOSE.readyInternalMatch,
+    inKindReadyCopy: FORCED_CLOSE.readyInKind,
+  };
+  const base = {
+    lenderHoldsActive: true,
+    mounted: true,
+    attached: true,
+    submitPresent: true,
+    submitVisible: true,
+    submitDisabled: false,
+    visibleSubmits: 1,
+    visibleCards: 1,
+    saleLocked: false,
+    settled: true,
+    bodyPresent: true,
+    bodyVisible: true,
+    confirmExpected: false,
+    confirmText: null,
+    defaultable: true,
+    defaultableBefore: true,
+  };
+  const painted = (sentence) => ({
+    text: sentence,
+    bodyText: sentence,
+    visibleText: sentence,
+    bodyVisibleText: sentence,
+  });
+  const inKind = { ...base, ...painted(FORCED_CLOSE.readyInKind) };
+  const withheld = (sentence) => ({
+    ...base,
+    ...painted(sentence),
+    submitDisabled: true,
+    confirmExpected: false,
+    confirmText: null,
+  });
+
+  describe('a ready route the protocol would refuse', () => {
+    const refused = { ...inKind, defaultable: false, defaultableBefore: false };
+
+    it('still accuses when the answer held at every block of the span', () => {
+      const v = forcedCloseVerdict({ ...refused, defaultableStable: true }, copy);
+      expect(v.verdict).toBe('fail');
+      expect(v.why).toMatch(/would be refused/);
+    });
+
+    it('reports an incomplete observation when the span moved', () => {
+      const v = forcedCloseVerdict({ ...refused, defaultableStable: false }, copy);
+      expect(v.verdict).toBe('blocked');
+      expect(v.blockedKind).toBe('incomplete');
+      expect(v.why).toMatch(/held at every block/);
+    });
+
+    it('and when the span could not be covered at all', () => {
+      // `null` is the OLD evidence — two matching ends and nothing about
+      // the middle. Reading it as `true` is the finding.
+      const v = forcedCloseVerdict({ ...refused, defaultableStable: null }, copy);
+      expect(v.verdict).toBe('blocked');
+      expect(v.blockedKind).toBe('incomplete');
+    });
+
+    it('leaves a record predating the field exactly as it was', () => {
+      expect(forcedCloseVerdict(refused, copy).verdict).toBe('fail');
+    });
+  });
+
+  describe('a refusal the protocol does not make', () => {
+    const claiming = { ...withheld(FORCED_CLOSE.notYet), defaultable: true, defaultableBefore: true };
+
+    it('still accuses when the answer held throughout', () => {
+      const v = forcedCloseVerdict({ ...claiming, defaultableStable: true }, copy);
+      expect(v.verdict).toBe('fail');
+      expect(v.why).toMatch(/denied a close-out the protocol accepts/);
+    });
+
+    it('reports incomplete when a grace crossing could explain it', () => {
+      // The case in the wild: the deadline passes inside the observation,
+      // both ends read `true`, and the render legitimately showed the
+      // state before it.
+      const v = forcedCloseVerdict({ ...claiming, defaultableStable: false }, copy);
+      expect(v.verdict).toBe('blocked');
+      expect(v.blockedKind).toBe('incomplete');
+      expect(v.why).toMatch(/not attributed to the card/);
+    });
+  });
+
+  describe('a settlement route the protocol would not take', () => {
+    const match = { ...base, ...painted(FORCED_CLOSE.readyInternalMatch) };
+    const promisingMatch = { ...match, internalMatch: false, internalMatchBefore: false };
+
+    it('still accuses when no candidate existed at any block of the span', () => {
+      const v = forcedCloseVerdict({ ...promisingMatch, internalMatchStable: true }, copy);
+      expect(v.verdict).toBe('fail');
+      expect(v.why).toMatch(/held no match candidate throughout/);
+    });
+
+    // THE ROUND-TRIP, which is why this arm needed the interior read more
+    // than its siblings: a candidate that appears and is consumed inside
+    // the window leaves both ends `false` while the card painted the truth.
+    it('reports incomplete when a candidate could have come and gone', () => {
+      const v = forcedCloseVerdict({ ...promisingMatch, internalMatchStable: false }, copy);
+      expect(v.verdict).toBe('blocked');
+      expect(v.blockedKind).toBe('incomplete');
+      expect(v.why).toMatch(/settlement route/);
+    });
+
+    it('and when the span could not be covered', () => {
+      const v = forcedCloseVerdict({ ...promisingMatch, internalMatchStable: null }, copy);
+      expect(v.verdict).toBe('blocked');
+      expect(v.blockedKind).toBe('incomplete');
+    });
+
+    it('does not disturb a card whose route the protocol agrees with', () => {
+      const v = forcedCloseVerdict(
+        { ...match, internalMatch: true, internalMatchBefore: true, internalMatchStable: true },
+        copy,
+      );
+      expect(v.verdict).not.toBe('fail');
+    });
   });
 });

@@ -76,12 +76,34 @@ const CURRENCY_MARK = /\p{Sc}/u;
  * that cries wolf gets switched off, losing its true positives. The
  * distinguishing feature of a ticker is an INTERNAL UPPERCASE RUN —
  * `stETH` and `WETH` have one, `days` and `Position` do not. So: two or
- * more consecutive upper-case letters somewhere in a short alphanumeric
- * word.
+ * more consecutive upper-case letters somewhere in an alphanumeric word.
+ *
+ * ROUND 85 P2 — AND NO LENGTH CAP, which was the same mistake in a third
+ * costume.
+ *
+ * The first version required all-caps; round 1 widened the CASE rule and
+ * left a `{1,11}` bound, so a symbol of thirteen characters or more was
+ * refused. ERC-20 places no limit on `symbol()`, so that bound was a
+ * guess about other people's tokens sitting in a funds check — and it
+ * failed in the expensive direction: with the symbol unrecognised, the
+ * identifier exemption read `Loan 100 LONGTOKENABCDE principal` as a loan
+ * NUMBER and the scanner returned nothing, certifying an unsubstantiated
+ * amount as clean.
+ *
+ * The discriminator was never the length; it is the uppercase run, which
+ * is what actually separates a ticker from prose. Removing the cap is
+ * therefore not a loosening of the rule but the removal of something that
+ * was never part of it. Two characters minimum is kept: a one-letter word
+ * is not a symbol anyone writes copy around.
+ *
+ * Demonstrated rather than argued — the all-locale calibration puts every
+ * shipped `forcedClose` string in all twenty bundles through the scanner,
+ * and it stays green, so nothing this widening newly recognises appears in
+ * the product's own copy.
  */
 function isTicker(word) {
   if (typeof word !== 'string') return false;
-  if (!/^[A-Za-z][A-Za-z0-9]{1,11}$/.test(word)) return false;
+  if (!/^[A-Za-z][A-Za-z0-9]+$/.test(word)) return false;
   return /[A-Z]{2}/.test(word);
 }
 
@@ -2612,10 +2634,42 @@ export function forcedCloseVerdict(obs, copy) {
   // field it never had would silence the arm for every one of them. `in`
   // is what tells those apart, the same distinction round 74 needed for
   // JSON-RPC ids.
+  // ROUND 85 P2 — TWO MATCHING ENDS DO NOT SAY WHAT HAPPENED BETWEEN
+  // THEM, and three arms below were reading them as if they did.
+  //
+  // The bracket exists to establish that the window was QUIET, so that a
+  // card disagreeing with the protocol is a defect in the card rather than
+  // a state change this drive watched happen. Equality at the two ends is
+  // strong evidence of that for an answer that moves one way and no
+  // evidence at all for one that can round-trip: an internal-match
+  // candidate can appear and be consumed inside the observation, leaving
+  // both ends `false` while a render truthfully painted the match route.
+  //
+  // The drive now READS the interior — `stableAcross`, one probe per block
+  // of the span — and reports it here as a tri-state. `false` is a window
+  // that moved; `null` is one this drive could not cover, which is exactly
+  // the old two-point evidence and must not read as `true`. An older
+  // record carries neither field, so `undefined` leaves every arm below
+  // behaving as it did.
+  const unstable = (stable) => stable === false || stable === null;
+  const bracketUnstable = unstable(obs.defaultableStable);
+  const routeUnstable = unstable(obs.internalMatchStable);
+  // One sentence for all three sites: the finding is the same one wherever
+  // it lands, and three hand-written variants is how they drift.
+  const notQuiet = (what) => ({
+    verdict: 'blocked',
+    blockedKind: 'incomplete',
+    why: `${what}, and this drive could not establish that the protocol's answer held at every block of the window it watched — two matching reads at the ends of a bracket do not say what happened between them, so this is not attributed to the card`,
+  });
   const bracketRefuses =
     obs.defaultable === false &&
     (!('defaultableBefore' in obs) || obs.defaultableBefore === false);
   if (bracketRefuses && readyOffered) {
+    if (bracketUnstable) {
+      return notQuiet(
+        'a render this drive read offers a ready close-out the protocol would refuse',
+      );
+    }
     return {
       verdict: 'fail',
       // ROUND 60 P2 — `inferred`, NOT `observed`, and the distinction is
@@ -2730,6 +2784,14 @@ export function forcedCloseVerdict(obs, copy) {
   if (obs.defaultable === true && obs.defaultableBefore === true) {
     const claimed = refusalRenderClaim();
     if (claimed) {
+      // ROUND 85 P2 — the same interior question as the arm above. A grace
+      // deadline crossing inside the observation leaves both ends `true`
+      // while the render legitimately showed the state before it.
+      if (bracketUnstable) {
+        return notQuiet(
+          `a render this drive read withholds the action and states a refusal ("${claimed}") the protocol does not make`,
+        );
+      }
       return {
         verdict: 'fail',
         failKind: 'inferred',
@@ -2954,6 +3016,19 @@ export function forcedCloseVerdict(obs, copy) {
       return (obs.internalMatch === true && k) || (obs.internalMatch === false && m);
     });
     if (wrongRender) {
+      // ROUND 85 P2 — AND THIS IS THE ARM THE INTERIOR READ WAS ADDED FOR.
+      //
+      // The message below claims the protocol held its candidate, or held
+      // none, "throughout the observation". Two endpoint reads cannot say
+      // that about a value which can appear AND be consumed inside the
+      // window — so on a live round-trip this accused a card that had
+      // painted the truth, in the words of a claim the drive had not
+      // established.
+      if (routeUnstable) {
+        return notQuiet(
+          'a render this drive read promises a settlement route the protocol would not take',
+        );
+      }
       return {
         verdict: 'fail',
         failKind: 'inferred',
