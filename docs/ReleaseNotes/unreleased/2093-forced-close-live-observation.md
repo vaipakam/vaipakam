@@ -613,3 +613,14 @@ becomes closeable, that difference is exactly the difference between
 comparing against its own clock rather than the page's position. It now
 asks the question at the chain position the page itself had reached when
 it drew what was being judged.
+
+One more, and it is the previous fix keeping the problem it was for. The
+check had been taught to ask the protocol its question at the chain
+position the page had reached — but it read that position after it had
+finished examining the card, and examining the card includes opening the
+confirmation and waiting on it. A page that moves forward during that
+examination would supply a position it had not reached when it drew the
+thing being judged, which is the same error one step along. The position
+is now read before anything is looked at. The later reading is kept,
+because a different question — has the page caught up at all — genuinely
+wants the newest answer.

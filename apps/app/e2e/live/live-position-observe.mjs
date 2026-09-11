@@ -3111,6 +3111,30 @@ async function observeForcedClose(page, loan) {
   // may legitimately have started withheld and become ready, and this
   // drive cannot tell that from the defect without sampling every
   // render, which it does not.
+  // ROUND 58 P2 — THE HEAD THE RENDER CAME FROM IS SAMPLED BEFORE THE
+  // RENDER, not after it.
+  //
+  // Round 57 pinned the pre-render simulation to `pageHead` and left
+  // `pageHead` where it was: sampled AFTER `readForcedCloseCard`
+  // returns. That is the head the page had reached by the END of the
+  // observation, and the observation opens the confirmation and waits
+  // out interaction timeouts. Across a grace boundary a regressed card
+  // can expose a ready action at block N, the page can announce N+1
+  // while the drive is still inspecting, and both simulations then run
+  // against accepting blocks — the unsafe render validated by a head it
+  // never rendered at. The fix pinned the right axis and kept the wrong
+  // sample.
+  //
+  // Sampled here, before anything is read from the DOM, so it is a head
+  // the page had actually reached when the card under judgement was on
+  // screen. `settleHeadReads` first, for round 48's reason: an in-flight
+  // parse would otherwise make this zero or stale.
+  //
+  // The LATER sample below is kept and still feeds the absence gate,
+  // where "has the page caught up" is the question and the newest head
+  // is the right answer. Two samples, two different questions.
+  await settleHeadReads(page);
+  const headAtRender = pageHeadOf(page);
   const card = await readForcedCloseCard(page);
   // BESIDE THE SCRAPE, not at confirmation time (round 14 P2). What
   // matters is the head the page had reached when it rendered — or
@@ -3149,7 +3173,9 @@ async function observeForcedClose(page, loan) {
   // Saying which one was used is left to the verdict, which reports an
   // unanswerable probe as an incomplete observation either way.
   const defaultableBefore =
-    pageHead === 0n ? await probeCloseOut(loan.id) : await probeCloseOut(loan.id, pageHead);
+    headAtRender === 0n
+      ? await probeCloseOut(loan.id)
+      : await probeCloseOut(loan.id, headAtRender);
   // ROUND 4 P2 — ONE BLOCK FOR ALL THREE FACTS.
   //
   // `Promise.all` makes these concurrent; it does not pin them to a

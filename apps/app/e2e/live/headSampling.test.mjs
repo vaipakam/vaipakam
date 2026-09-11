@@ -55,19 +55,71 @@ describe('the head sample waits for the readings in flight', () => {
     expect(at(SETTLE)).toBeLessThan(at(SAMPLE));
   });
 
-  it('samples the head exactly once, so one await covers it', () => {
-    // The ordering above is only sufficient while there is a single
-    // sample site. A second one added later would be unprotected and
-    // would read as covered by this file.
-    //
-    // Counted as occurrences MINUS the declaration, because
-    // `function pageHeadOf(page)` matches the same text — the first
-    // version of this case asserted one occurrence, found two, and was
-    // measuring the definition rather than a second call site.
+  // ROUND 58 P2 — AND THE RENDER-TIME SAMPLE COMES FIRST.
+  //
+  // Round 57 pinned the pre-render simulation to `pageHead`, which is
+  // sampled AFTER the DOM observation — the head the page had reached by
+  // the END of it, after the confirmation was opened and the interaction
+  // timeouts waited out. A card exposing a ready action at block N could
+  // be validated by an N+1 announced while the drive was still looking.
+  //
+  // Two samples now, answering two questions: `headAtRender` before
+  // anything is read, for "what did the page know when it drew this",
+  // and `pageHead` after, for the absence gate's "has the page caught
+  // up". The ordering IS the fix, so it is pinned.
+  it('samples the render-time head BEFORE reading the card', () => {
+    const sample = at('const headAtRender = pageHeadOf(page);');
+    const read = at('const card = await readForcedCloseCard(page);');
+    expect(sample, 'the render-time sample was not found').toBeGreaterThan(-1);
+    expect(read, 'the card read was not found').toBeGreaterThan(-1);
+    expect(sample).toBeLessThan(read);
+  });
+
+  it('settles the in-flight parses before that sample too', () => {
+    // Otherwise the earlier sample is the one that reads zero or stale,
+    // which is round 48's defect moved to the new call site.
+    const settle = at(SETTLE);
+    expect(settle).toBeLessThan(at('const headAtRender = pageHeadOf(page);'));
+  });
+
+  it('pins the pre-render simulation to the render-time head', () => {
+    // Not to `pageHead` — that is the round-57 fix keeping the round-58
+    // defect, and the two identifiers differ by one word.
+    const decl = src.slice(at('const defaultableBefore ='), at('const defaultableBefore =') + 400);
+    expect(decl).toContain('headAtRender');
+    expect(decl).not.toContain('pageHead ===');
+  });
+
+  // AMENDED IN ROUND 58, and the guard earned its place by failing.
+  //
+  // It asserted ONE call site, on the reasoning that a second would be
+  // unprotected and would read as covered by this file. Round 58 added a
+  // second deliberately — `headAtRender` and `pageHead` answer different
+  // questions — so the invariant is no longer "one sample" but "every
+  // sample settles first", which is what the ordering fix actually
+  // rests on.
+  //
+  // Counted as occurrences MINUS the declaration, because
+  // `function pageHeadOf(page)` matches the same text — the first
+  // version of this case asserted one occurrence, found two, and was
+  // measuring the definition rather than a call site.
+  it('has exactly the two sample sites, each settled first', () => {
     const all = [...src.matchAll(/pageHeadOf\(page\)/g)];
     const declarations = [...src.matchAll(/function pageHeadOf\(page\)/g)];
     expect(declarations, 'exactly one definition').toHaveLength(1);
-    expect(all.length - declarations.length, 'exactly one call site').toBe(1);
+    expect(all.length - declarations.length, 'exactly two call sites').toBe(2);
+
+    // Each sample is preceded by its own settle, so neither reads a head
+    // that an in-flight parse has not yet recorded (round 48).
+    const settles = [...src.matchAll(/await settleHeadReads\(page\);/g)].map((m) => m.index);
+    expect(settles, 'one settle per sample').toHaveLength(2);
+    const samples = [...src.matchAll(/const (?:headAtRender|pageHead) = pageHeadOf\(page\);/g)].map(
+      (m) => m.index,
+    );
+    expect(samples).toHaveLength(2);
+    for (const [i, sample] of samples.entries()) {
+      expect(settles[i], `sample ${i} is settled first`).toBeLessThan(sample);
+    }
   });
 
   it('registers the pending parse synchronously with the event', () => {
