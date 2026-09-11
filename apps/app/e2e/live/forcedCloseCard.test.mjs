@@ -3390,6 +3390,44 @@ describe('round 46 review findings', () => {
       ).toBeUndefined();
     });
 
+    // SELF-REVIEW AFTER ROUND 46 — the LABEL must be painted, not merely
+    // present in the markup. `labelled` reads `innerText`, which yields
+    // every word whatever its colour, and the button's own visibility
+    // check cannot cover it: `paintsText` exempts a node with no own
+    // text, and a button wrapping its label in a span is that node.
+    // Round 37 fixed this for the receipt's leaves and not for the
+    // button beside them.
+    it('FAILS an action whose label is not painted', () => {
+      const v = forcedCloseVerdict(
+        { ...opened, confirmAction: { ...usable, labelPainted: false } },
+        copy,
+      );
+      expect(v.verdict).toBe('fail');
+      expect(v.failKind).toBe('observed');
+      expect(v.why).toMatch(/reads as blank/);
+    });
+
+    it('says nothing where the field was never recorded', () => {
+      const { labelPainted, ...older } = { ...usable, labelPainted: true };
+      expect(forcedCloseVerdict({ ...opened, confirmAction: older }, copy).verdict).toBe('pass');
+    });
+
+    // The two are DIFFERENT defects and report differently: a button
+    // with no label at all is blank markup; one with an unpainted label
+    // is a control that is not there until it is hovered.
+    it('distinguishes an unpainted label from a missing one', () => {
+      const missing = forcedCloseVerdict(
+        { ...opened, confirmAction: { ...usable, labelled: false } },
+        copy,
+      );
+      const unpainted = forcedCloseVerdict(
+        { ...opened, confirmAction: { ...usable, labelPainted: false } },
+        copy,
+      );
+      expect(missing.why).toMatch(/has no label/);
+      expect(unpainted.why).not.toMatch(/has no label/);
+    });
+
     it('and says nothing at all where no action was recorded', () => {
       const { confirmAction, ...noField } = { ...opened, confirmAction: usable };
       expect(forcedCloseVerdict(noField, copy).confirmClickable).toBeUndefined();

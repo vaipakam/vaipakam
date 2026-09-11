@@ -1616,12 +1616,35 @@ export function forcedCloseVerdict(obs, copy) {
         why: `the confirmation opened but ${why} — the lender is left one click short of the action the card offered`,
       };
     }
+    // SELF-REVIEW AFTER ROUND 46 — AND THE LABEL MUST BE PAINTED.
+    //
+    // `labelled` reads `innerText`, which yields every word whatever its
+    // colour, and the button's own visibility check cannot cover this:
+    // `paintsText` exempts a node with no own text, and a button that
+    // wraps its label in a span — the usual way to write one — is that
+    // node. So `color: transparent` on the label left every field above
+    // true on a control the lender reads as blank. Round 37 fixed this
+    // for the receipt's leaves and not for the button beside them.
+    //
+    // Its own arm rather than folding into `labelled`, because the two
+    // are different defects and the lender's experience of them differs:
+    // an unlabelled button is a blank control, an unpainted one is a
+    // control that is not there at all until it is hovered.
+    //
+    // `=== false`, so a record predating the field says nothing.
+    if (a.labelPainted === false) {
+      return {
+        verdict: 'fail',
+        failKind: 'observed',
+        why: 'the confirmation action carries a label in the markup but none of it is painted — the lender is asked to confirm a forced close-out on a control that reads as blank',
+      };
+    }
     // ROUND 46 P2 — AND IT MUST BE ABLE TO RECEIVE THE CLICK.
     //
     // Visible, enabled and labelled are all true of a button covered by
     // another element, or one under `pointer-events: none`. The lender
     // cannot activate either, and every field above says the route is
-    // fine. The drive now asks Playwright the actionability question
+    // fine. The drive asks Playwright the actionability question
     // directly with a TRIAL click, which runs the checks and dispatches
     // nothing — the only form of this test a watch-only drive may make,
     // since the real click sends a fee-paying transaction.

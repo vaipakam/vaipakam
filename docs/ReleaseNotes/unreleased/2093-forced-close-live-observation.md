@@ -302,3 +302,17 @@ The run also now states, in its own output, whether that test actually
 ran. "Not tested" is a legitimate result, and from the outside it looks
 exactly like a check that has quietly stopped working — so it is said out
 loud instead of left to be assumed.
+
+A second pass over the same area found that an earlier fix had only ever
+reached half of what it should have. The check had already learned that
+text can be hidden by its own colour — laid out, present in the page's
+text, and invisible on screen — and it was taught to look for that on the
+receipt's rows. The button beside those rows was never given the same
+treatment, and because of how the colour test is deliberately scoped, a
+button whose label sits inside a wrapper was exempt from it entirely.
+That is the usual way a button is written, so a confirmation control
+reading as blank would have been reported as present, visible, labelled
+and usable. It is now checked, with the leniency that matters in
+practice: a label that is partly hidden on purpose — the longer wording
+some interfaces provide for screen readers — is still a correctly
+labelled button, and the check says so rather than condemning it.

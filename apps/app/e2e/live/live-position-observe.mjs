@@ -4450,6 +4450,45 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
                 confirmButton === undefined
                   ? null
                   : (confirmButton.innerText ?? '').trim(),
+              // SELF-REVIEW AFTER ROUND 46 — IS THE LABEL ACTUALLY
+              // PAINTED? `labelled` reads `innerText`, which yields every
+              // word regardless of colour, and `visible(confirmButton)`
+              // cannot help: `paintsText` deliberately EXEMPTS a node with
+              // no own text, because `color` inherits and judging wrappers
+              // would condemn whole cards. A button that wraps its label
+              // in a span — which is how a button is usually written —
+              // is exactly that node, so `color: transparent` on the span
+              // left every signal green on a control reading as blank.
+              //
+              // That is round 37's finding, unfixed for this control. The
+              // receipt was given `rowShown`, which descends to the `dt`
+              // and `dd` for precisely this reason; the button beside it
+              // never got the same treatment. One fix, two sites.
+              //
+              // `some`, NOT `every`. A visually-hidden span carrying the
+              // long form of the label beside a short visible one is
+              // ordinary accessible markup, and `every` would condemn it
+              // — a false FAIL on a correct button, which is the error
+              // this file says gets a check switched off. One painted,
+              // readable text leaf is the claim `labelled` should be
+              // making, and it is enough to make it.
+              //
+              // No text-bearing leaf at all yields `true`: an icon-only
+              // button is a different defect, and `labelled` reports it.
+              labelPainted:
+                confirmButton === undefined
+                  ? false
+                  : (() => {
+                      const leaves = [
+                        confirmButton,
+                        ...confirmButton.querySelectorAll('*'),
+                      ].filter((n) =>
+                        [...n.childNodes].some(
+                          (c) => c.nodeType === 3 && c.textContent.trim() !== '',
+                        ),
+                      );
+                      return leaves.length === 0 || leaves.some((n) => visible(n));
+                    })(),
             };
             const rows = [
               ...el.querySelectorAll(
