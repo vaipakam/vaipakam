@@ -110,3 +110,46 @@ describe('the trial click is aimed at the control it reported on', () => {
     expect(block).toContain(': null');
   });
 });
+
+describe('the confirmation cluster counts only what is shown', () => {
+  // ROUND 51 P2, and the one finding on this PR that pointed the other
+  // way: not "a real defect went unreported" but "a CORRECT card would
+  // have been reported as defective".
+  //
+  // Round 46 added the duplicate-action count with a raw
+  // `querySelectorAll('button')`, so one usable action beside a button
+  // hidden by CSS — responsive variants of the same control rendered
+  // together being the ordinary way that happens — counted 2 and
+  // produced "the lender is given more than one way to pay for it".
+  //
+  // The card's own duplicate rule has counted VISIBLE controls since
+  // round 19, for the stated reason that a duplicate hidden in the DOM
+  // is not something the lender is being shown. This is that rule one
+  // level in, and it did not carry the filter.
+  //
+  // A source test because the cluster logic runs inside `page.evaluate`
+  // and cannot be imported; extraction is #2120, as for the cases above.
+  const src = fs.readFileSync(DRIVE, 'utf8');
+  const at = (needle) => src.indexOf(needle);
+
+  it('filters the cluster by the drive’s own visibility predicate', () => {
+    expect(src).toContain('(b) => b !== backButton && visible(b),');
+  });
+
+  it('selects the action from the FILTERED set', () => {
+    // Otherwise a hidden first variant could be the control put through
+    // the trial click — judging and trialling something the lender
+    // cannot reach, which is the fix defeating itself.
+    const i = at('const clusterActions =');
+    expect(i, 'the cluster is no longer built here').toBeGreaterThan(-1);
+    expect(src.slice(i, i + 600)).toContain('const confirmButton = clusterActions[0];');
+  });
+
+  it('still indexes over the card’s WHOLE button list', () => {
+    // Deliberately NOT filtered: the Playwright side addresses
+    // `card.locator('button').nth(index)`, which counts hidden buttons
+    // too. Filtering here would have broken the aim of the trial while
+    // fixing the count.
+    expect(src).toContain("[...el.querySelectorAll('button')].indexOf(confirmButton)");
+  });
+});
