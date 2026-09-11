@@ -12,7 +12,9 @@
 #
 # A diagnostic that is only exercised when something breaks is a diagnostic
 # nobody has seen work. These fixtures run it on demand, against a stubbed `gh`,
-# and assert the four outcomes that matter.
+# and assert what it does in each situation below. No count is stated here on
+# purpose — the scenarios are the list, and an earlier revision of this line
+# said "four" and was wrong within the hour.
 #
 # THE STEP IS EXTRACTED FROM THE WORKFLOW, never copied here: a copy would pass
 # while the real step drifted, which is the failure mode the whole issue is
@@ -126,16 +128,27 @@ grep -q 'Retry-After: 60' "$work/out.txt" && s=0 || s=1
 check r "retry-after is shown" "$s"
 grep -q 'secondary rate limit' "$work/out.txt" && s=0 || s=1
 check r "the error body is shown" "$s"
-grep -q 'unknown owner type' "$work/out.txt" && s=0 || s=1
-check r "gh's own message is still shown" "$s"
+# gh's OWN summary line — `unknown owner type` — is deliberately NOT carried,
+# and this pins the trade rather than hiding it. It sits on the same stream as
+# the trace, is not an HTTP line, and separating it from response payload would
+# need a guess about which stderr lines are gh's; on a public repository that
+# guess is the disclosure. It also adds nothing the status and headers do not
+# say better — it was the ONLY thing the old log had, which is precisely why
+# that log could not distinguish "wait" from "fix the secret".
+grep -q 'unknown owner type' "$work/out.txt" && s=1 || s=0
+check r "gh's unstructured summary line is NOT carried (the trade, pinned)" "$s"
 # The point of the whole change: the trace contradicts the table, and BOTH are
 # printed, so the reader can see which one to believe.
 grep -q '"remaining":5000' "$work/out.txt" && s=0 || s=1
 check r "the (misleading) rate_limit table is still shown, labelled" "$s"
 grep -qF "$SECRET" "$work/out.txt" && s=1 || s=0
 check r "the token does NOT appear anywhere in the output" "$s"
-grep -q 'Authorization: \*\*\*redacted\*\*\*' "$work/out.txt" && s=0 || s=1
-check r "the Authorization line is redacted rather than dropped" "$s"
+# STRONGER than the redaction this replaced: the Authorization line is not
+# matched by the allow-list, so it never reaches the output to be redacted.
+# The `sed` underneath stays as defence in depth and is now unreachable — which
+# is the right shape, since a redaction is only as good as its pattern.
+grep -qi 'authorization' "$work/out.txt" && s=1 || s=0
+check r "no Authorization line reaches the output at all" "$s"
 
 # ── scenario 2: the listing succeeds ─────────────────────────────────────────
 # The trace holds the whole board listing on success, so it must be discarded
@@ -215,7 +228,7 @@ check p "the step fails" "$([ "$rc" -ne 0 ] && echo 0 || echo 1)"
 # The branch must RUN TO THE END. Under the prefix bound it died at the pipe
 # and none of these three reached the log.
 grep -q '403 Forbidden' "$work/out.txt" && s=0 || s=1
-check p "the FAILED page's status survives the bound" "$s"
+check p "the FAILED page's status survives" "$s"
 grep -q 'X-Ratelimit-Remaining: 0' "$work/out.txt" && s=0 || s=1
 check p "the failed page's rate-limit header survives" "$s"
 grep -q 'secondary rate limit' "$work/out.txt" && s=0 || s=1
@@ -226,19 +239,51 @@ grep -q '"remaining":5000' "$work/out.txt" && s=0 || s=1
 check p "the rate_limit table is still collected afterwards" "$s"
 grep -q '::error::listing the board failed' "$work/out.txt" && s=0 || s=1
 check p "the error annotation is still emitted" "$s"
-grep -q 'showing the LAST' "$work/out.txt" && s=0 || s=1
-check p "the reader is told the trace was truncated, and from which end" "$s"
-# Earlier pages are what a prefix bound would have shown instead. The stub
-# serves 1,200 items across twelve pages; a byte-tail necessarily catches
-# whatever precedes the failing exchange, so the assertion is that the bulk
-# does not reach the log, not that none of it does.
+# NONE. Not "not many" — the earlier version of this assertion accepted 228 of
+# 1,200 card records reaching the log, and this repository is public while the
+# board spans repositories and carries Drafts that exist nowhere else. Any byte
+# window admits some; only an allow-list admits none (#2139 r3).
 printed=$(grep -c 'BOARD_ITEM_BODY' "$work/out.txt" || true)
-[ "$printed" -lt 300 ] && s=0 || s=1
-check p "the successful pages' bodies are mostly NOT printed ($printed of 1200)" "$s"
+[ "$printed" -eq 0 ] && s=0 || s=1
+check p "NO board item bodies reach the log ($printed of 1200)" "$s"
 grep -qF "$SECRET" "$work/out.txt" && s=1 || s=0
 check p "the token does NOT appear anywhere in the output" "$s"
 
-# ── scenario 4: the listing is truncated ─────────────────────────────────────
+# ── scenario 4: a trace the filter does not recognise ────────────────────────
+# The failure mode an allow-list introduces, and the reason it is safe anyway.
+# If gh's debug format changes, nothing matches — and the group must SAY that
+# rather than print an empty box, which would read as "nothing went wrong at
+# the transport level". It must still not fall back to printing the trace: the
+# trace is exactly what carries board contents.
+cat > "$work/bin/gh" <<SH
+#!/usr/bin/env bash
+if [ "\$1" = "api" ] && [ "\$2" = "rate_limit" ]; then
+  if [ "\$3" = "--jq" ]; then echo 5000; exit 0; fi
+  echo '{"resources":{}}'; exit 0
+fi
+if [ "\$1" = "project" ] && [ "\$2" = "item-list" ]; then
+  if [ -n "\${GH_DEBUG:-}" ]; then
+    echo "=== some future debug format nothing here knows ===" >&2
+    echo "title: BOARD_ITEM_BODY a private card title" >&2
+  fi
+  echo "unknown owner type" >&2
+  exit 1
+fi
+exit 0
+SH
+chmod +x "$work/bin/gh"
+
+echo "unrecognised trace format:"
+run_step && rc=0 || rc=$?
+check u "the step fails" "$([ "$rc" -ne 0 ] && echo 0 || echo 1)"
+grep -q 'no status line, rate-limit header or error message recognised' "$work/out.txt" && s=0 || s=1
+check u "the group says it recognised nothing, rather than showing an empty box" "$s"
+grep -q 'BOARD_ITEM_BODY' "$work/out.txt" && s=1 || s=0
+check u "it does NOT fall back to printing the trace" "$s"
+grep -q '::error::listing the board failed' "$work/out.txt" && s=0 || s=1
+check u "the branch still runs to the end" "$s"
+
+# ── scenario 5: the listing is truncated ─────────────────────────────────────
 # This guard sits AFTER the call, so restructuring the call is exactly the edit
 # that drops it silently. It is here to notice that.
 #

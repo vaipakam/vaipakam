@@ -195,19 +195,3 @@ jobs:
           node .github/scripts/check-excision-residue.selftest.mjs
           node .github/scripts/check-excision-residue.mjs
           echo "Excision residue gate + selftest OK." >> "$GITHUB_STEP_SUMMARY"
-
-      # NOT a prose gate — the odd one out in this job, and worth a line about
-      # why it is here anyway. It runs the board reconcile's board-listing step
-      # against a stubbed `gh` and asserts what the step PRINTS when the
-      # listing is refused. That diagnostic only ever executes when something
-      # is already broken, which is how it came to report a healthy quota
-      # beside an opaque error for four consecutive runs without anyone
-      # noticing it had stopped saying anything (#2129). This job is where the
-      # repo's other run-the-fixtures-first checks live, and the fixtures need
-      # nothing but bash, so they go here rather than in a workflow of their
-      # own.
-      - name: Board-reconcile list-step fixtures (#2129)
-        run: |
-          set -euo pipefail
-          bash .github/scripts/board-reconcile-list-step.selftest.sh
-          echo "Board-reconcile list-step fixtures OK." >> "$GITHUB_STEP_SUMMARY"

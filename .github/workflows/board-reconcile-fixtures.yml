@@ -1,0 +1,49 @@
+# Fixtures for the board reconcile's board-listing diagnostic.
+#
+# The `List board items` step of `project-board-reconcile.yml` has a failure
+# branch whose whole job is to say WHY a listing failed — whether the account
+# is rate limited and the answer is to wait, or the token cannot read the
+# project and the answer is to fix the secret. Those need opposite responses,
+# and for four consecutive scheduled runs the log said neither: a healthy
+# `5000` from `/rate_limit` beside gh's opaque `unknown owner type`. Three
+# explanations were argued from that pair and two withdrawn (#2129).
+#
+# A diagnostic only executes once something else is already broken, so nothing
+# notices when it stops diagnosing. These fixtures run it deliberately.
+#
+# ITS OWN WORKFLOW, deliberately. The fixtures first went into the docs-drift
+# job because the repo's other run-the-fixtures-first checks live there, which
+# is convenience rather than a reason: this is an operational check on the
+# board automation, and filing it under documentation would have made a board
+# regression present as a docs failure and put its cadence and environment
+# under a docs workflow's ownership (#2139 r3).
+name: Board reconcile fixtures
+
+on:
+  push:
+    branches: [main]
+  # NO `paths:` filter, for the reason the docs-drift workflow states for
+  # itself: the fixtures EXTRACT the step from the reconcile workflow, so what
+  # they cover is not confined to the files they name. The run is a few
+  # seconds of bash; a filter that is wrong in the direction of silence costs
+  # more than always running it.
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  fixtures:
+    name: board-reconcile list-step fixtures
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      # No `setup-node`, no other action: this is bash and coreutils. Avoiding
+      # actions also avoids the allowlist hazard — a `uses:` whose exact SHA is
+      # not allowlisted fails the WHOLE workflow at startup, not just the step.
+      - name: Run the fixtures
+        run: |
+          set -euo pipefail
+          bash .github/scripts/board-reconcile-list-step.selftest.sh
+          echo "Board-reconcile list-step fixtures OK." >> "$GITHUB_STEP_SUMMARY"

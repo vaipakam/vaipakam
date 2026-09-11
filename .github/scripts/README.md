@@ -53,7 +53,14 @@ stays honest: `board-reconcile-list-step.selftest.sh` holds fixtures for the
 `List board items` step of `project-board-reconcile.yml`. It extracts that step
 from the workflow — never a copy, so the fixtures cannot pass while the real
 step drifts — and runs it against a stubbed `gh`, asserting what the step
-prints when the listing is refused, succeeds, or comes back truncated.
+prints when the listing is refused, succeeds, fails partway through a
+paginated read, returns a trace in a format it does not recognise, or comes
+back truncated.
+
+It runs in its OWN workflow, `board-reconcile-fixtures.yml`, not with the
+gates above. Convenience would have put it in theirs; it is an operational
+check on the board automation, and filing it under documentation would make a
+board regression present as a docs failure.
 
 It exists because that step's failure branch is a diagnostic, and a diagnostic
 only executes once something else is already broken. This one reported a
