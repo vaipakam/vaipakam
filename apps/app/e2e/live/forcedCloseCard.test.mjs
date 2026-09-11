@@ -5327,3 +5327,183 @@ describe('round 65 review findings', () => {
     });
   });
 });
+
+describe('round 67 review findings', () => {
+  const ROWS = {
+    standard: Object.values(FORCED_CLOSE.receipt),
+    rental: Object.values(FORCED_CLOSE.rentalReceipt),
+  };
+  const copy = {
+    unknownCopy: FORCED_CLOSE.unknown,
+    notYetCopy: FORCED_CLOSE.notYet,
+    overdueTitleCopy: FORCED_CLOSE.title,
+    pendingTitleCopy: FORCED_CLOSE.titlePending,
+    readyCopy: [FORCED_CLOSE.readyInKind, FORCED_CLOSE.readyInternalMatch, FORCED_CLOSE.readyRental],
+    withheldCopy: [FORCED_CLOSE.unknown, FORCED_CLOSE.notYet, FORCED_CLOSE.readyNeedsRoute],
+    recognisedCopy: [
+      FORCED_CLOSE.unknown,
+      FORCED_CLOSE.notYet,
+      FORCED_CLOSE.blockedPaused,
+      FORCED_CLOSE.blockedSequencer,
+      FORCED_CLOSE.blockedNoConsent,
+      FORCED_CLOSE.readyInKind,
+      FORCED_CLOSE.readyInternalMatch,
+      FORCED_CLOSE.readyRental,
+      FORCED_CLOSE.readyNeedsRoute,
+    ],
+    receiptLeads: [FORCED_CLOSE.receipt.youReceive, FORCED_CLOSE.rentalReceipt.youReceive],
+    receiptRowSets: ROWS,
+    rentalReadyCopy: FORCED_CLOSE.readyRental,
+    internalMatchReadyCopy: FORCED_CLOSE.readyInternalMatch,
+    inKindReadyCopy: FORCED_CLOSE.readyInKind,
+    refusalStateCopy: [
+      FORCED_CLOSE.notYet,
+      FORCED_CLOSE.blockedPaused,
+      FORCED_CLOSE.blockedSequencer,
+      FORCED_CLOSE.blockedNoConsent,
+    ],
+  };
+  const card = (heading, body, extra = {}) => ({
+    lenderHoldsActive: true,
+    mounted: true,
+    attached: true,
+    submitPresent: true,
+    submitVisible: true,
+    submitDisabled: true,
+    visibleSubmits: 1,
+    visibleCards: 1,
+    saleLocked: false,
+    settled: true,
+    bodyPresent: true,
+    bodyVisible: true,
+    confirmExpected: false,
+    confirmText: null,
+    text: `${heading} ${body}`,
+    visibleText: `${heading} ${body}`,
+    bodyText: body,
+    bodyVisibleText: body,
+    ...extra,
+  });
+
+  // THE HEADING AND THE BODY ARE TWO STATEMENTS ABOUT ONE DEADLINE.
+  // `ForcedCloseCard` picks the heading on `view.overdue` alone, and
+  // every other state check in the module reads the body — so a
+  // regressed heading was never compared with anything.
+  describe('the heading must not contradict the body', () => {
+    it('reports "overdue" above a body saying the borrower still has time', () => {
+      const v = forcedCloseVerdict(
+        card(FORCED_CLOSE.title, FORCED_CLOSE.notYet, {
+          defaultable: false,
+          defaultableBefore: false,
+        }),
+        copy,
+      );
+      expect(v.verdict).toBe('fail');
+      expect(v.failKind).toBe('observed');
+      expect(v.why).toMatch(/both on screen, disagreeing/);
+    });
+
+    it('reports a ready close-out under the approaching-deadline heading', () => {
+      const v = forcedCloseVerdict(
+        card(FORCED_CLOSE.titlePending, FORCED_CLOSE.readyInKind, {
+          submitDisabled: false,
+          defaultable: true,
+          defaultableBefore: true,
+        }),
+        copy,
+      );
+      expect(v.verdict).toBe('fail');
+      expect(v.why).toMatch(/both on screen, disagreeing/);
+    });
+
+    it('says nothing when heading and body agree', () => {
+      for (const [heading, body] of [
+        [FORCED_CLOSE.titlePending, FORCED_CLOSE.notYet],
+        [FORCED_CLOSE.title, FORCED_CLOSE.readyInKind],
+      ]) {
+        const v = forcedCloseVerdict(
+          card(heading, body, {
+            submitDisabled: body === FORCED_CLOSE.readyInKind ? false : true,
+            defaultable: body === FORCED_CLOSE.readyInKind,
+            defaultableBefore: body === FORCED_CLOSE.readyInKind,
+          }),
+          copy,
+        );
+        expect(v.why ?? '').not.toMatch(/both on screen, disagreeing/);
+      }
+    });
+
+    it('does NOT judge states that leave the deadline open', () => {
+      // A paused protocol or an unreachable sequencer is perfectly
+      // compatible with an overdue loan, and `unknown` settles nothing.
+      // Reading either as a contradiction would accuse a card telling the
+      // truth — the direction this file refuses.
+      for (const body of [
+        FORCED_CLOSE.blockedPaused,
+        FORCED_CLOSE.blockedSequencer,
+        FORCED_CLOSE.unknown,
+      ]) {
+        for (const heading of [FORCED_CLOSE.title, FORCED_CLOSE.titlePending]) {
+          const v = forcedCloseVerdict(
+            card(heading, body, { defaultable: false, defaultableBefore: false }),
+            copy,
+          );
+          expect(v.why ?? '').not.toMatch(/both on screen, disagreeing/);
+        }
+      }
+    });
+
+    it('says nothing when the headings cannot be told apart', () => {
+      const same = { ...copy, pendingTitleCopy: FORCED_CLOSE.title };
+      const v = forcedCloseVerdict(
+        card(FORCED_CLOSE.title, FORCED_CLOSE.notYet, {
+          defaultable: false,
+          defaultableBefore: false,
+        }),
+        same,
+      );
+      expect(v.why ?? '').not.toMatch(/both on screen, disagreeing/);
+    });
+  });
+
+  // A REVERT SAYS *THAT*, NOT *WHY*. The round-65 arm catches a refusal
+  // the protocol does not make; it cannot catch the protocol refusing for
+  // one reason while the card names another.
+  describe('an unverified refusal reason', () => {
+    it('reports INCOMPLETE, not a defect', () => {
+      const v = forcedCloseVerdict(
+        card(FORCED_CLOSE.title, FORCED_CLOSE.blockedPaused, {
+          defaultable: false,
+          defaultableBefore: false,
+        }),
+        copy,
+      );
+      expect(v.verdict).toBe('blocked');
+      expect(v.blockedKind).toBe('incomplete');
+      expect(v.why).toMatch(/establishes THAT and not WHY/);
+    });
+
+    it('does not fire when the protocol ACCEPTS — that is the round-65 arm', () => {
+      const v = forcedCloseVerdict(
+        card(FORCED_CLOSE.title, FORCED_CLOSE.blockedPaused, {
+          defaultable: true,
+          defaultableBefore: true,
+        }),
+        copy,
+      );
+      expect(v.verdict).toBe('fail');
+      expect(v.why).toMatch(/denied a close-out the protocol accepts/);
+    });
+
+    it('does not fire when the simulation could not be run', () => {
+      const v = forcedCloseVerdict(
+        card(FORCED_CLOSE.title, FORCED_CLOSE.blockedPaused, {
+          defaultable: undefined,
+          defaultableBefore: undefined,
+        }),
+        copy,
+      );
+      expect(v.why ?? '').not.toMatch(/establishes THAT and not WHY/);
+    });
+  });
+});

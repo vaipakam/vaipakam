@@ -141,6 +141,23 @@ on a pre-signature panel whose whole purpose is to let the lender decide
 not to spend money, and a Back button that cannot be activated leaves
 leaving the page as the only way out.
 
+Two statements about the same fact are compared where the card makes
+them. The heading and the explanation are chosen independently, so a card
+could be headed "this loan is overdue" above a body saying the borrower
+still has time — both on screen, disagreeing. That pair is now checked,
+but only where the explanation actually settles the question: a paused
+protocol or an unreachable price feed is perfectly compatible with an
+overdue loan, and reading either as a contradiction would accuse a card
+that is telling the truth.
+
+The limits of what a simulation can prove are now stated too. Asking the
+protocol whether a close-out would succeed establishes that it would be
+refused; it does not establish which rule refused it. So a card that
+names the wrong reason — saying the protocol is paused when the deadline
+simply has not passed — is reported as unverified rather than passed,
+because the check did not establish the reason either way. Verifying each
+reason against its own rule is tracked separately.
+
 ### Timing, and what the check keeps
 
 The card passes through intermediate states on the way to its settled

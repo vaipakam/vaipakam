@@ -601,6 +601,13 @@ const FORCED_CLOSE_COPY = (() => {
     // that simulates with empty calldata does not make either of those
     // a false statement. Only these four say the close-out is refused,
     // and only they can be contradicted by the protocol accepting it.
+    // ROUND 67 P2 — the two HEADINGS, so a heading contradicting the body
+    // can be seen. `ForcedCloseCard` picks between them on `view.overdue`
+    // alone.
+    // The one body state that settles the deadline NEGATIVELY.
+    notYetCopy: need(fc.notYet, 'notYet'),
+    overdueTitleCopy: need(fc.title, 'title'),
+    pendingTitleCopy: need(fc.titlePending, 'titlePending'),
     refusalStateCopy: [
       need(fc.notYet, 'notYet'),
       need(fc.blockedPaused, 'blockedPaused'),

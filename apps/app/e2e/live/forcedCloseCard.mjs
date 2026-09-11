@@ -2291,6 +2291,58 @@ export function forcedCloseVerdict(obs, copy) {
     };
   }
 
+  // ROUND 67 P2 — THE HEADING MUST NOT CONTRADICT THE BODY.
+  //
+  // `ForcedCloseCard` picks its heading on `view.overdue` alone: "This
+  // loan is overdue", or "If this loan is not repaid" when it is not.
+  // Every state check in this module reads the BODY, so a card whose
+  // heading regressed showed the lender "This loan is overdue" above a
+  // body saying the borrower still has time — two statements about the
+  // same fact, both painted, and nothing looked at the pair.
+  //
+  // JUDGED ONLY WHERE THE BODY DETERMINES THE ANSWER, which is the whole
+  // care in this arm. `not-yet` means the deadline has NOT passed, so the
+  // overdue heading contradicts it. A ready state means it HAS, so the
+  // pending heading contradicts that. The blocked states do not settle
+  // it — a paused protocol or an unreachable sequencer is perfectly
+  // compatible with an overdue loan — and `unknown` settles nothing at
+  // all, so neither is judged here. Reading them as contradictions would
+  // accuse a card that is telling the truth.
+  //
+  // Both headings must be DISTINGUISHABLE and the card must paint
+  // exactly one of them; anything else is not a comparison this can make.
+  // `observed`, because both halves are read off the page.
+  if (
+    typeof copy?.overdueTitleCopy === 'string' &&
+    typeof copy?.pendingTitleCopy === 'string' &&
+    copy.overdueTitleCopy !== '' &&
+    copy.pendingTitleCopy !== '' &&
+    copy.overdueTitleCopy !== copy.pendingTitleCopy
+  ) {
+    const headText = obs.visibleText ?? obs.text ?? '';
+    const saysOverdue = headText.includes(copy.overdueTitleCopy);
+    const saysPending = headText.includes(copy.pendingTitleCopy);
+    if (saysOverdue !== saysPending) {
+      const bodySaysNotYet = paints(copy?.notYetCopy);
+      const bodySaysReady =
+        Array.isArray(copy?.readyCopy) && copy.readyCopy.some((sentence) => paints(sentence));
+      if (bodySaysNotYet && saysOverdue) {
+        return {
+          verdict: 'fail',
+          failKind: 'observed',
+          why: 'the card is headed "this loan is overdue" while its body says the borrower still has time — two statements about the same deadline, both on screen, disagreeing',
+        };
+      }
+      if (bodySaysReady && saysPending) {
+        return {
+          verdict: 'fail',
+          failKind: 'observed',
+          why: 'the card offers a close-out that is ready while its heading still says the loan is only approaching its deadline — two statements about the same deadline, both on screen, disagreeing',
+        };
+      }
+    }
+  }
+
   // ROUND 65 P2 — AND THE REVERSE DIRECTION, which nothing checked.
   //
   // The arm above catches a card offering an action the protocol would
@@ -2328,6 +2380,48 @@ export function forcedCloseVerdict(obs, copy) {
         verdict: 'fail',
         failKind: 'inferred',
         why: `the card withholds the action and states a refusal ("${claimed}"), but simulating that exact transaction against the protocol shows it would succeed — the lender is denied a close-out the protocol accepts, and given a reason that is not the protocol's`,
+      };
+    }
+  }
+
+  // ROUND 67 P2 — A REFUSAL ESTABLISHES THAT, NOT WHY.
+  //
+  // The arm above catches a card claiming a refusal the protocol does
+  // not make. Its blind spot is the case where the protocol DOES refuse
+  // and the card names the wrong reason: the grace period has not
+  // elapsed but the card says the protocol is paused. Both simulations
+  // return `false`, so the arm above is silent, and the recognition arm
+  // then passes the card — with the lender reading an explanation that
+  // is not the one the chain would give.
+  //
+  // A boolean simulation cannot settle this. `triggerDefault` reverting
+  // says the call is refused; it does not say which gate refused it, and
+  // this drive reads no gate. So the honest answer is that the state was
+  // NOT VERIFIED, and that is what it says.
+  //
+  // Reported as INCOMPLETE rather than as a defect, because the card may
+  // be entirely right — the difference between "we checked and it is
+  // wrong" and "we did not check" is the whole distinction this file is
+  // built on, and collapsing it here would manufacture findings out of
+  // a read this drive does not take.
+  //
+  // The stronger answer is to read the gate behind each painted state —
+  // the pause flag, the sequencer feed, the deadline view, the consent
+  // fields — and compare. That is four bracketed protocol reads rather
+  // than a rewiring, so it is deferred rather than half-done here; the
+  // tracked in #2133.
+  if (
+    !actionOffered &&
+    obs.defaultable === false &&
+    obs.defaultableBefore === false &&
+    Array.isArray(copy?.refusalStateCopy)
+  ) {
+    const claimed = copy.refusalStateCopy.find((sentence) => paints(sentence));
+    if (claimed) {
+      return {
+        verdict: 'blocked',
+        blockedKind: 'incomplete',
+        why: `the card withholds the action and states a specific reason ("${claimed}"); the protocol does refuse the close-out, but a reverting simulation establishes THAT and not WHY, and this drive reads no gate — so the reason the lender is given was not verified`,
       };
     }
   }
