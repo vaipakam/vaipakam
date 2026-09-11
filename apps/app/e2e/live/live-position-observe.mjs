@@ -3475,9 +3475,35 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
   // settled render, since a transiently disabled control is a legitimate
   // intermediate state (round 10) and must not be reported as a defect.
   const seenTexts = [];
+  // ROUND 35 P2 — THE DUPLICATE COUNT IS EVIDENCE TOO, and it was being
+  // overwritten by the same `snap = again` that superseded the text.
+  //
+  // Round 20 moved this count INTO each snapshot, because counting once
+  // before the poll missed a duplicate introduced by the settled render.
+  // That was right and is kept — but it left the mirror-image hole: a
+  // duplicate present on an intermediate tick and gone by the time the
+  // card settles was seen, counted, and then discarded, and the final
+  // record passed with `visibleCards: 1`. `remember` only ever captured
+  // `shown[0]`'s text, so the second card's content was never read at
+  // all — the run had positively observed a surface it could not vouch
+  // for and reported it clean.
+  //
+  // The peak travels BESIDE the settled count rather than replacing it,
+  // deliberately. They are different facts — "what the lender is looking
+  // at now" and "what this drive saw at any point" — and collapsing them
+  // would make the failure unable to say which it was describing.
+  //
+  // There is no legitimate transient here to forgive: `PositionDetails`
+  // renders exactly one `ForcedCloseCard` from one call site, with no
+  // keyed list and no transition wrapper, so React reconciles the same
+  // node in place. Two visible cards is a defect on any tick.
+  let visibleCardsPeak = 0;
   const remember = (v) => {
     for (const part of [v?.text, v?.bodyText]) {
       if (typeof part === 'string' && part !== '') seenTexts.push(part);
+    }
+    if (typeof v?.visibleCards === 'number' && v.visibleCards > visibleCardsPeak) {
+      visibleCardsPeak = v.visibleCards;
     }
   };
   remember(snap);
@@ -3504,6 +3530,7 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
         // ROUND 33 P2 — see the note on the vanished return below. Every
         // exit from this loop carries what the loop saw.
         seenTexts,
+        visibleCardsPeak,
       };
     }
     // ROUND 13 P2 — A CARD THAT VANISHES MID-POLL IS THE VANISHED CASE,
@@ -3558,6 +3585,7 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
         submitDisabled: true,
         settled: false,
         seenTexts,
+        visibleCardsPeak,
       };
     }
     snap = again;
@@ -3855,6 +3883,10 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
     // Every render read during the readiness wait, including the ones
     // the poll superseded (round 31 P2).
     seenTexts,
+    // ROUND 35 P2 — travels with `seenTexts`, and for the same reason:
+    // both are things this drive SAW, and the settled snapshot is not a
+    // record of what it saw.
+    visibleCardsPeak,
   };
 }
 

@@ -117,3 +117,38 @@ matter the safeguard was not merely weaker, it was inert. Both forms now
 count, and only the current block does: an older one is not the page's
 position and a not-yet-mined one would overstate it, which is the
 direction that produces false accusations.
+
+A further round found three more, and two of them were introduced by the
+previous round's own repairs — which is worth recording, because it is
+the argument for running the loop to convergence rather than stopping at
+the first quiet round.
+
+Carrying every render the check had read, so a figure shown briefly could
+not be lost, created a second problem: the renders were being joined
+together before being examined. Every rule that decides whether a number
+is an amount or a harmless identifier depends on the words around it, so
+joining let one render lend its context to another. A screen ending with
+the word "Loan" followed by a screen beginning with a figure read as a
+loan number, and the figure was excused — an adjacency that never existed
+for any reader. Each render is now judged on its own text.
+
+The check for currency figures recognised five signs, chosen by hand. A
+sign outside that list did not merely go unflagged; it left the figure to
+be treated as an identifier instead, so an amount written in roubles or
+won — won being the currency of a language the app ships — passed as
+clean. It now recognises every currency sign Unicode defines, which is a
+set nobody has to maintain.
+
+Finally, a second copy of the card appearing briefly and disappearing
+before the card settled was counted and then forgotten. The check only
+ever reads the first card, so that second surface was never examined at
+all, and the run reported the page clean having seen something it could
+not vouch for. A duplicate at any moment is now a failure, and it says
+whether the duplicate is still on screen or has gone, so nobody goes
+looking for something that is no longer there.
+
+One gap is stated rather than implied: the part of the drive that decides
+which network traffic to read for the page's position has no test of its
+own, because it cannot be reached without restructuring the file, and a
+live run cannot distinguish it working from the older path having been
+sufficient on that page. That restructuring is tracked separately.

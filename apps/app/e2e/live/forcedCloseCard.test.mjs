@@ -2110,3 +2110,159 @@ describe('round 33 review findings', () => {
     });
   });
 });
+
+describe('round 35 review findings', () => {
+  const copy = {
+    unknownCopy: FORCED_CLOSE.unknown,
+    readyCopy: [FORCED_CLOSE.readyInKind, FORCED_CLOSE.readyInternalMatch, FORCED_CLOSE.readyRental],
+    withheldCopy: [FORCED_CLOSE.unknown, FORCED_CLOSE.notYet, FORCED_CLOSE.readyNeedsRoute],
+    recognisedCopy: [
+      FORCED_CLOSE.unknown,
+      FORCED_CLOSE.notYet,
+      FORCED_CLOSE.blockedPaused,
+      FORCED_CLOSE.blockedSequencer,
+      FORCED_CLOSE.blockedNoConsent,
+      FORCED_CLOSE.readyInKind,
+      FORCED_CLOSE.readyInternalMatch,
+      FORCED_CLOSE.readyRental,
+      FORCED_CLOSE.readyNeedsRoute,
+    ],
+    receiptLead: FORCED_CLOSE.receipt.youReceive,
+  };
+
+  // ---- one render must not lend its context to another ---------------
+  describe('captured renders are scanned separately, never joined', () => {
+    // The `\n` join added in round 31 let a render ENDING in an
+    // identifier word supply the lead for the next render's opening
+    // digits. Every exemption in the scanner is a context test, so an
+    // adjacency that never existed on screen could exempt a figure that
+    // was.
+    it('finds a bare figure that a previous render would have exempted', () => {
+      const obs = {
+        lenderHoldsActive: true,
+        mounted: false,
+        attached: false,
+        saleLocked: false,
+        settled: false,
+        text: null,
+        bodyText: null,
+        bodyPresent: undefined,
+        confirmText: null,
+        confirmExpected: false,
+        seenTexts: ['Closing out Loan', '1.5 will be returned'],
+      };
+      const v = forcedCloseVerdict(obs, copy);
+      expect(v.verdict).toBe('fail');
+      expect(v.why).toMatch(/amount it cannot know/);
+    });
+
+    // The control: the same two strings joined DO exempt it, which is
+    // what the code used to do. Asserted directly so the case above is
+    // shown to be about the join rather than about the scanner.
+    it('and the join really was what suppressed it', () => {
+      expect(monetaryAmountsIn('1.5 will be returned')).toHaveLength(1);
+      expect(monetaryAmountsIn('Closing out Loan\n1.5 will be returned')).toEqual([]);
+    });
+
+    // The legitimate direction still holds: a real identifier inside ONE
+    // render is still an identifier. Widening this to "scan everything
+    // separately" must not turn `Loan 21` into a finding.
+    it('still exempts an identifier within a single render', () => {
+      expect(monetaryAmountsIn('Closing out Loan 21 now.')).toEqual([]);
+    });
+  });
+
+  // ---- every currency sign, not five of them -------------------------
+  describe('the scanner recognises every Unicode currency sign', () => {
+    // These are the inputs that made it a P2: the sign was unrecognised,
+    // so `hugsCurrency` was false, so the IDENTIFIER exemption fired and
+    // the figure was read as a loan number rather than an amount. Won is
+    // the currency of a shipped locale.
+    it('flags a figure after an identifier word when the sign is not ASCII', () => {
+      expect(monetaryAmountsIn('Loan 100 ₽')).toHaveLength(1);
+      expect(monetaryAmountsIn('Position 2 ₩')).toHaveLength(1);
+      expect(monetaryAmountsIn('Token 5 ₺')).toHaveLength(1);
+      expect(monetaryAmountsIn('Offer 9 ฿')).toHaveLength(1);
+      expect(monetaryAmountsIn('Loan 3 ₪')).toHaveLength(1);
+      expect(monetaryAmountsIn('Item 7 ￥')).toHaveLength(1);
+    });
+
+    it('still flags the signs that already worked', () => {
+      for (const s of ['$', '€', '£', '¥', '₹']) {
+        expect(monetaryAmountsIn(`Loan 100 ${s}`), s).toHaveLength(1);
+      }
+    });
+
+    it('does not fire on a bare identifier with no sign at all', () => {
+      expect(monetaryAmountsIn('Loan 100 is overdue.')).toEqual([]);
+    });
+  });
+
+  // ---- a duplicate seen and then gone --------------------------------
+  describe('a duplicate card counted on any tick is a finding', () => {
+    const base = {
+      lenderHoldsActive: true,
+      mounted: true,
+      attached: true,
+      submitPresent: true,
+      submitVisible: true,
+      submitDisabled: false,
+      visibleSubmits: 1,
+      saleLocked: false,
+      settled: true,
+      bodyPresent: true,
+      bodyText: FORCED_CLOSE.readyInKind,
+      text: FORCED_CLOSE.readyInKind,
+      confirmText: null,
+      confirmExpected: false,
+      visibleCards: 1,
+    };
+
+    it('PASSES when only one card was ever seen', () => {
+      expect(forcedCloseVerdict({ ...base, visibleCardsPeak: 1 }, copy).verdict).toBe('pass');
+    });
+
+    // The settled render is clean, so the round-19 arm cannot see this.
+    // Only the peak can, and the drive read just the first card — so a
+    // surface it could not vouch for reached the lender.
+    it('FAILS on a duplicate that vanished before the card settled', () => {
+      const v = forcedCloseVerdict({ ...base, visibleCardsPeak: 2 }, copy);
+      expect(v.verdict).toBe('fail');
+      expect(v.why).toMatch(/during the readiness wait/);
+    });
+
+    it('FAILS on a transient duplicate even when the card is gone entirely', () => {
+      const v = forcedCloseVerdict(
+        {
+          ...base,
+          mounted: false,
+          attached: false,
+          text: null,
+          bodyText: null,
+          bodyPresent: undefined,
+          visibleCards: 0,
+          visibleCardsPeak: 2,
+          seenTexts: [],
+        },
+        copy,
+      );
+      expect(v.verdict).toBe('fail');
+      expect(v.why).toMatch(/now gone|during the readiness wait/);
+    });
+
+    // A record predating the field must not manufacture a finding — the
+    // same `typeof` discipline every other added field here uses.
+    it('says nothing about a record that carries no peak', () => {
+      expect(forcedCloseVerdict(base, copy).verdict).toBe('pass');
+    });
+
+    // The settled-render sentence and the transient one must stay
+    // distinguishable: an operator told "2 cards are visible" about a
+    // page now showing one goes looking for something that is not there.
+    it('names which situation it saw', () => {
+      const now = forcedCloseVerdict({ ...base, visibleCards: 2, visibleCardsPeak: 2 }, copy);
+      expect(now.why).toMatch(/are visible at once/);
+      expect(now.why).not.toMatch(/during the readiness wait/);
+    });
+  });
+});

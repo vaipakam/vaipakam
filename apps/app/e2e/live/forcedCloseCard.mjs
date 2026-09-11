@@ -36,8 +36,32 @@
  * the testnet mocks would pass on mainnet by accident. See `isTicker`
  * below for the symbol shape; these are the currency signs a fiat
  * figure would use.
+ *
+ * ROUND 35 P2 — `\p{Sc}`, BECAUSE A HAND-LISTED FIVE WAS A DENYLIST
+ * WEARING AN ALLOWLIST'S CLOTHES.
+ *
+ * The class was `[$€£¥₹]`, and a sign outside it made `hugsCurrency`
+ * false — which does not merely fail to flag the figure, it hands it to
+ * the identifier exemption. `Loan 100 ₽` and `Position 2 ₩` therefore
+ * read as names for things rather than amounts and the scanner returned
+ * clean, on a surface whose one absolute promise is that no figure
+ * appears. Won is the currency of a SHIPPED locale.
+ *
+ * This is the same failure the transport allowlist had in round 33,
+ * arriving from the opposite direction: there a set that was too WIDE
+ * waved defects through, here a set too NARROW did. Both were
+ * hand-maintained lists standing in for a closed one that already
+ * exists. Unicode's `Sc` general category IS the complete set of
+ * currency symbols — it carries ₽, ₩, ₺, ₫, ฿, ₴, ₦, ₪, ¢, ₱, ₸, ₿ and
+ * the fullwidth forms (`￥`), and no provider or translator can add to
+ * it — so there is nothing left to keep in sync.
+ *
+ * Widening cannot make the scanner cry wolf on shipped copy: a currency
+ * sign adjacent to a figure IS the thing being forbidden, and the
+ * all-locale calibration over every shipped `forcedClose` string is what
+ * demonstrates none of them carries one.
  */
-const CURRENCY_MARK = /[$€£¥₹]/;
+const CURRENCY_MARK = /\p{Sc}/u;
 
 /**
  * Is this word a token symbol?
@@ -696,15 +720,33 @@ export function forcedCloseVerdict(obs, copy) {
   // never polls, so it is spread defensively rather than assumed — the
   // same `typeof` discipline the duplicate-control arm uses, and for the
   // same reason: a record without the field must not change the verdict.
-  const scanned = [
+  //
+  // ROUND 35 P2 — SCANNED SEPARATELY, NEVER JOINED. The `\n` join I
+  // added last round let one render supply CONTEXT for another's digits,
+  // and the scanner's exemptions are all context. A render ending in
+  // `Loan` followed by one beginning `1.5` became `Loan\n1.5`, whose
+  // `IDENTIFIER_LEAD` crosses the synthetic newline through `\s*` — so
+  // the figure was exempted as a loan NUMBER and the verdict passed,
+  // while scanning that render on its own reports it.
+  //
+  // Joining could only ever have hurt: each part is a complete rendered
+  // string, so no real amount spans two of them, and the only thing an
+  // adjacency creates is a neighbour that was never on screen together.
+  // The hits are concatenated instead, which is what was wanted all
+  // along — every render judged on its own text.
+  const parts = [
     obs.text,
     obs.bodyText,
     obs.confirmText,
     ...(Array.isArray(obs.seenTexts) ? obs.seenTexts : []),
-  ]
-    .filter((part) => typeof part === 'string' && part !== '')
-    .join('\n');
-  const amounts = monetaryAmountsIn(scanned);
+  ].filter((part) => typeof part === 'string' && part !== '');
+  //
+  // De-duplicated for the MESSAGE only. The whole card's text contains
+  // its body's, so a figure in the body is reported by both parts, and
+  // two identical fragments say nothing a reader can act on differently.
+  // The verdict turns on whether there were any, which dedup cannot
+  // change.
+  const amounts = [...new Set(parts.flatMap((part) => monetaryAmountsIn(part)))];
   const amountFinding = () => ({
     verdict: 'fail',
     why: `states an amount it cannot know: ${amounts.join(' | ')}`,
@@ -742,6 +784,27 @@ export function forcedCloseVerdict(obs, copy) {
       return {
         verdict: 'fail',
         why: `${obs.visibleCards} forced-close cards are visible at once — this drive reads only the first, so the others are unchecked and the surface states its case more than once`,
+      };
+    }
+
+    // 1a-bis-2. AND A DUPLICATE THAT HAS SINCE GONE (round 35 P2).
+    //
+    // The arm above reads the SETTLED render. A second card present on
+    // an intermediate readiness tick and gone by the time the card
+    // settled was counted and then discarded by the poll's `snap =
+    // again`, so the final record said `visibleCards: 1` and passed.
+    // The drive only ever scraped the first card's text, so that second
+    // surface was never read at all — it could have stated an amount or
+    // offered an action while the run reported the page clean.
+    //
+    // A separate sentence rather than the one above, because the two
+    // describe different situations and an operator reading "2 cards are
+    // visible" about a page now showing one would go looking for
+    // something that is not there.
+    if (typeof obs.visibleCardsPeak === 'number' && obs.visibleCardsPeak > 1) {
+      return {
+        verdict: 'fail',
+        why: `${obs.visibleCardsPeak} forced-close cards were visible at once during the readiness wait, though only one remains — the drive read the first and never the other, so a surface it could not vouch for was shown to the lender`,
       };
     }
 
@@ -866,6 +929,17 @@ export function forcedCloseVerdict(obs, copy) {
   // arms are not a concern here — no card rendered, so there is no
   // partly-read surface to misrepresent.
   if (!obs.mounted && amounts.length > 0) return amountFinding();
+
+  // 1-post-2. The duplicate the poll saw, on a record where no card
+  //           survived to be counted (round 35 P2). Same reasoning as
+  //           the arm inside the mounted block; the card vanishing
+  //           afterwards does not unsee it.
+  if (!obs.mounted && typeof obs.visibleCardsPeak === 'number' && obs.visibleCardsPeak > 1) {
+    return {
+      verdict: 'fail',
+      why: `${obs.visibleCardsPeak} forced-close cards were visible at once during the readiness wait, and the card is now gone — the drive read the first and never the other`,
+    };
+  }
 
   // ---- 2. Was this position one the assertion could apply to? ------
   if (!obs.lenderHoldsActive) {
