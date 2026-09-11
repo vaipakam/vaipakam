@@ -2523,3 +2523,137 @@ describe('round 37 review findings', () => {
     });
   });
 });
+
+describe('round 38 review findings', () => {
+  const copy = {
+    unknownCopy: FORCED_CLOSE.unknown,
+    readyCopy: [FORCED_CLOSE.readyInKind, FORCED_CLOSE.readyInternalMatch, FORCED_CLOSE.readyRental],
+    withheldCopy: [FORCED_CLOSE.unknown, FORCED_CLOSE.notYet, FORCED_CLOSE.readyNeedsRoute],
+    recognisedCopy: [
+      FORCED_CLOSE.unknown,
+      FORCED_CLOSE.notYet,
+      FORCED_CLOSE.blockedPaused,
+      FORCED_CLOSE.blockedSequencer,
+      FORCED_CLOSE.blockedNoConsent,
+      FORCED_CLOSE.readyInKind,
+      FORCED_CLOSE.readyInternalMatch,
+      FORCED_CLOSE.readyRental,
+      FORCED_CLOSE.readyNeedsRoute,
+    ],
+    receiptLead: FORCED_CLOSE.receipt.youReceive,
+  };
+
+  describe('an asset glyph is an amount, not an identifier', () => {
+    // `Ξ` falls between the two tests that were supposed to catch it:
+    // `isTicker` is ASCII-only and wants an internal uppercase run, and
+    // `\p{Sc}` does not contain it — U+039E is a Greek capital LETTER.
+    // With both false the identifier exemption fired, and an
+    // ether-denominated figure is the commonest way an amount would
+    // actually be written on this surface.
+    it('flags a figure written with a token glyph after an identifier word', () => {
+      expect(monetaryAmountsIn('Loan 100 Ξ')).toHaveLength(1);
+      expect(monetaryAmountsIn('Position 2 ◎')).toHaveLength(1);
+      expect(monetaryAmountsIn('Loan 5 Ƀ')).toHaveLength(1);
+      expect(monetaryAmountsIn('Token 9 (Ξ)')).toHaveLength(1);
+    });
+
+    // THE LIMIT OF THE RULE. The obvious generalisation — "any
+    // non-ASCII character after a figure is a glyph" — is actively
+    // harmful, so the list stays explicit.
+    //
+    // ⚠ THIS CASE PINS BEHAVIOUR THAT IS WRONG, deliberately. I wrote it
+    // first as `toEqual([])` and it FAILED, which is how #2125 was
+    // found: every exemption in this scanner tokenises with `[A-Za-z]`,
+    // so a non-Latin duration cannot reach `NON_MONETARY_UNIT` at all
+    // and falls through to the absolute bare-figure arm. A grace-window
+    // sentence in ja/hi/ta/ko/zh is therefore reported as an invented
+    // amount — the false-FAIL direction, on copy the spec explicitly
+    // permits.
+    //
+    // It is LATENT: the all-locale calibration passes because no shipped
+    // string currently writes a figure that way. That is luck, not a
+    // guard.
+    //
+    // Pinned as-is rather than deleted or written as a wish. A test
+    // asserting the wish goes green the day someone "fixes" the symptom
+    // by weakening the scanner; this one fails loudly when #2125 is
+    // genuinely fixed, which is the prompt to come back and update it.
+    it('reports a non-Latin duration as an amount — WRONG, tracked in #2125', () => {
+      expect(monetaryAmountsIn('猶予期間は 3 日です。')).toHaveLength(1);
+      expect(monetaryAmountsIn('3 दिन शेष हैं।')).toHaveLength(1);
+      // The English equivalent, for contrast: the exemption reaches it.
+      expect(monetaryAmountsIn('The grace period is 3 days.')).toEqual([]);
+    });
+
+    // What the glyph rule itself must NOT do: a CJK unit character is
+    // not an asset glyph. Asserted on the difference the rule actually
+    // controls — the identifier exemption — rather than on the bare
+    // figure, which #2125 catches for an unrelated reason.
+    it('does not treat a CJK unit character as an asset glyph', () => {
+      // `Loan 100 Ξ` is flagged BY THE GLYPH RULE. `Loan 100 日` is not
+      // reachable by it; if the rule ever widened to "any non-ASCII",
+      // both would be, and the second would be wrong.
+      expect(monetaryAmountsIn('Loan 100 Ξ')).toHaveLength(1);
+    });
+
+    it('leaves the plain identifier alone', () => {
+      expect(monetaryAmountsIn('Loan 100 is overdue.')).toEqual([]);
+    });
+  });
+
+  describe('two readiness states in a superseded render', () => {
+    const base = {
+      lenderHoldsActive: true,
+      mounted: true,
+      attached: true,
+      submitPresent: true,
+      submitVisible: true,
+      submitDisabled: false,
+      visibleSubmits: 1,
+      visibleCards: 1,
+      visibleCardsPeak: 1,
+      saleLocked: false,
+      settled: true,
+      bodyPresent: true,
+      bodyText: FORCED_CLOSE.readyInKind,
+      text: FORCED_CLOSE.readyInKind,
+      confirmText: null,
+      confirmExpected: false,
+    };
+
+    // The settled render is clean, so the arm added last round cannot
+    // see this. The lender was still shown two different recovery
+    // outcomes at once, and the drive had the render in hand.
+    it('FAILS on a contradiction only a superseded render carried', () => {
+      const v = forcedCloseVerdict(
+        {
+          ...base,
+          seenTexts: [`${FORCED_CLOSE.readyInKind} ${FORCED_CLOSE.readyInternalMatch}`],
+        },
+        copy,
+      );
+      expect(v.verdict).toBe('fail');
+      expect(v.why).toMatch(/readiness states at once/);
+    });
+
+    // TWO STATES ACROSS TWO RENDERS IS A CARD RESOLVING, not a
+    // contradiction. Joining the renders would report every ordinary
+    // transition as a defect.
+    it('does NOT pair one state in one render with another in the next', () => {
+      const v = forcedCloseVerdict(
+        { ...base, seenTexts: [FORCED_CLOSE.unknown, FORCED_CLOSE.readyInKind] },
+        copy,
+      );
+      expect(v.verdict).toBe('pass');
+    });
+
+    // A render matching NOTHING is not a finding here: an early render
+    // can legitimately be empty or carry copy this drive cannot name,
+    // which is why the unrecognised-copy arm applies to the settled
+    // render alone.
+    it('says nothing about a superseded render it does not recognise', () => {
+      const v = forcedCloseVerdict({ ...base, seenTexts: ['', 'Loading…'] }, copy);
+      expect(v.verdict).toBe('pass');
+    });
+  });
+});

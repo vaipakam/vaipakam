@@ -92,6 +92,22 @@ function isTicker(word) {
 const IDENTIFIER_LEAD = /\b(loan|position|offer|token|id|no|number|nft|item)\s*$/i;
 
 /**
+ * Glyphs that stand in for an ASSET the way a ticker does — `Ξ` for
+ * ether, `Ƀ` for bitcoin, `Ð` for doge, `◎` for sol.
+ *
+ * A hand-list, stated as one (round 38 P2). `isTicker` cannot reach them
+ * (ASCII-only, and they carry no internal uppercase run) and `\p{Sc}`
+ * does not contain them (`Ξ` is a Greek capital LETTER, U+039E). No
+ * Unicode category groups them, so there is no closed set to defer to
+ * the way the currency widening could — which means this list can only
+ * be wrong by omission, and the all-locale calibration is what would
+ * surface a shipped string carrying an unlisted one.
+ *
+ * `₿` is deliberately absent: it is `\p{Sc}` and already covered.
+ */
+const ASSET_GLYPH = /[\u039E\u03BE\u0243\u00D0\u25CE]/u;
+
+/**
  * Wording that asserts the protocol has REFUSED, as opposed to the app
  * not yet knowing. Checked only against a card that is simultaneously
  * reporting a check in flight, so this is a contradiction test rather
@@ -394,7 +410,31 @@ export function monetaryAmountsIn(text) {
     // 100 USDC principal`, where `Loan` made the figure an identifier
     // and the ticker behind it was never reached. Both exemptions now
     // look before they leave.
-    if (!trailingTicker && !hugsCurrency) {
+    // ROUND 38 P2 — AN ASSET GLYPH IS NOT A TICKER AND NOT A CURRENCY
+    // SIGN, and `Loan 100 Ξ` fell through the gap between them.
+    //
+    // `isTicker` is ASCII-only and wants an internal uppercase RUN, so a
+    // single `Ξ` fails it. `\p{Sc}` does not contain `Ξ` either — U+039E
+    // is a Greek capital LETTER, not a currency symbol. With both false
+    // the identifier exemption fired and an ether-denominated figure
+    // left as a loan number, which is the commonest way an amount would
+    // actually be written on this surface.
+    //
+    // THIS IS A HAND-LIST, and unlike the currency widening I am not
+    // going to pretend otherwise. There is no Unicode category for
+    // "asset glyph" to defer to, so the closed-set argument that
+    // justified `\p{Sc}` is simply unavailable here. The honest
+    // consequence: a glyph not listed will be missed, and the guard is
+    // the all-locale calibration — if shipped copy ever carries one, it
+    // fails there, on named copy, rather than surprising a live run.
+    //
+    // Deliberately NOT widened to "any non-ASCII character after a
+    // figure". Japanese, Hindi and Tamil ship, and `3日` is a duration:
+    // that rule would report the grace window as an invented amount in
+    // three locales at once — the false-FAIL direction, on the exemption
+    // the spec explicitly protects.
+    const trailingGlyph = ASSET_GLYPH.test(after.replace(/^[\s(\[{:,;«»"'‘’“”)\]}\u2013\u2014-]*/, '').slice(0, 2));
+    if (!trailingTicker && !hugsCurrency && !trailingGlyph) {
       if (/[#]\s*$/.test(before)) continue;
       if (IDENTIFIER_LEAD.test(before)) continue;
     }
@@ -1290,6 +1330,37 @@ export function forcedCloseVerdict(obs, copy) {
       return {
         verdict: 'fail',
         why: `the card's body states ${known.length} recognised readiness states at once — they are alternatives, so the lender is being told two different things about the same decision`,
+      };
+    }
+    // ROUND 38 P2 — AND IN EVERY CAPTURED RENDER, not only the settled
+    // one. The check above reads `bodyText`, which the poll overwrites,
+    // so a render showing two mutually exclusive states that then
+    // settled on one clean state was seen, recorded in `seenTexts`, and
+    // passed. The lender was shown two different recovery outcomes at
+    // once; the drive had the evidence and did not look at it.
+    //
+    // PER PART, never over a join — round 35's rule, and here it is not
+    // merely about context but about the claim itself: two states in ONE
+    // render is a contradiction, two states across two renders is a card
+    // resolving. Joining would report every ordinary transition as a
+    // defect.
+    //
+    // Only parts that match at all are judged. A part matching NOTHING
+    // is not a finding here: an early render can legitimately be empty
+    // or carry copy this drive has no vocabulary for, and the
+    // unrecognised-copy arm above deliberately applies to the SETTLED
+    // render alone for that reason.
+    const twoStateRender = parts
+      .map((part) =>
+        copy.recognisedCopy.filter(
+          (sentence) => typeof sentence === 'string' && sentence && part.includes(sentence),
+        ),
+      )
+      .find((hits) => hits.length > 1);
+    if (twoStateRender) {
+      return {
+        verdict: 'fail',
+        why: `a render this drive read stated ${twoStateRender.length} recognised readiness states at once, though the card settled on one — the lender was shown two different things about the same decision`,
       };
     }
   }

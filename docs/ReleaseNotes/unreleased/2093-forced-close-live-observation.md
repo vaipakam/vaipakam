@@ -208,3 +208,49 @@ websocket capture is inert today and, a few lines later, credited it with
 narrowing the timing window the missing-card check depends on. Only the
 first is true. An operator reading the second would have believed in a
 protection that is not currently in force.
+
+A further round produced five more, and one guard written for them failed
+in a way worth keeping.
+
+The check that receipt text is actually painted was looking for one way
+of writing a colour. Modern colour syntaxes survive into the computed
+value unchanged, and the check treated anything it could not read as
+painted — the wrong way round for a check whose purpose is to catch
+invisible disclosures. It now reads the transparency by shape rather than
+by recognising particular colour functions, so a syntax added to the web
+platform later needs no change. Anything still unreadable is treated as
+visible, deliberately: the cost of that is a missed defect, whereas the
+opposite would reject copy a lender can see.
+
+Three checks were reaching the wrong element or looking at too little.
+The click on the close-out button was selected by a different rule from
+the one that judged the button, so a transparent, disabled button placed
+ahead of the real one could be clicked instead — the same mismatch fixed
+for the card itself a few rounds earlier, in the control beside it. An
+amount written with an asset glyph rather than a ticker or a currency
+sign, which is how an ether figure is usually written, was being read as
+a reference number. And the rule that the card must be in exactly one
+state at a time is now applied to every screen the check saw, not only
+the last, since a card showing two contradictory outcomes and then
+settling on one had already shown them.
+
+The last of the five is about how the run reports itself. A card observed
+stating an amount it cannot know is the most serious thing this check can
+find, and it was being announced only after several infrastructure
+problems had each had a chance to declare the run inconclusive — so an
+unrelated network failure could turn a confirmed defect into "nothing was
+learned". An observed defect is now reported ahead of them. The ordering
+principle is the one the rest of the check already follows: something
+seen outranks something uncertain.
+
+The guard that failed concerns languages rather than layout. The scanner
+recognises the words that make a number harmless — days, hours, percent —
+and it only recognises them in the Latin alphabet. So a grace-window
+sentence in Japanese or Hindi is reported as an invented amount, which is
+exactly the false alarm the check is otherwise careful to avoid, on
+wording the specification explicitly permits. Nothing is failing today
+because no translated string happens to write a duration with a number in
+it, which is luck rather than protection. It is recorded as a known
+defect with its own issue, and the test pins what the code actually does
+rather than what it should do, so that fixing it properly is what breaks
+the test.

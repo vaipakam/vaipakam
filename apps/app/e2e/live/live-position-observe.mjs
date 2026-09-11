@@ -3305,11 +3305,47 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
           if (!own) return true;
           const cs = getComputedStyle(node);
           const fill = cs.webkitTextFillColor || cs.color || '';
-          const m = /rgba?\(([^)]+)\)/.exec(fill);
-          if (!m) return true;
-          const channels = m[1].split(/[,\s/]+/).filter(Boolean);
-          const alpha = channels.length > 3 ? Number(channels[3]) : 1;
-          return !(alpha === 0);
+          // ROUND 38 P2 — EVERY COMPUTED COLOUR FORM, not just `rgb()`/`rgba()`.
+          //
+          // Chromium PRESERVES the functional notation for the modern colour
+          // syntaxes, so `color(display-p3 0 0 0 / 0)` and `oklab(0 0 0 / 0)`
+          // never matched the old `rgba?` probe — and the no-match branch
+          // returns "painted", which fails OPEN on the one check that exists
+          // to catch invisible funds copy. All six receipt leaves could pass
+          // while `innerText` supplied their values.
+          //
+          // Parsed by SHAPE rather than by enumerating colour functions:
+          // every CSS colour syntax carrying alpha spells it either after a
+          // `/` (the modern forms, and space-separated `rgb()`) or as a fourth
+          // comma-separated component (legacy `rgba()` / `hsla()`). Reading
+          // the shape means a colour function added to CSS later needs no
+          // change here — the enumeration mistake this file has now made
+          // twice, with the transport allowlist and the currency signs.
+          //
+          // ANYTHING UNPARSEABLE COUNTS AS PAINTED. A form this cannot read
+          // must not be condemned: a false FAIL on legible copy is the error
+          // that gets the whole check switched off, so the residual is a
+          // missed defect and never an invented one.
+          const alphaOf = (value) => {
+            const v = String(value).trim();
+            if (v === 'transparent') return 0;
+            const fn = /^[a-zA-Z-]+\(([^]*)\)$/.exec(v);
+            if (!fn) return 1;
+            const body = fn[1];
+            const cut = body.lastIndexOf('/');
+            let raw = null;
+            if (cut >= 0) {
+              raw = body.slice(cut + 1);
+            } else {
+              const parts = body.split(',');
+              if (parts.length === 4) raw = parts[3];
+            }
+            if (raw === null) return 1;
+            const t = raw.trim();
+            const n = t.endsWith('%') ? Number(t.slice(0, -1)) / 100 : Number(t);
+            return Number.isFinite(n) ? n : 1;
+          };
+          return !(alphaOf(fill) === 0);
         };
         const visible = (node) => {
           if (node === null) return false;
@@ -3436,6 +3472,20 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
               ? shownSubmits.every((b) => b.disabled === true)
               : true,
           visibleSubmits: shownSubmits.length,
+          // ROUND 38 P2 — WHICH control the snapshot judged, so the
+          // CLICK addresses it. Round 33 fixed this for the card and
+          // left the control on `:visible`, one level down: Playwright's
+          // `:visible` ignores opacity while this pass rejects it, so an
+          // opacity-zero DISABLED submit ahead of a real enabled one is
+          // excluded here and selected there. The snapshot then records
+          // one usable action, the click lands on the transparent
+          // control and times out, `confirmText` stays null, and a
+          // healthy card is reported incomplete — the exact shape round
+          // 33 fixed, in the sibling it did not touch.
+          //
+          // Indexed within THIS card's submit list, which is what the
+          // interaction locator is scoped to.
+          chosenSubmitIndex: shownSubmits.length > 0 ? submits.indexOf(shownSubmits[0]) : -1,
         };
       })
       .catch(() => null);
@@ -3769,8 +3819,16 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
       // on a duplicated render is the one that may be disabled; the
       // actionability above is derived from the VISIBLE set, so the
       // click has to be too or the two describe different buttons.
-      .locator('[data-testid="forced-close-submit"]:visible')
-      .first()
+      // ROUND 38 P2 — BY INDEX, from the same pass that judged it.
+      // `:visible` is a different predicate from the drive's own
+      // `visible` (it does not consider opacity), so this used to be
+      // free to address a control the snapshot had excluded.
+      .locator('[data-testid="forced-close-submit"]')
+      .nth(
+        Number.isInteger(snap.chosenSubmitIndex) && snap.chosenSubmitIndex >= 0
+          ? snap.chosenSubmitIndex
+          : 0,
+      )
       .click({ timeout: 5_000 })
       .then(() => true)
       .catch(() => false);
@@ -3918,11 +3976,47 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
               if (!own) return true;
               const cs = getComputedStyle(node);
               const fill = cs.webkitTextFillColor || cs.color || '';
-              const m = /rgba?\(([^)]+)\)/.exec(fill);
-              if (!m) return true;
-              const channels = m[1].split(/[,\s/]+/).filter(Boolean);
-              const alpha = channels.length > 3 ? Number(channels[3]) : 1;
-              return !(alpha === 0);
+              // ROUND 38 P2 — EVERY COMPUTED COLOUR FORM, not just `rgb()`/`rgba()`.
+              //
+              // Chromium PRESERVES the functional notation for the modern colour
+              // syntaxes, so `color(display-p3 0 0 0 / 0)` and `oklab(0 0 0 / 0)`
+              // never matched the old `rgba?` probe — and the no-match branch
+              // returns "painted", which fails OPEN on the one check that exists
+              // to catch invisible funds copy. All six receipt leaves could pass
+              // while `innerText` supplied their values.
+              //
+              // Parsed by SHAPE rather than by enumerating colour functions:
+              // every CSS colour syntax carrying alpha spells it either after a
+              // `/` (the modern forms, and space-separated `rgb()`) or as a fourth
+              // comma-separated component (legacy `rgba()` / `hsla()`). Reading
+              // the shape means a colour function added to CSS later needs no
+              // change here — the enumeration mistake this file has now made
+              // twice, with the transport allowlist and the currency signs.
+              //
+              // ANYTHING UNPARSEABLE COUNTS AS PAINTED. A form this cannot read
+              // must not be condemned: a false FAIL on legible copy is the error
+              // that gets the whole check switched off, so the residual is a
+              // missed defect and never an invented one.
+              const alphaOf = (value) => {
+                const v = String(value).trim();
+                if (v === 'transparent') return 0;
+                const fn = /^[a-zA-Z-]+\(([^]*)\)$/.exec(v);
+                if (!fn) return 1;
+                const body = fn[1];
+                const cut = body.lastIndexOf('/');
+                let raw = null;
+                if (cut >= 0) {
+                  raw = body.slice(cut + 1);
+                } else {
+                  const parts = body.split(',');
+                  if (parts.length === 4) raw = parts[3];
+                }
+                if (raw === null) return 1;
+                const t = raw.trim();
+                const n = t.endsWith('%') ? Number(t.slice(0, -1)) / 100 : Number(t);
+                return Number.isFinite(n) ? n : 1;
+              };
+              return !(alphaOf(fill) === 0);
             };
             const visible = (node) => {
               if (!node) return false;
@@ -5414,6 +5508,40 @@ if (malformedRpc.length) {
       ` a reachable provider — the app asked for something invalid.`,
   );
   malformedRpc.slice(0, 6).forEach((r) => console.log(`  ${r.why} → ${r.url}`));
+  process.exit(1);
+}
+// ROUND 38 P2 — A FUNDS DEFECT ALREADY SEEN OUTRANKS EVERY
+// INFRASTRUCTURE BLOCKER BELOW IT.
+//
+// `failures` is consulted at the very end, after the route, WebSocket
+// and wrong-chain gates have each had a chance to exit 2. So a card
+// POSITIVELY OBSERVED stating an amount it cannot know — the one
+// absolute claim this drive makes — was reported as BLOCKED whenever any
+// unrelated request failed, or whenever the deployment happens to use
+// WebSocket RPC at all. The batch reads that as "nothing was learned",
+// and the finding disappears into a re-run.
+//
+// This is the SAME rule `forcedCloseVerdict` applies five times inside a
+// single visit — a definite observation outranks an uncertain one — and
+// it was missing from the one place that decides what the run actually
+// reports. Those blockers are all statements about what could NOT be
+// established; none of them unsees a rendered card.
+//
+// Scoped to forced-close FAILs rather than to `failures` as a whole,
+// deliberately. The other verdicts in `problems` include absence
+// findings, and an absence is exactly the kind of conclusion a
+// transport failure or an unobservable socket read legitimately
+// undermines. What is carried past them is content that was READ.
+const fcObserved = visited
+  .map((v) => ({ path: v.path, fc: v.forcedCloseVerdict }))
+  .filter(({ fc }) => fc && fc.verdict === 'fail');
+if (fcObserved.length) {
+  console.log(
+    `\n${fcObserved.length} forced-close card(s) were observed stating` +
+      ` something the surface may not say. Reported ahead of any` +
+      ` infrastructure blocker: this was READ, not inferred.`,
+  );
+  fcObserved.forEach(({ path, fc }) => console.log(`  ${path}: ${fc.why}`));
   process.exit(1);
 }
 if (routeFailures.length) {
