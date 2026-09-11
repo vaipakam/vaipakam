@@ -11892,9 +11892,16 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
   // sat in the release note until it was deleted for the same reason: every
   // restatement of a per-defect fact is a new place for that fact to drift
   // from the fixture establishing it. That enumeration went stale in the very
-  // round that consolidated the #2123 fixtures, saying twenty-two where the
-  // tree held twenty-one and "three times" for a defect now pinned once.
-  // The titles are the source; each fixture states its own scope.
+  // round that consolidated the #2123 fixtures — both its total and its
+  // per-defect counts.
+  //
+  // The sentence that replaced it then described the drift USING the drifted
+  // numbers, and was wrong again within two rounds (r51): it said that defect
+  // was "now pinned once" when the consolidation left TWO marked titles, the
+  // standalone one and the table. Which is the lesson stated twice over —
+  // naming the specific is what goes stale, including inside the note
+  // explaining that naming the specific goes stale. The titles are the
+  // source; each fixture states its own scope.
   //
   // COUNT THESE FROM THE TREE, NOT FROM THIS COMMENT. The criterion: every
   // test title asserting a wrong verdict contains the lower-case word
@@ -12724,6 +12731,10 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     "const {spawnSync}=require('node:child_process');\nspawnSync('wrangler',['deploy']);\n";
   const ARGV_PY = "import subprocess\nsubprocess.check_call(['wrangler','deploy'])\n";
   const SHELL_BODY = 'cd apps/agent\nwrangler deploy\n';
+  // A Make FRAGMENT is executable too — `makefileBlocks` has always matched
+  // `*.mk` and runs its recipes — and it was missing from the first two
+  // versions of this table (r51). The recipe line needs a real tab.
+  const MAKE_BODY = 'deploy:\n\tcd apps/agent && wrangler deploy\n';
 
   const WALK_HELPER_FAMILIES: ReadonlyArray<readonly [string, string]> = [
     ['ps1', SHELL_BODY],
@@ -12743,6 +12754,7 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     ['cjs', ARGV_CJS],
     ['cts', ARGV_CJS],
     ['py', ARGV_PY],
+    ['mk', MAKE_BODY],
   ];
 
   /**

@@ -13,57 +13,39 @@ That is worth landing on its own. Two of these designs are the kind a
 maintainer would reach for again, and one of them looks obviously correct until
 it is built.
 
-### What was tried, and what each cost
+### What was tried
 
-**Collecting the file's executable text** — the parts believed to run. Review
-found six routes by which executable text reached the file without reaching the
-collection, each one a silent pass, and two attempts to enumerate all the routes
-were both incomplete. A *selection* turns whatever it fails to recognise into
-silence. The decisive case was a command written inline in a sentence, which
-this check already acts on — so the boundary the design rested on did not exist.
+Three designs, and two smaller corrections that outlived them. All five were
+withdrawn under review.
 
-**Blanking a document's prose**, so a sentence naming a write would stop
-reporting the deployment below it. Six commands erased across three rounds. The
-rule cannot exist, and the reason is worth stating exactly: this check treats a
-bare, unindented line in a document as an actionable command — that is
-deliberate, and it is why a runbook's copy command is reported at all — and a
-prose sentence naming a write has that same shape. Separating them is the
-judgement whose answer produced the unwanted report in the first place.
+| | outcome |
+| --- | --- |
+| Collecting the file's executable text | withdrawn — a *selection* turns what it fails to recognise into silence, and two attempts to enumerate the routes in were both incomplete |
+| Blanking a document's prose | withdrawn — the rule cannot exist; a prose sentence naming a write has the same shape as the command this check is meant to act on |
+| Expanding a build file's recipe variables | withdrawn — it had to infer what a name denotes, and every round's findings were edges of the previous round's fix |
+| Treating the build tool's escaped currency symbol as inert | withdrawn — a **silent pass**, from a rule adopted because it was "purely lexical" |
+| Adding the tool's prefixed default filename to the build-file set | withdrawn — a **false report**, the opposite failure, from widening an imperfect model's scope |
 
-**Expanding a build file's recipe variables**, so a variable holding a
-redirection would be seen as the write it is. Fifteen findings over four rounds:
-conditionals in both directions, explicit removal, removal inside a dead branch,
-a settable recipe marker, that marker moving partway down the file, stored
-variable bodies, indented assignments, mismatched delimiters, a default-value
-assignment after a computed one. Every round's findings were edges of the
-previous round's fix. It failed the way the other two did — it had to infer
-what a name denotes — which is the real test, and not whether a transformation
-adds or removes characters.
+**What each cost, why none can be rebuilt, and the admissibility rule the
+rounds converged on are recorded once**, in
+[`DeployGuardRewriteScanRecord.md`](../../DesignsAndPlans/DeployGuardRewriteScanRecord.md).
 
-Two smaller corrections outlived all three designs above and were withdrawn in
-the last behaviour-changing round. Each looked obviously safe, and — the part
-worth keeping — they regressed in OPPOSITE directions, so neither is a template
-for judging the next one:
-
-- Treating the build tool's **escaped currency symbol** as inert. It is inert to
-  the build tool — and the build tool then hands a single symbol to the shell,
-  which may expand it. A deployment written that way, with the surrounding name
-  exported, really does run; treating the escape as permanently inert hid it.
-  A SILENT PASS, introduced by a rule adopted specifically because it was
-  "purely lexical".
-- Adding the tool's **canonical GNU-prefixed default filename** to the set of
-  files scanned as build files. Correct in itself, but it routes those files
-  through a variable model already known to be imperfect, extending its FALSE
-  REPORTS to files that previously escaped them — the opposite failure, reached
-  by widening the model's scope rather than by sharpening it.
+This section used to carry all of that in full. It was reduced to the table
+above because keeping it here meant a second copy of exactly the material whose
+drift produced the restructure — and because the paragraph below, claiming the
+rationale has one home, was false while it stood. The last two rows are worth
+one line here even so: they regressed in **opposite** directions, which is why
+neither is a template for judging the next "obviously safe" correction.
 
 ### What lands
 
 No behaviour change. The check's logic is what it was.
 
-- The reasoning above, recorded beside the code that would have to change, in
-  the functional specification, and here — so the next person does not rebuild
-  one of these designs without knowing what happened to it.
+- The reasoning, recorded ONCE — in the design record, with the call site and
+  the functional specification pointing at it rather than repeating it — so the
+  next person does not rebuild one of these designs without knowing what
+  happened to it, and so the account they find has not drifted from the two
+  others that used to exist.
 - Tests that **assert twenty-one current wrong verdicts across twelve defects**, so
   a later fix fails them and comes back to the question rather than passing
   silently.
@@ -113,8 +95,9 @@ No behaviour change. The check's logic is what it was.
   consequence; and a helper whose file name carries an upper-case extension is
   never FOUND by the sweep that discovers files to read — though one explicitly
   named by a file already being read is still opened, so the bypass is in the
-  discovery and not in the reading — across two command-shell families and a
-  POSIX one, because the gate that skips them is shared.
+  discovery and not in the reading — across EVERY executable family the sweep
+  is meant to yield, shells and script languages and build fragments alike,
+  because the gate that skips them is shared.
 
   **The rest fail the other way and assert the report**: a runbook sentence
   naming a write reports the deployment below it; a package manifest whose

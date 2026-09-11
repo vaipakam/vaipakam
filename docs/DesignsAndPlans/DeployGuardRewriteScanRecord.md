@@ -26,9 +26,25 @@ document:**
 | The fixtures | each defect's exact scope, mechanism and mutation evidence | — |
 | The release note | what landed in the pull request that produced this | — |
 
-The fixtures remain the ground truth for any per-defect fact. Where this
-document and a fixture disagree, **the fixture is right** — it was written with
-the code in hand and it runs.
+The fixtures remain the ground truth **for the check's verdict**, and where this
+document and a fixture disagree about a verdict, the fixture is right — it was
+written with the code in hand and it runs.
+
+**They are not ground truth for anything else, and the distinction has already
+cost a defect.** The harness writes a file and invokes the scanner; it never
+executes the recipe, workflow or helper it wrote. So a fixture establishes
+*"the check reports / does not report this text"* and nothing more. Whether the
+text would really deploy, whether the shell would parse it, whether the module
+system admits it — none of that is tested by the fixture passing, and all of it
+appears in fixture comments as though it were.
+
+That is not hypothetical: a helper payload sat in this suite calling `require`
+from a file the surrounding manifest made an ES module. The verdict was right
+and the premise was impossible — the body would have thrown before deploying
+anything, so a pin reading "an unsafe deployment passes silently" described a
+deployment that could never run. **Any claim a fixture makes about runtime
+behaviour needs its own evidence**, gathered outside the harness and recorded
+beside the claim.
 
 **This document therefore does not contain the bounds, and that is deliberate
 rather than an omission.** It names each defect and points at where its scope
@@ -207,7 +223,7 @@ fixable routes into one defect.
 | **#2123** | a helper whose file name carries an upper-case extension is never found by the sweep — *pinned (silent pass)* table-driven across every affected helper family |
 | **#2124** | a binding closed with that shell's ordinary statement terminator is not recognised — *pinned (silent pass)* |
 | **#2126** | the command-name normalisation is applied on the interpreter alone, without establishing the runner's lookup mode — *pinned (false report)* |
-| **#2085** | whether this detection should be a **declaration** rather than an inference — the three withdrawals are the strongest evidence yet that it should |
+| **#2085** | **no longer a "whether".** The specification now REQUIRES a declaration from the deployment wherever answering correctly would need another system's execution model, and the check still infers — so this is an open implementation gap, not an open question. Registered as a divergence in [`_CodeVsDocsAudit.md`](../FunctionalSpecs/_CodeVsDocsAudit.md); the three withdrawals are the evidence that settled it |
 
 ---
 
