@@ -12727,14 +12727,36 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     ['py', ARGV_PY],
   ];
 
+  /**
+   * Run one family's helper with NO OTHER HELPER PRESENT.
+   *
+   * `beforeEach` resets the temporary tree once per `it`, not once per loop
+   * iteration, so a bare loop leaves every previously written helper in
+   * place. That made the lower-case control VACUOUS from its second
+   * iteration (r49): `d.ps1` kept reporting, so `ok` stayed false whatever
+   * the current family did, and the control would have passed with `.cmd`,
+   * `.bat`, `.sh`, `.bash`, `.zsh`, `.ksh` and every script family silently
+   * unscanned. Verified directly — a `.zsh` file containing no deploy at all
+   * still yields exit 1 while `d.ps1` sits beside it.
+   *
+   * The upper-case pin did not have the bug, because nothing it writes is
+   * ever scanned, but it is run through the same helper so neither loop can
+   * regrow the problem.
+   */
+  const runFamilyAlone = (rel: string, body: string) => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith(rel, body);
+    rmSync(join(root, rel), { force: true });
+    return r;
+  };
+
   it('EVERY executable helper family is skipped by the walk when upper-cased (#2123, stated false green)', () => {
     // #2123 IS NOT ABOUT `.ps1`, not about three families, and not about
     // shells. The gate is the shared case-sensitive extension test in `walk`,
     // so it is about every family the walk is supposed to yield.
     for (const [ext, body] of WALK_HELPER_FAMILIES) {
-      seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
-      seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
-      const r = runWith(`apps/agent/D.${ext.toUpperCase()}`, body);
+      const r = runFamilyAlone(`apps/agent/D.${ext.toUpperCase()}`, body);
       expect(r.ok, `.${ext.toUpperCase()} should be bypassed by the walk`).toBe(
         true,
       );
@@ -12743,11 +12765,10 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
 
   it('the same bytes under each lower-case name ARE scanned (#2123 family control)', () => {
     // Load-bearing beyond the usual control role: it is what proves each pin
-    // above fails for the EXTENSION and not for an unrecognised body.
+    // above fails for the EXTENSION and not for an unrecognised body — which
+    // is only true while each iteration runs ALONE. See `runFamilyAlone`.
     for (const [ext, body] of WALK_HELPER_FAMILIES) {
-      seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
-      seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
-      const r = runWith(`apps/agent/d.${ext}`, body);
+      const r = runFamilyAlone(`apps/agent/d.${ext}`, body);
       expect(r.ok, `.${ext} should be scanned and reported`).toBe(false);
     }
   });

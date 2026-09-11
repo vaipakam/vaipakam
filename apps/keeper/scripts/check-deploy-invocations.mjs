@@ -9102,56 +9102,23 @@ for (const file of walk(REPO_ROOT)) {
   //     after NINE findings over five rounds. #2116 records the miss; #2085
   //     (a declaration) is the remedy that does not need the call graph.
   //
-  // Three transformations
-  // were tried here and all three withdrawn; this is the record, so the next
-  // person does not rebuild one (#2084, #2105 — ten rounds of building and
-  // withdrawing, then further rounds correcting this record itself; the PR
-  // carries the running count, deliberately not this comment, since every
-  // such round would restale a number written here).
+  // THREE TRANSFORMATIONS WERE TRIED HERE AND ALL THREE WITHDRAWN, as were
+  // two smaller "obviously safe" corrections that outlived them. What each
+  // was, what it cost, and why none can be rebuilt is recorded ONCE, in
+  // docs/DesignsAndPlans/DeployGuardRewriteScanRecord.md.
   //
-  //   1. A collected "executable image" — the parts of the file believed to
-  //      run. SIX ingestion paths reached the file without reaching the
-  //      collection, each a false GREEN, and two enumerations of "all the
-  //      paths" were both incomplete. A selection turns anything it fails to
-  //      recognise into SILENCE.
-  //   2. BLANKING a document's prose, so a sentence naming a write would stop
-  //      reporting the deploy below it. Six commands erased across three
-  //      rounds. The rule cannot exist: this guard treats a bare, unindented
-  //      Markdown line as an actionable command — which is why a runbook's
-  //      `cp a b` is reported at all — and a prose sentence naming a write has
-  //      that same shape. Telling them apart IS the classifier whose answer
-  //      produced the false red. #2112.
-  //   3. EXPANDING Makefile recipe variables, so a variable holding a
-  //      redirection would be seen as the write it is. FIFTEEN findings over
-  //      four rounds — conditionals both ways, `undefine`, `undefine` in a dead
-  //      branch, a settable recipe marker, that marker moving mid-file,
-  //      `define` bodies, indented assignments, mismatched `$(NAME}`, `?=`
-  //      after a computed value — every round's findings edges of the previous
-  //      round's fix. It failed the same way the other two did — it had to
-  //      infer WHAT A NAME DENOTES — which is the real test, not whether a
-  //      transformation adds or removes characters (#2105 r13). #2084.
+  // It used to be recorded here as well, at length. That second copy was
+  // removed (#2105 r49) because it was the drift mechanism the single-source
+  // document exists to eliminate: history duplicated beside code diverges
+  // from it, and this file's copy had already outlived two corrections made
+  // elsewhere. What stays here is only what constrains the expressions below.
   //
-  // The shape common to all three: each asks a question about the file that
-  // needs a PARSER FOR SOMETHING ELSE — a CI system's execution model, a
-  // Markdown grammar, Make's variable semantics — and this reader is a scanner.
-  // Where such a parser is genuinely needed, the answer is a declaration from
-  // the deploy itself (#2085), not a better approximation here.
-  //
-  // TWO SMALLER "OBVIOUSLY SAFE" CORRECTIONS WERE ALSO WITHDRAWN, and they are
-  // the cheapest lesson here because each survived to the LAST BEHAVIOUR-
-  // CHANGING round (r10), long after the three designs above were gone:
-  //
-  //   - Treating Make's `$$` as inert. It is inert TO MAKE, which then hands a
-  //     single `$` to the shell — so `$${DEPLOY} deploy`, with `DEPLOY`
-  //     exported, really runs, and skipping it hid the deploy. A false GREEN
-  //     introduced by a rule adopted precisely because it was "purely lexical".
-  //   - Adding `GNUmakefile` to the files scanned as Makefiles. Correct in
-  //     itself, but it routes those files through `makefileBlocks`' variable
-  //     model — already known to be imperfect — and so extends its false reds
-  //     to files that previously escaped them.
-  //
-  // The model's imperfection is LOAD-BEARING: its one consumer is calibrated
-  // around it, so making it locally more faithful can be a regression.
+  // The one line of it that IS a local constraint, because it governs what
+  // may be added to this function: a transformation is admissible only as a
+  // semantics-preserving normalisation of a known notation, never where it
+  // must infer WHICH TEXT IS EXECUTABLE or WHAT A NAME DENOTES. All three
+  // withdrawn designs failed that test; adding or removing characters is not
+  // the test and never was.
   // AN EXTENSIONLESS HELPER HAS A SHEBANG, NOT A SUFFIX. `walk` yields
   // extensionless executables deliberately, and keying the language on `.py`
   // alone classified `#!/usr/bin/env python3` as `other` — where an f-string

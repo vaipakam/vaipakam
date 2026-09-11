@@ -22,13 +22,20 @@ document:**
 | Where | Carries | Does not carry |
 | --- | --- | --- |
 | `ProjectDetailsREADME.md` | the binding invariants — what the platform is MEANT to do | any history, any defect scope, any reasoning about a withdrawn design |
-| This document | the record: designs tried, why each failed, the defect catalogue and its bounds | anything binding; nothing here is a requirement |
+| This document | the record: designs tried, why each failed, and a defect catalogue that POINTS AT each defect's scope and bounds without restating them | anything binding; nothing here is a requirement; and not the bounds themselves — see below |
 | The fixtures | each defect's exact scope, mechanism and mutation evidence | — |
 | The release note | what landed in the pull request that produced this | — |
 
 The fixtures remain the ground truth for any per-defect fact. Where this
 document and a fixture disagree, **the fixture is right** — it was written with
 the code in hand and it runs.
+
+**This document therefore does not contain the bounds, and that is deliberate
+rather than an omission.** It names each defect and points at where its scope
+and bounds are established; restating them here would recreate the copy this
+document exists to remove, and a restatement that drifts is worse than a
+pointer. A reader who needs a defect's exact extent should read its fixtures
+and its issue — in that order, since only the fixtures run.
 
 ---
 
