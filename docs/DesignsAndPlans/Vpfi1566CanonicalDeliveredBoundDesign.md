@@ -6310,7 +6310,12 @@ keys on the deploy time and the facet set as well, so a record corrected on
 either while a long run was reading cannot pass on an identical key; and a
 getter-less Diamond whose storage scan finds a held or rebate row carries
 that row's amount into the reconciliation figures and the shortfall, where
-the shell return had left both null. Run 34 re-reads every deployment with
+the shell return had left both null. Round 15 added the one writer the
+population had not counted: a cut's non-zero initializer is delegatecalled in
+the Diamond's context and can write any slot, so every initializer the cut
+history names joins the population under its own tag and is attributed like a
+facet — and one whose code cannot be read now is unattributable, not
+"never wrote", because it was called. Run 35 re-reads every deployment with
 all of it.
 
 ### 7a. What the provenance walk found, and how the design changes (2026-09-09)

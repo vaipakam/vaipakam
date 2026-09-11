@@ -395,15 +395,22 @@ async function facetsFromCutHistory(client, diamond, fromBlock, toBlock) {
     // first log of a complete history (#2095 r13 P1)
     const ordered = [...logs].sort((a, b) => (BigInt(a.blockNumber ?? 0) === BigInt(b.blockNumber ?? 0) ? Number(a.logIndex ?? 0) - Number(b.logIndex ?? 0) : BigInt(a.blockNumber ?? 0) < BigInt(b.blockNumber ?? 0) ? -1 : 1));
     const constructorCutSeen = ordered.length > 0 && (ordered[0].args?._diamondCut ?? []).length === 0;
-    for (const log of logs) for (const cut of log.args?._diamondCut ?? []) {
-      if (Number(cut.action) === 2 || typeof cut.facetAddress !== 'string') continue;
-      const k = cut.facetAddress.toLowerCase();
-      if (!blocksOf.has(k)) blocksOf.set(k, new Set());
-      if (log.blockNumber !== undefined && log.blockNumber !== null) blocksOf.get(k).add(BigInt(log.blockNumber));
+    // #2095 r15 P1 — a cut's non-zero `_init` was DELEGATECALLED in the
+    // Diamond's context and could write any slot: it is a writer like a facet
+    // and joins the population under its own source tag
+    const initializers = new Set();
+    const noteBlock = (k, log) => { if (!blocksOf.has(k)) blocksOf.set(k, new Set()); if (log.blockNumber !== undefined && log.blockNumber !== null) blocksOf.get(k).add(BigInt(log.blockNumber)); };
+    for (const log of logs) {
+      for (const cut of log.args?._diamondCut ?? []) {
+        if (Number(cut.action) === 2 || typeof cut.facetAddress !== 'string') continue;
+        noteBlock(cut.facetAddress.toLowerCase(), log);
+      }
+      const init = typeof log.args?._init === 'string' ? log.args._init.toLowerCase() : null;
+      if (init && init !== ZERO_ADDRESS) { initializers.add(init); noteBlock(init, log); }
     }
-    return { addresses: [...blocksOf.keys()], blocksOf, cuts: logs.length, constructorCutSeen, verdict: logs.length ? 'read' : 'empty (proves nothing — a pruned endpoint returns empty)' };
+    return { addresses: [...blocksOf.keys()], initializers: [...initializers], blocksOf, cuts: logs.length, constructorCutSeen, verdict: logs.length ? 'read' : 'empty (proves nothing — a pruned endpoint returns empty)' };
   } catch (err) {
-    return { addresses: [], blocksOf: new Map(), cuts: 0, constructorCutSeen: false, verdict: 'unreadable', reason: String(err?.shortMessage ?? err?.message ?? err).slice(0, 200) };
+    return { addresses: [], initializers: [], blocksOf: new Map(), cuts: 0, constructorCutSeen: false, verdict: 'unreadable', reason: String(err?.shortMessage ?? err?.message ?? err).slice(0, 200) };
   }
 }
 
@@ -490,13 +497,23 @@ async function applyLayoutProvenance(result, { client, censusBlock, atBlock, dia
   const add = (a, src) => { const k = a.toLowerCase(); if (!all.has(k)) all.set(k, new Set()); all.get(k).add(src); };
   for (const f of recorded.facets) for (const src of f.sources) add(f.address, src);
   for (const a of loupe ?? []) add(a, 'loupe');
-  for (const a of cut.addresses) add(a, 'cut-history');
+  for (const a of cut.addresses) add(a, cut.initializers.includes(a) ? 'cut-history:initializer' : 'cut-history');
   const facets = [];
   for (const [address, sources] of all) {
     const codeHash = await withReplicaRetry(atBlock, () => codeHashAtHash(client, censusBlock, address), { client });
     facets.push({ address, sources: [...sources], codeHash });
   }
   const attribution = attributeFacetCode({ facets, eras: STORAGE_READ.eras });
+  // an initializer whose code is gone (or was never there) CANNOT be
+  // attributed: unlike a facet that never had code, it was delegatecalled,
+  // so "no code now" is not "never wrote" — it is unreadable, and refuses
+  for (const n of [...attribution.noCode]) {
+    if (n.sources.includes('cut-history:initializer')) {
+      attribution.noCode = attribution.noCode.filter((x) => x !== n);
+      attribution.unattributed.push({ address: n.address, codeHash: null, sources: n.sources, note: 'initializer delegatecalled by a cut, its code unreadable at the census block' });
+    }
+  }
+  if (attribution.unattributed.length) attribution.verdict = 'unattributed';
   const population = cutHistoryCompleteness({ verdict: cut.verdict.split(' ')[0], cuts: cut.cuts, constructorCutSeen: cut.constructorCutSeen, addresses: cut.addresses, loupe, cutFacetHost });
   // For every unattributed facet: the commits around the moments it was cut
   // (block timestamps, hash-pinned by number under the census block) and
@@ -559,7 +576,7 @@ async function applyLayoutProvenance(result, { client, censusBlock, atBlock, dia
     attributed: attribution.attributed.map((a) => ({ address: a.address, name: a.name, eras: a.eras.map((e) => e.date), sources: a.sources })),
     unattributed: attribution.unattributed,
     noCode: attribution.noCode,
-    sources: { records: recorded.records, loupe: loupe ? loupe.length : 'unrouted', cutHistory: cut.verdict, cuts: cut.cuts, cutHistoryError: cut.reason },
+    sources: { records: recorded.records, loupe: loupe ? loupe.length : 'unrouted', cutHistory: cut.verdict, cuts: cut.cuts, initializers: cut.initializers.length, cutHistoryError: cut.reason },
     buildCandidates: candidateList.length ? { proposed: candidateList.length, newInFile: newCandidates, file: 'contracts/deployments/facet-build-candidates.json' } : undefined,
     cutBlocksUnreadable: unreadableBlocks.length ? unreadableBlocks : undefined,
     residual: 'a facet cut in and replaced with no local record and no readable cut history is not seen here; the cut history can only refute',
