@@ -140,6 +140,58 @@ describe('classifyRpcResponse', () => {
     expect(verdicts(out)).toEqual(['ok']);
   });
 
+  // ROUND 73 P2 — ids are how a batch's answers are attributed.
+  describe('a batch that reuses a request id', () => {
+    it('is a client fault, whatever came back', () => {
+      const out = classifyRpcResponse(
+        200,
+        JSON.stringify([{ jsonrpc: '2.0', id: 1, result: '0x1' }]),
+        rpcReq(call(1, 'eth_call'), call(1, 'eth_blockNumber')),
+      );
+      expect(verdicts(out)).toEqual(['client-fault', 'client-fault']);
+      expect(out[0].why).toMatch(/duplicate id/);
+    });
+
+    it('is judged before the response, so a healthy body does not excuse it', () => {
+      const out = classifyRpcResponse(
+        200,
+        JSON.stringify([
+          { jsonrpc: '2.0', id: 7, result: '0x1' },
+          { jsonrpc: '2.0', id: 7, result: '0x2' },
+        ]),
+        rpcReq(call(7, 'eth_call'), call(7, 'eth_call')),
+      );
+      expect(verdicts(out)).toEqual(['client-fault', 'client-fault']);
+    });
+
+    it('says nothing about a batch with distinct ids', () => {
+      const out = classifyRpcResponse(
+        200,
+        JSON.stringify([
+          { jsonrpc: '2.0', id: 1, result: '0x1' },
+          { jsonrpc: '2.0', id: 2, result: '0x2' },
+        ]),
+        rpcReq(call(1), call(2)),
+      );
+      expect(verdicts(out)).toEqual(['ok', 'ok']);
+    });
+
+    it('does not treat two ID-LESS notifications as a collision', () => {
+      // A notification legitimately carries no id and expects no reply.
+      // Reading absent ids as equal would invent a product FAIL out of a
+      // shape JSON-RPC allows.
+      const notify = (method) => ({ jsonrpc: '2.0', method, params: [] });
+      const out = classifyRpcResponse(
+        200,
+        JSON.stringify([{ jsonrpc: '2.0', id: null, error: { code: -32600, message: 'x' } }]),
+        JSON.stringify([notify('eth_call'), notify('eth_blockNumber')]),
+      );
+      expect(out.every((o) => o.verdict !== 'client-fault' || !/duplicate id/.test(o.why))).toBe(
+        true,
+      );
+    });
+  });
+
   // ROUND 72 P2 — a revert answers a CALL, not a head or a receipt.
   describe('the revert exemption is scoped to methods that execute code', () => {
     for (const method of [

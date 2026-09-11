@@ -283,7 +283,7 @@ could exercise the confirmation.
 
 ### Stated limits
 
-Three, and the first two are gaps in coverage rather than in the
+Four, and the first two are gaps in coverage rather than in the
 checking.
 
 The pool of positions is inherited from the existing driver, so NFT
@@ -297,7 +297,17 @@ everyone. So the one behaviour that most distinguishes this card is the
 one a live run cannot confirm. The run prints both gaps in its own output
 when they apply, rather than letting a clean tally imply otherwise.
 
-The third is intrinsic: a check that watches a live page can never rule
+The third is in the amount rule itself, and it matters most because that
+rule is about funds. The check reads rendered text rather than parsing
+it, so it can only judge what a number sits next to: an amount written
+out in words — "you receive one ETH", "half an ETH" — contains no number
+to find, and a card saying that passes the check clean. Fractions written
+as symbols are recognised, and spelled-out figures are not. So a green
+amount verdict means no unsubstantiated amount was found in the forms the
+check can see, which is a narrower statement than no amount was stated,
+and it should not be read as the wider one.
+
+The fourth is intrinsic: a check that watches a live page can never rule
 out that the page changed between two of its own observations, so where
 that race is unavoidable the check reports what it saw and names the
 uncertainty instead of resolving it by assumption.

@@ -725,6 +725,39 @@ export function classifyRpcResponse(status, body, requestBody) {
   const statusOk = status >= 200 && status < 300;
   const out = (c, verdict, why) => ({ key: callKey(c), method: String(c.method), verdict, why });
 
+  // ROUND 73 P2 — A BATCH THAT REUSES A REQUEST ID IS MALFORMED, and
+  // judged before the response is looked at, because this is a fact about
+  // what the PAGE ASKED.
+  //
+  // Ids are how a batch's answers are attributed. Reuse one and a single
+  // member satisfies two calls: `wanted` collapses the duplicates into
+  // one entry, `byId` holds one member, and both calls read `ok` off it.
+  // viem meanwhile resolves batches POSITIONALLY, so what the page
+  // actually received is one call's answer handed to another, or nothing
+  // — a read that failed or rendered the wrong value, with the ledger
+  // recording two clean fetches.
+  //
+  // `client-fault`, not `unreachable`, and round 21 settled which: a
+  // malformed request the page GENERATED is a working endpoint reporting
+  // an app defect, and filing it as "could not fetch" exits 2 on
+  // infrastructure while hiding the regression class this drive exists to
+  // catch.
+  //
+  // ONLY IDS THAT ARE PRESENT. A JSON-RPC notification legitimately
+  // carries none and expects no reply, so two of them are not a
+  // collision; treating absent ids as equal would invent a product FAIL
+  // out of a shape the spec allows.
+  const seenIds = new Set();
+  const reusedId = calls.some((c) => {
+    if (c.id === undefined || c.id === null) return false;
+    if (seenIds.has(c.id)) return true;
+    seenIds.add(c.id);
+    return false;
+  });
+  if (reusedId) {
+    return calls.map((c) => out(c, 'client-fault', 'duplicate id in the request batch'));
+  }
+
   // A status the page cannot see past: every call in the request failed,
   // whatever the body happens to contain. This is the plain-text 429 /
   // 5xx shape, and — per `answersDespiteStatus` — every non-2xx batch.

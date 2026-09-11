@@ -5138,11 +5138,28 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
       // Awaited together rather than raced, because a race is won by
       // whichever rejects first and would make a missing Back look like
       // a missing panel again.
+      //
+      // ROUND 73 P2 — AND THE FEE-PAYING ACTION IS A THIRD MARKER.
+      //
+      // Round 70 took the gate from one marker to two and stopped there,
+      // which is this PR's recurring shape once more. A regressed panel
+      // keeping its visible confirm button while losing BOTH the receipt
+      // rows and Back answered false to both waits, so the whole scrape
+      // was skipped and the run reported an unread observation — when
+      // what was on screen is far worse than a gap: a lender looking at
+      // a fee-paying action with no receipt explaining it and no way to
+      // decline.
+      //
+      // `.cluster` is the confirm pair's own container, and inside this
+      // card it comes only from `ConfirmReceipt` — the outer submit is
+      // not rendered at all while the panel is open, so a cluster button
+      // appearing after the click is the panel and nothing else.
       const back = card.getByRole('button', { name: /back/i }).first();
       const receiptRow = card
         .locator('[data-testid^="forced-close-receipt"], dl.receipt .receipt-row')
         .first();
-      const [backUp, rowsUp] = await Promise.all([
+      const clusterAction = card.locator('.cluster button').first();
+      const [backUp, rowsUp, actionUp] = await Promise.all([
         back
           .waitFor({ state: 'visible', timeout: 5_000 })
           .then(() => true)
@@ -5151,8 +5168,12 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
           .waitFor({ state: 'visible', timeout: 5_000 })
           .then(() => true)
           .catch(() => false),
+        clusterAction
+          .waitFor({ state: 'visible', timeout: 5_000 })
+          .then(() => true)
+          .catch(() => false),
       ]);
-      const rendered = backUp || rowsUp;
+      const rendered = backUp || rowsUp || actionUp;
       if (rendered) {
         // ROUND 23 P2 — THE RECEIPT'S OWN ROWS, not the shell plus DOM
         // text.
@@ -5668,12 +5689,26 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
             // duplicate hidden in the DOM is not something the lender is
             // being shown. Selecting from the filtered set too, so the
             // control judged and trialled is one the lender can reach.
-            const allActions =
-              backButton && backButton.parentElement
-                ? [...backButton.parentElement.querySelectorAll('button')].filter(
-                    (b) => b !== backButton,
-                  )
-                : [];
+            // ROUND 73 P2 — LOCATED WITHOUT BACK WHERE BACK IS GONE.
+            //
+            // Anchoring the cluster on Back's parent meant a panel that
+            // had LOST its Back button reported no action present — so
+            // the arm saying "no confirmation action was rendered beside
+            // Back" fired on a panel whose fee-paying action was plainly
+            // on screen. A true verdict reached through a false sentence,
+            // which is the error the `present`/`visible` split above was
+            // written to avoid, one level out.
+            //
+            // The fallback is the confirm pair's own container. Inside
+            // this card `.cluster` comes only from `ConfirmReceipt`, and
+            // the outer submit is not rendered while the panel is open,
+            // so there is nothing else for it to pick up. Back's parent
+            // stays the first choice, so a panel with Back behaves
+            // exactly as before.
+            const cluster = backButton?.parentElement ?? el.querySelector('.cluster');
+            const allActions = cluster
+              ? [...cluster.querySelectorAll('button')].filter((b) => b !== backButton)
+              : [];
             const clusterActions = allActions.filter(visible);
             const confirmButton = clusterActions[0];
             const confirmAction = {
