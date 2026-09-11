@@ -12784,8 +12784,21 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
    * has already hit. The DIRECTORY matters too: a workflow is only read as one
    * under `.github/workflows`.
    *
-   * THE FOURTH FIELD DECLARES WHAT THE BYPASS COSTS, and it has three
-   * positions because two could not hold the truth (r6):
+   * THE FOURTH FIELD DECLARES WHAT THE BYPASS COSTS FOR THIS ROW — the
+   * body AND the name together, not the suffix on its own (r10). That
+   * distinction is load-bearing and was not stated until Codex made the case
+   * concrete: `bun D.YML` happily executes a JAVASCRIPT body, because Bun
+   * reads the file as source and ignores the extension. So a `.YML` file is
+   * runnable or not depending on what is IN it, and a state attached to the
+   * suffix alone would be a claim nobody can make.
+   *
+   * Each row therefore classifies ITS OWN FIXTURE. The `.yml` row carries a
+   * workflow body, which Bun cannot execute (verified: it fails on the YAML),
+   * and which the platform discovers by name — so for that row nothing runs
+   * it and `inert` holds. A different `.yml` row with a JavaScript body would
+   * be `runs`, and that is not a contradiction.
+   *
+   * It has three positions because two could not hold the truth (r6):
    *
    *   'runs'    — something runs the file whatever it is called: `bash D.SH`,
    *               `python D.PY`, `make -f D.MK`, or a person who reads
@@ -13003,11 +13016,14 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
   }, FAMILY_TIMEOUT_MS);
 
   it('every family nothing runs is skipped too — discovery only (#2123)', () => {
-    // NOT titled as a wrong verdict: a workflow file is not launched by an
-    // interpreter at all — the platform picks it up by name, and matches only
-    // the lower-case suffixes — so nothing runs these under that name and the
-    // bypass is a DISCOVERY BLIND SPOT rather than a deployment slipping
-    // through.
+    // NOT titled as a wrong verdict: NOTHING RUNS THESE FIXTURES' BODIES
+    // under that name. Scoped to the bodies deliberately (r10) — the earlier
+    // wording said nothing runs "these", which read as a claim about the
+    // suffix and is false: `bun D.YML` executes a JavaScript body without
+    // caring about the extension. What holds here is narrower and is what the
+    // rows actually carry: a WORKFLOW body, which Bun rejects as source
+    // (verified — it fails on the YAML) and which the platform discovers by
+    // name.
     //
     // EVIDENCE BASIS, stated because r9 is what happens when it is not: this
     // rests on the platform's documented matching, NOT on an observation made
