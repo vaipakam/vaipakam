@@ -473,7 +473,33 @@ export function monetaryAmountsIn(text) {
   // the Arabic decimal and thousands marks for the same reason: a figure
   // written with them would otherwise split into two runs, and each half
   // would then be judged on its own neighbours rather than as one number.
-  const NUMBER = /\p{Nd}[\p{Nd}.,٫٬  ']*\p{Nd}|\p{Nd}/gu;
+  //
+  // ROUND 63 P2 — AND VULGAR FRACTIONS, which are not `\p{Nd}` at all.
+  //
+  // `½`, `¼` and their siblings are Unicode category `No`, so
+  // `You receive ½ ETH` produced NO numeric run: the scanner returned
+  // clean and the drive could certify a card stating an invented outcome
+  // in an entirely ordinary compact form.
+  //
+  // ENUMERATED rather than taken as `\p{No}` wholesale, and the
+  // distinction is the usual one about direction. `\p{No}` also contains
+  // the superscript digits, so a footnote marker (`Fees¹`) would become
+  // a "number" whose following word is then judged — an invented finding
+  // on correct copy, which is the failure that gets a check switched off.
+  // The vulgar fractions are a closed, enumerable set: U+00BC-BE, the
+  // U+2150-215E block, and U+2189. Listing them is not the "list of
+  // assets" mistake this file warns about, because unlike a ticker
+  // vocabulary this list cannot grow with the market.
+  //
+  // A fraction is matched on its own and as the tail of a mixed number,
+  // so `1½ ETH` is one run rather than a `1` beside an unread glyph.
+  const VULGAR = '\u00BC-\u00BE\u2150-\u215E\u2189';
+  const NUMBER = new RegExp(
+    `\\p{Nd}[\\p{Nd}.,٫٬  ']*\\p{Nd}[${VULGAR}]?` +
+      `|\\p{Nd}[${VULGAR}]?` +
+      `|[${VULGAR}]`,
+    'gu',
+  );
   let m;
   while ((m = NUMBER.exec(text)) !== null) {
     const start = m.index;

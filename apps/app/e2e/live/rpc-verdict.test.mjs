@@ -1140,3 +1140,69 @@ describe('isTransportFailure — an outage, or this drive asking wrongly (round 
     expect(isTransportFailure(a)).toBe(false);
   });
 });
+
+describe('round 63 P2 — the chain-id reader refuses a reused id too', () => {
+  // ROUND 60 closed this in `blockNumberFromRpcPair` and left the
+  // sibling reader collapsing duplicates. This is the same defect by the
+  // door that matters MORE: a chain id is what ADMITS an endpoint, so a
+  // wrong one buys trust in every height that endpoint reports
+  // afterwards, not just the one exchange.
+  //
+  // Round 60's own note said "same id-matching rule as
+  // `blockNumberFromRpcPair`, for the same reason" — the comment stayed
+  // true and the code stopped being.
+  const batch = (...calls) => JSON.stringify(calls.map((c) => ({ jsonrpc: '2.0', ...c })));
+
+  it('reads a well-formed batch with distinct ids', () => {
+    expect(
+      chainIdFromRpcPair(
+        batch({ id: 1, method: 'eth_blockNumber' }, { id: 2, method: 'eth_chainId' }),
+        [
+          { id: 1, result: '0x2c8a1f' },
+          { id: 2, result: '0x14a34' },
+        ],
+      ),
+    ).toBe(84532);
+  });
+
+  it('refuses a chain id from a REUSED id', () => {
+    // The exact shape from the finding: a height answer of `0x14a34`
+    // reading as "this endpoint speaks for Base Sepolia".
+    expect(
+      chainIdFromRpcPair(
+        batch({ id: 1, method: 'eth_chainId' }, { id: 1, method: 'eth_blockNumber' }),
+        [{ id: 1, result: '0x14a34' }],
+      ),
+    ).toBeNull();
+  });
+
+  it('keeps an unambiguous chain call when a DIFFERENT pair collides', () => {
+    // Refusing the whole exchange because two unrelated calls collided
+    // would be the over-correction: the `eth_chainId` id here names
+    // exactly one call and is still good evidence.
+    expect(
+      chainIdFromRpcPair(
+        batch(
+          { id: 7, method: 'eth_chainId' },
+          { id: 9, method: 'eth_call' },
+          { id: 9, method: 'eth_getLogs' },
+        ),
+        [
+          { id: 7, result: '0x14a34' },
+          { id: 9, result: '0x' },
+        ],
+      ),
+    ).toBe(84532);
+  });
+
+  it('still allows the single-call leniency', () => {
+    // One call, one answer: there is nothing else the reply could be
+    // about, so a rewritten or absent id is not a reason to discard it.
+    expect(
+      chainIdFromRpcPair(
+        JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_chainId' }),
+        { id: 99, result: '0x14a34' },
+      ),
+    ).toBe(84532);
+  });
+});

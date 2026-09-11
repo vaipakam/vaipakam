@@ -4822,3 +4822,50 @@ describe('round 62 review findings', () => {
     });
   });
 });
+
+describe('round 63 review findings', () => {
+  // VULGAR FRACTIONS ARE NUMBERS. `½`, `¼` and their siblings are
+  // Unicode category `No`, not `Nd`, so `You receive ½ ETH` produced no
+  // numeric run at all — the scanner returned clean on a card stating an
+  // invented outcome in an entirely ordinary compact form. The worst way
+  // for a guard on funds copy to be green: it looks exactly like
+  // coverage.
+  describe('an amount written as a fraction is still an amount', () => {
+    it('reports a bare vulgar fraction with a ticker', () => {
+      expect(monetaryAmountsIn('You receive ½ ETH')).not.toHaveLength(0);
+      expect(monetaryAmountsIn('¼ WETH')).not.toHaveLength(0);
+    });
+
+    it('reads a mixed number as ONE run', () => {
+      // Otherwise `1` is judged on its own and the glyph beside it is
+      // never read — a number whose neighbour analysis is wrong is worse
+      // than one that is missed, because it can exempt itself.
+      const found = monetaryAmountsIn('1½ ETH');
+      expect(found).toHaveLength(1);
+      expect(found[0]).toContain('1½');
+    });
+
+    it('does NOT treat a superscript footnote marker as a number', () => {
+      // The reason the fractions are enumerated instead of taken as
+      // `\p{No}` wholesale: that category also holds the superscript
+      // digits, and `Fees¹` becoming a "number" would have its following
+      // word judged — an invented finding on correct copy, which is the
+      // failure that gets a check switched off.
+      expect(monetaryAmountsIn('Fees¹ apply')).toHaveLength(0);
+      expect(monetaryAmountsIn('See note² below')).toHaveLength(0);
+    });
+
+    it('leaves every existing exemption intact', () => {
+      // The regression risk in widening a tokenizer is that the widened
+      // matches take a different path through the exemptions. These are
+      // the three the file has been caught on before.
+      expect(monetaryAmountsIn('Loan 21 will be returned')).toHaveLength(0);
+      expect(monetaryAmountsIn('Wait 3-day grace period')).toHaveLength(0);
+      expect(monetaryAmountsIn('Rate 5% applies')).toHaveLength(0);
+    });
+
+    it('still reads an ordinary grouped decimal', () => {
+      expect(monetaryAmountsIn('2,500.75 USDC')).toHaveLength(1);
+    });
+  });
+});

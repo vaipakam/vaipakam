@@ -488,8 +488,34 @@ export function chainIdFromRpcPair(requestBody, responseBody) {
     return null;
   }
   if (!calls) return null;
+  // ROUND 63 P2 — A REUSED ID IS NOT AN IDENTITY HERE EITHER.
+  //
+  // Round 60 refused duplicated ids in `blockNumberFromRpcPair` and left
+  // this sibling collapsing them, which is the same defect by the door
+  // that matters MORE: a batch reusing one id for `eth_chainId` and
+  // something else makes any member carrying that id eligible as the
+  // chain answer, so an `eth_blockNumber` result of `0x14a34` reads as
+  // "this endpoint speaks for Base Sepolia". `markDiamond` then ADMITS
+  // the endpoint and trusts every later height it reports — including
+  // heights from whatever chain it is actually on — which is exactly the
+  // wrong-chain bound the exclusion rules exist to keep out.
+  //
+  // Round 60's own note said "same id-matching rule as
+  // `blockNumberFromRpcPair`, for the same reason"; the comment stayed
+  // true and the code stopped being. Tenth instance on this PR of a fix
+  // applied to one of several parallel sites, and the second where the
+  // fixed site's own prose pointed at the one still broken.
+  //
+  // Refused rather than repaired, for round 60's reason: an id that
+  // names two calls names neither, and the caller already handles "no
+  // chain evidence here" by leaving the endpoint unadmitted.
+  const ids = calls.map((c) => c?.id);
+  const duplicated = new Set(ids.filter((id, i) => ids.indexOf(id) !== i));
   const wanted = new Set(
-    calls.filter((c) => c?.method === 'eth_chainId').map((c) => c?.id),
+    calls
+      .filter((c) => c?.method === 'eth_chainId')
+      .map((c) => c?.id)
+      .filter((id) => !duplicated.has(id)),
   );
   if (wanted.size === 0) return null;
   const items = Array.isArray(responseBody) ? responseBody : [responseBody];

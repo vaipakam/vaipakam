@@ -416,14 +416,19 @@ test('a receipt row with a blank label is not a readable row', async ({ page }) 
       <div class="receipt-row" id="ghostValue"><dt>Fees</dt><dd><span style="filter: opacity(0)">2% of interest</span></dd></div>
       <div class="receipt-row" id="clippedValue"><dt>Fees</dt><dd><span style="clip-path: inset(50%)">2% of interest</span></dd></div>
       <div class="receipt-row" id="wrappedOk"><dt><span>Fees</span></dt><dd><span>2% of interest</span></dd></div>
+      <div class="receipt-row" id="fillerRow"><dt><span style="color: transparent">Fees</span><span>—</span></dt><dd><span>2% of interest</span></dd></div>
     </dl>
   `);
 
   const result = await page.evaluate(
     ([clip, paint, vis, text, row]) => {
       const scope = new Function(
-        `${clip}\n${paint}\n${vis}\n${text}\n${row}\nreturn { rowShown, visible };`,
-      )() as { rowShown: (r: Element) => boolean; visible: (n: Element | null) => boolean };
+        `${clip}\n${paint}\n${vis}\n${text}\n${row}\nreturn { rowShown, visible, visibleTextOf };`,
+      )() as {
+        rowShown: (r: Element) => boolean;
+        visible: (n: Element | null) => boolean;
+        visibleTextOf: (r: Element | null) => string;
+      };
       const byId = (id: string) => document.getElementById(id)!;
       return {
         good: scope.rowShown(byId('good')),
@@ -442,6 +447,18 @@ test('a receipt row with a blank label is not a readable row', async ({ page }) 
         ghostLabelWrapperVisible: scope.visible(byId('ghostLabel').querySelector('dt')),
         ghostLabelInnerText:
           (byId('ghostLabel').querySelector('dt') as HTMLElement).innerText.trim(),
+        // ROUND 63 P2 — AND THE TEXT CARRIED INTO THE VERDICT.
+        //
+        // A row with painted filler beside an erased label passes the
+        // readability test legitimately — something in it IS painted —
+        // and the projection then recorded its raw `innerText`, so the
+        // erased label still satisfied the expected label/value pairing.
+        // All six pairs matched while the lender read filler.
+        fillerRowReadable: scope.rowShown(byId('fillerRow')),
+        fillerRowPaintedText: scope.visibleTextOf(byId('fillerRow')),
+        fillerRowInnerText: (byId('fillerRow') as HTMLElement).innerText
+          .replace(/\s+/g, ' ')
+          .trim(),
         // The reason this was reachable: geometry alone accepts the
         // empty label, because the fixed width and the flex stretch give
         // it a full-size box.
@@ -464,6 +481,20 @@ test('a receipt row with a blank label is not a readable row', async ({ page }) 
     'the dt wrapper still passes the predicate — which is why the text rule must descend',
   ).toBe(true);
   expect(result.ghostLabelInnerText, 'and innerText still yields the label').toBe('Fees');
+
+  // ROUND 63 P2 — the row reads, and what it CARRIES must not include
+  // the erased label. Reporting it readable is correct here; reporting
+  // its raw text as the disclosure is what let filler stand in for the
+  // funds figures.
+  expect(result.fillerRowReadable, 'painted filler makes the row readable').toBe(true);
+  // No space between the two painted runs: the join is deliberately
+  // empty so that a label split across elements (`<b>Loan</b>s`) does not
+  // become `Loan s` when compared against shipped copy with `includes`.
+  // I expected a space here and the fixture said otherwise, which is the
+  // right way round for a rule that has to match real strings.
+  expect(result.fillerRowPaintedText, 'the painted runs, joined').toBe('—2% of interest');
+  expect(result.fillerRowPaintedText, 'and NOT the erased label').not.toContain('Fees');
+  expect(result.fillerRowInnerText, 'while innerText still carries it').toContain('Fees');
   // Recorded rather than assumed: if this ever becomes false the rows
   // are being rejected by geometry and the text rule is no longer the
   // thing under test.

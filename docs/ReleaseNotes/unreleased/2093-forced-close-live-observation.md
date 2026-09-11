@@ -112,6 +112,33 @@ chain is not evidence of anything, so heights announced by the page are
 waited for, scoped to the deployment's own endpoint, and refused when a
 provider's answers cannot be told apart.
 
+One consequence of that rule is worth stating, because it is where it
+was got wrong twice: deciding that a piece of text is readable and
+carrying that text into the verdict are two different steps, and the
+readable-text result has to be the one carried. A receipt line with some
+readable filler beside an erased label is legitimately a readable line —
+but if what gets recorded is the underlying text rather than the visible
+text, the erased label still satisfies the disclosure the line was
+supposed to make, and the lender reads filler where the figures should
+be.
+
+The same rule about *where* an answer comes from applies to the chain
+data. A provider that answers two different questions under one
+identifier has not told the check which question it answered, so an
+answer to one can be read as an answer to the other — and being wrong
+about which chain a provider speaks for is worse than being wrong about a
+single height, because it buys trust in everything that provider says
+afterwards. Those exchanges are refused rather than guessed at.
+
+Amounts written as fractions — "½ ETH" rather than "0.5 ETH" — are now
+recognised. They are a different kind of character from ordinary digits,
+so the scanner had been finding no number at all and reporting such a
+card as clean: the worst way for a check on funds copy to be green,
+because it looks exactly like coverage. The recognised set is listed
+explicitly rather than taken as "anything numeric-ish", since the wider
+category also contains superscript footnote markers, and treating those
+as amounts would invent findings on correct copy.
+
 ### Stated limits
 
 Two, and they are gaps in coverage rather than in the checking. The pool

@@ -5605,7 +5605,7 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
                   ) &&
                   visible(n),
               )
-              .map((n) => n.innerText ?? '')
+              .map((n) => visibleTextOf(n))
               .filter((t) => t.trim() !== '');
             return {
               rowsOk: rows.length === 6 && shown.length === rows.length,
@@ -5614,7 +5614,23 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
               // wants both, and the row-identity check (round 53) wants
               // the rows alone. Merging them would make "six rows" mean
               // "six of anything on the panel".
-              rowsText: shown.map((r) => r.innerText ?? '').filter((t) => t.trim() !== ''),
+              //
+              // ROUND 63 P2 — THE PAINTED TEXT, not `innerText`, and the
+              // previous round computed it and threw it away.
+              //
+              // `rowShown` used `visibleTextOf` as a BOOLEAN and this
+              // projection then recorded the row's raw `innerText`. A row
+              // carrying painted filler beside an erased label or value
+              // therefore passed the readability test AND supplied the
+              // expected disclosure from text nobody can see — all six
+              // pairs satisfied, `confirmScanned=true`, while the lender
+              // reads filler instead of what the receipt must disclose.
+              //
+              // Ninth instance on this PR of a fix reaching one of
+              // several parallel sites, and a new variant of it: the
+              // right value was computed at the right moment and
+              // discarded one line later.
+              rowsText: shown.map((r) => visibleTextOf(r)).filter((t) => t.trim() !== ''),
               otherText,
             };
           })
