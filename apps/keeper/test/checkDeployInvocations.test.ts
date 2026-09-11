@@ -12779,33 +12779,60 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
    * families pass for the wrong reason, which is the vacuity trap this suite
    * has already hit. The DIRECTORY matters too: a workflow is only read as one
    * under `.github/workflows`.
+   *
+   * THE FOURTH FIELD DECLARES WHAT THE BYPASS COSTS, and it has three
+   * positions because two could not hold the truth (r6):
+   *
+   *   'runs'    — something runs the file whatever it is called: `bash D.SH`,
+   *               `python D.PY`, `make -f D.MK`, or a person who reads
+   *               `RUNBOOK.MD` and copies the command out of it. An unsafe
+   *               deployment survives, so this is a genuine SILENT PASS and
+   *               its pin is titled as a wrong verdict.
+   *   'inert'   — nothing runs it under that name. `node D.JS` exits on the
+   *               unknown extension; the workflow engine matches only the
+   *               lower-case suffixes. A DISCOVERY BLIND SPOT, pinned but not
+   *               counted as a wrong verdict.
+   *   'unknown' — the bypass is real and its cost is NOT ESTABLISHED. These
+   *               were filed as 'inert' when the field was a boolean, which
+   *               asserted something no fixture shows.
+   *
+   * The field PARTITIONS the pins, so a wrong declaration moves a family
+   * under a title claiming something different rather than costing nothing.
+   * What it cannot do is verify itself: the harness never executes a fixture,
+   * so each value rests on evidence gathered outside and recorded beside it.
+   * Do not let a new family default to whichever value makes the table tidy.
    */
   const WALK_HELPER_FAMILIES: ReadonlyArray<
-    readonly [ext: string, body: string, dir: string, upperCaseStillRuns: boolean]
+    readonly [
+      ext: string,
+      body: string,
+      dir: string,
+      upperCaseConsequence: 'runs' | 'inert' | 'unknown',
+    ]
   > = [
-    ['ps1', SHELL_BODY, 'apps/agent', true],
-    ['cmd', SHELL_BODY, 'apps/agent', true],
-    ['bat', SHELL_BODY, 'apps/agent', true],
-    ['sh', SHELL_BODY, 'apps/agent', true],
-    ['bash', SHELL_BODY, 'apps/agent', true],
-    ['zsh', SHELL_BODY, 'apps/agent', true],
-    ['ksh', SHELL_BODY, 'apps/agent', true],
+    ['ps1', SHELL_BODY, 'apps/agent', 'runs'],
+    ['cmd', SHELL_BODY, 'apps/agent', 'runs'],
+    ['bat', SHELL_BODY, 'apps/agent', 'runs'],
+    ['sh', SHELL_BODY, 'apps/agent', 'runs'],
+    ['bash', SHELL_BODY, 'apps/agent', 'runs'],
+    ['zsh', SHELL_BODY, 'apps/agent', 'runs'],
+    ['ksh', SHELL_BODY, 'apps/agent', 'runs'],
     // ESM: `.mjs`/`.mts` by extension, and `.js`/`.ts` because the seeded
     // manifest declares `"type": "module"` exactly as apps/agent does.
-    ['js', ARGV_ESM, 'apps/agent', false],
-    ['mjs', ARGV_ESM, 'apps/agent', false],
-    ['ts', ARGV_ESM, 'apps/agent', false],
-    ['mts', ARGV_ESM, 'apps/agent', false],
+    ['js', ARGV_ESM, 'apps/agent', 'inert'],
+    ['mjs', ARGV_ESM, 'apps/agent', 'inert'],
+    ['ts', ARGV_ESM, 'apps/agent', 'inert'],
+    ['mts', ARGV_ESM, 'apps/agent', 'inert'],
     // CommonJS by extension, whatever the manifest says.
-    ['cjs', ARGV_CJS, 'apps/agent', false],
-    ['cts', ARGV_CJS, 'apps/agent', false],
-    ['py', ARGV_PY, 'apps/agent', true],
-    ['mk', MAKE_BODY, 'apps/agent', true],
-    ['md', RUNBOOK_BODY, 'apps/agent', true],
-    ['mdx', RUNBOOK_BODY, 'apps/agent', true],
+    ['cjs', ARGV_CJS, 'apps/agent', 'inert'],
+    ['cts', ARGV_CJS, 'apps/agent', 'inert'],
+    ['py', ARGV_PY, 'apps/agent', 'runs'],
+    ['mk', MAKE_BODY, 'apps/agent', 'runs'],
+    ['md', RUNBOOK_BODY, 'apps/agent', 'runs'],
+    ['mdx', RUNBOOK_BODY, 'apps/agent', 'runs'],
     // A workflow is only READ as one under this directory.
-    ['yml', WORKFLOW_BODY, '.github/workflows', false],
-    ['yaml', WORKFLOW_BODY, '.github/workflows', false],
+    ['yml', WORKFLOW_BODY, '.github/workflows', 'inert'],
+    ['yaml', WORKFLOW_BODY, '.github/workflows', 'inert'],
     // THESE TWO PIN DISCOVERY ONLY, and the distinction is sharper than the
     // Node one (r2). Their body is an inert `note` value, so the lower-case
     // REPORT is itself #2119's false report — reading every scalar as a
@@ -12820,8 +12847,8 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     // lower-case report would be CORRECT — is not available while
     // value-by-value reading is itself the defect, so the harmful-consequence
     // question for these two is OPEN, not answered here.
-    ['json', JSON_VALUE_BODY, 'apps/agent', false],
-    ['jsonc', JSON_VALUE_BODY, 'apps/agent', false],
+    ['json', JSON_VALUE_BODY, 'apps/agent', 'unknown'],
+    ['jsonc', JSON_VALUE_BODY, 'apps/agent', 'unknown'],
   ];
 
   it('walk yields exactly these families — parity with EXTENSIONS (#2123 guard)', () => {
@@ -12851,22 +12878,39 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     // maul any `https://` elsewhere in it, including inside the very
     // declarations this needs to find.
     //
-    // Doing it in this order keeps both problems away: the locators run on
-    // untouched source, and the stripping applies only to the array bodies,
-    // which contain no URLs — just quoted suffixes and prose.
+    // THE VALUES ARE EVALUATED, NOT PATTERN-MATCHED (r6). Every earlier
+    // version of this read the source SPELLING and was wrong about membership
+    // in a new way each round: comments at line start, then trailing
+    // comments, then — caught by mutation — a double-quoted `".toml"`, which
+    // a single-quote regex silently ignores while the table stays a subset.
+    // That is the same trap this whole suite is about, now five deep: reading
+    // text is not observing behaviour, and a narrower regex is not a fix for
+    // a regex being the wrong instrument.
+    //
+    // So the array initialisers are EXECUTED. Any literal form JavaScript
+    // accepts — single, double, backtick, a concatenation — yields the same
+    // members the guard itself gets, because it is the same expression. The
+    // `...SHELL_EXTENSIONS` spread is handled by evaluating that array first
+    // and passing it in, rather than relying on both blobs being scanned,
+    // which is how the old version got the spread right by accident.
+    //
+    // Importing the module would still be better and is still unavailable:
+    // it has no exports and calls `process.exit` at import time.
     const src = readFileSync(SCRIPT, 'utf8');
-    const stripComments = (t: string) =>
-      t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
-    const shell = /const SHELL_EXTENSIONS = \[([^\]]*)\]/.exec(src);
-    const rest = /const EXTENSIONS = \[([\s\S]*?)\n\];/.exec(src);
+    const shell = /const SHELL_EXTENSIONS = (\[[^\]]*\])/.exec(src);
+    const rest = /const EXTENSIONS = (\[[\s\S]*?\n\])/.exec(src);
     expect(shell, 'SHELL_EXTENSIONS should be locatable').not.toBeNull();
     expect(rest, 'EXTENSIONS should be locatable').not.toBeNull();
-    const pick = (blob: string) =>
-      [...blob.matchAll(/'\.([A-Za-z0-9]+)'/g)].map((m) => m[1]);
-    const production = new Set([
-      ...pick(stripComments(shell![1])),
-      ...pick(stripComments(rest![1])),
-    ]);
+    const evalArray = (literal: string, shellExts: string[] = []): string[] =>
+      // eslint-disable-next-line no-new-func
+      new Function('SHELL_EXTENSIONS', `return ${literal};`)(
+        shellExts,
+      ) as string[];
+    const shellExts = evalArray(shell![1]);
+    const allExts = evalArray(rest![1], shellExts);
+    const production = new Set(
+      [...shellExts, ...allExts].map((e) => e.replace(/^\./, '')),
+    );
     const covered = new Set(WALK_HELPER_FAMILIES.map(([e]) => e));
     const missing = [...production].filter((e) => !covered.has(e)).sort();
     const extra = [...covered].filter((e) => !production.has(e)).sort();
@@ -12945,15 +12989,15 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
   // stops one being FREE, since the family then sits under a title asserting
   // a consequence nobody checked. Treating that as verification would be the
   // same mistake, one level up.
-  const RUNNABLE = WALK_HELPER_FAMILIES.filter(([, , , runs]) => runs);
-  const DISCOVERY_ONLY = WALK_HELPER_FAMILIES.filter(([, , , runs]) => !runs);
+  const RUNNABLE = WALK_HELPER_FAMILIES.filter(([, , , c]) => c === 'runs');
+  const INERT = WALK_HELPER_FAMILIES.filter(([, , , c]) => c === 'inert');
+  const UNKNOWN = WALK_HELPER_FAMILIES.filter(([, , , c]) => c === 'unknown');
 
-  it('both consequence classes are populated (#2123 partition guard)', () => {
-    // Without this, declaring every row `false` would empty the silent-pass
+  it('the consequence partition covers every family and is not degenerate (#2123 partition guard)', () => {
+    // Without this, declaring every row `inert` would empty the silent-pass
     // pin and leave the suite green while claiming nothing at all.
     expect(RUNNABLE.length).toBeGreaterThan(0);
-    expect(DISCOVERY_ONLY.length).toBeGreaterThan(0);
-    expect(RUNNABLE.length + DISCOVERY_ONLY.length).toBe(
+    expect(RUNNABLE.length + INERT.length + UNKNOWN.length).toBe(
       WALK_HELPER_FAMILIES.length,
     );
   });
@@ -12961,9 +13005,8 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
   // AN EXPLICIT TIMEOUT, because each of these spawns the guard once per
   // family and vitest's default is 5 s (r4). Measured near 1.1 s here, but a
   // loaded runner reproduced a timeout — and a timeout in THIS test reads as
-  // a deploy-guard regression rather than as a slow machine, which is the
-  // expensive way to find out. Splitting by consequence roughly halves each
-  // one; the budget covers the rest.
+  // a deploy-guard regression rather than a slow machine, which is the
+  // expensive way to find out.
   const FAMILY_TIMEOUT_MS = 60_000;
 
   it('every family something STILL RUNS is skipped by the walk (#2123, stated false green)', () => {
@@ -12979,11 +13022,30 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
   }, FAMILY_TIMEOUT_MS);
 
   it('every family nothing runs is skipped too — discovery only (#2123)', () => {
-    // NOT titled as a wrong verdict, deliberately: nothing runs these under
-    // that name, so the bypass is a DISCOVERY BLIND SPOT and not a deployment
-    // slipping through. Pinned because the gate is shared and a file the
-    // sweep never opens is invisible for every purpose.
-    for (const [ext, body, dir] of DISCOVERY_ONLY) {
+    // NOT titled as a wrong verdict: `node D.JS` exits on the unknown
+    // extension and the workflow engine matches only the lower-case
+    // suffixes, so nothing runs these under that name and the bypass is a
+    // DISCOVERY BLIND SPOT rather than a deployment slipping through.
+    for (const [ext, body, dir] of INERT) {
+      const r = runFamilyAlone(`${dir}/D.${ext.toUpperCase()}`, body);
+      expect(r.ok, `.${ext.toUpperCase()} should be bypassed by the walk`).toBe(
+        true,
+      );
+    }
+  }, FAMILY_TIMEOUT_MS);
+
+  it('families whose consequence is UNDETERMINED are skipped too — discovery only (#2123)', () => {
+    // A THIRD STATE, because a boolean could not hold it (r6). These two were
+    // filed under "nothing runs them", which their own fixture note and the
+    // release note both contradict: their body is inert, so the LOWER-CASE
+    // report is #2119's false report, and no fixture can show a genuinely
+    // actionable file of this format bypassed while value-by-value reading is
+    // itself the defect. So whether the bypass could ever hide a real
+    // deployment here is OPEN — not answered, and now not silently answered
+    // by a field with only two positions.
+    //
+    // The discovery fact still holds and is what this pins.
+    for (const [ext, body, dir] of UNKNOWN) {
       const r = runFamilyAlone(`${dir}/D.${ext.toUpperCase()}`, body);
       expect(r.ok, `.${ext.toUpperCase()} should be bypassed by the walk`).toBe(
         true,
