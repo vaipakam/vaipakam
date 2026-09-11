@@ -123,7 +123,10 @@ the transaction simulated cleanly, and the receipt's wording deliberately
 covers both outcomes. The check now reads which settlement the protocol
 would actually perform and compares it against the one the card is
 displaying, so being told you will receive one thing and receiving
-another is caught.
+another is caught. Only where the card actually commits to one of the two
+outcomes: a card that describes neither is not making the promise this
+comparison exists to check, and reporting it as unchecked would claim a
+gap that was never there.
 
 The comparison runs in both directions. A card that withholds the action
 and blames the protocol — saying the deadline has not passed, or that the

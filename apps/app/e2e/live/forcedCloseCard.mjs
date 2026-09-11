@@ -2770,17 +2770,42 @@ export function forcedCloseVerdict(obs, copy) {
   }
   // The same window rule as the refusal arm below: a route that changed
   // while the card was being observed cannot be matched to the render.
+  //
+  // SELF-REVIEW — THE THIRD ARM OF THIS FAMILY, on the same two counts
+  // its siblings were corrected on. Read as a matrix, the three arms
+  // judging a painted route are the bracket agreeing, the bracket going
+  // unread, and the bracket disagreeing; the first two traverse
+  // `routeRenders` and require a render to have actually COMMITTED to a
+  // route, and this one did neither.
+  //
+  // It read `actionOffered` — the SETTLED snapshot — so a card promising
+  // a route on an earlier pressable render and then withdrawing the
+  // action fell through to a pass with the route unpaired, which is
+  // round 70's finding and its own sweep for the third time in one file.
+  //
+  // And it fired with no promise painted at all, where both siblings
+  // deliberately do not: a card painting neither route is not making the
+  // claim this probe exists to check, and blocking it reports a gap in
+  // coverage that was never there. That is the over-blocking direction,
+  // which is quieter than a false FAIL and still wrong.
   if (
     obs.internalMatch !== undefined &&
     obs.internalMatchBefore !== undefined &&
-    obs.internalMatch !== obs.internalMatchBefore &&
-    actionOffered
+    obs.internalMatch !== obs.internalMatchBefore
   ) {
-    return {
-      verdict: 'blocked',
-      blockedKind: 'incomplete',
-      why: 'the settlement route the protocol would take changed while the card was being observed — the route it painted cannot be matched to a chain answer taken at the same moment',
-    };
+    const promised = routeRenders.some(
+      (r) =>
+        r.offered &&
+        paintedIn(r.visibleText, copy?.internalMatchReadyCopy) !==
+          paintedIn(r.visibleText, copy?.inKindReadyCopy),
+    );
+    if (promised) {
+      return {
+        verdict: 'blocked',
+        blockedKind: 'incomplete',
+        why: 'the settlement route the protocol would take changed while the card was being observed — the route it painted cannot be matched to a chain answer taken at the same moment',
+      };
+    }
   }
 
   // ROUND 55 P2 — AND THE WINDOW HAS TO HAVE BEEN QUIET.

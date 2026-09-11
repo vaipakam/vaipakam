@@ -5168,6 +5168,71 @@ describe('round 64 P2 — the settlement route the card promises', () => {
     );
     expect(v.verdict).not.toBe('fail');
   });
+
+  // SELF-REVIEW — the THIRD arm of this family, brought to the same shape
+  // as the two round-69/70 corrected its siblings to. It read the settled
+  // snapshot, and it fired with no route promise painted at all.
+  describe('the changed-route arm, on the same two counts', () => {
+    it('reports a promise made on an earlier PRESSABLE render', () => {
+      // The card promised in-kind while it could be acted on, then
+      // withdrew the action. The route changed under it, so the promise
+      // cannot be paired with a chain answer — and gating on the settled
+      // snapshot skipped the whole history.
+      const v = forcedCloseVerdict(
+        {
+          ...base,
+          submitDisabled: true,
+          text: FORCED_CLOSE.unknown,
+          bodyText: FORCED_CLOSE.unknown,
+          visibleText: FORCED_CLOSE.unknown,
+          bodyVisibleText: FORCED_CLOSE.unknown,
+          internalMatch: true,
+          internalMatchBefore: false,
+          seenRenders: [
+            {
+              text: FORCED_CLOSE.readyInKind,
+              bodyText: FORCED_CLOSE.readyInKind,
+              visibleText: FORCED_CLOSE.readyInKind,
+              bodyVisibleText: FORCED_CLOSE.readyInKind,
+              submitVisible: true,
+              submitDisabled: false,
+            },
+          ],
+        },
+        copy,
+      );
+      expect(v.verdict).toBe('blocked');
+      expect(v.blockedKind).toBe('incomplete');
+      expect(v.why).toMatch(/changed while the card was being observed/);
+    });
+
+    it('does NOT block a card that painted neither route', () => {
+      // Both siblings decline this case in so many words: a card making
+      // no route promise is not making the claim the probe checks, and
+      // blocking it reports a gap in coverage that was never there.
+      const rental = {
+        ...base,
+        text: FORCED_CLOSE.readyRental,
+        bodyText: FORCED_CLOSE.readyRental,
+        visibleText: FORCED_CLOSE.readyRental,
+        bodyVisibleText: FORCED_CLOSE.readyRental,
+        internalMatch: true,
+        internalMatchBefore: false,
+      };
+      expect(forcedCloseVerdict(rental, copy).why ?? '').not.toMatch(
+        /changed while the card was being observed/,
+      );
+    });
+
+    it('still reports a promise on the settled render', () => {
+      const v = forcedCloseVerdict(
+        { ...inKind, internalMatch: false, internalMatchBefore: true },
+        copy,
+      );
+      expect(v.verdict).toBe('blocked');
+      expect(v.why).toMatch(/changed while the card was being observed/);
+    });
+  });
 });
 
 describe('round 65 review findings', () => {
