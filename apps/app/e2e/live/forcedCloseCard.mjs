@@ -2258,6 +2258,80 @@ export function forcedCloseVerdict(obs, copy) {
       why: 'the card renders a READY route and offers the action, but simulating that exact transaction against the protocol shows it would be refused — the lender would pay a network fee for a call that cannot succeed',
     };
   }
+  // Does the card PAINT this sentence? Shared by the two arms below,
+  // and declared ahead of both so neither sits in its temporal dead
+  // zone — which is how the first version of the round-65 arm was
+  // written, and would have thrown on the first card that reached it.
+  const paints = (sentence) =>
+    typeof sentence === 'string' &&
+    sentence !== '' &&
+    (obs.bodyVisibleText ?? obs.bodyText ?? obs.visibleText ?? obs.text ?? '').includes(sentence);
+
+  // ROUND 65 P2 — CAN THE LENDER BACK OUT?
+  //
+  // The confirmation is a pre-signature panel, and Back is the one
+  // control on it whose whole job is to let the lender NOT spend money.
+  // Its trial result was swallowed, so a Back button permanently covered
+  // or carrying `pointer-events: none` left the receipt and the confirm
+  // action scanning clean and the card passing — while the only way out
+  // of the panel was to leave the page.
+  //
+  // `observed`, unlike the two protocol arms: this is read off the page,
+  // not inferred from a disagreement with a chain read.
+  //
+  // `=== false` and `present === true`, so a record predating the field
+  // and a panel whose Back could not be located both say nothing rather
+  // than manufacturing a finding. `null` — trialled-not-established — is
+  // likewise not a defect.
+  if (obs.backAction?.present === true && obs.backAction.clickable === false) {
+    return {
+      verdict: 'fail',
+      failKind: 'observed',
+      why: 'the confirmation renders a Back control the lender cannot activate — the only way out of a pre-signature panel is to leave the page',
+    };
+  }
+
+  // ROUND 65 P2 — AND THE REVERSE DIRECTION, which nothing checked.
+  //
+  // The arm above catches a card offering an action the protocol would
+  // refuse. Its mirror is a card that WITHHOLDS the action and states a
+  // refusal the protocol does not make: `not-yet`, `blocked-paused`,
+  // `blocked-sequencer` or `blocked-no-consent` rendered with no submit
+  // while both ends of the bracket say the close-out would succeed.
+  //
+  // Nothing reported that. `readyOffered` is false, so the arm above
+  // does nothing; the recognition arm then passes the card as correctly
+  // withheld. The lender is denied a close-out the protocol accepts and
+  // is told a reason that is not true — and if any other visited
+  // position supplied the confirmation scan, the whole run exits clean.
+  //
+  // ONLY THE FOUR REFUSAL COPIES. `unknown` asserts nothing, and
+  // `readyNeedsRoute` is a claim about the app's ability to route rather
+  // than about the protocol's answer — a close-out that simulates with
+  // empty calldata makes neither of those a false statement. Widening
+  // this to every withheld sentence would accuse a card that is telling
+  // the truth, which is the direction that gets a check switched off.
+  //
+  // `inferred` and BOTH ENDS OF THE BRACKET, exactly as its mirror: a
+  // page-versus-protocol disagreement whose commonest cause is a
+  // deployment on another chain, and a window that must have been quiet
+  // before the disagreement means anything.
+  if (
+    !actionOffered &&
+    Array.isArray(copy?.refusalStateCopy) &&
+    obs.defaultable === true &&
+    obs.defaultableBefore === true
+  ) {
+    const claimed = copy.refusalStateCopy.find((sentence) => paints(sentence));
+    if (claimed) {
+      return {
+        verdict: 'fail',
+        failKind: 'inferred',
+        why: `the card withholds the action and states a refusal ("${claimed}"), but simulating that exact transaction against the protocol shows it would succeed — the lender is denied a close-out the protocol accepts, and given a reason that is not the protocol's`,
+      };
+    }
+  }
+
   // ROUND 64 P2 — AND WHICH SETTLEMENT IT WOULD PERFORM, not only that
   // it would succeed.
   //
@@ -2285,10 +2359,6 @@ export function forcedCloseVerdict(obs, copy) {
     obs.internalMatch !== undefined &&
     obs.internalMatchBefore !== undefined &&
     obs.internalMatch === obs.internalMatchBefore;
-  const paints = (sentence) =>
-    typeof sentence === 'string' &&
-    sentence !== '' &&
-    (obs.bodyVisibleText ?? obs.bodyText ?? obs.visibleText ?? obs.text ?? '').includes(sentence);
   if (matchKnown && actionOffered) {
     const paintsMatch = paints(copy?.internalMatchReadyCopy);
     const paintsInKind = paints(copy?.inKindReadyCopy);

@@ -591,6 +591,22 @@ const FORCED_CLOSE_COPY = (() => {
     // starts lying.
     internalMatchReadyCopy: need(fc.readyInternalMatch, 'readyInternalMatch'),
     inKindReadyCopy: need(fc.readyInKind, 'readyInKind'),
+    // ROUND 65 P2 — the copies that assert the PROTOCOL REFUSES, as
+    // distinct from the ones that assert the app does not yet know or
+    // cannot drive a settlement.
+    //
+    // Deliberately NOT every withheld sentence. `unknown` asserts
+    // nothing, and `readyNeedsRoute` is a claim about the app's ability
+    // to route rather than about the protocol's answer — a close-out
+    // that simulates with empty calldata does not make either of those
+    // a false statement. Only these four say the close-out is refused,
+    // and only they can be contradicted by the protocol accepting it.
+    refusalStateCopy: [
+      need(fc.notYet, 'notYet'),
+      need(fc.blockedPaused, 'blockedPaused'),
+      need(fc.blockedSequencer, 'blockedSequencer'),
+      need(fc.blockedNoConsent, 'blockedNoConsent'),
+    ],
   };
 })();
 /**
@@ -1470,8 +1486,30 @@ const pageRpcChain = new Map();
  * produces.
  */
 const CHAIN_PROBE_TIMEOUT_MS = 15_000;
-function notePageRpcEndpoint(url, calls) {
-  if (pageRpcChain.has(url) || !callsTargetContract(calls, DIAMOND)) return;
+function notePageRpcEndpoint(url, calls, rawBody) {
+  // ROUND 65 P2 — THE SAME TWO TESTS `markDiamond` USES, not one of them.
+  //
+  // `callsTargetContract` reads the `to` of the shapes it knows, and
+  // viem batches contract reads through multicall3 — so on the COMMON
+  // path the `to` is the aggregator and the Diamond appears only inside
+  // the encoded calldata. `markDiamond` has carried both tests since the
+  // day attribution-by-`to` marked nothing on a live run; this one kept
+  // only the weaker half.
+  //
+  // The consequence is the dangerous direction. Such an endpoint is
+  // admitted to the height set and its heads are trusted for absence
+  // confirmation, while it is never chain-probed — so if it serves
+  // another chain and does not volunteer `eth_chainId`, the wrong-chain
+  // gate cannot downgrade the resulting missing-card FAIL and the drive
+  // exits 1 against a product that did nothing wrong.
+  //
+  // Twelfth instance on this PR of one of several parallel sites being
+  // left behind, and the second where the two sites are a few hundred
+  // lines apart with the same job.
+  const hex = String(DIAMOND).replace(/^0x/, '').toLowerCase();
+  const mentionsDiamond =
+    typeof rawBody === 'string' && rawBody.toLowerCase().includes(hex);
+  if (pageRpcChain.has(url) || !(mentionsDiamond || callsTargetContract(calls, DIAMOND))) return;
   pageRpcChain.set(
     url,
     (async () => {
@@ -1664,7 +1702,10 @@ const routeHandler = async (route) => {
     // serve the deployment it is being reviewed against? Only knowable
     // from its own traffic — see `pageRpcChain`.
     const pageCalls = rpcCallsFromBody(req.postData());
-    if (pageCalls) notePageRpcEndpoint(req.url(), pageCalls);
+    // The RAW body travels with the parsed calls: the Diamond can appear
+    // only inside multicall3 calldata, which no parse of the JSON-RPC
+    // envelope surfaces (round 65 P2).
+    if (pageCalls) notePageRpcEndpoint(req.url(), pageCalls, req.postData());
     recordRpcResponse(
       {
         status: resp.status,
@@ -3860,6 +3901,38 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
           // predicate stays honest if something ever is.
           const flow = getComputedStyle(node).position;
           const inFlow = flow === 'static' || flow === 'relative';
+          // ROUND 65 P2 — WHICH ancestors clip an out-of-flow box, rather than
+          // none of them.
+          //
+          // The exemption below was written to avoid a containing-block
+          // question, and avoiding it cost the whole rule: `inFlow` is computed
+          // once, so for any absolute or fixed node the walk skipped EVERY
+          // ancestor intersection test. An absolutely positioned body, receipt
+          // leaf or action inside a positioned `overflow: hidden` box — which IS
+          // its containing block and definitively clips it — carried fully
+          // clipped readiness copy or funds disclosures into a passing verdict.
+          //
+          // The question is answerable, and narrowly. An absolutely positioned
+          // box is clipped by an `overflow` ancestor only from its CONTAINING
+          // BLOCK upwards; ancestors between it and that block do not clip it.
+          // So the walk skips until it reaches the containing block and applies
+          // the rule from there — including to the containing block itself,
+          // which clips its own padding box.
+          //
+          // Read from the properties that define it rather than guessed: for
+          // `absolute`, the nearest ancestor that is positioned or that
+          // establishes a containing block by `transform`, `filter`,
+          // `perspective` or paint/layout `contain`; for `fixed`, only the
+          // latter group, since a merely positioned ancestor does not capture a
+          // fixed box. Anything this cannot decide leaves the ancestor skipped,
+          // so the residual stays a missed defect rather than an invented one.
+          const establishesCB = (cs) =>
+            cs.transform !== 'none' ||
+            cs.perspective !== 'none' ||
+            cs.filter !== 'none' ||
+            /\b(paint|layout|strict|content)\b/.test(cs.contain || '') ||
+            /\btransform\b/.test(cs.willChange || '');
+          let reachedCB = inFlow;
           const r = node.getBoundingClientRect();
           // TRUNCATED TEXT IS CONDEMNED, DELIBERATELY, and this note exists so
           // it is not "fixed" later as a false positive. `text-overflow:
@@ -3995,7 +4068,16 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
             // right back out again for a positioned leaf, so `position: absolute;
             // height: 1px; overflow: hidden` still passed. The fix for the skipped
             // box, skipping the same box.
-            if (!inFlow && n !== node) continue;
+            // ROUND 65 P2 — skip only UP TO the containing block, then apply the
+            // rule. `n !== node` keeps round 45's correction: an element always
+            // clips its OWN text, whatever its `position`.
+            if (!reachedCB && n !== node) {{
+              if (flow === 'fixed' ? establishesCB(cs) : cs.position !== 'static' || establishesCB(cs)) {{
+                reachedCB = true;
+              }} else {{
+                continue;
+              }}
+            }}
             const scrollsY =
               (cs.overflowY === 'auto' || cs.overflowY === 'scroll') &&
               n.scrollHeight > n.clientHeight;
@@ -4869,6 +4951,8 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
   let confirmText = null;
   /** The same panel, with the unpainted parts left out (round 64 P2). */
   let confirmVisibleText = null;
+  /** The confirmation's Back control: can the lender cancel? (round 65 P2) */
+  let backAction;
   // ROUND 45 P2 — the confirmation's OWN action, observed and never
   // clicked. Declared here rather than inside the branch so the final
   // projection can carry it whether or not the panel opened.
@@ -5031,6 +5115,38 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
               // predicate stays honest if something ever is.
               const flow = getComputedStyle(node).position;
               const inFlow = flow === 'static' || flow === 'relative';
+              // ROUND 65 P2 — WHICH ancestors clip an out-of-flow box, rather than
+              // none of them.
+              //
+              // The exemption below was written to avoid a containing-block
+              // question, and avoiding it cost the whole rule: `inFlow` is computed
+              // once, so for any absolute or fixed node the walk skipped EVERY
+              // ancestor intersection test. An absolutely positioned body, receipt
+              // leaf or action inside a positioned `overflow: hidden` box — which IS
+              // its containing block and definitively clips it — carried fully
+              // clipped readiness copy or funds disclosures into a passing verdict.
+              //
+              // The question is answerable, and narrowly. An absolutely positioned
+              // box is clipped by an `overflow` ancestor only from its CONTAINING
+              // BLOCK upwards; ancestors between it and that block do not clip it.
+              // So the walk skips until it reaches the containing block and applies
+              // the rule from there — including to the containing block itself,
+              // which clips its own padding box.
+              //
+              // Read from the properties that define it rather than guessed: for
+              // `absolute`, the nearest ancestor that is positioned or that
+              // establishes a containing block by `transform`, `filter`,
+              // `perspective` or paint/layout `contain`; for `fixed`, only the
+              // latter group, since a merely positioned ancestor does not capture a
+              // fixed box. Anything this cannot decide leaves the ancestor skipped,
+              // so the residual stays a missed defect rather than an invented one.
+              const establishesCB = (cs) =>
+                cs.transform !== 'none' ||
+                cs.perspective !== 'none' ||
+                cs.filter !== 'none' ||
+                /\b(paint|layout|strict|content)\b/.test(cs.contain || '') ||
+                /\btransform\b/.test(cs.willChange || '');
+              let reachedCB = inFlow;
               const r = node.getBoundingClientRect();
               // TRUNCATED TEXT IS CONDEMNED, DELIBERATELY, and this note exists so
               // it is not "fixed" later as a false positive. `text-overflow:
@@ -5166,7 +5282,16 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
                 // right back out again for a positioned leaf, so `position: absolute;
                 // height: 1px; overflow: hidden` still passed. The fix for the skipped
                 // box, skipping the same box.
-                if (!inFlow && n !== node) continue;
+                // ROUND 65 P2 — skip only UP TO the containing block, then apply the
+                // rule. `n !== node` keeps round 45's correction: an element always
+                // clips its OWN text, whatever its `position`.
+                if (!reachedCB && n !== node) {{
+                  if (flow === 'fixed' ? establishesCB(cs) : cs.position !== 'static' || establishesCB(cs)) {{
+                    reachedCB = true;
+                  }} else {{
+                    continue;
+                  }}
+                }}
                 const scrollsY =
                   (cs.overflowY === 'auto' || cs.overflowY === 'scroll') &&
                   n.scrollHeight > n.clientHeight;
@@ -5829,6 +5954,40 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
             confirmAction.clickable = null;
           }
         }
+        // ROUND 65 P2 — AND WHETHER THE LENDER CAN CANCEL.
+        //
+        // This click's failure was swallowed whole and recorded nothing,
+        // so a Back control that is permanently covered or carries
+        // `pointer-events: none` left the receipt and the confirm action
+        // scanning clean — and the verdict passed a confirmation the
+        // lender cannot back out of without leaving the page. On a
+        // pre-signature panel that is the one control whose whole job is
+        // to let them not spend money.
+        //
+        // TRIALLED, not inferred from the real click. The real click is
+        // needed anyway to restore the page, but its failure is
+        // ambiguous: a panel that closed on its own re-render fails it
+        // exactly as an unreachable control does. `trial: true` runs the
+        // full actionability suite — visible, stable, receives events,
+        // enabled — without dispatching, and is taken while the panel is
+        // demonstrably still open.
+        //
+        // THREE OUTCOMES, ALL WRITTEN, the same discipline
+        // `confirmAction.clickable` carries since round 47: `true` /
+        // `false` are the trial's verdict and `null` is "this run did not
+        // establish it". `undefined` has to keep meaning "a record
+        // predating this field", so the current run must never produce
+        // it.
+        backAction = {
+          present: await back.count().then((n) => n > 0).catch(() => false),
+          clickable: null,
+        };
+        if (backAction.present) {
+          backAction.clickable = await back
+            .click({ trial: true, timeout: 3_000 })
+            .then(() => true)
+            .catch(() => false);
+        }
         // Leave the page as it was found. Failing to close it is not a
         // finding and must not fail the drive.
         await back.click({ timeout: 3_000 }).catch(() => {});
@@ -5844,6 +6003,8 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
     confirmText,
     confirmVisibleText,
     confirmAction,
+    // ROUND 65 P2 — the CANCEL control, judged like the confirm one.
+    backAction,
     confirmExpected,
     // ROUND 50 P2 — whether the OUTER submit could take a click. Carried
     // so an unreachable control is reported as the defect it is rather

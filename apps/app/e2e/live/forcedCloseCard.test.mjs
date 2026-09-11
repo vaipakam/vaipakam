@@ -5169,3 +5169,161 @@ describe('round 64 P2 — the settlement route the card promises', () => {
     expect(v.verdict).not.toBe('fail');
   });
 });
+
+describe('round 65 review findings', () => {
+  const ROWS = {
+    standard: Object.values(FORCED_CLOSE.receipt),
+    rental: Object.values(FORCED_CLOSE.rentalReceipt),
+  };
+  const copy = {
+    unknownCopy: FORCED_CLOSE.unknown,
+    readyCopy: [FORCED_CLOSE.readyInKind, FORCED_CLOSE.readyInternalMatch, FORCED_CLOSE.readyRental],
+    withheldCopy: [FORCED_CLOSE.unknown, FORCED_CLOSE.notYet, FORCED_CLOSE.readyNeedsRoute],
+    recognisedCopy: [
+      FORCED_CLOSE.unknown,
+      FORCED_CLOSE.notYet,
+      FORCED_CLOSE.blockedPaused,
+      FORCED_CLOSE.blockedSequencer,
+      FORCED_CLOSE.blockedNoConsent,
+      FORCED_CLOSE.readyInKind,
+      FORCED_CLOSE.readyInternalMatch,
+      FORCED_CLOSE.readyRental,
+      FORCED_CLOSE.readyNeedsRoute,
+    ],
+    receiptLeads: [FORCED_CLOSE.receipt.youReceive, FORCED_CLOSE.rentalReceipt.youReceive],
+    receiptRowSets: ROWS,
+    rentalReadyCopy: FORCED_CLOSE.readyRental,
+    internalMatchReadyCopy: FORCED_CLOSE.readyInternalMatch,
+    inKindReadyCopy: FORCED_CLOSE.readyInKind,
+    refusalStateCopy: [
+      FORCED_CLOSE.notYet,
+      FORCED_CLOSE.blockedPaused,
+      FORCED_CLOSE.blockedSequencer,
+      FORCED_CLOSE.blockedNoConsent,
+    ],
+  };
+  const withheld = (sentence) => ({
+    lenderHoldsActive: true,
+    mounted: true,
+    attached: true,
+    submitPresent: true,
+    submitVisible: true,
+    submitDisabled: true,
+    visibleSubmits: 1,
+    visibleCards: 1,
+    saleLocked: false,
+    settled: true,
+    bodyPresent: true,
+    bodyVisible: true,
+    confirmExpected: false,
+    confirmText: null,
+    text: sentence,
+    bodyText: sentence,
+    visibleText: sentence,
+    bodyVisibleText: sentence,
+  });
+
+  // A CARD THAT WITHHOLDS AND BLAMES THE PROTOCOL. The ready-route arm
+  // is one-way — `readyOffered` is false here, so it did nothing, and
+  // the recognition arm then passed the card as correctly withheld. The
+  // lender is denied a close-out the protocol accepts and given a reason
+  // that is not the protocol's.
+  describe('a refusal the protocol does not make', () => {
+    for (const key of ['notYet', 'blockedPaused', 'blockedSequencer', 'blockedNoConsent']) {
+      it(`reports "${key}" when the simulation says the call would succeed`, () => {
+        const v = forcedCloseVerdict(
+          { ...withheld(FORCED_CLOSE[key]), defaultable: true, defaultableBefore: true },
+          copy,
+        );
+        expect(v.verdict).toBe('fail');
+        expect(v.failKind).toBe('inferred');
+        expect(v.why).toMatch(/denied a close-out the protocol accepts/);
+      });
+    }
+
+    it('says nothing when the protocol agrees the call would fail', () => {
+      const v = forcedCloseVerdict(
+        { ...withheld(FORCED_CLOSE.notYet), defaultable: false, defaultableBefore: false },
+        copy,
+      );
+      expect(v.verdict).not.toBe('fail');
+    });
+
+    it('says nothing when the window was not quiet', () => {
+      const v = forcedCloseVerdict(
+        { ...withheld(FORCED_CLOSE.notYet), defaultable: true, defaultableBefore: false },
+        copy,
+      );
+      expect(v.verdict).not.toBe('fail');
+    });
+
+    it('does NOT judge copy that claims no protocol refusal', () => {
+      // `unknown` asserts nothing and `readyNeedsRoute` is a claim about
+      // the app's ability to route, not about the protocol's answer. A
+      // close-out that simulates with empty calldata makes neither a
+      // false statement, and accusing them would be the false-FAIL
+      // direction.
+      for (const sentence of [FORCED_CLOSE.unknown, FORCED_CLOSE.readyNeedsRoute]) {
+        const v = forcedCloseVerdict(
+          { ...withheld(sentence), defaultable: true, defaultableBefore: true },
+          copy,
+        );
+        expect(v.why ?? '').not.toMatch(/denied a close-out the protocol accepts/);
+      }
+    });
+
+    it('judges the claim from PAINTED copy', () => {
+      // A refusal erased in the DOM was never made to the lender.
+      const v = forcedCloseVerdict(
+        {
+          ...withheld(FORCED_CLOSE.notYet),
+          visibleText: FORCED_CLOSE.unknown,
+          bodyVisibleText: FORCED_CLOSE.unknown,
+          defaultable: true,
+          defaultableBefore: true,
+        },
+        copy,
+      );
+      expect(v.why ?? '').not.toMatch(/denied a close-out the protocol accepts/);
+    });
+  });
+
+  // THE CANCEL CONTROL. A pre-signature panel whose Back button cannot be
+  // activated leaves the lender no way out but to leave the page.
+  describe('the confirmation’s Back control', () => {
+    const base = {
+      ...withheld(FORCED_CLOSE.readyInKind),
+      submitDisabled: false,
+      defaultable: true,
+      defaultableBefore: true,
+    };
+
+    it('reports a Back control that cannot be activated', () => {
+      const v = forcedCloseVerdict(
+        { ...base, backAction: { present: true, clickable: false } },
+        copy,
+      );
+      expect(v.verdict).toBe('fail');
+      expect(v.failKind).toBe('observed');
+      expect(v.why).toMatch(/Back control the lender cannot activate/);
+    });
+
+    it('says nothing when it was trialled and works', () => {
+      const v = forcedCloseVerdict(
+        { ...base, backAction: { present: true, clickable: true } },
+        copy,
+      );
+      expect(v.why ?? '').not.toMatch(/Back control/);
+    });
+
+    it('says nothing when the run did not establish it', () => {
+      // `null` is "not tested" and `undefined` is "a record predating the
+      // field". Neither is a defect, and collapsing either into one would
+      // invent a finding out of a re-render.
+      for (const backAction of [{ present: true, clickable: null }, undefined]) {
+        const v = forcedCloseVerdict({ ...base, backAction }, copy);
+        expect(v.why ?? '').not.toMatch(/Back control/);
+      }
+    });
+  });
+});

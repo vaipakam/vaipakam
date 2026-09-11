@@ -131,6 +131,22 @@ test('both copies of the drive visibility predicate agree, and reject clipped co
     </div>
     <p id="filterPartial" style="filter: opacity(0.4)">faint on purpose, still readable</p>
     <p id="filterOther" style="filter: brightness(0)">black, but painted</p>
+    <!-- ROUND 65 P2 — which ancestors clip an OUT-OF-FLOW box. -->
+    <div id="posClipper" style="position:relative; height:20px; overflow:hidden; width:200px; font:16px/20px monospace">
+      <p id="absClipped" style="position:absolute; top:60px; margin:0">a fee row pushed outside its containing block</p>
+      <!-- Short enough to fit ONE line in a 200px monospace box. The
+           first version of this fixture used a long sentence, which wrapped
+           to two lines and was then correctly rejected by the per-line
+           rule — a fixture failing for a reason that had nothing to do
+           with the rule under test. -->
+      <p id="absInside" style="position:absolute; top:0; margin:0">Fees 2%</p>
+    </div>
+    <div id="staticClipper" style="height:20px; overflow:hidden; width:200px; font:16px/20px monospace">
+      <p id="absUnderStatic" style="position:absolute; top:60px; margin:0">not clipped by a STATIC ancestor — it is not the containing block</p>
+    </div>
+    <div id="fixedHost" style="position:relative; height:20px; overflow:hidden; width:200px; font:16px/20px monospace">
+      <p id="fixedUnderPositioned" style="position:fixed; top:300px; left:10px; margin:0">a fixed box is not captured by a merely positioned ancestor</p>
+    </div>
   `);
 
   for (const [i, predicate] of predicates.entries()) {
@@ -166,6 +182,11 @@ test('both copies of the drive visibility predicate agree, and reject clipped co
           // question. An element clipping its OWN text is not uncertain
           // at all, whatever its `position` is.
           selfClippedAbs: visible(byId('selfClippedAbs')),
+          // ROUND 65 P2.
+          absClipped: visible(byId('absClipped')),
+          absInside: visible(byId('absInside')),
+          absUnderStatic: visible(byId('absUnderStatic')),
+          fixedUnderPositioned: visible(byId('fixedUnderPositioned')),
           plain: visible(byId('plain')),
           scrolledOut: visible(byId('scrolledOut')),
           // ROUND 48 — `clip-path` hides the CONTENT and leaves every
@@ -243,6 +264,30 @@ test('both copies of the drive visibility predicate agree, and reject clipped co
     // screen. Leaves are checked individually anyway.
     expect(result.cardish, `copy ${i}: a container whose last row is clipped`).toBe(true);
     expect(result.selfClipped, `copy ${i}: a dd clipping its own text`).toBe(false);
+    // ROUND 65 P2 — WHICH ancestors clip an OUT-OF-FLOW box.
+    //
+    // `inFlow` was computed once from the observed node, so every
+    // ancestor intersection test was skipped for any absolute or fixed
+    // node — an absolutely positioned receipt leaf inside a positioned
+    // `overflow: hidden` box carried fully clipped funds copy into a
+    // passing verdict. The exemption existed to avoid a containing-block
+    // question; the answer is narrow enough to give.
+    //
+    // These four are the whole rule, and the last two are what keep it
+    // from over-reaching into a false FAIL.
+    expect(
+      result.absClipped,
+      `copy ${i}: absolute, pushed outside its own containing block`,
+    ).toBe(false);
+    expect(result.absInside, `copy ${i}: absolute, inside its containing block`).toBe(true);
+    expect(
+      result.absUnderStatic,
+      `copy ${i}: a STATIC overflow ancestor is not an absolute box's containing block`,
+    ).toBe(true);
+    expect(
+      result.fixedUnderPositioned,
+      `copy ${i}: a merely positioned ancestor does not capture a FIXED box`,
+    ).toBe(true);
     expect(
       result.selfClippedAbs,
       `copy ${i}: a POSITIONED dd clipping its own text`,

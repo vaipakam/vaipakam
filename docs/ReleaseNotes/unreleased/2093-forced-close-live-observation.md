@@ -114,6 +114,22 @@ would actually perform and compares it against the one the card is
 displaying, so being told you will receive one thing and receiving
 another is caught.
 
+The comparison runs in both directions. A card that withholds the action
+and blames the protocol — saying the deadline has not passed, or that the
+protocol is paused — while the protocol would in fact accept the
+close-out is now reported too. That reading was previously one-way, so a
+lender could be denied a close-out they were entitled to and shown a
+reason that was not true, and the run would still pass. The check is
+careful about which wordings it judges: only the ones that assert the
+protocol refuses, never the ones that say the app does not yet know or
+cannot arrange a settlement, because those can be perfectly true at the
+same moment.
+
+The confirmation's Back button is checked as well. It is the one control
+on a pre-signature panel whose whole purpose is to let the lender decide
+not to spend money, and a Back button that cannot be activated leaves
+leaving the page as the only way out.
+
 ### Timing, and what the check keeps
 
 The card passes through intermediate states on the way to its settled
