@@ -71,11 +71,12 @@ No behaviour change. The check's logic is what it was.
   **Twelve assert a silent pass** — the direction this check must never fail in:
   a build file variable holding a write is not seen when its assignment sits
   below the deployment; a recipe marked by something other than a tab is not
-  read as a recipe; a helper whose deployment follows an unrelated line ending
-  in a backslash is read as one command, so a safety flag belonging to the
-  earlier line covers the deployment (pinned four times — two shells, each in a
-  standalone helper and in a workflow body, because the fold is in the shared
-  splitter and a fix scoped to any one of them leaves the rest live); a script declared in a package manifest is never
+  read as a recipe; a deployment that follows an unrelated line ending in a
+  backslash is read as one command with it, so a safety flag belonging to the
+  earlier line covers the deployment (pinned four times — two Windows shells,
+  each in a standalone helper and in a continuous-integration step, because the
+  fold is in the shared line splitter and a fix scoped to any one of them
+  leaves the rest live); a script declared in a package manifest is never
   split at its newlines, so a flag on one of its lines covers a deployment on
   another; a variable whose name differs only in case is not resolved, though
   the shell in question resolves it, so the deployment's directory reads as
@@ -150,7 +151,7 @@ not its siblings. One record per defect, named from the others.
 | **#2106** | a build file's prerequisites are ordered as written, not as they run |
 | **#2108** | a step naming another interpreter has its body read as shell |
 | **#2104** | a deployment written as a single-line workflow step whose configuration cannot be read is not reported |
-| **#2115** | a Windows helper spelling the command in upper or mixed case is not seen (lowercase and title case are) — and the spelling that IS covered is matched inside a block the shell never executes, *pinned (false report)* as the trade any widening of that rule grows |
+| **#2115** | a Windows-shell body spelling the command in upper or mixed case is not seen (lowercase and title case are) — and the spelling that IS covered is matched inside a block the shell never executes, *pinned (false report)* in both a standalone helper and a continuous-integration step, as the trade any widening of that rule grows |
 | **#2117** | the PowerShell assignment rewrite has no string state, so an assignment inside a here-string can invent a deployment |
 | **#2116** | a manifest script that invokes a sibling does not see that sibling's config write |
 | **#2121** | a script declared in a package manifest is never split at its newlines, so a safety flag on one line covers a deployment on another — *pinned (silent pass)*; the mirror of #2118 |

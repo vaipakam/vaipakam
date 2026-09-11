@@ -12209,11 +12209,17 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     // all — two file kinds times two shells — because the fold is in the
     // shared splitter and a fix scoped to any one of the four would leave the
     // other three live.
+    //
+    // `runs-on: windows-latest`, NOT ubuntu: `shell: cmd` on a Linux runner
+    // has no command processor, so the job would fail before reaching the
+    // deploy and the guard's silence would not be a false green for anything
+    // executable (r29). A pin whose scenario cannot run pins nothing — the
+    // other cmd workflow fixtures in this file already use windows-latest.
     seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
     seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
     const r = runWith(
       '.github/workflows/d.yml',
-      'name: d\non: push\njobs:\n  d:\n    runs-on: ubuntu-latest\n    steps:\n      - run: |\n' +
+      'name: d\non: push\njobs:\n  d:\n    runs-on: windows-latest\n    steps:\n      - run: |\n' +
         '          cd apps/agent\n          echo --keep-vars \\\n          wrangler deploy\n' +
         '        shell: cmd\n',
     );
