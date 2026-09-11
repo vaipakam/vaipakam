@@ -438,3 +438,136 @@ test('a receipt row with a blank label is not a readable row', async ({ page }) 
     'the empty label still passes the visibility predicate — which is why the text rule is needed',
   ).toBe(true);
 });
+
+// ROUND 61 P2 — THE BODY'S EXPLANATION, ONE LEVEL DOWN.
+//
+// `visible(body)` cannot answer "can the lender read this", and
+// `paintsText` says why in its own comment: only elements carrying their
+// OWN text are judged, because `color` inherits and condemning a wrapper
+// whose children set their own colour would be a false FAIL on the very
+// card the run exists to vouch for.
+//
+// So an explanation wrapped in a child — ordinary markup — is exempt
+// from the colour test; the opacity and filter walk only climbs to
+// ANCESTORS; and `notClipped` looks at the body and above. Erase the
+// CHILD and every one of those still passes while `innerText` keeps
+// yielding the sentence. That is round 21's heading-only surface
+// reached one level down, and it would pass a card whose explanation
+// the lender never sees.
+//
+// Three erasures, because they are three independent mechanisms and the
+// predicate has been caught carrying a fix in only one of them twice
+// (rounds 29 and 51).
+test('an explanation erased inside the body is not a visible body', async ({ page }) => {
+  const src = fs.readFileSync(DRIVE, 'utf8');
+  const clipSrc = arrowBlocks(src, 'notClipped')[0];
+  const paintSrc = arrowBlocks(src, 'paintsText')[0];
+  const visSrc = arrowBlocks(src, 'visible')[0];
+  const leafSrc = arrowBlocks(src, 'textLeavesOf', 'root')[0];
+
+  // One definition, like `rowShown`. If it is ever duplicated this test
+  // is exercising whichever copy came first — the split-predicate shape
+  // rounds 29 and 51 were both about.
+  expect(arrowBlocks(src, 'textLeavesOf', 'root')).toHaveLength(1);
+
+  await page.setContent(`
+    <style>
+      .card { padding: 16px; }
+      .body { font-size: .9rem; }
+      .transparent { color: transparent; }
+      .erased { filter: opacity(0); }
+      /* IN FLOW, deliberately. An absolutely-positioned child leaves the
+         wrapper zero-height, so the wrapper fails on geometry and the
+         leaf rule is never reached — the first version of this fixture
+         did that and proved nothing about the hole it names. */
+      .clipped { clip-path: inset(50%); }
+      .srOnly { position: absolute; width: 1px; height: 1px; clip-path: inset(50%); overflow: hidden; }
+    </style>
+    <div class="card">
+      <div class="body" id="plain"><p>This loan can be closed out now.</p></div>
+      <div class="body" id="ownText">This loan can be closed out now.</div>
+      <div class="body" id="transparent"><p class="transparent">This loan can be closed out now.</p></div>
+      <div class="body" id="erased"><p class="erased">This loan can be closed out now.</p></div>
+      <div class="body" id="clipped"><p class="clipped">This loan can be closed out now.</p></div>
+      <div class="body" id="empty"></div>
+      <div class="body" id="withSrOnly">
+        <span class="srOnly">Forced close-out</span>
+        <p>This loan can be closed out now.</p>
+      </div>
+    </div>
+  `);
+
+  const result = await page.evaluate(
+    ([clip, paint, vis, leaf]) => {
+      const scope = new Function(
+        `${clip}\n${paint}\n${vis}\n${leaf}\nreturn { visible, textLeavesOf };`,
+      )() as {
+        visible: (n: Element | null) => boolean;
+        textLeavesOf: (r: Element | null) => Element[];
+      };
+      const byId = (id: string) => document.getElementById(id)!;
+      // EXACTLY the expression the drive assigns to `bodyVisible`.
+      const bodyVisible = (b: Element | null) => {
+        const leaves = scope.textLeavesOf(b);
+        return scope.visible(b) && (leaves.length === 0 || leaves.some(scope.visible));
+      };
+      return {
+        plain: bodyVisible(byId('plain')),
+        ownText: bodyVisible(byId('ownText')),
+        transparent: bodyVisible(byId('transparent')),
+        erased: bodyVisible(byId('erased')),
+        clipped: bodyVisible(byId('clipped')),
+        empty: bodyVisible(byId('empty')),
+        // The LEAF RULE's own answer for the empty body, separated from
+        // the predicate's. See the assertion for why the split matters.
+        emptyLeafRule: (() => {
+          const leaves = scope.textLeavesOf(byId('empty'));
+          return leaves.length === 0 || leaves.some(scope.visible);
+        })(),
+        withSrOnly: bodyVisible(byId('withSrOnly')),
+        // The hole itself, recorded rather than assumed: each wrapper
+        // still passes the predicate on its own. If one of these ever
+        // reads false the leaf rule is no longer what is being tested.
+        wrapperLooksVisible: {
+          transparent: scope.visible(byId('transparent')),
+          erased: scope.visible(byId('erased')),
+          clipped: scope.visible(byId('clipped')),
+        },
+        // The body's DOM text survives every erasure, which is what made
+        // the wrong answer look right.
+        textStillReadable: (byId('transparent') as HTMLElement).innerText.trim().length > 0,
+      };
+    },
+    [clipSrc, paintSrc, visSrc, leafSrc] as const,
+  );
+
+  expect(result.plain, 'a readable explanation in a child').toBe(true);
+  expect(result.ownText, 'a readable explanation as the body’s own text').toBe(true);
+  expect(result.transparent, 'an explanation painted in nothing').toBe(false);
+  expect(result.erased, 'an explanation under a zero-opacity filter').toBe(false);
+  expect(result.clipped, 'an explanation clipped away').toBe(false);
+  // AN EMPTY BODY, and this assertion was written the other way round
+  // and failed — which is the useful outcome, because the reasoning
+  // behind it was wrong in a way worth keeping.
+  //
+  // The worry was that the leaf rule would newly condemn an empty body
+  // as "not visible" when the verdict has its own, more accurate arm for
+  // one that rendered nothing. It cannot: an empty body has a zero-height
+  // rect, so `visible` has ALWAYS returned false for it and the verdict
+  // has always reached that arm the same way. The guard is still right
+  // to be there — it is what keeps the leaf rule from becoming a SECOND
+  // route to the same mis-naming if the body ever has height without
+  // text — and this pair of assertions is what says so: the predicate
+  // rejects it, the leaf rule does not.
+  expect(result.empty, 'an empty body is rejected — by geometry').toBe(false);
+  expect(result.emptyLeafRule, 'not by the leaf rule, which abstains').toBe(true);
+  // `some`, not `every`: a screen-reader-only span is correct,
+  // accessible markup and is clipped by design. `every` would fail a
+  // card for having one, which is the false-FAIL direction.
+  expect(result.withSrOnly, 'a readable explanation beside an sr-only span').toBe(true);
+
+  expect(result.wrapperLooksVisible.transparent).toBe(true);
+  expect(result.wrapperLooksVisible.erased).toBe(true);
+  expect(result.wrapperLooksVisible.clipped).toBe(true);
+  expect(result.textStillReadable).toBe(true);
+});

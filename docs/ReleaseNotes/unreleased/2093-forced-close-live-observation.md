@@ -690,3 +690,24 @@ Finally, four places in the check each wrote out by hand the same
 fourteen-field record meaning "nothing was established here", and one of
 them had quietly lost a field the other three carried. They now share a
 single definition, so a field added in future reaches all of them.
+
+A further correction in the same area. The check already refused to pass
+a card whose explanation was hidden — that rule was added precisely to
+stop a heading-only card being mistaken for an explained one. But it
+asked the question of the explanation's container rather than of the
+words themselves, and the rules it applies are deliberately lenient
+towards containers: judging a wrapper by its text colour would condemn
+perfectly readable cards whose inner elements set their own. The result
+was that an explanation made transparent, erased, or clipped one level
+inside the container left every check satisfied while the text was still
+readable in the page's underlying markup — so a lender who saw only a
+heading would have been recorded as having seen the reason too.
+
+The check now also requires that at least one piece of the explanation's
+actual text be visible. It asks for one rather than all of them, because
+text placed off-screen for screen-reader users is correct and deliberate,
+and demanding that everything be visible would fail cards for being
+accessible. The remaining gap is stated plainly: an explanation split
+into two parts where only one is erased still passes. As everywhere else
+in this check, the error it can make is missing a fault, never inventing
+one.

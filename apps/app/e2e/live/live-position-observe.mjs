@@ -4146,6 +4146,48 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
         if (shown.length === 0) return { hiddenNow: true };
         const el = shown[0];
         const body = el.querySelector('[data-testid="forced-close-body"]');
+        // ROUND 61 P2 — THE BODY'S TEXT-BEARING LEAVES, not the wrapper.
+        //
+        // `visible(body)` alone cannot answer "can the lender read the
+        // explanation", and `paintsText` says why in its own comment:
+        // only elements carrying their OWN text are judged, because
+        // `color` inherits and condemning a wrapper whose children set
+        // their own colour would be a false FAIL. So a body that wraps
+        // its sentence in a child — ordinary markup — is EXEMPT from the
+        // colour test, the opacity/filter walk only climbs to ancestors,
+        // and `notClipped` looks at the body and above. Erase the CHILD
+        // and every one of them still passes, while `innerText` keeps
+        // yielding the sentence: the heading-only surface round 21 added
+        // `bodyVisible` to catch, reached one level down.
+        //
+        // The receipt pass and the submit labels have judged leaves
+        // since rounds 44 and 46. This is the same rule at the third
+        // site — seventh instance on this PR of a fix applied to one of
+        // several parallel sites.
+        //
+        // `some`, NOT `every`, and the difference is the whole safety
+        // margin. A screen-reader-only span is ordinary, accessible,
+        // correct markup and is clipped by design; `every` would fail
+        // the card for having one. The residual is stated rather than
+        // hidden: a body with two text leaves where only one is erased
+        // still passes here. That is the missed-defect direction, which
+        // is the one this file always takes.
+        //
+        // An EMPTY body has no leaves and must not be caught here — the
+        // verdict has its own arm for a body that rendered nothing, and
+        // reporting it as invisible would name the wrong defect.
+        // NAMED, so the fixture suite can extract and exercise it the
+        // way it does `rowShown` — the rule is the thing under test and
+        // a copy of it written into the test would prove nothing.
+        const textLeavesOf = (root) => {
+          if (root === null) return [];
+          return [root, ...root.querySelectorAll('*')].filter((n) =>
+            [...n.childNodes].some(
+              (c) => c.nodeType === 3 && c.textContent.trim() !== '',
+            ),
+          );
+        };
+        const textLeaves = textLeavesOf(body);
         // ROUND 26 P2 — EVERY SUBMIT CONTROL, not whichever is first.
         //
         // `querySelector` described control number one and nothing else.
@@ -4200,7 +4242,10 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
           // explained one. Presence, text and visibility are three
           // different facts about the body and the verdict needs all
           // three.
-          bodyVisible: visible(body),
+          //
+          // ROUND 61 P2 — and its text-bearing leaves, see `textLeaves`.
+          bodyVisible:
+            visible(body) && (textLeaves.length === 0 || textLeaves.some(visible)),
           bodyText: body === null ? null : body.innerText,
           submitPresent: submits.length > 0,
           submitVisible: shownSubmits.length > 0,
