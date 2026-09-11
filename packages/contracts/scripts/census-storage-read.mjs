@@ -445,8 +445,12 @@ export const DIAMOND_CUT_SELECTOR = '0x1f931c1c';
  * PAIR inside a returned window is undetectable by any test over logs and is
  * the stated residual. Pure; exported for the test.
  */
-export function cutHistoryCompleteness({ verdict, cuts, constructorCutSeen, addresses, loupe, cutFacetHost }) {
+export function cutHistoryCompleteness({ verdict, cuts, constructorCutSeen, addresses, loupe, cutFacetHost, loupeReadFailed = false }) {
   const reasons = [];
+  // #2095 r17 P1 — a loupe that answered the selector probe but not facets()
+  // (a rate-limited replica) leaves the current facet set unknown: that is an
+  // incomplete population, never a skipped check
+  if (loupeReadFailed) reasons.push('the loupe routes facets() but the call failed, so the current facet set could not be checked against the history');
   if (verdict !== 'read' || !cuts) reasons.push(`the cut history was ${verdict === 'read' ? 'empty' : verdict}`);
   // VaipakamDiamond's constructor emits ONE DiamondCut with an EMPTY cut array
   // and installs the diamondCut selector by writing storage directly
@@ -477,4 +481,25 @@ export function downgradeStorageOnlyProofs(classes, reason) {
     out[name] = c.status === 'proven' && STORAGE_ONLY_PROOFS.has(c.provenBy) ? { ...c, status: 'indeterminate', provenBy: undefined, indeterminateReason: reason } : c;
   }
   return out;
+}
+
+/**
+ * #2095 r17 P1 — an address the CUT HISTORY names (a facet or an initializer)
+ * with empty code at the census block is unreadable, not "never wrote":
+ * `LibDiamond.addFacet` checks extcodesize, so the cut proves the facet had
+ * code, and EIP-6780 still lets a contract created and self-destructed in
+ * one transaction vanish — a transient facet can be cut in, invoked, removed
+ * and destroyed within one transaction. Only an address named by a RECORD
+ * alone and never seen cut may count as never having written. Pure.
+ */
+export function refuseUnreadableCutSources(attribution) {
+  const keep = [];
+  for (const n of attribution.noCode) {
+    if (n.sources.some((x) => x.startsWith('cut-history'))) {
+      attribution.unattributed.push({ address: n.address, codeHash: null, sources: n.sources, note: n.sources.includes('cut-history:initializer') ? 'initializer delegatecalled by a cut, its code unreadable at the census block' : 'facet the cut history names, its code unreadable at the census block (a cut proves it had code)' });
+    } else keep.push(n);
+  }
+  attribution.noCode = keep;
+  if (attribution.unattributed.length) attribution.verdict = 'unattributed';
+  return attribution;
 }

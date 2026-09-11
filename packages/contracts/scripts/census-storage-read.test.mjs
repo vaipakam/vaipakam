@@ -1,7 +1,7 @@
 // census-storage-read.test.mjs — the era-complete storage read's rules (#1566 §7/§7a), over fake readers.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { prepareStorageRead, readCountersByStorage, scanRowsByStorage, intentVerdictFromStorage, eraSlotsExcept, mergeHistoricalRows, aliasOf, classifyEarlierCounters, markAliasedRows, splitByHeadSlot, getterAgreement, downgradeWithoutEraRead, attributeCounters, attributeFacetCode, downgradeProvenClasses, downgradeStorageOnlyProofs, requireHexData, cutHistoryCompleteness, ROW } from './census-storage-read.mjs';
+import { prepareStorageRead, readCountersByStorage, scanRowsByStorage, intentVerdictFromStorage, eraSlotsExcept, mergeHistoricalRows, aliasOf, classifyEarlierCounters, markAliasedRows, splitByHeadSlot, getterAgreement, downgradeWithoutEraRead, attributeCounters, attributeFacetCode, downgradeProvenClasses, downgradeStorageOnlyProofs, requireHexData, cutHistoryCompleteness, refuseUnreadableCutSources, ROW } from './census-storage-read.mjs';
 import { memberSlot, rowSlot } from './storage-slots.mjs';
 
 const H = (n) => '0x' + n.toString(16).padStart(64, '0');
@@ -316,6 +316,13 @@ test('the facet population is exhaustive only with a read history that holds the
   assert.match(cutHistoryCompleteness({ verdict: 'read', cuts: 2, constructorCutSeen: false, addresses: ['0xa'], loupe: ['0xa'] }).reasons.join(' '), /constructor's empty DiamondCut/);
   assert.match(cutHistoryCompleteness({ verdict: 'read', cuts: 2, constructorCutSeen: true, addresses: ['0xa'], loupe: ['0xa', '0xc'] }).reasons.join(' '), /1 facet\(s\) the loupe routes today never appear/);
   assert.equal(cutHistoryCompleteness({ verdict: 'read', cuts: 1, constructorCutSeen: true, addresses: [], loupe: null }).complete, true, 'a shell with no loupe: the history alone decides');
+  assert.match(cutHistoryCompleteness({ verdict: 'read', cuts: 1, constructorCutSeen: true, addresses: [], loupe: null, loupeReadFailed: true }).reasons.join(' '), /facets\(\) but the call failed/, 'a loupe that failed to answer is an incomplete population (#2095 r17)');
+  // an address the cut history names with empty code is unreadable, not "never wrote"; a record-only one may be
+  const att = { attributed: [], unattributed: [], noCode: [{ address: '0x1', sources: ['cut-history'] }, { address: '0x2', sources: ['record:live'] }, { address: '0x3', sources: ['cut-history:initializer'] }], verdict: 'attributed' };
+  refuseUnreadableCutSources(att);
+  assert.deepEqual(att.noCode.map((x) => x.address), ['0x2']);
+  assert.deepEqual(att.unattributed.map((x) => [x.address, /initializer/.test(x.note)]), [['0x1', false], ['0x3', true]]);
+  assert.equal(att.verdict, 'unattributed');
   // routed standard: a storage-only proof still falls on a provenance refusal; a routed proof keeps
   const d = downgradeStorageOnlyProofs({ a: { status: 'proven', provenBy: undefined }, b: { status: 'proven', provenBy: 'no-loans-ever-created' }, c: { status: 'proven', provenBy: 'no-loans-ever-created-by-storage' }, e: { status: 'proven', provenBy: 'storage-read-calibrated' } }, 'why');
   assert.deepEqual(Object.fromEntries(Object.entries(d).map(([k, v]) => [k, v.status])), { a: 'proven', b: 'proven', c: 'indeterminate', e: 'indeterminate' });

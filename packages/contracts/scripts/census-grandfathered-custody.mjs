@@ -92,7 +92,7 @@ import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync, rename
 import { readManifest, regenerateEntries, withManifestLock, writeSnapshotGuarded, livePublicationsInProgress, sameEntry } from './archive-manifest.mjs';
 import { loadSlots, loadEras } from './storage-slots.mjs';
 import { commitsAround, deployedAtIso, interpolateTimestamp, CANDIDATES_FILE } from './storage-layout-eras.mjs';
-import { prepareStorageRead, readCountersByStorage, scanRowsByStorage, intentVerdictFromStorage, mergeHistoricalRows, markAliasedRows, splitByHeadSlot, getterAgreement, downgradeWithoutEraRead, attributeCounters, attributeFacetCode, downgradeProvenClasses, downgradeStorageOnlyProofs, STORAGE_ONLY_PROOFS, requireHexData, cutHistoryCompleteness, DIAMOND_CUT_SELECTOR, MAX_STORAGE_LOAN_SCAN } from './census-storage-read.mjs';
+import { prepareStorageRead, readCountersByStorage, scanRowsByStorage, intentVerdictFromStorage, mergeHistoricalRows, markAliasedRows, splitByHeadSlot, getterAgreement, downgradeWithoutEraRead, attributeCounters, attributeFacetCode, downgradeProvenClasses, downgradeStorageOnlyProofs, STORAGE_ONLY_PROOFS, requireHexData, cutHistoryCompleteness, refuseUnreadableCutSources, DIAMOND_CUT_SELECTOR, MAX_STORAGE_LOAN_SCAN } from './census-storage-read.mjs';
 
 /** Sum a row field as a decimal string. A function declaration, so it is hoisted above every branch that returns early (#2095 r1 P2). */
 function sum(rows, field) {
@@ -394,7 +394,35 @@ async function facetsFromCutHistory(client, diamond, fromBlock, toBlock) {
     // the constructor's own DiamondCut carries an EMPTY cut array; it is the
     // first log of a complete history (#2095 r13 P1)
     const ordered = [...logs].sort((a, b) => (BigInt(a.blockNumber ?? 0) === BigInt(b.blockNumber ?? 0) ? Number(a.logIndex ?? 0) - Number(b.logIndex ?? 0) : BigInt(a.blockNumber ?? 0) < BigInt(b.blockNumber ?? 0) ? -1 : 1));
-    const constructorCutSeen = ordered.length > 0 && (ordered[0].args?._diamondCut ?? []).length === 0;
+    // #2095 r17 P1 — the marker is AUTHENTICATED, not inferred from shape alone:
+    // the first log must carry the constructor's exact shape (empty cut, zero
+    // initializer, empty calldata) AND sit in the transaction that created the
+    // Diamond (its receipt names the Diamond as the created contract) or, for a
+    // factory-created Diamond, in the first block the Diamond has code (none at
+    // the block before). A later initializer-only cut has the empty shape but
+    // a non-zero initializer, and a truncated history's first surviving cut is
+    // never the creation.
+    let constructorCutSeen = false;
+    let constructorCutEvidence = null;
+    if (ordered.length) {
+      const first = ordered[0];
+      const shapeOk = (first.args?._diamondCut ?? []).length === 0 && String(first.args?._init ?? ZERO_ADDRESS).toLowerCase() === ZERO_ADDRESS && (first.args?._calldata ?? '0x') === '0x';
+      if (shapeOk) {
+        try {
+          const receipt = first.transactionHash ? await client.getTransactionReceipt({ hash: first.transactionHash }) : null;
+          if (receipt?.contractAddress && receipt.contractAddress.toLowerCase() === diamond.toLowerCase()) { constructorCutSeen = true; constructorCutEvidence = `creation transaction ${first.transactionHash}`; }
+          else {
+            const n = BigInt(first.blockNumber);
+            const before = n > 0n ? requireHexData(await client.request({ method: 'eth_getCode', params: [diamond, `0x${(n - 1n).toString(16)}`] }), 'eth_getCode before') : '0x';
+            const at = requireHexData(await client.request({ method: 'eth_getCode', params: [diamond, `0x${n.toString(16)}`] }), 'eth_getCode at');
+            if (before === '0x' && at !== '0x') { constructorCutSeen = true; constructorCutEvidence = `the Diamond has no code at block ${n - 1n} and code at block ${n} (factory creation)`; }
+            else constructorCutEvidence = `the first surviving cut at block ${n} is not the creation (code already present before it)`;
+          }
+        } catch (err) {
+          constructorCutEvidence = `the creation could not be verified: ${String(err?.shortMessage ?? err?.message ?? err).slice(0, 120)}`;
+        }
+      } else constructorCutEvidence = 'the first surviving cut does not have the constructor\'s shape (empty cut, zero initializer, empty calldata)';
+    }
     // #2095 r15 P1 — a cut's non-zero `_init` was DELEGATECALLED in the
     // Diamond's context and could write any slot: it is a writer like a facet
     // and joins the population under its own source tag
@@ -408,7 +436,7 @@ async function facetsFromCutHistory(client, diamond, fromBlock, toBlock) {
       const init = typeof log.args?._init === 'string' ? log.args._init.toLowerCase() : null;
       if (init && init !== ZERO_ADDRESS) { initializers.add(init); noteBlock(init, log); }
     }
-    return { addresses: [...blocksOf.keys()], initializers: [...initializers], blocksOf, cuts: logs.length, constructorCutSeen, verdict: logs.length ? 'read' : 'empty (proves nothing — a pruned endpoint returns empty)' };
+    return { addresses: [...blocksOf.keys()], initializers: [...initializers], blocksOf, cuts: logs.length, constructorCutSeen, constructorCutEvidence, verdict: logs.length ? 'read' : 'empty (proves nothing — a pruned endpoint returns empty)' };
   } catch (err) {
     return { addresses: [], initializers: [], blocksOf: new Map(), cuts: 0, constructorCutSeen: false, verdict: 'unreadable', reason: String(err?.shortMessage ?? err?.message ?? err).slice(0, 200) };
   }
@@ -486,6 +514,7 @@ async function applyLayoutProvenance(result, { client, censusBlock, atBlock, dia
   const recorded = recordedFacetAddresses(slug, diamond, manifestEntry);
   let loupe = null;
   let cutFacetHost = null;
+  let loupeReadFailed = false;
   if (result.scanned.loupeRouted && readFacets) {
     try {
       const list = await readFacets();
@@ -494,6 +523,7 @@ async function applyLayoutProvenance(result, { client, censusBlock, atBlock, dia
       cutFacetHost = list.find((f) => (f.functionSelectors ?? f[1] ?? []).some((x) => String(x).toLowerCase() === DIAMOND_CUT_SELECTOR))?.facetAddress?.toLowerCase() ?? null;
     } catch (err) {
       loupe = null;
+      loupeReadFailed = true;
       result.scanned.layoutProvenanceLoupeError = String(err?.shortMessage ?? err?.message ?? err).slice(0, 200);
     }
   }
@@ -509,17 +539,10 @@ async function applyLayoutProvenance(result, { client, censusBlock, atBlock, dia
     facets.push({ address, sources: [...sources], codeHash });
   }
   const attribution = attributeFacetCode({ facets, eras: STORAGE_READ.eras });
-  // an initializer whose code is gone (or was never there) CANNOT be
-  // attributed: unlike a facet that never had code, it was delegatecalled,
-  // so "no code now" is not "never wrote" — it is unreadable, and refuses
-  for (const n of [...attribution.noCode]) {
-    if (n.sources.includes('cut-history:initializer')) {
-      attribution.noCode = attribution.noCode.filter((x) => x !== n);
-      attribution.unattributed.push({ address: n.address, codeHash: null, sources: n.sources, note: 'initializer delegatecalled by a cut, its code unreadable at the census block' });
-    }
-  }
-  if (attribution.unattributed.length) attribution.verdict = 'unattributed';
-  const population = cutHistoryCompleteness({ verdict: cut.verdict.split(' ')[0], cuts: cut.cuts, constructorCutSeen: cut.constructorCutSeen, addresses: cut.addresses, loupe, cutFacetHost });
+  // an address the cut history names with empty code now is unreadable, not
+  // "never wrote" (#2095 r15/r17 P1) — see refuseUnreadableCutSources
+  refuseUnreadableCutSources(attribution);
+  const population = cutHistoryCompleteness({ verdict: cut.verdict.split(' ')[0], cuts: cut.cuts, constructorCutSeen: cut.constructorCutSeen, addresses: cut.addresses, loupe, cutFacetHost, loupeReadFailed });
   // For every unattributed facet: the commits around the moments it was cut
   // (block timestamps, hash-pinned by number under the census block) and
   // around the deployedAt of every record that names it — the era tool builds
@@ -581,7 +604,7 @@ async function applyLayoutProvenance(result, { client, censusBlock, atBlock, dia
     attributed: attribution.attributed.map((a) => ({ address: a.address, name: a.name, eras: a.eras.map((e) => e.date), sources: a.sources })),
     unattributed: attribution.unattributed,
     noCode: attribution.noCode,
-    sources: { records: recorded.records, loupe: loupe ? loupe.length : 'unrouted', cutHistory: cut.verdict, cuts: cut.cuts, initializers: cut.initializers.length, cutHistoryError: cut.reason },
+    sources: { records: recorded.records, loupe: loupe ? loupe.length : loupeReadFailed ? 'read failed' : 'unrouted', cutHistory: cut.verdict, cuts: cut.cuts, initializers: cut.initializers.length, constructorCut: cut.constructorCutEvidence, cutHistoryError: cut.reason },
     buildCandidates: candidateList.length ? { proposed: candidateList.length, newInFile: newCandidates, file: 'contracts/deployments/facet-build-candidates.json' } : undefined,
     cutBlocksUnreadable: unreadableBlocks.length ? unreadableBlocks : undefined,
     residual: 'a facet cut in and replaced with no local record and no readable cut history is not seen here; the cut history can only refute',
@@ -2235,12 +2258,20 @@ async function censusDeployment(dep) {
   let intentStorage = null;
   if (!intentSurfaceRouted && !provenByEnumerable && STORAGE_READ.ok) {
     const readSlot = (slot) => withReplicaRetry(atBlock, () => storageAtHash(client, censusBlock, diamond, slot), { client });
-    const scan = await scanRowsByStorage({ readSlot, loanIds, eraSlots: STORAGE_READ.eraSlots, classes: ['liveIntentCommits'] });
-    // #2095 r6 P2 — the same attribution rule as every other counter read
+    // #2095 r6 P2 — the same attribution rule as every other counter read;
+    // #2095 r17 P1 — the id range comes from STORAGE (1..nextLoanId, whose slot
+    // never moved), never from the routed pagination, which a partially
+    // refreshed metrics facet may skip an older loan of
     const { counters, aliased } = attributeCounters(await readCountersByStorage({ readSlot, eraSlots: STORAGE_READ.eraSlots }), STORAGE_READ.headSlots, STORAGE_READ.occupied);
-    intentStorage = { rows: scan.rows.liveIntentCommits, slotsRead: scan.slotsRead + counters.slotsRead, loansScanned: scan.loansScanned, liveCommitCounts: counters.intentLiveCommitCount.map((x) => ({ slot: x.slot, value: x.value.toString(), eras: x.eras })), aliasedCountersIgnored: aliased };
-    intentStorage.verdict = intentVerdictFromStorage(intentStorage);
-    process.stderr.write(`census: ${who} — intent rows read from storage at ${STORAGE_READ.eraSlots.intentCommits.length} era slot(s) for ${loanIds.length} loan(s): ${intentStorage.rows.length} row(s)\n`);
+    const cap = BigInt(MAX_STORAGE_LOAN_SCAN);
+    const n = counters.nextLoanId > cap ? cap : counters.nextLoanId;
+    const ids = Array.from({ length: Number(n) }, (_, i) => BigInt(i + 1));
+    const scan = await scanRowsByStorage({ readSlot, loanIds: ids, eraSlots: STORAGE_READ.eraSlots, classes: ['liveIntentCommits'] });
+    intentStorage = { rows: scan.rows.liveIntentCommits, slotsRead: scan.slotsRead + counters.slotsRead, loansScanned: scan.loansScanned, truncated: counters.nextLoanId > n, nextLoanIdFromStorage: counters.nextLoanId.toString(), liveCommitCounts: counters.intentLiveCommitCount.map((x) => ({ slot: x.slot, value: x.value.toString(), eras: x.eras })), aliasedCountersIgnored: aliased };
+    intentStorage.verdict = intentStorage.truncated
+      ? { status: 'indeterminate', reason: `the intent storage scan was truncated at ${MAX_STORAGE_LOAN_SCAN} ids (nextLoanId=${counters.nextLoanId}); rows beyond it were not read` }
+      : intentVerdictFromStorage(intentStorage);
+    process.stderr.write(`census: ${who} — intent rows read from storage at ${STORAGE_READ.eraSlots.intentCommits.length} era slot(s) for ${ids.length} loan id(s) (1..nextLoanId from storage): ${intentStorage.rows.length} row(s)\n`);
   }
   // #2095 r3 P1 — a routed getter reads TODAY's layout only. Every class is
   // therefore also read at every EARLIER era's slot over the id range the

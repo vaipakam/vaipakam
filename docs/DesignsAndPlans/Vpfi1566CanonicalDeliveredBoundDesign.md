@@ -6315,8 +6315,20 @@ population had not counted: a cut's non-zero initializer is delegatecalled in
 the Diamond's context and can write any slot, so every initializer the cut
 history names joins the population under its own tag and is attributed like a
 facet — and one whose code cannot be read now is unattributable, not
-"never wrote", because it was called. Run 35 re-reads every deployment with
-all of it.
+"never wrote", because it was called. Round 17 hardened the population gate
+on four sides: the constructor's marker is authenticated — the first cut must
+have the constructor's exact shape (empty cut, zero initializer, empty
+calldata) and sit in the transaction that created the Diamond, or in the
+first block the Diamond has code, because a later initializer-only cut has
+the same empty shape and a truncated history's first surviving cut is never
+the creation; a loupe that answered the selector probe but not `facets()` is
+an incomplete population, never a skipped check; any address the cut history
+names with empty code now is unreadable rather than "never wrote" — a cut
+proves the facet had code, and a contract created and destroyed in one
+transaction can still vanish; and the intent-only storage read scans
+`1..nextLoanId` from storage, never the routed pagination, which a partially
+refreshed metrics facet may skip an older loan of. Run 36 re-reads every
+deployment with all of it.
 
 ### 7a. What the provenance walk found, and how the design changes (2026-09-09)
 
