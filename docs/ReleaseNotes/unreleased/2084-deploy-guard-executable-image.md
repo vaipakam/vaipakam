@@ -6,7 +6,7 @@ three ways that question reads text which does not correspond to what runs.
 
 **It fixes none of them, and changes no behaviour at all.** Every attempt was
 withdrawn under review. What lands is the record of why, and tests that pin the
-wrong verdicts that remain — twelve silent passes and nine false reports — so a
+wrong verdicts that remain — twelve silent passes and ten false reports — so a
 later fix announces itself instead of passing unnoticed.
 
 That is worth landing on its own. Two of these designs are the kind a
@@ -64,7 +64,7 @@ No behaviour change. The check's logic is what it was.
 - The reasoning above, recorded beside the code that would have to change, in
   the functional specification, and here — so the next person does not rebuild
   one of these designs without knowing what happened to it.
-- Tests that **assert twenty-one current wrong verdicts across twelve defects**, so
+- Tests that **assert twenty-two current wrong verdicts across twelve defects**, so
   a later fix fails them and comes back to the question rather than passing
   silently.
 
@@ -90,7 +90,7 @@ No behaviour change. The check's logic is what it was.
   them is shared and a fix scoped to one family would satisfy a single
   fixture while leaving every other family bypassed.
 
-  **Nine fail the other way and assert the report**: a runbook sentence naming a
+  **Ten fail the other way and assert the report**: a runbook sentence naming a
   write reports the deployment below it; a package manifest whose description
   merely names the command is reported as performing it, as is an unrelated
   data file of the same format, and as is a list of keywords once the file is
@@ -137,8 +137,8 @@ them — including **ten defects surfaced while correcting this record
 itself**, seven of them silent passes and three false reports — is recorded as its
 own issue with a reproduction and what a fix would have to be true of. All are
 behaviour the check already had, so nothing is made worse. Twelve are
-additionally pinned by tests that assert the current verdict — twenty-one such
-tests in all, twelve asserting a silent pass and nine a false report.
+additionally pinned by tests that assert the current verdict — twenty-two such
+tests in all, twelve asserting a silent pass and ten a false report.
 
 That the correcting itself surfaced more defects than the original work is the
 most useful thing here, and it is not an accident of effort: each correction
@@ -169,7 +169,7 @@ not its siblings. One record per defect, named from the others.
 | **#2108** | a step naming another interpreter has its body read as shell |
 | **#2104** | a deployment written as a single-line workflow step whose configuration cannot be read is not reported |
 | **#2115** | a Windows-shell body spelling the command in upper case, or in a mixed case OTHER than title case, is not seen (lowercase and title case are) — and the spelling that IS covered is matched inside a block the shell never executes, *pinned (false report)* in both a standalone helper and a continuous-integration step, as the trade any widening of that rule grows |
-| **#2117** | the PowerShell path has no string state, so text inside a here-string is read as commands — an assignment there can invent a deployment, and a command named there is reported — *pinned (false report)* |
+| **#2117** | the PowerShell path has no string state, so text inside a here-string is read as commands — *pinned (false report) twice, once per symptom, because they go through different preprocessing and a fix for one can leave the other*: a command named there is reported, and an assignment there is rewritten into a binding that makes a later indirect invocation resolve to a deployment the file never performs |
 | **#2116** | a manifest script that invokes a sibling does not see that sibling's config write |
 | **#2121** | a script declared in a package manifest is never split at its newlines, so a safety flag on one line covers a deployment on another — *pinned (silent pass)*; the mirror of #2118 |
 | **#2122** | a variable whose name differs only in case is not resolved, though that shell resolves it, so the deployment's directory reads as unknown — *pinned (silent pass)* |

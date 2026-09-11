@@ -8954,8 +8954,19 @@ for (const file of walk(REPO_ROOT)) {
   //     `windowsSeparators` states this must not happen and the code does it
   //     anyway; a correction must not preserve the platform-blind behaviour
   //     just because this note calls the exception established. The SEPARATOR
-  //     half is NOT affected: that shell reads either separator the same way
-  //     everywhere, so normalising it asserts nothing (r35).
+  //     half is NOT affected IN THE CASE THAT WAS CHECKED (r35): a path given
+  //     to one of that shell's own commands, such as the directory change,
+  //     reads the same with either separator on every platform, so
+  //     normalising it asserts nothing there.
+  //
+  //     THAT IS NARROWER THAN "the separator half is fine" (r40). The same
+  //     source warns the alternate separator "may not work when used with
+  //     native applications that only expect the native directory separator"
+  //     — and this rewrite also touches path-shaped ARGUMENTS handed to the
+  //     deploy tool itself, which is such an application. Nothing here
+  //     demonstrates that case either way; it is an open question, not a
+  //     cleared one, and a #2126 fix should settle it rather than inherit
+  //     this note's silence as approval.
   //
   //     The casing rule errs BOTH ways:
   //     the spelling it does cover is also matched inside a here-string the

@@ -11880,7 +11880,7 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
   // position moved and the pointer sent readers to unrelated tests (r27).
   //
   // So they pin two things: the shapes that defeated the withdrawn designs,
-  // and TWENTY-ONE WRONG VERDICTS across TWELVE defects, asserted so a later fix
+  // and TWENTY-TWO WRONG VERDICTS across TWELVE defects, asserted so a later fix
   // fails them and comes back to the question instead of passing unnoticed.
   //
   // The direction matters and is not decoration. TWELVE assert a SILENT PASS
@@ -11888,15 +11888,18 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
   // standalone helper and a workflow body, because the fold is in the shared
   // splitter and a fix scoped to any one of the four leaves the others live);
   // #2121, #2122; and #2123 three times (two command-shell families and a
-  // POSIX one, because that gate is shared too) — and NINE fail the opposite
+  // POSIX one, because that gate is shared too) — and TEN fail the opposite
   // way, so their fixtures assert a REPORT: #2112, #2119 four times (manifest,
-  // data file, multi-line list and a COMMENTED-OUT line), #2115 three times
-  // (the casing rewrite in a helper and in a workflow body, and the separator
-  // rewrite), #2117 — an inert here-string read as a command, reached via the
-  // separator rewrite, which was miscounted as a #2115 pin until r39 — and
-  // #2126, the CASING normalisation applied on a runner whose platform makes
-  // the normalised spelling a different program. #2126's separator half was
-  // withdrawn in r35; see the note where those fixtures were. A fixture that pinned the wrong direction would pass
+  // data file, multi-line list and a COMMENTED-OUT line), #2115 TWICE (the
+  // casing rewrite in a helper and in a workflow body — NOT the separator
+  // fixture, which the r39 reattribution moved and this sentence went on
+  // counting in both places until r40), #2117 twice (a command named inside
+  // an inert here-string, reached via the separator rewrite; and an
+  // ASSIGNMENT there, rewritten into a binding that makes a later `& $cmd
+  // deploy` resolve), and #2126, the casing normalisation applied on a runner
+  // whose platform makes the normalised spelling a different program.
+  // #2126's separator half was withdrawn in r35; see the note where those
+  // fixtures were. A fixture that pinned the wrong direction would pass
   // while the guard did the wrong thing.
   //
   // NOT "four different routes" for the #2119 group, which overstated their
@@ -12729,6 +12732,39 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
     const r = runWith('scripts/sep.ps1', "$doc = @'\ncd apps\\agent\nwrangler deploy\n'@\nWrite-Output $doc\n");
     expect(r.ok).toBe(false);
+  });
+
+  it('an inert here-string ASSIGNMENT invents the binding (#2117, stated false report)', () => {
+    // #2117's OTHER SYMPTOM, unpinned until r40. The fixture above covers a
+    // COMMAND named inside a here-string; this covers an ASSIGNMENT there.
+    //
+    // `powershellAssignments` rewrites `$cmd = 'wrangler'` into the ordinary
+    // binding shape without any model of quoting, so an assignment that is
+    // inert data becomes a real binding — and the later `& $cmd deploy`
+    // resolves to a deploy the file never performs. The control differs only
+    // in the here-string's contents and passes, so the report comes from the
+    // invented binding and nothing else.
+    //
+    // Pinned separately because a fix that suppressed command detection
+    // inside here-strings would flip the fixture above and leave this one
+    // reporting: the two symptoms go through different preprocessing.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith(
+      'scripts/a.ps1',
+      "cd apps/agent\n$doc = @'\n$cmd = 'wrangler'\n'@\nWrite-Output $doc\n& $cmd deploy\n",
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('the same helper without the inert assignment passes (#2117 assignment control)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith(
+      'scripts/a.ps1',
+      "cd apps/agent\n$doc = @'\nnothing here\n'@\nWrite-Output $doc\n& $cmd deploy\n",
+    );
+    expect(r.ok).toBe(true);
   });
 
   it('an inert value in a NON-manifest JSON file is reported too (#2119, stated false report)', () => {
