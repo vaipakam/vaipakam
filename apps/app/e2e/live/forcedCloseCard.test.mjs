@@ -3274,6 +3274,145 @@ describe('round 45 review findings', () => {
   });
 });
 
+describe('round 49 review findings', () => {
+  const copy = {
+    unknownCopy: FORCED_CLOSE.unknown,
+    readyCopy: [FORCED_CLOSE.readyInKind, FORCED_CLOSE.readyInternalMatch, FORCED_CLOSE.readyRental],
+    withheldCopy: [FORCED_CLOSE.unknown, FORCED_CLOSE.notYet, FORCED_CLOSE.readyNeedsRoute],
+    recognisedCopy: [
+      FORCED_CLOSE.unknown,
+      FORCED_CLOSE.notYet,
+      FORCED_CLOSE.blockedPaused,
+      FORCED_CLOSE.blockedSequencer,
+      FORCED_CLOSE.blockedNoConsent,
+      FORCED_CLOSE.readyInKind,
+      FORCED_CLOSE.readyInternalMatch,
+      FORCED_CLOSE.readyRental,
+      FORCED_CLOSE.readyNeedsRoute,
+    ],
+    receiptLeads: [FORCED_CLOSE.receipt.youReceive, FORCED_CLOSE.rentalReceipt.youReceive],
+  };
+
+  const opened = {
+    lenderHoldsActive: true,
+    mounted: true,
+    attached: true,
+    submitPresent: true,
+    submitVisible: true,
+    submitDisabled: false,
+    visibleSubmits: 1,
+    visibleCards: 1,
+    saleLocked: false,
+    settled: true,
+    bodyPresent: true,
+    bodyText: FORCED_CLOSE.readyInKind,
+    text: FORCED_CLOSE.readyInKind,
+    confirmExpected: true,
+    confirmText: `${FORCED_CLOSE.receipt.youReceive} …`,
+  };
+  const usable = { present: true, visible: true, enabled: true, labelled: true, count: 1, clickable: true, labelPainted: true };
+
+  describe('a magnitude word after an identifier, spaced', () => {
+    // Round 48 closed the JOINED form (`Loan 1k`) with a boundary test
+    // and the spaced form beside it walked straight through: `after`
+    // begins with whitespace, so the digits end cleanly, and `million`
+    // is neither a ticker nor a lower-case asset unit.
+    it('flags a spaced magnitude', () => {
+      expect(monetaryAmountsIn('Loan 1 million will be returned')).toHaveLength(1);
+      expect(monetaryAmountsIn('Position 2 billion becomes claimable')).toHaveLength(1);
+      expect(monetaryAmountsIn('Loan 3 lakh now')).toHaveLength(1);
+    });
+
+    it('still exempts an identifier followed by ordinary prose', () => {
+      expect(monetaryAmountsIn('Closing out Loan 21 now.')).toEqual([]);
+      expect(monetaryAmountsIn('Loan 21 will be returned')).toEqual([]);
+      expect(monetaryAmountsIn('Position 4 is held.')).toEqual([]);
+    });
+
+    // Inherits `firstWordAfter`'s CLAUSE boundary, so a magnitude word
+    // on the NEXT LINE is prose rather than a suffix — the same rule the
+    // asset-unit test already follows, and the reason round 24 exists.
+    it('does not reach across a line break for the magnitude word', () => {
+      expect(monetaryAmountsIn('Loan 21\nmillion is unrelated prose')).toEqual([]);
+    });
+  });
+
+  describe('structural confirm faults outrank an applicability change', () => {
+    // The pinned chain re-read happens AFTER the DOM pass. A loan going
+    // terminal, a token transferring or a sale being accepted in between
+    // used to discard everything observed about the confirmation.
+    const gone = { ...opened, lenderHoldsActive: false };
+    const sold = { ...opened, saleLocked: true };
+
+    it('reports a missing action on a position that has since gone', () => {
+      const v = forcedCloseVerdict({ ...gone, confirmAction: { ...usable, present: false } }, copy);
+      expect(v.verdict).toBe('fail');
+      expect(v.failKind).toBe('observed');
+      expect(v.why).toMatch(/no confirmation action was rendered/);
+    });
+
+    it('reports two actions on a position that has since sold', () => {
+      const v = forcedCloseVerdict({ ...sold, confirmAction: { ...usable, count: 2 } }, copy);
+      expect(v.verdict).toBe('fail');
+      expect(v.why).toMatch(/2 actions beside Back/);
+    });
+
+    it('reports an unpainted label on a position that has since gone', () => {
+      const v = forcedCloseVerdict(
+        { ...gone, confirmAction: { ...usable, labelPainted: false } },
+        copy,
+      );
+      expect(v.verdict).toBe('fail');
+      expect(v.why).toMatch(/reads as blank/);
+    });
+
+    it('reports an invisible action on a position that has since gone', () => {
+      const v = forcedCloseVerdict({ ...gone, confirmAction: { ...usable, visible: false } }, copy);
+      expect(v.verdict).toBe('fail');
+      expect(v.why).toMatch(/is not visible/);
+    });
+
+    // THE DELIBERATE LIMIT, and the substance of the rule rather than an
+    // omission. A disabled control, or one briefly covered by a
+    // transition overlay, is exactly what a loan terminalising mid-
+    // observation produces — reporting either as a product defect would
+    // be a false FAIL invented out of a race.
+    it('does NOT report a disabled action once the position has gone', () => {
+      const v = forcedCloseVerdict({ ...gone, confirmAction: { ...usable, enabled: false } }, copy);
+      expect(v.verdict).toBe('blocked');
+      expect(v.blockedKind).toBe('inapplicable');
+    });
+
+    it('does NOT report an unclickable action once the position has gone', () => {
+      const v = forcedCloseVerdict({ ...gone, confirmAction: { ...usable, clickable: false } }, copy);
+      expect(v.verdict).toBe('blocked');
+      expect(v.blockedKind).toBe('inapplicable');
+    });
+
+    // …and both still FAIL where nothing changed underneath, so the
+    // limit above is about the race and not about the check.
+    it('still reports a disabled action on a live position', () => {
+      const v = forcedCloseVerdict({ ...opened, confirmAction: { ...usable, enabled: false } }, copy);
+      expect(v.verdict).toBe('fail');
+      expect(v.why).toMatch(/is disabled/);
+    });
+
+    it('still reports an unclickable action on a live position', () => {
+      const v = forcedCloseVerdict({ ...opened, confirmAction: { ...usable, clickable: false } }, copy);
+      expect(v.verdict).toBe('fail');
+      expect(v.why).toMatch(/cannot receive a click/);
+    });
+
+    // A CLEAN reading is still refused on an inapplicable position —
+    // round 9's rule, which this fix preserves rather than replaces.
+    it('still refuses to BANK a clean reading once the position has gone', () => {
+      const v = forcedCloseVerdict({ ...gone, confirmAction: usable }, copy);
+      expect(v.verdict).toBe('blocked');
+      expect(v.blockedKind).toBe('inapplicable');
+    });
+  });
+});
+
 describe('round 46 review findings', () => {
   const copy = {
     unknownCopy: FORCED_CLOSE.unknown,

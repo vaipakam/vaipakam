@@ -92,6 +92,106 @@ function isTicker(word) {
 const IDENTIFIER_LEAD = /\b(loan|position|offer|token|id|no|number|nft|item)\s*$/i;
 
 /**
+ * Words that turn the digits before them into a QUANTITY, whatever word
+ * came first — `Loan 1 million will be returned` names no loan.
+ *
+ * ROUND 49 P2. Round 48 closed the joined form (`Loan 1k`) with a
+ * boundary test and I argued there, correctly, that enumerating suffixes
+ * is the mistake this file keeps making. The spaced form needs the list
+ * anyway, and it is worth being plain about why rather than pretending
+ * this is the same kind of rule: `Loan 21 will be returned` and
+ * `Loan 1 million will be returned` differ ONLY in what the following
+ * word means. No boundary, shape or punctuation test can separate them.
+ * A vocabulary is the only instrument that works here.
+ *
+ * Which means it carries the weakness of every vocabulary in this file,
+ * and it is the SAME weakness as the open ASCII-only duration bug
+ * (#2125): a magnitude word in a locale not listed here walks through.
+ * The app ships twenty locale bundles. Stated here rather than
+ * discovered later, and tracked with its sibling.
+ *
+ * Direction of the residual is deliberate, as everywhere else: a
+ * magnitude this does not know is a MISSED amount, never an invented
+ * one.
+ */
+const MAGNITUDE_WORD =
+  /^(k|m|mm|bn|b|t|thousand|thousands|million|millions|billion|billions|trillion|trillions|lakh|lakhs|crore|crores)$/i;
+
+/**
+ * The confirmation action's faults that NO STATE CHANGE CAN EXPLAIN.
+ *
+ * ROUND 49 P2. These are judged ahead of the applicability exits,
+ * because they are direct lender-visible evidence: a panel that opened
+ * with no action beside Back, or with two, or with one that cannot be
+ * seen or read, is wrong whatever the chain says about the position a
+ * moment later. Discarding them as `inapplicable` throws away the
+ * strongest observation this drive makes.
+ *
+ * WHAT IS DELIBERATELY NOT HERE, and this is the substance of the rule
+ * rather than an omission: `enabled` and `clickable`. A loan going
+ * terminal, a token transferring or a sale being accepted between the
+ * DOM pass and the pinned re-read produces exactly a disabled control,
+ * or one briefly covered by a transition overlay. Reporting either as a
+ * product defect would be a false FAIL invented out of a race, which is
+ * the error this file refuses everywhere else — so they stay below the
+ * applicability exits where a state change can still account for them.
+ *
+ * Each arm returns its own full sentence rather than a fragment: the
+ * two framings differ, and stitching them was how an earlier version
+ * reported an unpainted label as "has no label".
+ *
+ * @param {{count?: number, present?: boolean, visible?: boolean,
+ *          labelled?: boolean, labelPainted?: boolean}|undefined} a
+ * @returns {string|null} the reason to fail, or null
+ */
+function definiteConfirmActionFault(a) {
+  // Absent says nothing: an older record predates the field, and
+  // inventing a finding from silence is the failure mode this file
+  // guards against everywhere else.
+  if (!a) return null;
+  // TWO ACTIONS BESIDE BACK is a finding in itself, and ranked ahead of
+  // the usability tests for the same reason the duplicate-card arm
+  // outranks the content scan: the remaining fields describe the FIRST
+  // control, so a clean reading of it says nothing about the second.
+  // One level in from the duplicate-submit rule and the more dangerous
+  // level — these buttons send the transaction rather than opening a
+  // panel.
+  if (typeof a.count === 'number' && a.count > 1) {
+    return (
+      `the confirmation offers ${a.count} actions beside Back — the receipt ` +
+      'explains one decision while the lender is given more than one way to ' +
+      'pay for it, and this drive inspected only the first'
+    );
+  }
+  const oneClickShort = (what) =>
+    `the confirmation opened but ${what} — the lender is left one click short of the action the card offered`;
+  if (!a.present) return oneClickShort('no confirmation action was rendered beside Back');
+  if (!a.visible) return oneClickShort('its confirmation action is not visible');
+  if (!a.labelled) return oneClickShort('its confirmation action has no label');
+  // `labelled` reads `innerText`, which yields every word whatever its
+  // colour, and the button's own visibility check cannot cover this:
+  // `paintsText` exempts a node with no own text, and a button that
+  // wraps its label in a span — the usual way to write one — is that
+  // node. Round 37 fixed this for the receipt's leaves and not for the
+  // button beside them.
+  //
+  // Its own arm rather than folding into `labelled`, because the two are
+  // different defects and the lender's experience of them differs: an
+  // unlabelled button is a blank control, an unpainted one is a control
+  // that is not there at all until it is hovered.
+  //
+  // `=== false`, so a record predating the field says nothing.
+  if (a.labelPainted === false) {
+    return (
+      'the confirmation action carries a label in the markup but none of it is ' +
+      'painted — the lender is asked to confirm a forced close-out on a control ' +
+      'that reads as blank'
+    );
+  }
+  return null;
+}
+
+/**
  * Glyphs that stand in for an ASSET the way a ticker does — `Ξ` for
  * ether, `Ƀ` for bitcoin, `Ð` for doge, `◎` for sol.
  *
@@ -524,11 +624,25 @@ export function monetaryAmountsIn(text) {
     // punctuation, whitespace and end-of-text all read as a boundary, so
     // `Loan 21.` and `Loan 21` keep their exemption.
     const endsCleanly = !/^\p{L}/u.test(String(after));
+    // ROUND 49 P2 — AND THE SPACED FORM OF THE SAME THING.
+    //
+    // `Loan 1 million will be returned` cleared round 48's boundary test
+    // the moment it was written: `after` begins with whitespace, so the
+    // digits "end cleanly", and `million` is neither a ticker nor a
+    // lower-case asset unit. The joined form was closed and the spaced
+    // form beside it was not — one fix, two shapes, which is the
+    // recurring miss on this PR.
+    //
+    // Reuses `firstWordAfter`, so it inherits the CLAUSE boundary: a
+    // magnitude word on the next line is prose, not a suffix, exactly as
+    // the asset-unit test already treats it.
+    const spacedMagnitude = MAGNITUDE_WORD.test(firstWordAfter);
     if (
       !trailingTicker &&
       !hugsCurrency &&
       !trailingGlyph &&
       !trailingLower &&
+      !spacedMagnitude &&
       integral &&
       endsCleanly
     ) {
@@ -1346,6 +1460,31 @@ export function forcedCloseVerdict(obs, copy) {
     };
   }
 
+  // ROUND 49 P2 — THE CONFIRMATION'S STRUCTURAL FAULTS BELONG UP HERE.
+  //
+  // Round 9 settled the principle — "definite content failures are
+  // preserved above; what is refused here is BANKING a clean reading" —
+  // and applied it to the CONTENT checks only. The confirm-action arms
+  // were written later and landed below the applicability exits, so a
+  // panel observed with no action beside Back, or two of them, or one
+  // that is invisible or unreadable, was discarded as `inapplicable`
+  // whenever the pinned re-read happened to find the loan terminal, the
+  // token transferred, or a sale accepted. Direct lender-visible
+  // evidence, thrown away because of what the chain said afterwards.
+  //
+  // Only the faults NO STATE CHANGE CAN EXPLAIN are hoisted. That
+  // distinction is the whole content of this fix and it is deliberate:
+  // a disabled control and a control that cannot take a click are
+  // exactly what a loan terminalising mid-observation produces, and
+  // reporting either as a product defect would be a false FAIL invented
+  // out of a race — the error this file refuses everywhere else. Those
+  // two stay below, where an applicability change can still explain
+  // them away.
+  const structuralFault = definiteConfirmActionFault(obs.confirmAction);
+  if (structuralFault) {
+    return { verdict: 'fail', failKind: 'observed', why: structuralFault };
+  }
+
   // ---- 2. Was this position one the assertion could apply to? ------
   if (!obs.lenderHoldsActive) {
     return {
@@ -1616,55 +1755,16 @@ export function forcedCloseVerdict(obs, copy) {
   // this field is a record whose confirmation opened.
   if (obs.confirmAction) {
     const a = obs.confirmAction;
-    // ROUND 46 P2 — TWO ACTIONS BESIDE BACK is a finding in itself, and
-    // ranked ahead of the usability tests below for the same reason the
-    // duplicate-card arm outranks the content scan: the fields describe
-    // the FIRST control, so a clean reading of it says nothing about the
-    // second. One level in from the duplicate-submit rule and the more
-    // dangerous level — these buttons send the transaction rather than
-    // opening a panel.
-    if (typeof a.count === 'number' && a.count > 1) {
+    // ROUND 49 P2 — the STRUCTURAL faults have already been judged, above
+    // the applicability exits. What is left here is the pair a state
+    // change can legitimately explain, which is why they stay below.
+    //
+    // ROUND 46 P2 — A DISABLED CONTROL.
+    if (!a.enabled) {
       return {
         verdict: 'fail',
         failKind: 'observed',
-        why: `the confirmation offers ${a.count} actions beside Back — the receipt explains one decision while the lender is given more than one way to pay for it, and this drive inspected only the first`,
-      };
-    }
-    if (!a.present || !a.visible || !a.enabled || !a.labelled) {
-      const why = !a.present
-        ? 'no confirmation action was rendered beside Back'
-        : !a.visible
-          ? 'its confirmation action is not visible'
-          : !a.labelled
-            ? 'its confirmation action has no label'
-            : 'its confirmation action is disabled';
-      return {
-        verdict: 'fail',
-        failKind: 'observed',
-        why: `the confirmation opened but ${why} — the lender is left one click short of the action the card offered`,
-      };
-    }
-    // SELF-REVIEW AFTER ROUND 46 — AND THE LABEL MUST BE PAINTED.
-    //
-    // `labelled` reads `innerText`, which yields every word whatever its
-    // colour, and the button's own visibility check cannot cover this:
-    // `paintsText` exempts a node with no own text, and a button that
-    // wraps its label in a span — the usual way to write one — is that
-    // node. So `color: transparent` on the label left every field above
-    // true on a control the lender reads as blank. Round 37 fixed this
-    // for the receipt's leaves and not for the button beside them.
-    //
-    // Its own arm rather than folding into `labelled`, because the two
-    // are different defects and the lender's experience of them differs:
-    // an unlabelled button is a blank control, an unpainted one is a
-    // control that is not there at all until it is hovered.
-    //
-    // `=== false`, so a record predating the field says nothing.
-    if (a.labelPainted === false) {
-      return {
-        verdict: 'fail',
-        failKind: 'observed',
-        why: 'the confirmation action carries a label in the markup but none of it is painted — the lender is asked to confirm a forced close-out on a control that reads as blank',
+        why: 'the confirmation opened but its confirmation action is disabled — the lender is left one click short of the action the card offered',
       };
     }
     // ROUND 46 P2 — AND IT MUST BE ABLE TO RECEIVE THE CLICK.

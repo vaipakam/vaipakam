@@ -358,3 +358,29 @@ the worse direction would have reported a correctly absent card as a
 regression — a false alarm produced by timing rather than by anything on
 the page. The readings already in progress are now allowed to finish
 before that record is read.
+
+Two more from the following round. The rule that stops a number being
+read as an amount when it follows a word like "loan" had been closed
+against "Loan 1k" and was still open against "Loan 1 million" — the same
+mistake with a space in it. Closing the spaced form needs the check to
+know which words are magnitudes, which is a vocabulary, and vocabularies
+in this check have a known weakness: a word in a language nobody listed
+walks through. That limitation is now written down next to the list and
+tracked alongside the existing one, rather than left to be discovered.
+
+The other is about what the check throws away. It re-reads the loan's
+state from the chain after looking at the page, and if the loan has
+since ended, the token has moved, or a sale has been accepted, it treats
+the whole visit as no longer applicable. That is right for a clean
+reading — a page observed in a state that has already passed proves
+nothing — but it was also discarding faults that had genuinely been seen:
+a confirmation that opened with no button beside Back, or with two, or
+with one that cannot be seen or read. None of those can be explained by
+the loan changing a moment later, and they are now reported regardless.
+
+The line is drawn deliberately and narrowly. A button that is disabled,
+or that briefly cannot be clicked, is exactly what a loan ending
+mid-observation looks like, so those two stay where a state change can
+still account for them. Reporting them would mean accusing the product
+of something that was really a matter of timing, which this check is
+built specifically not to do.
