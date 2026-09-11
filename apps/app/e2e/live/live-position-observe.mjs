@@ -3043,6 +3043,13 @@ async function observeForcedClose(page, loan) {
   };
 }
 
+/**
+ * Returned when the DOM pass could not be RUN, as distinct from running
+ * and finding no card (round 41 P2). A unique object so it can never be
+ * confused with a value the page produced.
+ */
+const SCRAPE_FAILED = Symbol('forced-close scrape failed');
+
 async function readForcedCloseCard(page, timeoutMs = 30_000) {
   const cards = page.getByTestId('forced-close-card');
   // ROUND 3 P2 — VISIBLE, not merely ATTACHED.
@@ -3488,9 +3495,47 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
           chosenSubmitIndex: shownSubmits.length > 0 ? submits.indexOf(shownSubmits[0]) : -1,
         };
       })
-      .catch(() => null);
+      // ROUND 41 P2 — AN EVALUATOR THAT THREW IS NOT A CARD THAT IS GONE.
+      //
+      // This returned the SAME `null` the DOM pass returns when it finds
+      // no card, so a helper throwing, a destroyed execution context, or
+      // any browser-side failure was recorded as a vanished card. From
+      // there it either accuses an eligible product of omitting the
+      // surface, or — with an accepted sale on the pinned snapshot —
+      // reports `inapplicable`. Both describe the page; neither is true.
+      // Nothing was observed at all.
+      //
+      // The two are distinguished by a SENTINEL rather than by a second
+      // `null`, so the caller has to handle it: `null` keeps its single
+      // meaning — the callback ran and found nothing — and `scrapeFailed`
+      // means the callback did not run to completion.
+      .catch(() => SCRAPE_FAILED);
 
   let snap = await readCard();
+  // The scrape itself failed. Reported as INCOMPLETE, never as a product
+  // finding: `bodyPresent: undefined` is what the verdict reads as
+  // "nothing was established", and `mounted` stays true so the absence
+  // rules — which would otherwise turn this into a missing-card FAIL —
+  // are not consulted at all.
+  if (snap === SCRAPE_FAILED) {
+    return {
+      mounted: true,
+      attached: true,
+      scrapeFailed: true,
+      visibleCards: 0,
+      text: null,
+      bodyText: null,
+      bodyPresent: undefined,
+      bodyVisible: false,
+      confirmText: null,
+      confirmExpected: false,
+      submitPresent: false,
+      submitVisible: false,
+      submitDisabled: true,
+      visibleSubmits: 0,
+      settled: false,
+    };
+  }
   // A card that is attached but no longer VISIBLE is reported the way an
   // invisible-but-attached card is at the top of this function: not a
   // pass, and named as what it is (round 21 P2).
@@ -3637,6 +3682,7 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
   // node in place. Two visible cards is a defect on any tick.
   let visibleCardsPeak = 0;
   let visibleSubmitsPeak = 0;
+  let bodyHiddenSeen = false;
   const remember = (v) => {
     for (const part of [v?.text, v?.bodyText]) {
       if (typeof part === 'string' && part !== '') seenTexts.push(part);
@@ -3656,12 +3702,54 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
     if (typeof v?.visibleSubmits === 'number' && v.visibleSubmits > visibleSubmitsPeak) {
       visibleSubmitsPeak = v.visibleSubmits;
     }
+    // ROUND 41 P2 — AND A BODY THAT WAS PRESENT AND HIDDEN.
+    //
+    // `remember` kept the TEXTS and the two counts and dropped this, so
+    // a card rendering its explanation invisibly — the
+    // heading-without-a-reason state the absence rule exists for — was
+    // positively observed and then discarded when the card vanished. If
+    // an accepted sale explained the disappearance, the run reported
+    // `inapplicable`: nothing to see about a lender shown an action with
+    // no reason for it.
+    //
+    // A LATCH rather than a count, because unlike the peaks there is no
+    // magnitude to carry — it either happened or it did not — and
+    // because the settled render's own `bodyVisible` is judged
+    // separately, on its own terms.
+    if (v?.bodyPresent === true && v?.bodyVisible === false) bodyHiddenSeen = true;
   };
   remember(snap);
   const deadline = Date.now() + timeoutMs;
   while ((!settled || readyPending(snap)) && Date.now() < deadline) {
     await page.waitForTimeout(1_000);
     const again = await readCard();
+    // Same sentinel, same treatment (round 41 P2): a scrape that threw
+    // mid-poll says nothing about the page, so the loop stops on an
+    // INCOMPLETE record rather than letting the last good snapshot stand
+    // in for a read that did not happen.
+    if (again === SCRAPE_FAILED) {
+      return {
+        mounted: true,
+        attached: true,
+        scrapeFailed: true,
+        visibleCards: 0,
+        text: null,
+        bodyText: null,
+        bodyPresent: undefined,
+        bodyVisible: false,
+        confirmText: null,
+        confirmExpected: false,
+        submitPresent: false,
+        submitVisible: false,
+        submitDisabled: true,
+        visibleSubmits: 0,
+        settled: false,
+        seenTexts,
+        visibleCardsPeak,
+        visibleSubmitsPeak,
+        bodyHiddenSeen,
+      };
+    }
     remember(again);
     if (again?.hiddenNow) {
       return {
@@ -3683,6 +3771,7 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
         seenTexts,
         visibleCardsPeak,
         visibleSubmitsPeak,
+        bodyHiddenSeen,
       };
     }
     // ROUND 13 P2 — A CARD THAT VANISHES MID-POLL IS THE VANISHED CASE,
@@ -3739,6 +3828,7 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
         seenTexts,
         visibleCardsPeak,
         visibleSubmitsPeak,
+        bodyHiddenSeen,
       };
     }
     snap = again;
@@ -4204,6 +4294,7 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
     // record of what it saw.
     visibleCardsPeak,
     visibleSubmitsPeak,
+    bodyHiddenSeen,
   };
 }
 
@@ -5713,7 +5804,7 @@ if (!visited.some((v) => /^\/positions\/\d+$/.test(v.path))) {
 // check that never once executed. Ranked after `failures` and after the
 // Advanced BLOCKED arm, for the same reason those are ordered as they
 // are: a real regression is still reported as one.
-const fcGap = forcedCloseCoverage(visited);
+const fcGap = forcedCloseCoverage(visited, ROLE);
 if (fcGap) {
   console.log(`\nBLOCKED: ${fcGap}.`);
   process.exit(2);

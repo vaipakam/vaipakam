@@ -119,4 +119,13 @@ describe('a funds defect that was READ outranks every blocker', () => {
     const tagged = decl.includes("failKind === 'observed'");
     expect(tagged, 'the filter must require the observed tag').toBe(true);
   });
+  // ROUND 41 P2 — the coverage gate now needs the ROLE, and it is
+  // deliberately permissive when none is supplied so an older caller
+  // does not start failing. That leniency is only safe if the live
+  // caller actually passes it — otherwise the lender check the round-41
+  // finding restored is switched off again by omission, silently, which
+  // is the exact shape of the finding it fixes.
+  it('passes the role into the coverage gate', () => {
+    expect(src).toContain('forcedCloseCoverage(visited, ROLE)');
+  });
 });

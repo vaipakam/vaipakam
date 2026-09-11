@@ -601,9 +601,20 @@ export function saysCheckRunning(text, unknownCopy) {
  * says so rather than implying an airtight gate. If the page's real head
  * runs several blocks beyond its last announced one AND a transition
  * lands in that window, an absence can still be reported as a defect.
- * Two things shrink it — `newHeads` pushes are now recorded alongside
- * HTTP `eth_blockNumber`, so the bound tracks the real head far more
- * closely — but shrinking is not eliminating. The complete fix is for
+ * One thing shrinks it — the gate requires this observer to PASS the
+ * announced bound rather than draw level with it — but shrinking is not
+ * eliminating.
+ *
+ * ROUND 41 P2 — THE `newHeads` CREDIT IS STRUCK, here as it was in the
+ * coverage notes. This comment still said socket pushes are "recorded
+ * alongside HTTP `eth_blockNumber`, so the bound tracks the real head
+ * far more closely". They are recorded, and the bound does not track
+ * anything better for it: `live-position-observe.mjs` exits 2 at the
+ * `wsRpcMethods.size` gate on ANY WebSocket JSON-RPC traffic, before a
+ * verdict or coverage is computed — so on precisely the runs where
+ * socket heads would matter, nothing downstream ever reads them. Round
+ * 37 corrected the operational account and left this one, which is the
+ * duplicate-site pattern again, across a file boundary. The complete fix is for
  * the card to publish the block its readiness resolved at, the way the
  * chooser publishes its readiness (#1855); this drive would then compare
  * two stated facts instead of racing an unobservable one. Tracked in
@@ -758,6 +769,24 @@ export function forcedCloseVerdict(obs, copy) {
   // observed — downgrading it to `blocked` because a LATER, narrower
   // read failed reports "we could not check" about something we did
   // check.
+  // 0. THE SCRAPE ITSELF DID NOT RUN (round 41 P2).
+  //
+  // `readForcedCloseCard` used to return the same `null` for "the DOM
+  // pass found no card" and "the DOM pass threw", so a helper error or a
+  // destroyed execution context was judged as a vanished card — accusing
+  // an eligible product of omitting the surface, or being explained away
+  // by an accepted sale. Neither describes the page. Nothing was seen.
+  //
+  // First, because every arm below reasons from an observation and this
+  // record is the absence of one.
+  if (obs.scrapeFailed) {
+    return {
+      verdict: 'blocked',
+      blockedKind: 'incomplete',
+      why: 'the DOM pass over the card could not be completed — nothing was observed, so neither its content nor its absence says anything about the page',
+    };
+  }
+
   // 1-pre. THE AMOUNT EVIDENCE IS GATHERED HERE; WHERE IT IS REPORTED
   //        depends on whether a card rendered (round 33 P2).
   //
@@ -1068,6 +1097,123 @@ export function forcedCloseVerdict(obs, copy) {
     };
   }
 
+  // 1-post-4. THE PER-RENDER CONTENT SCANS, AHEAD OF APPLICABILITY
+  //           (round 41 P2).
+  //
+  // Both of these judge what a render SAID, and both sat after section
+  // 2 — so an accepted sale found by the pinned snapshot returned
+  // `inapplicable` and discarded a contradiction the lender had been
+  // shown. The amounts and the duplicate counts were moved ahead of that
+  // exit in rounds 33 and 40 for exactly this reason; these two were
+  // left behind. Fifth instance in this PR of a rule applied to some of
+  // its sites and not the rest.
+  //
+  // The rule they are being brought under is the one this module states
+  // in its own header: eligibility qualifying an ABSENCE is correct,
+  // eligibility suppressing a POSITIVE finding is not.
+  //
+  // Below the mounted block, so the duplicate-card and duplicate-control
+  // arms still outrank them — a finding drawn from the first card must
+  // not be presented as the verdict on a surface only partly read.
+  // ROUND 7 P2 — AN UNRESOLVED CHECK MAY NOT CLAIM UNAVAILABILITY.
+  //
+  // The module names this invariant in its own header — "An unresolved
+  // check is never reported as 'not available'" — and then used the
+  // unresolved copy only as a readiness SIGNAL, never enforcing it. A
+  // card saying both "still checking" and "not available" states the
+  // app's ignorance and the protocol's refusal at once, and they are
+  // opposite claims.
+  //
+  // Narrow by construction: this fires only where a render ALSO
+  // reported a check in flight, so it is a self-contradiction rather
+  // than a judgement about wording. Copy that merely says a route is
+  // unavailable — which several legitimate states do — is untouched.
+  //
+  // NOT GATED ON `checkRunning`, deliberately (round 37 P2). That
+  // variable reads the SETTLED render, and gating on it would have
+  // reintroduced the very defect being fixed one line up: a card that
+  // contradicted itself mid-poll and then settled clean has
+  // `checkRunning === false`, so the scan below would never run. Each
+  // part now carries its own check-running test instead, which is both
+  // the gate and the pairing.
+  {
+    // EVERY match, not the first one. The shipped `unknown` copy itself
+    // contains "not what the protocol has refused" — correctly negated —
+    // and examining only the first hit let that legitimate occurrence
+    // vouch for an affirmative claim later in the same card. Fourth
+    // variant in this PR of stopping at the first thing found; caught
+    // here by the round-7 case failing rather than by review.
+    // ROUND 37 P2 — EVERY CAPTURED RENDER, not only the settled one.
+    //
+    // This invariant is ABOUT the unresolved state — "an unresolved
+    // check is never reported as 'not available'" — and it was reading
+    // only `obs.text`, which is the render the poll finally settled on.
+    // A card that said both things WHILE its checks ran and then reached
+    // clean ready copy had the contradiction overwritten by the ordinary
+    // readiness update, so the arm could not fire on the exact moment it
+    // exists to catch.
+    //
+    // Scanned PER PART, never over the joined text, for round 35's
+    // reason: the pairing must be two claims in ONE render. A render
+    // saying "still checking" and a different one later saying
+    // "unavailable" is a card that resolved, which is correct
+    // behaviour — pairing those across renders would manufacture a FAIL
+    // out of a normal transition.
+    const refusal = parts
+      .map((part) =>
+        saysCheckRunning(part, copy?.unknownCopy ?? '') ? firstUnnegatedRefusal(part) : null,
+      )
+      .find((hit) => hit);
+    if (refusal) {
+      return {
+        verdict: 'fail',
+        failKind: 'observed',
+        why: `card reports a check still running AND claims unavailability ("${refusal}") — opposite claims about the app's knowledge and the protocol's answer`,
+      };
+    }
+  }
+
+
+  // Two recognised readiness states inside ONE captured render. The
+  // settled-render form of this check lives further down, where the
+  // recognised-copy vocabulary is consulted; this is the form that
+  // survives the poll overwriting `bodyText`, and it has to clear
+  // applicability for the same reason the refusal scan does.
+  if (Array.isArray(copy?.recognisedCopy) && copy.recognisedCopy.length > 0) {
+    const twoStateSeen = parts
+      .map((part) =>
+        copy.recognisedCopy.filter(
+          (sentence) => typeof sentence === 'string' && sentence && part.includes(sentence),
+        ),
+      )
+      .find((hits) => hits.length > 1);
+    if (twoStateSeen) {
+      return {
+        verdict: 'fail',
+        failKind: 'observed',
+        why: `a render this drive read stated ${twoStateSeen.length} recognised readiness states at once, though the card settled on one — the lender was shown two different things about the same decision`,
+      };
+    }
+  }
+
+  // 1-post-5. A BODY PRESENT AND HIDDEN, on any render (round 41 P2).
+  //
+  // The heading-without-a-reason state is what the absence rule exists
+  // to catch, and `remember` kept the texts and the counts while
+  // dropping this. Observed on a render, then discarded when the card
+  // vanished — and explained away as `inapplicable` if a sale had been
+  // accepted meanwhile.
+  //
+  // `=== true`, so a record predating the field says nothing rather than
+  // manufacturing a finding.
+  if (obs.bodyHiddenSeen === true) {
+    return {
+      verdict: 'fail',
+      failKind: 'observed',
+      why: 'a render this drive read had its explanatory body present but not visible — the lender was shown the heading and no reason, whether or not the card settled that way',
+    };
+  }
+
   // ---- 2. Was this position one the assertion could apply to? ------
   if (!obs.lenderHoldsActive) {
     return {
@@ -1225,64 +1371,6 @@ export function forcedCloseVerdict(obs, copy) {
   }
 
   const checkRunning = saysCheckRunning(obs.text ?? '', copy?.unknownCopy ?? '');
-
-  // ROUND 7 P2 — AN UNRESOLVED CHECK MAY NOT CLAIM UNAVAILABILITY.
-  //
-  // The module names this invariant in its own header — "An unresolved
-  // check is never reported as 'not available'" — and then used the
-  // unresolved copy only as a readiness SIGNAL, never enforcing it. A
-  // card saying both "still checking" and "not available" states the
-  // app's ignorance and the protocol's refusal at once, and they are
-  // opposite claims.
-  //
-  // Narrow by construction: this fires only where a render ALSO
-  // reported a check in flight, so it is a self-contradiction rather
-  // than a judgement about wording. Copy that merely says a route is
-  // unavailable — which several legitimate states do — is untouched.
-  //
-  // NOT GATED ON `checkRunning`, deliberately (round 37 P2). That
-  // variable reads the SETTLED render, and gating on it would have
-  // reintroduced the very defect being fixed one line up: a card that
-  // contradicted itself mid-poll and then settled clean has
-  // `checkRunning === false`, so the scan below would never run. Each
-  // part now carries its own check-running test instead, which is both
-  // the gate and the pairing.
-  {
-    // EVERY match, not the first one. The shipped `unknown` copy itself
-    // contains "not what the protocol has refused" — correctly negated —
-    // and examining only the first hit let that legitimate occurrence
-    // vouch for an affirmative claim later in the same card. Fourth
-    // variant in this PR of stopping at the first thing found; caught
-    // here by the round-7 case failing rather than by review.
-    // ROUND 37 P2 — EVERY CAPTURED RENDER, not only the settled one.
-    //
-    // This invariant is ABOUT the unresolved state — "an unresolved
-    // check is never reported as 'not available'" — and it was reading
-    // only `obs.text`, which is the render the poll finally settled on.
-    // A card that said both things WHILE its checks ran and then reached
-    // clean ready copy had the contradiction overwritten by the ordinary
-    // readiness update, so the arm could not fire on the exact moment it
-    // exists to catch.
-    //
-    // Scanned PER PART, never over the joined text, for round 35's
-    // reason: the pairing must be two claims in ONE render. A render
-    // saying "still checking" and a different one later saying
-    // "unavailable" is a card that resolved, which is correct
-    // behaviour — pairing those across renders would manufacture a FAIL
-    // out of a normal transition.
-    const refusal = parts
-      .map((part) =>
-        saysCheckRunning(part, copy?.unknownCopy ?? '') ? firstUnnegatedRefusal(part) : null,
-      )
-      .find((hit) => hit);
-    if (refusal) {
-      return {
-        verdict: 'fail',
-        failKind: 'observed',
-        why: `card reports a check still running AND claims unavailability ("${refusal}") — opposite claims about the app's knowledge and the protocol's answer`,
-      };
-    }
-  }
 
   // ROUND 7 P2 — A READY ROUTE MUST OFFER THE ACTION.
   //
@@ -1491,11 +1579,36 @@ export function forcedCloseVerdict(obs, copy) {
  * @param {Array<{path?: string, forcedCloseVerdict?: {verdict: string, blockedKind?: string}|null}>} visits
  * @returns {string|null} the reason to exit 2, or null
  */
-export function forcedCloseCoverage(visits) {
+export function forcedCloseCoverage(visits, role) {
   const judged = (Array.isArray(visits) ? visits : []).filter(
     (v) => v && v.forcedCloseVerdict,
   );
-  if (judged.length === 0) return null; // not a lender run; nothing advertised
+  // ROUND 41 P2 — "NO VERDICTS" MEANS TWO DIFFERENT THINGS and this
+  // returned the same answer for both.
+  //
+  // On a BORROWER run the forced-close card is not observed at all, so
+  // an empty set is correct and there is nothing to report. On a LENDER
+  // run it means the assertion this drive ADVERTISES never reached a
+  // single position — the observation unwired, the field renamed, the
+  // scrape never called — and the run exited 0 announcing routes clean.
+  // That is the exact failure round 1 introduced this function to catch,
+  // reachable through the one input it treated as uninteresting.
+  //
+  // The role has to be PASSED rather than sniffed from the records,
+  // because the records are what went missing: inferring "this was a
+  // lender run" from the presence of lender fields makes the check
+  // vanish precisely when it is needed. The caller knows `ROLE`.
+  //
+  // Unknown role is treated as the permissive case deliberately — an
+  // older caller that passes nothing must not start failing — and the
+  // parity test pins that the live caller does pass it.
+  if (judged.length === 0) {
+    if (role !== 'lender') return null; // borrower run; nothing advertised
+    return (
+      'no forced-close verdict was recorded on any visit of a LENDER run — ' +
+      'the assertion this drive advertises did not run at all'
+    );
+  }
 
   const incomplete = judged.filter(
     (v) =>

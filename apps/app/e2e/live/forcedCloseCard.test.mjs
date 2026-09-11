@@ -2806,3 +2806,152 @@ describe('round 40 review findings', () => {
     });
   });
 });
+
+describe('round 41 review findings', () => {
+  const copy = {
+    unknownCopy: FORCED_CLOSE.unknown,
+    readyCopy: [FORCED_CLOSE.readyInKind, FORCED_CLOSE.readyInternalMatch, FORCED_CLOSE.readyRental],
+    withheldCopy: [FORCED_CLOSE.unknown, FORCED_CLOSE.notYet, FORCED_CLOSE.readyNeedsRoute],
+    recognisedCopy: [
+      FORCED_CLOSE.unknown,
+      FORCED_CLOSE.notYet,
+      FORCED_CLOSE.blockedPaused,
+      FORCED_CLOSE.blockedSequencer,
+      FORCED_CLOSE.blockedNoConsent,
+      FORCED_CLOSE.readyInKind,
+      FORCED_CLOSE.readyInternalMatch,
+      FORCED_CLOSE.readyRental,
+      FORCED_CLOSE.readyNeedsRoute,
+    ],
+    receiptLead: FORCED_CLOSE.receipt.youReceive,
+  };
+
+  const gone = {
+    lenderHoldsActive: true,
+    mounted: false,
+    attached: false,
+    saleLocked: false,
+    settled: false,
+    text: null,
+    bodyText: null,
+    bodyPresent: undefined,
+    confirmText: null,
+    confirmExpected: false,
+    seenTexts: [],
+    visibleCards: 0,
+    visibleCardsPeak: 1,
+    visibleSubmitsPeak: 1,
+  };
+
+  // A scrape that THREW is not a card that is gone. The drive returned
+  // the same `null` for both, so a helper error or a destroyed execution
+  // context was judged as a vanished card — accusing an eligible product
+  // of omitting the surface, or being explained away by an accepted
+  // sale. Neither describes the page; nothing was observed.
+  describe('a DOM pass that could not run', () => {
+    it('is INCOMPLETE, not a missing card', () => {
+      const v = forcedCloseVerdict({ ...gone, mounted: true, attached: true, scrapeFailed: true }, copy);
+      expect(v.verdict).toBe('blocked');
+      expect(v.blockedKind).toBe('incomplete');
+      expect(v.why).toMatch(/could not be completed/);
+    });
+
+    it('is not explained away by an accepted sale either', () => {
+      const v = forcedCloseVerdict(
+        { ...gone, mounted: true, attached: true, scrapeFailed: true, saleLocked: true },
+        copy,
+      );
+      expect(v.blockedKind).toBe('incomplete');
+    });
+
+    it('leaves a genuine absence reported as an absence', () => {
+      const v = forcedCloseVerdict(gone, copy);
+      expect(v.verdict).toBe('fail');
+      expect(v.why).toMatch(/absent/);
+    });
+  });
+
+  // Both of these judge what a render SAID and both sat after the
+  // applicability exits, so an accepted sale discarded a contradiction
+  // the lender had been shown. Amounts and duplicate counts were moved
+  // ahead of that exit in rounds 33 and 40; these were left behind.
+  describe('captured contradictions clear applicability', () => {
+    it('FAILS a captured refusal contradiction even under an accepted sale', () => {
+      const v = forcedCloseVerdict(
+        {
+          ...gone,
+          saleLocked: true,
+          seenTexts: [`${FORCED_CLOSE.unknown} This loan is not available for closing out.`],
+        },
+        copy,
+      );
+      expect(v.verdict).toBe('fail');
+      expect(v.failKind).toBe('observed');
+    });
+
+    it('FAILS a captured two-state render even under an accepted sale', () => {
+      const v = forcedCloseVerdict(
+        {
+          ...gone,
+          saleLocked: true,
+          seenTexts: [`${FORCED_CLOSE.readyInKind} ${FORCED_CLOSE.readyInternalMatch}`],
+        },
+        copy,
+      );
+      expect(v.verdict).toBe('fail');
+      expect(v.failKind).toBe('observed');
+    });
+
+    it('still reports an ordinary explained disappearance as inapplicable', () => {
+      const v = forcedCloseVerdict({ ...gone, saleLocked: true }, copy);
+      expect(v.verdict).toBe('blocked');
+      expect(v.blockedKind).toBe('inapplicable');
+    });
+  });
+
+  // The heading-without-a-reason state is what the absence rule exists
+  // for, and `remember` kept the texts and the counts while dropping it.
+  describe('a body seen present and hidden', () => {
+    it('FAILS even after the card vanished under an accepted sale', () => {
+      const v = forcedCloseVerdict({ ...gone, saleLocked: true, bodyHiddenSeen: true }, copy);
+      expect(v.verdict).toBe('fail');
+      expect(v.failKind).toBe('observed');
+      expect(v.why).toMatch(/present but not visible/);
+    });
+
+    it('says nothing on a record predating the field', () => {
+      const v = forcedCloseVerdict({ ...gone, saleLocked: true }, copy);
+      expect(v.verdict).toBe('blocked');
+    });
+  });
+
+  // "No verdicts" means two different things: on a BORROWER run the card
+  // is not observed at all, on a LENDER run the advertised assertion
+  // never reached a position. The same `null` was returned for both, so
+  // an unwired observation exited 0 announcing routes clean.
+  describe('coverage distinguishes a borrower run from a disabled assertion', () => {
+    it('reports nothing for a borrower run with no verdicts', () => {
+      expect(forcedCloseCoverage([{ path: '/positions/1' }], 'borrower')).toBeNull();
+    });
+
+    it('FAILS coverage for a LENDER run with no verdicts at all', () => {
+      const gap = forcedCloseCoverage([{ path: '/positions/1' }], 'lender');
+      expect(gap).toMatch(/did not run at all/);
+    });
+
+    it('stays permissive when no role is supplied', () => {
+      // An older caller that passes nothing must not start failing. The
+      // live caller does pass it — pinned separately.
+      expect(forcedCloseCoverage([{ path: '/positions/1' }])).toBeNull();
+    });
+
+    it('is unaffected when verdicts ARE present', () => {
+      expect(
+        forcedCloseCoverage(
+          [{ path: '/positions/1', forcedCloseVerdict: { verdict: 'pass' } }],
+          'lender',
+        ),
+      ).toBeNull();
+    });
+  });
+});
