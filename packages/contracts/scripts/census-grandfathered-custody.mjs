@@ -2894,11 +2894,19 @@ async function main() {
     // row as non-VPFI under the first token and copy that verdict to the
     // second. Same Diamond, different artifact token ⇒ its own scan.
     const scopeToken = (dep.addresses.vpfiToken ?? dep.addresses.vpfiMirror ?? 'none').toString().toLowerCase();
-    const addrKey = `${dep.slug}|${(dep.addresses.diamond || '').toLowerCase()}|${scopeToken}`;
+    // #2095 r20 P1 — layout provenance is a per-record verdict: two records of
+    // one Diamond differ in the facets they name (the in-place-refresh case) and
+    // in their deploy time, so a result is reused only when those match too
+    const provenanceKey = (() => {
+      const list = dep.manifestEntry?.facets ?? Object.values(dep.addresses.facets ?? {});
+      const facets = [...new Set(list.filter((v) => typeof v === 'string').map((v) => v.toLowerCase()))].sort().join(',');
+      return `${deployedAtIso(dep.manifestEntry?.deployedAt ?? dep.addresses.deployedAt) ?? 'null'}|${facets}`;
+    })();
+    const addrKey = `${dep.slug}|${(dep.addresses.diamond || '').toLowerCase()}|${scopeToken}|${provenanceKey}`;
     if (byAddress.has(addrKey)) {
       const prior = byAddress.get(addrKey);
       results.push({ ...prior, deployment: dep.label, duplicateOfDeployment: prior.deployment });
-      process.stderr.write(`census: ${who} — same Diamond AND scoping metadata as "${prior.deployment}"; reusing that result\n`);
+      process.stderr.write(`census: ${who} — same Diamond, scoping metadata AND facet population as "${prior.deployment}"; reusing that result\n`);
       continue;
     }
     process.stderr.write(`census: ${who} …\n`);

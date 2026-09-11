@@ -37,6 +37,11 @@ export const MAX_STORAGE_LOAN_SCAN = 5000;
 export function prepareStorageRead({ slots, eras: rawEras }) {
   const refuse = (reason) => ({ ok: false, reason });
   if (!slots?.fields || !slots?.storagePosition) return refuse('storage-slots.json is missing or has no fields');
+  // #2095 r20 P1 — every census field must be pinned: a missing one would read as
+  // an empty era-slot list downstream and certify a class it never read
+  const REQUIRED_FIELDS = ['nextLoanId', 'totalLoansEverCreated', 'intentLiveCommitCount', 'intentCommits', 'borrowerLifRebate', 'fallbackSnapshot'];
+  const missingFields = REQUIRED_FIELDS.filter((f) => !slots.fields[f]);
+  if (missingFields.length) return refuse(`storage-slots.json lacks the pinned slot of ${missingFields.join(', ')} — regenerate it with the probe script; a class cannot be read without its field`);
   if (!rawEras?.eras?.length) return refuse('storage-slot-eras.json is missing or has no eras');
   const eras = expandBytecode(rawEras);
   if (eras.eras.some((e) => !e.bytecode || !Object.keys(e.bytecode).length)) return refuse('an era carries no bytecode catalogue — regenerate the era table (#2095 r9)');
@@ -207,6 +212,11 @@ export function eraSlotsExcept(eraSlots, headSlots) {
 export function mergeHistoricalRows(cls, historical, className) {
   const all = historical?.rows?.[className] ?? [];
   if (!all.length) return { ...cls, historicalRows: 0 };
+  // #2095 r20 P1 — a getter row may absorb a historical (earlier-slot) row only
+  // when the getter cannot be reading HEAD's row for that loan: if storage holds
+  // a row for the same loan at HEAD's slot, the getter (reading HEAD) is that
+  // row, and a same-valued row at an older slot is a DISTINCT liability
+  const headLoanIds = new Set(((historical?.headRows ?? {})[className] ?? []).map((r) => String(r.loanId)));
   // #2095 r7 P2 — a routed getter compiled against an EARLIER layout returns
   // the very row the era scan finds at that era's slot. Such a row is already
   // in the getter's set; merging it again would double the count, the total
@@ -224,7 +234,7 @@ export function mergeHistoricalRows(cls, historical, className) {
   const hist = [];
   let alreadyReported = 0;
   for (const r of all) {
-    const i = unclaimed.findIndex((g) => String(g.loanId) === String(r.loanId) && String(g[amountField]) === String(r[amountField]));
+    const i = headLoanIds.has(String(r.loanId)) ? -1 : unclaimed.findIndex((g) => String(g.loanId) === String(r.loanId) && String(g[amountField]) === String(r[amountField]));
     if (i >= 0) { unclaimed.splice(i, 1); alreadyReported += 1; } else hist.push(r);
   }
   const base = { historicalRows: hist.length, historicalRowsAlreadyReportedByGetter: alreadyReported };

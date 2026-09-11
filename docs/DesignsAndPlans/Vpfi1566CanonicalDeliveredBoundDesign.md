@@ -6334,8 +6334,15 @@ and an endpoint that omitted one cut may have omitted a transient writer —
 so the population is not exhaustive; on a shell whose cut never ran, the same
 absence is exactly what the record says. Round 19 found no major issue; it
 tidied the proof labels — a zero-loans bound the event corroboration refuted
-no longer carries a `provenBy` on the class or on the deployment. Run 37
-re-reads every deployment with all of it.
+no longer carries a `provenBy` on the class or on the deployment. Round 20
+closed three doors: the slot table must pin every census field, because a
+missing one read downstream as an empty era-slot list and certified a class
+never read; a getter row may absorb a same-valued earlier-slot row only when
+storage holds no row for that loan at HEAD's slot — otherwise the getter is
+reading HEAD's row and the older one is a distinct liability; and two
+records naming the same Diamond reuse a result only when their facet
+populations and deploy times are identical too, since provenance is a
+per-record verdict. Run 38 re-reads every deployment with all of it.
 
 ### 7a. What the provenance walk found, and how the design changes (2026-09-09)
 

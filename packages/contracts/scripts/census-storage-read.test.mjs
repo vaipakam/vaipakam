@@ -230,6 +230,10 @@ test('a historical row an older routed getter already returned is not merged twi
   const historical = { rows: { vpfiHeldCustody: [{ loanId: '1', vpfiHeld: '5', mappingSlot: '0x01' }, { loanId: '2', vpfiHeld: '7', mappingSlot: '0x01' }] } };
   const m = mergeHistoricalRows(cls, historical, 'vpfiHeldCustody');
   assert.equal(m.count, 2, 'loan 1 once, loan 2 once');
+  // a same-valued row at an older slot while storage holds loan 1 at HEAD's slot too: the getter reads HEAD, the older row is a distinct liability (#2095 r20 P1)
+  const withHead = mergeHistoricalRows(cls, { ...historical, headRows: { vpfiHeldCustody: [{ loanId: '1', vpfiHeld: '5', mappingSlot: '0xhead' }] } }, 'vpfiHeldCustody');
+  assert.equal(withHead.count, 3, 'loan 1 twice (HEAD via the getter, the older slot as history) and loan 2');
+  assert.equal(withHead.historicalRowsAlreadyReportedByGetter, 0);
   assert.equal(m.total, '12');
   assert.equal(m.historicalRows, 1);
   assert.equal(m.historicalRowsAlreadyReportedByGetter, 1);
@@ -268,6 +272,13 @@ test('a non-zero at an old counter slot that is now a MAPPING head is a stale co
   const a = attributeCounters({ nextLoanId: 0n, totalLoansEverCreated: [{ slot: at(16), value: 4n, eras: [] }], intentLiveCommitCount: [{ slot: at(32), value: 2n, eras: [] }], allZero: false, slotsRead: 3 }, headSlots, occupied);
   assert.equal(a.counters.allZero, false);
   assert.deepEqual(a.unexplained.map((x) => [x.which, x.value, x.atMappingHead]), [['intentLiveCommitCount', '2', 'lastUpdateDayId']]);
+});
+
+test('a slot table missing a census field is refused (#2095 r20 P1)', () => {
+  const { fallbackSnapshot, ...fewer } = slots.fields;
+  const r = prepareStorageRead({ slots: { ...slots, fields: fewer }, eras });
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /lacks the pinned slot of fallbackSnapshot/);
 });
 
 test('an era whose row member has the same slot but a narrower type is refused (#2095 r9 P2)', () => {
