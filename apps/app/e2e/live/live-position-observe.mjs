@@ -8155,8 +8155,16 @@ if (malformedRpc.length) {
 //
 //   promoted   a dead jump anchor, a mis-ordered row, and the card's own
 //              observed findings — DOM facts about a page that rendered.
-//              A refused RPC does not reorder static markup or rebind a
-//              button to another anchor.
+//              Both are structurally immune to a missing read rather than
+//              merely unlikely to be caused by one, which is what makes
+//              the promotion safe and is worth stating since the gate
+//              rests on it: `waitFirst` is reported as `null` and never
+//              `false` when a row it needs is absent, so a blocked read
+//              cannot manufacture an ordering defect; and an
+//              `advancedAnchors` entry exists only because its jump
+//              BUTTON rendered, and the button and its target section
+//              come from the same component, so missing data removes the
+//              entry rather than breaking the link.
 //   not        a hooks-order crash, an uncaught page error, a nav failure
 //              or a non-2xx. Every one of those is a plausible CONSEQUENCE
 //              of the drive's own allowlist refusing a request, and round
