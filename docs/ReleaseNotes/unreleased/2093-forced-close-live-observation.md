@@ -742,3 +742,19 @@ gap being closed.
 
 Verified against the live testnet card, which reads exactly as before —
 the stricter rule does not reject real, correct markup.
+
+Reviewing that rule before submitting it found two more things.
+
+The rule gathers readable text by descending through the card's markup
+and skipping anything hidden — but it judged only the elements it
+descended into, so text sitting directly inside a container that was
+itself hidden was still collected as readable. Every place that uses the
+rule happens to check the container first, which is exactly why this
+would have gone unnoticed: the rule's own answer was wrong while every
+use of it was right.
+
+And the rule exists in two copies, for the same structural reason the
+visibility test does — each runs inside a separate browser-side pass and
+they cannot share code. Nothing asserted that the two agreed. That is
+the same story that has already cost this check real defects, so the
+test now compares them directly.

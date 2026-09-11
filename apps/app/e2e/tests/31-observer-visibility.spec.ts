@@ -509,6 +509,29 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
   expect(arrowBlocks(src, 'visibleTextOf', 'root')).toHaveLength(2);
   expect(arrowBlocks(src, 'textLeavesOf', 'root'), 'replaced').toHaveLength(0);
 
+  // AND THE TWO COPIES MUST AGREE, which nothing asserted when they were
+  // written. `visible` has a whole test for this property because its two
+  // copies had already drifted (#2102); a second duplicated helper with
+  // no such assertion is that story queued up again. Compared as source
+  // with whitespace normalised — the copies sit at different indentation
+  // — because textual identity is the strongest form of "they agree" and
+  // the cheapest to check.
+  // COMMENT LINES DROPPED, code compared. The two copies carry different
+  // prose on purpose — one cross-references the other — and this
+  // assertion failed on exactly that when it compared the raw source,
+  // which would have made it a nuisance rather than a guard. Only whole
+  // comment lines are removed, never a trailing `//`, so the regex
+  // literals in the body are untouched.
+  const codeOf = (t: string) =>
+    t
+      .split('\n')
+      .filter((line) => !line.trim().startsWith('//'))
+      .join(' ')
+      .split(/\s+/)
+      .join(' ');
+  const bothCopies = arrowBlocks(src, 'visibleTextOf', 'root');
+  expect(codeOf(bothCopies[0]), 'the two copies have drifted').toBe(codeOf(bothCopies[1]));
+
   await page.setContent(`
     <style>
       .card { padding: 16px; }
@@ -533,6 +556,7 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
         <p class="transparent">This loan can be closed out now.</p>
         <p>You can change your mind until you confirm.</p>
       </div>
+      <div class="body transparent" id="rootErased">This loan can be closed out now.</div>
       <div class="body" id="styleOnly"><style>.x { color: red; }</style></div>
       <div class="body" id="styleBeside"><style>.x { color: red; }</style><p>This loan can be closed out now.</p></div>
       <div class="body" id="withSrOnly">
@@ -571,6 +595,11 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
         // Two leaves, the RECOGNISED sentence erased and a secondary
         // note painted. Round 61's "at least one visible leaf" passed
         // this while the lender read nothing justifying the button.
+        // THE ROOT'S OWN TEXT, erased at the root's own level. The walk
+        // judges only the elements it DESCENDS INTO, so without a root
+        // check the sentence would be collected as painted.
+        rootErasedPaintedText: scope.visibleTextOf(byId('rootErased')),
+        rootErasedInnerText: (byId('rootErased') as HTMLElement).innerText.trim(),
         twoLeavesVisible: bodyVisible(byId('twoLeaves')),
         twoLeavesPaintedText: scope.visibleTextOf(byId('twoLeaves')),
         twoLeavesInnerText: (byId('twoLeaves') as HTMLElement).innerText.replace(/\s+/g, ' ').trim(),
@@ -648,6 +677,11 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
   // it can no longer substantiate the action it was supposed to justify.
   // `innerText` still yields it, which is exactly the disagreement the
   // finding is about.
+  expect(result.rootErasedPaintedText, 'text erased at the root’s own level').toBe('');
+  expect(result.rootErasedInnerText, 'which innerText still yields').toBe(
+    'This loan can be closed out now.',
+  );
+
   expect(result.twoLeavesVisible, 'something in the body is painted').toBe(true);
   expect(result.twoLeavesPaintedText, 'but not the sentence').toBe(
     'You can change your mind until you confirm.',

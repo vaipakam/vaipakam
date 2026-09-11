@@ -4203,6 +4203,12 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
         // of it written into the test would prove nothing.
         const visibleTextOf = (root) => {
           if (root === null) return '';
+          // THE ROOT'S OWN VISIBILITY FIRST — see the twin in the receipt
+          // pass. The walk only judges elements it DESCENDS INTO, so a
+          // text node directly under a hidden root would be collected as
+          // painted. The two copies are asserted identical by
+          // `31-observer-visibility.spec.ts`.
+          if (!visible(root)) return '';
           const unpainted = /^(script|style|template|title|noscript)$/i;
           const parts = [];
           const walk = (node) => {
@@ -5509,6 +5515,15 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
             // with `includes`.
             const visibleTextOf = (root) => {
               if (root === null) return '';
+              // THE ROOT'S OWN VISIBILITY FIRST. A text node directly
+              // under a hidden root would otherwise be collected — the
+              // walk only judges elements it DESCENDS INTO — so a body
+              // erased at its own level still reported its sentence as
+              // painted. Every caller happens to check the root already,
+              // which is exactly why this would have gone unnoticed: the
+              // helper's own answer was wrong while every use of it was
+              // right. Found by self-review.
+              if (!visible(root)) return '';
               const unpainted = /^(script|style|template|title|noscript)$/i;
               const parts = [];
               const walk = (node) => {
