@@ -4869,3 +4869,138 @@ describe('round 63 review findings', () => {
     });
   });
 });
+
+describe('round 64 review findings', () => {
+  // AN ACCUSATION MUST BE BUILT FROM WHAT THE LENDER CAN SEE.
+  //
+  // `parts` feeds three rules that all return `fail`: the amount scan,
+  // the check-running-versus-refusal contradiction, and the two-states-
+  // at-once scan. Built from raw `innerText`, a recognised sentence
+  // erased in the DOM counted as something the lender was shown — so a
+  // card displaying exactly ONE legitimate state was reported as having
+  // shown two. A product failure assembled entirely from copy nobody can
+  // read.
+  const ROWS = {
+    standard: Object.values(FORCED_CLOSE.receipt),
+    rental: Object.values(FORCED_CLOSE.rentalReceipt),
+  };
+  const copy = {
+    unknownCopy: FORCED_CLOSE.unknown,
+    readyCopy: [FORCED_CLOSE.readyInKind, FORCED_CLOSE.readyInternalMatch, FORCED_CLOSE.readyRental],
+    withheldCopy: [FORCED_CLOSE.unknown, FORCED_CLOSE.notYet, FORCED_CLOSE.readyNeedsRoute],
+    recognisedCopy: [
+      FORCED_CLOSE.unknown,
+      FORCED_CLOSE.notYet,
+      FORCED_CLOSE.readyInKind,
+      FORCED_CLOSE.readyInternalMatch,
+      FORCED_CLOSE.readyRental,
+      FORCED_CLOSE.readyNeedsRoute,
+    ],
+    receiptLeads: [FORCED_CLOSE.receipt.youReceive, FORCED_CLOSE.rentalReceipt.youReceive],
+    receiptRowSets: ROWS,
+    rentalReadyCopy: FORCED_CLOSE.readyRental,
+  };
+  const base = {
+    lenderHoldsActive: true,
+    mounted: true,
+    attached: true,
+    submitPresent: true,
+    submitVisible: true,
+    submitDisabled: false,
+    visibleSubmits: 1,
+    visibleCards: 1,
+    saleLocked: false,
+    settled: true,
+    bodyPresent: true,
+    bodyVisible: true,
+    confirmExpected: false,
+    confirmText: null,
+  };
+
+  it('does not accuse a card of two states when one of them is erased', () => {
+    // The raw text carries both sentences; only one is painted. The
+    // lender saw one state.
+    const both = `${FORCED_CLOSE.readyInKind} ${FORCED_CLOSE.notYet}`;
+    const v = forcedCloseVerdict(
+      {
+        ...base,
+        text: both,
+        bodyText: both,
+        visibleText: FORCED_CLOSE.readyInKind,
+        bodyVisibleText: FORCED_CLOSE.readyInKind,
+      },
+      copy,
+    );
+    expect(v.verdict).not.toBe('fail');
+  });
+
+  it('still accuses when BOTH states are painted', () => {
+    // The fix must not switch the rule off — this is the shape it exists
+    // for, and it is the assertion that keeps the previous case from
+    // passing for the wrong reason.
+    const both = `${FORCED_CLOSE.readyInKind} ${FORCED_CLOSE.notYet}`;
+    const v = forcedCloseVerdict(
+      { ...base, text: both, bodyText: both, visibleText: both, bodyVisibleText: both },
+      copy,
+    );
+    expect(v.verdict).toBe('fail');
+    expect(v.why).toMatch(/recognised readiness states at once/);
+  });
+
+  it('does not report an amount that is in the DOM but not painted', () => {
+    // The deliberate widening beyond the finding. An erased figure is
+    // not something the card is STATING to anyone, and leaving the most
+    // consequential rule in the file able to invent a finding from
+    // invisible copy would be the inconsistency the finding names.
+    const v = forcedCloseVerdict(
+      {
+        ...base,
+        text: `${FORCED_CLOSE.readyInKind} You receive 100 USDC`,
+        bodyText: FORCED_CLOSE.readyInKind,
+        visibleText: FORCED_CLOSE.readyInKind,
+        bodyVisibleText: FORCED_CLOSE.readyInKind,
+      },
+      copy,
+    );
+    expect(v.verdict).not.toBe('fail');
+  });
+
+  it('still reports an amount that IS painted', () => {
+    const shown = `${FORCED_CLOSE.readyInKind} You receive 100 USDC`;
+    const v = forcedCloseVerdict(
+      { ...base, text: shown, bodyText: shown, visibleText: shown, bodyVisibleText: shown },
+      copy,
+    );
+    expect(v.verdict).toBe('fail');
+    expect(v.why).toMatch(/states an amount it cannot know/);
+  });
+
+  it('falls back to raw text for a record predating the fields', () => {
+    // `undefined` must keep meaning "this observation did not report
+    // painted text", never "nothing was painted" — otherwise every older
+    // record stops being scanned at all, which would silently retire the
+    // rules rather than refine them.
+    const shown = `${FORCED_CLOSE.readyInKind} You receive 100 USDC`;
+    const v = forcedCloseVerdict({ ...base, text: shown, bodyText: shown }, copy);
+    expect(v.verdict).toBe('fail');
+    expect(v.why).toMatch(/states an amount it cannot know/);
+  });
+
+  it('judges the withheld-copy-beside-a-live-button gate on painted text', () => {
+    // Same rule one level down: an erased withheld sentence must not
+    // accuse a card that is, on screen, offering an action beside
+    // perfectly good ready copy.
+    const both = `${FORCED_CLOSE.readyInKind} ${FORCED_CLOSE.notYet}`;
+    const v = forcedCloseVerdict(
+      {
+        ...base,
+        text: both,
+        bodyText: FORCED_CLOSE.readyInKind,
+        visibleText: FORCED_CLOSE.readyInKind,
+        bodyVisibleText: FORCED_CLOSE.readyInKind,
+      },
+      copy,
+    );
+    expect(v.why ?? '').not.toMatch(/NON-ACTIONABLE state yet offers an enabled action/);
+  });
+});

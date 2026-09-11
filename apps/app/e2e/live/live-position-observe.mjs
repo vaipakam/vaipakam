@@ -4491,6 +4491,8 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
   // settled render, since a transiently disabled control is a legitimate
   // intermediate state (round 10) and must not be reported as a defect.
   const seenTexts = [];
+  /** The same renders, painted text only (round 64 P2). */
+  const seenVisibleTexts = [];
   // ROUND 50 P2 — THE COPY AND THE CONTROL, KEPT TOGETHER.
   //
   // The note above is about round 10's exemption, and that exemption is
@@ -4539,10 +4541,29 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
     for (const part of [v?.text, v?.bodyText]) {
       if (typeof part === 'string' && part !== '') seenTexts.push(part);
     }
+    // ROUND 64 P2 — AND THE PAINTED TEXT OF EVERY RENDER.
+    //
+    // The scans that classify readiness and accuse the card of stating
+    // two states at once run over `parts`, which is built from these.
+    // On raw text a recognised sentence erased in the DOM counts as a
+    // state the lender was shown, so a card displaying exactly one
+    // legitimate state is reported as having shown two — an accusation
+    // assembled entirely from copy nobody can read, which is the
+    // false-FAIL direction this file everywhere else refuses.
+    //
+    // Carried BESIDE the raw text rather than replacing it: `seenTexts`
+    // answers "what was in this render" and these answer "what could be
+    // read in it", and the pair is what lets a verdict say which it
+    // means.
+    for (const part of [v?.visibleText, v?.bodyVisibleText]) {
+      if (typeof part === 'string' && part !== '') seenVisibleTexts.push(part);
+    }
     if (v && (typeof v.text === 'string' || typeof v.bodyText === 'string')) {
       seenRenders.push({
         text: v.text,
         bodyText: v.bodyText,
+        visibleText: v.visibleText,
+        bodyVisibleText: v.bodyVisibleText,
         submitVisible: v.submitVisible,
         submitDisabled: v.submitDisabled,
       });
@@ -4591,6 +4612,7 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
       return nothingEstablished({
         scrapeFailed: true,
         seenTexts,
+        seenVisibleTexts,
         seenRenders,
         visibleCardsPeak,
         visibleSubmitsPeak,
@@ -4607,6 +4629,7 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
         // ROUND 33 P2 — see the note on the vanished return below. Every
         // exit from this loop carries what the loop saw.
         seenTexts,
+        seenVisibleTexts,
         seenRenders,
         visibleCardsPeak,
         visibleSubmitsPeak,
@@ -4665,6 +4688,7 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
         submitDisabled: true,
         settled: false,
         seenTexts,
+        seenVisibleTexts,
         seenRenders,
         visibleCardsPeak,
         visibleSubmitsPeak,
@@ -4757,6 +4781,8 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
   const confirmExpected =
     snap.submitPresent && snap.submitVisible && !snap.submitDisabled;
   let confirmText = null;
+  /** The same panel, with the unpainted parts left out (round 64 P2). */
+  let confirmVisibleText = null;
   // ROUND 45 P2 — the confirmation's OWN action, observed and never
   // clicked. Declared here rather than inside the branch so the final
   // projection can carry it whether or not the panel opened.
@@ -5632,12 +5658,22 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
               // discarded one line later.
               rowsText: shown.map((r) => visibleTextOf(r)).filter((t) => t.trim() !== ''),
               otherText,
+              // ROUND 64 P2 — the WHOLE panel's painted text, carried
+              // beside the raw `confirmText` rather than replacing it.
+              //
+              // `confirmText` has one other job — it is what
+              // `confirmScanned` is derived from and what says the
+              // receipt was COMPLETELY covered — so swapping it would
+              // change two meanings to fix one. This is the scanned
+              // text; that stays the coverage fact.
+              panelText: visibleTextOf(el),
             };
           })
           .catch(() => null);
         confirmText = receiptShown?.rowsOk
           ? await card.innerText({ timeout: 2_000 }).catch(() => null)
           : null;
+        confirmVisibleText = receiptShown?.rowsOk ? (receiptShown.panelText ?? null) : null;
         confirmAction = receiptShown?.confirmAction;
         // ROUND 50 P2 — kept whatever `rowsOk` decided, so a figure on a
         // row the lender COULD see is scanned even when a different row
@@ -5720,6 +5756,7 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
     mounted: true,
     attached: true,
     confirmText,
+    confirmVisibleText,
     confirmAction,
     confirmExpected,
     // ROUND 50 P2 — whether the OUTER submit could take a click. Carried
@@ -5732,6 +5769,7 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
     // Every render read during the readiness wait, including the ones
     // the poll superseded (round 31 P2).
     seenTexts,
+    seenVisibleTexts,
     seenRenders,
     // ROUND 35 P2 — travels with `seenTexts`, and for the same reason:
     // both are things this drive SAW, and the settled snapshot is not a

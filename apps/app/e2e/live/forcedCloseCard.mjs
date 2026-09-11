@@ -1213,10 +1213,36 @@ export function forcedCloseVerdict(obs, copy) {
   // `confirmText` keeps its one job — deciding whether the receipt was
   // COMPLETELY covered — and the amount scan stops depending on that
   // answer. Each row is its own part, never joined: round 35's rule.
+  //
+  // ROUND 64 P2 — BUILT FROM PAINTED TEXT, because everything downstream
+  // of it makes an ACCUSATION.
+  //
+  // `parts` feeds three rules that all return `fail`: the amount scan,
+  // the check-running-versus-refusal contradiction, and the two-states-
+  // at-once scan. On raw `innerText` a sentence that is transparent,
+  // clipped or filter-erased counts as something the lender was shown —
+  // so a card displaying exactly one legitimate readiness state, with a
+  // second recognised sentence erased in its DOM, is reported as having
+  // shown two. An accusation assembled entirely from copy nobody can
+  // read, on the surface this drive exists to vouch for.
+  //
+  // THE AMOUNT SCAN TAKES IT TOO, and that is a deliberate widening
+  // beyond the finding. Its rule is that the card must state no amount
+  // it cannot substantiate — and an erased figure is not something the
+  // card is STATING to anyone. Keeping that one rule on raw text while
+  // its two siblings move would leave the most consequential check in
+  // the file able to invent a finding from invisible copy, which is the
+  // inconsistency the finding names in its last sentence. The residual
+  // runs the other way — an invented figure hidden by CSS goes
+  // unreported — and that is the direction this file always takes.
+  //
+  // `??` at every position: `undefined` keeps meaning "this record
+  // predates the field", so an older observation falls back to its raw
+  // text rather than scanning nothing.
   const parts = [
-    obs.text,
-    obs.bodyText,
-    obs.confirmText,
+    obs.visibleText ?? obs.text,
+    obs.bodyVisibleText ?? obs.bodyText,
+    obs.confirmVisibleText ?? obs.confirmText,
     ...(Array.isArray(obs.confirmRowsText) ? obs.confirmRowsText : []),
     // ROUND 53 P2 — and the panel's other visible regions. Round 50's
     // fix kept the readable ROWS and still discarded a warning banner, a
@@ -1224,7 +1250,11 @@ export function forcedCloseVerdict(obs, copy) {
     // USDC` beside one hidden row read as an incomplete scan rather than
     // an invented figure.
     ...(Array.isArray(obs.confirmOtherText) ? obs.confirmOtherText : []),
-    ...(Array.isArray(obs.seenTexts) ? obs.seenTexts : []),
+    ...(Array.isArray(obs.seenVisibleTexts)
+      ? obs.seenVisibleTexts
+      : Array.isArray(obs.seenTexts)
+        ? obs.seenTexts
+        : []),
   ].filter((part) => typeof part === 'string' && part !== '');
   //
   // De-duplicated for the MESSAGE only. The whole card's text contains
@@ -1677,9 +1707,23 @@ export function forcedCloseVerdict(obs, copy) {
   // The settled render is judged as one of the renders rather than
   // separately, so there is one rule rather than two that can drift.
   const renders = [
-    { text: obs.text, submitVisible: obs.submitVisible, submitDisabled: obs.submitDisabled },
+    {
+      text: obs.text,
+      visibleText: obs.visibleText,
+      submitVisible: obs.submitVisible,
+      submitDisabled: obs.submitDisabled,
+    },
     ...(Array.isArray(obs.seenRenders) ? obs.seenRenders : []),
   ];
+  // ROUND 64 P2 — THE ROUTE GATES READ PAINTED TEXT TOO.
+  //
+  // This arm and the ready-copy one below accuse the card of showing
+  // withheld copy beside a live button. On raw `innerText` an erased
+  // withheld sentence in the DOM makes that accusation about a card that
+  // is, on screen, offering an action beside perfectly good ready copy.
+  // Same rule as `parts` above and for the same reason: what is not
+  // painted is not something the lender was shown.
+  const readable = (r) => r?.visibleText ?? r?.text ?? '';
   if (Array.isArray(copy?.withheldCopy)) {
     const unsafe = renders.find(
       (r) =>
@@ -1690,7 +1734,7 @@ export function forcedCloseVerdict(obs, copy) {
         !r.submitDisabled &&
         copy.withheldCopy.some(
           (sentence) =>
-            typeof sentence === 'string' && sentence && (r.text ?? '').includes(sentence),
+            typeof sentence === 'string' && sentence && readable(r).includes(sentence),
         ),
     );
     if (unsafe) {
@@ -1937,7 +1981,7 @@ export function forcedCloseVerdict(obs, copy) {
   // rather than assumed.
   if (!actionOffered && Array.isArray(copy?.readyCopy)) {
     const ready = copy.readyCopy.find(
-      (sentence) => typeof sentence === 'string' && sentence && (obs.text ?? '').includes(sentence),
+      (sentence) => typeof sentence === 'string' && sentence && (obs.visibleText ?? obs.text ?? '').includes(sentence),
     );
     if (ready) {
       return {
@@ -2182,7 +2226,7 @@ export function forcedCloseVerdict(obs, copy) {
     actionOffered &&
     Array.isArray(copy?.readyCopy) &&
     copy.readyCopy.some(
-      (sentence) => typeof sentence === 'string' && sentence && (obs.text ?? '').includes(sentence),
+      (sentence) => typeof sentence === 'string' && sentence && (obs.visibleText ?? obs.text ?? '').includes(sentence),
     );
   const bracketDisagrees =
     'defaultableBefore' in obs &&
