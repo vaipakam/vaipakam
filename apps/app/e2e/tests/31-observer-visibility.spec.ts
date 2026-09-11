@@ -89,6 +89,9 @@ test('both copies of the drive visibility predicate agree, and reject clipped co
     <div id="halfLines" style="height:20px; overflow:hidden; width:200px; font:16px/20px monospace">
       <p id="twoLines" style="margin:0">first line visible<br>second line clipped away</p>
     </div>
+    <div id="cardClip" style="height:30px; overflow:hidden; width:200px; font:16px/20px monospace">
+      <section id="cardish"><p style="margin:0">row one</p><p style="margin:0">row two</p><p style="margin:0">row three clipped</p></section>
+    </div>
     <dl class="receipt">
       <div class="receipt-row" id="ghostRow">
         <dt style="color: transparent">Fees</dt>
@@ -118,6 +121,10 @@ test('both copies of the drive visibility predicate agree, and reject clipped co
           slivered: visible(byId('slivered')),
           trimmed: visible(byId('trimmed')),
           twoLines: visible(byId('twoLines')),
+          // A CONTAINER with a clipped descendant. The per-line rule is
+          // scoped to nodes carrying their OWN text, so this keeps the
+          // element-rect behaviour it already had.
+          cardish: visible(byId('cardish')),
           plain: visible(byId('plain')),
           scrolledOut: visible(byId('scrolledOut')),
           // Recorded so a future failure says WHICH branch ran. The
@@ -165,6 +172,14 @@ test('both copies of the drive visibility predicate agree, and reject clipped co
     expect(result.twoLines, `copy ${i}: a two-line value with line two clipped`).toBe(
       false,
     );
+    // THE LIMIT OF THE PER-LINE RULE, and a correction to my own first
+    // version of it. `selectNodeContents` on a CONTAINER yields a rect
+    // per line of its whole subtree, so an unscoped rule condemns the
+    // entire card whenever any one descendant line is mostly clipped —
+    // and the verdict that follows says "card is in the DOM but not
+    // visible", which is the wrong sentence about a card largely on
+    // screen. Leaves are checked individually anyway.
+    expect(result.cardish, `copy ${i}: a container whose last row is clipped`).toBe(true);
     // The deliberate limit of the rule, pinned so it cannot be tightened
     // by accident: content merely scrolled out of a scroll container is
     // reachable, and condemning it would be a false failure — the

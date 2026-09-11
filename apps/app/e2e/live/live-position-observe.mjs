@@ -3264,6 +3264,26 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
           const flow = getComputedStyle(node).position;
           const inFlow = flow === 'static' || flow === 'relative';
           const r = node.getBoundingClientRect();
+          // One Range per NODE, not per clipping ancestor: this predicate runs
+          // for the card, the body, the control and every receipt leaf on every
+          // poll tick, and rebuilding the range inside the walk was pure waste.
+          const ownText = [...node.childNodes].some(
+            (c) => c.nodeType === 3 && c.textContent.trim() !== '',
+          );
+          const boxes = (() => {
+            if (!ownText) return [r];
+            try {
+              const range = document.createRange();
+              range.selectNodeContents(node);
+              const rects = [...range.getClientRects()].filter(
+                (q) => q.width > 0 && q.height > 0,
+              );
+              // "No rects" must not read as "nothing is visible".
+              return rects.length > 0 ? rects : [r];
+            } catch {
+              return [r];
+            }
+          })();
           for (let n = node.parentElement; n; n = n.parentElement) {
             const cs = getComputedStyle(n);
             const clipsY = cs.overflowY !== 'visible';
@@ -3295,21 +3315,23 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
             // whole — so a descender trimmed by a pixel still passes (that line
             // is ~95% shown) while a line that is wholly outside does not.
             //
-            // Falls back to the element rect when there is no text to measure —
-            // a spacer, an icon, a wrapper — since a Range over nothing yields
-            // no rects and "no rects" must not read as "nothing is visible".
-            const boxes = (() => {
-              try {
-                const range = document.createRange();
-                range.selectNodeContents(node);
-                const rects = [...range.getClientRects()].filter(
-                  (q) => q.width > 0 && q.height > 0,
-                );
-                return rects.length > 0 ? rects : [r];
-              } catch {
-                return [r];
-              }
-            })();
+            // SCOPED TO NODES CARRYING THEIR OWN TEXT, and computed ONCE above
+            // the ancestor walk rather than per ancestor.
+            //
+            // Both corrected after writing this. `selectNodeContents` on a
+            // CONTAINER yields a rect per line of its whole subtree, so applying
+            // the per-line rule to the card or the body would condemn the entire
+            // surface whenever any single descendant line was mostly clipped —
+            // and the resulting verdict says "card is in the DOM but not
+            // visible", which is the wrong sentence about a card that is largely
+            // on screen. The finding was about a multi-line `dt`/`dd`, and a
+            // leaf's own text is exactly where "can this be read" is the
+            // question being asked. Same scope `paintsText` uses, for the same
+            // reason.
+            //
+            // Containers keep the element-rect rule they already had, and their
+            // leaves are checked individually anyway — the receipt probe
+            // requires every row AND both of its leaves to pass.
             for (const q of boxes) {
               if (clipsY && !scrollsY && q.height > 0) {
                 const shown = Math.min(q.bottom, box.bottom) - Math.max(q.top, box.top);
@@ -4066,6 +4088,26 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
               const flow = getComputedStyle(node).position;
               const inFlow = flow === 'static' || flow === 'relative';
               const r = node.getBoundingClientRect();
+              // One Range per NODE, not per clipping ancestor: this predicate runs
+              // for the card, the body, the control and every receipt leaf on every
+              // poll tick, and rebuilding the range inside the walk was pure waste.
+              const ownText = [...node.childNodes].some(
+                (c) => c.nodeType === 3 && c.textContent.trim() !== '',
+              );
+              const boxes = (() => {
+                if (!ownText) return [r];
+                try {
+                  const range = document.createRange();
+                  range.selectNodeContents(node);
+                  const rects = [...range.getClientRects()].filter(
+                    (q) => q.width > 0 && q.height > 0,
+                  );
+                  // "No rects" must not read as "nothing is visible".
+                  return rects.length > 0 ? rects : [r];
+                } catch {
+                  return [r];
+                }
+              })();
               for (let n = node.parentElement; n; n = n.parentElement) {
                 const cs = getComputedStyle(n);
                 const clipsY = cs.overflowY !== 'visible';
@@ -4097,21 +4139,23 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
                 // whole — so a descender trimmed by a pixel still passes (that line
                 // is ~95% shown) while a line that is wholly outside does not.
                 //
-                // Falls back to the element rect when there is no text to measure —
-                // a spacer, an icon, a wrapper — since a Range over nothing yields
-                // no rects and "no rects" must not read as "nothing is visible".
-                const boxes = (() => {
-                  try {
-                    const range = document.createRange();
-                    range.selectNodeContents(node);
-                    const rects = [...range.getClientRects()].filter(
-                      (q) => q.width > 0 && q.height > 0,
-                    );
-                    return rects.length > 0 ? rects : [r];
-                  } catch {
-                    return [r];
-                  }
-                })();
+                // SCOPED TO NODES CARRYING THEIR OWN TEXT, and computed ONCE above
+                // the ancestor walk rather than per ancestor.
+                //
+                // Both corrected after writing this. `selectNodeContents` on a
+                // CONTAINER yields a rect per line of its whole subtree, so applying
+                // the per-line rule to the card or the body would condemn the entire
+                // surface whenever any single descendant line was mostly clipped —
+                // and the resulting verdict says "card is in the DOM but not
+                // visible", which is the wrong sentence about a card that is largely
+                // on screen. The finding was about a multi-line `dt`/`dd`, and a
+                // leaf's own text is exactly where "can this be read" is the
+                // question being asked. Same scope `paintsText` uses, for the same
+                // reason.
+                //
+                // Containers keep the element-rect rule they already had, and their
+                // leaves are checked individually anyway — the receipt probe
+                // requires every row AND both of its leaves to pass.
                 for (const q of boxes) {
                   if (clipsY && !scrollsY && q.height > 0) {
                     const shown = Math.min(q.bottom, box.bottom) - Math.max(q.top, box.top);
