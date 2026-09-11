@@ -3477,7 +3477,7 @@ describe('round 56 review findings', () => {
         copy,
       );
       expect(v.verdict).toBe('fail');
-      expect(v.why).toMatch(/not yet defaultable/);
+      expect(v.why).toMatch(/would be refused/);
     });
 
     // An older record carries no bracket, so the single reading still
@@ -3486,7 +3486,7 @@ describe('round 56 review findings', () => {
     it('still FAILS on a single refusing reading with no bracket', () => {
       const v = forcedCloseVerdict({ ...ready, defaultable: false }, copy);
       expect(v.verdict).toBe('fail');
-      expect(v.why).toMatch(/not yet defaultable/);
+      expect(v.why).toMatch(/would be refused/);
     });
   });
 });
@@ -3556,7 +3556,7 @@ describe('round 55 review findings', () => {
         copy,
       );
       expect(v.verdict).toBe('fail');
-      expect(v.why).toMatch(/not yet defaultable/);
+      expect(v.why).toMatch(/would be refused/);
     });
 
     it('BLOCKS when the BEFORE reading could not answer', () => {
@@ -3716,7 +3716,7 @@ describe('round 54 review findings', () => {
       const v = forcedCloseVerdict({ ...base, defaultable: false }, copy);
       expect(v.verdict).toBe('fail');
       expect(v.failKind).toBe('observed');
-      expect(v.why).toMatch(/not yet defaultable/);
+      expect(v.why).toMatch(/would be refused/);
     });
 
     it('passes ready copy on a defaultable loan', () => {
@@ -3748,7 +3748,7 @@ describe('round 54 review findings', () => {
       const v = forcedCloseVerdict({ ...base, defaultable: undefined }, copy);
       expect(v.verdict).toBe('blocked');
       expect(v.blockedKind).toBe('incomplete');
-      expect(v.why).toMatch(/defaultability answer could not be read/);
+      expect(v.why).toMatch(/could not be simulated/);
     });
 
     it('says nothing for a record predating the field', () => {

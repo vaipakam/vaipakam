@@ -3012,47 +3012,61 @@ async function readLenderCardText(page, card) {
  * still an answer.
  */
 /**
- * The protocol's own answer about whether this close-out can run, plus
- * every OTHER gate `triggerDefault` applies (round 55 P2).
+ * Would the protocol ACCEPT the close-out this card is offering?
  *
- * `isLoanDefaultable` checks Active status and the grace deadline and
- * nothing else, so it returns `true` on a paused protocol and during a
- * sequencer outage — both of which `triggerDefault` rejects
- * independently, and both of which the app's own resolver treats as
- * separate gates. Reading only the narrow view would have let a
- * regressed ready card be substantiated by a probe that was never
- * asking the whole question.
+ * ROUND 57 P2 — SIMULATED, not enumerated, and the product's own code
+ * makes the argument better than a comment here can. `ForcedCloseCard`
+ * simulates `triggerDefault(loanId, [])` before submitting, and says why:
+ * it asks the contract "would this work right now?" instead of
+ * re-deriving the answer from a second copy of the branch rules, and it
+ * "covers the gates this decision does not model".
  *
- * The gates are ASKED OF THE CHAIN rather than reimplemented from the
- * contract source, for the reason this file keeps relearning: a
- * reimplementation is correct until the contract moves, and then it is
- * silently wrong in the direction that vouches for a defect. These are
- * the same three views the app consults, so they move with it.
+ * Round 55 read three views instead — `isLoanDefaultable`, `paused`,
+ * `sequencerHealthy` — and I defended the enumeration on the grounds
+ * that those are the views the app consults. They are not the whole
+ * predicate: a liquid, non-collapsed ERC-20 loan with no internal match
+ * needs a non-empty enabled adapter list, and all three of those reads
+ * return the accepting combination while `triggerDefault(loanId, [])`
+ * is guaranteed to revert. The enumeration was already incomplete when
+ * I wrote that it might become so.
  *
- * `undefined` when any of them could not answer — the verdict reports
- * that as an incomplete observation rather than accusing or vouching.
+ * THE EXACT CALL THE CARD OFFERS, from the observed lender's account,
+ * so this answers the question the lender's click would ask and not a
+ * proxy for it.
+ *
+ * Three outcomes, decided by the classifier this repo already has:
+ *
+ *   - resolves           the protocol would accept it
+ *   - reverts            it would be refused — `classifyRpcFailure`
+ *                        calls a revert `'answered'`, which is positive
+ *                        evidence about the CONTRACT rather than the
+ *                        endpoint
+ *   - anything else      `undefined`: this drive could not ask, and a
+ *                        drive that could not ask must neither accuse
+ *                        nor vouch
  *
  * @param {bigint} loanId
- * @param {bigint} [blockNumber] pin all three to one block when given
+ * @param {bigint} [blockNumber] simulate against this block when given
  * @returns {Promise<boolean|undefined>}
  */
-async function probeDefaultable(loanId, blockNumber) {
-  const at = blockNumber === undefined ? {} : { blockNumber };
-  const read = (functionName, args) =>
-    pub
-      .readContract({ address: DIAMOND, abi: DIAMOND_ABI_VIEM, functionName, args, ...at })
-      .catch(() => undefined);
-  const [defaultable, paused, sequencerHealthy] = await Promise.all([
-    read('isLoanDefaultable', [loanId]),
-    read('paused', []),
-    read('sequencerHealthy', []),
-  ]);
-  if (defaultable === undefined || paused === undefined || sequencerHealthy === undefined) {
-    return undefined;
+async function probeCloseOut(loanId, blockNumber) {
+  try {
+    await pub.simulateContract({
+      address: DIAMOND,
+      abi: DIAMOND_ABI_VIEM,
+      functionName: 'triggerDefault',
+      args: [loanId, []],
+      account: observed,
+      ...(blockNumber === undefined ? {} : { blockNumber }),
+    });
+    return true;
+  } catch (err) {
+    // A REVERT is the protocol answering. Anything else — a dead
+    // endpoint, a rate limit, this drive asking wrongly — is a failure
+    // to determine, and `classifyRpcFailure` is the one place that
+    // judgement lives.
+    return classifyRpcFailure(err) === 'answered' ? false : undefined;
   }
-  // Every gate must agree. A `true` from the narrow view beside a paused
-  // Diamond is not a route the lender can take.
-  return defaultable === true && paused === false && sequencerHealthy === true;
 }
 
 /**
@@ -3097,7 +3111,6 @@ async function observeForcedClose(page, loan) {
   // may legitimately have started withheld and become ready, and this
   // drive cannot tell that from the defect without sampling every
   // render, which it does not.
-  const defaultableBefore = await probeDefaultable(loan.id);
   const card = await readForcedCloseCard(page);
   // BESIDE THE SCRAPE, not at confirmation time (round 14 P2). What
   // matters is the head the page had reached when it rendered — or
@@ -3115,6 +3128,28 @@ async function observeForcedClose(page, loan) {
   // correctly absent card a regression.
   await settleHeadReads(page);
   const pageHead = pageHeadOf(page);
+  // ROUND 57 P2 — THE OTHER END OF THE BRACKET, AT THE PAGE'S OWN HEAD.
+  //
+  // Round 55 took a pre-read on `OBSERVE_RPC` at wall-clock `latest`,
+  // which is not the chain view the render came from. This file treats
+  // the page's provider and `OBSERVE_RPC` as independent everywhere
+  // else — the round-8 confirming re-read exists for exactly that — so
+  // across a grace boundary the observer can be at N+1 while the page
+  // and its DOM are still at N: both ends of the bracket answer `true`,
+  // the window looks quiet, and a ready action rendered at a head where
+  // the protocol still refused it is validated.
+  //
+  // `pageHead` is the head the PAGE was seen to reach, and it is
+  // already recorded for the absence gate. Simulating against it asks
+  // the question the render was answering.
+  //
+  // Where the page never disclosed a head, this falls back to an
+  // unpinned probe — the round-55 bracket, which is weaker (wall-clock
+  // ordering rather than a head) but no weaker than what it replaces.
+  // Saying which one was used is left to the verdict, which reports an
+  // unanswerable probe as an incomplete observation either way.
+  const defaultableBefore =
+    pageHead === 0n ? await probeCloseOut(loan.id) : await probeCloseOut(loan.id, pageHead);
   // ROUND 4 P2 — ONE BLOCK FOR ALL THREE FACTS.
   //
   // `Promise.all` makes these concurrent; it does not pin them to a
@@ -3170,16 +3205,14 @@ async function observeForcedClose(page, loan) {
         }),
         tokenOwnerOf(loan.lenderTokenId, blockNumber),
         saleLockedOn(loan.lenderTokenId, loan.id, blockNumber, loan.authority),
-        // ROUND 55 P2 — EVERY GATE, not just the narrow view.
-        // `isLoanDefaultable` checks Active status and the grace
-        // deadline only, so it answers `true` on a paused protocol and
-        // during a sequencer outage — both of which `triggerDefault`
-        // rejects on its own. See `probeDefaultable`.
+        // ROUND 57 P2 — THE EXACT CALL, simulated. Round 55's three
+        // reads were not the whole predicate; see `probeCloseOut`.
         //
-        // `undefined` when any of them could not answer, so the verdict
-        // can tell "the protocol says no" from "this drive could not
-        // ask" — the distinction every other probe in this file carries.
-        probeDefaultable(loan.id, blockNumber),
+        // `undefined` when the simulation could not be run, so the
+        // verdict can tell "the protocol says no" from "this drive
+        // could not ask" — the distinction every other probe here
+        // carries.
+        probeCloseOut(loan.id, blockNumber),
       ]);
     },
   );

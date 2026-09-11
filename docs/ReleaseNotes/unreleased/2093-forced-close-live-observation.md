@@ -590,3 +590,26 @@ would have called the page faulty on the strength of something that
 happened afterwards. Both directions are now reported as an
 unmatchable reading. A window in which the protocol refuses throughout is
 still a fault, because there is nothing ambiguous about it.
+
+The round after that overturned the reasoning in the one before it, which
+is worth recording as plainly as the fix.
+
+Asking the protocol three specific questions — is the loan past its
+deadline, is the protocol paused, is the sequencer healthy — is not the
+same as asking whether the transaction would work. There are conditions
+none of those three cover, and a page could render "ready" on a loan
+where all three answer favourably and the transaction would still be
+rejected. The product's own code already says how to do this properly: it
+simulates the exact transaction before submitting it, precisely because
+that covers the conditions no list of checks models. The check now does
+the same, asking the question the lender's click would ask rather than a
+stand-in for it.
+
+The other half is about whose view of the chain the answer comes from.
+The check reads the chain through its own connection, which can be a
+block ahead of the one the page is using. Around the moment a loan
+becomes closeable, that difference is exactly the difference between
+"the page was right" and "the page was wrong" — and the check was
+comparing against its own clock rather than the page's position. It now
+asks the question at the chain position the page itself had reached when
+it drew what was being judged.

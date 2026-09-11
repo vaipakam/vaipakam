@@ -2040,7 +2040,7 @@ export function forcedCloseVerdict(obs, copy) {
     return {
       verdict: 'fail',
       failKind: 'observed',
-      why: 'the card renders a READY route and offers the action, but the protocol reports this loan is not yet defaultable — the lender would pay a network fee for a transaction that is guaranteed to be refused',
+      why: 'the card renders a READY route and offers the action, but simulating that exact transaction against the protocol shows it would be refused — the lender would pay a network fee for a call that cannot succeed',
     };
   }
   // ROUND 55 P2 — AND THE WINDOW HAS TO HAVE BEEN QUIET.
@@ -2087,7 +2087,7 @@ export function forcedCloseVerdict(obs, copy) {
     return {
       verdict: 'blocked',
       blockedKind: 'incomplete',
-      why: 'the card offers a READY action but the protocol\'s own defaultability answer could not be read — whether this transaction would be accepted went unestablished',
+      why: 'the card offers a READY action but the transaction it offers could not be simulated — whether the protocol would accept it went unestablished',
     };
   }
   // ROUND 54 P2 — AN UNREADABLE OUTER SUBMIT IS ONE TOO.
