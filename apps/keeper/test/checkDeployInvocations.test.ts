@@ -12741,6 +12741,14 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
   // `*.mk` and runs its recipes — and it was missing from the first two
   // versions of this table (r51). The recipe line needs a real tab.
   const MAKE_BODY = 'deploy:\n\tcd apps/agent && wrangler deploy\n';
+  // A RUNBOOK IS EXECUTABLE TOO, in the only sense this check cares about: a
+  // bare, unindented command line in a document is treated as an actionable
+  // instruction, which is why a runbook's deploy is reported at all — and
+  // `EXTENSIONS` carries `.md` and `.mdx`. Both were missing from the first
+  // three versions of this table (r55). The body is the runbook shape, not a
+  // shell one: no `cd`, the config named on the line itself.
+  const RUNBOOK_BODY =
+    'Deploy it:\n\nwrangler deploy --config apps/agent/wrangler.jsonc\n';
 
   const WALK_HELPER_FAMILIES: ReadonlyArray<readonly [string, string]> = [
     ['ps1', SHELL_BODY],
@@ -12761,6 +12769,8 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     ['cts', ARGV_CJS],
     ['py', ARGV_PY],
     ['mk', MAKE_BODY],
+    ['md', RUNBOOK_BODY],
+    ['mdx', RUNBOOK_BODY],
   ];
 
   /**
