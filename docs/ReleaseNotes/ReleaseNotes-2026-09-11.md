@@ -1,3 +1,24 @@
+# Release Notes — 2026-09-11
+
+One entry, and it closes nothing. A guard that must decide whether a
+deployment's checked-in configuration is the one that will actually load had
+three plausible ways to read the file more faithfully; all three were built and
+all three were withdrawn, along with two smaller corrections that looked
+obviously safe and regressed in opposite directions. What lands is the account
+of why none of them can work, the intent stated where it binds, and tests that
+assert the wrong answers the guard still gives — so that a later, correct fix
+fails them loudly instead of passing unnoticed. The executable code is
+unchanged, byte for byte.
+
+The most transferable part is not about deployments at all. Each withdrawn
+design failed for the same reason: it asked a question about a file that only
+another system's execution model can answer — a continuous-integration
+system's, a document format's grammar, a build tool's variable language — while
+this check is a scanner. Where such a model is genuinely needed, the answer is
+a declaration from the thing being deployed, not a better approximation in the
+reader. That conclusion is now recorded as a requirement, and the gap between
+it and the current implementation is registered rather than quietly carried.
+
 ## Thread — three attempts at the deploy guard's rewrite question, all withdrawn (PR #2105)
 
 The deploy guard refuses to trust a configuration's checked-in contents when the
@@ -28,7 +49,7 @@ withdrawn under review.
 
 **What each cost, why none can be rebuilt, and the admissibility rule the
 rounds converged on are recorded once**, in
-[`DeployGuardRewriteScanRecord.md`](../../DesignsAndPlans/DeployGuardRewriteScanRecord.md).
+[`DeployGuardRewriteScanRecord.md`](../DesignsAndPlans/DeployGuardRewriteScanRecord.md).
 
 This section used to carry all of that in full. It was reduced to the table
 above because keeping it here meant a second copy of exactly the material whose
@@ -213,7 +234,7 @@ specification — and the copies drifted exactly as the table's restatements had
 a scope correction reached two of them and not the third, leaving the
 specification prescribing a remedy that would have introduced a silent pass.
 The record now has one home,
-[`DeployGuardRewriteScanRecord.md`](../../DesignsAndPlans/DeployGuardRewriteScanRecord.md);
+[`DeployGuardRewriteScanRecord.md`](../DesignsAndPlans/DeployGuardRewriteScanRecord.md);
 the specification carries the binding invariants and nothing else; this note
 says what landed. That split is itself part of what landed, and it is the same
 lesson the three withdrawn designs taught, applied to the documents rather than
@@ -239,7 +260,7 @@ to the code.
 | **#2123** | a helper whose file name carries an upper-case extension is never found by the sweep that discovers files to read — *pinned (silent pass)*, and the broadest of the three, since a file the sweep never yields is never examined at all — though one named explicitly by a file already being read IS opened, so the gap is in the discovery and not in the reading |
 | **#2124** | a binding closed with that shell's ordinary statement terminator is not recognised, so the deployment's directory reads as unknown — *pinned (silent pass)* |
 | **#2126** | the command-name normalisation is applied on the strength of the INTERPRETER alone, without establishing how the runner resolves command names — so where that lookup is case-SENSITIVE the normalised spelling names a program the runner does not have, and the check reports it — *pinned (false report)*. Stating this as interpreter-versus-platform, as this row did, does not describe the pinned report: a host on another platform may resolve case-insensitively, and there the normalisation is harmless and the #2115 miss is the real defect. What is missing is not a platform test but an established lookup mode. The check's own comment states this must not happen. A companion claim about the path-separator normalisation was withdrawn, and the withdrawal is narrower than "that rewrite is fine": what was checked is a path given to the SHELL'S OWN commands, which reads the same either way on every platform, so the report there is correct. The same documentation warns the alternate separator "may not work when used with native applications that only expect the native directory separator" — and a deployment command is a native application. Nothing pins that case, because nothing demonstrates it; it is an open question, not an approval |
-| **#2085** | **no longer an open question — an open implementation gap.** The specification now REQUIRES a declaration from the deployment wherever answering would need another system's execution model, and the check still infers, so this is required work rather than design exploration. The three withdrawals are the evidence that settled it; the divergence is registered in [`_CodeVsDocsAudit.md`](../../FunctionalSpecs/_CodeVsDocsAudit.md) as the principal one of this set |
+| **#2085** | **no longer an open question — an open implementation gap.** The specification now REQUIRES a declaration from the deployment wherever answering would need another system's execution model, and the check still infers, so this is required work rather than design exploration. The three withdrawals are the evidence that settled it; the divergence is registered in [`_CodeVsDocsAudit.md`](../FunctionalSpecs/_CodeVsDocsAudit.md) as the principal one of this set |
 
 This PR closes none of them.
 
@@ -249,3 +270,4 @@ continuous-integration system's execution model, a document format's grammar, a
 build tool's variable language — and this check is a scanner. Where such a model
 is genuinely needed, the answer is a declaration from the deployment itself
 rather than a better approximation here.
+<!-- assembled-fragment: 2084-deploy-guard-executable-image.md sha256=b71c629abf69fa3033d2e215d83db65b3b36ae39bd7d972a66c5956ae4e7d024 -->
