@@ -5038,18 +5038,31 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
             // duplicate hidden in the DOM is not something the lender is
             // being shown. Selecting from the filtered set too, so the
             // control judged and trialled is one the lender can reach.
-            const clusterActions =
+            const allActions =
               backButton && backButton.parentElement
                 ? [...backButton.parentElement.querySelectorAll('button')].filter(
-                    (b) => b !== backButton && visible(b),
+                    (b) => b !== backButton,
                   )
                 : [];
+            const clusterActions = allActions.filter(visible);
             const confirmButton = clusterActions[0];
             const confirmAction = {
-              present: confirmButton !== undefined,
-              // Retained rather than folded into `present`: the two say
-              // different things to a reader, and an older record may
-              // carry a control that was found without being shown.
+              // SELF-REVIEW AFTER ROUND 56 — `present` READS THE
+              // UNFILTERED SET, so the two messages stay distinct.
+              //
+              // Round 51 filtered the cluster by `visible` — correctly,
+              // to stop a hidden responsive variant being counted as a
+              // second fee-paying action — and computing `present` from
+              // the filtered set made `visible` dead: it could only ever
+              // be true when `present` was. A confirm button rendered
+              // but HIDDEN then reported "no confirmation action was
+              // rendered beside Back", which is a true verdict reached
+              // through a false sentence, and round 45 gave those two
+              // states separate messages deliberately.
+              //
+              // The count and the selection keep the filtered set, which
+              // is what round 51's fix was actually about.
+              present: allActions.length > 0,
               visible: confirmButton !== undefined && visible(confirmButton),
               enabled: confirmButton !== undefined && confirmButton.disabled === false,
               labelled:

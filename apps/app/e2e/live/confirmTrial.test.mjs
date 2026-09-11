@@ -132,8 +132,24 @@ describe('the confirmation cluster counts only what is shown', () => {
   const src = fs.readFileSync(DRIVE, 'utf8');
   const at = (needle) => src.indexOf(needle);
 
+  // AMENDED AFTER ROUND 56's self-review, and the guard did its job:
+  // this case failed the moment the shape changed, which is the whole
+  // reason it exists.
+  //
+  // The filter moved rather than went away. Computing `present` from the
+  // FILTERED set had made the `visible` field dead — it could only ever
+  // be true when `present` was — so a confirm button rendered but hidden
+  // reported "no confirmation action was rendered beside Back": a true
+  // verdict reached through a false sentence. The unfiltered set now
+  // answers "was one rendered", and the filtered one answers everything
+  // round 51's fix was actually about: the count, and which control is
+  // judged and trialled.
   it('filters the cluster by the drive’s own visibility predicate', () => {
-    expect(src).toContain('(b) => b !== backButton && visible(b),');
+    expect(src).toContain('const clusterActions = allActions.filter(visible);');
+  });
+
+  it('answers PRESENT from the unfiltered set, so hidden is not absent', () => {
+    expect(src).toContain('present: allActions.length > 0,');
   });
 
   it('selects the action from the FILTERED set', () => {
