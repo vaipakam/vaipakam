@@ -208,27 +208,6 @@ function definiteConfirmActionFault(a) {
 const ASSET_GLYPH = /[\u039E\u03BE\u0243\u00D0\u25CE]/u;
 
 /**
- * ROUND 60 P2 — SPELLED-OUT DENOMINATIONS COUNT TOO.
- *
- * `Loan 100 ether will be returned` and `Token 5 bitcoins` walked
- * through the identifier exemption: the trailing word is a denomination,
- * but it was not a ticker and not on this list, so nothing objected and
- * an ordinary monetary phrase was read as a reference number.
- *
- * This is the third vocabulary in this file (the others being
- * `MAGNITUDE_WORD` and the duration words) and it carries their
- * weakness: a denomination nobody listed walks through, and the app
- * ships twenty locale bundles. Round 49 argued the case for why a
- * vocabulary is unavoidable where the distinction is semantic — `Loan
- * 21 will be returned` and `Loan 100 ether will be returned` differ only
- * in what the following word MEANS — and that argument applies here
- * unchanged. Tracked with its siblings in #2125.
- *
- * The residual direction is deliberate and the same as everywhere else:
- * a denomination this does not know is a MISSED amount, never an
- * invented one.
- */
-/**
  * Lower-case DENOMINATIONS, which `isTicker` cannot reach.
  *
  * ROUND 43 P2. `isTicker` requires an internal uppercase RUN, and that
@@ -250,7 +229,24 @@ const ASSET_GLYPH = /[\u039E\u03BE\u0243\u00D0\u25CE]/u;
  * The residual is stated rather than hidden: a lower-case unit not
  * listed is missed. The all-locale calibration is the guard — a shipped
  * string carrying one fails there, on named copy, rather than
- * surprising a live run.
+ * surprising a live run. The direction is deliberate and the same as
+ * everywhere else in this file: a denomination this does not know is a
+ * MISSED amount, never an invented one.
+ *
+ * ROUND 60 P2 — THE SPELLED-OUT FORMS TOO. The list carried every
+ * abbreviation and not one written-out denomination, so `Loan 100 ether
+ * will be returned` and `Token 5 bitcoins` walked through the
+ * identifier exemption on the same mechanism round 43 closed for
+ * `Loan 100 eth`: the trailing word IS a denomination, but membership
+ * is the only thing that can say so.
+ *
+ * This is the third vocabulary in this file — `MAGNITUDE_WORD` and the
+ * duration words are the others — and it inherits their weakness across
+ * twenty shipped locale bundles. Round 49 argued why a vocabulary is
+ * unavoidable where the distinction is semantic (`Loan 21 will be
+ * returned` and `Loan 100 ether will be returned` differ only in what
+ * the following word MEANS), and that argument applies here unchanged.
+ * Tracked with its siblings in #2125.
  */
 const LOWERCASE_ASSET_UNIT =
   /^(eth|weth|wei|gwei|btc|wbtc|sats|usdc|usdt|dai|ether|ethers|bitcoin|bitcoins|satoshi|satoshis|szabo|finney)$/;
@@ -333,13 +329,6 @@ function firstUnnegatedRefusal(text) {
 }
 
 /**
- * Units that make a number a DURATION or a PROPORTION rather than an
- * amount of money. The card is explicitly allowed to show the grace
- * window ("may show the grace window to explain a wait"), so a naive
- * digit scan would fail on correct copy — which is worse than no check,
- * because it would be silenced rather than fixed.
- */
-/**
  * A token symbol somewhere in the short run that follows a figure,
  * across the delimiters real copy uses — spaces, brackets, colons,
  * dashes, commas. Used only to WITHHOLD an exemption, never to create a
@@ -374,6 +363,13 @@ function hasTickerNear(after) {
   return false;
 }
 
+/**
+ * Units that make a number a DURATION or a PROPORTION rather than an
+ * amount of money. The card is explicitly allowed to show the grace
+ * window ("may show the grace window to explain a wait"), so a naive
+ * digit scan would fail on correct copy — which is worse than no check,
+ * because it would be silenced rather than fixed.
+ */
 const NON_MONETARY_UNIT =
   /^(%|bps|day|days|hour|hours|hr|hrs|h|minute|minutes|min|mins|m|second|seconds|sec|secs|s|week|weeks|month|months|year|years|block|blocks)$/i;
 
