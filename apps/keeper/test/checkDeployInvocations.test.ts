@@ -11900,7 +11900,9 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
   // an inert here-string, reached via the separator rewrite; and an
   // ASSIGNMENT there, rewritten into a binding that makes a later `& $cmd
   // deploy` resolve), and #2126, the casing normalisation applied on a runner
-  // whose platform makes the normalised spelling a different program.
+  // whose case-sensitive command lookup makes the normalised spelling a
+  // different program — the LOOKUP, not the platform family, being the
+  // discriminator (r46).
   // #2126's separator half was withdrawn in r35; see the note where those
   // fixtures were. A fixture that pinned the wrong direction would pass
   // while the guard did the wrong thing.
@@ -12227,10 +12229,18 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     // here comes from the same shared pass as the pwsh case.
     //
     // THE FOUR #2118 PINS SPAN TWO INDEPENDENT DIMENSIONS — dialect (pwsh /
-    // cmd) and host (standalone helper / workflow step) — and the honest
-    // statement about a partial fix is arithmetic, not rhetoric: a fix gated
-    // on EITHER dimension satisfies the two fixtures on its side and leaves
-    // the two on the other still wrong. An earlier version of this comment
+    // cmd) and INGESTION SURFACE (standalone helper / workflow body) — and
+    // the honest statement about a partial fix is arithmetic, not rhetoric: a
+    // fix gated on EITHER dimension satisfies the two fixtures on its side
+    // and leaves the two on the other still wrong.
+    //
+    // "INGESTION SURFACE", NOT "HOST" (r46). `host` is used elsewhere in this
+    // file for the MACHINE a workflow runs on, which is the axis #2126 turns
+    // on — and the second dimension here has nothing to do with the runner:
+    // the same runner processes both a standalone helper and a workflow body.
+    // Calling it a host points a fix at runner gating instead of at the
+    // helper/workflow dispatch paths, which is the very category error the
+    // #2126 work exists to record. An earlier version of this comment
     // said a dialect-gated fix "fixes neither of them", which overstated it
     // (r43): such a fix really does fix that dialect's helper AND workflow.
     // Only a correction at the shared line splitter moves all four.
@@ -12257,8 +12267,9 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     // HELPER pins and leave BOTH workflow pins — this one and its cmd sibling
     // — still green on a production path. An earlier version said such a fix
     // would satisfy "every other #2118 fixture", which overstated it (r43):
-    // host and dialect are independent, so a host-gated fix moves two of the
-    // four, exactly as a dialect-gated one does.
+    // ingestion surface and dialect are independent, so a surface-gated fix
+    // moves two of the four, exactly as a dialect-gated one does. Surface,
+    // not "host" — see the note at the cmd helper pin (r46).
     seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
     seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
     const r = runWith(
@@ -12329,10 +12340,15 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     // `windows-latest`, NOT ubuntu (r30): this check's own contract says
     // `Wrangler` is a DIFFERENT executable where the runner resolves names
     // case-sensitively, as `ubuntu-latest` does, so pinning the
-    // trade on a Linux runner would rest on applying a Windows rewrite where
-    // the rewrite's own reasoning says it should not apply — and a
-    // runner-aware correction could then flip this fixture for a reason that
-    // has nothing to do with the casing widening it exists to announce.
+    // trade on a CASE-SENSITIVE runner would rest on applying a Windows
+    // rewrite where the rewrite's own reasoning says it should not apply —
+    // and a lookup-aware correction could then flip this fixture for a reason
+    // that has nothing to do with the casing widening it exists to announce.
+    //
+    // NOT "a Linux runner" (r46): a Linux host with case-INSENSITIVE lookup
+    // resolves `Wrangler` to the real command, so pinning the trade there
+    // would be perfectly valid. It is this fixture's case-sensitive mode that
+    // makes the rewrite inappropriate, and nothing broader.
     //
     // NOTE ON THE PROBE THAT FOUND THIS: a first attempt used no `cd`, so
     // nothing scoped the deploy to the package and BOTH casings passed —
@@ -12593,8 +12609,18 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     // A STATED FALSE GREEN. PowerShell resolves `$TARGET` and `$target` as
     // one variable, so it really does deploy from apps/agent. The rewrite
     // preserves the spelling and the shared variable model — correct for
-    // POSIX, where they ARE two variables — looks it up exactly, so the
-    // directory reads as unknown and the deploy is not attributed.
+    // POSIX-SHELL VARIABLE SEMANTICS, where they ARE two variables — looks it
+    // up exactly, so the directory reads as unknown and the deploy is not
+    // attributed.
+    //
+    // THE DISCRIMINATOR IS THE SHELL LANGUAGE, NOT THE HOST (r46), and the
+    // distinction is the opposite of #2126's: PowerShell binds variable
+    // names case-INSENSITIVELY on EVERY platform it runs on, so unlike
+    // command lookup this owes nothing to the runner. A fix gated on the
+    // host would therefore be wrong in both directions — it would leave this
+    // defect live wherever the host looked POSIX, and would mis-resolve a
+    // POSIX shell's genuinely distinct variables wherever it looked Windows.
+    // What the shared model needs is per-language name-matching.
     //
     // This defeats the pwsh rewrite in its main use: resolving the directory
     // a deploy runs from. The control differs only in the spelling.

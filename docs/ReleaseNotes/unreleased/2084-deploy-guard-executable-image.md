@@ -68,38 +68,33 @@ No behaviour change. The check's logic is what it was.
   a later fix fails them and comes back to the question rather than passing
   silently.
 
-  **How many pins each defect carries is stated once, in the table below, and
-  deliberately not repeated here.** Several defects are pinned more than once,
-  for TWO different reasons, and which applies is recorded at each fixture
-  rather than generalised here:
+  **Several defects are pinned more than once. Why, and how many times, is
+  recorded at the fixtures and in the table below — not here.**
 
-  - the faulty step is **shared**, so a fix gated on any one of the properties
-    the pins vary satisfies only the fixtures sharing that property and leaves
-    the rest wrong; or
-  - the pins are **separately fixable routes** into one defect, where a fix for
-    one genuinely can leave the other standing.
+  That sentence is short on purpose, and the reason is the most transferable
+  thing in this document. Four review rounds were spent on the paragraph that
+  used to sit here, which existed to explain the multiple pins: each round
+  found it asserting something the fixtures did not support, each correction
+  added prose to state the matter more precisely, and the added prose was
+  itself wrong the next round — twice over in the last one, where a sentence
+  written specifically to remove a category error reintroduced it with a
+  different word, and a paragraph opening "stated once, in the table below"
+  hardcoded two of the counts three lines later.
 
-  The first of those is **not** one pin per host, and saying so understated it:
-  where the pins vary along more than one property at once they are the
-  combinations, not a list. The backslash-fold defect is pinned across two
-  shell dialects AND two hosts — four fixtures for two independent properties
-  — so a fix gated on either property moves two of the four and only a
-  correction at the shared step moves all of them. How many properties a
-  given defect varies is recorded at its fixtures.
+  That is not a paragraph nearly finished. It is an explanation whose edge
+  list has no end, because every restatement of a per-defect fact is a new
+  place for that fact to drift from the fixture that establishes it. The same
+  shape was met twice before in this work — enumerating the spellings of a
+  command, and enumerating a document format's grammar — and resolved the same
+  way both times: **delete the thing generating the edges rather than answer
+  the next one.** The fixtures already carry each defect's scope, mechanism,
+  mutation evidence and pin count, established with the code in hand. A prose
+  copy adds no information and one more surface to be wrong on.
 
-  An earlier draft of this paragraph gave the first as the reason for all of
-  them. It is not: the two symptoms of the here-string defect go through
-  different rewrites, and of the four pins on the manifest-format defect only
-  three share a branch. Stating one universal reason made the multiplicity look
-  like redundancy, when for some of them it is the opposite.
-
-  That over-generalisation is the same failure as the stale arithmetic this
-  paragraph replaced, and it is worth naming as one: **the record kept
-  asserting something broader than what had been verified.** Each fixture
-  carries its scope, its mechanism and its mutation evidence, established with
-  the code in hand; every time the note restated one, the qualifiers fell off.
-  So the note now carries the shape of the finding and points at the fixture
-  for its extent — one record per fact, named from the others.
+  What survives is the general point those rounds actually established, which
+  needs no per-defect detail to state: **the record kept asserting something
+  broader than what had been verified**, and the qualifiers fell off at every
+  restatement. One record per fact, named from the others.
 
   **Some assert a silent pass** — the direction this check must never fail in:
   a build file variable holding a write is not seen when its assignment sits
@@ -134,10 +129,10 @@ No behaviour change. The check's logic is what it was.
   a separate symptom from the command-name one, reached through a different
   rewrite, which is why both are pinned; and a line that is COMMENTED OUT, in the variant
   of that format permitting comments, is read as a command although it is not a
-  property at all; and a Windows normalisation is applied wherever the
-  interpreter is a Windows shell, INCLUDING on a runner whose platform those
-  rules do not describe, so it reports a program that does not exist on that
-  platform.
+  property at all; and a command-name normalisation is applied wherever the
+  interpreter is a Windows shell, WITHOUT establishing whether the runner
+  resolves command names case-insensitively, so where it does not the check
+  reports a program that runner does not have.
 - Two tests pinning that a bare command line and an inline command span in a
   document **are** read as commands — the two shapes that defeated the withdrawn
   designs, so a future attempt cannot quietly reintroduce the erasure.
@@ -232,7 +227,7 @@ not its siblings. One record per defect, named from the others.
 | **#2122** | a variable whose name differs only in case is not resolved, though that shell resolves it, so the deployment's directory reads as unknown — *pinned (silent pass)* |
 | **#2123** | a helper whose file name carries an upper-case extension is never found by the sweep that discovers files to read — *pinned (silent pass)*, and the broadest of the three, since a file the sweep never yields is never examined at all — though one named explicitly by a file already being read IS opened, so the gap is in the discovery and not in the reading |
 | **#2124** | a binding closed with that shell's ordinary statement terminator is not recognised, so the deployment's directory reads as unknown — *pinned (silent pass)* |
-| **#2126** | the command-name normalisation for one platform's shells is chosen by the interpreter rather than the platform, so it also applies where that platform's rules do not hold and reports a program that does not exist there — *pinned (false report)*. The check's own comment states this must not happen. A companion claim about the path-separator normalisation was withdrawn, and the withdrawal is narrower than "that rewrite is fine": what was checked is a path given to the SHELL'S OWN commands, which reads the same either way on every platform, so the report there is correct. The same documentation warns the alternate separator "may not work when used with native applications that only expect the native directory separator" — and a deployment command is a native application. Nothing pins that case, because nothing demonstrates it; it is an open question, not an approval |
+| **#2126** | the command-name normalisation is applied on the strength of the INTERPRETER alone, without establishing how the runner resolves command names — so where that lookup is case-SENSITIVE the normalised spelling names a program the runner does not have, and the check reports it — *pinned (false report)*. Stating this as interpreter-versus-platform, as this row did, does not describe the pinned report: a host on another platform may resolve case-insensitively, and there the normalisation is harmless and the #2115 miss is the real defect. What is missing is not a platform test but an established lookup mode. The check's own comment states this must not happen. A companion claim about the path-separator normalisation was withdrawn, and the withdrawal is narrower than "that rewrite is fine": what was checked is a path given to the SHELL'S OWN commands, which reads the same either way on every platform, so the report there is correct. The same documentation warns the alternate separator "may not work when used with native applications that only expect the native directory separator" — and a deployment command is a native application. Nothing pins that case, because nothing demonstrates it; it is an open question, not an approval |
 | **#2085** | whether this detection should be a declaration rather than an inference — the three withdrawals are the strongest evidence yet that it should |
 
 This PR closes none of them.
