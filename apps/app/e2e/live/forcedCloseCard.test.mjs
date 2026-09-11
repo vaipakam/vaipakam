@@ -3175,3 +3175,88 @@ describe('rounds 42–43 review findings', () => {
     });
   });
 });
+
+describe('round 45 review findings', () => {
+  const copy = {
+    unknownCopy: FORCED_CLOSE.unknown,
+    readyCopy: [FORCED_CLOSE.readyInKind, FORCED_CLOSE.readyInternalMatch, FORCED_CLOSE.readyRental],
+    withheldCopy: [FORCED_CLOSE.unknown, FORCED_CLOSE.notYet, FORCED_CLOSE.readyNeedsRoute],
+    recognisedCopy: [
+      FORCED_CLOSE.unknown,
+      FORCED_CLOSE.notYet,
+      FORCED_CLOSE.blockedPaused,
+      FORCED_CLOSE.blockedSequencer,
+      FORCED_CLOSE.blockedNoConsent,
+      FORCED_CLOSE.readyInKind,
+      FORCED_CLOSE.readyInternalMatch,
+      FORCED_CLOSE.readyRental,
+      FORCED_CLOSE.readyNeedsRoute,
+    ],
+    receiptLeads: [FORCED_CLOSE.receipt.youReceive, FORCED_CLOSE.rentalReceipt.youReceive],
+  };
+
+  // The drive clicked the outer submit, waited for Back and scanned the
+  // six rows — and never looked at the button that would actually send
+  // the transaction. A confirm control missing, hidden, blank or
+  // permanently disabled strands the lender one click short while the
+  // run reports the ACTIONABLE route as covered.
+  describe('the confirmation must offer its own action', () => {
+    const opened = {
+      lenderHoldsActive: true,
+      mounted: true,
+      attached: true,
+      submitPresent: true,
+      submitVisible: true,
+      submitDisabled: false,
+      visibleSubmits: 1,
+      visibleCards: 1,
+      saleLocked: false,
+      settled: true,
+      bodyPresent: true,
+      bodyText: FORCED_CLOSE.readyInKind,
+      text: FORCED_CLOSE.readyInKind,
+      confirmExpected: true,
+      confirmText: `${FORCED_CLOSE.receipt.youReceive} …`,
+    };
+    const usable = { present: true, visible: true, enabled: true, labelled: true };
+
+    it('PASSES when the action is present, visible, labelled and enabled', () => {
+      expect(forcedCloseVerdict({ ...opened, confirmAction: usable }, copy).verdict).toBe('pass');
+    });
+
+    for (const [field, why] of [
+      ['present', /no confirmation action was rendered/],
+      ['visible', /not visible/],
+      ['enabled', /disabled/],
+      ['labelled', /no label/],
+    ]) {
+      it(`FAILS when the action is not ${field}`, () => {
+        const v = forcedCloseVerdict(
+          { ...opened, confirmAction: { ...usable, [field]: false } },
+          copy,
+        );
+        expect(v.verdict).toBe('fail');
+        expect(v.failKind).toBe('observed');
+        expect(v.why).toMatch(why);
+      });
+    }
+
+    // Silence is not a finding: an older record predates the field, and
+    // inventing one from absence is the failure mode this module guards
+    // against everywhere else.
+    it('says nothing when the record carries no confirmAction', () => {
+      expect(forcedCloseVerdict(opened, copy).verdict).toBe('pass');
+    });
+
+    // And it must not fire where the panel never rendered — those cases
+    // are reported by the arms around it, not as a missing button.
+    it('says nothing when the confirmation never opened', () => {
+      const v = forcedCloseVerdict(
+        { ...opened, confirmText: null, confirmAction: { ...usable, present: false } },
+        copy,
+      );
+      expect(v.verdict).toBe('blocked');
+      expect(v.blockedKind).toBe('incomplete');
+    });
+  });
+});

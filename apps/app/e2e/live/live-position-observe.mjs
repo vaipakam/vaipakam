@@ -3318,7 +3318,21 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
             const box = n.getBoundingClientRect();
             if (clipsY && box.height === 0) return false;
             if (clipsX && box.width === 0) return false;
-            if (!inFlow) continue;
+            // ROUND 45 P2 — the out-of-flow exemption is about ANCESTORS, never
+            // about the node's own clipping box.
+            //
+            // I wrote it to avoid a containing-block question: whether a given
+            // ancestor clips an absolutely positioned descendant depends on which
+            // element is that descendant's containing block, and answering it
+            // wrongly condemns content the lender can see. None of that
+            // uncertainty applies to an element clipping ITS OWN text — every
+            // element clips its own content, whatever its `position` is.
+            //
+            // Round 44 put `node` into this walk and this `continue` skipped it
+            // right back out again for a positioned leaf, so `position: absolute;
+            // height: 1px; overflow: hidden` still passed. The fix for the skipped
+            // box, skipping the same box.
+            if (!inFlow && n !== node) continue;
             const scrollsY =
               (cs.overflowY === 'auto' || cs.overflowY === 'scroll') &&
               n.scrollHeight > n.clientHeight;
@@ -4007,6 +4021,10 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
   const confirmExpected =
     snap.submitPresent && snap.submitVisible && !snap.submitDisabled;
   let confirmText = null;
+  // ROUND 45 P2 — the confirmation's OWN action, observed and never
+  // clicked. Declared here rather than inside the branch so the final
+  // projection can carry it whether or not the panel opened.
+  let confirmAction;
   if (confirmExpected) {
     const opened = await card
       // ROUND 26 P2 — click the control the verdict judged actionable.
@@ -4168,7 +4186,21 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
                 const box = n.getBoundingClientRect();
                 if (clipsY && box.height === 0) return false;
                 if (clipsX && box.width === 0) return false;
-                if (!inFlow) continue;
+                // ROUND 45 P2 — the out-of-flow exemption is about ANCESTORS, never
+                // about the node's own clipping box.
+                //
+                // I wrote it to avoid a containing-block question: whether a given
+                // ancestor clips an absolutely positioned descendant depends on which
+                // element is that descendant's containing block, and answering it
+                // wrongly condemns content the lender can see. None of that
+                // uncertainty applies to an element clipping ITS OWN text — every
+                // element clips its own content, whatever its `position` is.
+                //
+                // Round 44 put `node` into this walk and this `continue` skipped it
+                // right back out again for a positioned leaf, so `position: absolute;
+                // height: 1px; overflow: hidden` still passed. The fix for the skipped
+                // box, skipping the same box.
+                if (!inFlow && n !== node) continue;
                 const scrollsY =
                   (cs.overflowY === 'auto' || cs.overflowY === 'scroll') &&
                   n.scrollHeight > n.clientHeight;
@@ -4349,6 +4381,45 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
             // about its contents, and adding it as a fallback was the
             // same mistake as the `p`/`dd`/`span` fallback before it —
             // a claim about a case I had not looked at.
+            // ROUND 45 P2 — THE CONFIRMATION'S OWN ACTION, located but
+            // never clicked.
+            //
+            // The drive opened the panel, waited for Back, scanned the
+            // six rows — and never looked at the button that would
+            // actually send the transaction. A confirm control missing,
+            // hidden, blank or permanently disabled strands the lender
+            // one click short of the action while this run reports the
+            // ACTIONABLE route as covered, which is the strongest claim
+            // it makes.
+            //
+            // Located by STRUCTURE because `ConfirmReceipt` gives it no
+            // testid: the panel renders exactly two buttons in one
+            // cluster — Back and confirm — and the outer submit is not
+            // rendered at all while the panel is open, so the confirm
+            // action is the button beside Back.
+            //
+            // NOT CLICKED, which is the point of doing it this way: this
+            // drive is watch-only and that button sends a fee-paying
+            // transaction. Presence, visibility, a non-blank label and
+            // `disabled === false` are all observable without touching
+            // it.
+            const panelButtons = [...el.querySelectorAll('button')];
+            const backButton = panelButtons.find((b) =>
+              /back/i.test((b.innerText ?? '').trim()),
+            );
+            const confirmButton =
+              backButton && backButton.parentElement
+                ? [...backButton.parentElement.querySelectorAll('button')].find(
+                    (b) => b !== backButton,
+                  )
+                : undefined;
+            const confirmAction = {
+              present: confirmButton !== undefined,
+              visible: confirmButton !== undefined && visible(confirmButton),
+              enabled: confirmButton !== undefined && confirmButton.disabled === false,
+              labelled:
+                confirmButton !== undefined && (confirmButton.innerText ?? '').trim() !== '',
+            };
             const rows = [
               ...el.querySelectorAll(
                 '[data-testid^="forced-close-receipt"], dl.receipt .receipt-row',
@@ -4436,12 +4507,15 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
               if (!visible(dt) || !visible(dd)) return false;
               return hasText(dt) && hasText(dd);
             };
-            return rows.length === 6 && rows.every(rowShown);
+            // An OBJECT now, not a boolean: the caller needs the
+            // confirm-action facts as well as whether the rows read.
+            return { rowsOk: rows.length === 6 && rows.every(rowShown), confirmAction };
           })
-          .catch(() => false);
-        confirmText = receiptShown
+          .catch(() => null);
+        confirmText = receiptShown?.rowsOk
           ? await card.innerText({ timeout: 2_000 }).catch(() => null)
           : null;
+        confirmAction = receiptShown?.confirmAction;
         // Leave the page as it was found. Failing to close it is not a
         // finding and must not fail the drive.
         await back.click({ timeout: 3_000 }).catch(() => {});
@@ -4455,6 +4529,7 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
     mounted: true,
     attached: true,
     confirmText,
+    confirmAction,
     confirmExpected,
     settled,
     // Every render read during the readiness wait, including the ones

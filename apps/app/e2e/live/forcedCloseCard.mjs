@@ -1536,6 +1536,47 @@ export function forcedCloseVerdict(obs, copy) {
       checkRunning,
     };
   }
+  // ROUND 45 P2 — THE CONFIRMATION MUST OFFER ITS OWN ACTION.
+  //
+  // The drive clicked the outer submit, waited for Back and scanned the
+  // six rows — and never looked at the button that would actually send
+  // the transaction. A confirm control missing, hidden, blank or
+  // permanently disabled strands the lender one click short while the
+  // run reports the ACTIONABLE route as covered, which is the strongest
+  // claim this drive makes.
+  //
+  // Judged only where the panel was established to have rendered, so a
+  // shell that never opened is still reported by the arms around it
+  // rather than as a missing button.
+  //
+  // On the path this drive takes the control cannot legitimately be
+  // unusable: `ConfirmReceipt`'s confirm is `disabled={busy || disabled}`,
+  // `ForcedCloseCard` passes `disabled={holdingAfterSubmit}`, and
+  // `submittable` is `canSubmitFromApp(readiness) && !holdingAfterSubmit`
+  // — so a card whose outer submit was clickable has both false, and
+  // `busy` cannot be true because this drive never submits.
+  //
+  // Absent `confirmAction` says nothing: an older record predates the
+  // field, and inventing a finding from silence is the failure mode this
+  // file guards against everywhere else.
+  if (obs.confirmText !== null && obs.confirmText !== undefined && obs.confirmAction) {
+    const a = obs.confirmAction;
+    if (!a.present || !a.visible || !a.enabled || !a.labelled) {
+      const why = !a.present
+        ? 'no confirmation action was rendered beside Back'
+        : !a.visible
+          ? 'its confirmation action is not visible'
+          : !a.labelled
+            ? 'its confirmation action has no label'
+            : 'its confirmation action is disabled';
+      return {
+        verdict: 'fail',
+        failKind: 'observed',
+        why: `the confirmation opened and its receipt rendered, but ${why} — the lender is left one click short of the action the card offered`,
+      };
+    }
+  }
+
   if (obs.confirmExpected && obs.confirmText === null) {
     return {
       verdict: 'blocked',

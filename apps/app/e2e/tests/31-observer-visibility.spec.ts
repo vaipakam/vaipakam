@@ -93,6 +93,7 @@ test('both copies of the drive visibility predicate agree, and reject clipped co
       <div class="receipt-row" id="selfClipRow">
         <dt style="width:118px">Fees</dt>
         <dd id="selfClipped" style="height:1px; overflow:hidden; font:16px/20px monospace">2% of the interest, taken at settlement</dd>
+        <dd id="selfClippedAbs" style="position:absolute; height:1px; overflow:hidden; width:200px; font:16px/20px monospace">2% of the interest, taken at settlement</dd>
       </div>
     </dl>
     <div id="cardClip" style="height:30px; overflow:hidden; width:200px; font:16px/20px monospace">
@@ -135,6 +136,11 @@ test('both copies of the drive visibility predicate agree, and reject clipped co
           // `parentElement`, so the one box that could catch this was
           // the one box it skipped.
           selfClipped: visible(byId('selfClipped')),
+          // The out-of-flow exemption is about ANCESTORS — whether one
+          // clips a positioned descendant is a containing-block
+          // question. An element clipping its OWN text is not uncertain
+          // at all, whatever its `position` is.
+          selfClippedAbs: visible(byId('selfClippedAbs')),
           plain: visible(byId('plain')),
           scrolledOut: visible(byId('scrolledOut')),
           // Recorded so a future failure says WHICH branch ran. The
@@ -191,6 +197,10 @@ test('both copies of the drive visibility predicate agree, and reject clipped co
     // screen. Leaves are checked individually anyway.
     expect(result.cardish, `copy ${i}: a container whose last row is clipped`).toBe(true);
     expect(result.selfClipped, `copy ${i}: a dd clipping its own text`).toBe(false);
+    expect(
+      result.selfClippedAbs,
+      `copy ${i}: a POSITIONED dd clipping its own text`,
+    ).toBe(false);
     // The deliberate limit of the rule, pinned so it cannot be tightened
     // by accident: content merely scrolled out of a scroll container is
     // reachable, and condemning it would be a false failure — the
