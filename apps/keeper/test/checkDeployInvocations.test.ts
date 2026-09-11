@@ -12770,8 +12770,11 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
    * EVERY extension `walk` accepts, with the body and location each needs.
    *
    * The list is DERIVED-CHECKED, not hand-trusted: `walk yields exactly these
-   * families` below reads `EXTENSIONS` out of the guard's source and fails if
-   * this table and that list disagree in either direction. That guard exists
+   * families` below IMPORTS the scanner's own extension arrays — from the
+   * shared module both sides read since r7, never by locating them in the
+   * guard's source — and fails if this table and that list disagree in either
+   * direction. The earlier source-reading versions are why that matters; the
+   * guard's own note records how each of them failed. That guard exists
    * because this table was a SUBSET SEVEN TIMES — three representatives, then
    * seven shell families, fourteen, fifteen, seventeen, each widening made
    * BECAUSE the previous was too narrow and each stopping short again. At
@@ -12792,11 +12795,15 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
    * runnable or not depending on what is IN it, and a state attached to the
    * suffix alone would be a claim nobody can make.
    *
-   * Each row therefore classifies ITS OWN FIXTURE. The `.yml` row carries a
-   * workflow body, which Bun cannot execute (verified: it fails on the YAML),
-   * and which the platform discovers by name — so for that row nothing runs
-   * it and `inert` holds. A different `.yml` row with a JavaScript body would
-   * be `runs`, and that is not a contradiction.
+   * Each row therefore classifies ITS OWN FIXTURE, and the `.yml` row is the
+   * worked example — including the part that went wrong. It carries a
+   * WORKFLOW body, which Bun does refuse (verified: it fails on the YAML) and
+   * which the platform discovers by name, and on that pair of observations
+   * the row was filed `inert`. It is `runs` (r11): a workflow body is a
+   * sequence of bare shell lines under some YAML keys, and `bash D.YML`
+   * executes it — the key lines fail as commands, then the deploy runs. Two
+   * consumers ruled out is not every consumer, which is the same gap Bun
+   * exposed in the Node rows one round earlier.
    *
    * It has three positions because two could not hold the truth (r6):
    *
@@ -12805,10 +12812,15 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
    *               `RUNBOOK.MD` and copies the command out of it. An unsafe
    *               deployment survives, so this is a genuine SILENT PASS and
    *               its pin is titled as a wrong verdict.
-   *   'inert'   — nothing runs it under that name. `node D.JS` exits on the
-   *               unknown extension; the workflow engine matches only the
-   *               lower-case suffixes. A DISCOVERY BLIND SPOT, pinned but not
-   *               counted as a wrong verdict.
+   *   'inert'   — nothing runs it under that name: a DISCOVERY BLIND SPOT,
+   *               pinned but not counted as a wrong verdict. DEFINED AND
+   *               CURRENTLY EMPTY, deliberately. Both examples this bullet
+   *               once gave were overturned — `node D.JS` does exit on the
+   *               unknown extension but `bun D.JS` runs it, and the workflow
+   *               engine does match only lower-case suffixes but `bash D.YML`
+   *               runs the body anyway. Occupying this state means ruling out
+   *               every interpreter that would accept the body, which is much
+   *               harder than it looks; see the partition guard.
    *   'unknown' — the bypass is real and its cost is NOT ESTABLISHED. These
    *               were filed as 'inert' when the field was a boolean, which
    *               asserted something no fixture shows.
@@ -12887,6 +12899,28 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     // lower-case report would be CORRECT — is not available while
     // value-by-value reading is itself the defect, so the harmful-consequence
     // question for these two is OPEN, not answered here.
+    //
+    // ONE CONCRETE ROUTE HAS BEEN PROPOSED AND DOES NOT CLOSE IT (r12),
+    // recorded so it is not rediscovered as new. On a CASE-FOLDING checkout
+    // — Windows, or macOS at its default — `apps/agent/package.JSON` is what
+    // the package manager resolves when it looks up `package.json`, so
+    // `pnpm run deploy` would execute that manifest's `scripts.deploy`, while
+    // `readdirSync` reports the stored upper-case name and the sweep skips
+    // it. An actionable body and a real consumer, which is exactly what this
+    // row lacks.
+    //
+    // It fails on the SYMMETRY of the same folding, and that is the part
+    // worth keeping: `packageScripts(dir)` reads
+    // `<dir>/package.json` BY EXACT NAME through `readFileSync` rather than
+    // through the sweep, so on the very host where the package manager finds
+    // the upper-case manifest, so does the scanner — the manifest-script
+    // analysis is not bypassed there at all. Which way that lands depends on
+    // whether the file sits in the selected entry-point chain, and this
+    // harness cannot tell: it runs on a case-sensitive filesystem, where
+    // neither resolution happens. Filing the row `runs` on that route would
+    // assert a host property nobody here observed, which is the mistake the
+    // consequence field exists to prevent — the runner-lookup lesson one
+    // level out, with the filesystem in the runner's place.
     ['json', JSON_VALUE_BODY, 'apps/agent', 'unknown'],
     ['jsonc', JSON_VALUE_BODY, 'apps/agent', 'unknown'],
   ];
@@ -12971,6 +13005,59 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     return r;
   };
 
+  /**
+   * THE BYPASS IS THE CASE-SENSITIVE COMPARISON, NOT THE UPPER-CASE SPELLING
+   * (r12).
+   *
+   * The faulty gate is `entry.endsWith(e)` against a lower-case `e`, so EVERY
+   * spelling that is not exactly lower-case slips through — `D.Ps1` as surely
+   * as `D.PS1`. Pinning only what `toUpperCase()` produces would let a
+   * correction that admits the two tested spellings and nothing else pass
+   * every pin here while leaving the same silent pass for the rest, which is
+   * the enumeration trap this suite keeps walking into from the other side.
+   *
+   * So each family is pinned under BOTH spellings, derived rather than
+   * listed. Two is not "every spelling" — `2^n - 1` of them exist per family
+   * and no fixture set enumerates that — but the pair spans the distinction a
+   * fix must make: one is reachable by folding the whole name, the other only
+   * by comparing case-insensitively. A fix that normalises passes both; a fix
+   * that special-cases the upper-case form fails the second.
+   */
+  const BYPASS_SPELLINGS: ReadonlyArray<
+    readonly [label: string, spell: (ext: string) => string]
+  > = [
+    ['fully upper-case', (e) => e.toUpperCase()],
+    ['mixed-case', (e) => e[0].toUpperCase() + e.slice(1)],
+  ];
+
+  it('each family is pinned under two DISTINCT non-lower-case spellings (#2123 spelling guard)', () => {
+    // A single-character extension would collapse the pair into one spelling
+    // and halve the loops below without failing anything — the family would
+    // still be "covered twice", by the same name twice. Nothing in the type
+    // prevents such an extension being added upstream, and the parity guard
+    // would import it happily.
+    //
+    // The COUNT is asserted for the same reason the partition guard refuses a
+    // degenerate split: the distinctness check above is self-relative, so
+    // trimming the list back to the single fully-upper-case spelling would
+    // halve every loop below and leave all of them, and this guard, green.
+    expect(
+      BYPASS_SPELLINGS.length,
+      'spellings pinned per family',
+    ).toBeGreaterThan(1);
+    for (const [ext] of WALK_HELPER_FAMILIES) {
+      const spelled = BYPASS_SPELLINGS.map(([, s]) => s(ext));
+      expect(new Set(spelled).size, `.${ext} spellings collapsed: ${spelled}`).toBe(
+        BYPASS_SPELLINGS.length,
+      );
+      for (const s of spelled) {
+        expect(s, `.${ext} spelling is not distinguishable from lower-case`).not.toBe(
+          ext,
+        );
+      }
+    }
+  });
+
   // THE DECLARED CONSEQUENCE IS CONSUMED, NOT JUST DOCUMENTED (r4). The field
   // was required by the type and read by nothing, so flipping a row changed no
   // test — dead metadata wearing the shape of a check. It now PARTITIONS the
@@ -13034,36 +13121,37 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     // and a runbook a human reads and copies from. An unsafe deployment
     // survives here, which is the direction this check must never fail in.
     for (const [ext, body, dir] of RUNNABLE) {
-      const r = runFamilyAlone(`${dir}/D.${ext.toUpperCase()}`, body);
-      expect(r.ok, `.${ext.toUpperCase()} should be bypassed by the walk`).toBe(
-        true,
-      );
+      for (const [label, spell] of BYPASS_SPELLINGS) {
+        const rel = `${dir}/D.${spell(ext)}`;
+        const r = runFamilyAlone(rel, body);
+        expect(r.ok, `${rel} (${label}) should be bypassed by the walk`).toBe(
+          true,
+        );
+      }
     }
   }, FAMILY_TIMEOUT_MS);
 
   it('every family nothing runs is skipped too — discovery only (#2123)', () => {
-    // NOT titled as a wrong verdict: NOTHING RUNS THESE FIXTURES' BODIES
-    // under that name. Scoped to the bodies deliberately (r10) — the earlier
-    // wording said nothing runs "these", which read as a claim about the
-    // suffix and is false: `bun D.YML` executes a JavaScript body without
-    // caring about the extension. What holds here is narrower and is what the
-    // rows actually carry: a WORKFLOW body, which Bun rejects as source
-    // (verified — it fails on the YAML) and which the platform discovers by
-    // name.
+    // NOT titled as a wrong verdict, and CURRENTLY ITERATING NOTHING — the
+    // class is empty by decision, not by omission, and the partition guard
+    // above carries that decision rather than this comment restating it.
     //
-    // EVIDENCE BASIS, stated because r9 is what happens when it is not: this
-    // rests on the platform's documented matching, NOT on an observation made
-    // here — there is no runner in this harness to try it on. The Node
-    // families sat in this class until Bun disproved them, and the difference
-    // was that their claim had been checked against one runtime instead of
-    // the three the guard models. If a way to launch a workflow file by an
-    // upper-case name turns up, these two belong in 'runs' and this comment
-    // is the thing that was wrong.
+    // The loop stays so the class has somewhere to land the day a family is
+    // genuinely shown to have no consumer. Two families sat here and left:
+    // the Node ones when Bun ran them (r9), the workflow ones when plain
+    // `bash` ran them (r11). Both had been filed on a real observation about
+    // a real consumer; what was missing each time was the next consumer. A
+    // row arriving here needs the negative across every interpreter that
+    // would accept its body, gathered outside this harness — there is no
+    // runner in here to try anything on.
     for (const [ext, body, dir] of INERT) {
-      const r = runFamilyAlone(`${dir}/D.${ext.toUpperCase()}`, body);
-      expect(r.ok, `.${ext.toUpperCase()} should be bypassed by the walk`).toBe(
-        true,
-      );
+      for (const [label, spell] of BYPASS_SPELLINGS) {
+        const rel = `${dir}/D.${spell(ext)}`;
+        const r = runFamilyAlone(rel, body);
+        expect(r.ok, `${rel} (${label}) should be bypassed by the walk`).toBe(
+          true,
+        );
+      }
     }
   }, FAMILY_TIMEOUT_MS);
 
@@ -13079,10 +13167,13 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     //
     // The discovery fact still holds and is what this pins.
     for (const [ext, body, dir] of UNKNOWN) {
-      const r = runFamilyAlone(`${dir}/D.${ext.toUpperCase()}`, body);
-      expect(r.ok, `.${ext.toUpperCase()} should be bypassed by the walk`).toBe(
-        true,
-      );
+      for (const [label, spell] of BYPASS_SPELLINGS) {
+        const rel = `${dir}/D.${spell(ext)}`;
+        const r = runFamilyAlone(rel, body);
+        expect(r.ok, `${rel} (${label}) should be bypassed by the walk`).toBe(
+          true,
+        );
+      }
     }
   }, FAMILY_TIMEOUT_MS);
 
