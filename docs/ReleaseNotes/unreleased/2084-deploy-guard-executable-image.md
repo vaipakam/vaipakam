@@ -130,13 +130,19 @@ disproving a sentence in this document, and two further corrections to the
 scope of issues already filed came the same way — which is the argument for
 writing the reason down at all, rather than only the fix.
 
+**Each row is a one-line symptom and a pointer.** The precise scope and bounds
+of every defect live on its issue, and deliberately not here: this table
+restated them, the restatements went stale as each was corrected, and eight
+review rounds were spent finding a correction that had landed in one place and
+not its siblings. One record per defect, named from the others.
+
 | | |
 | --- | --- |
 | **#2084** | a build file variable holding a write is not seen, when the assignment sits below the deployment — *pinned (miss)* |
 | **#2112** | a runbook sentence naming a write reports the deployment below it — *pinned (false report)* |
 | **#2114** | a recipe marked by something other than a tab is not read as a recipe — *pinned (miss)* |
-| **#2118** | a Windows-shell helper's deployment is lent a safety flag by the unrelated line above it, when that line ends in a character that shell does not treat as a continuation — *pinned (silent pass) in BOTH Windows shells, since a fix aimed at one dialect would leave the other live, and with both of its bounds pinned too: it applies only to text read as a shell, and only where the line ends immediately at that character* |
-| **#2119** | text in any file of the manifest's format is read as a command, so a description naming the deployment is reported as performing it — *pinned (false report) four times, because the scope was wrong in four different ways*: unrelated files of that format behave the same way; a value written as a LIST is skipped only where the file is written compactly, and is read when it is written across several lines; and a line that is COMMENTED OUT is read although it is not a property at all, which matters because the sketched remedy is expressed in terms of which keys hold scripts and a commented line has no key |
+| **#2118** | a Windows-shell helper's deployment is lent a safety flag by the unrelated line above it, when that line ends in a character that shell does not treat as a continuation — *pinned (silent pass) in both Windows shells, with its bounds pinned too*. The bound is text actually passed through the line-splitting reader, NOT everything read as a shell: a manifest script is shell text that bypasses that reader entirely, which is #2121 |
+| **#2119** | text in any file of the manifest's format is read as a command, so a description naming the deployment is reported as performing it — *pinned (false report) four times, because the scope was wrong in four separate ways*. The issue carries them; three of the four move together under one fix |
 | **#2110** | a folded workflow scalar's positions are not comparable with the file's |
 | **#2113** | a write assigned by a live conditional branch is not seen |
 | **#2106** | a build file's prerequisites are ordered as written, not as they run |

@@ -11864,11 +11864,14 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
   // Nothing transforms the text now, bar two pre-existing exceptions: the
   // Windows normalisation, and a manifest script judged against its declared
   // value. An earlier version of this note said no fixture here exercises
-  // those two — the last two pairs below exercise exactly them, and each
-  // exception turned out to carry a wrong verdict of its own (r20).
+  // those two. Both are exercised, and each turned out to carry a wrong
+  // verdict of its own (r20): the Windows normalisation by the #2115, #2118,
+  // #2122, #2123 and #2124 fixtures, and the manifest exception by the #2119
+  // and #2121 ones. Named by defect rather than by position, because the
+  // position moved and the pointer sent readers to unrelated tests (r27).
   //
   // So they pin two things: the shapes that defeated the withdrawn designs,
-  // and FIFTEEN WRONG VERDICTS across TEN defects, asserted so a later fix
+  // and SEVENTEEN WRONG VERDICTS across TEN defects, asserted so a later fix
   // fails them and comes back to the question instead of passing unnoticed.
   //
   // The direction matters and is not decoration. TEN assert a SILENT PASS —

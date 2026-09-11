@@ -9010,11 +9010,14 @@ for (const file of walk(REPO_ROOT)) {
   //     the command is reported as deploying it. A false RED on main too
   //     (#2119).
   //
-  //     Neither "manifests" nor "every string": the regex is
-  //     `:\s*"…"`, so a value written as an ARRAY is passed over —
-  //     `"keywords":["wrangler deploy"]` does NOT report (r21, verified both
-  //     ways). A fix scoped to "every string" would change that case, which
-  //     behaves correctly today.
+  //     Neither "manifests" nor "every string", and the second half is about
+  //     LAYOUT rather than the value's kind (r23/r27): the regex is
+  //     `:\s*"…"`, so an ARRAY element is dropped only when its line ALSO
+  //     carries a scalar property — `{"keywords":["wrangler deploy"],…}` on
+  //     one line does not report, the same array written one element per line
+  //     DOES, because that line has no scalar match and the raw line is
+  //     returned instead. Both layouts are pinned. See #2119, which carries
+  //     the full scope; do not restate it here.
   //
   //     WHETHER A SECOND ROUTE EXISTS DEPENDS ON HOW A FIX NARROWS — an
   //     earlier version of this note said it always does, which is wrong
