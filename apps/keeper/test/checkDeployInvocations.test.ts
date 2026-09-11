@@ -11865,9 +11865,14 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
   // Windows normalisation, and a manifest script judged against its declared
   // value. An earlier version of this note said no fixture here exercises
   // those two. Both are exercised, and each turned out to carry a wrong
-  // verdict of its own (r20): the Windows normalisation by the #2115, #2118,
-  // #2122 and #2124 fixtures, and the manifest exception by the #2119 and
-  // #2121 ones. #2123 is NOT one of them and was listed here by mistake
+  // verdict of its own (r20): the Windows normalisation by the #2115, #2122,
+  // #2124 and #2126 fixtures, and the manifest exception by the #2119 and
+  // #2121 ones. #2118 is NOT one of them either, and was listed here until
+  // r35: `forInterpreter` makes no relevant change to those bodies, and the
+  // unsafe pass arrives later, when the SHARED line splitter folds the
+  // trailing backslash. A correction to `windowsSeparators`,
+  // `powershellAssignments` or `foldCaretContinuations` would leave #2118
+  // exactly as it is. #2123 is NOT one of them and was listed here by mistake
   // (r28) — its gate is the shared extension test in `walk`, which skips the
   // file before any interpreter is chosen, and one of its fixtures is a
   // POSIX helper that is not a Windows file at all. Attributing it to the
@@ -11875,7 +11880,7 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
   // position moved and the pointer sent readers to unrelated tests (r27).
   //
   // So they pin two things: the shapes that defeated the withdrawn designs,
-  // and TWENTY-TWO WRONG VERDICTS across ELEVEN defects, asserted so a later fix
+  // and TWENTY-ONE WRONG VERDICTS across ELEVEN defects, asserted so a later fix
   // fails them and comes back to the question instead of passing unnoticed.
   //
   // The direction matters and is not decoration. TWELVE assert a SILENT PASS
@@ -11883,14 +11888,13 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
   // standalone helper and a workflow body, because the fold is in the shared
   // splitter and a fix scoped to any one of the four leaves the others live);
   // #2121, #2122; and #2123 three times (two command-shell families and a
-  // POSIX one, because that gate is shared too) — and TEN fail the opposite
-  // way, so their fixtures assert a REPORT — TEN of them: #2112, #2119 four times (manifest,
+  // POSIX one, because that gate is shared too) — and NINE fail the opposite
+  // way, so their fixtures assert a REPORT: #2112, #2119 four times (manifest,
   // data file, multi-line list and a COMMENTED-OUT line), #2115 three times
   // (the casing rewrite in a helper and in a workflow body, and the separator
-  // rewrite), and #2126 TWICE — that same pair of normalisations applied on
-  // a runner whose platform makes the normalised spelling a different
-  // program, pinned once per rewrite because a fix gating only one of them
-  // would satisfy the other's fixture. A fixture that pinned the wrong direction would pass
+  // rewrite), and #2126 — the CASING normalisation applied on a runner whose
+  // platform makes the normalised spelling a different program. Its separator
+  // half was withdrawn in r35; see the note where those fixtures were. A fixture that pinned the wrong direction would pass
   // while the guard did the wrong thing.
   //
   // NOT "four different routes" for the #2119 group, which overstated their
@@ -12301,45 +12305,26 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     expect(r.ok).toBe(false);
   });
 
-  it('the SEPARATOR normalisation runs on a POSIX runner (#2126, stated false report)', () => {
-    // THE OTHER HALF OF #2126, and it needs its own pin (r33): a fix gating
-    // only the casing replacement on the runner would satisfy the fixture
-    // above while `windowsSeparators` still rewrote this path.
-    //
-    // On Linux a backslash in a path is an ordinary character, so this step
-    // does NOT change into the package directory. The check rewrites the path,
-    // models the directory as `apps/agent`, and attributes the deployment to a
-    // package the step never entered — which is the defect, and it is an error
-    // of ATTRIBUTION rather than of inventing a command name (contrast the
-    // casing pin above, where `Wrangler` is a program the platform lacks).
-    //
-    // WHAT HAPPENS AFTER THE FAILED `Set-Location` IS DELIBERATELY NOT STATED
-    // (r34). An earlier version said the deploy then runs from the repository
-    // root; a reviewer said the runner's PowerShell wrapper sets an
-    // error preference that ends the step first, so it never runs at all. I
-    // could not confirm that from the documentation cited — two fetches of it
-    // show only the command template — so rather than swap one unverified
-    // execution path for another, the comment now claims neither. The pin does
-    // not depend on it: the attribution is wrong whether the deployment then
-    // runs elsewhere or not at all.
-    //
-    // Mutation-checked: disabling only the separator replacement flips this
-    // and leaves the forward-slash control reporting; disabling the casing
-    // fold leaves it unchanged.
-    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
-    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
-    const r = runWith('.github/workflows/d.yml', posixPwsh('cd apps\\agent', 'wrangler deploy'));
-    expect(r.ok).toBe(false);
-  });
-
-  it('the forward-slash path on the same runner IS the package (#2126 separator control)', () => {
-    // The control: this really does enter the package directory on Linux, so
-    // the report is correct and must survive a #2126 fix.
-    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
-    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
-    const r = runWith('.github/workflows/d.yml', posixPwsh('cd apps/agent', 'wrangler deploy'));
-    expect(r.ok).toBe(false);
-  });
+  // THE SEPARATOR HALF OF #2126 WAS WITHDRAWN (r35), and this note stands
+  // where its two fixtures were. I had pinned `cd apps\\agent` in a POSIX
+  // pwsh step as a false report, on the reasoning that a backslash is an
+  // ordinary character there so the step never enters the package directory.
+  // That reasoning is WRONG: PowerShell accepts either separator on every
+  // platform — "PowerShell allows you to use backslash or forward slash for
+  // compatibility with PowerShell on other platforms" (about_Path_Syntax) —
+  // and `Set-Location` is a cmdlet, so the directory change happens and the
+  // attribution is correct.
+  //
+  // So the rewrite matches real behaviour here and the report it produces is
+  // RIGHT. The fixtures asserted a correct verdict while calling it a defect,
+  // which is worse than a missing pin: it would have sent someone to "fix"
+  // working behaviour. #2126 is now the casing rule alone.
+  //
+  // The caveat that survives, and why the rewrite is not simply harmless: the
+  // same documentation warns the two separators are interchangeable for
+  // PowerShell commands but "may not work when used with native applications
+  // that only expect the native directory separator". Nothing here pins that,
+  // because nothing here demonstrates it.
 
   it('an UPPER-case mention in the same workflow body is not reported (#2115 workflow control)', () => {
     // The half that flips under #2115's proposed widening, on the workflow
