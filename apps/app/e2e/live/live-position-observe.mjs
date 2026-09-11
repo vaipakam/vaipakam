@@ -5985,7 +5985,25 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
               // which is the whole point — the fault and its excuse have
               // to come from one DOM read or the comparison is between
               // two different moments (round 9's rule).
-              panelPresent: rows.length > 0,
+              //
+              // ROUND 69 P2 — DERIVED FROM THE PANEL, not from its rows.
+              //
+              // `rows.length > 0` conflated "the panel is gone" with
+              // "the panel is there and broken". A confirmation still
+              // visibly open on its Back button, with both the receipt
+              // rows and the action removed, reported `panelPresent:
+              // false` — and the guard above then read a directly
+              // observed broken funds confirmation as an explained
+              // removal, downgrading it to incomplete. My own round-68
+              // fix, over-reaching by one case.
+              //
+              // The Back control is the panel: it is what this pass
+              // already located to anchor the action cluster, it is
+              // rendered for every confirmation state, and it survives
+              // exactly the regression that removes everything else.
+              // Rows are CONTENT, and content going missing is the
+              // defect rather than the excuse for it.
+              panelPresent: backButton !== undefined && visible(backButton),
               rowsText: shown.map((r) => visibleTextOf(r)).filter((t) => t.trim() !== ''),
               otherText,
               // ROUND 64 P2 — the WHOLE panel's painted text, carried
@@ -7669,6 +7687,27 @@ if (pageChainWrong.length) {
   );
   process.exit(2);
 }
+// ROUND 69 P2 — THIS DRIVE'S OWN ALLOWLIST COMES BEFORE BLAMING THE APP.
+//
+// The route handler deliberately aborts a read method it does not
+// allowlist, which can make the card or the chooser appear absent. The
+// forced-close filter above already defers the resulting INFERRED
+// failure for exactly that reason — and then the generic exit below ran
+// first anyway, so the drive exited 1 against the product when its own
+// allowlist had stopped the page loading.
+//
+// Placed AFTER the observed-findings exit and BEFORE this one, which is
+// the whole ranking: content that was READ outranks any blocker, and a
+// blocker outranks a conclusion INFERRED from an absence the blocker
+// could have caused.
+if (allowlistTooNarrow.length || httpGaps.length) {
+  console.log(
+    `\n  → ranked ahead of the inferred failures below: this drive's own` +
+      ` request allowlist stopped the page loading, so anything missing` +
+      ` says nothing about the app.`,
+  );
+  process.exit(2);
+}
 if (failures) process.exit(1);
 // The Advanced probe could not be run to completion on some page: the
 // switch was there but unclickable, or the page evaluate threw. Not a
@@ -7692,7 +7731,6 @@ if (advBlocked.length) {
   advBlocked.forEach(({ v, why }) => console.log(`  ${v.path}: ${why}`));
   process.exit(2);
 }
-if (allowlistTooNarrow.length || httpGaps.length) process.exit(2);
 // Every candidate moved out from under us: the list route alone proves
 // nothing about the chooser, so this run verified nothing.
 if (!visited.some((v) => /^\/positions\/\d+$/.test(v.path))) {

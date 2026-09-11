@@ -2629,29 +2629,52 @@ export function forcedCloseVerdict(obs, copy) {
       };
     }
   }
+  //
+  // ROUND 69 P2 — ON EVERY CAPTURED RENDER, not only the settled one.
+  //
+  // The bracket proves the route did NOT change across the observation,
+  // so a render that painted the in-kind promise before the card settled
+  // on internal-match copy showed the lender the wrong funds outcome at
+  // a moment when the protocol's answer was already fixed. `seenRenders`
+  // preserved that render and this comparison read only the settled one.
+  //
+  // Thirteenth instance of the parallel-site shape, and one I should
+  // have closed myself: I made the HEADING arm per-render two cycles ago
+  // as a proactive sweep, and did not carry the same sweep to its
+  // sibling — applying the lesson to one arm and not the other is the
+  // lesson, restated.
+  //
+  // Same `renders` list the unsafe-control arm uses, so there is one
+  // notion of "what this drive saw" rather than two.
+  const routeRenders = [
+    { visibleText: obs.bodyVisibleText ?? obs.bodyText ?? obs.visibleText ?? obs.text },
+    ...(Array.isArray(obs.seenRenders)
+      ? obs.seenRenders.map((r) => ({
+          visibleText: r?.bodyVisibleText ?? r?.bodyText ?? r?.visibleText ?? r?.text,
+        }))
+      : []),
+  ];
+  const paintedIn = (renderText, sentence) =>
+    typeof sentence === 'string' &&
+    sentence !== '' &&
+    typeof renderText === 'string' &&
+    renderText.includes(sentence);
   if (matchKnown && actionOffered) {
-    const paintsMatch = paints(copy?.internalMatchReadyCopy);
-    const paintsInKind = paints(copy?.inKindReadyCopy);
-    // Only when the card commits to exactly ONE of the two. Painting
-    // neither is a different route entirely (rental, needs-route) and is
-    // not this rule's business; painting both is already reported by the
-    // two-states-at-once scan, and re-reporting it here would name the
-    // wrong defect.
-    if (paintsMatch !== paintsInKind) {
-      if (obs.internalMatch === true && paintsInKind) {
-        return {
-          verdict: 'fail',
-          failKind: 'inferred',
-          why: 'the card promises the collateral in kind, but the protocol holds a live internal-match candidate and would dispatch that instead — the lender is being told they receive one thing and would receive another',
-        };
-      }
-      if (obs.internalMatch === false && paintsMatch) {
-        return {
-          verdict: 'fail',
-          failKind: 'inferred',
-          why: 'the card promises an internal match, but the protocol holds no match candidate and would settle the close-out another way — the lender is being told they receive one thing and would receive another',
-        };
-      }
+    const wrongRender = routeRenders.find((r) => {
+      const m = paintedIn(r.visibleText, copy?.internalMatchReadyCopy);
+      const k = paintedIn(r.visibleText, copy?.inKindReadyCopy);
+      if (m === k) return false;
+      return (obs.internalMatch === true && k) || (obs.internalMatch === false && m);
+    });
+    if (wrongRender) {
+      return {
+        verdict: 'fail',
+        failKind: 'inferred',
+        why:
+          obs.internalMatch === true
+            ? 'a render this drive read promises the collateral in kind, while the protocol held a live internal-match candidate throughout the observation and would dispatch that instead — the lender was shown one outcome and would receive another'
+            : 'a render this drive read promises an internal match, while the protocol held no match candidate throughout the observation and would settle the close-out another way — the lender was shown one outcome and would receive another',
+      };
     }
   }
   // The same window rule as the refusal arm below: a route that changed

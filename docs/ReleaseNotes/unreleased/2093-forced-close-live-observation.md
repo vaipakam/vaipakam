@@ -218,6 +218,13 @@ carries the terms of both settlement routes at once, which the previous
 rule could not notice because it only checked that the right terms were
 present, not that the wrong ones were absent.
 
+Where the check's own restrictions could be the cause of what it sees, it
+says so before blaming the page. The driver refuses to serve requests it
+does not recognise, and that refusal can itself make a card fail to
+appear; a conclusion drawn from something missing now ranks behind that
+explanation, while anything the check actually read still ranks ahead of
+everything.
+
 ### Stated limits
 
 Three, and the first two are gaps in coverage rather than in the

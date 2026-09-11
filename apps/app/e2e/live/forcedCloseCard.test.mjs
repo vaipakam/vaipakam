@@ -5074,7 +5074,7 @@ describe('round 64 P2 — the settlement route the card promises', () => {
     );
     expect(v.verdict).toBe('fail');
     expect(v.failKind).toBe('inferred');
-    expect(v.why).toMatch(/would dispatch that instead/);
+    expect(v.why).toMatch(/would dispatch that instead/);  // settled render, judged by the per-render rule since round 69
   });
 
   it('reports a card promising a match when the protocol holds none', () => {
@@ -5084,7 +5084,7 @@ describe('round 64 P2 — the settlement route the card promises', () => {
     );
     expect(v.verdict).toBe('fail');
     expect(v.failKind).toBe('inferred');
-    expect(v.why).toMatch(/holds no match candidate/);
+    expect(v.why).toMatch(/held no match candidate throughout/);
   });
 
   it('passes each route when the protocol agrees with it', () => {
@@ -5744,5 +5744,99 @@ describe('round 68 — a receipt stating BOTH settlement routes', () => {
     const v = forcedCloseVerdict({ ...base, confirmRowsText: rows(RENTAL) }, copy);
     expect(v.verdict).toBe('fail');
     expect(v.why).toMatch(/shows the rental receipt/);
+  });
+});
+
+describe('round 69 — the settlement route is judged on every render', () => {
+  // The bracket proves the route did NOT change across the observation,
+  // so a render that painted the in-kind promise before the card settled
+  // on internal-match copy showed the lender the wrong funds outcome at
+  // a moment when the protocol's answer was already fixed.
+  //
+  // Thirteenth instance of the parallel-site shape, and one I should
+  // have closed myself: the HEADING arm was made per-render two cycles
+  // ago as a proactive sweep, and the sweep did not reach its sibling.
+  const copy = {
+    unknownCopy: FORCED_CLOSE.unknown,
+    readyCopy: [FORCED_CLOSE.readyInKind, FORCED_CLOSE.readyInternalMatch, FORCED_CLOSE.readyRental],
+    recognisedCopy: [FORCED_CLOSE.unknown, FORCED_CLOSE.readyInKind, FORCED_CLOSE.readyInternalMatch],
+    receiptLeads: [FORCED_CLOSE.receipt.youReceive],
+    receiptRowSets: {
+      standard: Object.values(FORCED_CLOSE.receipt),
+      rental: Object.values(FORCED_CLOSE.rentalReceipt),
+    },
+    rentalReadyCopy: FORCED_CLOSE.readyRental,
+    internalMatchReadyCopy: FORCED_CLOSE.readyInternalMatch,
+    inKindReadyCopy: FORCED_CLOSE.readyInKind,
+  };
+  const render = (body) => ({
+    text: body,
+    visibleText: body,
+    bodyText: body,
+    bodyVisibleText: body,
+    submitVisible: true,
+    submitDisabled: false,
+  });
+  const base = {
+    lenderHoldsActive: true,
+    mounted: true,
+    attached: true,
+    submitPresent: true,
+    submitVisible: true,
+    submitDisabled: false,
+    visibleSubmits: 1,
+    visibleCards: 1,
+    saleLocked: false,
+    settled: true,
+    bodyPresent: true,
+    bodyVisible: true,
+    confirmExpected: false,
+    confirmText: null,
+    defaultable: true,
+    defaultableBefore: true,
+    internalMatch: true,
+    internalMatchBefore: true,
+    // The SETTLED render is correct — it promises the internal match.
+    ...render(FORCED_CLOSE.readyInternalMatch),
+  };
+
+  it('reports a wrong-route promise seen only in an earlier render', () => {
+    const v = forcedCloseVerdict(
+      { ...base, seenRenders: [render(FORCED_CLOSE.readyInKind)] },
+      copy,
+    );
+    expect(v.verdict).toBe('fail');
+    expect(v.failKind).toBe('inferred');
+    expect(v.why).toMatch(/throughout the observation/);
+  });
+
+  it('says nothing when every render promises the route the protocol would take', () => {
+    const v = forcedCloseVerdict(
+      { ...base, seenRenders: [render(FORCED_CLOSE.readyInternalMatch)] },
+      copy,
+    );
+    expect(v.verdict).not.toBe('fail');
+  });
+
+  it('says nothing when the bracket did not agree — that is the race arm', () => {
+    // A route that changed mid-observation cannot be matched to any
+    // render, and the arm that says so has its own sentence.
+    const v = forcedCloseVerdict(
+      {
+        ...base,
+        internalMatchBefore: false,
+        seenRenders: [render(FORCED_CLOSE.readyInKind)],
+      },
+      copy,
+    );
+    expect(v.why ?? '').not.toMatch(/throughout the observation/);
+  });
+
+  it('judges an earlier render on its PAINTED text', () => {
+    const hidden = { ...render(FORCED_CLOSE.readyInternalMatch) };
+    hidden.text = `${FORCED_CLOSE.readyInternalMatch} ${FORCED_CLOSE.readyInKind}`;
+    hidden.bodyText = hidden.text;
+    const v = forcedCloseVerdict({ ...base, seenRenders: [hidden] }, copy);
+    expect(v.why ?? '').not.toMatch(/throughout the observation/);
   });
 });
