@@ -2622,8 +2622,12 @@ async function censusDeployment(dep) {
       result.classes = downgradeProvenClasses(result.classes, why);
       result.scanned.headCounterContradiction = why;
     }
-    if (hc.intentLiveCommitCount !== null && hc.intentLiveCommitCount !== undefined && BigInt(hc.intentLiveCommitCount) > 0n && result.classes.liveIntentCommits.status === 'proven' && !(result.classes.liveIntentCommits.count > 0)) {
-      const why = `intentLiveCommitCount at HEAD's slot reads ${hc.intentLiveCommitCount} while no live intent row was found by the routed getter or at any era slot — the protocol's own counter says a commit exists that no read reached; refusing to certify`;
+    // #2095 r12 P2 — the counter is protocol-wide: an intent the getter filed
+    // as non-VPFI or unknown-asset is a live commit it counts, so every
+    // candidate of every scope is accounted before the counter contradicts
+    const intentCandidatesFound = intentRows.length + nonVpfiIntentRows.length + unknownAssetIntentRows.length + (intentStorage?.rows.length ?? 0) + ((historical.rows?.liveIntentCommits ?? []).length);
+    if (hc.intentLiveCommitCount !== null && hc.intentLiveCommitCount !== undefined && BigInt(hc.intentLiveCommitCount) > BigInt(intentCandidatesFound) && result.classes.liveIntentCommits.status === 'proven') {
+      const why = `intentLiveCommitCount at HEAD's slot reads ${hc.intentLiveCommitCount} while only ${intentCandidatesFound} live intent candidate(s) of any scope were found by the routed getter or at any era slot — the protocol's own counter says a commit exists that no read reached; refusing to certify`;
       result.classes.liveIntentCommits = { ...result.classes.liveIntentCommits, status: 'indeterminate', provenBy: undefined, counterContradiction: true, indeterminateReason: why };
       result.scanned.headCounterContradiction = `${result.scanned.headCounterContradiction ? `${result.scanned.headCounterContradiction}; ` : ''}${why}`;
     }

@@ -6278,8 +6278,13 @@ that same comparison — covers the facet set (as a set) and the deploy time,
 so a corrected archive whose facets differ is never "already recorded"; and
 the era table is pinned in the excision-residue gate as a historical record,
 because its catalogue names every contract each past build produced, the
-retired buy surface among them. Run 33 re-reads every deployment under
-`provenance`.
+retired buy surface among them. Round 12 corrected the new live-commit rule
+itself: the counter is protocol-wide, so an intent the getter filed as
+non-VPFI or unknown-asset is a live commit it counts, and every candidate of
+every scope is accounted before the counter may contradict. Run 33 re-reads
+every deployment under `provenance` — from the round-11 head; the round-12
+correction changes no verdict, since a HEAD live-commit counter above zero
+occurs only where the intent class is already withheld for scope.
 
 ### 7a. What the provenance walk found, and how the design changes (2026-09-09)
 
