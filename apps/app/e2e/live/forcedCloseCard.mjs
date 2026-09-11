@@ -2258,6 +2258,77 @@ export function forcedCloseVerdict(obs, copy) {
       why: 'the card renders a READY route and offers the action, but simulating that exact transaction against the protocol shows it would be refused — the lender would pay a network fee for a call that cannot succeed',
     };
   }
+  // ROUND 64 P2 — AND WHICH SETTLEMENT IT WOULD PERFORM, not only that
+  // it would succeed.
+  //
+  // `triggerDefault(loanId, [])` simulates cleanly on a defaultable loan
+  // whether the contract dispatches an internal match or takes the
+  // in-kind path, because the match is dispatched FIRST and succeeds. So
+  // a card that has regressed to promising the collateral, on a loan
+  // with a live match candidate, passed everything this module had: the
+  // simulation said yes, and the standard receipt deliberately covers
+  // both outcomes so its six rows were satisfied too. The lender reads
+  // "you receive the collateral" and is repaid the lent asset instead —
+  // a promise about funds that the protocol will not keep, which is the
+  // one class of defect this whole check exists for.
+  //
+  // `inferred`, for the same reason the refusal arm above is: it is a
+  // disagreement between the page and a protocol read, and the most
+  // ordinary cause of that is a deployment on another chain. The chain
+  // gate must go first.
+  //
+  // BOTH ENDS OF THE BRACKET must agree before this is a finding. A
+  // match candidate can appear or be consumed inside the observation
+  // window, and one read cannot distinguish a mis-promising card from an
+  // answer that changed while the drive watched.
+  const matchKnown =
+    obs.internalMatch !== undefined &&
+    obs.internalMatchBefore !== undefined &&
+    obs.internalMatch === obs.internalMatchBefore;
+  const paints = (sentence) =>
+    typeof sentence === 'string' &&
+    sentence !== '' &&
+    (obs.bodyVisibleText ?? obs.bodyText ?? obs.visibleText ?? obs.text ?? '').includes(sentence);
+  if (matchKnown && actionOffered) {
+    const paintsMatch = paints(copy?.internalMatchReadyCopy);
+    const paintsInKind = paints(copy?.inKindReadyCopy);
+    // Only when the card commits to exactly ONE of the two. Painting
+    // neither is a different route entirely (rental, needs-route) and is
+    // not this rule's business; painting both is already reported by the
+    // two-states-at-once scan, and re-reporting it here would name the
+    // wrong defect.
+    if (paintsMatch !== paintsInKind) {
+      if (obs.internalMatch === true && paintsInKind) {
+        return {
+          verdict: 'fail',
+          failKind: 'inferred',
+          why: 'the card promises the collateral in kind, but the protocol holds a live internal-match candidate and would dispatch that instead — the lender is being told they receive one thing and would receive another',
+        };
+      }
+      if (obs.internalMatch === false && paintsMatch) {
+        return {
+          verdict: 'fail',
+          failKind: 'inferred',
+          why: 'the card promises an internal match, but the protocol holds no match candidate and would settle the close-out another way — the lender is being told they receive one thing and would receive another',
+        };
+      }
+    }
+  }
+  // The same window rule as the refusal arm below: a route that changed
+  // while the card was being observed cannot be matched to the render.
+  if (
+    obs.internalMatch !== undefined &&
+    obs.internalMatchBefore !== undefined &&
+    obs.internalMatch !== obs.internalMatchBefore &&
+    actionOffered
+  ) {
+    return {
+      verdict: 'blocked',
+      blockedKind: 'incomplete',
+      why: 'the settlement route the protocol would take changed while the card was being observed — the route it painted cannot be matched to a chain answer taken at the same moment',
+    };
+  }
+
   // ROUND 55 P2 — AND THE WINDOW HAS TO HAVE BEEN QUIET.
   //
   // The pinned answer is taken AFTER the whole DOM observation, which
@@ -2544,6 +2615,17 @@ export function forcedCloseVerdict(obs, copy) {
     // them, because a pass carrying `unrecorded` on a current run would
     // mean the assignment had gone missing.
     confirmClickable: obs.confirmAction?.clickable,
+    // ROUND 64 P2 — WHETHER THE SETTLEMENT-ROUTE CHECK COULD FIRE.
+    //
+    // The route arm is silent when the view could not answer, and a
+    // silent arm passes exactly like a satisfied one. Carried out so the
+    // report can say which happened — the same reason `visibleSubmits`,
+    // `rendersJudged` and `confirmScanned` are carried, each added after
+    // a check turned out to have been vacuous on a green run.
+    routeKnown:
+      obs.internalMatch !== undefined &&
+      obs.internalMatchBefore !== undefined &&
+      obs.internalMatch === obs.internalMatchBefore,
   };
 }
 

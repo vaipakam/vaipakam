@@ -5004,3 +5004,168 @@ describe('round 64 review findings', () => {
     expect(v.why ?? '').not.toMatch(/NON-ACTIONABLE state yet offers an enabled action/);
   });
 });
+
+describe('round 64 P2 — the settlement route the card promises', () => {
+  // `triggerDefault(loanId, [])` simulates cleanly on a defaultable loan
+  // whether the contract dispatches an internal match or takes the
+  // in-kind path, because the match is dispatched FIRST and succeeds. So
+  // "the transaction would succeed" never said WHICH settlement the
+  // lender is about to get — and the standard receipt deliberately
+  // covers both outcomes, so its six rows could not catch it either.
+  const ROWS = {
+    standard: Object.values(FORCED_CLOSE.receipt),
+    rental: Object.values(FORCED_CLOSE.rentalReceipt),
+  };
+  const copy = {
+    unknownCopy: FORCED_CLOSE.unknown,
+    readyCopy: [FORCED_CLOSE.readyInKind, FORCED_CLOSE.readyInternalMatch, FORCED_CLOSE.readyRental],
+    withheldCopy: [FORCED_CLOSE.unknown, FORCED_CLOSE.notYet, FORCED_CLOSE.readyNeedsRoute],
+    recognisedCopy: [
+      FORCED_CLOSE.unknown,
+      FORCED_CLOSE.notYet,
+      FORCED_CLOSE.readyInKind,
+      FORCED_CLOSE.readyInternalMatch,
+      FORCED_CLOSE.readyRental,
+      FORCED_CLOSE.readyNeedsRoute,
+    ],
+    receiptLeads: [FORCED_CLOSE.receipt.youReceive, FORCED_CLOSE.rentalReceipt.youReceive],
+    receiptRowSets: ROWS,
+    rentalReadyCopy: FORCED_CLOSE.readyRental,
+    internalMatchReadyCopy: FORCED_CLOSE.readyInternalMatch,
+    inKindReadyCopy: FORCED_CLOSE.readyInKind,
+  };
+  const base = {
+    lenderHoldsActive: true,
+    mounted: true,
+    attached: true,
+    submitPresent: true,
+    submitVisible: true,
+    submitDisabled: false,
+    visibleSubmits: 1,
+    visibleCards: 1,
+    saleLocked: false,
+    settled: true,
+    bodyPresent: true,
+    bodyVisible: true,
+    confirmExpected: false,
+    confirmText: null,
+    defaultable: true,
+    defaultableBefore: true,
+  };
+  const inKind = {
+    ...base,
+    text: FORCED_CLOSE.readyInKind,
+    bodyText: FORCED_CLOSE.readyInKind,
+    visibleText: FORCED_CLOSE.readyInKind,
+    bodyVisibleText: FORCED_CLOSE.readyInKind,
+  };
+  const match = {
+    ...base,
+    text: FORCED_CLOSE.readyInternalMatch,
+    bodyText: FORCED_CLOSE.readyInternalMatch,
+    visibleText: FORCED_CLOSE.readyInternalMatch,
+    bodyVisibleText: FORCED_CLOSE.readyInternalMatch,
+  };
+
+  it('reports a card promising collateral when a match would be dispatched', () => {
+    const v = forcedCloseVerdict(
+      { ...inKind, internalMatch: true, internalMatchBefore: true },
+      copy,
+    );
+    expect(v.verdict).toBe('fail');
+    expect(v.failKind).toBe('inferred');
+    expect(v.why).toMatch(/would dispatch that instead/);
+  });
+
+  it('reports a card promising a match when the protocol holds none', () => {
+    const v = forcedCloseVerdict(
+      { ...match, internalMatch: false, internalMatchBefore: false },
+      copy,
+    );
+    expect(v.verdict).toBe('fail');
+    expect(v.failKind).toBe('inferred');
+    expect(v.why).toMatch(/holds no match candidate/);
+  });
+
+  it('passes each route when the protocol agrees with it', () => {
+    expect(
+      forcedCloseVerdict({ ...inKind, internalMatch: false, internalMatchBefore: false }, copy)
+        .verdict,
+    ).not.toBe('fail');
+    expect(
+      forcedCloseVerdict({ ...match, internalMatch: true, internalMatchBefore: true }, copy).verdict,
+    ).not.toBe('fail');
+  });
+
+  it('is INFERRED, not observed, so the chain gate can go first', () => {
+    // Same reasoning as the refusal arm: this is a disagreement between
+    // the page and a protocol read, and its commonest cause is a
+    // deployment pointed at another chain. `observed` bypasses the
+    // infrastructure gates by design, so tagging it that way would exit
+    // 1 on an operational misconfiguration.
+    const v = forcedCloseVerdict(
+      { ...inKind, internalMatch: true, internalMatchBefore: true },
+      copy,
+    );
+    expect(v.failKind).toBe('inferred');
+  });
+
+  it('says INCOMPLETE when the route changed while the card was watched', () => {
+    const v = forcedCloseVerdict(
+      { ...inKind, internalMatch: true, internalMatchBefore: false },
+      copy,
+    );
+    expect(v.verdict).toBe('blocked');
+    expect(v.blockedKind).toBe('incomplete');
+    expect(v.why).toMatch(/changed while the card was being observed/);
+  });
+
+  it('claims nothing when the route could not be read', () => {
+    // `undefined` is a failure to determine, not an answer of `false`.
+    // A view that declined to answer must never become a finding.
+    expect(
+      forcedCloseVerdict({ ...inKind, internalMatch: undefined, internalMatchBefore: undefined }, copy)
+        .verdict,
+    ).not.toBe('fail');
+    expect(
+      forcedCloseVerdict({ ...match, internalMatch: undefined, internalMatchBefore: true }, copy)
+        .verdict,
+    ).not.toBe('fail');
+  });
+
+  it('claims nothing about a card painting NEITHER of the two routes', () => {
+    // The rental and needs-route states are different settlements and
+    // not this rule's business; judging them here would name the wrong
+    // defect.
+    const rental = {
+      ...base,
+      text: FORCED_CLOSE.readyRental,
+      bodyText: FORCED_CLOSE.readyRental,
+      visibleText: FORCED_CLOSE.readyRental,
+      bodyVisibleText: FORCED_CLOSE.readyRental,
+    };
+    expect(
+      forcedCloseVerdict({ ...rental, internalMatch: true, internalMatchBefore: true }, copy)
+        .verdict,
+    ).not.toBe('fail');
+  });
+
+  it('judges the route from PAINTED copy, like everything else', () => {
+    // An in-kind promise erased in the DOM beside a painted match
+    // promise must not be accused: the lender read the match sentence.
+    const both = `${FORCED_CLOSE.readyInKind} ${FORCED_CLOSE.readyInternalMatch}`;
+    const v = forcedCloseVerdict(
+      {
+        ...base,
+        text: both,
+        bodyText: both,
+        visibleText: FORCED_CLOSE.readyInternalMatch,
+        bodyVisibleText: FORCED_CLOSE.readyInternalMatch,
+        internalMatch: true,
+        internalMatchBefore: true,
+      },
+      copy,
+    );
+    expect(v.verdict).not.toBe('fail');
+  });
+});

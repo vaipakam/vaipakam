@@ -583,6 +583,14 @@ const FORCED_CLOSE_COPY = (() => {
     // Which readiness copy means the RENTAL route, so the verdict can
     // pick the receipt the card is supposed to be showing.
     rentalReadyCopy: need(fc.readyRental, 'readyRental'),
+    // ROUND 64 P2 — which readiness copy names WHICH SETTLEMENT, so the
+    // verdict can compare the route the card is painting against the
+    // route the protocol would actually take. Named separately rather
+    // than positionally inside `readyCopy`, because an index into that
+    // array is exactly the kind of coupling that survives a reorder and
+    // starts lying.
+    internalMatchReadyCopy: need(fc.readyInternalMatch, 'readyInternalMatch'),
+    inKindReadyCopy: need(fc.readyInKind, 'readyInKind'),
   };
 })();
 /**
@@ -3070,6 +3078,62 @@ async function probeCloseOut(loanId, blockNumber) {
 }
 
 /**
+ * Would the protocol settle this close-out by INTERNAL MATCH?
+ *
+ * ROUND 64 P2 — because "the transaction would succeed" does not say
+ * WHICH settlement the lender is about to get.
+ *
+ * `triggerDefault(loanId, [])` simulates cleanly on a defaultable loan
+ * whether the contract dispatches an internal match or takes the in-kind
+ * path, because the match is dispatched FIRST and succeeds. So a card
+ * that has regressed to promising collateral in kind, on a loan with a
+ * live match candidate, passes every check this drive had: the
+ * simulation says yes, and the standard receipt deliberately covers both
+ * outcomes so its six rows are satisfied too. The lender reads "you
+ * receive the collateral" and is repaid the lent asset instead.
+ *
+ * THE CONTRACT'S OWN QUESTION, not a re-derivation. This is the same
+ * view `decideForcedClose` consumes and the same one
+ * `attemptInternalMatchAutoDispatch` consults, so it already folds in
+ * the `internalMatchEnabled` config flag, the subject's status and the
+ * matchable-collateral filter. Re-deriving any of that here would go
+ * stale the moment one of them moved — the argument round 57 made for
+ * simulating rather than re-deriving the grace ladder, at the next
+ * branch down.
+ *
+ * Tri-state, exactly like `probeCloseOut`: `true` / `false` are the
+ * chain answering, `undefined` is a failure to determine and asserts
+ * nothing.
+ */
+async function probeInternalMatch(loanId, blockNumber) {
+  try {
+    const out = await pub.readContract({
+      address: DIAMOND,
+      abi: DIAMOND_ABI_VIEM,
+      functionName: 'hasInternalMatchCandidate',
+      args: [loanId],
+      ...(blockNumber === undefined ? {} : { blockNumber }),
+    });
+    // `(bool found, uint256 candidateId)`. Only the first is read: a
+    // candidate id without `found` is not a candidate, and reading the
+    // id for anything would be this drive re-deciding a question the
+    // view already answered.
+    const found = Array.isArray(out) ? out[0] : out?.found;
+    return typeof found === 'boolean' ? found : undefined;
+  } catch {
+    // UNDEFINED EITHER WAY, and deliberately not a `classifyRpcFailure`
+    // branch. That helper distinguishes "the contract answered with a
+    // revert" from "nothing answered", which matters for a SIMULATION —
+    // a revert there is the protocol saying no. This is a `view`: a
+    // revert from it is the view declining to answer, not an answer of
+    // `false`. Both outcomes are a failure to determine, so both assert
+    // nothing, and writing that as a ternary whose arms are identical
+    // would only look like a branch that had been got wrong.
+    return undefined;
+  }
+}
+
+/**
  * The forced-close observation, with its chain facts read AT THE SCRAPE.
  *
  * ROUND 2 P2, and the second half of round 1's staleness fix. Writing
@@ -3159,6 +3223,16 @@ async function observeForcedClose(page, loan) {
     headAtRender === 0n
       ? await probeCloseOut(loan.id)
       : await probeCloseOut(loan.id, headAtRender);
+  // ROUND 64 P2 — AND WHICH SETTLEMENT, bracketed the same way and for
+  // the same reason. A match candidate can appear or be consumed inside
+  // the observation window, so one read cannot distinguish "the card is
+  // promising the wrong settlement" from "the answer changed while we
+  // watched". Both ends agreeing is what makes the comparison a finding;
+  // a disagreement is reported as incomplete.
+  const matchBefore =
+    headAtRender === 0n
+      ? await probeInternalMatch(loan.id)
+      : await probeInternalMatch(loan.id, headAtRender);
   //
   // ROUND 59 P2 — AND THE PROBE ITSELF RUNS BEFORE THE OBSERVATION, not
   // only its PIN.
@@ -3224,7 +3298,8 @@ async function observeForcedClose(page, loan) {
   //
   // In the pinned block with the others, so it cannot disagree with the
   // status it is judged beside.
-  const [pinnedBlock, live, authorityNow, pinnedSale, pinnedDefaultable] = await discovery(
+  const [pinnedBlock, live, authorityNow, pinnedSale, pinnedDefaultable, pinnedMatch] =
+    await discovery(
     `re-reading loan ${loan.id} beside the forced-close scrape`,
     async () => {
       // `cacheTime: 0` — the block this snapshot pins itself to must be
@@ -3252,6 +3327,9 @@ async function observeForcedClose(page, loan) {
         // could not ask" — the distinction every other probe here
         // carries.
         probeCloseOut(loan.id, blockNumber),
+        // ROUND 64 P2 — the settlement ROUTE, in the same pinned
+        // snapshot as everything else it will be compared against.
+        probeInternalMatch(loan.id, blockNumber),
       ]);
     },
   );
@@ -3389,6 +3467,14 @@ async function observeForcedClose(page, loan) {
     // observation, so an answer taken afterwards cannot validate a
     // render that preceded it. The verdict compares the two.
     defaultableBefore,
+    // ROUND 64 P2 — WHICH SETTLEMENT the protocol would perform, both
+    // ends of the same bracket. `triggerDefault` succeeding says the
+    // close-out would run; it does not say whether the lender receives
+    // the collateral or is repaid the lent asset, because the contract
+    // dispatches an internal match FIRST and that path succeeds too.
+    // The verdict compares these against the route the card is painting.
+    internalMatch: pinnedMatch,
+    internalMatchBefore: matchBefore,
     absenceUnconfirmed,
     // ROUND 24 P2 — and the REASON with it. Round 23 produced this
     // string and then dropped it here, so every diagnosis fell back to
@@ -7029,7 +7115,12 @@ for (const v of visited) {
                       : v.forcedCloseVerdict.confirmClickable
                         ? 'yes'
                         : 'no'
-                  }`
+                  }` +
+                  // ROUND 64 P2 — and whether the settlement-route check
+                  // could fire at all. A route the drive could not read
+                  // makes that arm silent, and a silent arm passes
+                  // exactly like a satisfied one.
+                  ` route=${v.forcedCloseVerdict.routeKnown ? 'checked' : 'unread'}`
                 : '') +
               // ROUND 14 — WHETHER THE ABSENCE GATE COULD HAVE FIRED.
               //

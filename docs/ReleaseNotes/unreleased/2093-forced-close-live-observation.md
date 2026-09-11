@@ -101,6 +101,19 @@ that has contradicted itself about which chain it is on, the check
 declines to conclude at all rather than blaming the page for a disagreement
 between two data sources.
 
+Asking whether the transaction would succeed also turned out not to be
+the same as asking what the lender would receive. The protocol can settle
+an overdue loan two ways — by handing over the collateral, or by matching
+it against another position and repaying the lent asset — and the
+close-out call succeeds either way, because the match is attempted first
+and works. A card that had regressed to promising the collateral on a
+loan the protocol would match instead therefore satisfied every check:
+the transaction simulated cleanly, and the receipt's wording deliberately
+covers both outcomes. The check now reads which settlement the protocol
+would actually perform and compares it against the one the card is
+displaying, so being told you will receive one thing and receiving
+another is caught.
+
 ### Timing, and what the check keeps
 
 The card passes through intermediate states on the way to its settled
