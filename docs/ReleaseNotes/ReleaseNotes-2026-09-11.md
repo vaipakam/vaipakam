@@ -270,4 +270,4 @@ continuous-integration system's execution model, a document format's grammar, a
 build tool's variable language — and this check is a scanner. Where such a model
 is genuinely needed, the answer is a declaration from the deployment itself
 rather than a better approximation here.
-<!-- assembled-fragment: 2084-deploy-guard-executable-image.md sha256=b71c629abf69fa3033d2e215d83db65b3b36ae39bd7d972a66c5956ae4e7d024 -->
+<!-- assembled-fragment: 2084-deploy-guard-executable-image.md sha256=3913afac94dde2b15f9584c7202d084d6c7eca1eba1ecc4cf4bbb73e331d155b -->

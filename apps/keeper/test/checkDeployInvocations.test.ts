@@ -12806,8 +12806,20 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     // A workflow is only READ as one under this directory.
     ['yml', WORKFLOW_BODY, '.github/workflows'],
     ['yaml', WORKFLOW_BODY, '.github/workflows'],
-    // Read value-by-value, which is #2119's subject — and equally bypassed
-    // when the name is upper-cased, which is this defect's.
+    // THESE TWO PIN DISCOVERY ONLY, and the distinction is sharper than the
+    // Node one (r2). Their body is an inert `note` value, so the lower-case
+    // REPORT is itself #2119's false report — reading every scalar as a
+    // command. Skipping the upper-case file is therefore the CORRECT verdict
+    // for this particular input, not a harmful silent pass, and the pair must
+    // not be read as demonstrating one.
+    //
+    // What the pair does establish is the same discovery fact as everywhere
+    // else: the sweep yields one name and not the other. That is why they
+    // belong in this table and in the parity guard. A fixture showing a
+    // genuinely actionable file of this format bypassed — where the
+    // lower-case report would be CORRECT — is not available while
+    // value-by-value reading is itself the defect, so the harmful-consequence
+    // question for these two is OPEN, not answered here.
     ['json', JSON_VALUE_BODY, 'apps/agent'],
     ['jsonc', JSON_VALUE_BODY, 'apps/agent'],
   ];
@@ -12817,7 +12829,23 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     // than trusting the table above, and fails in BOTH directions: an
     // extension added to the guard and not here, or dropped there and left
     // here. Either way the suite says so instead of quietly covering less.
-    const src = readFileSync(SCRIPT, 'utf8');
+    // COMMENTS ARE STRIPPED FIRST, and that is not fussiness (r2). Reading the
+    // raw source made this check follow TEXT rather than runtime membership in
+    // both directions: a suffix merely MENTIONED in a comment — `// '.toml' is
+    // intentionally unsupported` — counted as production and demanded a
+    // fixture, and a genuinely COMMENTED-OUT entry stayed in the production set
+    // so the parity assertion passed while `EXTENSIONS` had actually shrunk,
+    // leaving the behavioural control to fail later for an unrelated-looking
+    // reason.
+    //
+    // Importing the list would be better still and is not available: the guard
+    // is a script with no exports that scans and calls `process.exit` at import
+    // time, so a test that imported it would end the test process. Exporting
+    // the list would change the guard's executable code, which this work
+    // deliberately leaves byte-identical.
+    const stripComments = (t: string) =>
+      t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|\n)\s*\/\/[^\n]*/g, '$1');
+    const src = stripComments(readFileSync(SCRIPT, 'utf8'));
     const shell = /const SHELL_EXTENSIONS = \[([^\]]*)\]/.exec(src);
     const rest = /const EXTENSIONS = \[([\s\S]*?)\n\];/.exec(src);
     expect(shell, 'SHELL_EXTENSIONS should be locatable').not.toBeNull();
