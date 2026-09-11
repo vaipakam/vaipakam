@@ -8077,9 +8077,27 @@ if (wsRpcMethods.size) {
 // broken chooser (exit 1) instead of the deployment fault it is. See
 // `pageRpcChain` for why the OBSERVE_RPC check above cannot cover this.
 const pageChainWrong = [];
+// ROUND 77 P2 — AND AN UNANSWERABLE PROBE IS NOT AN ACCEPTABLE ONE.
+//
+// `served === null` means the synthetic `eth_chainId` was refused, timed
+// out or came back unreadable — not that the endpoint serves the right
+// chain. Treating it as acceptable let the whole point of this gate
+// escape in the case it was written for: with a deterministic deploy
+// putting a Diamond at the same address on two networks, ordinary reads
+// and heads still answer, so a missing card or a route disagreement
+// against `OBSERVE_RPC` passed every infrastructure gate and exited 1 as
+// a product regression while the page's chain had never been
+// established.
+//
+// Same three-way discipline as everything else here: answered-and-wrong,
+// answered-and-right, and could-not-ask are three outcomes, and the
+// third asserts nothing.
+const pageChainUnknown = [];
 for (const [url, probe] of pageRpcChain) {
   const served = await probe;
-  if (served !== null && served !== CHAIN_ID) {
+  if (served === null) {
+    pageChainUnknown.push(redact(url).slice(0, 120));
+  } else if (served !== CHAIN_ID) {
     pageChainWrong.push({ url: redact(url).slice(0, 120), served });
   }
 }
@@ -8114,6 +8132,36 @@ if (allowlistTooNarrow.length || httpGaps.length) {
     `\n  → ranked ahead of the inferred failures below: this drive's own` +
       ` request allowlist stopped the page loading, so anything missing` +
       ` says nothing about the app.`,
+  );
+  process.exit(2);
+}
+// ROUND 77 P2 — AND AN UNESTABLISHED PAGE CHAIN OUTRANKS AN INFERENCE.
+//
+// Placed exactly where the allowlist gate is and for the same reason: a
+// conclusion INFERRED from an absence must not outrank a precondition
+// this run never established. If the page's own endpoint would not say
+// which chain it serves, "the card is missing" and "the route disagrees"
+// are both explained by a deployment on another network — and that is
+// the case this gate exists for, since a deterministic deploy answers
+// ordinary reads at the same address either way.
+//
+// GATED ON THERE BEING AN INFERENCE TO PROTECT. An unanswerable probe on
+// an otherwise clean run is not worth exiting 2 over: nothing was
+// concluded from it. So this blocks only where the run was about to
+// report a failure it INFERRED — which is what `failures` reaching here
+// means, the observed findings having already exited above.
+if (failures && pageChainUnknown.length) {
+  console.log(
+    `\nBLOCKED: ${pageChainUnknown.length} of the page's own RPC endpoint(s)` +
+      ` would not say which chain they serve, so this run cannot tell a` +
+      ` product regression from a site built against another network.`,
+  );
+  pageChainUnknown.slice(0, 6).forEach((u) => console.log(`  unanswered → ${u}`));
+  console.log(
+    `  → ranked ahead of the inferred failures below, exactly as the` +
+      ` allowlist gap is: a missing surface says nothing about the app` +
+      ` until the page's chain is known. Re-run, or point the probe at an` +
+      ` endpoint that answers eth_chainId.`,
   );
   process.exit(2);
 }

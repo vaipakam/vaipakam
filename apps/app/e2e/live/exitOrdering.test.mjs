@@ -51,6 +51,8 @@ describe('a funds defect that was READ outranks every blocker', () => {
   const ROUTE_EXIT = 'if (routeFailures.length) {';
   const WS_EXIT = 'if (wsRpcMethods.size) {';
   const CHAIN_EXIT = 'if (pageChainWrong.length) {';
+  const CHAIN_UNKNOWN_EXIT = 'if (failures && pageChainUnknown.length) {';
+  const GENERIC_FAIL_EXIT = 'if (failures) process.exit(1);';
 
   it('every guard this is ranked against still exists', () => {
     // Guards the guard. If one is renamed or removed, the ordering
@@ -62,6 +64,8 @@ describe('a funds defect that was READ outranks every blocker', () => {
       ['route failures', ROUTE_EXIT],
       ['websocket RPC', WS_EXIT],
       ['wrong chain', CHAIN_EXIT],
+      ['unknown chain', CHAIN_UNKNOWN_EXIT],
+      ['generic failures', GENERIC_FAIL_EXIT],
     ]) {
       expect(at(needle), `${name} guard not found in the drive`).toBeGreaterThan(-1);
     }
@@ -80,6 +84,32 @@ describe('a funds defect that was READ outranks every blocker', () => {
 
   it('reports it before the wrong-chain blocker', () => {
     expect(at(FORCED_CLOSE_EXIT)).toBeLessThan(at(CHAIN_EXIT));
+  });
+
+  // ROUND 77 P2 — and an UNESTABLISHED page chain outranks an inference.
+  //
+  // `served === null` is a probe that was refused or timed out, not an
+  // endpoint on the right chain. Treating it as acceptable let a missing
+  // surface exit 1 against the product while the page's chain had never
+  // been established — which is precisely the case the wrong-chain gate
+  // exists for, since a deterministic deploy answers ordinary reads at
+  // the same address on either network.
+  it('blocks on an unknown page chain before the generic failure exit', () => {
+    expect(at(CHAIN_UNKNOWN_EXIT)).toBeLessThan(at(GENERIC_FAIL_EXIT));
+  });
+
+  it('still lets a READ defect past the unknown-chain blocker', () => {
+    // The whole ranking in one line: content that was read outranks a
+    // blocker, and a blocker outranks a conclusion inferred from an
+    // absence the blocker could explain.
+    expect(at(FORCED_CLOSE_EXIT)).toBeLessThan(at(CHAIN_UNKNOWN_EXIT));
+  });
+
+  it('gates the unknown-chain block on there being an inference to protect', () => {
+    // An unanswerable probe on an otherwise clean run concluded nothing,
+    // so it must not exit 2. Without the `failures &&` guard this would
+    // block every run whose chain probe timed out.
+    expect(CHAIN_UNKNOWN_EXIT).toContain('failures &&');
   });
 
   it('exits 1 rather than 2 — a finding, not an inconclusive run', () => {
