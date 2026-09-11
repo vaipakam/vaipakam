@@ -2024,6 +2024,14 @@ export function forcedCloseVerdict(obs, copy) {
     // confident pass.
     visibleCardsPeak: obs.visibleCardsPeak,
     visibleSubmitsPeak: obs.visibleSubmitsPeak,
+    // SELF-REVIEW AFTER ROUND 50 — HOW MANY RENDERS WERE ACTUALLY
+    // JUDGED. Round 27's remedy again, and needed for the same reason it
+    // was needed for `visibleSubmits`: the unsafe-render arm scans
+    // `seenRenders`, an empty array scans nothing, and a check that
+    // quietly observes NOTHING passes exactly like a check that observed
+    // something clean. The count is the difference, and it only shows if
+    // it is printed.
+    rendersJudged: 1 + (Array.isArray(obs.seenRenders) ? obs.seenRenders.length : 0),
     // SELF-REVIEW AFTER ROUND 46 — round 27's remedy, applied to the
     // trial click, and needed here for a reason the other three do not
     // have: this field can legitimately be absent.

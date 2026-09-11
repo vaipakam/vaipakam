@@ -6195,6 +6195,12 @@ for (const v of visited) {
                   // went missing, which is round 27's remedy for a field
                   // carried by hand — print it rather than pass
                   // confidently.
+                  // SELF-REVIEW AFTER ROUND 50 — and HOW MANY RENDERS
+                  // the unsafe-render arm actually had to judge. An
+                  // empty `seenRenders` scans nothing and passes exactly
+                  // like a clean scan, which is round 27's lesson about
+                  // `visibleSubmits` in a new place.
+                  ` renders=${v.forcedCloseVerdict.rendersJudged}` +
                   ` confirmClickable=${
                     v.forcedCloseVerdict.confirmClickable === undefined
                       ? 'unrecorded'
