@@ -4558,8 +4558,35 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
             if (Number(cs.opacity) === 0) return false;
             if (filterErases(cs)) return false;
           }
+          // ROUND 81 P2 — AND TEXT PARKED OUTSIDE THE DOCUMENT IS NOT
+          // PAINTED EITHER.
+          //
+          // `position: absolute; left: -9999px` is the older screen-reader
+          // pattern, and it defeats every test above it: `checkVisibility`
+          // is true, the rect has real width and height, opacity is 1 and
+          // nothing clips it. So an off-screen readiness sentence or a fee
+          // value could substantiate a card showing a sighted lender
+          // nothing but filler — the exact substitution the painted-text
+          // rule exists to stop, arriving by geometry instead of colour.
+          //
+          // BELOW THE FOLD IS NOT THIS. Content the lender can scroll to is
+          // painted and must stay admitted, so the test is in DOCUMENT
+          // coordinates and asks whether the box lies wholly before the
+          // document's origin — left of it or above it — which no amount of
+          // scrolling can reach. A box at y=4000 has positive document
+          // coordinates and is unaffected.
+          //
+          // Deliberately narrow. Anything further — a box parked far to the
+          // RIGHT, inside a horizontally scrollable ancestor, or an RTL
+          // document's mirrored origin — is a reachability question this
+          // cannot answer from one rect, and guessing would condemn copy
+          // the lender can read. The residual is a missed defect, which is
+          // the direction this file takes every time.
           const r = node.getBoundingClientRect();
           if (!(r.width > 0 && r.height > 0)) return false;
+          const docRight = r.right + window.scrollX;
+          const docBottom = r.bottom + window.scrollY;
+          if (docRight <= 0 || docBottom <= 0) return false;
           return notClipped(node);
         };
         // ROUND 66 P2 — TWO QUESTIONS, SEPARATED. `shownBox` above answers
@@ -5947,6 +5974,9 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
               }
               const r = node.getBoundingClientRect();
               if (!(r.width > 0 && r.height > 0)) return false;
+              const docRight = r.right + window.scrollX;
+              const docBottom = r.bottom + window.scrollY;
+              if (docRight <= 0 || docBottom <= 0) return false;
               return notClipped(node);
             };
             // ROUND 66 P2 — TWO QUESTIONS, SEPARATED. `shownBox` above answers

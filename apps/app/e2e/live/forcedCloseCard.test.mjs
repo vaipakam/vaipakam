@@ -6442,6 +6442,32 @@ describe('round 70 review findings', () => {
     // trapped lender. The drive now records `null` when it cannot see the
     // panel any more, and the arm must let that through: the two facts
     // would otherwise come from renders that never coexisted.
+    // ROUND 81 P2 — and an observed Back defect outranks an INFERRED
+    // protocol mismatch. A visit carries one verdict, and a blocker can
+    // downgrade an inferred one to BLOCKED — so a trapped lender would
+    // have vanished behind a provider disagreement that cannot explain a
+    // broken button.
+    it('reports an unusable Back ahead of a protocol mismatch', () => {
+      const v = forcedCloseVerdict(
+        {
+          ...panel({ present: true, clickable: false }),
+          // A ready card the bracket refuses: the inferred arm would
+          // otherwise return first.
+          submitDisabled: false,
+          text: FORCED_CLOSE.readyInKind,
+          visibleText: FORCED_CLOSE.readyInKind,
+          bodyText: FORCED_CLOSE.readyInKind,
+          bodyVisibleText: FORCED_CLOSE.readyInKind,
+          defaultable: false,
+          defaultableBefore: false,
+        },
+        copy,
+      );
+      expect(v.verdict).toBe('fail');
+      expect(v.failKind).toBe('observed');
+      expect(v.why).toMatch(/cannot activate/);
+    });
+
     it('says nothing when Back presence was not established', () => {
       const v = forcedCloseVerdict(panel({ present: null, clickable: null }), copy);
       expect(v.why ?? '').not.toMatch(/no way to decline/);

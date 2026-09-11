@@ -1982,6 +1982,97 @@ export function forcedCloseVerdict(obs, copy) {
     return { verdict: 'fail', failKind: 'observed', why: structuralFault };
   }
 
+  // ROUND 81 P2 — THE CANCEL CONTROL IS JUDGED HERE, ABOVE EVERY
+  // INFERRED ARM.
+  //
+  // These three read the page. They used to sit below the protocol arms,
+  // so a ready card the bracket refused returned the INFERRED mismatch
+  // first — and a visit carries exactly one verdict, which an
+  // infrastructure gate can then downgrade to BLOCKED. A lender trapped
+  // on a panel with no usable way out disappeared entirely, hidden by a
+  // provider disagreement that cannot explain a broken button.
+  //
+  // Same principle as the exit ordering at the end of the drive, applied
+  // one level in: what was READ outranks what was inferred, and the
+  // arms' ORDER is how a single-verdict function expresses that. They
+  // move beside the round-49 structural faults, which are here for
+  // exactly this reason and say so.
+  //
+  // They depend on nothing but `obs`, which is what makes the hoist safe
+  // — the same test round 49 applied, and the one an earlier attempt at
+  // hoisting in this file failed by sweeping two arms above their own
+  // declarations.
+  // ROUND 65 P2 — CAN THE LENDER BACK OUT?
+  //
+  // The confirmation is a pre-signature panel, and Back is the one
+  // control on it whose whole job is to let the lender NOT spend money.
+  // Its trial result was swallowed, so a Back button permanently covered
+  // or carrying `pointer-events: none` left the receipt and the confirm
+  // action scanning clean and the card passing — while the only way out
+  // of the panel was to leave the page.
+  //
+  // `observed`, unlike the two protocol arms: this is read off the page,
+  // not inferred from a disagreement with a chain read.
+  //
+  // `=== false` and `present === true`, so a record predating the field
+  // and a panel whose Back could not be located both say nothing rather
+  // than manufacturing a finding. `null` — trialled-not-established — is
+  // likewise not a defect.
+  if (obs.backAction?.present === true && obs.backAction.clickable === false) {
+    return {
+      verdict: 'fail',
+      failKind: 'observed',
+      why: 'the confirmation renders a Back control the lender cannot activate — the only way out of a pre-signature panel is to leave the page',
+    };
+  }
+  // ROUND 68 P2 — AND A BACK CONTROL THAT IS NOT PAINTED.
+  //
+  // Playwright's actionability suite ignores ancestor opacity, so a Back
+  // button under `opacity: 0`, or with transparent label text, passes
+  // the trial above while being invisible to the lender. Round 65
+  // recorded presence and clickability and stopped there — unlike the
+  // two fee-paying controls, which have carried painted evidence since
+  // rounds 46 and 54. The one control whose job is to stop a payment had
+  // the weakest check on the panel.
+  //
+  // A separate arm from `clickable`, because they are different defects:
+  // an unclickable Back is a trap the lender can see, an unpainted one
+  // is a way out they never know exists.
+  //
+  // `=== false`, so a record predating the field and a probe that could
+  // not answer (`null`) both say nothing.
+  // ROUND 70 P2 — AND A CONFIRMATION WITH NO BACK CONTROL AT ALL.
+  //
+  // Until now the panel was DETECTED by its Back button, so a
+  // confirmation whose receipt and fee-paying action render perfectly
+  // while Back is missing was never scanned — reported as
+  // `blocked/incomplete` from a null `confirmText` rather than as what
+  // it is: the lender given a fee-paying action and no way to decline
+  // without leaving the page.
+  //
+  // Requires POSITIVE evidence that the panel was up, so a visit that
+  // never opened a confirmation says nothing. Either the action or the
+  // rows will do — the same two independent markers the scrape now uses
+  // to detect the panel.
+  if (
+    obs.backAction?.present === false &&
+    (obs.confirmAction?.present === true ||
+      (Array.isArray(obs.confirmRowsText) && obs.confirmRowsText.length > 0))
+  ) {
+    return {
+      verdict: 'fail',
+      failKind: 'observed',
+      why: 'the confirmation renders its receipt and its fee-paying action with no Back control at all — the lender is asked to commit with no way to decline short of leaving the page',
+    };
+  }
+  if (obs.backAction?.present === true && obs.backAction.painted === false) {
+    return {
+      verdict: 'fail',
+      failKind: 'observed',
+      why: 'the confirmation renders a Back control that is not painted — the lender is asked to confirm a forced close-out with no visible way to decline',
+    };
+  }
+
   // ---- 2. Was this position one the assertion could apply to? ------
   if (!obs.lenderHoldsActive) {
     return {
@@ -2515,76 +2606,6 @@ export function forcedCloseVerdict(obs, copy) {
     (obs.bodyVisibleText ?? obs.bodyText ?? obs.visibleText ?? obs.text ?? '').includes(sentence);
 
 
-  // ROUND 65 P2 — CAN THE LENDER BACK OUT?
-  //
-  // The confirmation is a pre-signature panel, and Back is the one
-  // control on it whose whole job is to let the lender NOT spend money.
-  // Its trial result was swallowed, so a Back button permanently covered
-  // or carrying `pointer-events: none` left the receipt and the confirm
-  // action scanning clean and the card passing — while the only way out
-  // of the panel was to leave the page.
-  //
-  // `observed`, unlike the two protocol arms: this is read off the page,
-  // not inferred from a disagreement with a chain read.
-  //
-  // `=== false` and `present === true`, so a record predating the field
-  // and a panel whose Back could not be located both say nothing rather
-  // than manufacturing a finding. `null` — trialled-not-established — is
-  // likewise not a defect.
-  if (obs.backAction?.present === true && obs.backAction.clickable === false) {
-    return {
-      verdict: 'fail',
-      failKind: 'observed',
-      why: 'the confirmation renders a Back control the lender cannot activate — the only way out of a pre-signature panel is to leave the page',
-    };
-  }
-  // ROUND 68 P2 — AND A BACK CONTROL THAT IS NOT PAINTED.
-  //
-  // Playwright's actionability suite ignores ancestor opacity, so a Back
-  // button under `opacity: 0`, or with transparent label text, passes
-  // the trial above while being invisible to the lender. Round 65
-  // recorded presence and clickability and stopped there — unlike the
-  // two fee-paying controls, which have carried painted evidence since
-  // rounds 46 and 54. The one control whose job is to stop a payment had
-  // the weakest check on the panel.
-  //
-  // A separate arm from `clickable`, because they are different defects:
-  // an unclickable Back is a trap the lender can see, an unpainted one
-  // is a way out they never know exists.
-  //
-  // `=== false`, so a record predating the field and a probe that could
-  // not answer (`null`) both say nothing.
-  // ROUND 70 P2 — AND A CONFIRMATION WITH NO BACK CONTROL AT ALL.
-  //
-  // Until now the panel was DETECTED by its Back button, so a
-  // confirmation whose receipt and fee-paying action render perfectly
-  // while Back is missing was never scanned — reported as
-  // `blocked/incomplete` from a null `confirmText` rather than as what
-  // it is: the lender given a fee-paying action and no way to decline
-  // without leaving the page.
-  //
-  // Requires POSITIVE evidence that the panel was up, so a visit that
-  // never opened a confirmation says nothing. Either the action or the
-  // rows will do — the same two independent markers the scrape now uses
-  // to detect the panel.
-  if (
-    obs.backAction?.present === false &&
-    (obs.confirmAction?.present === true ||
-      (Array.isArray(obs.confirmRowsText) && obs.confirmRowsText.length > 0))
-  ) {
-    return {
-      verdict: 'fail',
-      failKind: 'observed',
-      why: 'the confirmation renders its receipt and its fee-paying action with no Back control at all — the lender is asked to commit with no way to decline short of leaving the page',
-    };
-  }
-  if (obs.backAction?.present === true && obs.backAction.painted === false) {
-    return {
-      verdict: 'fail',
-      failKind: 'observed',
-      why: 'the confirmation renders a Back control that is not painted — the lender is asked to confirm a forced close-out with no visible way to decline',
-    };
-  }
 
   // ROUND 65 P2 — AND THE REVERSE DIRECTION, which nothing checked.
   //

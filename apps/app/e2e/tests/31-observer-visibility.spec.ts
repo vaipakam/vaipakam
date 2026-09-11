@@ -705,6 +705,18 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
            two words and stops matching shipped copy. -->
       <div class="body" id="inlineSplit"><b>Loan</b>s are closed out</div>
       <div class="body" id="withBreak">Wait 3 days<br>USDC is returned later</div>
+      <!-- ROUND 81 P2 — the older screen-reader pattern defeats every
+           other test: visible, real rect, opaque, unclipped. Admitting it
+           let an off-screen sentence substantiate a card showing a
+           sighted lender nothing. -->
+      <div class="body" id="offLeft">
+        <p style="position:absolute; left:-9999px">This loan can be closed out now.</p>
+      </div>
+      <!-- The control that keeps the rule narrow: below the fold is
+           painted, and must stay admitted. -->
+      <div class="body" id="belowFold">
+        <p style="position:relative; top:4000px">This loan can be closed out now.</p>
+      </div>
       <!-- ROUND 79 P2 — flex and grid ITEMS are blockified, so their
            computed display reads as block while they sit side by side on
            one rendered row. Inserting a break here stopped the ticker
@@ -792,6 +804,8 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
         // ROUND 74 P2 — rendered line boundaries survive, inline runs do
         // not gain one.
         twoLinesPaintedText: scope.visibleTextOf(byId('twoLines')),
+        offLeftPaintedText: scope.visibleTextOf(byId('offLeft')),
+        belowFoldPaintedText: scope.visibleTextOf(byId('belowFold')),
         flexRowPaintedText: scope.visibleTextOf(byId('flexRow')),
         gridRowPaintedText: scope.visibleTextOf(byId('gridRow')),
         flexColumnPaintedText: scope.visibleTextOf(byId('flexColumn')),
@@ -962,4 +976,12 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
     'closed out now',
   );
   expect(result.noShadowPaintedText, 'and a transparent fill alone is still erased').toBe('');
+
+  // ROUND 81 P2 — parked outside the document is not painted; below the
+  // fold is. The second assertion is what keeps the rule from condemning
+  // copy the lender can scroll to.
+  expect(result.offLeftPaintedText, 'an off-screen sentence is not painted').toBe('');
+  expect(result.belowFoldPaintedText, 'but below the fold still is').toContain(
+    'closed out now',
+  );
 });
