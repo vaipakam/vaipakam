@@ -1346,7 +1346,7 @@ const acceptsCloseOut = new Set();
   if (ROLE === 'lender' && (authorities.size > 1 || capBinds)) {
     for (const l of eligible) {
       if (l.status !== STATUS_ACTIVE || acceptedSale.has(l.id)) continue;
-      if ((await probeCloseOut(l.id)) === true) acceptsCloseOut.add(l.id);
+      if ((await probeCloseOut(l.id, undefined, l.authority)) === true) acceptsCloseOut.add(l.id);
     }
   }
 }
@@ -3156,23 +3156,49 @@ async function readLenderCardText(page, card) {
  * @param {bigint} [blockNumber] simulate against this block when given
  * @returns {Promise<boolean|undefined>}
  */
-async function probeCloseOut(loanId, blockNumber) {
+async function probeCloseOut(loanId, blockNumber, account) {
   try {
     await pub.simulateContract({
       address: DIAMOND,
       abi: DIAMOND_ABI_VIEM,
       functionName: 'triggerDefault',
       args: [loanId, []],
-      account: observed,
+      // ROUND 75 P2 — THE ACCOUNT IS A PARAMETER, not the module-scoped
+      // `observed`.
+      //
+      // The round-74 pre-selection runs BEFORE `let observed` is
+      // initialised, so reading it here threw a `ReferenceError` from
+      // the temporal dead zone — which the catch below then classified
+      // as a transport failure and returned as `undefined`. Every
+      // candidate came back unknown, `acceptsCloseOut` stayed empty, and
+      // the whole authority-and-walk prioritisation was INERT while
+      // reading as though it worked.
+      //
+      // Passing the candidate's own authority is also the more correct
+      // question: it simulates the close-out as the lender whose card it
+      // is, which is what `saleLockedOn` already does with its
+      // `authority` argument.
+      account: account ?? observed,
       ...(blockNumber === undefined ? {} : { blockNumber }),
     });
     return true;
   } catch (err) {
     // A REVERT is the protocol answering. Anything else — a dead
-    // endpoint, a rate limit, this drive asking wrongly — is a failure
-    // to determine, and `classifyRpcFailure` is the one place that
-    // judgement lives.
-    return classifyRpcFailure(err) === 'answered' ? false : undefined;
+    // endpoint, a rate limit — is a failure to determine, and
+    // `classifyRpcFailure` is the one place that judgement lives.
+    //
+    // ROUND 75 P2 — AND THIS DRIVE BEING WRONG ABOUT ITSELF IS RETHROWN.
+    //
+    // The swallow above is what made the TDZ silent: a `ReferenceError`
+    // is not a chain condition, and classifying it as one turned a
+    // programming error into a permanent "could not ask". That is the
+    // exact lesson `isTransportFailure` was written for in round 31 —
+    // "a catch that cannot tell a dead endpoint from a programming error
+    // will keep reporting the programming error as a chain condition" —
+    // and this probe was not using it.
+    if (classifyRpcFailure(err) === 'answered') return false;
+    if (!isTransportFailure(err)) throw err;
+    return undefined;
   }
 }
 
@@ -3219,7 +3245,11 @@ async function probeInternalMatch(loanId, blockNumber) {
     // view already answered.
     const found = Array.isArray(out) ? out[0] : out?.found;
     return typeof found === 'boolean' ? found : undefined;
-  } catch {
+  } catch (err) {
+    // ROUND 75 P2 — the same guard as its sibling. A bare `catch` here
+    // would swallow a programming error just as silently, and this
+    // probe's answer gates the settlement-route arms.
+    if (!isTransportFailure(err)) throw err;
     // UNDEFINED EITHER WAY, and deliberately not a `classifyRpcFailure`
     // branch. That helper distinguishes "the contract answered with a
     // revert" from "nothing answered", which matters for a SIMULATION —
@@ -4286,7 +4316,31 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
             const n = t.endsWith('%') ? Number(t.slice(0, -1)) / 100 : Number(t);
             return Number.isFinite(n) ? n : 1;
           };
-          return !(alphaOf(fill) === 0);
+          // ROUND 75 P2 — A ZERO-ALPHA FILL IS NOT THE ONLY WAY GLYPHS GET
+          // PAINTED.
+          //
+          // `color: transparent` with a `text-shadow` is a real technique, and
+          // the glyphs are plainly on screen: the shadow draws them.
+          // Condemning that text erased the body, a receipt value or a control
+          // label and accused a surface the lender can read — the false-FAIL
+          // direction this helper already argues for two paragraphs up, where
+          // an unparseable colour is deliberately counted as painted. The same
+          // goes for a paint-order stroke, which outlines glyphs a transparent
+          // fill would otherwise hide.
+          //
+          // DECLINED rather than adjudicated: no attempt is made to decide
+          // whether the shadow is itself visible, offset clear of the glyphs,
+          // or the colour of the background. Each of those is the contrast
+          // judgement this file has already refused to make, and getting it
+          // wrong puts the accusation back. The residual is a missed defect,
+          // never an invented one.
+          if (alphaOf(fill) !== 0) return true;
+          const shadow = String(cs.textShadow ?? 'none').trim();
+          if (shadow !== '' && shadow !== 'none') return true;
+          const strokeWidth = String(cs.webkitTextStrokeWidth ?? '0px').trim();
+          const strokeColor = String(cs.webkitTextStrokeColor ?? 'transparent').trim();
+          if (parseFloat(strokeWidth) > 0 && alphaOf(strokeColor) !== 0) return true;
+          return false;
         };
         const shownBox = (node) => {
           if (node === null) return false;
@@ -4891,6 +4945,16 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
         bodyVisibleText: v.bodyVisibleText,
         submitVisible: v.submitVisible,
         submitDisabled: v.submitDisabled,
+        // ROUND 75 P2 — AND THE LABEL FACTS, which this projection
+        // dropped. The snapshot had already computed them; keeping the
+        // control's visibility and disabled state while discarding
+        // whether it could be READ meant only the settled render reached
+        // the label arms, so a render offering an enabled but blank or
+        // unpainted control passed once a later render repaired it. The
+        // same transient-control reasoning the unsafe-control arm has
+        // carried since round 50 — a click is instantaneous.
+        submitLabelled: v.submitLabelled,
+        submitLabelPainted: v.submitLabelPainted,
       });
     }
     if (typeof v?.visibleCards === 'number' && v.visibleCards > visibleCardsPeak) {
@@ -5624,7 +5688,13 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
                 const n = t.endsWith('%') ? Number(t.slice(0, -1)) / 100 : Number(t);
                 return Number.isFinite(n) ? n : 1;
               };
-              return !(alphaOf(fill) === 0);
+              if (alphaOf(fill) !== 0) return true;
+              const shadow = String(cs.textShadow ?? 'none').trim();
+              if (shadow !== '' && shadow !== 'none') return true;
+              const strokeWidth = String(cs.webkitTextStrokeWidth ?? '0px').trim();
+              const strokeColor = String(cs.webkitTextStrokeColor ?? 'transparent').trim();
+              if (parseFloat(strokeWidth) > 0 && alphaOf(strokeColor) !== 0) return true;
+              return false;
             };
             const shownBox = (node) => {
               if (!node) return false;
@@ -5748,9 +5818,8 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
             // `disabled === false` are all observable without touching
             // it.
             const panelButtons = [...el.querySelectorAll('button')];
-            const backButton = panelButtons.find((b) =>
-              /back/i.test((b.innerText ?? '').trim()),
-            );
+            const isBack = (b) => /back/i.test((b?.innerText ?? '').trim());
+            const backButton = panelButtons.find(isBack);
             // ROUND 46 P2 — COUNTED, not just found. `find` took the
             // first non-Back button and a second fee-paying action
             // beside it went unexamined — the same rule the outer card
@@ -5789,8 +5858,19 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
             // stays the first choice, so a panel with Back behaves
             // exactly as before.
             const cluster = backButton?.parentElement ?? el.querySelector('.cluster');
+            // ROUND 75 P2 — EVERY Back, not the one object identity.
+            //
+            // Excluding `backButton` alone meant a panel rendering TWO
+            // visible Back controls and no confirm button recorded the
+            // SECOND Back as its fee-paying action: visible, enabled,
+            // labelled, and it passes a trial click, so the run reported
+            // `confirmScanned` and could pass with no confirmation action
+            // on the panel at all. The label is what identifies a Back
+            // control, so the label is what has to exclude it — `find`
+            // picking one of several is not a licence to treat the rest
+            // as something else.
             const allActions = cluster
-              ? [...cluster.querySelectorAll('button')].filter((b) => b !== backButton)
+              ? [...cluster.querySelectorAll('button')].filter((b) => !isBack(b))
               : [];
             const clusterActions = allActions.filter(visible);
             const confirmButton = clusterActions[0];
@@ -6300,15 +6380,48 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
         // establish it". `undefined` has to keep meaning "a record
         // predating this field", so the current run must never produce
         // it.
+        // ROUND 75 P2 — AND THE PANEL HAS TO STILL BE THERE.
+        //
+        // `confirmAction` comes from the receipt evaluation; these two
+        // facts were taken in a LATER pass. `ForcedCloseCard` is
+        // explicitly allowed to withdraw the whole confirmation when
+        // readiness changes, so a panel that closed in between recorded
+        // `confirmAction.present: true` beside `backAction.present:
+        // false` — and the missing-Back arm reported a lender trapped on
+        // a panel, from two facts no single render ever showed together.
+        // The same race turns a trial rejection into "the control is
+        // unusable" when what actually happened is that it went away with
+        // everything else.
+        //
+        // So absence and a failed trial are only believed while the panel
+        // is demonstrably still up. Otherwise they are `null` — this run
+        // did not establish it — which is the third outcome the
+        // `confirmAction` trial has carried since round 47, for the same
+        // reason.
+        //
+        // Either marker proves the panel, matching the detection gate
+        // above rather than inventing a second notion of "still open".
+        const panelStillUp = async () => {
+          const [rows, action] = await Promise.all([
+            card
+              .locator('[data-testid^="forced-close-receipt"], dl.receipt .receipt-row')
+              .count()
+              .catch(() => 0),
+            card.locator('.cluster button').count().catch(() => 0),
+          ]);
+          return rows > 0 || action > 0;
+        };
+        const backCount = await back.count().catch(() => 0);
         backAction = {
-          present: await back.count().then((n) => n > 0).catch(() => false),
+          present: backCount > 0 ? true : (await panelStillUp()) ? false : null,
           clickable: null,
         };
         if (backAction.present) {
-          backAction.clickable = await back
+          const trialled = await back
             .click({ trial: true, timeout: 3_000 })
             .then(() => true)
             .catch(() => false);
+          backAction.clickable = trialled ? true : (await panelStillUp()) ? false : null;
           // ROUND 68 P2 — AND IS IT PAINTED?
           //
           // Playwright's actionability suite does not consider ancestor

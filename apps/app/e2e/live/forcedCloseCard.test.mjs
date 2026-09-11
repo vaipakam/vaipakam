@@ -6204,6 +6204,72 @@ describe('round 70 review findings', () => {
     expect(v.why).toMatch(/throughout the observation/);
   });
 
+  // ROUND 75 P2 — the LABEL facts are judged per render too. The
+  // projection dropped them, so only the settled render reached these
+  // arms and a blank fee-paying control passed once a later render
+  // repaired the label.
+  it('reports a blank action label seen only in an earlier render', () => {
+    const settled = {
+      lenderHoldsActive: true,
+      mounted: true,
+      attached: true,
+      submitPresent: true,
+      submitVisible: true,
+      submitDisabled: false,
+      submitLabelled: true,
+      submitLabelPainted: true,
+      visibleSubmits: 1,
+      visibleCards: 1,
+      saleLocked: false,
+      settled: true,
+      bodyPresent: true,
+      bodyVisible: true,
+      confirmExpected: false,
+      confirmText: null,
+      defaultable: true,
+      defaultableBefore: true,
+      internalMatch: false,
+      internalMatchBefore: false,
+      text: FORCED_CLOSE.readyInKind,
+      visibleText: FORCED_CLOSE.readyInKind,
+      bodyText: FORCED_CLOSE.readyInKind,
+      bodyVisibleText: FORCED_CLOSE.readyInKind,
+    };
+    const earlier = (extra) => ({
+      text: FORCED_CLOSE.readyInKind,
+      visibleText: FORCED_CLOSE.readyInKind,
+      bodyText: FORCED_CLOSE.readyInKind,
+      bodyVisibleText: FORCED_CLOSE.readyInKind,
+      submitVisible: true,
+      submitDisabled: false,
+      submitLabelled: true,
+      submitLabelPainted: true,
+      ...extra,
+    });
+
+    const blank = forcedCloseVerdict(
+      { ...settled, seenRenders: [earlier({ submitLabelled: false })] },
+      copy,
+    );
+    expect(blank.verdict).toBe('fail');
+    expect(blank.why).toMatch(/no label at all/);
+
+    const unpainted = forcedCloseVerdict(
+      { ...settled, seenRenders: [earlier({ submitLabelPainted: false })] },
+      copy,
+    );
+    expect(unpainted.verdict).toBe('fail');
+    expect(unpainted.why).toMatch(/painted in nothing/);
+
+    // And a render the lender could not act on is not this arm's
+    // business — the control has to be offered.
+    const withheld = forcedCloseVerdict(
+      { ...settled, seenRenders: [earlier({ submitLabelled: false, submitDisabled: true })] },
+      copy,
+    );
+    expect(withheld.why ?? '').not.toMatch(/no label at all/);
+  });
+
   // ROUND 74 P2 — a READY route offered on an earlier render is judged
   // too. `readyOffered` came from the settled snapshot, so a card that
   // offered a fee-paying action the protocol would reject and then
@@ -6370,6 +6436,20 @@ describe('round 70 review findings', () => {
       expect(v.verdict).toBe('fail');
       expect(v.failKind).toBe('observed');
       expect(v.why).toMatch(/no way to decline/);
+    });
+
+    // ROUND 75 P2 — a panel legitimately WITHDRAWN mid-scan is not a
+    // trapped lender. The drive now records `null` when it cannot see the
+    // panel any more, and the arm must let that through: the two facts
+    // would otherwise come from renders that never coexisted.
+    it('says nothing when Back presence was not established', () => {
+      const v = forcedCloseVerdict(panel({ present: null, clickable: null }), copy);
+      expect(v.why ?? '').not.toMatch(/no way to decline/);
+    });
+
+    it('says nothing when the Back trial was not established', () => {
+      const v = forcedCloseVerdict(panel({ present: true, clickable: null }), copy);
+      expect(v.why ?? '').not.toMatch(/cannot be activated|no way to decline/);
     });
 
     it('says nothing when no confirmation was ever opened', () => {

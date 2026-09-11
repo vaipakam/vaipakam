@@ -695,6 +695,18 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
            two words and stops matching shipped copy. -->
       <div class="body" id="inlineSplit"><b>Loan</b>s are closed out</div>
       <div class="body" id="withBreak">Wait 3 days<br>USDC is returned later</div>
+      <!-- ROUND 75 P2 — a transparent FILL is not the only way glyphs get
+           painted: a text-shadow draws them, and so does a paint-order
+           stroke. Condemning either accuses copy the lender can read. -->
+      <div class="body" id="shadowPainted">
+        <p style="color: transparent; text-shadow: 0 0 0 #111">This loan can be closed out now.</p>
+      </div>
+      <div class="body" id="strokePainted">
+        <p style="color: transparent; -webkit-text-stroke: 1px #111">This loan can be closed out now.</p>
+      </div>
+      <div class="body" id="noShadow">
+        <p style="color: transparent; text-shadow: none">This loan can be closed out now.</p>
+      </div>
     </div>
   `);
 
@@ -751,6 +763,9 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
         // ROUND 74 P2 — rendered line boundaries survive, inline runs do
         // not gain one.
         twoLinesPaintedText: scope.visibleTextOf(byId('twoLines')),
+        shadowPaintedText: scope.visibleTextOf(byId('shadowPainted')),
+        strokePaintedText: scope.visibleTextOf(byId('strokePainted')),
+        noShadowPaintedText: scope.visibleTextOf(byId('noShadow')),
         inlineSplitPaintedText: scope.visibleTextOf(byId('inlineSplit')),
         withBreakPaintedText: scope.visibleTextOf(byId('withBreak')),
         // The hole itself, recorded rather than assumed: each wrapper
@@ -876,4 +891,21 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
   expect(result.withBreakPaintedText, 'a <br> breaks the line').toBe(
     'Wait 3 days\nUSDC is returned later',
   );
+
+  // ROUND 75 P2 — glyphs painted by something other than the fill.
+  //
+  // `color: transparent` with a shadow or a stroke puts the words on
+  // screen, and calling them erased accuses copy the lender can read —
+  // the direction the unparseable-colour branch already refuses. The
+  // check declines rather than adjudicating: no attempt is made to
+  // decide whether the shadow is offset clear of the glyphs or matches
+  // the background, because that is the contrast judgement this file
+  // does not make.
+  expect(result.shadowPaintedText, 'a text-shadow paints the glyphs').toContain(
+    'closed out now',
+  );
+  expect(result.strokePaintedText, 'a paint-order stroke does too').toContain(
+    'closed out now',
+  );
+  expect(result.noShadowPaintedText, 'and a transparent fill alone is still erased').toBe('');
 });

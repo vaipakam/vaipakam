@@ -233,6 +233,35 @@ describe('classifyRpcResponse', () => {
       expect(verdicts(out)).toEqual(['ok', 'ok']);
     });
 
+    it('matches a REQUESTED null id normally (round 75)', () => {
+      // Round 74 made `"id": null` a present id; this branch still read
+      // every null reply as the absent id of a whole-request error, so a
+      // mixed batch with one legitimate null-id call reported every
+      // sibling unreachable even though all replies arrived.
+      const out = classifyRpcResponse(
+        200,
+        JSON.stringify([
+          { jsonrpc: '2.0', id: null, result: '0x1' },
+          { jsonrpc: '2.0', id: 2, result: '0x2' },
+        ]),
+        JSON.stringify([
+          { jsonrpc: '2.0', id: null, method: 'eth_call', params: [] },
+          { jsonrpc: '2.0', id: 2, method: 'eth_chainId', params: [] },
+        ]),
+      );
+      expect(verdicts(out)).toEqual(['ok', 'ok']);
+    });
+
+    it('still treats an UNREQUESTED null error as whole-request (round 75)', () => {
+      // A parse error carries no id because the server never read them.
+      const out = classifyRpcResponse(
+        200,
+        JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'parse' } }),
+        rpcReq(call(1, 'eth_call'), call(2, 'eth_chainId')),
+      );
+      expect(verdicts(out)).toEqual(['client-fault', 'client-fault']);
+    });
+
     it('treats an explicit null id as PRESENT (round 74)', () => {
       // A notification OMITS the member. An explicit null is an id the
       // spec discourages but allows, and the response must echo it — so

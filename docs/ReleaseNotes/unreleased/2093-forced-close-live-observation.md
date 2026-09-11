@@ -105,6 +105,16 @@ Line breaks are now kept, while words split across styling inside a
 single line are still joined without one, since a bolded word must not
 become two.
 
+Deciding that text is invisible has a matching limit. Transparent letters
+are not always unreadable — a shadow or an outline can draw the glyphs
+the fill leaves blank — so the check no longer concludes "erased" from
+the fill alone. It declines rather than adjudicating: it does not try to
+work out whether such a shadow is itself visible, or the same colour as
+what is behind it, because that is the contrast judgement this check has
+always refused to make. The cost is a defect it may miss; the alternative
+is condemning copy the lender can read, which is what gets a check
+switched off.
+
 ### Asking the protocol rather than re-deriving it
 
 A card can be perfectly rendered and still be offering an action that

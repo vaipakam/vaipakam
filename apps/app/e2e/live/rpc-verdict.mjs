@@ -834,7 +834,25 @@ export function classifyRpcResponse(status, body, requestBody) {
           `json-rpc ${code} — a revert-shaped error from ${c.method}, which executes no code`,
         );
 
-  const whole = members.find((m) => m?.error && (m.id === null || m.id === undefined));
+  // ROUND 75 P2 — a null id is only a WHOLE-REQUEST error when no call
+  // asked under that id.
+  //
+  // Round 74 taught `rpcRequestCalls` to accept an explicit `"id": null`
+  // as the present id the spec says it is, and left this test reading it
+  // as the absent id of a parse error. So a mixed batch carrying one
+  // legitimate null-id call had its ordinary reply treated as a failure
+  // of the entire request, and every sibling was reported with it.
+  //
+  // `wanted` is the set of ids actually requested, so the question is
+  // whether this null was asked for. A null nobody asked for is still the
+  // canonical whole-request shape: the server never got far enough to
+  // read the ids.
+  const nullRequested = answerable.some((c) => c.id === null);
+  const whole = members.find(
+    (m) =>
+      m?.error &&
+      (m.id === undefined || (m.id === null && !nullRequested)),
+  );
   if (whole) {
     const verdict = classifyRpcFailure(whole.error);
     return answerable.map((c) =>
@@ -883,7 +901,11 @@ export function classifyRpcResponse(status, body, requestBody) {
   let unattributable = false;
   for (const m of members) {
     const id = m?.id;
-    if (id === null || id === undefined || !wanted.has(id) || byId.has(id)) {
+    // ROUND 75 P2 — and a REQUESTED null matches normally here too.
+    // Reading every null as unattributable marked the whole batch
+    // unreachable because one call legitimately used that id, reporting
+    // siblings whose replies had all arrived as infrastructure failures.
+    if (id === undefined || !wanted.has(id) || byId.has(id)) {
       unattributable = true;
       continue;
     }

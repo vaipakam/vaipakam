@@ -1837,19 +1837,39 @@ export function forcedCloseVerdict(obs, copy) {
   // rather than waited for, because it is three fields of the same
   // atomic snapshot and nothing between here and its old declaration
   // changes them.
-  const offersAction = obs.submitVisible !== false && !obs.submitDisabled;
-  if (offersAction && obs.submitLabelled === false) {
+  //
+  // ROUND 75 P2 — ON EVERY CAPTURED RENDER, each on its own facts.
+  //
+  // These read the settled snapshot alone, so a render offering an
+  // enabled control with no readable label passed the moment a later
+  // render repaired it — the lender having already been shown, and able
+  // to press, a blank fee-paying control. That is the unsafe-control
+  // arm's own rule (round 50: a click is instantaneous), applied to the
+  // two facts about the control's LABEL rather than its state.
+  //
+  // The history is walked here rather than through `capturedRenders`
+  // because these arms sit ABOVE the applicability exits by round 49's
+  // hoist, and that list is built much further down. Each render is
+  // judged on its own three fields, which is what the projection now
+  // carries.
+  const labelRenders = [
+    obs,
+    ...(Array.isArray(obs.seenRenders) ? obs.seenRenders : []),
+  ];
+  const offeredWith = (r, fact) =>
+    r && r.submitVisible !== false && !r.submitDisabled && r[fact] === false;
+  if (labelRenders.some((r) => offeredWith(r, 'submitLabelled'))) {
     return {
       verdict: 'fail',
       failKind: 'observed',
-      why: 'the card offers a visible, enabled action with no label at all — the lender is asked to open a forced close-out from a blank control',
+      why: 'a render this drive read offers a visible, enabled action with no label at all — the lender is asked to open a forced close-out from a blank control',
     };
   }
-  if (offersAction && obs.submitLabelPainted === false) {
+  if (labelRenders.some((r) => offeredWith(r, 'submitLabelPainted'))) {
     return {
       verdict: 'fail',
       failKind: 'observed',
-      why: 'the card offers a visible, enabled action whose label is in the markup but painted in nothing — the lender is asked to open a forced close-out from a control that reads as blank',
+      why: 'a render this drive read offers a visible, enabled action whose label is in the markup but painted in nothing — the lender is asked to open a forced close-out from a control that reads as blank',
     };
   }
 
@@ -2442,7 +2462,25 @@ export function forcedCloseVerdict(obs, copy) {
     obs.defaultableBefore !== undefined &&
     obs.defaultable !== undefined &&
     obs.defaultableBefore !== obs.defaultable;
-  if (obs.defaultable === false && !bracketDisagrees && readyOffered) {
+  // ROUND 75 P2 — BOTH SAMPLES MUST SAY `false`, not merely "they did not
+  // disagree".
+  //
+  // `bracketDisagrees` requires both ends to be DEFINED, so an unreadable
+  // pre-render probe beside a `false` post-render one made it false and
+  // this arm accused the card on one side of a bracket it promises to
+  // take on two. A transient RPC failure was enough to report a
+  // correctly rendered card as a product defect — the direction this file
+  // refuses everywhere else, and the reason the bracket exists at all.
+  //
+  // A record that carries no `defaultableBefore` KEY is unaffected: that
+  // is an older shape rather than a probe that failed, and requiring a
+  // field it never had would silence the arm for every one of them. `in`
+  // is what tells those apart, the same distinction round 74 needed for
+  // JSON-RPC ids.
+  const bracketRefuses =
+    obs.defaultable === false &&
+    (!('defaultableBefore' in obs) || obs.defaultableBefore === false);
+  if (bracketRefuses && readyOffered) {
     return {
       verdict: 'fail',
       // ROUND 60 P2 — `inferred`, NOT `observed`, and the distinction is
