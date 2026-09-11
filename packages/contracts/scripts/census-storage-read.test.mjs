@@ -363,9 +363,13 @@ test('the snapshot getter and the loan getter must attribute to a common layout 
     { address: '0xLoanOld', eras: [{ commit: 'e0', layoutEra: 'e0' }] },
     { address: '0xLoanNew', eras: [{ commit: 'e2', layoutEra: 'e2' }] },
   ];
-  assert.equal(gettersShareLayout(attributed, '0xclaim', '0xloannew').shared, true, 'a deployment build attributed to era e2 shares with the era');
-  assert.equal(gettersShareLayout(attributed, '0xClaim', '0xLoanOld').shared, false, 'different layouts');
-  assert.equal(gettersShareLayout(attributed, '0xClaim', '0xClaim').shared, true, 'one facet hosting both');
-  assert.match(gettersShareLayout(attributed, null, '0xClaim').reason, /host is unknown/);
-  assert.match(gettersShareLayout(attributed, '0xClaim', '0xNobody').reason, /unattributed/);
+  assert.equal(gettersShareLayout(attributed, ['0xclaim', '0xloannew']).shared, true, 'a deployment build attributed to era e2 shares with the era');
+  assert.equal(gettersShareLayout(attributed, ['0xClaim', '0xLoanOld']).shared, false, 'different layouts');
+  assert.equal(gettersShareLayout(attributed, ['0xClaim', '0xClaim']).shared, true, 'one facet hosting both');
+  assert.match(gettersShareLayout(attributed, [null, '0xClaim']).reason, /host is unknown/);
+  assert.match(gettersShareLayout(attributed, ['0xClaim', '0xNobody']).reason, /unattributed/);
+  // the token getter joins: three hosts must share (#2095 r25 P1)
+  const withToken = [...attributed, { address: '0xToken', eras: [{ commit: 'e2', layoutEra: 'e2' }] }, { address: '0xTokenOld', eras: [{ commit: 'e0', layoutEra: 'e0' }] }];
+  assert.equal(gettersShareLayout(withToken, ['0xClaim', '0xLoanNew', '0xToken']).shared, true);
+  assert.equal(gettersShareLayout(withToken, ['0xClaim', '0xLoanNew', '0xTokenOld']).shared, false, 'a token getter on another layout breaks the exclusion');
 });

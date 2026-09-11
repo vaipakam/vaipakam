@@ -502,9 +502,18 @@ export function main(argv = process.argv.slice(2)) {
   const reusePath = arg('--reuse', null);
   const reusable = new Map();
   let reuseTable = null;
+  const rejectedReuse = [];
   if (reusePath && existsSync(reusePath)) {
     reuseTable = JSON.parse(readFileSync(reusePath, 'utf8'));
-    for (const e of expandBytecode(reuseTable).eras ?? []) if (e.origin !== 'deployment build') reusable.set(e.commit, e);
+    // #2095 r25 P1 — an entry is reused only when its recorded content digest
+    // still matches its contents; an edited or undigested entry is rebuilt,
+    // never re-signed
+    const trusted = (e) => e.contentDigest && contentDigestOf(e, reuseTable.bytecodeIndex) === e.contentDigest;
+    for (const e of reuseTable.eras ?? []) {
+      if (e.origin === 'deployment build') continue;
+      if (trusted(e)) reusable.set(e.commit, expandBytecode({ ...reuseTable, eras: [e], deploymentBuilds: [] }).eras[0]);
+      else rejectedReuse.push(`era ${e.commit.slice(0, 9)}`);
+    }
   }
   const log = (m) => process.stderr.write(m + '\n');
   const walk = walkProvenance({ since, fields: FIELDS });
@@ -549,7 +558,8 @@ export function main(argv = process.argv.slice(2)) {
   const layoutKey = (b) => JSON.stringify({ f: Object.fromEntries(FIELDS.map((f) => [f, b.fields?.[f] ? { s: b.fields[f].slot, t: normalizeFieldType(b.fields[f].type), o: b.fields[f].offset ?? 0 } : null])), r: b.rows ?? null, p: b.storagePosition });
   const eraLayouts = new Map(built.map((b) => [layoutKey(b), b.commit]));
   const reusableBuilds = new Map();
-  if (reuseTable) for (const b of expandBytecode(reuseTable).deploymentBuilds ?? []) reusableBuilds.set(b.commit, b);
+  if (reuseTable) for (const b of reuseTable.deploymentBuilds ?? []) { if (b.contentDigest && contentDigestOf(b, reuseTable.bytecodeIndex) === b.contentDigest) reusableBuilds.set(b.commit, expandBytecode({ ...reuseTable, eras: [], deploymentBuilds: [b] }).deploymentBuilds[0]); else rejectedReuse.push(`build ${b.commit.slice(0, 9)}`); }
+  if (rejectedReuse.length) log(`storage-layout-eras: ${rejectedReuse.length} entr${rejectedReuse.length === 1 ? 'y' : 'ies'} of the reused table fail their content digest and will be REBUILT: ${rejectedReuse.slice(0, 6).join(', ')}${rejectedReuse.length > 6 ? ', …' : ''}`);
   const deploymentBuilds = [];
   const candidates = onlyHead ? [] : deploymentBuildCandidates();
   log(`storage-layout-eras: ${candidates.length} deployment build candidate(s)`);

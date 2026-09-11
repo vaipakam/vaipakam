@@ -6379,8 +6379,19 @@ scoped only when the snapshot getter and the loan getter attribute to a
 common layout era — on a partially refreshed Diamond one can read today's
 `fallbackSnapshot` while the other reads an older `loans` mapping, and then
 the asset says nothing about the row, so those rows become unknown-asset
-and the class is not certified. Run 41 re-reads every deployment with all of
-it.
+and the class is not certified. Round 25 caught a crash the previous round
+had introduced — the scope check ran before the provenance record it writes
+to existed, which a smoke of the enumerable path would have shown and which
+one now precedes every push — and closed four more doors: the token getter
+joins every exclusion, since a row is filed non-VPFI by comparing the row
+getter's asset with `getVPFIToken()`, so the snapshot, loan and token getters
+must share a layout for a fallback exclusion and the intent and token
+getters for an intent exclusion; the VPFI discovery falls back to a direct
+call when `facetAddress(bytes4)` is cut out; each custody getter is probed
+before the enumeration and an unrouted one leaves its classes indeterminate
+with what storage found reported; and the era tool reuses an entry only when
+its recorded content digest still matches, rebuilding any other rather than
+re-signing it. Run 41 re-reads every deployment with all of it.
 
 ### 7a. What the provenance walk found, and how the design changes (2026-09-09)
 

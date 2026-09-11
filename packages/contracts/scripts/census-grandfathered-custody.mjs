@@ -544,21 +544,6 @@ async function applyLayoutProvenance(result, { client, censusBlock, atBlock, dia
   // an address the cut history names with empty code now is unreadable, not
   // "never wrote" (#2095 r15/r17 P1) — see refuseUnreadableCutSources
   refuseUnreadableCutSources(attribution);
-  // #2095 r24 P1 — a fallback row is filed non-VPFI by the LOAN getter's asset;
-  // on a partially refreshed Diamond the snapshot getter and the loan getter
-  // can read different layouts, and then the asset says nothing about the row.
-  // The two hosts must attribute to a common layout era for the exclusion to
-  // stand; otherwise the excluded rows are unknown-asset and the class is not
-  // certified.
-  if (scopeSelectors) {
-    const share = gettersShareLayout(attribution.attributed, hostOf(scopeSelectors.fallback), hostOf(scopeSelectors.loan));
-    result.scanned.layoutProvenance.scopeGetters = share;
-    const fb = result.classes.fallbackSnapshotCustody;
-    const excluded = fb?.nonVpfiRowsExcluded ?? [];
-    if (!share.shared && excluded.length) {
-      result.classes.fallbackSnapshotCustody = { ...fb, status: 'indeterminate', provenBy: undefined, unknownAssetRows: [...(fb.unknownAssetRows ?? []), ...excluded], nonVpfiRowsExcluded: [], indeterminateReason: `${excluded.length} fallback row(s) were filed non-VPFI by the loan getter, but the snapshot getter and the loan getter do not attribute to a common layout (${share.reason}) — the asset is not reconciled; refusing to certify` };
-    }
-  }
   const population = cutHistoryCompleteness({ verdict: cut.verdict.split(' ')[0], cuts: cut.cuts, constructorCutSeen: cut.constructorCutSeen, addresses: cut.addresses, loupe, cutFacetHost, loupeReadFailed, recordedFacets: recorded.facets.map((f) => f.address) });
   // For every unattributed facet: the commits around the moments it was cut
   // (block timestamps, hash-pinned by number under the census block) and
@@ -626,6 +611,30 @@ async function applyLayoutProvenance(result, { client, censusBlock, atBlock, dia
     cutBlocksUnreadable: unreadableBlocks.length ? unreadableBlocks : undefined,
     residual: 'a facet cut in and replaced with no local record and no readable cut history is not seen here; the cut history can only refute',
   };
+  // #2095 r24 P1 — a fallback row is filed non-VPFI by the LOAN getter's asset;
+  // on a partially refreshed Diamond the snapshot getter and the loan getter
+  // can read different layouts, and then the asset says nothing about the row.
+  // The two hosts must attribute to a common layout era for the exclusion to
+  // stand; otherwise the excluded rows are unknown-asset and the class is not
+  // certified.
+  if (scopeSelectors) {
+    // #2095 r25 P1 — the TOKEN getter is part of every exclusion: a row is
+    // filed non-VPFI by comparing the row getter's asset with getVPFIToken(),
+    // so the token getter must read the same layout as the row getters
+    const fbShare = gettersShareLayout(attribution.attributed, [hostOf(scopeSelectors.fallback), hostOf(scopeSelectors.loan), hostOf(scopeSelectors.token)]);
+    const intentShare = gettersShareLayout(attribution.attributed, [hostOf(scopeSelectors.intent), hostOf(scopeSelectors.token)]);
+    result.scanned.layoutProvenance.scopeGetters = { fallback: fbShare, intent: intentShare };
+    const fb = result.classes.fallbackSnapshotCustody;
+    const fbExcluded = fb?.nonVpfiRowsExcluded ?? [];
+    if (!fbShare.shared && fbExcluded.length) {
+      result.classes.fallbackSnapshotCustody = { ...fb, status: 'indeterminate', provenBy: undefined, unknownAssetRows: [...(fb.unknownAssetRows ?? []), ...fbExcluded], nonVpfiRowsExcluded: [], indeterminateReason: `${fbExcluded.length} fallback row(s) were filed non-VPFI, but the snapshot, loan and token getters do not attribute to a common layout (${fbShare.reason}) — the asset is not reconciled; refusing to certify` };
+    }
+    const it = result.classes.liveIntentCommits;
+    const itExcluded = it?.nonVpfiRowsExcluded ?? [];
+    if (!intentShare.shared && itExcluded.length) {
+      result.classes.liveIntentCommits = { ...it, status: 'indeterminate', provenBy: undefined, unknownAssetRows: [...(it.unknownAssetRows ?? []), ...itExcluded], nonVpfiRowsExcluded: [], indeterminateReason: `${itExcluded.length} intent row(s) were filed non-VPFI, but the intent getter and the token getter do not attribute to a common layout (${intentShare.reason}) — the asset is not reconciled; refusing to certify` };
+    }
+  }
   process.stderr.write(`census: ${who} — layout provenance: ${facets.length} facet address(es) (${recorded.records.length} record(s), loupe ${loupe ? loupe.length : 'unrouted'}, cut history ${cut.verdict.split(' ')[0]}): ${attribution.attributed.length} attributed, ${attribution.unattributed.length} unattributed, ${attribution.noCode.length} without code${candidateList.length ? `; ${candidateList.length} build candidate(s) proposed (${newCandidates} new in the candidates file)` : ''}\n`);
   const refusals = [];
   if (attribution.unattributed.length) refusals.push(`${attribution.unattributed.length} facet(s) of this Diamond carry code no layout era's build produced (${attribution.unattributed.slice(0, 4).map((u) => `${u.address} via ${u.sources.join('+')}`).join('; ')}${attribution.unattributed.length > 4 ? '; …' : ''}) — compiled from sources the walk never saw (a dirty tree, an unmerged branch), so the era-complete read cannot claim to cover their layout`);
@@ -1964,9 +1973,14 @@ async function censusDeployment(dep) {
   if (!noFacets && !notADiamond) {
     const vpfiSelector = toFunctionSelector(vpfiView.find((e) => e.name === 'getVPFIToken'));
     let vpfiGetterRouted;
+    let loupeAnswered = false;
     if (loupeRouted) {
-      vpfiGetterRouted = (await read('facetAddress', [vpfiSelector])) !== ZERO_ADDRESS;
-    } else {
+      // facetAddress(bytes4) is its own selector (#2095 r25 P2): if the Diamond
+      // answers facetAddresses() but not facetAddress(), fall through to the
+      // direct probe below rather than aborting
+      try { vpfiGetterRouted = (await read('facetAddress', [vpfiSelector])) !== ZERO_ADDRESS; loupeAnswered = true; } catch (err) { if (!isUnroutedOnDiamond(err)) rethrowUnlessRevert(err); }
+    }
+    if (!loupeAnswered) {
       // No loupe: the only admissible evidence of absence is the Diamond
       // fallback's own FunctionDoesNotExist on the call itself.
       try {
@@ -2428,11 +2442,19 @@ async function censusDeployment(dep) {
   const unknownAssetFallbackRows = [];
   const unknownAssetIntentRows = [];
   const intentRows = [];
+  // #2095 r25 P2 — cuts are per selector: each custody getter is probed before
+  // the loop; an unrouted one is recorded and its classes stay indeterminate
+  // (the era-complete storage read still reports what it finds)
+  const rebateGetterRouted = await routedByLoupeOrProbe('getBorrowerLifRebate', claim, [1n]);
+  const snapshotGetterRouted = await routedByLoupeOrProbe('getFallbackSnapshot', claim, [1n]);
+  if (!rebateGetterRouted || !snapshotGetterRouted) process.stderr.write(`census: ${who} — custody getter(s) unrouted: ${[!rebateGetterRouted && 'getBorrowerLifRebate', !snapshotGetterRouted && 'getFallbackSnapshot'].filter(Boolean).join(', ')}; their classes stay indeterminate\n`);
   for (const id of loanIds) {
-    const [rebateAmount, vpfiHeld] = await read('getBorrowerLifRebate', [id]);
-    if (vpfiHeld > 0n) vpfiHeldRows.push({ loanId: id.toString(), vpfiHeld: vpfiHeld.toString() });
-    if (rebateAmount > 0n) rebateRows.push({ loanId: id.toString(), rebateAmount: rebateAmount.toString() });
-
+    if (rebateGetterRouted) {
+      const [rebateAmount, vpfiHeld] = await read('getBorrowerLifRebate', [id]);
+      if (vpfiHeld > 0n) vpfiHeldRows.push({ loanId: id.toString(), vpfiHeld: vpfiHeld.toString() });
+      if (rebateAmount > 0n) rebateRows.push({ loanId: id.toString(), rebateAmount: rebateAmount.toString() });
+    }
+    if (!snapshotGetterRouted) { if (!intentSurfaceRouted) continue; } else {
     const snap = await read('getFallbackSnapshot', [id]);
     const [lenderCollateral, treasuryCollateral, borrowerCollateral, lenderPrincipalDue, treasuryPrincipalDue, active] =
       snap;
@@ -2460,6 +2482,7 @@ async function censusDeployment(dep) {
       });
     }
 
+    }
     // Class 3 — live intent commit, read from state. The view reverts
     // `IntentNoCommit` exactly when `commit.orderHash == 0`, and both teardown
     // paths delete the struct — so that revert IS the proof of absence. Any
@@ -2691,6 +2714,10 @@ async function censusDeployment(dep) {
   // #2095 r3 P1 — merge what the earlier-era read found into every class, and
   // withdraw the routed zero-loans proof when an earlier era's counter says
   // loans were created under a layout today's counter does not read.
+  // #2095 r25 P2 — a class whose routed getter is unrouted is never certified by
+  // the remaining reads alone; what storage found is still reported
+  if (!rebateGetterRouted) for (const name of ['vpfiHeldCustody', 'rebateRows']) result.classes[name] = { ...result.classes[name], status: 'indeterminate', provenBy: undefined, indeterminateReason: 'getBorrowerLifRebate is unrouted on this Diamond today — the class cannot be read through a getter; rows the storage read found are reported, none certified' };
+  if (!snapshotGetterRouted) result.classes.fallbackSnapshotCustody = { ...result.classes.fallbackSnapshotCustody, status: 'indeterminate', provenBy: undefined, indeterminateReason: 'getFallbackSnapshot is unrouted on this Diamond today — the class cannot be read through a getter; rows the storage read found are reported, none certified' };
   if (historical) {
     for (const name of Object.keys(result.classes)) result.classes[name] = mergeHistoricalRows(result.classes[name], historical, name);
     // r4 P1 — the routed getter and the HEAD-slot storage read must agree per loan id, both ways
@@ -2774,7 +2801,7 @@ async function censusDeployment(dep) {
     result.provenBy = undefined;
     result.classes = downgradeWithoutEraRead(result.classes, STORAGE_READ.reason);
   }
-  return applyLayoutProvenance(result, { client, censusBlock, atBlock, diamond, slug, label, deployBlock, readFacets: loupeRouted ? () => read('facets') : null, who, manifestEntry: dep.manifestEntry ?? null, scopeSelectors: { fallback: toFunctionSelector(claim.find((e) => e.name === 'getFallbackSnapshot')), loan: toFunctionSelector(loanView.find((e) => e.name === 'getLoanDetails')) } });
+  return applyLayoutProvenance(result, { client, censusBlock, atBlock, diamond, slug, label, deployBlock, readFacets: loupeRouted ? () => read('facets') : null, who, manifestEntry: dep.manifestEntry ?? null, scopeSelectors: { fallback: toFunctionSelector(claim.find((e) => e.name === 'getFallbackSnapshot')), loan: toFunctionSelector(loanView.find((e) => e.name === 'getLoanDetails')), token: toFunctionSelector(vpfiView.find((e) => e.name === 'getVPFIToken')), intent: intentSelector } });
 }
 
 /**

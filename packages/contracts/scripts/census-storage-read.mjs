@@ -552,15 +552,18 @@ export function refuseUnreadableCutSources(attribution) {
  * `layoutEra` counts as its era). An unknown or unattributed host shares
  * nothing. Pure; exported for the test.
  */
-export function gettersShareLayout(attributed, hostA, hostB) {
-  if (!hostA || !hostB) return { shared: false, reason: `a scope getter's host is unknown (${!hostA ? 'snapshot' : 'loan'} getter unrouted or the loupe unreadable)` };
+export function gettersShareLayout(attributed, hosts) {
+  const list = Array.isArray(hosts) ? hosts : [hosts];
+  if (list.some((h) => !h)) return { shared: false, reason: `a scope getter's host is unknown (a getter unrouted or the loupe unreadable)` };
   const erasOf = (h) => {
     const a = (attributed ?? []).find((x) => String(x.address).toLowerCase() === String(h).toLowerCase());
     return a ? new Set(a.eras.map((e) => e.layoutEra ?? e.commit)) : null;
   };
-  const A = erasOf(hostA); const B = erasOf(hostB);
-  if (!A || !B) return { shared: false, reason: `a scope getter's host is unattributed (${!A ? hostA : hostB})` };
-  if (String(hostA).toLowerCase() === String(hostB).toLowerCase()) return { shared: true, reason: 'one facet hosts both getters' };
-  const common = [...A].filter((e) => B.has(e));
-  return common.length ? { shared: true, reason: `both attribute to layout era ${common[0]}` } : { shared: false, reason: 'the two hosts attribute to different layout eras' };
+  const sets = list.map(erasOf);
+  const missing = list.filter((h, i) => !sets[i]);
+  if (missing.length) return { shared: false, reason: `a scope getter's host is unattributed (${missing[0]})` };
+  if (new Set(list.map((h) => String(h).toLowerCase())).size === 1) return { shared: true, reason: 'one facet hosts every getter' };
+  let common = [...sets[0]];
+  for (const s of sets.slice(1)) common = common.filter((e) => s.has(e));
+  return common.length ? { shared: true, reason: `all attribute to layout era ${common[0]}` } : { shared: false, reason: 'the hosts attribute to different layout eras' };
 }
