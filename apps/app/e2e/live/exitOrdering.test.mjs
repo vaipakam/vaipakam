@@ -90,14 +90,33 @@ describe('a funds defect that was READ outranks every blocker', () => {
     expect(block).not.toContain('process.exit(2)');
   });
 
-  it('is scoped to forced-close FAILs, not to every problem', () => {
-    // Deliberate, and the reason is in the drive's comment: the other
-    // verdicts include ABSENCE findings, and an absence is exactly the
-    // conclusion a transport failure or an unobservable socket read
-    // legitimately undermines. What is carried past the blockers is
-    // content that was READ.
+  // ⚠ THIS CASE PREVIOUSLY PINNED THE DEFECT AS CORRECT, which is worth
+  // recording where it happened rather than only in a commit message.
+  //
+  // Round 38 ranked forced-close FAILs ahead of the infrastructure
+  // gates, and its comment said — correctly — that ABSENCE findings must
+  // stay behind them, because a transport failure or a wrong-chain page
+  // endpoint explains a missing surface just as well as a regression
+  // does. The filter it shipped was `verdict === 'fail'`, which includes
+  // the two absence arms. I then wrote this case asserting exactly that
+  // string, so the guard I added to protect the fix certified the bug.
+  //
+  // Round 39 P2 found it. The verdict now tags every failure `observed`
+  // or `inferred` at its own return site, and this asserts the filter
+  // reads the TAG rather than the bare verdict — the property the
+  // original comment described all along.
+  it('bypasses the blockers only for failures that were READ', () => {
     const decl = src.slice(at('const fcObserved ='), at(FORCED_CLOSE_EXIT));
-    expect(decl).toContain("fc.verdict === 'fail'");
+    expect(decl).toContain("fc.failKind === 'observed'");
     expect(decl).not.toContain('failures');
+  });
+
+  it('does not let a bare verdict check stand in for the tag', () => {
+    // The regression that would undo this is dropping the tag test and
+    // keeping `verdict === 'fail'`, which reads as a harmless
+    // simplification and restores the round-38 defect exactly.
+    const decl = src.slice(at('const fcObserved ='), at(FORCED_CLOSE_EXIT));
+    const tagged = decl.includes("failKind === 'observed'");
+    expect(tagged, 'the filter must require the observed tag').toBe(true);
   });
 });

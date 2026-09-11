@@ -3636,12 +3636,25 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
   // keyed list and no transition wrapper, so React reconciles the same
   // node in place. Two visible cards is a defect on any tick.
   let visibleCardsPeak = 0;
+  let visibleSubmitsPeak = 0;
   const remember = (v) => {
     for (const part of [v?.text, v?.bodyText]) {
       if (typeof part === 'string' && part !== '') seenTexts.push(part);
     }
     if (typeof v?.visibleCards === 'number' && v.visibleCards > visibleCardsPeak) {
       visibleCardsPeak = v.visibleCards;
+    }
+    // ROUND 39 P2 — AND THE CONTROL COUNT, for the same reason one line
+    // up. Round 35 fixed the card peak and left its sibling on the
+    // settled snapshot, so two visible submit controls on an
+    // intermediate tick were counted and then overwritten by `snap =
+    // again`. That is the more dangerous of the two duplicates — the
+    // copy explains a single decision while the lender is briefly
+    // offered it twice, and whichever is pressed, at most one can be the
+    // action the copy describes. The drive read only the first, so the
+    // second was never inspected at all.
+    if (typeof v?.visibleSubmits === 'number' && v.visibleSubmits > visibleSubmitsPeak) {
+      visibleSubmitsPeak = v.visibleSubmits;
     }
   };
   remember(snap);
@@ -3669,6 +3682,7 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
         // exit from this loop carries what the loop saw.
         seenTexts,
         visibleCardsPeak,
+        visibleSubmitsPeak,
       };
     }
     // ROUND 13 P2 — A CARD THAT VANISHES MID-POLL IS THE VANISHED CASE,
@@ -3724,6 +3738,7 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
         settled: false,
         seenTexts,
         visibleCardsPeak,
+        visibleSubmitsPeak,
       };
     }
     snap = again;
@@ -4157,6 +4172,7 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
     // both are things this drive SAW, and the settled snapshot is not a
     // record of what it saw.
     visibleCardsPeak,
+    visibleSubmitsPeak,
   };
 }
 
@@ -5532,9 +5548,27 @@ if (malformedRpc.length) {
 // findings, and an absence is exactly the kind of conclusion a
 // transport failure or an unobservable socket read legitimately
 // undermines. What is carried past them is content that was READ.
+//
+// ROUND 39 P2 — `failKind === 'observed'`, AND THE ROUND-38 VERSION OF
+// THIS FILTER DID THE OPPOSITE OF WHAT ITS OWN COMMENT PROMISED.
+//
+// The paragraph above says absence findings must stay behind these gates
+// because a transport failure legitimately explains a missing surface.
+// The filter was `verdict === 'fail'`, which includes the two ABSENCE
+// arms — so a route failure or a wrong-chain page endpoint could remove
+// the card, the observer's own chain would still report the position
+// eligible, and the run would exit 1 accusing the product before the
+// gate that explains it ever ran. The principle was stated correctly and
+// implemented backwards in the same commit.
+//
+// The verdict now says which kind each failure is, rather than this
+// filter guessing from the `why` string. Every arm is tagged
+// explicitly — not defaulted — so a fail added later has to state
+// whether it was READ or INFERRED instead of inheriting whichever
+// default happened to be there.
 const fcObserved = visited
   .map((v) => ({ path: v.path, fc: v.forcedCloseVerdict }))
-  .filter(({ fc }) => fc && fc.verdict === 'fail');
+  .filter(({ fc }) => fc && fc.verdict === 'fail' && fc.failKind === 'observed');
 if (fcObserved.length) {
   console.log(
     `\n${fcObserved.length} forced-close card(s) were observed stating` +

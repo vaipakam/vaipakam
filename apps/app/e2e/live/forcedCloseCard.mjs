@@ -833,6 +833,7 @@ export function forcedCloseVerdict(obs, copy) {
   const amounts = [...new Set(parts.flatMap((part) => monetaryAmountsIn(part)))];
   const amountFinding = () => ({
     verdict: 'fail',
+    failKind: 'observed',
     why: `states an amount it cannot know: ${amounts.join(' | ')}`,
     amounts,
   });
@@ -867,6 +868,7 @@ export function forcedCloseVerdict(obs, copy) {
     if (typeof obs.visibleCards === 'number' && obs.visibleCards > 1) {
       return {
         verdict: 'fail',
+        failKind: 'observed',
         why: `${obs.visibleCards} forced-close cards are visible at once — this drive reads only the first, so the others are unchecked and the surface states its case more than once`,
       };
     }
@@ -888,7 +890,23 @@ export function forcedCloseVerdict(obs, copy) {
     if (typeof obs.visibleCardsPeak === 'number' && obs.visibleCardsPeak > 1) {
       return {
         verdict: 'fail',
+        failKind: 'observed',
         why: `${obs.visibleCardsPeak} forced-close cards were visible at once during the readiness wait, though only one remains — the drive read the first and never the other, so a surface it could not vouch for was shown to the lender`,
+      };
+    }
+
+    // 1a-ter-2. THE SAME, ONE LEVEL DOWN (round 39 P2). Round 35 gave
+    // the CARD count a peak and left the CONTROL count reading the
+    // settled snapshot, so two visible submit controls on an
+    // intermediate tick were counted and then overwritten. That is the
+    // more dangerous duplicate of the two: the copy explains one
+    // decision while the lender is offered it twice, and the drive
+    // inspected only the first.
+    if (typeof obs.visibleSubmitsPeak === 'number' && obs.visibleSubmitsPeak > 1) {
+      return {
+        verdict: 'fail',
+        failKind: 'observed',
+        why: `${obs.visibleSubmitsPeak} forced-close submit controls were visible at once during the readiness wait, though only one remains — the lender was briefly offered the same fee-paying action twice and this drive clicked only the first`,
       };
     }
 
@@ -911,6 +929,7 @@ export function forcedCloseVerdict(obs, copy) {
     if (typeof obs.visibleSubmits === 'number' && obs.visibleSubmits > 1) {
       return {
         verdict: 'fail',
+        failKind: 'observed',
         why: `${obs.visibleSubmits} forced-close submit controls are visible in one card — the copy explains a single decision while the lender is offered it more than once, and this drive clicks only the first`,
       };
     }
@@ -926,6 +945,7 @@ export function forcedCloseVerdict(obs, copy) {
     if (obs.text.trim() === '') {
       return {
         verdict: 'fail',
+        failKind: 'observed',
         why: 'card mounted with no text — withheld the explanation with the action',
       };
     }
@@ -945,6 +965,7 @@ export function forcedCloseVerdict(obs, copy) {
     if (obs.bodyPresent === false) {
       return {
         verdict: 'fail',
+        failKind: 'observed',
         why: 'card mounted with no explanatory body element — the withheld-action-without-explanation state',
       };
     }
@@ -962,6 +983,7 @@ export function forcedCloseVerdict(obs, copy) {
     if (obs.bodyVisible === false && obs.bodyPresent === true) {
       return {
         verdict: 'fail',
+        failKind: 'observed',
         why: 'card mounted with an explanatory body that is not visible — the lender sees the heading and no reason',
       };
     }
@@ -992,6 +1014,7 @@ export function forcedCloseVerdict(obs, copy) {
     if (obs.bodyPresent !== undefined && (obs.bodyText ?? '').trim() === '') {
       return {
         verdict: 'fail',
+        failKind: 'observed',
         why: 'card mounted with no explanatory body — the withheld-action-without-explanation state',
       };
     }
@@ -1021,6 +1044,7 @@ export function forcedCloseVerdict(obs, copy) {
   if (!obs.mounted && typeof obs.visibleCardsPeak === 'number' && obs.visibleCardsPeak > 1) {
     return {
       verdict: 'fail',
+      failKind: 'observed',
       why: `${obs.visibleCardsPeak} forced-close cards were visible at once during the readiness wait, and the card is now gone — the drive read the first and never the other`,
     };
   }
@@ -1095,11 +1119,38 @@ export function forcedCloseVerdict(obs, copy) {
     if (obs.attached) {
       return {
         verdict: 'fail',
+        // ROUND 39 P2 — INFERRED, not observed, and the distinction now
+        // decides whether this finding may overtake an infrastructure
+        // blocker at the run's exit.
+        //
+        // Round 38 ranked forced-close FAILs ahead of the route,
+        // WebSocket and wrong-chain gates so a funds defect the drive had
+        // READ could not be downgraded to "nothing was learned". I wrote
+        // in that commit that absence findings must stay behind those
+        // gates, because a transport failure legitimately explains a
+        // missing surface — and then filtered on `verdict === 'fail'`,
+        // which includes exactly the two arms it must not. The principle
+        // was stated correctly and implemented backwards.
+        //
+        // This arm is inferred rather than read for the same reason: the
+        // nodes are present and none is painted, which a stylesheet that
+        // failed to fetch produces just as readily as a CSS regression
+        // does. Conservative on purpose — the cost is a real finding
+        // reported one gate later, against a false accusation of the
+        // product.
+        failKind: 'inferred',
         why: 'card is in the DOM but not visible — the lender sees neither the action nor its explanation',
       };
     }
     return {
       verdict: 'fail',
+      // INFERRED — see the note on the arm above. This is the clearest
+      // case of the two: nothing was rendered, so nothing was read, and
+      // the conclusion rests entirely on the chain reads agreeing that
+      // the position is still eligible. A page that could not fetch its
+      // RPC, or one served by an endpoint on another chain, produces
+      // precisely this observation while the product is blameless.
+      failKind: 'inferred',
       why: 'card absent on a held Active lender position with no sale lock — absence claims the capability does not apply',
     };
   }
@@ -1148,6 +1199,7 @@ export function forcedCloseVerdict(obs, copy) {
     if (withheld) {
       return {
         verdict: 'fail',
+        failKind: 'observed',
         why: 'card renders a NON-ACTIONABLE state yet offers an enabled action — the user would pay a fee for a refusal',
       };
     }
@@ -1207,6 +1259,7 @@ export function forcedCloseVerdict(obs, copy) {
     if (refusal) {
       return {
         verdict: 'fail',
+        failKind: 'observed',
         why: `card reports a check still running AND claims unavailability ("${refusal}") — opposite claims about the app's knowledge and the protocol's answer`,
       };
     }
@@ -1228,6 +1281,7 @@ export function forcedCloseVerdict(obs, copy) {
     if (ready) {
       return {
         verdict: 'fail',
+        failKind: 'observed',
         why: 'card renders a READY route yet offers no usable action — a ready route is offered directly, not withheld',
       };
     }
@@ -1329,6 +1383,7 @@ export function forcedCloseVerdict(obs, copy) {
     if (known.length > 1) {
       return {
         verdict: 'fail',
+        failKind: 'observed',
         why: `the card's body states ${known.length} recognised readiness states at once — they are alternatives, so the lender is being told two different things about the same decision`,
       };
     }
@@ -1360,6 +1415,7 @@ export function forcedCloseVerdict(obs, copy) {
     if (twoStateRender) {
       return {
         verdict: 'fail',
+        failKind: 'observed',
         why: `a render this drive read stated ${twoStateRender.length} recognised readiness states at once, though the card settled on one — the lender was shown two different things about the same decision`,
       };
     }
@@ -1395,6 +1451,7 @@ export function forcedCloseVerdict(obs, copy) {
     // one of those three exits now prints `peak=undefined` instead of a
     // confident pass.
     visibleCardsPeak: obs.visibleCardsPeak,
+    visibleSubmitsPeak: obs.visibleSubmitsPeak,
   };
 }
 

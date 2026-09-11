@@ -2657,3 +2657,102 @@ describe('round 38 review findings', () => {
     });
   });
 });
+
+describe('round 39 review findings', () => {
+  const copy = { unknownCopy: FORCED_CLOSE.unknown };
+  const held = {
+    lenderHoldsActive: true,
+    mounted: true,
+    attached: true,
+    submitDisabled: true,
+    saleLocked: false,
+    settled: true,
+    bodyText: 'an explanation',
+    bodyPresent: true,
+    confirmText: null,
+    text: FORCED_CLOSE.unknown,
+    visibleCards: 1,
+    visibleCardsPeak: 1,
+    visibleSubmits: 0,
+  };
+
+  // ---- observed vs inferred -----------------------------------------
+  //
+  // The run ranks forced-close FAILs ahead of the route / WebSocket /
+  // wrong-chain gates so a funds defect that was READ cannot be
+  // downgraded to "nothing was learned". An ABSENCE must NOT get that
+  // treatment: a transport failure or a page served by the wrong chain
+  // removes the card while the product is blameless, and the observer's
+  // own chain still reports the position eligible. Round 38 wrote that
+  // distinction into a comment and then filtered on the bare verdict.
+  describe('every failure says whether it was read or inferred', () => {
+    it('tags a positively observed content defect as observed', () => {
+      const v = forcedCloseVerdict(
+        { ...held, text: `${FORCED_CLOSE.unknown} You will receive 1.5 WETH.` },
+        copy,
+      );
+      expect(v.verdict).toBe('fail');
+      expect(v.failKind).toBe('observed');
+    });
+
+    it('tags an absent card as inferred', () => {
+      const v = forcedCloseVerdict({ ...held, mounted: false, attached: false, text: null }, copy);
+      expect(v.verdict).toBe('fail');
+      expect(v.failKind).toBe('inferred');
+    });
+
+    it('tags a present-but-invisible card as inferred too', () => {
+      // Conservative on purpose: the nodes are there and none is
+      // painted, which a stylesheet that failed to fetch produces just
+      // as readily as a CSS regression. The cost is a real finding
+      // reported one gate later, against a false accusation.
+      const v = forcedCloseVerdict({ ...held, mounted: false, attached: true, text: null }, copy);
+      expect(v.verdict).toBe('fail');
+      expect(v.failKind).toBe('inferred');
+    });
+
+    it('leaves every fail arm tagged — none inherits a default', () => {
+      // A fail added later must STATE which kind it is. Asserted against
+      // the source so an untagged arm fails here rather than silently
+      // taking whichever default was in place.
+      const src = fs.readFileSync(
+        path.join(path.dirname(fileURLToPath(import.meta.url)), 'forcedCloseCard.mjs'),
+        'utf8',
+      );
+      const fails = src.split("verdict: 'fail',").length - 1;
+      const tagged = src.split('failKind:').length - 1;
+      expect(fails).toBeGreaterThan(10);
+      expect(tagged).toBe(fails);
+    });
+  });
+
+  // ---- the duplicate control, one level down from the card ----------
+  describe('a duplicate submit control counted on any tick', () => {
+    const ready = {
+      ...held,
+      submitPresent: true,
+      submitVisible: true,
+      submitDisabled: false,
+      visibleSubmits: 1,
+      text: FORCED_CLOSE.readyInKind,
+      bodyText: FORCED_CLOSE.readyInKind,
+      confirmExpected: false,
+    };
+
+    it('PASSES when only one control was ever seen', () => {
+      const v = forcedCloseVerdict({ ...ready, visibleSubmitsPeak: 1 }, copy);
+      expect(v.verdict).toBe('pass');
+    });
+
+    it('FAILS on a duplicate that vanished before the card settled', () => {
+      const v = forcedCloseVerdict({ ...ready, visibleSubmitsPeak: 2 }, copy);
+      expect(v.verdict).toBe('fail');
+      expect(v.failKind).toBe('observed');
+      expect(v.why).toMatch(/during the readiness wait/);
+    });
+
+    it('says nothing about a record carrying no submit peak', () => {
+      expect(forcedCloseVerdict(ready, copy).verdict).toBe('pass');
+    });
+  });
+});
