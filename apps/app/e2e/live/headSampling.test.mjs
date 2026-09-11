@@ -128,7 +128,7 @@ describe('the head sample waits for the readings in flight', () => {
   // ROUND 85 P2 — and the pre-navigation sample has to be taken BEFORE the
   // navigation, which is the only property that makes it a lower bound.
   it('samples the pre-navigation head before the page is loaded', () => {
-    const sample = at('const headBeforeNav = await discovery(');
+    const sample = at('headBeforeNav = await pub.getBlockNumber(');
     const goto = at('await page.goto(SITE + path');
     expect(sample, 'the pre-navigation sample was not found').toBeGreaterThan(-1);
     expect(goto, 'the navigation was not found').toBeGreaterThan(-1);
@@ -137,6 +137,24 @@ describe('the head sample waits for the readings in flight', () => {
     // filled by an earlier visit is a number this drive already had.
     const decl = src.slice(sample, sample + 200);
     expect(decl).toContain('cacheTime: 0');
+  });
+
+  // SELF-REVIEW OF ROUND 85 — and this sample must NOT go through
+  // `discovery`.
+  //
+  // My first version did, with a `.catch(() => null)` after it that could
+  // never fire: `discovery` exits the process rather than rejecting, so
+  // the fallback was decoration implying a degradation path that did not
+  // exist. The policy question underneath it is the real one — this
+  // sample only WIDENS a lower bound, so losing it should cost a block or
+  // two of bracket rather than an entire observation, and the pinned
+  // snapshot makes the same call under `discovery` a few seconds later,
+  // which keeps a genuinely dead endpoint loud.
+  it('degrades rather than ending the run when that sample fails', () => {
+    const sample = at('headBeforeNav = await pub.getBlockNumber(');
+    const decl = src.slice(sample - 200, sample + 200);
+    expect(decl).not.toContain('discovery(');
+    expect(decl).toContain('catch');
   });
 
   // ROUND 85 P2 — the interior of the bracket is READ, not inferred from

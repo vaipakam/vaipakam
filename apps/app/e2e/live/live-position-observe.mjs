@@ -2537,11 +2537,25 @@ async function visit(path, { expectChooser = false, loan = null } = {}) {
   // first announcement, bought for one call, and the span it adds is the
   // page's boot time — a block or two.
   //
-  // `discovery` so a failure here is a blocked run rather than an
-  // unhandled rejection: this sits outside the navigation catch below.
-  const headBeforeNav = await discovery('sampling the chain head before navigating', () =>
-    pub.getBlockNumber({ cacheTime: 0 }),
-  ).catch(() => null);
+  // NOT `discovery`, and the first version of this line used it with a
+  // `.catch` that could never fire — `discovery` exits the process rather
+  // than rejecting, so the fallback was decoration implying a degradation
+  // path that did not exist (caught by self-review).
+  //
+  // A plain catch is also the RIGHT policy here, which is why this is not
+  // simply the guard removed. This sample only WIDENS a lower bound: its
+  // absence costs a block or two of bracket, and the page's own first
+  // announcement still floors it. Aborting an entire observation over an
+  // optimisation would be the harsher answer, and it is not needed to keep
+  // a real fault loud — the pinned snapshot below makes the same call
+  // under `discovery`, so an endpoint that cannot answer `getBlockNumber`
+  // stops the run there, by name, a few seconds later.
+  let headBeforeNav = null;
+  try {
+    headBeforeNav = await pub.getBlockNumber({ cacheTime: 0 });
+  } catch {
+    headBeforeNav = null;
+  }
   const pageErrors = [];
   const consoleErrors = [];
   page.on('pageerror', (e) => pageErrors.push(String(e).replace(/\s+/g, ' ').slice(0, 300)));
@@ -3560,7 +3574,25 @@ async function stableAcross(from, to, expected, probe) {
   if (to < from) return null;
   if (to - from > SPAN_PROBE_BUDGET) return null;
   for (let b = from + 1n; b < to; b += 1n) {
-    const seen = await probe(b);
+    // A THROW HERE IS "NOT ESTABLISHED", not a reason to end the run, and
+    // that is safe for the one reason it would not be in general: both
+    // ENDPOINTS have already been probed with this same call, and the
+    // caller only asks when both answered. A programming error in the
+    // probe therefore surfaced before this loop ran. What is left to catch
+    // is the chain declining a historical read — an older block outside a
+    // node's state window is the realistic one — and aborting a whole
+    // observation because one interior block could not be re-read would be
+    // the harshest possible answer to the mildest possible cause.
+    //
+    // Caught rather than pattern-matched on the error, deliberately:
+    // enumerating provider error shapes is the mistake this file keeps
+    // being caught making, and every outcome here is the same anyway.
+    let seen;
+    try {
+      seen = await probe(b);
+    } catch {
+      return null;
+    }
     if (seen === undefined || seen === null) return null;
     if (seen !== expected) return false;
   }
@@ -8476,7 +8508,13 @@ for (const v of visited) {
                   // could fire at all. A route the drive could not read
                   // makes that arm silent, and a silent arm passes
                   // exactly like a satisfied one.
-                  ` route=${v.forcedCloseVerdict.routeKnown ? 'checked' : 'unread'}`
+                  ` route=${v.forcedCloseVerdict.routeKnown ? 'checked' : 'unread'}` +
+                  // Whether the protocol's answer was established across
+                  // every block of the bracket, rather than only at its
+                  // ends (round 85). `no`/`unknown` means the protocol
+                  // arms could not accuse on this visit, which a green
+                  // line would otherwise not say.
+                  ` span=${v.forcedCloseVerdict.spanStable ?? 'unknown'}`
                 : '') +
               // ROUND 14 — WHETHER THE ABSENCE GATE COULD HAVE FIRED.
               //

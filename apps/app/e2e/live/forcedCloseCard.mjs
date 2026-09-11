@@ -3375,6 +3375,26 @@ export function forcedCloseVerdict(obs, copy) {
       obs.internalMatch !== undefined &&
       obs.internalMatchBefore !== undefined &&
       obs.internalMatch === obs.internalMatchBefore,
+    // ROUND 85 P2 — AND WHETHER THE WINDOW ITSELF WAS ESTABLISHED.
+    //
+    // Carried for the same reason as everything around it: an arm that
+    // cannot fire passes exactly like a satisfied one, and the interior
+    // read is now what decides whether three of them may. Over a long
+    // span — a slower page, a faster chain — the interior goes over budget
+    // and every protocol accusation becomes incomplete, which is correct
+    // and would otherwise be invisible on a green run.
+    //
+    // Three values rather than a boolean, matching what is actually known:
+    // `yes` / `no` / `unknown`, where `unknown` covers both a record
+    // predating the fields and a span this drive could not cover.
+    spanStable:
+      obs.defaultableStable === undefined && obs.internalMatchStable === undefined
+        ? 'unknown'
+        : obs.defaultableStable === false || obs.internalMatchStable === false
+          ? 'no'
+          : obs.defaultableStable === null || obs.internalMatchStable === null
+            ? 'unknown'
+            : 'yes',
   };
 }
 
