@@ -11875,7 +11875,7 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
   // position moved and the pointer sent readers to unrelated tests (r27).
   //
   // So they pin two things: the shapes that defeated the withdrawn designs,
-  // and TWENTY-ONE WRONG VERDICTS across ELEVEN defects, asserted so a later fix
+  // and TWENTY-TWO WRONG VERDICTS across ELEVEN defects, asserted so a later fix
   // fails them and comes back to the question instead of passing unnoticed.
   //
   // The direction matters and is not decoration. TWELVE assert a SILENT PASS
@@ -11883,12 +11883,14 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
   // standalone helper and a workflow body, because the fold is in the shared
   // splitter and a fix scoped to any one of the four leaves the others live);
   // #2121, #2122; and #2123 three times (two command-shell families and a
-  // POSIX one, because that gate is shared too) — and NINE fail the opposite
-  // way, so their fixtures assert a REPORT: #2112, #2119 four times (manifest,
+  // POSIX one, because that gate is shared too) — and TEN fail the opposite
+  // way, so their fixtures assert a REPORT — TEN of them: #2112, #2119 four times (manifest,
   // data file, multi-line list and a COMMENTED-OUT line), #2115 three times
   // (the casing rewrite in a helper and in a workflow body, and the separator
-  // rewrite), and #2126 (that same normalisation applied on a runner whose
-  // platform makes the normalised spelling a different program). A fixture that pinned the wrong direction would pass
+  // rewrite), and #2126 TWICE — that same pair of normalisations applied on
+  // a runner whose platform makes the normalised spelling a different
+  // program, pinned once per rewrite because a fix gating only one of them
+  // would satisfy the other's fixture. A fixture that pinned the wrong direction would pass
   // while the guard did the wrong thing.
   //
   // NOT "four different routes" for the #2119 group, which overstated their
@@ -12259,28 +12261,71 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     expect(r.ok).toBe(false);
   });
 
-  it('the Windows normalisation runs on a POSIX runner too (#2126, stated false report)', () => {
+  const posixPwsh = (cd: string, cmd: string) =>
+    'name: d\non: push\njobs:\n  d:\n    runs-on: ubuntu-latest\n    steps:\n      - run: |\n' +
+    `          ${cd}\n          ${cmd}\n` +
+    '        shell: pwsh\n';
+
+  it('the CASING normalisation runs on a POSIX runner (#2126, stated false report)', () => {
     // THE CASE I DISCARDED WHEN FIXING THE RUNNER, recorded instead of thrown
-    // away (r31). Moving the #2115 fixture to windows-latest was right, and
-    // the ubuntu form I dropped is a wrong verdict of its own.
-    //
-    // PowerShell runs on Linux, where `Wrangler` and `wrangler` are DIFFERENT
-    // files — so on this runner the guard reports a command that does not
-    // exist on the platform, inside text nothing executes.
+    // away (r31). PowerShell runs on Linux, where `Wrangler` and `wrangler`
+    // are DIFFERENT files — so here the check reports a command the platform
+    // does not have.
     //
     // The sharp part: `windowsSeparators` carries a comment saying exactly
     // this — "on a POSIX runner `Wrangler` is a different file, and matching
     // it there would invent a command" — and then keys on the INTERPRETER
     // rather than the platform. `pwsh` is cross-platform, so the rationale
-    // and the implementation disagree. #2126.
+    // and the implementation disagree.
+    //
+    // AN EXECUTABLE LINE, NOT A HERE-STRING (r33). The first version put the
+    // mention inside an inert here-string, where the report comes from the
+    // missing PowerShell string state (#2117) — so fixing THAT would have
+    // flipped this pin while leaving the platform-blind normalisation
+    // untouched. Mutation-checked both ways: disabling the casing fold flips
+    // this and leaves the lower-case control reporting; disabling the
+    // separator rewrite leaves this unchanged.
     seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
     seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
-    const r = runWith(
-      '.github/workflows/d.yml',
-      'name: d\non: push\njobs:\n  d:\n    runs-on: ubuntu-latest\n    steps:\n      - run: |\n' +
-        "          cd apps/agent\n          $doc = @'\n          Wrangler deploy\n          '@\n" +
-        '          Write-Output $doc\n        shell: pwsh\n',
-    );
+    const r = runWith('.github/workflows/d.yml', posixPwsh('cd apps/agent', 'Wrangler deploy'));
+    expect(r.ok).toBe(false);
+  });
+
+  it('the lower-case spelling on the same runner genuinely runs (#2126 casing control)', () => {
+    // The control: on Linux THIS is the real command, so the report is
+    // correct and must survive any #2126 fix. Without it, a fix could stop
+    // reporting the whole step and still satisfy the pin above.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith('.github/workflows/d.yml', posixPwsh('cd apps/agent', 'wrangler deploy'));
+    expect(r.ok).toBe(false);
+  });
+
+  it('the SEPARATOR normalisation runs on a POSIX runner (#2126, stated false report)', () => {
+    // THE OTHER HALF OF #2126, and it needs its own pin (r33): a fix gating
+    // only the casing replacement on the runner would satisfy the fixture
+    // above while `windowsSeparators` still rewrote this path.
+    //
+    // On Linux a backslash in a path is an ordinary character, so this step
+    // does NOT change into the package directory — the deploy runs from the
+    // repository root and is not the agent's deploy at all. The check rewrites
+    // the path, models the directory as `apps/agent`, and reports.
+    //
+    // Mutation-checked: disabling only the separator replacement flips this
+    // and leaves the forward-slash control reporting; disabling the casing
+    // fold leaves it unchanged.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith('.github/workflows/d.yml', posixPwsh('cd apps\\agent', 'wrangler deploy'));
+    expect(r.ok).toBe(false);
+  });
+
+  it('the forward-slash path on the same runner IS the package (#2126 separator control)', () => {
+    // The control: this really does enter the package directory on Linux, so
+    // the report is correct and must survive a #2126 fix.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith('.github/workflows/d.yml', posixPwsh('cd apps/agent', 'wrangler deploy'));
     expect(r.ok).toBe(false);
   });
 

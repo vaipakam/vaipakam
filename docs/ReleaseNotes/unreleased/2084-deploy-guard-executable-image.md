@@ -6,7 +6,7 @@ three ways that question reads text which does not correspond to what runs.
 
 **It fixes none of them, and changes no behaviour at all.** Every attempt was
 withdrawn under review. What lands is the record of why, and tests that pin the
-wrong verdicts that remain — twelve silent passes and nine false reports — so a
+wrong verdicts that remain — twelve silent passes and ten false reports — so a
 later fix announces itself instead of passing unnoticed.
 
 That is worth landing on its own. Two of these designs are the kind a
@@ -64,7 +64,7 @@ No behaviour change. The check's logic is what it was.
 - The reasoning above, recorded beside the code that would have to change, in
   the functional specification, and here — so the next person does not rebuild
   one of these designs without knowing what happened to it.
-- Tests that **assert twenty-one current wrong verdicts across eleven defects**, so
+- Tests that **assert twenty-two current wrong verdicts across eleven defects**, so
   a later fix fails them and comes back to the question rather than passing
   silently.
 
@@ -87,7 +87,7 @@ No behaviour change. The check's logic is what it was.
   them is shared and a fix scoped to one family would satisfy a single
   fixture while leaving every other family bypassed.
 
-  **Nine fail the other way and assert the report**: a runbook sentence naming a
+  **Ten fail the other way and assert the report**: a runbook sentence naming a
   write reports the deployment below it; a package manifest whose description
   merely names the command is reported as performing it, as is an unrelated
   data file of the same format, and as is a list of keywords once the file is
@@ -99,7 +99,8 @@ No behaviour change. The check's logic is what it was.
   property at all; and a Windows normalisation is applied wherever the
   interpreter is a Windows shell, INCLUDING on a runner whose platform makes
   the normalised spelling a different program, so the check reports a command
-  that does not exist there.
+  that does not exist there — pinned once for each of the two normalisations,
+  since a correction gating only one of them would satisfy the other's test.
 - Two tests pinning that a bare command line and an inline command span in a
   document **are** read as commands — the two shapes that defeated the withdrawn
   designs, so a future attempt cannot quietly reintroduce the erasure.
@@ -127,8 +128,8 @@ them — including **ten defects surfaced while correcting this record
 itself**, seven of them silent passes and three false reports — is recorded as its
 own issue with a reproduction and what a fix would have to be true of. All are
 behaviour the check already had, so nothing is made worse. Ten are
-additionally pinned by tests that assert the current verdict — twenty-one such
-tests in all, twelve asserting a silent pass and nine a false report.
+additionally pinned by tests that assert the current verdict — twenty-two such
+tests in all, twelve asserting a silent pass and ten a false report.
 
 That the correcting itself surfaced more defects than the original work is the
 most useful thing here, and it is not an accident of effort: each correction
