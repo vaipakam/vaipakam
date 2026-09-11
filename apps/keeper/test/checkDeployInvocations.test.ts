@@ -12121,8 +12121,13 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     //
     // IT IS NOT THE REWRITE'S FAULT, and the record says so: the lower-case
     // spelling is already reported here with no rewrite involved, because the
-    // scanner has no PowerShell string state (#2117, #2118). So the rule
-    // WIDENS an existing fallible reading rather than adding a fault. Kept
+    // scanner has no PowerShell string state (#2117). So the rule WIDENS an
+    // existing fallible reading rather than adding a fault.
+    //
+    // NOT #2118, which an earlier version of this comment also cited (r31).
+    // There is no trailing backslash and no line joining here, so changing
+    // the folding would leave this case exactly as it is. Two independent
+    // remedies, and naming the wrong one sends a fix at the wrong subsystem. Kept
     // because #2115 proposes making the replacement case-insensitive, which
     // widens it further — a fix that should land with this visible, not
     // described as a pure tightening.
@@ -12247,6 +12252,31 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     const r = runWith(
       '.github/workflows/d.yml',
       'name: d\non: push\njobs:\n  d:\n    runs-on: windows-latest\n    steps:\n      - run: |\n' +
+        "          cd apps/agent\n          $doc = @'\n          Wrangler deploy\n          '@\n" +
+        '          Write-Output $doc\n        shell: pwsh\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('the Windows normalisation runs on a POSIX runner too (#2126, stated false report)', () => {
+    // THE CASE I DISCARDED WHEN FIXING THE RUNNER, recorded instead of thrown
+    // away (r31). Moving the #2115 fixture to windows-latest was right, and
+    // the ubuntu form I dropped is a wrong verdict of its own.
+    //
+    // PowerShell runs on Linux, where `Wrangler` and `wrangler` are DIFFERENT
+    // files — so on this runner the guard reports a command that does not
+    // exist on the platform, inside text nothing executes.
+    //
+    // The sharp part: `windowsSeparators` carries a comment saying exactly
+    // this — "on a POSIX runner `Wrangler` is a different file, and matching
+    // it there would invent a command" — and then keys on the INTERPRETER
+    // rather than the platform. `pwsh` is cross-platform, so the rationale
+    // and the implementation disagree. #2126.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith(
+      '.github/workflows/d.yml',
+      'name: d\non: push\njobs:\n  d:\n    runs-on: ubuntu-latest\n    steps:\n      - run: |\n' +
         "          cd apps/agent\n          $doc = @'\n          Wrangler deploy\n          '@\n" +
         '          Write-Output $doc\n        shell: pwsh\n',
     );

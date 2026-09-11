@@ -6,7 +6,7 @@ three ways that question reads text which does not correspond to what runs.
 
 **It fixes none of them, and changes no behaviour at all.** Every attempt was
 withdrawn under review. What lands is the record of why, and tests that pin the
-wrong verdicts that remain — twelve silent passes and eight false reports — so a
+wrong verdicts that remain — twelve silent passes and nine false reports — so a
 later fix announces itself instead of passing unnoticed.
 
 That is worth landing on its own. Two of these designs are the kind a
@@ -64,7 +64,7 @@ No behaviour change. The check's logic is what it was.
 - The reasoning above, recorded beside the code that would have to change, in
   the functional specification, and here — so the next person does not rebuild
   one of these designs without knowing what happened to it.
-- Tests that **assert twenty current wrong verdicts across ten defects**, so
+- Tests that **assert twenty-one current wrong verdicts across eleven defects**, so
   a later fix fails them and comes back to the question rather than passing
   silently.
 
@@ -87,7 +87,7 @@ No behaviour change. The check's logic is what it was.
   them is shared and a fix scoped to one family would satisfy a single
   fixture while leaving every other family bypassed.
 
-  **Eight fail the other way and assert the report**: a runbook sentence naming a
+  **Nine fail the other way and assert the report**: a runbook sentence naming a
   write reports the deployment below it; a package manifest whose description
   merely names the command is reported as performing it, as is an unrelated
   data file of the same format, and as is a list of keywords once the file is
@@ -96,7 +96,10 @@ No behaviour change. The check's logic is what it was.
   cost, and the casing one is pinned in a workflow body as well as a helper,
   since that rewrite runs on both; and a line that is COMMENTED OUT, in the variant
   of that format permitting comments, is read as a command although it is not a
-  property at all.
+  property at all; and a Windows normalisation is applied wherever the
+  interpreter is a Windows shell, INCLUDING on a runner whose platform makes
+  the normalised spelling a different program, so the check reports a command
+  that does not exist there.
 - Two tests pinning that a bare command line and an inline command span in a
   document **are** read as commands — the two shapes that defeated the withdrawn
   designs, so a future attempt cannot quietly reintroduce the erasure.
@@ -120,12 +123,12 @@ No behaviour change. The check's logic is what it was.
 ### What is deferred
 
 Every symptom this work set out to fix, plus the limitations found while proving
-them — including **nine defects surfaced while correcting this record
-itself**, seven of them silent passes and two false reports — is recorded as its
+them — including **ten defects surfaced while correcting this record
+itself**, seven of them silent passes and three false reports — is recorded as its
 own issue with a reproduction and what a fix would have to be true of. All are
 behaviour the check already had, so nothing is made worse. Ten are
-additionally pinned by tests that assert the current verdict — twenty such
-tests in all, twelve asserting a silent pass and eight a false report.
+additionally pinned by tests that assert the current verdict — twenty-one such
+tests in all, twelve asserting a silent pass and nine a false report.
 
 That the correcting itself surfaced more defects than the original work is the
 most useful thing here, and it is not an accident of effort: each correction
@@ -160,6 +163,7 @@ not its siblings. One record per defect, named from the others.
 | **#2122** | a variable whose name differs only in case is not resolved, though that shell resolves it, so the deployment's directory reads as unknown — *pinned (silent pass)* |
 | **#2123** | a helper whose file name carries an upper-case extension is never opened at all — *pinned (silent pass)*, and the broadest of the three, since no later rule can compensate for a file that was never read |
 | **#2124** | a binding closed with that shell's ordinary statement terminator is not recognised, so the deployment's directory reads as unknown — *pinned (silent pass)* |
+| **#2126** | a normalisation for one platform's shells is chosen by the interpreter rather than the platform, so it also applies where that platform's rules do not hold and reports a program that does not exist there — *pinned (false report)*; the check's own comment states this must not happen |
 | **#2085** | whether this detection should be a declaration rather than an inference — the three withdrawals are the strongest evidence yet that it should |
 
 This PR closes none of them.
