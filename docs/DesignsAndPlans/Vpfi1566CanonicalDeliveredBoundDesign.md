@@ -6332,8 +6332,10 @@ recorded facets to the gate: on a Diamond that routes today, a facet its
 records name that the history never added is a cut the endpoint omitted —
 and an endpoint that omitted one cut may have omitted a transient writer —
 so the population is not exhaustive; on a shell whose cut never ran, the same
-absence is exactly what the record says. Run 37 re-reads every deployment
-with all of it.
+absence is exactly what the record says. Round 19 found no major issue; it
+tidied the proof labels — a zero-loans bound the event corroboration refuted
+no longer carries a `provenBy` on the class or on the deployment. Run 37
+re-reads every deployment with all of it.
 
 ### 7a. What the provenance walk found, and how the design changes (2026-09-09)
 

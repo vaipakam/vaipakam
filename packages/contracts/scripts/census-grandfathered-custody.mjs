@@ -2506,7 +2506,8 @@ async function censusDeployment(dep) {
     vpfiToken,
     vpfiTokenSource,
     vpfiScopeAuthoritative,
-    provenBy: provenByEnumerable ?? undefined,
+    // #2095 r19 P2 — the deployment-level label is withdrawn with the bound it names
+    provenBy: corroboration?.contradictsPrimaryProof ? undefined : (provenByEnumerable ?? undefined),
     // BACKING, not a proof: what the Diamond holds, against what its rows claim.
     // Rows total > backing is exactly the shortfall slice 0 must reconcile.
     diamondVpfiBacking: diamondVpfiBalance === null ? null : diamondVpfiBalance.toString(),
@@ -2605,7 +2606,8 @@ async function censusDeployment(dep) {
                 : intentAbsenceProof?.proven
                   ? 'proven'
                   : 'indeterminate',
-        provenBy: provenByEnumerable ?? (intentStorage?.verdict.status === 'proven' ? 'storage-read-calibrated' : undefined),
+        // #2095 r19 P2 — a bound the corroboration refuted carries no proof label
+        provenBy: corroboration?.contradictsPrimaryProof ? undefined : (provenByEnumerable ?? (intentStorage?.verdict.status === 'proven' ? 'storage-read-calibrated' : undefined)),
         unknownAssetRows: intentSurfaceRouted ? unknownAssetIntentRows : intentStorage ? intentStorage.rows : unknownAssetIntentRows,
         // Codex #2070 r8 P2 — every field below derives from ONE verdict. When
         // the no-loans bound proves the class, no indeterminate reason and no
