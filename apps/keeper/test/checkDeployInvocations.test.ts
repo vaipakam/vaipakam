@@ -12823,13 +12823,22 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     ['ksh', SHELL_BODY, 'apps/agent', 'runs'],
     // ESM: `.mjs`/`.mts` by extension, and `.js`/`.ts` because the seeded
     // manifest declares `"type": "module"` exactly as apps/agent does.
-    ['js', ARGV_ESM, 'apps/agent', 'inert'],
-    ['mjs', ARGV_ESM, 'apps/agent', 'inert'],
-    ['ts', ARGV_ESM, 'apps/agent', 'inert'],
-    ['mts', ARGV_ESM, 'apps/agent', 'inert'],
+    //
+    // 'runs', NOT 'inert' (r9). These six were filed as inert because `node
+    // D.JS` exits ERR_UNKNOWN_FILE_EXTENSION — which is true, and was only
+    // half the question. The guard itself models `(?:node|bun|tsx)` as ways a
+    // helper gets launched, and BUN RUNS ALL SIX REGARDLESS OF CASE: verified
+    // directly on Bun 1.3.11, every one of D.JS D.MJS D.TS D.MTS D.CJS D.CTS
+    // executing its body. So `bun D.JS` really does run an unsafe deploy that
+    // this check exits 0 on — a genuine silent pass, wrongly excluded from
+    // that class while I tested one runtime out of the three the guard names.
+    ['js', ARGV_ESM, 'apps/agent', 'runs'],
+    ['mjs', ARGV_ESM, 'apps/agent', 'runs'],
+    ['ts', ARGV_ESM, 'apps/agent', 'runs'],
+    ['mts', ARGV_ESM, 'apps/agent', 'runs'],
     // CommonJS by extension, whatever the manifest says.
-    ['cjs', ARGV_CJS, 'apps/agent', 'inert'],
-    ['cts', ARGV_CJS, 'apps/agent', 'inert'],
+    ['cjs', ARGV_CJS, 'apps/agent', 'runs'],
+    ['cts', ARGV_CJS, 'apps/agent', 'runs'],
     ['py', ARGV_PY, 'apps/agent', 'runs'],
     ['mk', MAKE_BODY, 'apps/agent', 'runs'],
     ['md', RUNBOOK_BODY, 'apps/agent', 'runs'],
@@ -12956,9 +12965,19 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
   const UNKNOWN = WALK_HELPER_FAMILIES.filter(([, , , c]) => c === 'unknown');
 
   it('the consequence partition covers every family and is not degenerate (#2123 partition guard)', () => {
-    // Without this, declaring every row `inert` would empty the silent-pass
-    // pin and leave the suite green while claiming nothing at all.
-    expect(RUNNABLE.length).toBeGreaterThan(0);
+    // ALL THREE CLASSES MUST STAY POPULATED (r9). The first version checked
+    // only `RUNNABLE`, and its sum assertion was TAUTOLOGICAL — the declared
+    // type admits exactly these three values, so the parts always sum to the
+    // whole. The published record claims a three-state consequence; that
+    // claim could therefore have regressed to two states, or one, with the
+    // emptied test running zero iterations and the guard still green.
+    //
+    // If a state legitimately empties — say the undetermined pair is finally
+    // settled — this SHOULD fail, so that the record is updated deliberately
+    // rather than silently losing a state it advertises.
+    expect(RUNNABLE.length, 'silent-pass families').toBeGreaterThan(0);
+    expect(INERT.length, 'discovery-only families').toBeGreaterThan(0);
+    expect(UNKNOWN.length, 'undetermined families').toBeGreaterThan(0);
     expect(RUNNABLE.length + INERT.length + UNKNOWN.length).toBe(
       WALK_HELPER_FAMILIES.length,
     );
@@ -12984,10 +13003,20 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
   }, FAMILY_TIMEOUT_MS);
 
   it('every family nothing runs is skipped too — discovery only (#2123)', () => {
-    // NOT titled as a wrong verdict: `node D.JS` exits on the unknown
-    // extension and the workflow engine matches only the lower-case
-    // suffixes, so nothing runs these under that name and the bypass is a
-    // DISCOVERY BLIND SPOT rather than a deployment slipping through.
+    // NOT titled as a wrong verdict: a workflow file is not launched by an
+    // interpreter at all — the platform picks it up by name, and matches only
+    // the lower-case suffixes — so nothing runs these under that name and the
+    // bypass is a DISCOVERY BLIND SPOT rather than a deployment slipping
+    // through.
+    //
+    // EVIDENCE BASIS, stated because r9 is what happens when it is not: this
+    // rests on the platform's documented matching, NOT on an observation made
+    // here — there is no runner in this harness to try it on. The Node
+    // families sat in this class until Bun disproved them, and the difference
+    // was that their claim had been checked against one runtime instead of
+    // the three the guard models. If a way to launch a workflow file by an
+    // upper-case name turns up, these two belong in 'runs' and this comment
+    // is the thing that was wrong.
     for (const [ext, body, dir] of INERT) {
       const r = runFamilyAlone(`${dir}/D.${ext.toUpperCase()}`, body);
       expect(r.ok, `.${ext.toUpperCase()} should be bypassed by the walk`).toBe(
