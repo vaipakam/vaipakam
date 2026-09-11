@@ -91,7 +91,8 @@
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync, renameSync, rmSync } from 'node:fs';
 import { readManifest, regenerateEntries, withManifestLock, writeSnapshotGuarded, livePublicationsInProgress } from './archive-manifest.mjs';
 import { loadSlots, loadEras } from './storage-slots.mjs';
-import { prepareStorageRead, readCountersByStorage, scanRowsByStorage, intentVerdictFromStorage, mergeHistoricalRows, markAliasedRows, splitByHeadSlot, getterAgreement, downgradeWithoutEraRead, attributeCounters, MAX_STORAGE_LOAN_SCAN } from './census-storage-read.mjs';
+import { commitsAround, deployedAtIso, interpolateTimestamp, CANDIDATES_FILE } from './storage-layout-eras.mjs';
+import { prepareStorageRead, readCountersByStorage, scanRowsByStorage, intentVerdictFromStorage, mergeHistoricalRows, markAliasedRows, splitByHeadSlot, getterAgreement, downgradeWithoutEraRead, attributeCounters, attributeFacetCode, downgradeProvenClasses, MAX_STORAGE_LOAN_SCAN } from './census-storage-read.mjs';
 
 /** Sum a row field as a decimal string. A function declaration, so it is hoisted above every branch that returns early (#2095 r1 P2). */
 function sum(rows, field) {
@@ -113,7 +114,7 @@ const STORAGE_READ = (() => {
 })();
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createPublicClient, http, toFunctionSelector, parseAbiItem, encodeFunctionData, decodeFunctionResult, decodeErrorResult } from 'viem';
+import { createPublicClient, http, toFunctionSelector, parseAbiItem, encodeFunctionData, decodeFunctionResult, decodeErrorResult, keccak256 } from 'viem';
 import { Agent as HttpsAgent, request as httpsRequest } from 'node:https';
 import { resolve as resolvePath } from 'node:path';
 import { Agent as HttpAgent, request as httpRequest } from 'node:http';
@@ -321,6 +322,233 @@ async function codeAtHash(client, block, address) {
 /** A raw storage slot at the census block, hash-pinned like every other state read (design §7 question 4). */
 async function storageAtHash(client, block, address, slot) {
   return BigInt(await client.request({ method: 'eth_getStorageAt', params: [address, slot, blockRef(block)] }));
+}
+/** keccak256 of an account's runtime code at the census block (hash-pinned) — the key into each era's bytecode catalogue. */
+async function codeHashAtHash(client, block, address) {
+  return keccak256((await client.request({ method: 'eth_getCode', params: [address, blockRef(block)] })) ?? '0x');
+}
+
+/**
+ * #2095 r9 P1 — the facet addresses every LOCAL record of a Diamond names:
+ * the live artifact, every `.archive/<stamp>/addresses.json` and every
+ * sidecar of the same slug whose `diamond` is this one. An archived record of
+ * a Diamond later refreshed in place is the only record of the facets that
+ * wrote BEFORE the refresh. `.archive/` is gitignored, so on a checkout
+ * without it the recorded sources are fewer — that is reported, never assumed.
+ */
+function recordedFacetAddresses(slug, diamond) {
+  const out = new Map();
+  const add = (a, src) => {
+    if (typeof a !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(a)) return;
+    const k = a.toLowerCase();
+    if (!out.has(k)) out.set(k, new Set());
+    out.get(k).add(src);
+  };
+  const records = [];
+  const consider = (file, src) => {
+    if (!existsSync(file)) return;
+    let a;
+    try { a = JSON.parse(readFileSync(file, 'utf8')); } catch { return; }
+    if (`${a.diamond ?? ''}`.toLowerCase() !== diamond.toLowerCase()) return;
+    for (const v of Object.values(a.facets ?? {})) add(v, src);
+    records.push(src);
+    const iso = deployedAtIso(a.deployedAt);
+    if (iso) deployedAt.push({ record: src, iso });
+  };
+  const deployedAt = [];
+  consider(join(DEPLOYMENTS, slug, 'addresses.json'), 'record:live');
+  const archiveDir = join(DEPLOYMENTS, slug, '.archive');
+  if (existsSync(archiveDir)) for (const stamp of readdirSync(archiveDir).sort()) consider(join(archiveDir, stamp, 'addresses.json'), `record:${stamp}`);
+  for (const f of sidecarsOf(slug)) consider(join(DEPLOYMENTS, slug, f), `record:${f}`);
+  return { facets: [...out.entries()].map(([address, sources]) => ({ address, sources: [...sources] })), records, deployedAt };
+}
+
+/** The source record beside a deployment's artifact, as EVIDENCE only: a `(dirty)` stamp says the tree had uncommitted changes, not which files. */
+function sourceRecordFor(slug, label) {
+  const dir = label === 'live' ? join(DEPLOYMENTS, slug) : label.startsWith('archived ') ? join(DEPLOYMENTS, slug, '.archive', label.slice('archived '.length)) : null;
+  const file = dir ? join(dir, 'deployment_source.json') : null;
+  if (!file || !existsSync(file)) return { recorded: false };
+  try {
+    const d = JSON.parse(readFileSync(file, 'utf8'));
+    const m = /^([0-9a-f]{40})(\s*\(dirty\))?/.exec(`${d.monorepoCommit ?? ''}`);
+    return { recorded: true, commit: m?.[1] ?? null, dirty: Boolean(m?.[2]), deployedAt: d.deployedAt ?? null };
+  } catch {
+    return { recorded: false };
+  }
+}
+
+/**
+ * Every facet address the cut history ever ADDED or REPLACED in — a
+ * REFUTATION-ONLY source: a pruned endpoint returns an empty history, which
+ * proves nothing (the lesson of #2070 r5), so an empty or unreadable history
+ * widens nothing and is reported as such.
+ */
+async function facetsFromCutHistory(client, diamond, fromBlock, toBlock) {
+  try {
+    const logs = await getLogsChunked(client, { address: diamond, events: [DIAMOND_CUT_EVENT], fromBlock, toBlock });
+    const blocksOf = new Map();
+    for (const log of logs) for (const cut of log.args?._diamondCut ?? []) {
+      if (Number(cut.action) === 2 || typeof cut.facetAddress !== 'string') continue;
+      const k = cut.facetAddress.toLowerCase();
+      if (!blocksOf.has(k)) blocksOf.set(k, new Set());
+      if (log.blockNumber !== undefined && log.blockNumber !== null) blocksOf.get(k).add(BigInt(log.blockNumber));
+    }
+    return { addresses: [...blocksOf.keys()], blocksOf, cuts: logs.length, verdict: logs.length ? 'read' : 'empty (proves nothing — a pruned endpoint returns empty)' };
+  } catch (err) {
+    return { addresses: [], blocksOf: new Map(), cuts: 0, verdict: 'unreadable', reason: String(err?.shortMessage ?? err?.message ?? err).slice(0, 200) };
+  }
+}
+
+/** Candidates written this run, for the closing report. */
+let CANDIDATES_WRITTEN = 0;
+/**
+ * Merge candidate commits into `contracts/deployments/facet-build-candidates.json`
+ * — the census's request to the era tool: "build these, I saw facets cut at
+ * these moments that no catalogued build explains". Deterministic content
+ * (sorted, no timestamp), written only when it changes, so a re-run does not
+ * churn the file. The era tool reads it; `--check` fails until every entry
+ * is catalogued.
+ */
+function recordBuildCandidates(candidates) {
+  if (!candidates.length) return 0;
+  let current = { candidates: [] };
+  if (existsSync(CANDIDATES_FILE)) { try { current = JSON.parse(readFileSync(CANDIDATES_FILE, 'utf8')); } catch { current = { candidates: [] }; } }
+  const canon = (r) => String(r).replace(/'s cut of 0x[0-9a-fA-F]{40} at block/, "'s cut at block");
+  const byCommit = new Map((current.candidates ?? []).map((c) => [c.commit, new Set((c.reasons ?? []).map(canon))]));
+  let added = 0;
+  for (const c of candidates) {
+    if (!byCommit.has(c.commit)) { byCommit.set(c.commit, new Set()); added += 1; }
+    for (const r of c.reasons) byCommit.get(c.commit).add(canon(r));
+  }
+  const next = {
+    purpose: 'Commits the custody census asks the era tool to build (#1566 §7a, #2095 r9): a facet on chain carried code no catalogued build produced, and these are the commits around the moment it was cut or deployed. Regenerate the era table (storage-layout-eras.mjs) to catalogue them, then re-run the census. Written by census-grandfathered-custody.mjs; never hand-edit.',
+    candidates: [...byCommit.entries()].map(([commit, reasons]) => ({ commit, reasons: [...reasons].sort() })).sort((x, y) => x.commit.localeCompare(y.commit)),
+  };
+  const text = JSON.stringify(next, null, 2) + '\n';
+  if (!existsSync(CANDIDATES_FILE) || readFileSync(CANDIDATES_FILE, 'utf8') !== text) writeFileSync(CANDIDATES_FILE, text);
+  CANDIDATES_WRITTEN += added;
+  return added;
+}
+
+/**
+ * #2095 r9 P1 — attribute every facet that may have written to this Diamond
+ * to the layout era it was compiled against, and refuse every proof when one
+ * cannot be. A routed getter and the era-complete read together cover every
+ * COMMITTED layout; a facet built from a tree whose dirt reached the storage
+ * library, or from an unmerged branch, carries a layout the walk never saw —
+ * and its code hash is in no era's catalogue. The facet set is the union of
+ * the loupe's current facets, every local record naming this Diamond, and
+ * the cut history (refutation-only). Empty code never wrote (EIP-6780).
+ */
+async function applyLayoutProvenance(result, { client, censusBlock, atBlock, diamond, slug, label, deployBlock, readFacets, who }) {
+  result.scanned.sourceRecord = sourceRecordFor(slug, label);
+  if (result.scanned.notADiamond) {
+    result.scanned.layoutProvenance = { verdict: 'not-a-diamond', reason: 'the record names no Vaipakam Diamond; there are no facets of this protocol to attribute' };
+    return result;
+  }
+  if (!STORAGE_READ.ok) {
+    result.scanned.layoutProvenance = { verdict: 'not-checked', reason: STORAGE_READ.reason };
+    return result;
+  }
+  const recorded = recordedFacetAddresses(slug, diamond);
+  let loupe = null;
+  if (result.scanned.loupeRouted && readFacets) {
+    try {
+      const list = await readFacets();
+      loupe = list.map((f) => `${f.facetAddress ?? f[0]}`.toLowerCase());
+    } catch (err) {
+      loupe = null;
+      result.scanned.layoutProvenanceLoupeError = String(err?.shortMessage ?? err?.message ?? err).slice(0, 200);
+    }
+  }
+  const cut = await facetsFromCutHistory(client, diamond, deployBlock, atBlock);
+  const all = new Map();
+  const add = (a, src) => { const k = a.toLowerCase(); if (!all.has(k)) all.set(k, new Set()); all.get(k).add(src); };
+  for (const f of recorded.facets) for (const src of f.sources) add(f.address, src);
+  for (const a of loupe ?? []) add(a, 'loupe');
+  for (const a of cut.addresses) add(a, 'cut-history');
+  const facets = [];
+  for (const [address, sources] of all) {
+    const codeHash = await withReplicaRetry(atBlock, () => codeHashAtHash(client, censusBlock, address), { client });
+    facets.push({ address, sources: [...sources], codeHash });
+  }
+  const attribution = attributeFacetCode({ facets, eras: STORAGE_READ.eras });
+  // For every unattributed facet: the commits around the moments it was cut
+  // (block timestamps, hash-pinned by number under the census block) and
+  // around the deployedAt of every record that names it — the era tool builds
+  // them, and the next run attributes against them.
+  // A cut block below the endpoint's pruning floor has no readable header:
+  // that moment yields no candidate (recorded), the record's deployedAt
+  // still does, and the verdict is unaffected — an unattributed facet
+  // already refuses every proof. A candidate is help for the next run, never
+  // a reason to fail this one.
+  const blockIso = new Map();
+  const unreadableBlocks = [];
+  // anchors for an ESTIMATE when a header is unreadable: the census block's own
+  // timestamp and the record's deployedAt at its deployBlock (when both exist)
+  let censusIso = null;
+  const censusTimestamp = async () => {
+    if (censusIso === null) {
+      try { const b = await withReplicaRetry(atBlock, () => client.getBlock({ blockHash: censusBlock.hash }), { client }); censusIso = new Date(Number(b.timestamp) * 1000).toISOString().replace(/\.\d{3}Z$/, 'Z'); } catch { censusIso = false; }
+    }
+    return censusIso || null;
+  };
+  const anchor0 = recorded.deployedAt.length && deployBlock > 0n ? { b0: deployBlock, t0: recorded.deployedAt[0].iso } : null;
+  const isoOfBlock = async (n) => {
+    if (!blockIso.has(n)) {
+      try {
+        const b = await withReplicaRetry(atBlock, () => client.getBlock({ blockNumber: n }), { client });
+        blockIso.set(n, { iso: new Date(Number(b.timestamp) * 1000).toISOString().replace(/\.\d{3}Z$/, 'Z'), estimated: false });
+      } catch (err) {
+        const t1 = anchor0 ? await censusTimestamp() : null;
+        const est = anchor0 && t1 ? interpolateTimestamp({ block: n, b0: anchor0.b0, t0: anchor0.t0, b1: atBlock, t1 }) : null;
+        blockIso.set(n, est ? { iso: est, estimated: true } : null);
+        unreadableBlocks.push({ block: String(n), reason: String(err?.shortMessage ?? err?.message ?? err).split('\n')[0].slice(0, 160), estimatedTimestamp: est ?? undefined });
+      }
+    }
+    return blockIso.get(n);
+  };
+  const candidates = new Map();
+  const propose = (c, reason) => { if (!candidates.has(c.commit)) candidates.set(c.commit, new Set()); candidates.get(c.commit).add(reason); };
+  for (const u of attribution.unattributed) {
+    u.cutBlocks = [...(cut.blocksOf.get(u.address) ?? [])].map(String);
+    u.candidates = [];
+    for (const n of cut.blocksOf.get(u.address) ?? []) {
+      const t = await isoOfBlock(n);
+      if (!t) continue;
+      // an estimate may be hours off: widen to the commits around ±6 h as well
+      const moments = t.estimated ? [t.iso, new Date(Date.parse(t.iso) - 6 * 3600e3).toISOString().replace(/\.\d{3}Z$/, 'Z'), new Date(Date.parse(t.iso) + 6 * 3600e3).toISOString().replace(/\.\d{3}Z$/, 'Z')] : [t.iso];
+      for (const iso of moments) for (const c of commitsAround(iso)) { propose(c, `${c.relation} ${who}'s cut at block ${n} (${t.estimated ? 'estimated ' : ''}${iso})`); u.candidates.push(c.commit.slice(0, 9)); }
+    }
+    for (const rec of recorded.deployedAt) if (u.sources.includes(rec.record)) for (const c of commitsAround(rec.iso)) { propose(c, `${c.relation} ${who}'s ${rec.record} deployedAt ${rec.iso}`); u.candidates.push(c.commit.slice(0, 9)); }
+    u.candidates = [...new Set(u.candidates)];
+  }
+  const candidateList = [...candidates.entries()].map(([commit, reasons]) => ({ commit, reasons: [...reasons] }));
+  const newCandidates = recordBuildCandidates(candidateList);
+  result.scanned.layoutProvenance = {
+    verdict: facets.length ? attribution.verdict : 'no-facet-known',
+    facetsChecked: facets.length,
+    attributed: attribution.attributed.map((a) => ({ address: a.address, name: a.name, eras: a.eras.map((e) => e.date), sources: a.sources })),
+    unattributed: attribution.unattributed,
+    noCode: attribution.noCode,
+    sources: { records: recorded.records, loupe: loupe ? loupe.length : 'unrouted', cutHistory: cut.verdict, cuts: cut.cuts, cutHistoryError: cut.reason },
+    buildCandidates: candidateList.length ? { proposed: candidateList.length, newInFile: newCandidates, file: 'contracts/deployments/facet-build-candidates.json' } : undefined,
+    cutBlocksUnreadable: unreadableBlocks.length ? unreadableBlocks : undefined,
+    residual: 'a facet cut in and replaced with no local record and no readable cut history is not seen here; the cut history can only refute',
+  };
+  process.stderr.write(`census: ${who} — layout provenance: ${facets.length} facet address(es) (${recorded.records.length} record(s), loupe ${loupe ? loupe.length : 'unrouted'}, cut history ${cut.verdict.split(' ')[0]}): ${attribution.attributed.length} attributed, ${attribution.unattributed.length} unattributed, ${attribution.noCode.length} without code${candidateList.length ? `; ${candidateList.length} build candidate(s) proposed (${newCandidates} new in the candidates file)` : ''}\n`);
+  if (attribution.unattributed.length) {
+    // What the classes said BEFORE this rule — the routed-read standard the
+    // programme ratified — is kept beside the refusal, so the owner can see
+    // exactly what the layout-provenance rule withdrew and decide on it.
+    result.scanned.layoutProvenance.withoutProvenanceRule = Object.fromEntries(Object.entries(result.classes).map(([k, v]) => [k, v.status]));
+    result.scanned.layoutProvenance.unattributedSeenOnlyInRecords = attribution.unattributed.filter((u) => u.sources.every((x) => x.startsWith('record:'))).length;
+    const why = `${attribution.unattributed.length} facet(s) of this Diamond carry code no layout era's build produced (${attribution.unattributed.slice(0, 4).map((u) => `${u.address} via ${u.sources.join('+')}`).join('; ')}${attribution.unattributed.length > 4 ? '; …' : ''}) — compiled from sources the walk never saw (a dirty tree, an unmerged branch), so the era-complete read cannot claim to cover their layout; refusing to certify`;
+    result.provenBy = undefined;
+    result.classes = downgradeProvenClasses(result.classes, why);
+    result.scanned.layoutProvenanceContradiction = why;
+  }
+  return result;
 }
 /**
  * r28 P1 — the hash the census pins must be what EVERY replica serves at that
@@ -1792,8 +2020,17 @@ async function censusDeployment(dep) {
     // one verdict per class from the storage read; the routed-path conventions apply:
     // a rebate/held row is VPFI by definition, a fallback/intent row's asset is unreadable here
     const cls = (name, extra = {}) => {
-      if (!storage || storage.truncated || storage.kind === 'counter-contradiction') return { status, indeterminateReason: reason, provenBy: undefined, count: 0, total: '0', rows: [], counterContradiction: storage?.kind === 'counter-contradiction' || undefined, ...extra };
+      if (!storage || storage.kind === 'counter-contradiction') return { status, indeterminateReason: reason, provenBy: undefined, count: 0, total: '0', rows: [], counterContradiction: storage?.kind === 'counter-contradiction' || undefined, ...extra };
       if (storage.kind === 'no-loans-ever-created-by-storage') return { status: 'proven', provenBy: storage.kind, count: 0, total: '0', rows: [], ...extra };
+      // #2095 r9 P2 — a scan cut off at the cap still READ its prefix: what it
+      // found there is reported with its exact totals; only the verdict is withheld
+      if (storage.truncated) {
+        const v = clsFromScan(name, extra);
+        return { ...v, status: 'indeterminate', provenBy: undefined, indeterminateReason: v.indeterminateReason ? `${reason}; ${v.indeterminateReason}` : reason, scannedPrefix: `1..${storage.scan.loansScanned}` };
+      }
+      return clsFromScan(name, extra);
+    };
+    const clsFromScan = (name, extra) => {
       const rows = storage.scan.rows[name];
       if (name === 'liveIntentCommits') {
         // the storage row carries no amount (only the orderHash is read), and the live counter can contradict an empty scan
@@ -1815,7 +2052,7 @@ async function censusDeployment(dep) {
       liveIntentCommits: cls('liveIntentCommits', { nonVpfiRowsExcluded: [] }),
     };
     const everyClassProven = Object.values(classes).every((c) => c.status === 'proven');
-    return {
+    const shellResult = {
       chainSlug: slug,
       deployment: label,
       chainId: Number(chainId),
@@ -1835,6 +2072,7 @@ async function censusDeployment(dep) {
       scanned: { loanIdsEnumerated: storage?.scan?.loansScanned ?? 0, totalLoansEverCreated: storage ? storage.counters.totalLoansEverCreated.map((x) => x.value.toString()).join('|') : 'n/a', loanIdRange: storage?.scan?.loansScanned ? `1..${storage.scan.loansScanned}` : 'none', enumerable: false, noCode: false, custodySurfaceUnrouted, notADiamond, loupeRouted, producersMayBeLive: !notADiamond, storageRead: storageEvidence, storageReadUnavailable: STORAGE_READ.ok ? undefined : STORAGE_READ.reason },
       classes,
     };
+    return applyLayoutProvenance(shellResult, { client, censusBlock, atBlock, diamond, slug, label, deployBlock: BigInt(addresses.deployBlock ?? 0), readFacets: loupeRouted ? () => read('facets') : null, who });
   }
 
   const stats = await read('getProtocolStats');
@@ -2332,6 +2570,15 @@ async function censusDeployment(dep) {
       }
       result.scanned.earlierEraCounterContradiction = why;
     }
+    // #2095 r9 — a stale lifetime counter ABOVE the storage id range (the same
+    // rule the shell path applies) means loans the range cannot reach
+    const over = historical.earlierEraCounters.filter((c) => c.which === 'totalLoansEverCreated' && BigInt(c.value) > BigInt(historical.nextLoanIdFromStorage));
+    if (over.length) {
+      const why = `an earlier layout era's totalLoansEverCreated is ABOVE the loan-id range (${over.map((c) => `${c.value} at ${c.slot}${c.atMappingHead ? ` (now the head of ${c.atMappingHead}, which holds nothing)` : ''}`).join('; ')} > nextLoanId=${historical.nextLoanIdFromStorage}) — rows the range cannot reach may exist; refusing to certify`;
+      result.provenBy = undefined;
+      result.classes = downgradeProvenClasses(result.classes, why);
+      result.scanned.earlierEraCounterContradiction = why;
+    }
     if (historical.truncated) {
       const why = `the earlier-era scan was truncated at ${MAX_STORAGE_LOAN_SCAN} ids (nextLoanId=${historical.nextLoanIdFromStorage}); rows beyond it were not read`;
       for (const name of Object.keys(result.classes)) {
@@ -2346,7 +2593,7 @@ async function censusDeployment(dep) {
     result.provenBy = undefined;
     result.classes = downgradeWithoutEraRead(result.classes, STORAGE_READ.reason);
   }
-  return result;
+  return applyLayoutProvenance(result, { client, censusBlock, atBlock, diamond, slug, label, deployBlock, readFacets: loupeRouted ? () => read('facets') : null, who });
 }
 
 /**
@@ -2752,6 +2999,10 @@ async function main() {
           '        No global verdict is claimable from this run, and the canonical artifact was NOT overwritten.\n' +
           `        Written to: ${outFile}\n`
         : 'RESULT: not established — a class is non-empty, indeterminate, or a chain failed. See the artifact.\n',
+  );
+  if (CANDIDATES_WRITTEN) process.stderr.write(
+    `census: ${CANDIDATES_WRITTEN} new facet-build candidate commit(s) written to contracts/deployments/facet-build-candidates.json — ` +
+    'regenerate the era table (node scripts/storage-layout-eras.mjs --reuse contracts/deployments/storage-slot-eras.json) so they are catalogued, then re-run\n',
   );
 
   // A partial run has not established the programme's claim, so it must not

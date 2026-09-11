@@ -27,16 +27,20 @@
  * Usage: node scripts/storage-layout-eras.mjs [--since 2026-05-01] [--only-head] [--keep-worktrees] [--out <path>]
  */
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, symlinkSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync, symlinkSync } from 'node:fs';
+import { keccak256 } from 'viem';
 import { tmpdir } from 'node:os';
 import { join, resolve as resolvePath } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { walkProvenance, storagePositionOf, layoutFingerprint, REPO_ROOT, LIB_PATH, DEFAULT_SINCE, STRUCTS } from './storage-layout-provenance.mjs';
+import { walkProvenance, storagePositionOf, layoutFingerprint, layoutShapeFingerprint, REPO_ROOT, LIB_PATH, DEFAULT_SINCE, STRUCTS } from './storage-layout-provenance.mjs';
 export { storagePositionOf };
 
 export const FIELDS = ['nextLoanId', 'totalLoansEverCreated', 'intentLiveCommitCount', 'intentCommits', 'borrowerLifRebate', 'fallbackSnapshot'];
 export const ROW_STRUCTS = ['SwapToRepayIntentCommit', 'BorrowerLifRebate', 'FallbackSnapshot'];
 export const OUT_DEFAULT = join(REPO_ROOT, 'contracts', 'deployments', 'storage-slot-eras.json');
+/** Commits the census asked to have built, derived from cut timestamps it saw on chain (#2095 r9) — written by the census, read here. */
+export const CANDIDATES_FILE = join(REPO_ROOT, 'contracts', 'deployments', 'facet-build-candidates.json');
+export const DEPLOYMENTS_DIR = join(REPO_ROOT, 'contracts', 'deployments');
 const PROBE_SRC = `// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 import {LibVaipakam} from "./libraries/LibVaipakam.sol";
@@ -109,6 +113,171 @@ export function eraCommits(walk, commitsAsc) {
   return [...set.values()].sort((a, b) => a.date.localeCompare(b.date));
 }
 
+/**
+ * The runtime bytecode of every contract under `src/` that the era's build
+ * produced, keyed by keccak256 (#2095 r9 P1). A facet on a chain whose code
+ * hash is in some era's catalogue was compiled from that era's sources —
+ * the metadata trailer hashes every source in its import closure, so a
+ * facet built from a tree whose dirt touched the storage library matches
+ * NO era and the census refuses to certify the deployment. Pure over an
+ * `out/` directory; exported for the test.
+ */
+export function bytecodeCatalogueFrom(outDir) {
+  const catalogue = {};
+  let count = 0;
+  for (const f of readdirSync(outDir, { recursive: true })) {
+    if (!String(f).endsWith('.json')) continue;
+    let art;
+    try { art = JSON.parse(readFileSync(join(outDir, String(f)), 'utf8')); } catch { continue; }
+    const target = art?.metadata?.settings?.compilationTarget;
+    if (!target) continue;
+    const [path, name] = Object.entries(target)[0] ?? [];
+    if (!path || !/^src\//.test(path)) continue;
+    const code = art.deployedBytecode?.object;
+    if (!code || code === '0x' || code.length < 4) continue;
+    const h = keccak256(code);
+    catalogue[h] = catalogue[h] && catalogue[h] !== name ? `${catalogue[h]}|${name}` : name;
+    count += 1;
+  }
+  return { catalogue, count };
+}
+
+/** Parse `git ls-tree <rev> <dir>/` into { path: { mode, type, hash } }. Pure. */
+export function parseLsTree(text) {
+  const out = {};
+  for (const line of String(text).split('\n')) {
+    const m = /^(\d{6}) (\w+) ([0-9a-f]{40})\t(.+)$/.exec(line);
+    if (m) out[m[4]] = { mode: m[1], type: m[2], hash: m[3] };
+  }
+  return out;
+}
+
+/**
+ * Whether the main checkout's `contracts/lib` may stand in for an era's
+ * dependencies (#2095 r9 P2): only when the era commit's lib tree — every
+ * vendored tree AND every submodule gitlink — is identical to HEAD's, and
+ * every gitlink's working checkout is at that very commit. A dependency
+ * revision that changed an imported enum, value type or inline struct
+ * would otherwise yield slots for a source combination that never existed.
+ * Pure; exported for the test.
+ */
+export function depsFromMainAreIdentical({ eraTree, headTree, submoduleHeads }) {
+  const a = parseLsTree(eraTree);
+  const b = parseLsTree(headTree);
+  const paths = new Set([...Object.keys(a), ...Object.keys(b)]);
+  const differences = [];
+  for (const p of paths) {
+    if (!a[p] || !b[p] || a[p].hash !== b[p].hash) { differences.push(`${p}: ${a[p]?.hash?.slice(0, 9) ?? 'absent'} at the era vs ${b[p]?.hash?.slice(0, 9) ?? 'absent'} at HEAD`); continue; }
+    if (a[p].type === 'commit' && (submoduleHeads?.[p] ?? null) !== a[p].hash) differences.push(`${p}: gitlink ${a[p].hash.slice(0, 9)} but the working submodule is at ${submoduleHeads?.[p]?.slice(0, 9) ?? 'unknown'}`);
+  }
+  return { identical: differences.length === 0, differences };
+}
+
+/** `1782867868-unix` or ISO → ISO-8601 UTC, or null. Pure. */
+export function deployedAtIso(v) {
+  if (v === null || v === undefined) return null;
+  const s = String(v);
+  if (/^\d+-unix$/.test(s)) return new Date(Number(s.slice(0, -5)) * 1000).toISOString().replace(/\.\d{3}Z$/, 'Z');
+  const d = new Date(s);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString().replace(/\.\d{3}Z$/, 'Z');
+}
+
+/**
+ * A block's timestamp estimated between two known (block, time) anchors —
+ * for a cut block below an endpoint's pruning floor, whose header cannot be
+ * read (#2095 r9). Block time is near-constant on these chains, and a
+ * candidate commit is only help for attribution by code, never a verdict.
+ * Returns ISO or null when the anchors cannot bracket an estimate. Pure.
+ */
+export function interpolateTimestamp({ block, b0, t0, b1, t1 }) {
+  const n = BigInt(block); const B0 = BigInt(b0); const B1 = BigInt(b1);
+  const T0 = Date.parse(t0); const T1 = Date.parse(t1);
+  if (Number.isNaN(T0) || Number.isNaN(T1) || B1 <= B0 || T1 <= T0) return null;
+  const ms = T0 + Number(n - B0) * ((T1 - T0) / Number(B1 - B0));
+  return new Date(Math.round(ms / 1000) * 1000).toISOString().replace(/\.\d{3}Z$/, 'Z');
+}
+
+/** The main ref to date commits against: origin/main when it exists, else HEAD. */
+export function mainRef(repo = REPO_ROOT) {
+  try { sh('git', ['rev-parse', '--verify', '-q', 'origin/main'], repo); return 'origin/main'; } catch { return 'HEAD'; }
+}
+
+/**
+ * The commits a deployment's facets were most plausibly built from, given a
+ * moment in time: the last first-parent commit of main at or before it, and
+ * the first one after it (a refresh run from a branch that merged minutes
+ * later builds the same tree as its squash). Exported for the census; pure
+ * over git.
+ */
+export function commitsAround(iso, { repo = REPO_ROOT, ref = mainRef(repo), branches = true, maxBranches = 16 } = {}) {
+  const out = [];
+  const seen = new Set();
+  const push = (commit, relation) => { if (commit && !seen.has(commit)) { seen.add(commit); out.push({ commit, relation }); } };
+  try { push(sh('git', ['rev-list', '-1', '--first-parent', `--before=${iso}`, ref], repo).trim(), 'last main commit at or before'); } catch { /* none */ }
+  try { push(sh('git', ['rev-list', '--reverse', '--first-parent', `--after=${iso}`, ref], repo).trim().split('\n')[0], 'first main commit after'); } catch { /* none */ }
+  // A refresh run from a feature branch builds that branch's tree, which a
+  // squash merge need not reproduce (main may have moved). Merged branches are
+  // kept, so for every branch or tag active around the moment — a tip within
+  // three days before or one day after — the last commit at or before it is a
+  // candidate too, nearest tips first.
+  if (branches) {
+    const t = Date.parse(iso);
+    const lo = t - 3 * 86400e3; const hi = t + 86400e3;
+    let refs = [];
+    try {
+      refs = sh('git', ['for-each-ref', '--format=%(committerdate:iso8601-strict)\t%(refname)', 'refs/heads', 'refs/remotes', 'refs/tags'], repo).trim().split('\n')
+        .map((l) => { const [d, r] = l.split('\t'); return { r, t: Date.parse(d) }; })
+        .filter((x) => x.r && !Number.isNaN(x.t) && x.t >= lo && x.t <= hi && !/\/HEAD$/.test(x.r))
+        .sort((a, b) => Math.abs(a.t - t) - Math.abs(b.t - t))
+        .slice(0, maxBranches);
+    } catch { refs = []; }
+    for (const { r } of refs) {
+      try { push(sh('git', ['rev-list', '-1', `--before=${iso}`, r], repo).trim(), `last commit at or before, on ${r.replace(/^refs\/(heads|remotes)\//, '')}`); } catch { /* none */ }
+    }
+  }
+  return out;
+}
+
+/**
+ * Every commit a deployed facet may have been compiled from, as far as the
+ * LOCAL records and the census's candidates file say (#2095 r9 P1):
+ *   - the `monorepoCommit` each `deployment_source.json` records;
+ *   - the commits around each record's `deployedAt` (a refresh rewrites it);
+ *   - the commits the census derived from cut timestamps on chain.
+ * Returns [{ commit, reasons[] }] sorted by commit. Exported for the test.
+ */
+export function deploymentBuildCandidates({ deploymentsDir = DEPLOYMENTS_DIR, candidatesFile = CANDIDATES_FILE, repo = REPO_ROOT, ref = mainRef(repo) } = {}) {
+  const byCommit = new Map();
+  const add = (commit, reason) => {
+    if (!/^[0-9a-f]{40}$/.test(commit ?? '')) return;
+    if (!byCommit.has(commit)) byCommit.set(commit, new Set());
+    byCommit.get(commit).add(reason);
+  };
+  const record = (file, label, slug) => {
+    if (!existsSync(file)) return;
+    let a; try { a = JSON.parse(readFileSync(file, 'utf8')); } catch { return; }
+    const src = join(file, '..', 'deployment_source.json');
+    if (existsSync(src)) {
+      try { const m = /^([0-9a-f]{40})/.exec(String(JSON.parse(readFileSync(src, 'utf8')).monorepoCommit ?? '')); if (m) add(m[1], `recorded by ${slug}/${label}`); } catch { /* unreadable record */ }
+    }
+    const iso = deployedAtIso(a.deployedAt);
+    if (iso) for (const c of commitsAround(iso, { repo, ref })) add(c.commit, `${c.relation} ${slug}/${label}'s deployedAt ${iso}`);
+  };
+  if (existsSync(deploymentsDir)) {
+    for (const slug of readdirSync(deploymentsDir, { withFileTypes: true }).filter((d) => d.isDirectory() && d.name !== 'anvil' && !d.name.startsWith('.')).map((d) => d.name).sort()) {
+      const dir = join(deploymentsDir, slug);
+      record(join(dir, 'addresses.json'), 'live', slug);
+      const arch = join(dir, '.archive');
+      if (existsSync(arch)) for (const stamp of readdirSync(arch).sort()) record(join(arch, stamp, 'addresses.json'), `archived ${stamp}`, slug);
+      for (const f of readdirSync(dir).filter((f) => /^addresses\.prior-rehearsal\.\d+\.json$/.test(f)).sort()) record(join(dir, f), f, slug);
+    }
+  }
+  if (existsSync(candidatesFile)) {
+    try { for (const c of JSON.parse(readFileSync(candidatesFile, 'utf8')).candidates ?? []) for (const r of c.reasons ?? []) add(c.commit, r); } catch { /* an unreadable candidates file adds nothing; --check reports it */ }
+  }
+  return [...byCommit.entries()].map(([commit, reasons]) => ({ commit, reasons: [...reasons].sort() })).sort((x, y) => x.commit.localeCompare(y.commit));
+}
+
 export function buildEra(sha, { repo = REPO_ROOT, keep = false, log = () => {} } = {}) {
   // A fresh, unpredictable directory per build (CodeQL js/insecure-temporary-file:
   // a fixed name under the OS temp dir could be pre-created by another user).
@@ -117,13 +286,28 @@ export function buildEra(sha, { repo = REPO_ROOT, keep = false, log = () => {} }
   sh('git', ['worktree', 'add', '--detach', dir, sha], repo);
   try {
     const c = join(dir, 'contracts');
-    // dependencies: the pinned submodules from the superproject's own store; a symlink to the main checkout's lib is the fallback
+    // dependencies: the pinned submodules from the superproject's own store. The
+    // main checkout's lib may stand in ONLY when the era's lib tree is identical
+    // to HEAD's and every submodule checkout sits at its gitlink (#2095 r9 P2);
+    // otherwise the era is unavailable rather than built from sources that
+    // never existed together.
+    let dependencies = 'submodules at the era commit';
     try {
       sh('git', ['submodule', 'update', '--init', '--recursive', '--', 'contracts/lib'], dir);
     } catch (e) {
-      log(`  ${sha.slice(0, 9)}: submodule update failed (${String(e.stderr || e.message).split('\n')[0].slice(0, 80)}); linking contracts/lib from the main checkout`);
+      const eraTree = sh('git', ['ls-tree', sha, 'contracts/lib/'], repo);
+      const headTree = sh('git', ['ls-tree', 'HEAD', 'contracts/lib/'], repo);
+      const submoduleHeads = {};
+      for (const [p, ent] of Object.entries(parseLsTree(eraTree))) {
+        if (ent.type !== 'commit') continue;
+        try { submoduleHeads[p] = sh('git', ['rev-parse', 'HEAD'], join(repo, p)).trim(); } catch { submoduleHeads[p] = null; }
+      }
+      const same = depsFromMainAreIdentical({ eraTree, headTree, submoduleHeads });
+      if (!same.identical) throw new Error(`submodule update failed (${String(e.stderr || e.message).split('\n')[0].slice(0, 80)}) and the main checkout's contracts/lib is not the era's: ${same.differences.join('; ')}`);
+      log(`  ${sha.slice(0, 9)}: submodule update failed (${String(e.stderr || e.message).split('\n')[0].slice(0, 80)}); linking contracts/lib from the main checkout (identical lib tree)`);
       rmSync(join(c, 'lib'), { recursive: true, force: true });
       symlinkSync(join(repo, 'contracts', 'lib'), join(c, 'lib'));
+      dependencies = 'main checkout (lib tree identical to the era commit)';
     }
     writeFileSync(join(c, 'src', 'StorageLayoutEraProbe.sol'), PROBE_SRC);
     const lib = readFileSync(join(dir, LIB_PATH), 'utf8');
@@ -133,7 +317,9 @@ export function buildEra(sha, { repo = REPO_ROOT, keep = false, log = () => {} }
     sh('forge', ['build', '--skip', 'test', '--skip', 'script', '--extra-output', 'storageLayout', '--silent'], c, { env: { ...process.env, FOUNDRY_PROFILE: profile } });
     const art = JSON.parse(readFileSync(join(c, 'out', 'StorageLayoutEraProbe.sol', 'StorageLayoutEraProbe.json'), 'utf8'));
     if (!art.storageLayout) throw new Error('artifact carries no storageLayout');
-    return { ...slotsFromLayout(art.storageLayout, pos.position), occupied: occupiedRangesFromLayout(art.storageLayout, pos.position), storagePosition: pos.position, positionDerivation: pos.derivation, profile };
+    const { catalogue, count } = bytecodeCatalogueFrom(join(c, 'out'));
+    if (!count) throw new Error('the era build produced no src/ bytecode to catalogue');
+    return { ...slotsFromLayout(art.storageLayout, pos.position), occupied: occupiedRangesFromLayout(art.storageLayout, pos.position), storagePosition: pos.position, positionDerivation: pos.derivation, profile, dependencies, bytecode: catalogue, bytecodeCount: count };
   } finally {
     if (!keep) {
       try { sh('git', ['worktree', 'remove', '--force', dir], repo); } catch { /* leave it; `git worktree prune` cleans up */ }
@@ -161,6 +347,7 @@ export function checkEraTable({ tablePath = OUT_DEFAULT, since = DEFAULT_SINCE, 
   const missing = needed.filter((e) => !have.has(fingerprintAt(e.sha)));
   const problems = [];
   if ((table.eras ?? []).some((e) => !e.fingerprint)) problems.push('an era carries no fingerprint — regenerate the table');
+  if ((table.eras ?? []).some((e) => !e.bytecode || !Object.keys(e.bytecode).length)) problems.push('an era carries no bytecode catalogue — regenerate the table (#2095 r9)');
   if (!table.complete) problems.push(`the table is incomplete (${(table.unavailable ?? []).length} era(s) unavailable${table.partial ? `; ${table.partial}` : ''})`);
   // Freshness is a CONTENT identity, never a commit SHA: the table's HEAD era
   // must have been built from the layout inputs HEAD has now (#2095 r2 P1 — a
@@ -168,6 +355,10 @@ export function checkEraTable({ tablePath = OUT_DEFAULT, since = DEFAULT_SINCE, 
   // commit the branch head is not an ancestor of either).
   if (table.headFingerprint !== walk.headFingerprint) problems.push(`the table's HEAD era was built from a different layout (fingerprint ${String(table.headFingerprint).slice(0, 12)} vs ${walk.headFingerprint.slice(0, 12)} now) — regenerate`);
   for (const m of missing) problems.push(`era ${m.sha.slice(0, 9)} (${m.date.slice(0, 10)}, ${m.event}) is not in the table`);
+  // every commit a deployed facet may have been built from must be catalogued (#2095 r9 P1)
+  const haveBuilds = new Set([...(table.eras ?? []).map((e) => e.commit), ...(table.deploymentBuilds ?? []).filter((b) => b.bytecode).map((b) => b.commit)]);
+  for (const c of deploymentBuildCandidates()) if (!haveBuilds.has(c.commit)) problems.push(`deployment build ${c.commit.slice(0, 9)} (${c.reasons[0]}) is not in the table — regenerate`);
+  for (const b of table.deploymentBuilds ?? []) if (b.layoutInTable === false) problems.push(`deployment build ${b.commit.slice(0, 9)} carries a layout no era holds — the walk is incomplete`);
   log(`storage-layout-eras --check: ${problems.length ? 'STALE' : 'OK'} — ${needed.length} era(s) implied by the walk, ${have.size} in the table${problems.length ? '\n  ' + problems.join('\n  ') : ''}`);
   return { ok: problems.length === 0, problems, needed: needed.length, inTable: have.size };
 }
@@ -201,15 +392,17 @@ export function main(argv = process.argv.slice(2)) {
   const unavailable = [];
   for (const e of eras) {
     const t0 = Date.now();
-    const fingerprint = layoutFingerprint(sh('git', ['show', `${e.sha}:${LIB_PATH}`], REPO_ROOT), STRUCTS, FIELDS);
-    if (reusable.has(e.sha) && !(e.sha === head && !reusable.get(e.sha).occupied)) {
-      built.push({ ...reusable.get(e.sha), event: e.event ?? reusable.get(e.sha).event ?? null, fingerprint });
+    const eraSource = sh('git', ['show', `${e.sha}:${LIB_PATH}`], REPO_ROOT);
+    const fingerprint = layoutFingerprint(eraSource, STRUCTS, FIELDS);
+    const layoutShape = layoutShapeFingerprint(eraSource, STRUCTS, FIELDS);
+    if (reusable.has(e.sha) && reusable.get(e.sha).bytecode && !(e.sha === head && !reusable.get(e.sha).occupied)) {
+      built.push({ ...reusable.get(e.sha), event: e.event ?? reusable.get(e.sha).event ?? null, fingerprint, layoutShape });
       log(`  ${e.sha.slice(0, 9)} ${e.date.slice(0, 10)} ${(e.event ?? '').padEnd(34)} reused`);
       continue;
     }
     try {
       const r = buildEra(e.sha, { keep, log });
-      built.push({ commit: e.sha, date: e.date, event: e.event ?? null, fingerprint, ...r });
+      built.push({ commit: e.sha, date: e.date, event: e.event ?? null, fingerprint, layoutShape, ...r });
       log(`  ${e.sha.slice(0, 9)} ${e.date.slice(0, 10)} ${(e.event ?? '').padEnd(34)} ok in ${Math.round((Date.now() - t0) / 1000)}s (${r.profile}); intentCommits ${r.fields.intentCommits ? r.fields.intentCommits.slot.slice(0, 12) + '…' : 'absent'}`);
     } catch (err) {
       const reason = String(err.stderr || err.message).split('\n').slice(0, 3).join(' | ').slice(0, 300);
@@ -217,10 +410,42 @@ export function main(argv = process.argv.slice(2)) {
       log(`  ${e.sha.slice(0, 9)} ${e.date.slice(0, 10)} FAILED: ${reason.slice(0, 160)}`);
     }
   }
+  // Deployment builds (#2095 r9 P1): the commits deployed facets were most
+  // plausibly compiled from, catalogued so the census can attribute a facet's
+  // code to a layout the table holds. An era commit needs no second build.
+  const eraShapes = new Set(built.map((b) => b.layoutShape));
+  const reusableBuilds = new Map();
+  if (reusePath && existsSync(reusePath)) for (const b of JSON.parse(readFileSync(reusePath, 'utf8')).deploymentBuilds ?? []) reusableBuilds.set(b.commit, b);
+  const deploymentBuilds = [];
+  const candidates = onlyHead ? [] : deploymentBuildCandidates();
+  log(`storage-layout-eras: ${candidates.length} deployment build candidate(s)`);
+  for (const cand of candidates) {
+    const era = built.find((b) => b.commit === cand.commit);
+    let src;
+    try { src = sh('git', ['show', `${cand.commit}:${LIB_PATH}`], REPO_ROOT); } catch { unavailable.push({ commit: cand.commit, date: null, event: 'deployment build', reason: 'the commit is not in this repository' }); continue; }
+    const fingerprint = layoutFingerprint(src, STRUCTS, FIELDS);
+    const layoutShape = layoutShapeFingerprint(src, STRUCTS, FIELDS);
+    const date = sh('git', ['show', '-s', '--format=%cI', cand.commit], REPO_ROOT).trim();
+    // membership is by SHAPE: a rename between two change events leaves the
+    // layout in the table while the content fingerprint differs
+    const base = { commit: cand.commit, date, reasons: cand.reasons, layoutFingerprint: fingerprint, layoutShape, layoutInTable: eraShapes.has(layoutShape) };
+    if (era) { deploymentBuilds.push({ ...base, sameAsEra: true, bytecode: era.bytecode, bytecodeCount: era.bytecodeCount, profile: era.profile, dependencies: era.dependencies }); log(`  ${cand.commit.slice(0, 9)} ${date.slice(0, 10)} deployment build = era`); continue; }
+    if (reusableBuilds.has(cand.commit) && reusableBuilds.get(cand.commit).bytecode) { const r = reusableBuilds.get(cand.commit); deploymentBuilds.push({ ...base, bytecode: r.bytecode, bytecodeCount: r.bytecodeCount, profile: r.profile, dependencies: r.dependencies }); log(`  ${cand.commit.slice(0, 9)} ${date.slice(0, 10)} deployment build reused`); continue; }
+    const t0 = Date.now();
+    try {
+      const r = buildEra(cand.commit, { keep, log });
+      deploymentBuilds.push({ ...base, bytecode: r.bytecode, bytecodeCount: r.bytecodeCount, profile: r.profile, dependencies: r.dependencies });
+      log(`  ${cand.commit.slice(0, 9)} ${date.slice(0, 10)} deployment build ok in ${Math.round((Date.now() - t0) / 1000)}s (${r.bytecodeCount} contracts${base.layoutInTable ? '' : '; LAYOUT NOT IN THE TABLE'})`);
+    } catch (err) {
+      const reason = String(err.stderr || err.message).split('\n').slice(0, 3).join(' | ').slice(0, 300);
+      unavailable.push({ commit: cand.commit, date, event: 'deployment build', reason });
+      log(`  ${cand.commit.slice(0, 9)} ${date.slice(0, 10)} deployment build FAILED: ${reason.slice(0, 160)}`);
+    }
+  }
   const distinct = {};
   for (const f of FIELDS) distinct[f] = [...new Set(built.map((b) => b.fields[f]?.slot).filter(Boolean))];
   const result = {
-    purpose: 'Every storage slot each census-read field has occupied across the layout eras of LibVaipakam.Storage since the walk began (#1566, design section 7a). A row is proven absent only when it reads zero at EVERY era slot. Generated by storage-layout-eras.mjs from the compiler at one commit per era; never hand-edit.',
+    purpose: 'Every storage slot each census-read field has occupied across the layout eras of LibVaipakam.Storage since the walk began (#1566, design section 7a), and per era the keccak256 of every src/ contract\'s runtime bytecode so a deployed facet can be attributed to the layout it was compiled against. A row is proven absent only when it reads zero at EVERY era slot on a deployment whose every facet attributes to an era. Generated by storage-layout-eras.mjs from the compiler at one commit per era; never hand-edit.',
     generatedAt: new Date().toISOString(),
     head,
     since,
@@ -228,7 +453,11 @@ export function main(argv = process.argv.slice(2)) {
     complete: unavailable.length === 0 && !onlyHead,
     partial: onlyHead ? 'only-head diagnostic — one era, not a table the census may read' : undefined,
     headFingerprint: walk.headFingerprint,
-    eras: built,
+    // the occupied-slot map is what an EARLIER era's slot may alias TODAY, so
+    // only HEAD's is read; carrying it for every era multiplied the table's
+    // size by nine for nothing
+    eras: built.map((b) => (b.commit === head ? b : { ...b, occupied: undefined })),
+    deploymentBuilds,
     unavailable,
     distinctSlots: distinct,
   };

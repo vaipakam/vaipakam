@@ -7,7 +7,7 @@ import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { extractDeclarations, isPrefix, walkProvenance, stripComments, inlineStructsBefore, layoutFingerprint, storagePositionOf } from './storage-layout-provenance.mjs';
+import { extractDeclarations, isPrefix, walkProvenance, stripComments, inlineStructsBefore, layoutFingerprint, layoutShapeFingerprint, storagePositionOf } from './storage-layout-provenance.mjs';
 
 const SRC = (extra = '', rowExtra = '') => `
 // SPDX-License-Identifier: MIT
@@ -166,4 +166,25 @@ library LibVaipakam {
   assert.ok(kinds.includes('Old append'), `the growth of Old while it lived is an era: ${kinds.join(' | ')}`);
   assert.ok(kinds.includes('Storage removal'), `its removal from Storage is Storage's own era: ${kinds.join(' | ')}`);
   assert.deepEqual(w.violations.map((v) => v.struct), ['Storage', 'Storage'], 'the two revisions that embedded Old are Storage prefix violations; Old itself is not compared against a HEAD that lacks it');
+});
+
+test('the layout SHAPE ignores names: a rename keeps it, an insertion or a retype changes it (#2095 r9)', () => {
+  const a = SRC('uint256 totalLoansEverCreated;');
+  const renamed = SRC('uint256 lifetimeLoans;');
+  const inserted = SRC('uint256 x; uint256 totalLoansEverCreated;');
+  const retyped = SRC('uint128 totalLoansEverCreated;');
+  const S = (src) => layoutShapeFingerprint(src, ['Storage', 'Row'], ['intentCommits']);
+  assert.equal(S(a), S(renamed), 'a rename is the same shape');
+  assert.notEqual(layoutFingerprint(a, ['Storage', 'Row'], ['intentCommits']), layoutFingerprint(renamed, ['Storage', 'Row'], ['intentCommits']), 'but a different content fingerprint');
+  // with intentCommits as the only target, everything after it is outside the layout-bearing prefix: the same shape
+  assert.equal(S(a), S(inserted), 'a field inserted after the last target');
+  assert.equal(S(a), S(retyped), 'a retype after the last target');
+  // with totalLoansEverCreated a target too, the same edits are inside the prefix
+  const T = (src) => layoutShapeFingerprint(src, ['Storage', 'Row'], ['intentCommits', 'totalLoansEverCreated']);
+  assert.notEqual(T(a), T(inserted), 'a field inserted before a target');
+  assert.notEqual(T(a), T(retyped), 'a target retyped');
+  // fields AFTER the last target move nothing the census reads: the same shape (the walk opens no era for them either)
+  const appendedAfter = SRC('uint256 totalLoansEverCreated; uint256 laterField; mapping(address => uint256) laterMap;');
+  assert.equal(T(SRC('uint256 totalLoansEverCreated;')), T(appendedAfter), 'an append after the last target keeps the shape');
+  assert.notEqual(T(SRC('uint256 totalLoansEverCreated;')), T(SRC('uint256 x; uint256 totalLoansEverCreated;')), 'an insertion before it does not');
 });

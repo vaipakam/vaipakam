@@ -1,20 +1,20 @@
 // census-storage-read.test.mjs — the era-complete storage read's rules (#1566 §7/§7a), over fake readers.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { prepareStorageRead, readCountersByStorage, scanRowsByStorage, intentVerdictFromStorage, eraSlotsExcept, mergeHistoricalRows, aliasOf, classifyEarlierCounters, markAliasedRows, splitByHeadSlot, getterAgreement, downgradeWithoutEraRead, attributeCounters, ROW } from './census-storage-read.mjs';
+import { prepareStorageRead, readCountersByStorage, scanRowsByStorage, intentVerdictFromStorage, eraSlotsExcept, mergeHistoricalRows, aliasOf, classifyEarlierCounters, markAliasedRows, splitByHeadSlot, getterAgreement, downgradeWithoutEraRead, attributeCounters, attributeFacetCode, downgradeProvenClasses, ROW } from './census-storage-read.mjs';
 import { memberSlot, rowSlot } from './storage-slots.mjs';
 
 const H = (n) => '0x' + n.toString(16).padStart(64, '0');
 const base = 0x1000n;
 const slotOf = (rel) => H(base + BigInt(rel));
 const era = (commit, date, rel, withRows = true) => ({
-  commit, date, storagePosition: H(base),
+  commit, date, storagePosition: H(base), bytecode: {},
   ...(commit === 'headhead1' ? { occupied: OCCUPIED_FOR_HEAD } : {}),
   fields: Object.fromEntries(Object.entries(rel).map(([f, r]) => [f, r === null ? null : { slot: slotOf(r), relative: r, offset: 0 }])),
   rows: withRows ? {
-    SwapToRepayIntentCommit: rel.intentCommits === null ? null : { orderHash: { slot: 0, offset: 0 }, deadline: { slot: 1, offset: 0 } },
-    BorrowerLifRebate: { vpfiHeld: { slot: 0, offset: 0 }, rebateAmount: { slot: 1, offset: 0 } },
-    FallbackSnapshot: { lenderCollateral: { slot: 0, offset: 0 }, treasuryCollateral: { slot: 1, offset: 0 }, borrowerCollateral: { slot: 2, offset: 0 }, active: { slot: 5, offset: 0 } },
+    SwapToRepayIntentCommit: rel.intentCommits === null ? null : { orderHash: { slot: 0, offset: 0, type: 't_bytes32' }, deadline: { slot: 1, offset: 0, type: 't_uint64' } },
+    BorrowerLifRebate: { vpfiHeld: { slot: 0, offset: 0, type: 't_uint256' }, rebateAmount: { slot: 1, offset: 0, type: 't_uint256' } },
+    FallbackSnapshot: { lenderCollateral: { slot: 0, offset: 0, type: 't_uint256' }, treasuryCollateral: { slot: 1, offset: 0, type: 't_uint256' }, borrowerCollateral: { slot: 2, offset: 0, type: 't_uint256' }, active: { slot: 5, offset: 0, type: 't_bool' } },
   } : {},
 });
 const HEADREL = { nextLoanId: 1, totalLoansEverCreated: 86, intentLiveCommitCount: 193, intentCommits: 194, borrowerLifRebate: 137, fallbackSnapshot: 45 };
@@ -248,4 +248,56 @@ test('a historical row an older routed getter already returned is not merged twi
   assert.equal(intent.status, 'indeterminate');
   assert.equal(intent.historicalRowsAlreadyReportedByGetter, 0);
   assert.deepEqual(intent.unknownAssetRows.map((r) => r.orderHash), ['0xcd']);
+});
+
+test('a non-zero at an old counter slot that is now a MAPPING head is a stale counter, not the mapping (#2095 r9 P1)', () => {
+  const occupied = [
+    { label: 'lastUpdateDayId', from: '32', to: '32', isMapping: true },
+    { label: 'activeOfferIdsList', from: '16', to: '16', isMapping: false },
+  ];
+  const at = (n) => '0x' + n.toString(16).padStart(64, '0');
+  const readings = [
+    { which: 'intentLiveCommitCount', slot: at(32), value: '2', eras: [{ date: '2026-06' }] },
+    { which: 'totalLoansEverCreated', slot: at(16), value: '4', eras: [{ date: '2026-05' }] },
+  ];
+  const { contradictions, aliased } = classifyEarlierCounters(readings, occupied);
+  assert.deepEqual(aliased.map((x) => [x.which, x.aliases]), [['totalLoansEverCreated', 'activeOfferIdsList']], 'an array length explains a non-zero');
+  assert.deepEqual(contradictions.map((x) => [x.which, x.atMappingHead]), [['intentLiveCommitCount', 'lastUpdateDayId']], 'a mapping head holds nothing — the reading is the old counter');
+  // and through attributeCounters the stale live-commit counter stays a contradiction candidate
+  const headSlots = { totalLoansEverCreated: at(999), intentLiveCommitCount: at(998) };
+  const a = attributeCounters({ nextLoanId: 0n, totalLoansEverCreated: [{ slot: at(16), value: 4n, eras: [] }], intentLiveCommitCount: [{ slot: at(32), value: 2n, eras: [] }], allZero: false, slotsRead: 3 }, headSlots, occupied);
+  assert.equal(a.counters.allZero, false);
+  assert.deepEqual(a.unexplained.map((x) => [x.which, x.value, x.atMappingHead]), [['intentLiveCommitCount', '2', 'lastUpdateDayId']]);
+});
+
+test('an era whose row member has the same slot but a narrower type is refused (#2095 r9 P2)', () => {
+  const ok = prepareStorageRead({ slots, eras });
+  assert.equal(ok.ok, true, ok.reason);
+  const narrowed = JSON.parse(JSON.stringify(eras));
+  const e = narrowed.eras.find((x) => x.commit !== narrowed.head && x.rows?.FallbackSnapshot);
+  e.rows.FallbackSnapshot.borrowerCollateral.type = 't_uint128';
+  const r = prepareStorageRead({ slots, eras: narrowed });
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /borrowerCollateral as t_uint128, not t_uint256/);
+});
+
+test('a facet is attributed to the era whose catalogue holds its code hash; unknown code refuses; empty code never wrote (#2095 r9 P1)', () => {
+  const erasT = [
+    { commit: 'a'.repeat(40), date: '2026-05-10T00:00:00Z', bytecode: { '0x11': 'RiskFacet' } },
+    { commit: 'b'.repeat(40), date: '2026-07-01T00:00:00Z', bytecode: { '0x11': 'RiskFacet', '0x22': 'DefaultedFacet' } },
+  ];
+  const EMPTY = '0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470';
+  const r = attributeFacetCode({ facets: [
+    { address: '0xA', codeHash: '0x11', sources: ['loupe'] },
+    { address: '0xB', codeHash: '0x22', sources: ['record'] },
+    { address: '0xC', codeHash: '0x33', sources: ['cut-history'] },
+    { address: '0xD', codeHash: EMPTY, sources: ['record'] },
+  ], eras: erasT });
+  assert.equal(r.verdict, 'unattributed');
+  assert.deepEqual(r.attributed.map((x) => [x.address, x.name, x.eras.length]), [['0xA', 'RiskFacet', 2], ['0xB', 'DefaultedFacet', 1]]);
+  assert.deepEqual(r.unattributed.map((x) => x.address), ['0xC']);
+  assert.deepEqual(r.noCode.map((x) => x.address), ['0xD']);
+  assert.equal(attributeFacetCode({ facets: [{ address: '0xA', codeHash: '0x11', sources: [] }], eras: erasT }).verdict, 'attributed');
+  const d = downgradeProvenClasses({ a: { status: 'proven', provenBy: 'x' }, b: { status: 'indeterminate', indeterminateReason: 'kept' } }, 'why');
+  assert.deepEqual(d, { a: { status: 'indeterminate', provenBy: undefined, indeterminateReason: 'why' }, b: { status: 'indeterminate', indeterminateReason: 'kept' } });
 });

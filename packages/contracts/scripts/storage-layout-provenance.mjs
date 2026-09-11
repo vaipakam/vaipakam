@@ -37,7 +37,8 @@ export const REPO_ROOT = resolvePath(HERE, '..', '..', '..');
 export const LIB_PATH = 'contracts/src/libraries/LibVaipakam.sol';
 export const SLOTS_JSON = join(REPO_ROOT, 'contracts', 'deployments', 'storage-slots.json');
 /** The earliest deployment in the census inventory is 2026-05-10; the walk starts a little before it. */
-export const DEFAULT_SINCE = '2026-05-01';
+/** The storage library's first commit (2026-04-22): every layout it ever had is walked, the April deployments' included (#2095 r9). */
+export const DEFAULT_SINCE = '2026-04-22';
 /** Structs whose layout the census reads: the state root and the three loan-keyed rows. */
 export const STRUCTS = ['Storage', 'SwapToRepayIntentCommit', 'BorrowerLifRebate', 'FallbackSnapshot'];
 
@@ -126,6 +127,32 @@ export function layoutFingerprint(source, structs, fields) {
   const parts = [storagePositionOf(source)?.position ?? 'no-position'];
   for (const n of names) {
     try { parts.push(`${n}:${extractDeclarations(source, n).join(';')}`); } catch { parts.push(`${n}:absent`); }
+  }
+  return createHash('sha256').update(parts.join('\n')).digest('hex');
+}
+/**
+ * The SHAPE of a layout — the storage position and the size-bearing type
+ * sequence of Storage, the row structs and every inline struct before a
+ * target — with no names (#2095 r9). A rename opens no era, so a commit
+ * between two change events shares its era's shape while its content
+ * fingerprint (names included) differs; "is this commit's layout one the
+ * table holds" is a question about shape.
+ */
+export function layoutShapeFingerprint(source, structs, fields, structName = 'Storage') {
+  const inline = inlineStructsBefore(source, fields, structName);
+  const names = [...new Set([...structs, ...inline.local])].sort();
+  const parts = [storagePositionOf(source)?.position ?? 'no-position'];
+  for (const n of names) {
+    try {
+      let seq = extractDeclarations(source, n);
+      // Storage is layout-bearing only up to the LAST target: a field appended
+      // after it moves nothing the census reads, and the walk opens no era for it
+      if (n === structName && fields.length) {
+        const last = Math.max(-1, ...fields.map((f) => seq.findIndex((d) => fieldName(d) === f)));
+        if (last >= 0) seq = seq.slice(0, last + 1);
+      }
+      parts.push(`${n}:${seq.map(layoutType).join(';')}`);
+    } catch { parts.push(`${n}:absent`); }
   }
   return createHash('sha256').update(parts.join('\n')).digest('hex');
 }

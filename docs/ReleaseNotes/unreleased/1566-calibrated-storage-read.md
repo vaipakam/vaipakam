@@ -22,6 +22,15 @@ of them. What storage shows at today's slot is checked against what the
 getter reported, loan by loan and in both directions, so a getter cut from
 an older layout than the one the census assumes cannot certify a row away.
 Where that era table cannot be read at all, no getter-based proof is issued.
+And because a deployment could have been built from sources that were never
+committed, every facet that may have written to a Diamond is matched by the
+hash of its code to the build of one of those layout eras; a Diamond with a
+facet that matches none is not certified on any class. That last rule is
+what moves the census's headline from seventeen of twenty deployments proven
+empty to ten: the live testnet Diamonds of base-sepolia and arb-sepolia have
+run facets built from working trees no commit reproduces, and whether the
+routed reads alone may certify such a Diamond is a decision the design puts
+to the owner, with each withheld verdict recorded beside its refusal.
 A bare shell is settled the same way from its loan counter, whose slot never
 moved.
 

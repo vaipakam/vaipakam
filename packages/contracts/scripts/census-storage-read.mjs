@@ -37,6 +37,7 @@ export function prepareStorageRead({ slots, eras }) {
   const refuse = (reason) => ({ ok: false, reason });
   if (!slots?.fields || !slots?.storagePosition) return refuse('storage-slots.json is missing or has no fields');
   if (!eras?.eras?.length) return refuse('storage-slot-eras.json is missing or has no eras');
+  if (eras.eras.some((e) => !e.bytecode)) return refuse('an era carries no bytecode catalogue — regenerate the era table (#2095 r9)');
   if (!eras.complete) return refuse(`the era table is INCOMPLETE — ${eras.unavailable?.length ?? '?'} era(s) could not be built (${(eras.unavailable ?? []).map((u) => u.commit.slice(0, 9)).join(', ')}); a "zero at every era" claim needs every era`);
   const head = eras.eras.find((e) => e.commit === eras.head);
   if (!head) return refuse('the era table carries no HEAD era');
@@ -57,6 +58,11 @@ export function prepareStorageRead({ slots, eras }) {
       if (!r) continue; // the struct did not exist in that era, and neither did its mapping (checked above)
       for (const [m, off] of Object.entries(members)) {
         if (!r[m] || r[m].slot !== off || (r[m].offset ?? 0) !== 0) return refuse(`era ${e.commit.slice(0, 9)} (${e.date.slice(0, 10)}) places ${struct}.${m} at slot ${r[m]?.slot}/offset ${r[m]?.offset}, not ${off}/0 — the read would misattribute that era's rows`);
+        // #2095 r9 P2 — the same slot and offset with a NARROWER type packs the
+        // next member into the upper part of the word; a full-word read would
+        // then fabricate an amount. The type must be HEAD's in every era.
+        const headType = head.rows?.[struct]?.[m]?.type;
+        if (headType && r[m].type !== headType) return refuse(`era ${e.commit.slice(0, 9)} (${e.date.slice(0, 10)}) declares ${struct}.${m} as ${r[m].type}, not ${headType} — a full-word read would misattribute that era's rows`);
       }
     }
   }
@@ -81,6 +87,13 @@ export function prepareStorageRead({ slots, eras }) {
     head: eras.head,
     occupied,
     headSlots: slots.fields,
+    // what a deployed facet's code hash attributes to (#2095 r9 P1): every era's
+    // build, and every deployment build whose layout an era holds
+    eras: [
+      ...eras.eras.map((e) => ({ commit: e.commit, date: e.date, bytecode: e.bytecode, kind: 'era' })),
+      ...(eras.deploymentBuilds ?? []).filter((b) => b.bytecode && b.layoutInTable !== false && !b.sameAsEra).map((b) => ({ commit: b.commit, date: b.date, bytecode: b.bytecode, kind: 'deployment build', reasons: b.reasons })),
+    ],
+    deploymentBuildsOutsideTable: (eras.deploymentBuilds ?? []).filter((b) => b.layoutInTable === false).map((b) => b.commit),
     erasBuilt: eras.eras.length,
     generatedAt: eras.generatedAt,
     eraSlots,
@@ -256,9 +269,14 @@ export function classifyEarlierCounters(readings, occupied) {
   const aliased = [];
   for (const r of readings) {
     if (BigInt(r.value) === 0n) continue;
-    const alias = aliasOf(r.slot, occupied);
-    if (alias) aliased.push({ ...r, aliases: alias });
-    else contradictions.push(r);
+    const hit = aliasEntry(r.slot, occupied);
+    // #2095 r9 P1 — a mapping stores NOTHING at its head slot, so a non-zero
+    // there cannot be the current mapping's value: it is the old counter (or
+    // some other earlier occupant), left where an upgraded layout put a
+    // mapping head. Only a current value field, array length or inline
+    // struct explains a non-zero reading.
+    if (hit && !hit.isMapping) aliased.push({ ...r, aliases: hit.label });
+    else contradictions.push(hit ? { ...r, atMappingHead: hit.label } : r);
   }
   return { contradictions, aliased };
 }
@@ -360,7 +378,40 @@ export function attributeCounters(counters, headSlots, occupied) {
       intentLiveCommitCount,
       allZero: counters.nextLoanId === 0n && totalLoansEverCreated.every((x) => x.value === 0n) && intentLiveCommitCount.every((x) => x.value === 0n),
     },
-    unexplained: contradictions.map((x) => ({ which: x.which, slot: x.slot, value: String(x.value), eras: x.eras })),
+    unexplained: contradictions.map((x) => ({ which: x.which, slot: x.slot, value: String(x.value), eras: x.eras, atMappingHead: x.atMappingHead })),
     aliased: aliased.map((x) => ({ which: x.which, slot: x.slot, value: String(x.value), aliases: x.aliases })),
   };
+}
+
+/**
+ * #2095 r9 P1 — attribute every facet that ever wrote to a deployment to the
+ * layout era it was compiled against, by the keccak256 of its runtime code
+ * against each era's catalogue. A facet whose code is in no era's catalogue
+ * was built from sources the walk never saw — a dirty tree whose dirt reached
+ * the storage library, or an unmerged branch — and the era-complete read
+ * cannot claim to cover its layout. Empty code is a contract that never
+ * existed (post-Cancun, code cannot vanish — EIP-6780), so it never wrote.
+ * Pure; exported for the test.
+ */
+export function attributeFacetCode({ facets, eras }) {
+  const EMPTY = '0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470'; // keccak256('0x')
+  const attributed = [];
+  const unattributed = [];
+  const noCode = [];
+  for (const f of facets) {
+    if (!f.codeHash || f.codeHash === EMPTY) { noCode.push({ address: f.address, sources: f.sources }); continue; }
+    const hits = (eras ?? []).filter((e) => e.bytecode?.[f.codeHash]).map((e) => ({ commit: e.commit.slice(0, 9), date: String(e.date).slice(0, 10), name: e.bytecode[f.codeHash], kind: e.kind ?? 'era' }));
+    if (hits.length) attributed.push({ address: f.address, name: hits[0].name, eras: hits.map((h) => ({ commit: h.commit, date: h.date, kind: h.kind })), sources: f.sources });
+    else unattributed.push({ address: f.address, codeHash: f.codeHash, sources: f.sources });
+  }
+  return { attributed, unattributed, noCode, verdict: unattributed.length ? 'unattributed' : 'attributed' };
+}
+
+/** Every class the getters or the storage read called proven becomes indeterminate with `reason`; nothing else changes. Pure. */
+export function downgradeProvenClasses(classes, reason) {
+  const out = {};
+  for (const [name, c] of Object.entries(classes)) {
+    out[name] = c.status !== 'proven' ? c : { ...c, status: 'indeterminate', provenBy: undefined, indeterminateReason: reason };
+  }
+  return out;
 }
