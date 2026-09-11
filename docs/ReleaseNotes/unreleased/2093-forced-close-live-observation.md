@@ -668,3 +668,25 @@ chain that reuses one identifier for two different questions is refused
 rather than guessed at; and amounts written with the denomination spelled
 out — "100 ether" rather than "100 ETH" — are now recognised after words
 like "loan", where they had been read as reference numbers.
+
+Reviewing that visibility fix before submitting it turned up a fault in
+the fix itself. Changing how the check waits gave the wait a second way
+to fail — the page navigating away mid-wait, or the shared visibility
+rule failing to be read back correctly — and the surrounding code
+treated every failure of the wait as proof that no card was ever shown.
+A wait that times out has genuinely looked and kept finding nothing, and
+reporting an absence is right. A wait that never got to ask has
+established nothing at all, and reporting an absence invents a missing
+card out of an infrastructure problem. The two are now told apart: the
+second is reported as an incomplete observation, and names which of them
+happened rather than leaving a reader to guess.
+
+The same review found the shared visibility rule could, if it were ever
+read back incorrectly, produce unusable text that failed silently inside
+that same swallowed error. It now refuses at start-up, by name, so the
+problem is visible where it is caused.
+
+Finally, four places in the check each wrote out by hand the same
+fourteen-field record meaning "nothing was established here", and one of
+them had quietly lost a field the other three carried. They now share a
+single definition, so a field added in future reaches all of them.

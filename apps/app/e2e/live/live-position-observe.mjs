@@ -3403,11 +3403,6 @@ async function observeForcedClose(page, loan) {
 }
 
 /**
- * Returned when the DOM pass could not be RUN, as distinct from running
- * and finding no card (round 41 P2). A unique object so it can never be
- * confused with a value the page produced.
- */
-/**
  * The visibility predicate's SOURCE, so the mount wait can run the same
  * one the scrape runs (round 60 P2).
  *
@@ -3443,12 +3438,66 @@ const VISIBILITY_HELPER_SOURCES = (() => {
         if (depth === 0) break;
       }
     }
+    // The loop can also end by running out of file, and then `i` is
+    // `self.length` and the slice is everything from the helper to EOF —
+    // syntactically broken source that `new Function` rejects at the
+    // first poll, inside a `catch` that reads the rejection as "the card
+    // never mounted". Balance is therefore checked rather than assumed,
+    // so an unparseable extraction fails HERE, by name, at import.
+    if (depth !== 0) {
+      throw new Error(
+        `the visibility helper \`${name}\` could not be extracted from this file — ` +
+          'its braces do not balance, so the mount wait has no predicate to run.',
+      );
+    }
     return self.slice(start, i + 2);
   };
   return [block('notClipped'), block('paintsText'), block('visible')];
 })();
 
+/**
+ * Returned when the DOM pass could not be RUN, as distinct from running
+ * and finding no card (round 41 P2). A unique object so it can never be
+ * confused with a value the page produced.
+ */
 const SCRAPE_FAILED = Symbol('forced-close scrape failed');
+
+/**
+ * The reading that establishes NOTHING — as distinct from one that
+ * establishes an absence.
+ *
+ * `bodyPresent: undefined` is what the verdict reads as "nothing was
+ * observed", and `mounted: true` keeps the absence rules from being
+ * consulted at all, so a read that did not happen can never become a
+ * missing-card FAIL. Extracted because three call sites were building
+ * this same fourteen-field literal by hand and a field added to one of
+ * them would silently not reach the others — the shape that has already
+ * cost `visibleSubmits` twice on this PR.
+ *
+ * `overrides` is for the fields that genuinely differ: the accumulated
+ * `seen*` / `*Peak` evidence at the mid-poll site, and `mounted: false`
+ * for the attached-but-no-longer-visible case, which is a real
+ * observation rather than a failed one.
+ */
+function nothingEstablished(overrides = {}) {
+  return {
+    mounted: true,
+    attached: true,
+    visibleCards: 0,
+    text: null,
+    bodyText: null,
+    bodyPresent: undefined,
+    bodyVisible: false,
+    confirmText: null,
+    confirmExpected: false,
+    submitPresent: false,
+    submitVisible: false,
+    submitDisabled: true,
+    visibleSubmits: 0,
+    settled: false,
+    ...overrides,
+  };
+}
 
 async function readForcedCloseCard(page, timeoutMs = 30_000) {
   const cards = page.getByTestId('forced-close-card');
@@ -3522,6 +3571,8 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
   // `waitForFunction` runs the SAME predicate the scrape uses, built
   // from the same helper sources, so there is one definition of visible
   // rather than two that agree until they do not.
+  /** Set only when the wait failed for a reason that is not a timeout. */
+  let mountFault = null;
   const mounted = await page
     .waitForFunction(
       ([clipSrc, paintSrc, visSrc]) => {
@@ -3534,7 +3585,38 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
       { timeout: timeoutMs, polling: 250 },
     )
     .then(() => true)
-    .catch(() => false);
+    .catch((err) => {
+      // SELF-REVIEW OF THE FIX ABOVE — a timeout and a failure to ASK
+      // are not the same answer, and the previous line collapsed them.
+      //
+      // `waitForFunction` rejects for two unrelated reasons. A timeout
+      // means the predicate ran, repeatedly, and kept saying no — that
+      // is a real absence and `false` is the right answer. Anything else
+      // means the question was never put: `new Function` rejecting a
+      // malformed extraction, the execution context destroyed by a
+      // navigation mid-poll, the page closing. Reading those as `false`
+      // reports a card that was never looked for as a card that was not
+      // there.
+      //
+      // That is round 41's defect exactly, and the comment warning about
+      // it sits directly above this call — `.catch` swallowing an engine
+      // throw and letting `mounted: false` stand for it. Round 60's fix
+      // re-introduced it at the same site by giving the wait a new way
+      // to throw, which is the shape this PR has now caught six times: a
+      // fix leaving its own new state unhandled.
+      if (err?.name !== 'TimeoutError') mountFault = err;
+      return false;
+    });
+  // Nothing was established, so nothing is claimed. Reported as
+  // INCOMPLETE through the same sentinel shape a failed scrape uses; the
+  // cause is named separately so a reader need not guess which of the
+  // two happened.
+  if (mountFault) {
+    return nothingEstablished({
+      scrapeFailed: true,
+      mountFault: String(mountFault?.message ?? mountFault),
+    });
+  }
   const attached = mounted ? true : (await cards.count()) > 0;
   // ROUND 19 P2 — HOW MANY CARDS, not just whether one is there.
   //
@@ -4196,44 +4278,13 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
   // rules — which would otherwise turn this into a missing-card FAIL —
   // are not consulted at all.
   if (snap === SCRAPE_FAILED) {
-    return {
-      mounted: true,
-      attached: true,
-      scrapeFailed: true,
-      visibleCards: 0,
-      text: null,
-      bodyText: null,
-      bodyPresent: undefined,
-      bodyVisible: false,
-      confirmText: null,
-      confirmExpected: false,
-      submitPresent: false,
-      submitVisible: false,
-      submitDisabled: true,
-      visibleSubmits: 0,
-      settled: false,
-    };
+    return nothingEstablished({ scrapeFailed: true });
   }
   // A card that is attached but no longer VISIBLE is reported the way an
   // invisible-but-attached card is at the top of this function: not a
   // pass, and named as what it is (round 21 P2).
   if (snap?.hiddenNow) {
-    return {
-      mounted: false,
-      attached: true,
-      visibleCards: 0,
-      text: null,
-      bodyText: null,
-      bodyPresent: undefined,
-      bodyVisible: false,
-      confirmText: null,
-      confirmExpected: false,
-      submitPresent: false,
-      submitVisible: false,
-      submitDisabled: true,
-      visibleSubmits: 0,
-      settled: false,
-    };
+    return nothingEstablished({ mounted: false });
   }
   // The evaluate is atomic, so a null means the card went between the
   // visibility wait and this pass — round 7's vanished case, detected by
@@ -4433,45 +4484,22 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
     // INCOMPLETE record rather than letting the last good snapshot stand
     // in for a read that did not happen.
     if (again === SCRAPE_FAILED) {
-      return {
-        mounted: true,
-        attached: true,
+      return nothingEstablished({
         scrapeFailed: true,
-        visibleCards: 0,
-        text: null,
-        bodyText: null,
-        bodyPresent: undefined,
-        bodyVisible: false,
-        confirmText: null,
-        confirmExpected: false,
-        submitPresent: false,
-        submitVisible: false,
-        submitDisabled: true,
-        visibleSubmits: 0,
-        settled: false,
         seenTexts,
         seenRenders,
         visibleCardsPeak,
         visibleSubmitsPeak,
         bodyHiddenSeen,
-      };
+      });
     }
     remember(again);
     if (again?.hiddenNow) {
-      return {
+      // This literal was the drift the helper exists to stop: it alone
+      // omitted `visibleSubmits`, while its three siblings set it to 0.
+      // Folding it onto the shared shape supplies it.
+      return nothingEstablished({
         mounted: false,
-        attached: true,
-        visibleCards: 0,
-        text: null,
-        bodyText: null,
-        bodyPresent: undefined,
-        bodyVisible: false,
-        confirmText: null,
-        confirmExpected: false,
-        submitPresent: false,
-        submitVisible: false,
-        submitDisabled: true,
-        settled: false,
         // ROUND 33 P2 — see the note on the vanished return below. Every
         // exit from this loop carries what the loop saw.
         seenTexts,
@@ -4479,7 +4507,7 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
         visibleCardsPeak,
         visibleSubmitsPeak,
         bodyHiddenSeen,
-      };
+      });
     }
     // ROUND 13 P2 — A CARD THAT VANISHES MID-POLL IS THE VANISHED CASE,
     // not a reason to keep the last snapshot.

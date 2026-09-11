@@ -169,3 +169,83 @@ describe('the confirmation cluster counts only what is shown', () => {
     expect(src).toContain("[...el.querySelectorAll('button')].indexOf(confirmButton)");
   });
 });
+
+describe('a reading that did not happen is never reported as an absence', () => {
+  // SAME INVARIANT as the file above it, one level up: an outcome must
+  // be recorded on every path, and the paths that establish nothing must
+  // say so rather than defaulting into a finding.
+  //
+  // FOUND BY SELF-REVIEW of round 60's own fix, before Codex saw it.
+  // Giving the mount wait a `waitForFunction` gave it a second way to
+  // reject — `new Function` refusing a malformed extraction, or the
+  // execution context being destroyed by a navigation mid-poll — and the
+  // `.catch(() => false)` it inherited reads every rejection as "no card
+  // was ever visible". That turns an infrastructure failure into a
+  // missing-card FAIL on a healthy loan.
+  //
+  // It is round 41's defect at round 41's own call site: the comment
+  // warning that a swallowed engine throw once stood in for `mounted:
+  // false` is still directly above the line that re-introduced it.
+  const src = fs.readFileSync(DRIVE, 'utf8');
+  const at = (needle) => src.indexOf(needle);
+
+  it('tells a timeout apart from a failure to ask the question', () => {
+    // A timeout means the predicate ran and kept saying no, which IS an
+    // absence. Anything else means it never ran. Collapsing the two is
+    // the defect, so the discrimination is pinned.
+    expect(src).toContain("if (err?.name !== 'TimeoutError') mountFault = err;");
+  });
+
+  it('reports a non-timeout fault as INCOMPLETE, not as a missing card', () => {
+    const i = at('if (mountFault) {');
+    expect(i, 'the mount-fault exit was not found').toBeGreaterThan(-1);
+    const branch = src.slice(i, i + 400);
+    expect(branch).toContain('nothingEstablished(');
+    expect(branch).toContain('scrapeFailed: true');
+  });
+
+  it('names WHICH failure happened rather than leaving it to be guessed', () => {
+    // This file's own rule, stated at the mount gate since round 3: a
+    // hidden card and an absent one are different defects and a reader
+    // should not have to guess. A failed scrape and a failed wait are
+    // two more.
+    expect(src).toContain('mountFault: String(mountFault?.message ?? mountFault)');
+  });
+
+  it('refuses an unbalanced extraction at import instead of at the first poll', () => {
+    // Without this the brace walk can run off the end of the file and
+    // return everything from the helper to EOF — source `new Function`
+    // rejects on the first poll, inside the very `catch` above. Failing
+    // at import, by name, is the difference between a named error and a
+    // silent false absence.
+    const i = at("const block = (name) => {");
+    expect(i, 'the extractor was not found').toBeGreaterThan(-1);
+    expect(src.slice(i, i + 1600)).toContain('if (depth !== 0) {');
+  });
+
+  it('builds the nothing-established shape in exactly ONE place', () => {
+    // Four hand-written copies of the same fourteen-field literal is how
+    // `visibleSubmits` went missing: one of the four simply omitted it,
+    // and every other signal stayed green. Counted as calls minus the
+    // declaration, the same way the head-sample count is — measuring the
+    // definition instead of the call sites is a mistake this suite has
+    // already made once.
+    //
+    // FIVE sites, not four, and this case failed on its first run by
+    // asserting four — the count I had in mind was of the literals this
+    // replaced, and the mount-fault exit above is a new fifth. Left
+    // recorded because it is the same error the case is written against:
+    // a number taken from memory rather than from the code.
+    const all = [...src.matchAll(/nothingEstablished\(/g)];
+    const declarations = [...src.matchAll(/function nothingEstablished\(/g)];
+    expect(declarations, 'exactly one definition').toHaveLength(1);
+    expect(all.length - declarations.length, 'every site goes through it').toBe(5);
+  });
+
+  it('keeps `bodyPresent` undefined there, which is what the verdict reads', () => {
+    // The whole shape rests on this one field: `undefined` is "nothing
+    // was observed", and any value at all would make it a finding.
+    const i = at('function nothingEstablished(');
+    expect(src.slice(i, i + 700)).toContain('bodyPresent: undefined,');
+  });
+});
