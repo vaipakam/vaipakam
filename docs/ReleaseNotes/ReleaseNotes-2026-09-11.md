@@ -120,18 +120,24 @@ No behaviour change. The check's logic is what it was.
   is meant to yield, because the gate that skips them is shared.
 
   **That last one carries a distinction the others do not, and it is the
-  difference between a silent pass and a blind spot.** For the shell families,
-  for Python and for a build fragment, the interpreter does not care what the
-  file is called, so a deployment written there really does run and really is
-  missed. For the six JavaScript and TypeScript spellings it does not: invoking
-  such a file by that name fails on the unknown extension before anything
-  executes. What is established for those six is that **the guard never
-  examines the file** — not that a deployment in it would have run. They are
-  pinned all the same, because the gate is shared and a fix aimed only at the
-  runnable families would leave them unexamined, and because a file the sweep
-  never opens is invisible for every purpose rather than only for a deployment.
-  Calling every family a silent pass, as this paragraph did, claimed an
-  outcome that cannot occur for six of them.
+  difference between a silent pass and a blind spot.** Where something runs
+  the file regardless of what it is called, a deployment written there really
+  does run and really is missed. Where nothing does — because the interpreter
+  refuses the spelling, or the engine that would pick the file up matches only
+  the other one — what is established is that the guard never EXAMINES the
+  file, which is a blind spot rather than a deployment slipping past. For one
+  format the question is not settled at all, and the record says so instead of
+  choosing.
+
+  **Which family falls on which side is declared at the fixtures and
+  deliberately not listed here.** It was listed here, and the list went stale
+  three times — every family added changed the membership while the sentence
+  did not. It is now a required field on each fixture that partitions the
+  tests, so a wrong classification moves a family under a different claim
+  rather than quietly contradicting a paragraph. Every family is pinned either
+  way, because the gate is shared: a fix aimed only at the runnable ones would
+  leave the rest unexamined, and a file the sweep never opens is invisible for
+  every purpose rather than only for a deployment.
 
   **The rest fail the other way and assert the report**: a runbook sentence
   naming a write reports the deployment below it; a package manifest whose
@@ -257,7 +263,7 @@ to the code.
 | **#2116** | a manifest script that invokes a sibling does not see that sibling's config write |
 | **#2121** | a script declared in a package manifest is never split at its newlines, so a safety flag on one line covers a deployment on another — *pinned (silent pass)*; the mirror of #2118 |
 | **#2122** | a variable whose name differs only in case is not resolved, though that shell resolves it, so the deployment's directory reads as unknown — *pinned (silent pass)* |
-| **#2123** | a file whose name carries an upper-case extension is never found by the sweep that discovers files to read — *pinned*, table-driven across every family the sweep accepts, with a parity guard against the production list so the table cannot quietly become a subset again. **Mixed consequence**: a silent pass where the file would run regardless of its name, a discovery blind spot where it would not — the distinction is drawn above and established at the fixtures. Broad either way, since a file the sweep never yields is never examined at all — though one named explicitly by a file already being read IS opened, so the gap is in the discovery and not in the reading |
+| **#2123** | a file whose name carries an upper-case extension is never found by the sweep that discovers files to read — *pinned*, table-driven across every family the sweep accepts, with a parity guard against the production list so the table cannot quietly become a subset again. **Mixed consequence**: a silent pass where the file would run regardless of its name, a discovery blind spot where it would not — which family is which is declared and partitioned at the fixtures, deliberately not restated here. Broad either way, since a file the sweep never yields is never examined at all — though one named explicitly by a file already being read IS opened, so the gap is in the discovery and not in the reading |
 | **#2124** | a binding closed with that shell's ordinary statement terminator is not recognised, so the deployment's directory reads as unknown — *pinned (silent pass)* |
 | **#2126** | the command-name normalisation is applied on the strength of the INTERPRETER alone, without establishing how the runner resolves command names — so where that lookup is case-SENSITIVE the normalised spelling names a program the runner does not have, and the check reports it — *pinned (false report)*. Stating this as interpreter-versus-platform, as this row did, does not describe the pinned report: a host on another platform may resolve case-insensitively, and there the normalisation is harmless and the #2115 miss is the real defect. What is missing is not a platform test but an established lookup mode. The check's own comment states this must not happen. A companion claim about the path-separator normalisation was withdrawn, and the withdrawal is narrower than "that rewrite is fine": what was checked is a path given to the SHELL'S OWN commands, which reads the same either way on every platform, so the report there is correct. The same documentation warns the alternate separator "may not work when used with native applications that only expect the native directory separator" — and a deployment command is a native application. Nothing pins that case, because nothing demonstrates it; it is an open question, not an approval |
 | **#2085** | **no longer an open question — an open implementation gap.** The specification now REQUIRES a declaration from the deployment wherever answering would need another system's execution model, and the check still infers, so this is required work rather than design exploration. The three withdrawals are the evidence that settled it; the divergence is registered in [`_CodeVsDocsAudit.md`](../FunctionalSpecs/_CodeVsDocsAudit.md) as the principal one of this set |
@@ -270,4 +276,4 @@ continuous-integration system's execution model, a document format's grammar, a
 build tool's variable language — and this check is a scanner. Where such a model
 is genuinely needed, the answer is a declaration from the deployment itself
 rather than a better approximation here.
-<!-- assembled-fragment: 2084-deploy-guard-executable-image.md sha256=3913afac94dde2b15f9584c7202d084d6c7eca1eba1ecc4cf4bbb73e331d155b -->
+<!-- assembled-fragment: 2084-deploy-guard-executable-image.md sha256=5c2157adb2526eed3aba3e332b8d0c6b88402931484b79969034d7b3a8188f1f -->
