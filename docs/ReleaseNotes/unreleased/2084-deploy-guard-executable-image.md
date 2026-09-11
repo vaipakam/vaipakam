@@ -210,6 +210,19 @@ restated them, the restatements went stale as each was corrected, and round
 after round was spent finding a correction that had landed in one place and
 not its siblings. One record per defect, named from the others.
 
+The same reasoning is why this release note is **no longer where the rationale
+lives**. That rationale was carried in three places at once — a call-site
+comment, this note, and a single 3,692-word bullet in the functional
+specification — and the copies drifted exactly as the table's restatements had:
+a scope correction reached two of them and not the third, leaving the
+specification prescribing a remedy that would have introduced a silent pass.
+The record now has one home,
+[`DeployGuardRewriteScanRecord.md`](../../DesignsAndPlans/DeployGuardRewriteScanRecord.md);
+the specification carries the binding invariants and nothing else; this note
+says what landed. That split is itself part of what landed, and it is the same
+lesson the three withdrawn designs taught, applied to the documents rather than
+to the code.
+
 | | |
 | --- | --- |
 | **#2084** | a build file variable holding a write is not seen, when the assignment sits below the deployment — *pinned (miss)* |

@@ -8936,6 +8936,15 @@ for (const file of walk(REPO_ROOT)) {
   // Shell semantics apply to SHELL files. A redirection is a redirection in
   // shell text; in JavaScript the same character is a comparison (#2066 r10).
   const fileIsShell = Boolean(winInterp) || isShellFile(rel, text);
+  // THE RECORD FOR ALL OF THIS lives in ONE place —
+  // docs/DesignsAndPlans/DeployGuardRewriteScanRecord.md: the designs tried
+  // and withdrawn, the defect catalogue, and the interpreter/runner/language
+  // distinctions. What follows is deliberately NOT a copy of it. These are
+  // the warnings that belong at THIS call site because they are about the
+  // code immediately below, and a reader editing `forInterpreter` or
+  // `logicalLines` needs them here rather than one hop away. Scope claims
+  // about a defect belong to its fixtures, which is where they are checked.
+  //
   // THE REWRITE QUESTION IS ASKED OF THE FILE ESSENTIALLY AS WRITTEN. Two
   // exceptions predate this and stand — but the first of them is applied more
   // widely than its own justification reaches (r38), so read the note on the
