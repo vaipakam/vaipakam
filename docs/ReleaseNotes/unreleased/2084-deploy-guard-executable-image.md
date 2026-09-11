@@ -73,10 +73,19 @@ No behaviour change. The check's logic is what it was.
   for TWO different reasons, and which applies is recorded at each fixture
   rather than generalised here:
 
-  - the faulty step is **shared across hosts**, so a fix scoped to one host
-    would satisfy a single fixture and leave every other host wrong; or
+  - the faulty step is **shared**, so a fix gated on any one of the properties
+    the pins vary satisfies only the fixtures sharing that property and leaves
+    the rest wrong; or
   - the pins are **separately fixable routes** into one defect, where a fix for
     one genuinely can leave the other standing.
+
+  The first of those is **not** one pin per host, and saying so understated it:
+  where the pins vary along more than one property at once they are the
+  combinations, not a list. The backslash-fold defect is pinned across two
+  shell dialects AND two hosts — four fixtures for two independent properties
+  — so a fix gated on either property moves two of the four and only a
+  correction at the shared step moves all of them. How many properties a
+  given defect varies is recorded at its fixtures.
 
   An earlier draft of this paragraph gave the first as the reason for all of
   them. It is not: the two symptoms of the here-string defect go through
@@ -210,13 +219,13 @@ not its siblings. One record per defect, named from the others.
 | **#2112** | a runbook sentence naming a write reports the deployment below it — *pinned (false report)* |
 | **#2114** | a recipe marked by something other than a tab is not read as a recipe — *pinned (miss)* |
 | **#2118** | a deployment is lent a safety flag by the unrelated line above it, when that line ends in a character the shell does not treat as a continuation — *pinned (silent pass) four times, and its bounds pinned too* |
-| **#2119** | text in any file of the manifest's format is read as a command, so a description naming the deployment is reported as performing it — *pinned (false report) four times, because the scope was wrong in four separate ways*. The issue carries them; three of the four move together under one fix |
+| **#2119** | an ordinary single-value property, in any file of the manifest's format, is read as a command — so a description naming the deployment is reported as performing it — *pinned (false report) four times, because the scope was wrong in four separate ways*. The issue carries them; three of the four move together under one fix. **Not "any text in such a file"**: that wording was the value-kind overstatement the fixtures had already removed, and it is wrong in a way a fix would inherit — whether a list's entries are read depends on the file's LAYOUT, so the same words are passed over when the file is written compactly and read when it is written one entry to a line. The bound is pinned too, precisely so a fix aimed at the categorical version does not change the compact case, which behaves correctly today |
 | **#2110** | a folded workflow scalar's positions are not comparable with the file's |
 | **#2113** | a write assigned by a live conditional branch is not seen |
 | **#2106** | a build file's prerequisites are ordered as written, not as they run |
 | **#2108** | a step naming another interpreter has its body read as shell |
 | **#2104** | a deployment written as a single-line workflow step whose configuration cannot be read is not reported |
-| **#2115** | a body spelling the command in upper case, or in a mixed case OTHER than title case, is not seen (lowercase and title case are) — and the spelling that IS covered is matched inside a block the shell never executes, *pinned (false report)* in both a standalone helper and a continuous-integration step, as the trade any widening of that rule grows. **The miss is scoped by how the RUNNER RESOLVES COMMAND NAMES, not by the shell**, and this row has now been wrong about that scope twice, each time by naming something broader than the evidence. It first said "a Windows-shell body", which is the interpreter-vs-platform confusion #2126 exists to record — that shell also runs elsewhere. The correction then said "POSIX runners", which is still too broad: what is actually demonstrated is a **Linux runner with case-SENSITIVE lookup**, where the two spellings are different files. Other POSIX hosts need not behave that way — a case-insensitive filesystem resolves both to one executable, and there the miss is real again. So the verified claim is the narrow one, and every other resolution mode is explicitly OPEN rather than assumed either way. Where the mode is undeterminable — an unresolvable or matrix-selected runner — the two directions genuinely conflict: reporting risks naming a command that does not exist, and not reporting risks the silent pass this check must never produce. That choice is not made here; it belongs on the issue with the evidence, and pretending it was settled is how the row went wrong the first time |
+| **#2115** | a body spelling the command in upper case, or in a mixed case OTHER than title case, is not seen (lowercase and title case are) — and the spelling that IS covered is matched inside a block the shell never executes, *pinned (false report)* in both a standalone helper and a continuous-integration step, as the trade any widening of that rule grows. **The miss is scoped by how the RUNNER RESOLVES COMMAND NAMES, not by the shell**, and this row has now been wrong about that scope twice, each time by naming something broader than the evidence. It first said "a Windows-shell body", which is the interpreter-vs-platform confusion #2126 exists to record — that shell also runs elsewhere. The correction then said "POSIX runners", which was still too broad, so it was narrowed again: what is actually demonstrated is a **runner with case-SENSITIVE lookup**, which is what the fixture's `ubuntu-latest` provides and where the two spellings are different files. A host resolving case-insensitively maps both to one executable, and there the miss is real again — so the discriminator is the LOOKUP, and naming any platform family in its place has now been wrong three times running. So the verified claim is the narrow one, and every other resolution mode is explicitly OPEN rather than assumed either way. Where the mode is undeterminable — an unresolvable or matrix-selected runner — the two directions genuinely conflict: reporting risks naming a command that does not exist, and not reporting risks the silent pass this check must never produce. That choice is not made here; it belongs on the issue with the evidence, and pretending it was settled is how the row went wrong the first time |
 | **#2117** | the PowerShell path has no string state, so text inside a here-string is read as commands — *pinned (false report) twice, once per symptom, because they go through different preprocessing and a fix for one can leave the other*: a command named there is reported, and an assignment there is rewritten into a binding that makes a later indirect invocation resolve to a deployment the file never performs |
 | **#2116** | a manifest script that invokes a sibling does not see that sibling's config write |
 | **#2121** | a script declared in a package manifest is never split at its newlines, so a safety flag on one line covers a deployment on another — *pinned (silent pass)*; the mirror of #2118 |

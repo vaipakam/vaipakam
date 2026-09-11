@@ -4710,9 +4710,12 @@ describe('check-deploy-invocations — apps/agent scope (#1933)', () => {
     expect(r.ok).toBe(true);
   });
 
-  it('but on a POSIX path Wrangler is a different file (#1995 r16 control)', () => {
+  it('but under case-sensitive lookup Wrangler is a different file (#1995 r16 control)', () => {
     // Case-folding belongs where the interpreter is known; doing it everywhere
-    // would invent a command that does not exist on a POSIX runner.
+    // would invent a command that does not exist on a runner whose executable
+    // lookup is case-SENSITIVE — which is the discriminator, not the platform
+    // family (r45). A case-insensitive host resolves both spellings to one
+    // program, and this control says nothing about that case.
     expect(runWith('cs.sh', 'cd apps/agent\nWrangler deploy\n').ok).toBe(true);
   });
 
@@ -12324,7 +12327,8 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     // deploys anything; the here-string is inert.
     //
     // `windows-latest`, NOT ubuntu (r30): this check's own contract says
-    // `Wrangler` on a POSIX runner is a DIFFERENT executable, so pinning the
+    // `Wrangler` is a DIFFERENT executable where the runner resolves names
+    // case-sensitively, as `ubuntu-latest` does, so pinning the
     // trade on a Linux runner would rest on applying a Windows rewrite where
     // the rewrite's own reasoning says it should not apply — and a
     // runner-aware correction could then flip this fixture for a reason that
@@ -12350,17 +12354,29 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     `          ${cd}\n          ${cmd}\n` +
     '        shell: pwsh\n';
 
-  it('the CASING normalisation runs on a POSIX runner (#2126, stated false report)', () => {
+  it('the CASING normalisation runs on a case-sensitive runner (#2126, stated false report)', () => {
     // THE CASE I DISCARDED WHEN FIXING THE RUNNER, recorded instead of thrown
-    // away (r31). PowerShell runs on Linux, where `Wrangler` and `wrangler`
-    // are DIFFERENT files — so here the check reports a command the platform
-    // does not have.
+    // away (r31). PowerShell runs on Linux, and this fixture's runner —
+    // `ubuntu-latest` — resolves executables CASE-SENSITIVELY, so `Wrangler`
+    // and `wrangler` are different files and the check reports a command
+    // that runner does not have.
     //
-    // The sharp part: `windowsSeparators` carries a comment saying exactly
-    // this — "on a POSIX runner `Wrangler` is a different file, and matching
-    // it there would invent a command" — and then keys on the INTERPRETER
-    // rather than the platform. `pwsh` is cross-platform, so the rationale
-    // and the implementation disagree.
+    // THE DISCRIMINATOR IS THE LOOKUP, NOT THE PLATFORM FAMILY (r45). Do not
+    // read this fixture as "POSIX" or "Linux" categorically: a host that
+    // resolves executables case-INSENSITIVELY maps both spellings to one
+    // program, and there the #2115 miss is genuine, so a fix keyed on
+    // "not Windows" would turn this false report into a silent pass — the
+    // worse direction. Nothing in this suite exercises such a host; that
+    // mode is OPEN, not decided.
+    //
+    // The sharp part: `windowsSeparators` carries a comment reaching for
+    // exactly this point — that matching the capitalised spelling where the
+    // runner would not resolve it "would invent a command" — and then keys
+    // on the INTERPRETER rather than on the runner. `pwsh` is
+    // cross-platform, so the rationale and the implementation disagree.
+    // Quoted as the evidence of that disagreement and NOT as an authority on
+    // scope: that comment says "POSIX runner", which is the same
+    // over-generalisation corrected here.
     //
     // AN EXECUTABLE LINE, NOT A HERE-STRING (r33). The first version put the
     // mention inside an inert here-string, where the report comes from the
