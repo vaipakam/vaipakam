@@ -12061,7 +12061,7 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
         'writeFileSync("configs/custom.jsonc", generated) for you.\n\n' +
         '```bash\nwrangler deploy --config configs/custom.jsonc\n```\n',
     );
-    expect(r.ok).toBe(false);
+    expectReportedAt(r, 'docs/rb-prose.md');
   });
 
   it('the same runbook whose sentence names a READ passes (#2112 control)', () => {
@@ -12184,7 +12184,7 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
     seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
     const r = runWith('apps/agent/doc.ps1', "$doc = @'\nWrangler deploy\n'@\nWrite-Output $doc\n");
-    expect(r.ok).toBe(false);
+    expectReportedAt(r, 'apps/agent/doc.ps1');
   });
 
   it('an UPPER-case mention is not reported — the half a widening would flip (#2115 control)', () => {
@@ -12348,7 +12348,7 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
         "          cd apps/agent\n          $doc = @'\n          Wrangler deploy\n          '@\n" +
         '          Write-Output $doc\n        shell: pwsh\n',
     );
-    expect(r.ok).toBe(false);
+    expectReportedAt(r, '.github/workflows/d.yml');
   });
 
   const posixPwsh = (cd: string, cmd: string) =>
@@ -12390,7 +12390,7 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
     seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
     const r = runWith('.github/workflows/d.yml', posixPwsh('cd apps/agent', 'Wrangler deploy'));
-    expect(r.ok).toBe(false);
+    expectReportedAt(r, '.github/workflows/d.yml');
   });
 
   it('the lower-case spelling on the same runner genuinely runs (#2126 casing control)', () => {
@@ -12513,7 +12513,7 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
       '{"name":"@vaipakam/agent","description":"wrangler deploy",' +
         '"scripts":{"deploy":"wrangler deploy --keep-vars"}}\n',
     );
-    expect(r.ok).toBe(false);
+    expectReportedAt(r, 'apps/agent/package.json');
   });
 
   it('an ARRAY value is passed over when the line also carries a scalar (#2119 bound)', () => {
@@ -12558,7 +12558,7 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
       '{\n "name":"@vaipakam/agent",\n "keywords":[\n  "wrangler deploy"\n ],\n' +
         ' "scripts":{"deploy":"wrangler deploy --keep-vars"}\n}\n',
     );
-    expect(r.ok).toBe(false);
+    expectReportedAt(r, 'apps/agent/package.json');
   });
 
   it('a newline inside a manifest script is not a command boundary (#2121, stated false green)', () => {
@@ -12779,6 +12779,30 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
    * ever scanned, but it is run through the same helper so neither loop can
    * regrow the problem.
    */
+  /**
+   * A FALSE-REPORT PIN MUST ASSERT THE REPORT, NOT MERELY A NON-ZERO EXIT
+   * (r53). `runWith` maps EVERY `execFileSync` failure to `ok: false` — a
+   * crash, a timeout, a guard that threw on this specific input — which is
+   * the same value a genuine violation produces. So `expect(r.ok).toBe(false)`
+   * alone lets a pin claim "the check wrongly reports this" while the check
+   * actually fell over and reported nothing.
+   *
+   * The silent-pass pins do not need this: they assert `ok === true`, and a
+   * crash would flip that to false and FAIL them. The exposure is one-sided,
+   * which is why it survived until the family control was fixed the same way
+   * one round earlier and the question was asked of the rest.
+   */
+  const expectReportedAt = (
+    r: { ok: boolean; out: string },
+    rel: string,
+  ): void => {
+    expect(r.ok, `${rel} should be reported`).toBe(false);
+    expect(r.out, `${rel} should produce a violation report`).toContain(
+      'missing --keep-vars',
+    );
+    expect(r.out, `${rel} should be named in the report`).toContain(rel);
+  };
+
   const runFamilyAlone = (rel: string, body: string) => {
     // `"type": "module"` mirrors the real apps/agent manifest, so `.js` and
     // `.ts` helpers here are ESM exactly as they would be in the tree (r50).
@@ -12796,6 +12820,28 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     // #2123 IS NOT ABOUT `.ps1`, not about three families, and not about
     // shells. The gate is the shared case-sensitive extension test in `walk`,
     // so it is about every family the walk is supposed to yield.
+    //
+    // WHAT IS PINNED IS THE VERDICT: the file is never examined. The
+    // CONSEQUENCE differs by family and the distinction is recorded rather
+    // than smoothed over (r53).
+    //
+    //   - Shell families, `.py` and `.mk`: the interpreter does not care what
+    //     the file is called. `bash D.SH`, `python D.PY`, `make -f D.MK` all
+    //     run, so an unsafe deployment really does pass silently.
+    //   - The Node families: `node D.JS` does NOT run. It exits
+    //     `ERR_UNKNOWN_FILE_EXTENSION` before executing anything, for every
+    //     one of `.JS .MJS .TS .MTS .CJS .CTS` — verified on the Node in this
+    //     tree. So for those six, "an unsafe deployment passes silently"
+    //     overstates it: what is established is that the guard never looks at
+    //     the file, not that a deployment written there would run when
+    //     invoked by that name.
+    //
+    // They are pinned anyway, and not as a courtesy: the gate is SHARED, so a
+    // correction that special-cased the runnable families would leave these
+    // six unscanned — and a file the guard never opens is invisible for every
+    // purpose, not just for the deploy it might contain. What the pin must
+    // not do is claim a deployment that cannot happen, which is the
+    // right-verdict-impossible-premise trap this suite has now hit twice.
     for (const [ext, body] of WALK_HELPER_FAMILIES) {
       const r = runFamilyAlone(`apps/agent/D.${ext.toUpperCase()}`, body);
       expect(r.ok, `.${ext.toUpperCase()} should be bypassed by the walk`).toBe(
@@ -12872,7 +12918,7 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     seed('apps/agent/package.json', '{"name":"@vaipakam/agent","scripts":{"deploy":"wrangler deploy --keep-vars"}}\n');
     seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
     const r = runWith('apps/agent/metadata.jsonc', '{"name":"x"}\n// "note": "wrangler deploy"\n');
-    expect(r.ok).toBe(false);
+    expectReportedAt(r, 'apps/agent/metadata.jsonc');
   });
 
   it('an inert here-string is reported, reached via the separator rewrite (#2117, stated false report)', () => {
@@ -12912,7 +12958,7 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
     seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
     const r = runWith('scripts/sep.ps1', "$doc = @'\ncd apps\\agent\nwrangler deploy\n'@\nWrite-Output $doc\n");
-    expect(r.ok).toBe(false);
+    expectReportedAt(r, 'scripts/sep.ps1');
   });
 
   it('an inert here-string ASSIGNMENT invents the binding (#2117, stated false report)', () => {
@@ -12935,7 +12981,7 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
       'scripts/a.ps1',
       "cd apps/agent\n$doc = @'\n$cmd = 'wrangler'\n'@\nWrite-Output $doc\n& $cmd deploy\n",
     );
-    expect(r.ok).toBe(false);
+    expectReportedAt(r, 'scripts/a.ps1');
   });
 
   it('the same helper without the inert assignment passes (#2117 assignment control)', () => {
@@ -12979,7 +13025,7 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     seed('apps/agent/package.json', '{"name":"@vaipakam/agent","scripts":{"deploy":"wrangler deploy --keep-vars"}}\n');
     seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
     const r = runWith('apps/agent/metadata.json', '{"note":"wrangler deploy"}\n');
-    expect(r.ok).toBe(false);
+    expectReportedAt(r, 'apps/agent/metadata.json');
   });
 
   it('the same manifest with an ordinary description passes (#2119 control)', () => {
