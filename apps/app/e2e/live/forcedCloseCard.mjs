@@ -2414,6 +2414,15 @@ export function forcedCloseVerdict(obs, copy) {
   // EVERY RENDER THIS DRIVE CAPTURED, settled one first, each carrying
   // its own submit facts.
   //
+  // NOT A SECOND COPY OF `renders` above, though it looks like one and
+  // this PR's commonest finding is exactly that shape. They walk the same
+  // renders and read DIFFERENT TEXT, deliberately: the unsafe-control arm
+  // matches withheld copy anywhere on the CARD, because a live button
+  // beside such a sentence is wrong wherever the sentence sits, while
+  // these arms read the BODY first — round 12's rule, so the `lastOutcome`
+  // note about a PREVIOUS attempt cannot substantiate a claim about the
+  // current state. Collapsing them would silently pick one rule for both.
+  //
   // Declared here rather than beside the route arms that first needed it
   // (round 70), because the REFUSAL arms below need the same list — and
   // one notion of "what this drive saw" is the point. Hoisted by moving
