@@ -157,6 +157,30 @@ describe('the head sample waits for the readings in flight', () => {
     expect(decl).toContain('catch');
   });
 
+  // ROUND 86 P2 — and the interior scan is only worth taking when the
+  // FLOOR bounds something. A lagging page provider can serve a contract
+  // read from below every floor source this drive has, and scanning a span
+  // the card's data sits under proves nothing about that data however
+  // exhaustively it is read. The evidence is the ORDER of the endpoint's
+  // first head announcement and its first `eth_call`, which this drive can
+  // see because every page request goes through its interception.
+  it('only trusts the floor when the endpoint announced a head before reading', () => {
+    expect(at('function floorEstablishedFor(page)')).toBeGreaterThan(-1);
+    const fn = src.slice(at('function floorEstablishedFor(page)'), at('function floorEstablishedFor(page)') + 700);
+    // Both stamps, and the ordering test between them.
+    expect(fn).toContain('pageFirstHeadAt');
+    expect(fn).toContain('pageFirstReadAt');
+    expect(fn).toMatch(/head === undefined \|\| head > read/);
+    // `eth_call` and not any POST: counting `eth_chainId` or the head
+    // announcements themselves would make this permanently false and
+    // silently retire three protocol arms.
+    expect(src).toContain("body.includes('eth_call')");
+    // And the gate is actually consumed by both stability reads.
+    const both = src.slice(at('const floorSound ='), at('const floorSound =') + 1200);
+    expect(both).toMatch(/defaultableStable =\s*\n?\s*floorSound &&/);
+    expect(both).toMatch(/internalMatchStable =\s*\n?\s*floorSound &&/);
+  });
+
   // ROUND 85 P2 — the interior of the bracket is READ, not inferred from
   // its ends. Two matching endpoint samples say nothing about a value that
   // can round-trip inside the window.

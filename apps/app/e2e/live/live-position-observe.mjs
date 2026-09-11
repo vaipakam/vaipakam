@@ -2140,6 +2140,70 @@ const pageDiamondKeys = new WeakMap(); // page -> Set<key>
  */
 const pageHeadPending = new WeakMap(); // page -> Set<Promise<void>>
 
+/**
+ * WHEN each endpoint first announced a head, and when it first served a
+ * contract read. `page -> Map<key, epoch ms>`, one map each.
+ *
+ * ROUND 86 P2 — the evidence that decides whether the bracket's floor
+ * bounds anything. See `floorEstablishedFor`.
+ */
+const pageFirstHeadAt = new WeakMap(); // page -> Map<key, number>
+const pageFirstReadAt = new WeakMap(); // page -> Map<key, number>
+
+/**
+ * Can the bracket's lower end be trusted to sit at or below the block the
+ * card's data came from?
+ *
+ * ROUND 86 P2, and it is the question rounds 84 and 85 kept answering with
+ * a better guess instead of evidence.
+ *
+ * The floor is built from the page's first head announcement and from this
+ * drive's own pre-navigation sample. Neither bounds a read the page's
+ * provider served BEFORE it announced anything: a lagging provider can
+ * answer a contract read at block M while this observer was already at N,
+ * and both floor sources then sit above the state the card actually
+ * rendered. Around a grace transition between M and N the interior scan
+ * starts at N, finds the answer constant, and a legitimate block-M refusal
+ * render is blamed on the product.
+ *
+ * That ordering is OBSERVABLE, which is what makes this an answer rather
+ * than another estimate. Every page RPC goes through this drive's route
+ * interception, so it can see whether the endpoint announced a head BEFORE
+ * it served its first `eth_call`. If it did, the provider had reached that
+ * head before any contract read, and a read at `latest` afterwards cannot
+ * have been served from below it. If a read came first, nothing bounds it
+ * and the comparison is not established — the drive says so rather than
+ * accusing.
+ *
+ * `eth_call` specifically, not any POST: `eth_chainId` and the head
+ * announcements themselves are not state reads, and treating them as such
+ * would make this permanently false and silently retire the protocol arms.
+ *
+ * THE RESIDUAL, stated: this assumes an endpoint's head does not go
+ * BACKWARDS. A load-balanced pool serving one request from a lagging node
+ * can break that, and no amount of observation from outside will show it.
+ * It is a much narrower assumption than the one it replaces — the same
+ * URL regressing, rather than two independent providers being in step —
+ * and it is the same irreducible class as the observer/confirmer race this
+ * PR already states as a limit.
+ */
+function floorEstablishedFor(page) {
+  const diamond = pageDiamondKeys.get(page);
+  const heads = pageFirstHeadAt.get(page);
+  const reads = pageFirstReadAt.get(page);
+  if (!diamond || !heads || !reads) return false;
+  let sawHead = false;
+  for (const key of diamond) {
+    const head = heads.get(key);
+    const read = reads.get(key);
+    if (head !== undefined) sawHead = true;
+    // A read served before this endpoint announced anything, or before it
+    // announced its first head: nothing this drive saw bounds that read.
+    if (read !== undefined && (head === undefined || head > read)) return false;
+  }
+  return sawHead;
+}
+
 function watchPageHead(page) {
   const heads = new Map();
   const diamond = new Set();
@@ -2154,6 +2218,10 @@ function watchPageHead(page) {
   const foreign = new Set();
   const pending = new Set();
   const floors = new Map();
+  const firstHeadAt = new Map();
+  const firstReadAt = new Map();
+  pageFirstHeadAt.set(page, firstHeadAt);
+  pageFirstReadAt.set(page, firstReadAt);
   pageRpcHeads.set(page, heads);
   pageRpcHeadFloors.set(page, floors);
   pageDiamondKeys.set(page, diamond);
@@ -2376,6 +2444,20 @@ function watchPageHead(page) {
         ? await res.json().catch(() => undefined)
         : undefined;
       markDiamond(key, body, parsed);
+      // ROUND 86 P2 — WHEN, not only what. `floorEstablishedFor` needs the
+      // ORDER of this endpoint's first head announcement and its first
+      // contract read; without it the bracket's floor bounds nothing on a
+      // lagging provider. Stamped on the RESPONSE, which is the moment the
+      // page actually held the answer.
+      //
+      // `eth_call` only for the read side: `eth_chainId` and the head
+      // announcements are not state reads, and counting them would make
+      // the test permanently false and quietly retire three arms.
+      const stamp = (map) => {
+        if (!map.has(key)) map.set(key, Date.now());
+      };
+      if (announcesHead) stamp(firstHeadAt);
+      else if (body.includes('eth_call')) stamp(firstReadAt);
       // Cheap reject before parsing — most POSTs are not this.
       if (!announcesHead) return;
       // The PARSE is a pure function in `rpc-verdict.mjs`, tested
@@ -2550,11 +2632,19 @@ async function visit(path, { expectChooser = false, loan = null } = {}) {
   // a real fault loud — the pinned snapshot below makes the same call
   // under `discovery`, so an endpoint that cannot answer `getBlockNumber`
   // stops the run there, by name, a few seconds later.
+  //
+  // ROUND 86 P2 — AND ONLY ON A VISIT THAT WILL USE IT. `observeForcedClose`
+  // runs for a lender detail visit with a `loan`, so on the list route and
+  // on every borrower visit this was a chain read taken for nobody. Gated
+  // on the consumer's own condition rather than a copy of its intent, so
+  // the two cannot drift into disagreeing about which visits bracket.
   let headBeforeNav = null;
-  try {
-    headBeforeNav = await pub.getBlockNumber({ cacheTime: 0 });
-  } catch {
-    headBeforeNav = null;
+  if (ROLE === 'lender' && loan) {
+    try {
+      headBeforeNav = await pub.getBlockNumber({ cacheTime: 0 });
+    } catch {
+      headBeforeNav = null;
+    }
   }
   const pageErrors = [];
   const consoleErrors = [];
@@ -4027,8 +4117,18 @@ async function observeForcedClose(page, loan, headBeforeNav) {
   // round-trip inside an observation, and the close-out answer is the one
   // an accusation about a withheld card rests on. A fix applied to one of
   // several parallel sites is this PR's most repeated finding.
+  // ROUND 86 P2 — AND ONLY WHERE THE FLOOR BOUNDS ANYTHING.
+  //
+  // A scan of a span the card's data might sit BELOW proves nothing about
+  // that data, however exhaustively it is read. `floorEstablishedFor` is
+  // the evidence — did this endpoint announce a head before it served its
+  // first contract read — and where it is absent both answers stay `null`,
+  // which the verdict already reports as an incomplete observation.
+  const floorSound = floorEstablishedFor(page);
   const defaultableStable =
-    defaultableBefore !== undefined && defaultableBefore === pinnedDefaultable
+    floorSound &&
+    defaultableBefore !== undefined &&
+    defaultableBefore === pinnedDefaultable
       ? await discovery(
           `checking the close-out answer held across the bracket for loan ${loan.id}`,
           () =>
@@ -4038,7 +4138,7 @@ async function observeForcedClose(page, loan, headBeforeNav) {
         )
       : null;
   const internalMatchStable =
-    matchBefore !== undefined && matchBefore === pinnedMatch
+    floorSound && matchBefore !== undefined && matchBefore === pinnedMatch
       ? await discovery(
           `checking the settlement route held across the bracket for loan ${loan.id}`,
           () =>

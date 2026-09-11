@@ -2496,8 +2496,24 @@ export function forcedCloseVerdict(obs, copy) {
   const panelWasUp =
     obs.confirmAction?.present === true ||
     (Array.isArray(obs.confirmRowsText) && obs.confirmRowsText.length > 0);
+  // ROUND 86 P2 — AND THE PAINT READ IS THE THIRD NULL, which round 84
+  // left behind while fixing its two siblings.
+  //
+  // `painted` is `null` when the evaluation could not run at all — the
+  // control detached between its trial click and the paint read, or the
+  // injected predicate threw. Playwright's actionability suite ignores
+  // ancestor opacity, which is the entire reason this second question is
+  // asked, so a clickable-but-unread Back leaves the run having
+  // established nothing about whether the lender can SEE the only control
+  // for declining a fee-paying action. That fell through to `pass`.
+  //
+  // Written as a third disjunct rather than a second arm: all three are
+  // one sentence — the panel moved while its Back control was being read —
+  // and three arms with three messages is the drift this file keeps
+  // closing. `undefined` stays reserved for a record predating each field.
   if (
     (obs.backAction?.present === true && obs.backAction.clickable === null) ||
+    (obs.backAction?.present === true && obs.backAction.painted === null) ||
     (obs.backAction?.present === null && panelWasUp)
   ) {
     return {

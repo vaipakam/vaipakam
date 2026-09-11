@@ -5626,6 +5626,29 @@ describe('round 65 review findings', () => {
       );
       expect(noPanel.why ?? '').not.toMatch(/Back control/);
     });
+
+    // ROUND 86 P2 — THE THIRD NULL, which round 84 left behind while
+    // fixing its two siblings. `painted` is null when the evaluation could
+    // not run — the control detached between its trial click and the paint
+    // read, or the injected predicate threw — and Playwright's trial does
+    // not consider opacity, which is the entire reason the paint question
+    // is asked separately. A clickable-but-unread Back establishes nothing
+    // about whether the lender can SEE the only way to decline.
+    it('is equally incomplete when the paint read could not run', () => {
+      const v = forcedCloseVerdict(
+        { ...base, backAction: { present: true, clickable: true, painted: null } },
+        copy,
+      );
+      expect(v.verdict).toBe('blocked');
+      expect(v.blockedKind).toBe('incomplete');
+      // And a trialled, painted control is still a pass — the arm must not
+      // have swallowed the ordinary case.
+      const ok = forcedCloseVerdict(
+        { ...base, backAction: { present: true, clickable: true, painted: true } },
+        copy,
+      );
+      expect(ok.why ?? '').not.toMatch(/Back control/);
+    });
   });
 });
 
