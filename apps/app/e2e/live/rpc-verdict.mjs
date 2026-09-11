@@ -253,7 +253,17 @@ export function rpcRequestCalls(parsed) {
       c.jsonrpc === '2.0' &&
       typeof c.method === 'string' &&
       c.method.length > 0 &&
-      (c.params === undefined || (typeof c.params === 'object' && c.params !== null)),
+      (c.params === undefined || (typeof c.params === 'object' && c.params !== null)) &&
+      // ROUND 74 P2 — AND THE ID IS ONE OF THE THREE TYPES THE SPEC
+      // ALLOWS. Nothing validated it, so `true`, `[1]` or `{}` passed as
+      // well formed. A lenient provider echoing a boolean id then
+      // produced an `ok` ledger entry and the malformed request rode
+      // through the route gate; an OBJECT id is worse, because two
+      // separately parsed objects never match by identity, so the
+      // attribution fails and the page's own defect is reported as an
+      // infrastructure failure. Absent is fine — that is a
+      // notification.
+      (!('id' in c) || c.id === null || typeof c.id === 'string' || typeof c.id === 'number'),
   );
   return wellFormed ? calls : undefined;
 }
@@ -723,7 +733,18 @@ export function classifyRpcResponse(status, body, requestBody) {
 
   const parsed = parseJson(body);
   const statusOk = status >= 200 && status < 300;
-  const out = (c, verdict, why) => ({ key: callKey(c), method: String(c.method), verdict, why });
+  // `recoverable: false` marks a fault in the request ENVELOPE rather
+  // than in the call — see `summariseRpcLedger`, which must not let a
+  // later success for the same method and params erase it.
+  const out = (c, verdict, why, recoverable = true) => ({
+    key: callKey(c),
+    method: String(c.method),
+    verdict,
+    why,
+    // Carried ONLY when false, so every other outcome keeps the shape it
+    // has always had and nothing downstream has to learn a new field.
+    ...(recoverable ? {} : { recoverable: false }),
+  });
 
   // ROUND 73 P2 — A BATCH THAT REUSES A REQUEST ID IS MALFORMED, and
   // judged before the response is looked at, because this is a fact about
@@ -747,25 +768,51 @@ export function classifyRpcResponse(status, body, requestBody) {
   // carries none and expects no reply, so two of them are not a
   // collision; treating absent ids as equal would invent a product FAIL
   // out of a shape the spec allows.
+  //
+  // ROUND 74 P2 — AND `"id": null` IS PRESENT. A notification OMITS the
+  // member; an explicit null is an id the spec discourages but allows,
+  // and the response must echo it. The first version of this test read
+  // `c.id === undefined || c.id === null`, which conflated the two: two
+  // calls both carrying `"id": null` escaped the duplicate check
+  // entirely, and their replies were then filed as unattributable
+  // INFRASTRUCTURE failures rather than as the malformed request the page
+  // generated. `in` is what tells them apart.
+  //
+  // ROUND 74 P2 — AND A NOTIFICATION IS EXCLUDED FROM EVERY COMPLETENESS
+  // CHECK BELOW, not just this one. It expects no response member, so
+  // "omitted from the batch" and "no JSON came back" are the CORRECT
+  // outcomes for it, and recording either as `unreachable` exits 2 on a
+  // standards-compliant page.
+  const isNotification = (c) => !('id' in c);
+  const answerable = calls.filter((c) => !isNotification(c));
+
   const seenIds = new Set();
-  const reusedId = calls.some((c) => {
-    if (c.id === undefined || c.id === null) return false;
+  const reusedId = answerable.some((c) => {
     if (seenIds.has(c.id)) return true;
     seenIds.add(c.id);
     return false;
   });
   if (reusedId) {
-    return calls.map((c) => out(c, 'client-fault', 'duplicate id in the request batch'));
+    return answerable.map((c) =>
+      out(c, 'client-fault', 'duplicate id in the request batch', false),
+    );
   }
 
   // A status the page cannot see past: every call in the request failed,
   // whatever the body happens to contain. This is the plain-text 429 /
   // 5xx shape, and — per `answersDespiteStatus` — every non-2xx batch.
   if (!statusOk && !answersDespiteStatus(parsed)) {
+    // Notifications INCLUDED here, deliberately: a status the page cannot
+    // see past means the request never landed, and a notification that
+    // never landed was not delivered either. What follows is different —
+    // there the response arrived and simply carries nothing for a call
+    // that asked for nothing.
     return calls.map((c) => out(c, 'unreachable', `HTTP ${status}`));
   }
   if (parsed === undefined) {
-    return calls.map((c) => out(c, 'unreachable', `non-JSON response (HTTP ${status})`));
+    // An all-notification batch is answered with an empty body, commonly
+    // a 204. Nothing was asked for, so nothing is missing.
+    return answerable.map((c) => out(c, 'unreachable', `non-JSON response (HTTP ${status})`));
   }
 
   const members = Array.isArray(parsed) ? parsed : [parsed];
@@ -790,7 +837,7 @@ export function classifyRpcResponse(status, body, requestBody) {
   const whole = members.find((m) => m?.error && (m.id === null || m.id === undefined));
   if (whole) {
     const verdict = classifyRpcFailure(whole.error);
-    return calls.map((c) =>
+    return answerable.map((c) =>
       verdict === 'answered'
         ? answeredOutcome(c, whole.error?.code)
         : out(c, verdict, `json-rpc ${whole.error?.code}`),
@@ -826,11 +873,12 @@ export function classifyRpcResponse(status, body, requestBody) {
   // without consulting the id, so the id is not load-bearing here — but a
   // BATCH answered this way lost every member but one.
   if (!Array.isArray(parsed)) {
-    if (calls.length === 1) return [memberOutcome(calls[0], members[0])];
-    return calls.map((c) => out(c, 'unreachable', 'batch answered with a single response'));
+    if (answerable.length === 0) return [];
+    if (answerable.length === 1) return [memberOutcome(answerable[0], members[0])];
+    return answerable.map((c) => out(c, 'unreachable', 'batch answered with a single response'));
   }
 
-  const wanted = new Set(calls.map((c) => c.id));
+  const wanted = new Set(answerable.map((c) => c.id));
   const byId = new Map();
   let unattributable = false;
   for (const m of members) {
@@ -851,12 +899,12 @@ export function classifyRpcResponse(status, body, requestBody) {
   // and is still reported per call below — here there is no member left we
   // can trust, so nothing may be recorded as ok (#1529 review round 24).
   if (unattributable) {
-    return calls.map((c) =>
+    return answerable.map((c) =>
       out(c, 'unreachable', 'unexpected or duplicate member in batch response'),
     );
   }
 
-  return calls.map((c) => {
+  return answerable.map((c) => {
     const member = byId.get(c.id);
     // Nothing came back for this call. On a 200 that is a batch that
     // dropped a member — the read fails in the page, silently.
@@ -914,7 +962,24 @@ export function summariseRpcLedger(ledger) {
   const seen = new Set();
   ledger.forEach((e, i) => {
     if (e.verdict === 'ok') return;
-    if ((lastOk.get(e.key) ?? -1) > i) return; // recovered on a later attempt
+    // ROUND 74 P2 — A FAULT IN THE REQUEST ENVELOPE IS NOT RECOVERABLE.
+    //
+    // The round-23 rule exists for viem's retries and endpoint fallback,
+    // and it is sound for a fault that is a property of the CALL: a
+    // `callKey` is method plus params, so the same method and params
+    // succeeding later proves the earlier `-32602` was the provider being
+    // wrong rather than the page being malformed. That test stays green
+    // and stays right.
+    //
+    // A DUPLICATE ID is a property of the BATCH ENVELOPE, which no
+    // `callKey` carries — ids are deliberately excluded from it. So the
+    // very next refresh of the same read cleared the finding, and the
+    // drive exited 0 having watched the page consume ambiguously
+    // attributed answers. The finding as reported said "only
+    // `unreachable` is recoverable", which would have taken round 23's
+    // case with it; what actually distinguishes them is what the fault is
+    // a property of, so that is what is recorded.
+    if (e.recoverable !== false && (lastOk.get(e.key) ?? -1) > i) return;
     // One entry per (verdict, call, reason): a read retried three times
     // and still dead is one problem, not three.
     const dedupe = `${e.verdict}|${e.key}|${e.why}`;

@@ -543,12 +543,18 @@ test('a receipt row with a blank label is not a readable row', async ({ page }) 
   // its raw text as the disclosure is what let filler stand in for the
   // funds figures.
   expect(result.fillerRowReadable, 'painted filler makes the row readable').toBe(true);
-  // No space between the two painted runs: the join is deliberately
-  // empty so that a label split across elements (`<b>Loan</b>s`) does not
-  // become `Loan s` when compared against shipped copy with `includes`.
-  // I expected a space here and the fixture said otherwise, which is the
-  // right way round for a rule that has to match real strings.
-  expect(result.fillerRowPaintedText, 'the painted runs, joined').toBe('—2% of interest');
+  // No space between two painted runs INSIDE one line: the join is
+  // deliberately empty so that a label split across elements
+  // (`<b>Loan</b>s`) does not become `Loan s` when compared against
+  // shipped copy with `includes`.
+  //
+  // ROUND 74 P2 — but a LINE BREAK survives. `dt` and `dd` are separate
+  // boxes, so `innerText` puts them on separate lines, and round 24 made
+  // that newline a clause boundary the amount scanner relies on: without
+  // it a duration on one line and a ticker on the next read as one
+  // clause and produced a false funds FAIL. This assertion said
+  // `—2% of interest` until the boundary came back.
+  expect(result.fillerRowPaintedText, 'the painted runs, joined').toBe('—\n2% of interest');
   expect(result.fillerRowPaintedText, 'and NOT the erased label').not.toContain('Fees');
   expect(result.fillerRowInnerText, 'while innerText still carries it').toContain('Fees');
 
@@ -615,6 +621,7 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
   expect(arrowBlocks(src, 'visibleTextOf', 'root')).toHaveLength(2);
   expect(arrowBlocks(src, 'textLeavesOf', 'root'), 'replaced').toHaveLength(0);
 
+
   // AND THE TWO COPIES MUST AGREE, which nothing asserted when they were
   // written. `visible` has a whole test for this property because its two
   // copies had already drifted (#2102); a second duplicated helper with
@@ -674,6 +681,20 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
         <span class="srOnly">Forced close-out</span>
         <p>This loan can be closed out now.</p>
       </div>
+      <!-- ROUND 74 P2 — rendered line boundaries. Two rows must not read
+           as one clause: round 24 made the newline a clause boundary, and
+           joining every run with nothing deleted it, so a ticker on the
+           second line looked adjacent to a duration on the first and the
+           amount scanner emitted a false funds FAIL. -->
+      <div class="body" id="twoLines">
+        <p>Wait 3 days</p>
+        <p>USDC is returned later</p>
+      </div>
+      <!-- And the rule round 66 exists for must survive it: an INLINE
+           split is still joined with nothing, or a bolded word becomes
+           two words and stops matching shipped copy. -->
+      <div class="body" id="inlineSplit"><b>Loan</b>s are closed out</div>
+      <div class="body" id="withBreak">Wait 3 days<br>USDC is returned later</div>
     </div>
   `);
 
@@ -727,6 +748,11 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
           return (b.innerText ?? '').trim() === '' || scope.visibleTextOf(b) !== '';
         })(),
         withSrOnly: bodyVisible(byId('withSrOnly')),
+        // ROUND 74 P2 — rendered line boundaries survive, inline runs do
+        // not gain one.
+        twoLinesPaintedText: scope.visibleTextOf(byId('twoLines')),
+        inlineSplitPaintedText: scope.visibleTextOf(byId('inlineSplit')),
+        withBreakPaintedText: scope.visibleTextOf(byId('withBreak')),
         // The hole itself, recorded rather than assumed: each wrapper
         // still passes the predicate on its own. If one of these ever
         // reads false the leaf rule is no longer what is being tested.
@@ -831,4 +857,23 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
   expect(result.wrapperLooksVisible.erased).toBe(true);
   expect(result.wrapperLooksVisible.clipped).toBe(true);
   expect(result.textStillReadable).toBe(true);
+
+  // ROUND 74 P2 — THE BOUNDARY RULE, both directions.
+  //
+  // `innerText` puts a newline between rendered blocks and round 24 made
+  // that newline a clause boundary the amount scanner relies on. Joining
+  // every painted run with nothing deleted it, so `Wait 3 days` above
+  // `USDC is returned later` read as one clause and produced an observed
+  // funds FAIL on correct copy. The opposite rule still holds inside a
+  // line: an inline split must not gain a separator, or `<b>Loan</b>s`
+  // becomes `Loan s` and stops matching shipped copy with `includes`.
+  expect(result.twoLinesPaintedText, 'two rows stay two clauses').toBe(
+    'Wait 3 days\nUSDC is returned later',
+  );
+  expect(result.inlineSplitPaintedText, 'an inline split gains nothing').toBe(
+    'Loans are closed out',
+  );
+  expect(result.withBreakPaintedText, 'a <br> breaks the line').toBe(
+    'Wait 3 days\nUSDC is returned later',
+  );
 });

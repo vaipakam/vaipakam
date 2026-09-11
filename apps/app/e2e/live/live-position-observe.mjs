@@ -1307,6 +1307,50 @@ if (ROLE === 'lender') {
   });
 }
 
+// ROUND 74 P2 — CONFIRMATION CAPABILITY IS RESOLVED BEFORE THE AUTHORITY
+// CHOICE, which is the fourth time this same lesson has been applied.
+//
+// The comment below already records it twice: ranking fixed inside the
+// SELECTED authority's walk cannot recover a better candidate one
+// authority away, because by then `mine` is fixed. My round-72 promotion
+// of close-out-capable positions went in at exactly that level, so a
+// lender with several non-defaultable Active loans still outranks a
+// lender holding one the protocol would accept — and the capped walk
+// cannot reach the latter, exiting 2 to claim the confirmation was never
+// observable.
+//
+// Resolved ONCE here, across every authority, and the same answer feeds
+// both the choice and the walk — the shape `acceptedSale` already uses.
+//
+// PAID FOR ONLY WHEN IT CAN CHANGE SOMETHING: more than one authority to
+// choose between, or a single authority holding more eligible loans than
+// the visit cap. Otherwise every candidate is visited whatever the order
+// and a simulate per loan is pure cost.
+//
+// PROMOTES ON A POSITIVE ANSWER ONLY. `probeCloseOut` answers `undefined`
+// when it could not ask, and ranking a candidate down on a failed read
+// hands the run to a worse one on no evidence — the rule the
+// accepted-sale resolution above states for itself.
+//
+// ORDERING ONLY. The protocol accepting a close-out is not the card
+// offering one, and this probe is unpinned; no verdict reads it.
+const acceptsCloseOut = new Set();
+{
+  const authorities = new Set(eligible.map((l) => l.authority.toLowerCase()));
+  const perAuthority = new Map();
+  for (const l of eligible) {
+    const k = l.authority.toLowerCase();
+    perAuthority.set(k, (perAuthority.get(k) ?? 0) + 1);
+  }
+  const capBinds = [...perAuthority.values()].some((n) => n > MAX_POSITIONS);
+  if (ROLE === 'lender' && (authorities.size > 1 || capBinds)) {
+    for (const l of eligible) {
+      if (l.status !== STATUS_ACTIVE || acceptedSale.has(l.id)) continue;
+      if ((await probeCloseOut(l.id)) === true) acceptsCloseOut.add(l.id);
+    }
+  }
+}
+
 // The observed address: whichever authority on the CHOSEN side holds the
 // most eligible loans, so one session covers as many position pages as
 // possible.
@@ -1361,8 +1405,14 @@ if (!observed) {
   // call.
   const applicableCount = (loans) =>
     loans.filter((l) => l.status === STATUS_ACTIVE && !acceptedSale.has(l.id)).length;
+  const capableCount = (loans) => loans.filter((l) => acceptsCloseOut.has(l.id)).length;
   const [best] = [...byAuthority.entries()].sort((a, b) => {
     if (ROLE === 'lender') {
+      // Ahead of mere applicability: a card that MOUNTS still need not
+      // OFFER anything, and the confirmation can only be read on one that
+      // does (round 74).
+      const byCapable = (capableCount(b[1]) > 0 ? 1 : 0) - (capableCount(a[1]) > 0 ? 1 : 0);
+      if (byCapable !== 0) return byCapable;
       const byApplicable =
         (applicableCount(b[1]) > 0 ? 1 : 0) - (applicableCount(a[1]) > 0 ? 1 : 0);
       if (byApplicable !== 0) return byApplicable;
@@ -4436,6 +4486,27 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
           // gating descent on the full `visible` discarded that child — a
           // product FAIL on a card whose explanation is painted, which is
           // the direction this file refuses everywhere else.
+          // ROUND 74 P2 — RENDERED LINE BOUNDARIES SURVIVE THE WALK.
+          //
+          // `innerText` inserts a newline between rendered blocks, and round 24
+          // made that newline a CLAUSE BOUNDARY: `Wait 3 days` above `USDC is
+          // returned later` is two rows, so the ticker is not near the duration.
+          // Round 66 moved the scans onto this painted walk and joined every
+          // text node with nothing, which silently deleted that boundary — so
+          // correct copy on two lines read as one clause and the amount scanner
+          // emitted an observed funds FAIL on an allowed grace duration. A false
+          // FAIL on funds copy, introduced by the fix that made the reading
+          // honest.
+          //
+          // A newline is emitted around a child that BREAKS THE LINE and never
+          // around an inline one, which is what keeps round 66's other rule
+          // intact: `<b>Loan</b>s` must not become `Loan s`. `inline-block` and
+          // `contents` do not break, matching what `innerText` does; `<br>` does,
+          // unless it is display:none.
+          const breaksLine = (el) => {
+            const d = getComputedStyle(el).display;
+            return d !== 'contents' && !d.startsWith('inline') && !d.startsWith('ruby');
+          };
           const walk = (node) => {
             const ownPainted = paintsText(node);
             for (const child of node.childNodes) {
@@ -4443,13 +4514,25 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
                 if (ownPainted) parts.push(child.textContent);
               } else if (child.nodeType === 1) {
                 if (unpainted.test(child.tagName)) continue;
+                if (child.tagName === 'BR') {
+                  if (getComputedStyle(child).display !== 'none') parts.push('\n');
+                  continue;
+                }
                 if (!shownBox(child)) continue;
+                const boundary = breaksLine(child);
+                if (boundary) parts.push('\n');
                 walk(child);
+                if (boundary) parts.push('\n');
               }
             }
           };
           walk(root);
-          return parts.join('').replace(/\s+/g, ' ').trim();
+          // Horizontal whitespace collapses; the deliberate breaks do not.
+          return parts
+            .join('')
+            .replace(/[^\S\n]+/g, ' ')
+            .replace(/[^\S\n]*\n[\s]*/g, '\n')
+            .trim();
         };
         const bodyVisibleText = visibleTextOf(body);
         // ROUND 26 P2 — EVERY SUBMIT CONTROL, not whichever is first.
@@ -5925,6 +6008,27 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
               // gating descent on the full `visible` discarded that child — a
               // product FAIL on a card whose explanation is painted, which is
               // the direction this file refuses everywhere else.
+              // ROUND 74 P2 — RENDERED LINE BOUNDARIES SURVIVE THE WALK.
+              //
+              // `innerText` inserts a newline between rendered blocks, and round 24
+              // made that newline a CLAUSE BOUNDARY: `Wait 3 days` above `USDC is
+              // returned later` is two rows, so the ticker is not near the duration.
+              // Round 66 moved the scans onto this painted walk and joined every
+              // text node with nothing, which silently deleted that boundary — so
+              // correct copy on two lines read as one clause and the amount scanner
+              // emitted an observed funds FAIL on an allowed grace duration. A false
+              // FAIL on funds copy, introduced by the fix that made the reading
+              // honest.
+              //
+              // A newline is emitted around a child that BREAKS THE LINE and never
+              // around an inline one, which is what keeps round 66's other rule
+              // intact: `<b>Loan</b>s` must not become `Loan s`. `inline-block` and
+              // `contents` do not break, matching what `innerText` does; `<br>` does,
+              // unless it is display:none.
+              const breaksLine = (el) => {
+                const d = getComputedStyle(el).display;
+                return d !== 'contents' && !d.startsWith('inline') && !d.startsWith('ruby');
+              };
               const walk = (node) => {
                 const ownPainted = paintsText(node);
                 for (const child of node.childNodes) {
@@ -5932,13 +6036,25 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
                     if (ownPainted) parts.push(child.textContent);
                   } else if (child.nodeType === 1) {
                     if (unpainted.test(child.tagName)) continue;
+                    if (child.tagName === 'BR') {
+                      if (getComputedStyle(child).display !== 'none') parts.push('\n');
+                      continue;
+                    }
                     if (!shownBox(child)) continue;
+                    const boundary = breaksLine(child);
+                    if (boundary) parts.push('\n');
                     walk(child);
+                    if (boundary) parts.push('\n');
                   }
                 }
               };
               walk(root);
-              return parts.join('').replace(/\s+/g, ' ').trim();
+              // Horizontal whitespace collapses; the deliberate breaks do not.
+              return parts
+                .join('')
+                .replace(/[^\S\n]+/g, ' ')
+                .replace(/[^\S\n]*\n[\s]*/g, '\n')
+                .trim();
             };
             const rowShown = (row) => {
               if (!visible(row)) return false;
@@ -7316,28 +7432,17 @@ visited.push(await visit('/positions'));
 // if every sliced row raced out it reported BLOCKED while eligible
 // candidates sat untried behind the slice (#1529 review round 9).
 let observedDetails = 0;
-// WHICH CANDIDATES GO FIRST — the rules, their three rounds of history
-// and the reasoning are in `walkOrder.mjs`, where they are a pure
-// function with tests rather than three comment blocks around one
-// expression. This file supplies the ANSWERS and does the asking.
+// WHICH CANDIDATES GO FIRST — the rules, their four rounds of history and
+// the reasoning are in `walkOrder.mjs`, where they are a pure function
+// with tests rather than four comment blocks around one expression. This
+// file supplies the ANSWERS and does the asking.
 //
-// `acceptedSale` is resolved once, above the authority choice, so the
-// walk consumes the same answer rather than asking again against a
-// different candidate set.
-//
-// The close-out probe runs ONLY where the cap actually binds: below it
-// every candidate is visited whatever the order, and a simulate per loan
-// would be pure cost. It promotes on a positive answer only — `undefined`
-// means the drive could not ask, and ranking on a failed read would cost
-// the run the coverage the promotion exists to secure. Ordering only: no
-// verdict reads it.
-const acceptsCloseOut = new Set();
-if (ROLE === 'lender' && mine.length > MAX_POSITIONS) {
-  for (const l of mine) {
-    if (l.status !== STATUS_ACTIVE || acceptedSale.has(l.id)) continue;
-    if ((await probeCloseOut(l.id)) === true) acceptsCloseOut.add(l.id);
-  }
-}
+// BOTH answers are resolved once, above the authority choice, so the walk
+// consumes exactly what the choice did rather than asking again against a
+// different candidate set. Round 74 moved `acceptsCloseOut` up there for
+// the reason `acceptedSale` was moved before it: a ranking applied only
+// to the selected authority's loans cannot recover a better candidate one
+// authority away.
 const readyFirst = walkOrderFor({
   loans: mine,
   role: ROLE,
@@ -7347,9 +7452,9 @@ const readyFirst = walkOrderFor({
 });
 if (acceptsCloseOut.size > 0) {
   console.log(
-    `\npromoted ${acceptsCloseOut.size} position(s) the protocol would accept a close-out on` +
-      `\n  → ${mine.length} eligible loan(s) against a cap of ${MAX_POSITIONS}, so the order decides ` +
-      `whether the confirmation can be scanned at all.` +
+    `\nresolved close-out capability on ${acceptsCloseOut.size} position(s) across every authority` +
+      `\n  → ${mine.length} eligible loan(s) here against a cap of ${MAX_POSITIONS}, so this decides both ` +
+      `which lender is observed and whether the confirmation can be scanned at all.` +
       `\n  → ordering only: the protocol accepting is not the card offering it, and no verdict reads this.`,
   );
 }

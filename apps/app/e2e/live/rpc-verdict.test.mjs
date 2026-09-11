@@ -140,6 +140,63 @@ describe('classifyRpcResponse', () => {
     expect(verdicts(out)).toEqual(['ok']);
   });
 
+  // ROUND 74 P2 — a notification asks for nothing, so nothing is missing.
+  describe('notifications and response completeness', () => {
+    const notify = (method) => ({ jsonrpc: '2.0', method, params: [] });
+
+    it('records nothing for an all-notification batch answered with no body', () => {
+      expect(
+        classifyRpcResponse(204, '', JSON.stringify([notify('eth_call')])),
+      ).toEqual([]);
+    });
+
+    it('records nothing for a single notification answered with no body', () => {
+      expect(classifyRpcResponse(200, '', JSON.stringify(notify('eth_call')))).toEqual([]);
+    });
+
+    it('does not report a notification omitted from a mixed batch', () => {
+      const out = classifyRpcResponse(
+        200,
+        JSON.stringify([{ jsonrpc: '2.0', id: 1, result: '0x1' }]),
+        JSON.stringify([{ jsonrpc: '2.0', id: 1, method: 'eth_call', params: [] }, notify('eth_chainId')]),
+      );
+      expect(verdicts(out)).toEqual(['ok']);
+    });
+
+    it('still reports every call when the STATUS failed', () => {
+      // A status the page cannot see past means the request never landed,
+      // and a notification that never landed was not delivered either.
+      const out = classifyRpcResponse(503, 'nope', JSON.stringify([notify('eth_call')]));
+      expect(verdicts(out)).toEqual(['unreachable']);
+    });
+  });
+
+  // ROUND 74 P2 — ids must be one of the three types the spec allows.
+  describe('request ids outside the JSON-RPC types', () => {
+    for (const [label, id] of [
+      ['a boolean', true],
+      ['an array', [1]],
+      ['an object', { a: 1 }],
+    ]) {
+      it(`refuses ${label} id as a well-formed request`, () => {
+        expect(
+          rpcRequestCalls([{ jsonrpc: '2.0', id, method: 'eth_call', params: [] }]),
+        ).toBeUndefined();
+      });
+    }
+
+    it('accepts the three the spec allows, and an absent one', () => {
+      for (const c of [
+        { jsonrpc: '2.0', id: 1, method: 'eth_call', params: [] },
+        { jsonrpc: '2.0', id: 'a', method: 'eth_call', params: [] },
+        { jsonrpc: '2.0', id: null, method: 'eth_call', params: [] },
+        { jsonrpc: '2.0', method: 'eth_call', params: [] },
+      ]) {
+        expect(rpcRequestCalls([c])).toHaveLength(1);
+      }
+    });
+  });
+
   // ROUND 73 P2 — ids are how a batch's answers are attributed.
   describe('a batch that reuses a request id', () => {
     it('is a client fault, whatever came back', () => {
@@ -174,6 +231,20 @@ describe('classifyRpcResponse', () => {
         rpcReq(call(1), call(2)),
       );
       expect(verdicts(out)).toEqual(['ok', 'ok']);
+    });
+
+    it('treats an explicit null id as PRESENT (round 74)', () => {
+      // A notification OMITS the member. An explicit null is an id the
+      // spec discourages but allows, and the response must echo it — so
+      // two of them collide like any other pair.
+      const nulled = (method) => ({ jsonrpc: '2.0', id: null, method, params: [] });
+      const out = classifyRpcResponse(
+        200,
+        JSON.stringify([{ jsonrpc: '2.0', id: null, result: '0x1' }]),
+        JSON.stringify([nulled('eth_call'), nulled('eth_blockNumber')]),
+      );
+      expect(verdicts(out)).toEqual(['client-fault', 'client-fault']);
+      expect(out[0].why).toMatch(/duplicate id/);
     });
 
     it('does not treat two ID-LESS notifications as a collision', () => {
@@ -690,6 +761,24 @@ describe('recordRpcResponse + summariseRpcLedger', () => {
         ),
       );
       expect(out).toEqual({ malformed: [], unreachable: [] });
+    });
+
+    // ROUND 74 P2 — but an ENVELOPE fault is not recoverable, because
+    // `callKey` is method plus params and carries no id at all, so the
+    // very next refresh of the same read shared its key and erased it.
+    it('keeps a duplicate-id fault despite a later success on the same key', () => {
+      const out = summariseRpcLedger(
+        ledgerOf(
+          attempt(
+            200,
+            JSON.stringify([{ jsonrpc: '2.0', id: 1, result: '0x1' }]),
+            rpcReq(call(1, 'eth_call'), call(1, 'eth_call')),
+          ),
+          attempt(200, okBody(1), rpcReq(call(1, 'eth_call'))),
+        ),
+      );
+      expect(out.malformed).toHaveLength(1);
+      expect(out.malformed[0].why).toMatch(/duplicate id/);
     });
 
     it('does NOT let an earlier success clear a later failure', () => {

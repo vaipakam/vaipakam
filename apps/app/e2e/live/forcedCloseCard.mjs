@@ -2366,12 +2366,77 @@ export function forcedCloseVerdict(obs, copy) {
   // So the accusation requires the window to have been quiet AND
   // refusing throughout. A disagreement of either kind is reported
   // below as an incomplete observation.
-  const readyOffered =
-    actionOffered &&
+  // EVERY RENDER THIS DRIVE CAPTURED, settled one first, each carrying
+  // its own submit facts.
+  //
+  // NOT A SECOND COPY OF `renders` above, though it looks like one and
+  // this PR's commonest finding is exactly that shape. They walk the same
+  // renders and read DIFFERENT TEXT, deliberately: the unsafe-control arm
+  // matches withheld copy anywhere on the CARD, because a live button
+  // beside such a sentence is wrong wherever the sentence sits, while
+  // these arms read the BODY first — round 12's rule, so the `lastOutcome`
+  // note about a PREVIOUS attempt cannot substantiate a claim about the
+  // current state. Collapsing them would silently pick one rule for both.
+  //
+  // Declared here rather than beside the route arms that first needed it
+  // (round 70), because the REFUSAL arms below need the same list — and
+  // one notion of "what this drive saw" is the point. Hoisted by moving
+  // the whole declaration, not by slicing the file: an earlier attempt at
+  // that swept two unrelated arms above their own declarations and put
+  // 183 tests into a temporal dead zone.
+  //
+  // `offeredIn` is exactly the expression `actionOffered` uses, so one
+  // render is judged by one rule wherever it appears. It reads a render
+  // carrying NEITHER field as OFFERED — `!== false` passes and
+  // `!undefined` passes — which is the same default `actionOffered`
+  // takes: silence is not evidence against the offer. Confined to
+  // hand-written records either way, since the scrape sets both fields on
+  // every render and an absent control yields `submitVisible: false` with
+  // `submitDisabled: true` rather than silence.
+  const offeredIn = (r) => r?.submitVisible !== false && !r?.submitDisabled;
+  const capturedRenders = [
+    {
+      visibleText: obs.bodyVisibleText ?? obs.bodyText ?? obs.visibleText ?? obs.text,
+      // The WHOLE card's painted text beside the body-first reading. The
+      // ready-state arms have always matched against the card, the
+      // refusal and route arms against the body; carrying both keeps each
+      // arm on the text it was written for instead of silently switching
+      // one of them when this list was shared out (round 74).
+      cardText: obs.visibleText ?? obs.text,
+      offered: actionOffered,
+    },
+    ...(Array.isArray(obs.seenRenders)
+      ? obs.seenRenders.map((r) => ({
+          visibleText: r?.bodyVisibleText ?? r?.bodyText ?? r?.visibleText ?? r?.text,
+          cardText: r?.visibleText ?? r?.text,
+          offered: offeredIn(r),
+        }))
+      : []),
+  ];
+  const paintedIn = (renderText, sentence) =>
+    typeof sentence === 'string' &&
+    sentence !== '' &&
+    typeof renderText === 'string' &&
+    renderText.includes(sentence);
+
+  // ROUND 74 P2 — IN EVERY CAPTURED RENDER, each on its own submit facts.
+  //
+  // Derived from the settled snapshot alone, this skipped all three arms
+  // it gates whenever the card ENDED somewhere else: a render offering a
+  // ready route with a live button, settling into `ready-needs-route`,
+  // left a lender who was briefly offered a fee-paying transaction the
+  // protocol would reject — and the run passed. The unsafe-control arm
+  // does not cover it either, since its copy is a WITHHELD state and this
+  // one is ready.
+  //
+  // `cardText`, which is what this test has always read. The refusal and
+  // route arms read the body; keeping both on the list means sharing it
+  // out did not quietly switch either.
+  const readyOfferedIn = (r) =>
+    r.offered &&
     Array.isArray(copy?.readyCopy) &&
-    copy.readyCopy.some(
-      (sentence) => typeof sentence === 'string' && sentence && (obs.visibleText ?? obs.text ?? '').includes(sentence),
-    );
+    copy.readyCopy.some((sentence) => paintedIn(r.cardText, sentence));
+  const readyOffered = capturedRenders.some(readyOfferedIn);
   const bracketDisagrees =
     'defaultableBefore' in obs &&
     obs.defaultableBefore !== undefined &&
@@ -2411,51 +2476,6 @@ export function forcedCloseVerdict(obs, copy) {
     sentence !== '' &&
     (obs.bodyVisibleText ?? obs.bodyText ?? obs.visibleText ?? obs.text ?? '').includes(sentence);
 
-  // EVERY RENDER THIS DRIVE CAPTURED, settled one first, each carrying
-  // its own submit facts.
-  //
-  // NOT A SECOND COPY OF `renders` above, though it looks like one and
-  // this PR's commonest finding is exactly that shape. They walk the same
-  // renders and read DIFFERENT TEXT, deliberately: the unsafe-control arm
-  // matches withheld copy anywhere on the CARD, because a live button
-  // beside such a sentence is wrong wherever the sentence sits, while
-  // these arms read the BODY first — round 12's rule, so the `lastOutcome`
-  // note about a PREVIOUS attempt cannot substantiate a claim about the
-  // current state. Collapsing them would silently pick one rule for both.
-  //
-  // Declared here rather than beside the route arms that first needed it
-  // (round 70), because the REFUSAL arms below need the same list — and
-  // one notion of "what this drive saw" is the point. Hoisted by moving
-  // the whole declaration, not by slicing the file: an earlier attempt at
-  // that swept two unrelated arms above their own declarations and put
-  // 183 tests into a temporal dead zone.
-  //
-  // `offeredIn` is exactly the expression `actionOffered` uses, so one
-  // render is judged by one rule wherever it appears. It reads a render
-  // carrying NEITHER field as OFFERED — `!== false` passes and
-  // `!undefined` passes — which is the same default `actionOffered`
-  // takes: silence is not evidence against the offer. Confined to
-  // hand-written records either way, since the scrape sets both fields on
-  // every render and an absent control yields `submitVisible: false` with
-  // `submitDisabled: true` rather than silence.
-  const offeredIn = (r) => r?.submitVisible !== false && !r?.submitDisabled;
-  const capturedRenders = [
-    {
-      visibleText: obs.bodyVisibleText ?? obs.bodyText ?? obs.visibleText ?? obs.text,
-      offered: actionOffered,
-    },
-    ...(Array.isArray(obs.seenRenders)
-      ? obs.seenRenders.map((r) => ({
-          visibleText: r?.bodyVisibleText ?? r?.bodyText ?? r?.visibleText ?? r?.text,
-          offered: offeredIn(r),
-        }))
-      : []),
-  ];
-  const paintedIn = (renderText, sentence) =>
-    typeof sentence === 'string' &&
-    sentence !== '' &&
-    typeof renderText === 'string' &&
-    renderText.includes(sentence);
 
   // ROUND 65 P2 — CAN THE LENDER BACK OUT?
   //
@@ -2581,21 +2601,37 @@ export function forcedCloseVerdict(obs, copy) {
   // bracket-disagrees arm, and for `false`/`false` the round-7 arm, which
   // fails a ready offered card the protocol refuses. Widening all four
   // would report the same gap twice and block runs nothing is wrong with.
-  if (
-    Array.isArray(copy?.refusalStateCopy) &&
-    obs.defaultable === true &&
-    obs.defaultableBefore === true
-  ) {
+  // ROUND 74 P2 — AND THE THREE INCOMPLETE ARMS TAKE THE SAME SWEEP.
+  //
+  // Round 73 made the FAIL arm above per-render and left these three on
+  // the settled snapshot, and I said in the review thread that each was
+  // covered by a ready-side counterpart. That is true only for a card
+  // that settles READY. A card settling into another non-actionable
+  // state — `ready-needs-route`, say — after an earlier render painted
+  // `blocked-paused` matched nothing at all: `readyOffered` is false so
+  // the ready-side arms are silent, and the settled body carries no
+  // refusal so these were too. The reason shown to the lender went
+  // unverified and the visit passed.
+  //
+  // One helper, so the four arms cannot drift apart again.
+  const refusalRenderClaim = () => {
+    if (!Array.isArray(copy?.refusalStateCopy)) return undefined;
     for (const r of capturedRenders) {
       if (r.offered) continue;
       const claimed = copy.refusalStateCopy.find((sentence) => paintedIn(r.visibleText, sentence));
-      if (claimed) {
-        return {
-          verdict: 'fail',
-          failKind: 'inferred',
-          why: `a render this drive read withholds the action and states a refusal ("${claimed}"), but simulating that exact transaction against the protocol shows it would succeed — the lender is denied a close-out the protocol accepts, and given a reason that is not the protocol's`,
-        };
-      }
+      if (claimed) return claimed;
+    }
+    return undefined;
+  };
+
+  if (obs.defaultable === true && obs.defaultableBefore === true) {
+    const claimed = refusalRenderClaim();
+    if (claimed) {
+      return {
+        verdict: 'fail',
+        failKind: 'inferred',
+        why: `a render this drive read withholds the action and states a refusal ("${claimed}"), but simulating that exact transaction against the protocol shows it would succeed — the lender is denied a close-out the protocol accepts, and given a reason that is not the protocol's`,
+      };
     }
   }
 
@@ -2637,12 +2673,8 @@ export function forcedCloseVerdict(obs, copy) {
   //
   // Above the `false`/`false` arm, because "we could not ask" is a
   // different and weaker statement than "we asked and it refused".
-  if (
-    !actionOffered &&
-    (obs.defaultable === undefined || obs.defaultableBefore === undefined) &&
-    Array.isArray(copy?.refusalStateCopy)
-  ) {
-    const claimed = copy.refusalStateCopy.find((sentence) => paints(sentence));
+  if (obs.defaultable === undefined || obs.defaultableBefore === undefined) {
+    const claimed = refusalRenderClaim();
     if (claimed) {
       return {
         verdict: 'blocked',
@@ -2669,8 +2701,8 @@ export function forcedCloseVerdict(obs, copy) {
   // answer, in EITHER direction. Guessing which end was true would
   // manufacture a verdict out of a race, the error rounds 55 and 56
   // spent themselves arguing against on the ready side.
-  if (!actionOffered && bracketDisagrees && Array.isArray(copy?.refusalStateCopy)) {
-    const claimed = copy.refusalStateCopy.find((sentence) => paints(sentence));
+  if (bracketDisagrees) {
+    const claimed = refusalRenderClaim();
     if (claimed) {
       return {
         verdict: 'blocked',
@@ -2682,13 +2714,8 @@ export function forcedCloseVerdict(obs, copy) {
       };
     }
   }
-  if (
-    !actionOffered &&
-    obs.defaultable === false &&
-    obs.defaultableBefore === false &&
-    Array.isArray(copy?.refusalStateCopy)
-  ) {
-    const claimed = copy.refusalStateCopy.find((sentence) => paints(sentence));
+  if (obs.defaultable === false && obs.defaultableBefore === false) {
+    const claimed = refusalRenderClaim();
     if (claimed) {
       return {
         verdict: 'blocked',

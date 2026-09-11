@@ -5455,6 +5455,36 @@ describe('round 65 review findings', () => {
         expect(v.why ?? '').not.toMatch(/denied a close-out the protocol accepts/);
       });
 
+      // ROUND 74 P2 — the three INCOMPLETE arms take the same sweep. My
+      // round-73 reply said each was covered by a ready-side counterpart;
+      // that holds only for a card which settles READY, and this is the
+      // case it does not cover.
+      it('reports the three bracket outcomes on an earlier render too', () => {
+        const settledElsewhere = {
+          ...withheld(FORCED_CLOSE.readyNeedsRoute),
+          seenRenders: [
+            {
+              text: FORCED_CLOSE.blockedPaused,
+              bodyText: FORCED_CLOSE.blockedPaused,
+              visibleText: FORCED_CLOSE.blockedPaused,
+              bodyVisibleText: FORCED_CLOSE.blockedPaused,
+              submitVisible: true,
+              submitDisabled: true,
+            },
+          ],
+        };
+        const at = (defaultable, defaultableBefore) =>
+          forcedCloseVerdict({ ...settledElsewhere, defaultable, defaultableBefore }, copy);
+
+        expect(at(false, false).why).toMatch(/establishes THAT and not WHY/);
+        expect(at(undefined, undefined).why).toMatch(/could not simulate the close-out/);
+        expect(at(true, false).why).toMatch(/from refusing this close-out to permitting it/);
+        for (const v of [at(false, false), at(undefined, undefined), at(true, false)]) {
+          expect(v.verdict).toBe('blocked');
+          expect(v.blockedKind).toBe('incomplete');
+        }
+      });
+
       it('still requires both ends of the bracket', () => {
         for (const [a, b] of [
           [false, false],
@@ -6143,8 +6173,13 @@ describe('round 70 review findings', () => {
         bodyVisible: true,
         confirmExpected: false,
         confirmText: null,
-        defaultable: false,
-        defaultableBefore: false,
+        // ROUND 74 P2 — the protocol ACCEPTS here, so this fixture
+        // isolates the route arm. It said `false`/`false`, which was
+        // incidental until `readyOffered` became per-render: the earlier
+        // render offers a ready route, so the round-7 arm now fires first
+        // and reports the more serious defect. That arm has its own test.
+        defaultable: true,
+        defaultableBefore: true,
         internalMatch: true,
         internalMatchBefore: true,
         text: FORCED_CLOSE.unknown,
@@ -6167,6 +6202,52 @@ describe('round 70 review findings', () => {
     );
     expect(v.verdict).toBe('fail');
     expect(v.why).toMatch(/throughout the observation/);
+  });
+
+  // ROUND 74 P2 — a READY route offered on an earlier render is judged
+  // too. `readyOffered` came from the settled snapshot, so a card that
+  // offered a fee-paying action the protocol would reject and then
+  // settled somewhere non-actionable passed clean.
+  it('reports a ready route offered only in an earlier render', () => {
+    const v = forcedCloseVerdict(
+      {
+        lenderHoldsActive: true,
+        mounted: true,
+        attached: true,
+        submitPresent: true,
+        submitVisible: true,
+        submitDisabled: true,
+        visibleSubmits: 1,
+        visibleCards: 1,
+        saleLocked: false,
+        settled: true,
+        bodyPresent: true,
+        bodyVisible: true,
+        confirmExpected: false,
+        confirmText: null,
+        defaultable: false,
+        defaultableBefore: false,
+        internalMatch: undefined,
+        internalMatchBefore: undefined,
+        text: FORCED_CLOSE.readyNeedsRoute,
+        visibleText: FORCED_CLOSE.readyNeedsRoute,
+        bodyText: FORCED_CLOSE.readyNeedsRoute,
+        bodyVisibleText: FORCED_CLOSE.readyNeedsRoute,
+        seenRenders: [
+          {
+            text: FORCED_CLOSE.readyInKind,
+            visibleText: FORCED_CLOSE.readyInKind,
+            bodyText: FORCED_CLOSE.readyInKind,
+            bodyVisibleText: FORCED_CLOSE.readyInKind,
+            submitVisible: true,
+            submitDisabled: false,
+          },
+        ],
+      },
+      copy,
+    );
+    expect(v.verdict).toBe('fail');
+    expect(v.why).toMatch(/pay a network fee for a call that cannot succeed/);
   });
 
   // ROUND 72 P2 — AND A PROMISE THE LENDER COULD NOT ACT ON IS STILL A
@@ -6349,8 +6430,10 @@ describe('self-review of round 70 — the unread-route arm takes the same sweep'
     bodyVisible: true,
     confirmExpected: false,
     confirmText: null,
-    defaultable: false,
-    defaultableBefore: false,
+    // ROUND 74 P2 — accepting, so this isolates the route arm; see the
+    // note on the round-70 fixture above.
+    defaultable: true,
+    defaultableBefore: true,
     // The route could not be read at all.
     internalMatch: undefined,
     internalMatchBefore: undefined,

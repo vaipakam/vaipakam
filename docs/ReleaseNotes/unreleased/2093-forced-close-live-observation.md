@@ -93,6 +93,18 @@ including a child that explicitly repaints itself. The result would have
 been a reported failure on a card whose explanation is plainly on screen.
 The two questions are now asked separately.
 
+Gathering the readable text also has to preserve where the lines fall,
+and the first version did not. Two sentences on separate rows are two
+separate statements, and the amount rule relies on that: a waiting period
+on one line and a currency named on the next are unrelated, where the
+same words side by side would be an amount. Collecting every readable run
+into one string erased those boundaries, so correct copy on two rows
+could be reported as stating an amount it never stated — a false failure
+about funds, introduced by the very change that made the reading honest.
+Line breaks are now kept, while words split across styling inside a
+single line are still joined without one, since a bolded word must not
+become two.
+
 ### Asking the protocol rather than re-deriving it
 
 A card can be perfectly rendered and still be offering an action that
@@ -275,11 +287,15 @@ were not yet closable could therefore use up the allowance on cards with
 nothing to confirm, and the run would report the confirmation unchecked
 while a usable position sat discovered and unvisited.
 
-Positions the protocol would accept a close-out on are now tried first.
-It improves which positions are looked at and changes nothing about the
-conclusions drawn from them: the protocol accepting is not the same as
-the card offering, so the run still says plainly when nothing it visited
-could exercise the confirmation.
+Positions the protocol would accept a close-out on are now tried first,
+and that is settled before the check picks **which** lender to watch
+rather than afterwards — otherwise a lender with several positions that
+cannot be closed still outranks one holding a position that can, and the
+allowance runs out before the better candidate is reached. It improves
+which positions are looked at and changes nothing about the conclusions
+drawn from them: the protocol accepting is not the same as the card
+offering, so the run still says plainly when nothing it visited could
+exercise the confirmation.
 
 ### Stated limits
 
