@@ -6,7 +6,7 @@ three ways that question reads text which does not correspond to what runs.
 
 **It fixes none of them, and changes no behaviour at all.** Every attempt was
 withdrawn under review. What lands is the record of why, and tests that pin the
-wrong verdicts that remain — ten silent passes and seven false reports — so a
+wrong verdicts that remain — twelve silent passes and eight false reports — so a
 later fix announces itself instead of passing unnoticed.
 
 That is worth landing on its own. Two of these designs are the kind a
@@ -64,17 +64,18 @@ No behaviour change. The check's logic is what it was.
 - The reasoning above, recorded beside the code that would have to change, in
   the functional specification, and here — so the next person does not rebuild
   one of these designs without knowing what happened to it.
-- Tests that **assert seventeen current wrong verdicts across ten defects**, so
+- Tests that **assert twenty current wrong verdicts across ten defects**, so
   a later fix fails them and comes back to the question rather than passing
   silently.
 
-  **Ten assert a silent pass** — the direction this check must never fail in:
+  **Twelve assert a silent pass** — the direction this check must never fail in:
   a build file variable holding a write is not seen when its assignment sits
   below the deployment; a recipe marked by something other than a tab is not
   read as a recipe; a helper whose deployment follows an unrelated line ending
   in a backslash is read as one command, so a safety flag belonging to the
-  earlier line covers the deployment (pinned once per Windows shell, since the
-  two are separate branches); a script declared in a package manifest is never
+  earlier line covers the deployment (pinned four times — two shells, each in a
+  standalone helper and in a workflow body, because the fold is in the shared
+  splitter and a fix scoped to any one of them leaves the rest live); a script declared in a package manifest is never
   split at its newlines, so a flag on one of its lines covers a deployment on
   another; a variable whose name differs only in case is not resolved, though
   the shell in question resolves it, so the deployment's directory reads as
@@ -85,13 +86,14 @@ No behaviour change. The check's logic is what it was.
   them is shared and a fix scoped to one family would satisfy a single
   fixture while leaving every other family bypassed.
 
-  **Seven fail the other way and assert the report**: a runbook sentence naming a
+  **Eight fail the other way and assert the report**: a runbook sentence naming a
   write reports the deployment below it; a package manifest whose description
   merely names the command is reported as performing it, as is an unrelated
   data file of the same format, and as is a list of keywords once the file is
   written across several lines; and a command named inside a block the shell
   never executes is reported — which is what the two Windows normalisations
-  cost, pinned once for each; and a line that is COMMENTED OUT, in the variant
+  cost, and the casing one is pinned in a workflow body as well as a helper,
+  since that rewrite runs on both; and a line that is COMMENTED OUT, in the variant
   of that format permitting comments, is read as a command although it is not a
   property at all.
 - Two tests pinning that a bare command line and an inline command span in a
@@ -119,8 +121,8 @@ them — including **nine defects surfaced while correcting this record
 itself**, seven of them silent passes and two false reports — is recorded as its
 own issue with a reproduction and what a fix would have to be true of. All are
 behaviour the check already had, so nothing is made worse. Ten are
-additionally pinned by tests that assert the current verdict — seventeen such
-tests in all, ten asserting a silent pass and seven a false report.
+additionally pinned by tests that assert the current verdict — twenty such
+tests in all, twelve asserting a silent pass and eight a false report.
 
 That the correcting itself surfaced more defects than the original work is the
 most useful thing here, and it is not an accident of effort: each correction
@@ -141,7 +143,7 @@ not its siblings. One record per defect, named from the others.
 | **#2084** | a build file variable holding a write is not seen, when the assignment sits below the deployment — *pinned (miss)* |
 | **#2112** | a runbook sentence naming a write reports the deployment below it — *pinned (false report)* |
 | **#2114** | a recipe marked by something other than a tab is not read as a recipe — *pinned (miss)* |
-| **#2118** | a Windows-shell helper's deployment is lent a safety flag by the unrelated line above it, when that line ends in a character that shell does not treat as a continuation — *pinned (silent pass) in both Windows shells, with its bounds pinned too*. The bound is text actually passed through the line-splitting reader, NOT everything read as a shell: a manifest script is shell text that bypasses that reader entirely, which is #2121 |
+| **#2118** | a deployment is lent a safety flag by the unrelated line above it, when that line ends in a character the shell does not treat as a continuation — *pinned (silent pass) four times, and its bounds pinned too* |
 | **#2119** | text in any file of the manifest's format is read as a command, so a description naming the deployment is reported as performing it — *pinned (false report) four times, because the scope was wrong in four separate ways*. The issue carries them; three of the four move together under one fix |
 | **#2110** | a folded workflow scalar's positions are not comparable with the file's |
 | **#2113** | a write assigned by a live conditional branch is not seen |
@@ -151,7 +153,7 @@ not its siblings. One record per defect, named from the others.
 | **#2115** | a Windows helper spelling the command in upper or mixed case is not seen (lowercase and title case are) — and the spelling that IS covered is matched inside a block the shell never executes, *pinned (false report)* as the trade any widening of that rule grows |
 | **#2117** | the PowerShell assignment rewrite has no string state, so an assignment inside a here-string can invent a deployment |
 | **#2116** | a manifest script that invokes a sibling does not see that sibling's config write |
-| **#2121** | a script declared in a package manifest is never split at its newlines, so a safety flag on one line covers a deployment on another — *pinned (silent pass)*; the mirror of #2118, and the same root: line splitting belongs to the reader a body passes through, not to the body |
+| **#2121** | a script declared in a package manifest is never split at its newlines, so a safety flag on one line covers a deployment on another — *pinned (silent pass)*; the mirror of #2118 |
 | **#2122** | a variable whose name differs only in case is not resolved, though that shell resolves it, so the deployment's directory reads as unknown — *pinned (silent pass)* |
 | **#2123** | a helper whose file name carries an upper-case extension is never opened at all — *pinned (silent pass)*, and the broadest of the three, since no later rule can compensate for a file that was never read |
 | **#2124** | a binding closed with that shell's ordinary statement terminator is not recognised, so the deployment's directory reads as unknown — *pinned (silent pass)* |

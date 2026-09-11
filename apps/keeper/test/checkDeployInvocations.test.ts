@@ -11866,23 +11866,29 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
   // value. An earlier version of this note said no fixture here exercises
   // those two. Both are exercised, and each turned out to carry a wrong
   // verdict of its own (r20): the Windows normalisation by the #2115, #2118,
-  // #2122, #2123 and #2124 fixtures, and the manifest exception by the #2119
-  // and #2121 ones. Named by defect rather than by position, because the
+  // #2122 and #2124 fixtures, and the manifest exception by the #2119 and
+  // #2121 ones. #2123 is NOT one of them and was listed here by mistake
+  // (r28) — its gate is the shared extension test in `walk`, which skips the
+  // file before any interpreter is chosen, and one of its fixtures is a
+  // POSIX helper that is not a Windows file at all. Attributing it to the
+  // normalisation would point a fix at the wrong subsystem. Named by defect rather than by position, because the
   // position moved and the pointer sent readers to unrelated tests (r27).
   //
   // So they pin two things: the shapes that defeated the withdrawn designs,
-  // and SEVENTEEN WRONG VERDICTS across TEN defects, asserted so a later fix
+  // and TWENTY WRONG VERDICTS across TEN defects, asserted so a later fix
   // fails them and comes back to the question instead of passing unnoticed.
   //
-  // The direction matters and is not decoration. TEN assert a SILENT PASS —
-  // #2084, #2114 and #2124 as misses; #2118 once per Windows dialect, #2121,
-  // #2122, and #2123 three times (two Windows dialects and a POSIX helper,
-  // because the gate is shared and a fix scoped to one family would satisfy
-  // a single fixture) — and SEVEN fail the opposite way, so their fixtures
-  // assert a REPORT: #2112, #2119 four times (manifest, data file, multi-line
-  // list and a COMMENTED-OUT line) and #2115 twice (the casing and separator
-  // rewrites). A fixture that pinned the wrong direction would pass while the
-  // guard did the wrong thing.
+  // The direction matters and is not decoration. TWELVE assert a SILENT PASS
+  // — #2084, #2114 and #2124 as misses; #2118 FOUR times (two shells times a
+  // standalone helper and a workflow body, because the fold is in the shared
+  // splitter and a fix scoped to any one of the four leaves the others live);
+  // #2121, #2122; and #2123 three times (two command-shell families and a
+  // POSIX one, because that gate is shared too) — and EIGHT fail the opposite
+  // way, so their fixtures assert a REPORT: #2112, #2119 four times (manifest,
+  // data file, multi-line list and a COMMENTED-OUT line) and #2115 three
+  // times (the casing rewrite in a helper and in a workflow body, and the
+  // separator rewrite). A fixture that pinned the wrong direction would pass
+  // while the guard did the wrong thing.
   //
   // NOT "four different routes" for the #2119 group, which overstated their
   // independence (r26). Three of them — the manifest description, the
@@ -12166,6 +12172,88 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     expect(r.ok).toBe(false);
   });
 
+  it('a pwsh WORKFLOW body folds the same way (#2118, stated false green)', () => {
+    // #2118 IS NOT A HELPER-FILE DEFECT. The workflow ingestion paths call
+    // the same `logicalLines(forInterpreter(...))`, so a `run: |` block with
+    // `shell: pwsh` folds identically — verified, with the control below
+    // differing only by the backslash (r28).
+    //
+    // Pinned because a fix scoped to standalone helpers would satisfy every
+    // other #2118 fixture and leave this production path green. Same reasoning
+    // as pinning the defect once per dialect.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith(
+      '.github/workflows/d.yml',
+      'name: d\non: push\njobs:\n  d:\n    runs-on: ubuntu-latest\n    steps:\n      - run: |\n' +
+        "          cd apps/agent\n          Write-Output '--keep-vars' \\\n          wrangler deploy\n" +
+        '        shell: pwsh\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('the same workflow body without the backslash IS reported (#2118 workflow control)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith(
+      '.github/workflows/d.yml',
+      'name: d\non: push\njobs:\n  d:\n    runs-on: ubuntu-latest\n    steps:\n      - run: |\n' +
+        "          cd apps/agent\n          Write-Output '--keep-vars'\n          wrangler deploy\n" +
+        '        shell: pwsh\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a cmd WORKFLOW body folds the same way (#2118, stated false green)', () => {
+    // The second dialect on the workflow path. Four #2118 defect fixtures in
+    // all — two file kinds times two shells — because the fold is in the
+    // shared splitter and a fix scoped to any one of the four would leave the
+    // other three live.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith(
+      '.github/workflows/d.yml',
+      'name: d\non: push\njobs:\n  d:\n    runs-on: ubuntu-latest\n    steps:\n      - run: |\n' +
+        '          cd apps/agent\n          echo --keep-vars \\\n          wrangler deploy\n' +
+        '        shell: cmd\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('the casing rewrite reaches into a WORKFLOW here-string too (#2115, stated false report)', () => {
+    // The casing normalisation runs on workflow bodies as well as helpers, so
+    // the trade it makes is not helper-only either (r28). Nothing here
+    // deploys anything; the here-string is inert.
+    //
+    // NOTE ON THE PROBE THAT FOUND THIS: a first attempt used no `cd`, so
+    // nothing scoped the deploy to the package and BOTH casings passed —
+    // which looked like a refutation and was not. The scope is what makes the
+    // report possible; the casing is what makes it reachable.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith(
+      '.github/workflows/d.yml',
+      'name: d\non: push\njobs:\n  d:\n    runs-on: ubuntu-latest\n    steps:\n      - run: |\n' +
+        "          cd apps/agent\n          $doc = @'\n          Wrangler deploy\n          '@\n" +
+        '          Write-Output $doc\n        shell: pwsh\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('an UPPER-case mention in the same workflow body is not reported (#2115 workflow control)', () => {
+    // The half that flips under #2115's proposed widening, on the workflow
+    // path — so the trade announces itself there too, not only for helpers.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith(
+      '.github/workflows/d.yml',
+      'name: d\non: push\njobs:\n  d:\n    runs-on: ubuntu-latest\n    steps:\n      - run: |\n' +
+        "          cd apps/agent\n          $doc = @'\n          WRANGLER deploy\n          '@\n" +
+        '          Write-Output $doc\n        shell: pwsh\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
   it('the same helper with CRLF endings IS reported (#2118 bound)', () => {
     // THE DEFECT IS LF-ONLY, and this pins the boundary rather than leaving
     // the record to imply every checkout is affected. Byte-identical to the
@@ -12240,11 +12328,13 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     // fixture and the record both claimed (r23).
     //
     // The extraction matches a colon followed by a quoted scalar. Here the
-    // minified line carries scalars too, so the match succeeds and the
-    // unmatched array element is dropped with them. Written across several
-    // lines, the element sits on a line with NO colon-introduced scalar, the
-    // extraction returns that raw line instead, and the command IS read — the
-    // sibling fixture below pins that, and the two only make sense together.
+    // COMPACT line carries scalars too, so the match succeeds and the
+    // unmatched array element is dropped with them. That is the whole of the
+    // exception: an array is passed over ONLY in this layout. Written across
+    // several lines the element sits on a line with no colon-introduced
+    // scalar, the extraction returns that raw line, and the command IS read —
+    // the sibling fixture below pins that, and the two only make sense
+    // together. Full scope on #2119; not restated here.
     //
     // So "a list value is not read at all" was false, and this fixture passed
     // only because it was compact. Kept, with the layout named.
