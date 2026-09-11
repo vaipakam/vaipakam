@@ -2130,6 +2130,23 @@ function watchPageHead(page) {
         if (id === CHAIN_ID_CONFLICT) {
           foreign.add(key);
           diamond.delete(key);
+          // ROUND 80 P2 — AND THE EXIT GATE HAS TO HEAR ABOUT IT.
+          //
+          // There are TWO ways this endpoint can contradict itself: one
+          // batch answering `eth_chainId` twice with different chains,
+          // which lands here, and two separate responses disagreeing,
+          // which lands below. Round 79 recorded only the second, so a
+          // same-response conflict marked the endpoint foreign in this
+          // page-local set and told the shared map nothing — and if the
+          // synthetic probe then answered the expected chain, the
+          // reconciliation trusted it and an inferred missing surface
+          // could be reported as a product regression on a provider that
+          // had contradicted itself in a single reply.
+          //
+          // The parallel-site shape once more, and inside the fix for the
+          // very question it belongs to: I split the conflict into two
+          // paths and handled one.
+          observedPageChain.set(key, CHAIN_ID_CONFLICT);
           return;
         }
         if (id !== null) {
