@@ -384,3 +384,42 @@ mid-observation looks like, so those two stay where a state change can
 still account for them. Reporting them would mean accusing the product
 of something that was really a matter of timing, which this check is
 built specifically not to do.
+
+Four more from the next round, and three of them are versions of the same
+mistake: something the check genuinely saw was being thrown away because
+something else nearby could not be read.
+
+A confirmation receipt has six lines, and the check only kept the text at
+all when all six of them rendered legibly. So a single missing line
+discarded the other five — including, in the worst case, one stating an
+amount the platform cannot know. That is the headline thing this check
+exists to catch, reported as "I couldn't read it" rather than "this is
+wrong". The readable lines are now kept and scanned in their own right,
+and the all-six question goes back to being only what it is: whether the
+receipt was completely covered.
+
+The same shape again on the card's own button. When the button is
+visible and enabled but sits under something else, the check's click
+simply fails, and that failure was discarded — leaving the run to report
+an unread confirmation instead of a lender who cannot reach the
+confirmation at all. It is now tested the same way the confirmation's own
+button is, and reported as what it is.
+
+The third concerns a moment rather than a page. The card can pass through
+an intermediate state where the safety check is still running and the
+button is already live — a state the lender can click, and pay for. The
+check recorded the wording of every such moment and the button counts of
+every such moment, but never the two together, so any unsafe moment was
+forgiven as soon as the card settled into a clean one. It now keeps them
+paired. The deliberate exception is unchanged: a button that is briefly
+disabled costs nobody anything and is still treated as a normal
+intermediate state.
+
+The fourth is smaller and about trusting a provider less. Block numbers
+arrive from the network as hexadecimal by specification, and the check
+was converting them with something that also happily accepts an ordinary
+decimal or a negative number. A provider answering in the wrong format
+would have supplied a chain position far lower than the real one, which
+in the worse direction turns a correctly absent card into a reported
+regression. The format is now checked, in all three places the check
+reads a number of that kind.

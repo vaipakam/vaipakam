@@ -3274,6 +3274,174 @@ describe('round 45 review findings', () => {
   });
 });
 
+describe('round 50 review findings', () => {
+  const copy = {
+    unknownCopy: FORCED_CLOSE.unknown,
+    readyCopy: [FORCED_CLOSE.readyInKind, FORCED_CLOSE.readyInternalMatch, FORCED_CLOSE.readyRental],
+    withheldCopy: [FORCED_CLOSE.unknown, FORCED_CLOSE.notYet, FORCED_CLOSE.readyNeedsRoute],
+    recognisedCopy: [
+      FORCED_CLOSE.unknown,
+      FORCED_CLOSE.notYet,
+      FORCED_CLOSE.blockedPaused,
+      FORCED_CLOSE.blockedSequencer,
+      FORCED_CLOSE.blockedNoConsent,
+      FORCED_CLOSE.readyInKind,
+      FORCED_CLOSE.readyInternalMatch,
+      FORCED_CLOSE.readyRental,
+      FORCED_CLOSE.readyNeedsRoute,
+    ],
+    receiptLeads: [FORCED_CLOSE.receipt.youReceive, FORCED_CLOSE.rentalReceipt.youReceive],
+  };
+
+  const base = {
+    lenderHoldsActive: true,
+    mounted: true,
+    attached: true,
+    submitPresent: true,
+    submitVisible: true,
+    submitDisabled: false,
+    visibleSubmits: 1,
+    visibleCards: 1,
+    saleLocked: false,
+    settled: true,
+    bodyPresent: true,
+    bodyText: FORCED_CLOSE.readyInKind,
+    text: FORCED_CLOSE.readyInKind,
+    confirmExpected: true,
+    confirmText: `${FORCED_CLOSE.receipt.youReceive} …`,
+  };
+
+  describe('a readable row is scanned even when another row is not', () => {
+    // `confirmText` is the whole card's text and is set only when ALL
+    // SIX rows rendered readably, so one missing row discarded the text
+    // of the five on screen — and an invented amount stated in one of
+    // THOSE was downgraded to `blocked/incomplete`.
+    it('FAILS on an amount stated in a row that DID render', () => {
+      const v = forcedCloseVerdict(
+        { ...base, confirmText: null, confirmRowsText: ['You receive', '1,250.00 USDC'] },
+        copy,
+      );
+      expect(v.verdict).toBe('fail');
+      expect(v.failKind).toBe('observed');
+      expect(v.why).toMatch(/states an amount it cannot know/);
+    });
+
+    // …while the receipt is still reported as incompletely covered when
+    // nothing was invented. `rowsOk` keeps its one job.
+    it('still reports the receipt as incomplete when the rows are clean', () => {
+      const v = forcedCloseVerdict(
+        { ...base, confirmText: null, confirmRowsText: ['You receive', 'Fees'] },
+        copy,
+      );
+      expect(v.verdict).toBe('blocked');
+      expect(v.blockedKind).toBe('incomplete');
+    });
+
+    // Round 35's rule survives: rows are scanned SEPARATELY, so one row
+    // cannot supply context for another's digits.
+    it('does not let one row lend an identifier lead to the next', () => {
+      const v = forcedCloseVerdict(
+        { ...base, confirmText: null, confirmRowsText: ['Loan', '1.5 will be returned'] },
+        copy,
+      );
+      expect(v.verdict).toBe('fail');
+      expect(v.why).toMatch(/states an amount it cannot know/);
+    });
+
+    it('says nothing where the field was never recorded', () => {
+      const v = forcedCloseVerdict({ ...base, confirmText: null }, copy);
+      expect(v.verdict).toBe('blocked');
+      expect(v.blockedKind).toBe('incomplete');
+    });
+  });
+
+  describe('an unsafe render is judged even after the card settles', () => {
+    // Round 10 forgives a transiently DISABLED control — an intermediate
+    // state that costs the lender nothing. A transiently ENABLED one
+    // beside copy saying the check is still running is the expensive
+    // direction, and it was being discarded the moment the card settled.
+    it('FAILS on withheld copy beside a live button on an EARLIER render', () => {
+      const v = forcedCloseVerdict(
+        {
+          ...base,
+          seenRenders: [
+            { text: FORCED_CLOSE.unknown, submitVisible: true, submitDisabled: false },
+            { text: FORCED_CLOSE.readyInKind, submitVisible: true, submitDisabled: false },
+          ],
+        },
+        copy,
+      );
+      expect(v.verdict).toBe('fail');
+      expect(v.failKind).toBe('observed');
+      expect(v.why).toMatch(/NON-ACTIONABLE state yet offers an enabled action/);
+    });
+
+    // The round-10 exemption is intact: the same intermediate render
+    // with the control DISABLED is a legitimate state and passes.
+    it('forgives a transiently DISABLED control on the same copy', () => {
+      const v = forcedCloseVerdict(
+        {
+          ...base,
+          seenRenders: [
+            { text: FORCED_CLOSE.unknown, submitVisible: true, submitDisabled: true },
+            { text: FORCED_CLOSE.readyInKind, submitVisible: true, submitDisabled: false },
+          ],
+        },
+        copy,
+      );
+      expect(v.verdict).toBe('pass');
+    });
+
+    it('still FAILS when the settled render itself is the unsafe one', () => {
+      const v = forcedCloseVerdict({ ...base, text: FORCED_CLOSE.unknown, settled: true }, copy);
+      expect(v.verdict).toBe('fail');
+      expect(v.why).toMatch(/NON-ACTIONABLE state yet offers an enabled action/);
+    });
+
+    it('says nothing where no earlier render was recorded', () => {
+      expect(forcedCloseVerdict(base, copy).verdict).toBe('pass');
+    });
+  });
+
+  describe('an outer submit that cannot be clicked', () => {
+    // The drive's real click already failed when the control could not
+    // take one, and that result was discarded: the verdict saw only
+    // `confirmText === null` and filed the visit as an incomplete
+    // READING rather than the defect that stranded the lender.
+    it('FAILS rather than reporting an unread confirmation', () => {
+      const v = forcedCloseVerdict(
+        { ...base, confirmText: null, submitClickable: false },
+        copy,
+      );
+      expect(v.verdict).toBe('fail');
+      expect(v.failKind).toBe('observed');
+      expect(v.why).toMatch(/cannot receive a click/);
+    });
+
+    it('says nothing when the trial was never run', () => {
+      const v = forcedCloseVerdict({ ...base, confirmText: null }, copy);
+      expect(v.verdict).toBe('blocked');
+      expect(v.blockedKind).toBe('incomplete');
+    });
+
+    it('PASSES a submit that can take a click', () => {
+      expect(forcedCloseVerdict({ ...base, submitClickable: true }, copy).verdict).toBe('pass');
+    });
+
+    // Stays BELOW the applicability exits with the other pointer faults:
+    // a transition overlay during a terminalising loan produces exactly
+    // this, and reporting it afterwards would be a false FAIL from a race.
+    it('does NOT report it once the position has gone', () => {
+      const v = forcedCloseVerdict(
+        { ...base, lenderHoldsActive: false, confirmText: null, submitClickable: false },
+        copy,
+      );
+      expect(v.verdict).toBe('blocked');
+      expect(v.blockedKind).toBe('inapplicable');
+    });
+  });
+});
+
 describe('round 49 review findings', () => {
   const copy = {
     unknownCopy: FORCED_CLOSE.unknown,

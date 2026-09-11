@@ -287,6 +287,46 @@ export function rpcCallsFromBody(requestBody) {
 }
 
 /**
+ * A JSON-RPC QUANTITY, or null if the value is not one.
+ *
+ * ROUND 50 P2, generalised from the finding's own site. An Ethereum
+ * JSON-RPC quantity is hex with an `0x` prefix. `BigInt` is far more
+ * willing than that — it accepts `"100000"` and `"-1"` — and three
+ * separate readers in this file leaned on it, two of them with a
+ * `catch` whose comment already claimed to be rejecting non-hex values.
+ *
+ * All three consume the same kind of field and all three feed decisions
+ * that must not be made on a misread number, so the rule lives in one
+ * place rather than being written out three times and drifting. That is
+ * the repeated correction on this PR: a fix applied to one of several
+ * parallel sites.
+ *
+ * The heights matter most, and specifically when they come out too LOW.
+ * The absence gate makes the confirming observer clear the head the PAGE
+ * was seen to reach, so an artificially low bound lets the observer
+ * settle below what the DOM was showing and report a correctly absent
+ * card as a regression — the same false FAIL round 48's head-sampling
+ * race produced, by a different road.
+ *
+ * Unreadable is treated as ABSENT, never guessed at. A missing height is
+ * already handled as not-ready, which is the honest outcome.
+ *
+ * @param {unknown} raw
+ * @returns {bigint|null}
+ */
+function hexQuantity(raw) {
+  if (typeof raw !== 'string') return null;
+  if (!/^0x[0-9a-fA-F]+$/.test(raw)) return null;
+  try {
+    return BigInt(raw);
+  } catch {
+    // Unreachable given the shape test, kept as a belt: this value is
+    // used to bound a product claim.
+    return null;
+  }
+}
+
+/**
  * The block height a page disclosed in one `eth_blockNumber` exchange.
  *
  * The forced-close absence gate has to know whether THIS observer has
@@ -373,12 +413,12 @@ export function blockNumberFromRpcPair(requestBody, responseBody) {
     if (!lone && !wanted.has(item?.id)) continue;
     const raw = heightOf(item?.result);
     if (raw === null) continue;
-    let seen;
-    try {
-      seen = BigInt(raw);
-    } catch {
-      continue; // not a hex quantity
-    }
+    // ROUND 50 P2 — A QUANTITY IS HEX, and `BigInt` is far too willing.
+    // The `catch` here used to carry the comment "not a hex quantity"
+    // while checking nothing at all; `hexQuantity` is what that comment
+    // always claimed.
+    const seen = hexQuantity(raw);
+    if (seen === null) continue;
     if (best === null || seen > best) best = seen;
   }
   return best;
@@ -417,13 +457,14 @@ export function chainIdFromRpcPair(requestBody, responseBody) {
   const lone = calls.length === 1 && items.length === 1;
   for (const item of items) {
     if (!lone && !wanted.has(item?.id)) continue;
-    if (typeof item?.result !== 'string') continue;
-    try {
-      const n = Number(BigInt(item.result));
-      if (Number.isSafeInteger(n)) return n;
-    } catch {
-      continue;
-    }
+    // A CHAIN ID IS A QUANTITY TOO (round 50 P2, the same rule one
+    // function over). A decimal id read as hex attributes an endpoint to
+    // the wrong chain, which either admits a foreign chain's height or
+    // excludes the endpoint actually serving the Diamond.
+    const id = hexQuantity(item?.result);
+    if (id === null) continue;
+    const n = Number(id);
+    if (Number.isSafeInteger(n)) return n;
   }
   return null;
 }
@@ -453,12 +494,10 @@ export function blockNumberFromWsFrame(payload) {
   if (parsed.method !== 'eth_subscription') return null;
   const header = parsed.params?.result;
   if (!header || typeof header !== 'object') return null;
-  if (typeof header.number !== 'string') return null;
-  try {
-    return BigInt(header.number);
-  } catch {
-    return null;
-  }
+  // ROUND 50 P2 — the SOCKET half of the same rule. A `newHeads` push
+  // carrying a decimal `number` fed the identical too-low head bound,
+  // and this reader is the one that fires on a healthy network.
+  return hexQuantity(header.number);
 }
 
 /**

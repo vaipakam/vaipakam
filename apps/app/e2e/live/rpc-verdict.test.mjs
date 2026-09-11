@@ -742,6 +742,63 @@ describe('blockNumberFromRpcPair — envelope strictness', () => {
   });
 });
 
+describe('round 50 P2 — a QUANTITY is hex, everywhere it is read', () => {
+  // `BigInt` accepts `"100000"` and `"-1"`. The `catch` in
+  // `blockNumberFromRpcPair` carried the comment "not a hex quantity"
+  // since it was written and checked nothing, and two more readers in
+  // this file leaned on the same conversion.
+  //
+  // TOO LOW is the dangerous direction, by an indirect route: the
+  // absence gate makes the confirming observer clear the head the PAGE
+  // reached, so an artificially low bound lets it settle below what the
+  // DOM was showing and report a correctly absent card as a regression.
+  // Request as the JSON viem sends; RESPONSE as the parsed object the
+  // caller hands over — the shape the surrounding suites already use.
+  const req = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_blockNumber' });
+  const reply = (result) => ({ id: 1, result });
+
+  it('reads a proper hex height', () => {
+    expect(blockNumberFromRpcPair(req, reply('0x2c8a1f'))).toBe(0x2c8a1fn);
+  });
+
+  it('refuses a DECIMAL height rather than reading it 19x too low', () => {
+    expect(blockNumberFromRpcPair(req, reply('100000'))).toBeNull();
+  });
+
+  it('refuses a signed value', () => {
+    expect(blockNumberFromRpcPair(req, reply('-1'))).toBeNull();
+    expect(blockNumberFromRpcPair(req, reply('-0x1'))).toBeNull();
+  });
+
+  it('refuses a bare 0x and other near-misses', () => {
+    expect(blockNumberFromRpcPair(req, reply('0x'))).toBeNull();
+    expect(blockNumberFromRpcPair(req, reply('0X1f'))).toBeNull();
+    expect(blockNumberFromRpcPair(req, reply(' 0x1f '))).toBeNull();
+    expect(blockNumberFromRpcPair(req, reply('0x1fz'))).toBeNull();
+  });
+
+  // THE PARALLEL SITES, which is why the rule was extracted rather than
+  // written out at the one place the finding named.
+  it('applies the same rule to a newHeads push', () => {
+    const push = (number) =>
+      JSON.stringify({
+        jsonrpc: '2.0',
+        method: 'eth_subscription',
+        params: { subscription: '0x1', result: { number } },
+      });
+    expect(blockNumberFromWsFrame(push('0x2c8a1f'))).toBe(0x2c8a1fn);
+    expect(blockNumberFromWsFrame(push('100000'))).toBeNull();
+    expect(blockNumberFromWsFrame(push('-1'))).toBeNull();
+  });
+
+  it('applies it to a chain id, which is a quantity too', () => {
+    const idReq = JSON.stringify({ jsonrpc: '2.0', id: 7, method: 'eth_chainId' });
+    const idReply = (result) => ({ id: 7, result });
+    expect(chainIdFromRpcPair(idReq, idReply('0x14a34'))).toBe(84532);
+    expect(chainIdFromRpcPair(idReq, idReply('84532'))).toBeNull();
+  });
+});
+
 describe('blockNumberFromWsFrame — a newHeads push', () => {
   it('reads the height from an eth_subscription header', () => {
     expect(

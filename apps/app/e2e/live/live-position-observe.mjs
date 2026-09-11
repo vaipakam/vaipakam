@@ -3888,6 +3888,25 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
   // settled render, since a transiently disabled control is a legitimate
   // intermediate state (round 10) and must not be reported as a defect.
   const seenTexts = [];
+  // ROUND 50 P2 — THE COPY AND THE CONTROL, KEPT TOGETHER.
+  //
+  // The note above is about round 10's exemption, and that exemption is
+  // narrower than the shape it was protecting. A transiently DISABLED
+  // control is a legitimate intermediate state; a transiently ENABLED
+  // one beside copy that says the safety check is still running is not —
+  // the lender can press a fee-paying action the protocol has not
+  // established is permitted, which is the more expensive direction and
+  // the one the withheld-copy arm exists for.
+  //
+  // `seenTexts` kept the copy and the peaks kept the counts, and nothing
+  // kept the PAIR, so an unsafe intermediate render settling into a
+  // clean ready state passed: the verdict matched the final copy against
+  // the final control and saw nothing wrong.
+  //
+  // Rendered facts, not a verdict: the drive observes and the module
+  // judges. That keeps the copy list in one place and makes the rule
+  // unit-testable, which a latch computed here would not be.
+  const seenRenders = [];
   // ROUND 35 P2 — THE DUPLICATE COUNT IS EVIDENCE TOO, and it was being
   // overwritten by the same `snap = again` that superseded the text.
   //
@@ -3916,6 +3935,14 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
   const remember = (v) => {
     for (const part of [v?.text, v?.bodyText]) {
       if (typeof part === 'string' && part !== '') seenTexts.push(part);
+    }
+    if (v && (typeof v.text === 'string' || typeof v.bodyText === 'string')) {
+      seenRenders.push({
+        text: v.text,
+        bodyText: v.bodyText,
+        submitVisible: v.submitVisible,
+        submitDisabled: v.submitDisabled,
+      });
     }
     if (typeof v?.visibleCards === 'number' && v.visibleCards > visibleCardsPeak) {
       visibleCardsPeak = v.visibleCards;
@@ -3975,6 +4002,7 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
         visibleSubmits: 0,
         settled: false,
         seenTexts,
+        seenRenders,
         visibleCardsPeak,
         visibleSubmitsPeak,
         bodyHiddenSeen,
@@ -3999,6 +4027,7 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
         // ROUND 33 P2 — see the note on the vanished return below. Every
         // exit from this loop carries what the loop saw.
         seenTexts,
+        seenRenders,
         visibleCardsPeak,
         visibleSubmitsPeak,
         bodyHiddenSeen,
@@ -4056,6 +4085,7 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
         submitDisabled: true,
         settled: false,
         seenTexts,
+        seenRenders,
         visibleCardsPeak,
         visibleSubmitsPeak,
         bodyHiddenSeen,
@@ -4151,8 +4181,36 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
   // clicked. Declared here rather than inside the branch so the final
   // projection can carry it whether or not the panel opened.
   let confirmAction;
+  // ROUND 50 P2 — the text of the receipt rows that WERE readable,
+  // carried separately from `confirmText` so an amount on a visible row
+  // is scanned even when another row is not.
+  let confirmRowsText = null;
+  // ROUND 50 P2 — CAN THE OUTER SUBMIT ACTUALLY BE CLICKED?
+  //
+  // The real click below already fails when it cannot, and that `false`
+  // was thrown away: the verdict saw only `confirmText === null` and
+  // filed an otherwise eligible visit as `blocked/incomplete`. So a
+  // deployed card that strands the lender BEFORE the confirmation — a
+  // visible, enabled submit under an overlay or `pointer-events: none` —
+  // was reported as a gap in this drive's reading rather than as the
+  // product defect it is.
+  //
+  // Trialled first, exactly as the confirmation's own action is (round
+  // 46), so the two controls are judged the same way and the signal is
+  // separated from whatever else a real click can fail on — a detach
+  // mid-click, a navigation. The trial dispatches nothing; the real
+  // click still follows, because opening the panel is how the receipt
+  // gets read.
+  //
+  // `undefined` where no trial was run, so a record that never reached
+  // this path says nothing.
+  let submitClickable;
   if (confirmExpected) {
-    const opened = await card
+    // ONE LOCATOR for the trial and the real click, so the two cannot
+    // describe different controls — the mismatch round 38 found between
+    // the judged card and the clicked one, and round 46 found again
+    // inside the confirmation.
+    const submit = card
       // ROUND 26 P2 — click the control the verdict judged actionable.
       // `getByTestId(...).first()` addresses the first in the DOM, which
       // on a duplicated render is the one that may be disabled; the
@@ -4167,7 +4225,12 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
         Number.isInteger(snap.chosenSubmitIndex) && snap.chosenSubmitIndex >= 0
           ? snap.chosenSubmitIndex
           : 0,
-      )
+      );
+    submitClickable = await submit
+      .click({ trial: true, timeout: 3_000 })
+      .then(() => true)
+      .catch(() => false);
+    const opened = await submit
       .click({ timeout: 5_000 })
       .then(() => true)
       .catch(() => false);
@@ -4771,13 +4834,36 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
             };
             // An OBJECT now, not a boolean: the caller needs the
             // confirm-action facts as well as whether the rows read.
-            return { rowsOk: rows.length === 6 && rows.every(rowShown), confirmAction };
+            //
+            // ROUND 50 P2 — AND THE TEXT OF THE ROWS THAT WERE READABLE.
+            //
+            // `rowsOk` is all-or-nothing by design, and the caller used
+            // it to decide whether to take the card's text at all. So one
+            // row missing, hidden or clipped threw away the text of the
+            // five on screen, and an invented amount stated in one of
+            // THOSE was reported as an incomplete reading rather than as
+            // the product failure it is.
+            //
+            // Each readable row is carried SEPARATELY rather than joined:
+            // round 35 established that joining renders lets one supply
+            // context for another's digits, and the scanner's exemptions
+            // are all context.
+            const shown = rows.filter(rowShown);
+            return {
+              rowsOk: rows.length === 6 && shown.length === rows.length,
+              confirmAction,
+              rowsText: shown.map((r) => r.innerText ?? '').filter((t) => t.trim() !== ''),
+            };
           })
           .catch(() => null);
         confirmText = receiptShown?.rowsOk
           ? await card.innerText({ timeout: 2_000 }).catch(() => null)
           : null;
         confirmAction = receiptShown?.confirmAction;
+        // ROUND 50 P2 — kept whatever `rowsOk` decided, so a figure on a
+        // row the lender COULD see is scanned even when a different row
+        // was unreadable.
+        confirmRowsText = receiptShown?.rowsText ?? null;
         // ROUND 46 P2 — CAN IT ACTUALLY RECEIVE A CLICK?
         //
         // Geometrically visible, natively enabled and labelled is not
@@ -4853,10 +4939,16 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
     confirmText,
     confirmAction,
     confirmExpected,
+    // ROUND 50 P2 — whether the OUTER submit could take a click. Carried
+    // so an unreachable control is reported as the defect it is rather
+    // than as an unread confirmation.
+    submitClickable,
+    confirmRowsText,
     settled,
     // Every render read during the readiness wait, including the ones
     // the poll superseded (round 31 P2).
     seenTexts,
+    seenRenders,
     // ROUND 35 P2 — travels with `seenTexts`, and for the same reason:
     // both are things this drive SAW, and the settled snapshot is not a
     // record of what it saw.

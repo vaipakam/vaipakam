@@ -1040,10 +1040,28 @@ export function forcedCloseVerdict(obs, copy) {
   // adjacency creates is a neighbour that was never on screen together.
   // The hits are concatenated instead, which is what was wanted all
   // along — every render judged on its own text.
+  //
+  // ROUND 50 P2 — AND THE ROWS THAT WERE READABLE, whatever happened to
+  // the rest of the receipt.
+  //
+  // `confirmText` is the whole card's text and is set only when ALL SIX
+  // rows rendered readably. So one row missing, hidden or clipped
+  // discarded the text of the five that were on screen — and an invented
+  // amount stated in one of THOSE was downgraded to `blocked/incomplete`
+  // instead of being reported. A gap in what was read was suppressing a
+  // figure that was read, which is the same ordering error round 46
+  // found in the confirm-action gate and round 26 found in the row scan
+  // itself.
+  //
+  // `confirmRowsText` carries the readable rows and nothing else, so
+  // `confirmText` keeps its one job — deciding whether the receipt was
+  // COMPLETELY covered — and the amount scan stops depending on that
+  // answer. Each row is its own part, never joined: round 35's rule.
   const parts = [
     obs.text,
     obs.bodyText,
     obs.confirmText,
+    ...(Array.isArray(obs.confirmRowsText) ? obs.confirmRowsText : []),
     ...(Array.isArray(obs.seenTexts) ? obs.seenTexts : []),
   ].filter((part) => typeof part === 'string' && part !== '');
   //
@@ -1628,11 +1646,43 @@ export function forcedCloseVerdict(obs, copy) {
   // silence as "hidden" would invent findings on every older record.
   const actionOffered = obs.submitVisible !== false && !obs.submitDisabled;
 
-  if (actionOffered && Array.isArray(copy?.withheldCopy)) {
-    const withheld = copy.withheldCopy.find(
-      (sentence) => typeof sentence === 'string' && sentence && (obs.text ?? '').includes(sentence),
+  // ROUND 50 P2 — ON EVERY RENDER SEEN, not only the settled one.
+  //
+  // `seenTexts` kept the copy from intermediate ticks and the peaks kept
+  // the control counts, and nothing kept the PAIR. So a render showing
+  // withheld copy beside a live button — the safety check still running,
+  // the fee-paying action already pressable — was positively observed
+  // and then discarded the moment the card settled into a clean ready
+  // state, because this arm matched the FINAL copy against the FINAL
+  // control and found nothing wrong.
+  //
+  // Round 10's exemption does not cover this and was never meant to: it
+  // forgives a transiently DISABLED control, an intermediate state that
+  // costs the lender nothing. A transiently ENABLED one beside copy
+  // saying the decision is not yet safe is the expensive direction, and
+  // it is exactly what this arm exists for. Briefly is long enough — a
+  // click is instantaneous.
+  //
+  // The settled render is judged as one of the renders rather than
+  // separately, so there is one rule rather than two that can drift.
+  const renders = [
+    { text: obs.text, submitVisible: obs.submitVisible, submitDisabled: obs.submitDisabled },
+    ...(Array.isArray(obs.seenRenders) ? obs.seenRenders : []),
+  ];
+  if (Array.isArray(copy?.withheldCopy)) {
+    const unsafe = renders.find(
+      (r) =>
+        r &&
+        // Same `!== false` reading as `actionOffered` below: an older
+        // record that carries no visibility says nothing about it.
+        r.submitVisible !== false &&
+        !r.submitDisabled &&
+        copy.withheldCopy.some(
+          (sentence) =>
+            typeof sentence === 'string' && sentence && (r.text ?? '').includes(sentence),
+        ),
     );
-    if (withheld) {
+    if (unsafe) {
       return {
         verdict: 'fail',
         failKind: 'observed',
@@ -1811,6 +1861,32 @@ export function forcedCloseVerdict(obs, copy) {
     }
   }
 
+  // ROUND 50 P2 — AN UNREACHABLE OUTER SUBMIT IS A DEFECT, not an
+  // unread confirmation.
+  //
+  // The drive's real click already failed when the control could not
+  // take one, and that result was discarded — so a visible, enabled
+  // submit under an overlay or `pointer-events: none` reached the arm
+  // below as `confirmText === null` and was filed as an incomplete
+  // READING. It is not: the lender cannot reach the confirmation at all,
+  // which is further upstream than any of the confirm-action faults and
+  // strands them earlier.
+  //
+  // Ranked ABOVE the incomplete arm for the reason this module has now
+  // applied five times: a defect that was observed outranks a gap in
+  // what was read. Kept BELOW the applicability exits, with the other
+  // pointer faults, because a transition overlay during a terminalising
+  // loan produces exactly this — reporting it after the position has
+  // gone would be a false FAIL invented out of a race.
+  //
+  // `=== false`, so a visit that never ran the trial says nothing.
+  if (obs.submitClickable === false) {
+    return {
+      verdict: 'fail',
+      failKind: 'observed',
+      why: 'the card offers a visible, enabled action that cannot receive a click — covered by another element, or not accepting pointer events, so the lender cannot reach the confirmation at all',
+    };
+  }
   if (obs.confirmExpected && obs.confirmText === null) {
     return {
       verdict: 'blocked',
