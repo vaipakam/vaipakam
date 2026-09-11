@@ -519,3 +519,31 @@ then could be clicked is treated as reachable, since a click that worked
 outranks a probe that did not; and a grace window written as "3-day"
 rather than "3 days" is no longer read as an invented amount, which had
 made correct copy the specification explicitly permits fail the check.
+
+The next round found the largest single gap in the whole check, and it is
+not about how the page looks.
+
+The check confirmed that the position was still active and still held by
+the lender, and never asked the protocol whether the close-out could
+actually run. So a page that wrongly said "ready" and offered the button
+would have been certified as correct — certifying an action the protocol
+is guaranteed to refuse, after the lender has paid the network fee for
+it. The page's own wording was being accepted as proof of itself.
+
+The check now asks the protocol directly, at the same moment it reads the
+loan's status, and never works the answer out for itself: the grace
+period is configurable on-chain, and any client that recreates the
+default ladder is correct only until someone changes it. If the protocol
+says the loan is not yet closeable while the page offers the action, that
+is a fault. If the question cannot be asked at all, the run says so
+rather than passing — a route this check vouches for is not something to
+vouch for on no evidence.
+
+Two smaller ones alongside it. The receipt's six lines are now checked
+against their own headings rather than merely being present, so a receipt
+where every line is true and every line sits under the wrong question —
+the loss disclosure filed under "Fees" — is caught; nothing on such a
+panel is false, which is what makes it the most misleading shape it can
+take. And the card's own button must carry a label the lender can read,
+which the confirmation's button has been required to do for some rounds
+while the one that opens it was not.

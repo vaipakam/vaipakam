@@ -438,11 +438,18 @@ const FORCED_CLOSE_COPY = (() => {
     ),
   );
   const fc = bundle?.copy?.forcedClose ?? {};
+  // The SHARED receipt labels (round 54 P2). `ReviewReceipt` renders
+  // every write flow's six rows from `copy.receipt`, so the headings
+  // live there rather than under `forcedClose` — and taking them from
+  // the same place the component does is what keeps this from becoming
+  // a second copy to drift.
+  const enCopy = bundle?.copy ?? {};
   const need = (value, key) => {
     if (typeof value !== 'string' || value === '') {
       throw new Error(
-        `copy.forcedClose.${key} is missing from src/i18n/locales/en.json — ` +
-          'the forced-close observation cannot judge the deployed card without it.',
+        `copy.${key.includes('(label)') ? '' : 'forcedClose.'}${key} is missing from ` +
+          'src/i18n/locales/en.json — the forced-close observation cannot judge ' +
+          'the deployed card without it.',
       );
     }
     return value;
@@ -531,6 +538,30 @@ const FORCED_CLOSE_COPY = (() => {
     // `need` on every value, so a copy key that moves is a loud startup
     // failure rather than a silently narrower check — the same rule the
     // leads above already follow.
+    // ROUND 54 P2 — THE LABELS TOO, PAIRED WITH THEIR VALUES.
+    //
+    // Round 53 checked the value SET, so the six right values under the
+    // six wrong headings — the loss disclosure filed under "Fees", the
+    // fee disclosure under "You receive" — satisfied it: every value
+    // present, all six distinct. A receipt whose every line is true and
+    // whose every line is attached to the wrong question, certified as
+    // scanned.
+    //
+    // Ordered, because the order is part of the contract:
+    // `ReviewReceipt` states it outright — "Six fixed rows, same order
+    // everywhere" — and renders from a fixed array. Pairing by index
+    // therefore enforces both the pairing and the order with one rule.
+    //
+    // Labels come from the SHARED `copy.receipt`, which is where
+    // `ReviewReceipt` takes them from, rather than being restated here.
+    receiptRowLabels: [
+      need(enCopy.receipt?.youReceive, 'receipt.youReceive (label)'),
+      need(enCopy.receipt?.youLock, 'receipt.youLock (label)'),
+      need(enCopy.receipt?.youMayOwe, 'receipt.youMayOwe (label)'),
+      need(enCopy.receipt?.youCanLose, 'receipt.youCanLose (label)'),
+      need(enCopy.receipt?.fees, 'receipt.fees (label)'),
+      need(enCopy.receipt?.whenThisEnds, 'receipt.whenThisEnds (label)'),
+    ],
     receiptRowSets: {
       standard: [
         need(fc.receipt?.youReceive, 'receipt.youReceive'),
@@ -3034,7 +3065,28 @@ async function observeForcedClose(page, loan) {
   // Pinning to one block number makes the three facts a snapshot rather
   // than three samples. It also makes them consistent with each other
   // by construction, which no amount of re-reading can achieve.
-  const [pinnedBlock, live, authorityNow, pinnedSale] = await discovery(
+  //
+  // ROUND 54 P2 — AND A FOURTH FACT: whether the PROTOCOL agrees the
+  // close-out can run at all.
+  //
+  // The pinned snapshot established Active status and ownership and
+  // nothing about the grace deadline, so a regressed page rendering a
+  // READY route with an enabled submit was certified by this drive —
+  // certifying an action `triggerDefault` is guaranteed to refuse, after
+  // charging the lender a network fee. The copy was being allowed to
+  // substantiate itself.
+  //
+  // READ, never derived. `src/data/forcedClose.ts` states the rule for
+  // the app and it binds this drive identically: `LibVaipakam.gracePeriod`
+  // walks governance-configurable `graceBuckets`, and the ladder in the
+  // code is only the fallback used when that array is empty — so a client
+  // reproducing it is correct until the first deployment tunes the
+  // buckets and silently wrong afterwards. `isLoanDefaultable(loanId)` is
+  // the chain's own answer and the same view the app consults.
+  //
+  // In the pinned block with the others, so it cannot disagree with the
+  // status it is judged beside.
+  const [pinnedBlock, live, authorityNow, pinnedSale, pinnedDefaultable] = await discovery(
     `re-reading loan ${loan.id} beside the forced-close scrape`,
     async () => {
       // `cacheTime: 0` — the block this snapshot pins itself to must be
@@ -3054,6 +3106,19 @@ async function observeForcedClose(page, loan) {
         }),
         tokenOwnerOf(loan.lenderTokenId, blockNumber),
         saleLockedOn(loan.lenderTokenId, loan.id, blockNumber, loan.authority),
+        // `undefined` when the read could not answer, so the verdict can
+        // tell "the protocol says no" from "this drive could not ask" —
+        // the distinction every other probe in this file carries.
+        pub
+          .readContract({
+            address: DIAMOND,
+            abi: DIAMOND_ABI_VIEM,
+            functionName: 'isLoanDefaultable',
+            args: [loan.id],
+            blockNumber,
+          })
+          .then((v) => v === true)
+          .catch(() => undefined),
       ]);
     },
   );
@@ -3183,6 +3248,10 @@ async function observeForcedClose(page, loan) {
     ...card,
     lenderHoldsActive,
     saleLocked,
+    // ROUND 54 P2 — the PROTOCOL's own answer about whether this
+    // close-out can run, read at the pinned block beside the status it
+    // is judged with. `undefined` where the read could not answer.
+    defaultable: pinnedDefaultable,
     absenceUnconfirmed,
     // ROUND 24 P2 — and the REASON with it. Round 23 produced this
     // string and then dropped it here, so every diagnosis fell back to
@@ -3853,6 +3922,32 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
               ? shownSubmits.every((b) => b.disabled === true)
               : true,
           visibleSubmits: shownSubmits.length,
+          // ROUND 54 P2 — AND WHETHER THE LENDER CAN READ IT.
+          //
+          // Present, visible and enabled made `confirmExpected` true, so
+          // a blank outer submit — or one whose label is painted in
+          // nothing — was clicked by its test id, opened a healthy
+          // confirmation, and passed. The confirmation's OWN action has
+          // carried `labelled` since round 45 and `labelPainted` since
+          // round 46; the control that opens it, which is the first
+          // thing the lender sees, had neither.
+          //
+          // Judged over the VISIBLE set, matching every other submit
+          // fact here: a hidden control is not something the lender is
+          // being shown, and `some` rather than `every` because one
+          // readable control among several is a readable offer.
+          //
+          // `labelPainted` reuses the button-label rule from the
+          // confirmation: `visible` on the leaves that carry their own
+          // text, `some` rather than `every`, so a visually-hidden long
+          // form beside a short visible one stays correct.
+          submitLabelled: shownSubmits.some((b) => (b.innerText ?? '').trim() !== ''),
+          submitLabelPainted: shownSubmits.some((b) => {
+            const leaves = [b, ...b.querySelectorAll('*')].filter((n) =>
+              [...n.childNodes].some((c) => c.nodeType === 3 && c.textContent.trim() !== ''),
+            );
+            return leaves.length === 0 || leaves.some((n) => visible(n));
+          }),
           // ROUND 38 P2 — WHICH control the snapshot judged, so the
           // CLICK addresses it. Round 33 fixed this for the card and
           // left the control on `:visible`, one level down: Playwright's

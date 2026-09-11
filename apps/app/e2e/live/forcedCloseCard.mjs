@@ -1846,10 +1846,32 @@ export function forcedCloseVerdict(obs, copy) {
       stateText.includes(copy.rentalReadyCopy);
     const expected = isRental ? routeSets.rental : routeSets.standard;
     const other = isRental ? routeSets.standard : routeSets.rental;
-    const covers = (set) =>
-      Array.isArray(set) &&
-      set.length === 6 &&
-      set.every((value) => rowsSeen.some((t) => t.includes(value)));
+    // ROUND 54 P2 — PAIRED WITH THEIR LABELS, not merely all present.
+    //
+    // Round 53 checked the value SET, so the six right values under the
+    // six wrong headings satisfied it: every value present, all six
+    // distinct. A receipt whose every line is true and whose every line
+    // answers the wrong question — the loss disclosure filed under
+    // "Fees" — certified as scanned. That is the most misleading shape
+    // this panel can take, because nothing on it is false.
+    //
+    // Pairing is BY INDEX, which enforces the order too. That is not an
+    // extra demand: `ReviewReceipt` states it outright — "Six fixed
+    // rows, same order everywhere" — and renders from a fixed array.
+    //
+    // Labels are optional so a caller that supplies none keeps round
+    // 53's set-only behaviour rather than failing on a record this rule
+    // cannot judge.
+    const labels = Array.isArray(copy?.receiptRowLabels) ? copy.receiptRowLabels : null;
+    const covers = (set) => {
+      if (!Array.isArray(set) || set.length !== 6) return false;
+      if (labels === null || labels.length !== 6) {
+        return set.every((value) => rowsSeen.some((t) => t.includes(value)));
+      }
+      return set.every(
+        (value, i) => rowsSeen[i].includes(labels[i]) && rowsSeen[i].includes(value),
+      );
+    };
     if (!covers(expected)) {
       if (covers(other)) {
         return {
@@ -1967,6 +1989,91 @@ export function forcedCloseVerdict(obs, copy) {
     }
   }
 
+  // ROUND 54 P2 — A READY ROUTE THE PROTOCOL WOULD REFUSE.
+  //
+  // The card's readiness copy was allowed to substantiate itself: the
+  // pinned snapshot established Active status and ownership and nothing
+  // about the grace deadline, so a regressed page rendering a READY
+  // route with an enabled submit passed — this drive certifying an
+  // action `triggerDefault` is guaranteed to refuse, after the lender
+  // has paid a network fee for it. The same class as the
+  // withheld-copy-plus-enabled-control arm, with the chain rather than
+  // the copy as the authority.
+  //
+  // `=== false` and not falsy, deliberately: `undefined` means the read
+  // could not answer, and a drive that cannot ask must not accuse. That
+  // case is an incomplete observation, reported below.
+  //
+  // Kept BELOW the applicability exits with the other chain-dependent
+  // arms: a loan that terminalises between the DOM pass and the pinned
+  // re-read is no longer defaultable, and reporting that as a product
+  // defect would be a false FAIL invented out of a race.
+  if (obs.defaultable === false && actionOffered && Array.isArray(copy?.readyCopy)) {
+    const ready = copy.readyCopy.find(
+      (sentence) => typeof sentence === 'string' && sentence && (obs.text ?? '').includes(sentence),
+    );
+    if (ready) {
+      return {
+        verdict: 'fail',
+        failKind: 'observed',
+        why: 'the card renders a READY route and offers the action, but the protocol reports this loan is not yet defaultable — the lender would pay a network fee for a transaction that is guaranteed to be refused',
+      };
+    }
+  }
+  // And where the drive could not ASK, it says so rather than passing.
+  //
+  // A ready route offering the action is the strongest claim this drive
+  // vouches for, and vouching for it without the protocol's own answer
+  // is exactly the "clean reading banked on no evidence" this module
+  // refuses elsewhere. `undefined` only — an older record that predates
+  // the field is unaffected, since it carries no `defaultable` key at
+  // all and `in` distinguishes the two.
+  if (
+    'defaultable' in obs &&
+    obs.defaultable === undefined &&
+    actionOffered &&
+    Array.isArray(copy?.readyCopy) &&
+    copy.readyCopy.some(
+      (sentence) => typeof sentence === 'string' && sentence && (obs.text ?? '').includes(sentence),
+    )
+  ) {
+    return {
+      verdict: 'blocked',
+      blockedKind: 'incomplete',
+      why: 'the card offers a READY action but the protocol\'s own defaultability answer could not be read — whether this transaction would be accepted went unestablished',
+    };
+  }
+  // ROUND 54 P2 — AN UNREADABLE OUTER SUBMIT IS ONE TOO.
+  //
+  // Present, visible and enabled is what made `confirmExpected` true, so
+  // a blank control — or one whose label is painted in nothing — was
+  // clicked by its test id, opened a healthy confirmation, and passed
+  // the visit. The lender cannot tell what action they are opening. The
+  // confirmation's own button has carried `labelled` since round 45 and
+  // `labelPainted` since round 46; the control that opens it, which is
+  // the first thing the lender sees, had neither.
+  //
+  // Two arms rather than one, matching the confirmation's treatment and
+  // for the same reason: a blank control and one that is not there
+  // until hovered read differently to a lender, and the run should say
+  // which it saw.
+  //
+  // `=== false`, so a record predating either field says nothing. Kept
+  // with the other control faults, below the applicability exits.
+  if (obs.submitLabelled === false) {
+    return {
+      verdict: 'fail',
+      failKind: 'observed',
+      why: 'the card offers a visible, enabled action with no label at all — the lender is asked to open a forced close-out from a blank control',
+    };
+  }
+  if (obs.submitLabelPainted === false) {
+    return {
+      verdict: 'fail',
+      failKind: 'observed',
+      why: 'the card offers a visible, enabled action whose label is in the markup but painted in nothing — the lender is asked to open a forced close-out from a control that reads as blank',
+    };
+  }
   // ROUND 50 P2 — AN UNREACHABLE OUTER SUBMIT IS A DEFECT, not an
   // unread confirmation.
   //

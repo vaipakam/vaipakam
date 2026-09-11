@@ -3352,6 +3352,170 @@ describe('round 45 review findings', () => {
   });
 });
 
+describe('round 54 review findings', () => {
+  const LABELS = [
+    enBundle.copy.receipt.youReceive,
+    enBundle.copy.receipt.youLock,
+    enBundle.copy.receipt.youMayOwe,
+    enBundle.copy.receipt.youCanLose,
+    enBundle.copy.receipt.fees,
+    enBundle.copy.receipt.whenThisEnds,
+  ];
+  const VALUES = Object.values(FORCED_CLOSE.receipt);
+  const paired = (values = VALUES, labels = LABELS) =>
+    values.map((v, i) => `${labels[i]}\n${v}`);
+
+  const copy = {
+    unknownCopy: FORCED_CLOSE.unknown,
+    readyCopy: [FORCED_CLOSE.readyInKind, FORCED_CLOSE.readyInternalMatch, FORCED_CLOSE.readyRental],
+    withheldCopy: [FORCED_CLOSE.unknown, FORCED_CLOSE.notYet, FORCED_CLOSE.readyNeedsRoute],
+    recognisedCopy: [
+      FORCED_CLOSE.unknown,
+      FORCED_CLOSE.notYet,
+      FORCED_CLOSE.blockedPaused,
+      FORCED_CLOSE.blockedSequencer,
+      FORCED_CLOSE.blockedNoConsent,
+      FORCED_CLOSE.readyInKind,
+      FORCED_CLOSE.readyInternalMatch,
+      FORCED_CLOSE.readyRental,
+      FORCED_CLOSE.readyNeedsRoute,
+    ],
+    receiptLeads: [FORCED_CLOSE.receipt.youReceive, FORCED_CLOSE.rentalReceipt.youReceive],
+    receiptRowSets: {
+      standard: VALUES,
+      rental: Object.values(FORCED_CLOSE.rentalReceipt),
+    },
+    receiptRowLabels: LABELS,
+    rentalReadyCopy: FORCED_CLOSE.readyRental,
+  };
+
+  const base = {
+    lenderHoldsActive: true,
+    mounted: true,
+    attached: true,
+    submitPresent: true,
+    submitVisible: true,
+    submitDisabled: false,
+    visibleSubmits: 1,
+    visibleCards: 1,
+    saleLocked: false,
+    settled: true,
+    bodyPresent: true,
+    bodyText: FORCED_CLOSE.readyInKind,
+    text: FORCED_CLOSE.readyInKind,
+    confirmExpected: true,
+    confirmText: `${FORCED_CLOSE.receipt.youReceive} …`,
+  };
+
+  describe('each value under its own heading', () => {
+    it('passes a correctly paired receipt', () => {
+      expect(forcedCloseVerdict({ ...base, confirmRowsText: paired() }, copy).verdict).toBe('pass');
+    });
+
+    // The finding's own example: every value present, all six distinct,
+    // and each one answering the wrong question. Nothing on the panel
+    // is false, which is what makes it the most misleading shape it can
+    // take.
+    it('BLOCKS a receipt whose values sit under the wrong headings', () => {
+      const swapped = [...VALUES];
+      [swapped[3], swapped[4]] = [swapped[4], swapped[3]];
+      const v = forcedCloseVerdict({ ...base, confirmRowsText: paired(swapped) }, copy);
+      expect(v.verdict).not.toBe('pass');
+    });
+
+    // Pairing is by index, so the order is enforced with it —
+    // `ReviewReceipt` renders "six fixed rows, same order everywhere".
+    it('BLOCKS a correctly paired receipt in the wrong ORDER', () => {
+      const rows = paired();
+      const reordered = [rows[1], rows[0], ...rows.slice(2)];
+      expect(forcedCloseVerdict({ ...base, confirmRowsText: reordered }, copy).verdict).not.toBe(
+        'pass',
+      );
+    });
+
+    it('keeps the set-only behaviour for a caller with no labels', () => {
+      const { receiptRowLabels, ...older } = copy;
+      expect(forcedCloseVerdict({ ...base, confirmRowsText: VALUES }, older).verdict).toBe('pass');
+    });
+  });
+
+  describe('the outer submit must be readable', () => {
+    it('FAILS a blank outer submit', () => {
+      const v = forcedCloseVerdict({ ...base, submitLabelled: false }, copy);
+      expect(v.verdict).toBe('fail');
+      expect(v.failKind).toBe('observed');
+      expect(v.why).toMatch(/no label at all/);
+    });
+
+    it('FAILS an outer submit whose label is not painted', () => {
+      const v = forcedCloseVerdict({ ...base, submitLabelPainted: false }, copy);
+      expect(v.verdict).toBe('fail');
+      expect(v.why).toMatch(/reads as blank/);
+    });
+
+    it('says nothing where neither field was recorded', () => {
+      expect(forcedCloseVerdict(base, copy).verdict).toBe('pass');
+    });
+
+    it('passes a labelled, painted control', () => {
+      expect(
+        forcedCloseVerdict({ ...base, submitLabelled: true, submitLabelPainted: true }, copy)
+          .verdict,
+      ).toBe('pass');
+    });
+  });
+
+  describe('a ready route the protocol would refuse', () => {
+    // The pinned snapshot established Active status and ownership and
+    // nothing about the grace deadline, so the readiness copy was
+    // allowed to substantiate itself — certifying an action
+    // `triggerDefault` is guaranteed to refuse after the lender pays for
+    // it.
+    it('FAILS ready copy with an enabled action on a non-defaultable loan', () => {
+      const v = forcedCloseVerdict({ ...base, defaultable: false }, copy);
+      expect(v.verdict).toBe('fail');
+      expect(v.failKind).toBe('observed');
+      expect(v.why).toMatch(/not yet defaultable/);
+    });
+
+    it('passes ready copy on a defaultable loan', () => {
+      expect(forcedCloseVerdict({ ...base, defaultable: true }, copy).verdict).toBe('pass');
+    });
+
+    // A WITHHELD card on a non-defaultable loan is the correct render,
+    // not a defect — that is the whole point of `not-yet`.
+    it('does not fault a withheld card on a non-defaultable loan', () => {
+      const v = forcedCloseVerdict(
+        {
+          ...base,
+          text: FORCED_CLOSE.notYet,
+          bodyText: FORCED_CLOSE.notYet,
+          submitDisabled: true,
+          defaultable: false,
+          confirmExpected: false,
+          confirmText: null,
+        },
+        copy,
+      );
+      expect(v.verdict).toBe('pass');
+    });
+
+    // A drive that could not ask must not accuse — and must not pass
+    // either, since a ready route offering the action is the strongest
+    // claim it makes.
+    it('BLOCKS where the defaultability read could not answer', () => {
+      const v = forcedCloseVerdict({ ...base, defaultable: undefined }, copy);
+      expect(v.verdict).toBe('blocked');
+      expect(v.blockedKind).toBe('incomplete');
+      expect(v.why).toMatch(/defaultability answer could not be read/);
+    });
+
+    it('says nothing for a record predating the field', () => {
+      expect(forcedCloseVerdict(base, copy).verdict).toBe('pass');
+    });
+  });
+});
+
 describe('round 53 review findings', () => {
   const ROWS = {
     standard: Object.values(FORCED_CLOSE.receipt),
