@@ -490,6 +490,8 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
       <div class="body" id="erased"><p class="erased">This loan can be closed out now.</p></div>
       <div class="body" id="clipped"><p class="clipped">This loan can be closed out now.</p></div>
       <div class="body" id="empty"></div>
+      <div class="body" id="styleOnly"><style>.x { color: red; }</style></div>
+      <div class="body" id="styleBeside"><style>.x { color: red; }</style><p>This loan can be closed out now.</p></div>
       <div class="body" id="withSrOnly">
         <span class="srOnly">Forced close-out</span>
         <p>This loan can be closed out now.</p>
@@ -518,6 +520,9 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
         erased: bodyVisible(byId('erased')),
         clipped: bodyVisible(byId('clipped')),
         empty: bodyVisible(byId('empty')),
+        styleOnly: bodyVisible(byId('styleOnly')),
+        styleBeside: bodyVisible(byId('styleBeside')),
+        styleLeafCount: scope.textLeavesOf(byId('styleOnly')).length,
         // The LEAF RULE's own answer for the empty body, separated from
         // the predicate's. See the assertion for why the split matters.
         emptyLeafRule: (() => {
@@ -565,6 +570,25 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
   // accessible markup and is clipped by design. `every` would fail a
   // card for having one, which is the false-FAIL direction.
   expect(result.withSrOnly, 'a readable explanation beside an sr-only span').toBe(true);
+
+  // A `<style>` HOLDS TEXT AND PAINTS NONE, and `innerText` — which is
+  // what `bodyText` reads — already skips it, so counting it as a leaf
+  // would make the two disagree about what the body says.
+  //
+  // AND THIS ASSERTION WAS WRITTEN TOO STRONGLY, then failed, which is
+  // the second time in this one test that a dramatic justification did
+  // not survive contact with the layout engine. The claim was that a
+  // `<style>`-only body would FAIL for markup nobody can see. It does
+  // read false — but on GEOMETRY, exactly like the empty body above: a
+  // `<style>` is `display: none`, so the wrapper has no height and
+  // `visible` rejects it before the leaf rule is consulted. The leaf
+  // count is what actually demonstrates the exclusion, and the
+  // exclusion is defence in depth rather than a live defect: it stops
+  // the rule CONTRIBUTING a false FAIL if such a body ever gains height
+  // from something else.
+  expect(result.styleLeafCount, 'a <style> is not a text leaf').toBe(0);
+  expect(result.styleOnly, 'rejected by geometry, not by the leaf rule').toBe(false);
+  expect(result.styleBeside, 'a readable explanation beside a <style>').toBe(true);
 
   expect(result.wrapperLooksVisible.transparent).toBe(true);
   expect(result.wrapperLooksVisible.erased).toBe(true);

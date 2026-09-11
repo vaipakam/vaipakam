@@ -4181,10 +4181,27 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
         // a copy of it written into the test would prove nothing.
         const textLeavesOf = (root) => {
           if (root === null) return [];
-          return [root, ...root.querySelectorAll('*')].filter((n) =>
-            [...n.childNodes].some(
-              (c) => c.nodeType === 3 && c.textContent.trim() !== '',
-            ),
+          // Elements whose text is NEVER PAINTED are not leaves, however
+          // much text they hold. `innerText` — which is what `bodyText`
+          // reads — already skips them, so counting one would make the
+          // two disagree about what the body says.
+          //
+          // NOT REACHABLE TODAY, and the first version of this comment
+          // claimed otherwise. A body holding only a `<style>` has no
+          // height, so `visible` rejects it on geometry before the leaf
+          // rule is consulted at all — the fixture asserts exactly that.
+          // What the exclusion does is stop the rule from CONTRIBUTING a
+          // false FAIL if such a body ever gains height from something
+          // else, and keep it agreeing with the text `bodyText` reports.
+          // Defence in depth, stated as such rather than dressed up as a
+          // live defect.
+          const unpainted = /^(script|style|template|title|noscript)$/i;
+          return [root, ...root.querySelectorAll('*')].filter(
+            (n) =>
+              !unpainted.test(n.tagName) &&
+              [...n.childNodes].some(
+                (c) => c.nodeType === 3 && c.textContent.trim() !== '',
+              ),
           );
         };
         const textLeaves = textLeavesOf(body);
