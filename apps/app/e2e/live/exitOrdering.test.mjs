@@ -51,7 +51,8 @@ describe('a funds defect that was READ outranks every blocker', () => {
   const ROUTE_EXIT = 'if (routeFailures.length) {';
   const WS_EXIT = 'if (wsRpcMethods.size) {';
   const CHAIN_EXIT = 'if (pageChainWrong.length) {';
-  const CHAIN_UNKNOWN_EXIT = 'if (failures && pageChainUnknown.length) {';
+  const CHAIN_UNKNOWN_EXIT =
+    'if (pageChainUnknown.length && absenceRemaining.length && !observedRemaining.length) {';
   const GENERIC_FAIL_EXIT = 'if (failures) process.exit(1);';
 
   it('every guard this is ranked against still exists', () => {
@@ -105,11 +106,24 @@ describe('a funds defect that was READ outranks every blocker', () => {
     expect(at(FORCED_CLOSE_EXIT)).toBeLessThan(at(CHAIN_UNKNOWN_EXIT));
   });
 
-  it('gates the unknown-chain block on there being an inference to protect', () => {
-    // An unanswerable probe on an otherwise clean run concluded nothing,
-    // so it must not exit 2. Without the `failures &&` guard this would
-    // block every run whose chain probe timed out.
-    expect(CHAIN_UNKNOWN_EXIT).toContain('failures &&');
+  // ROUND 78 P2 — and it gates on the KIND of failure, not the count.
+  //
+  // `failures` is not all-inferred: `fcObserved` extracts only the
+  // forced-close observed findings, while a hooks-order crash, an
+  // uncaught page error, a dead anchor and a mis-ordered row are read
+  // directly and counted in the same total. Gating on the aggregate
+  // downgraded those to "nothing was learned" — the swallow this whole
+  // ordering exists to prevent.
+  it('gates the unknown-chain block on absence-shaped failures only', () => {
+    expect(CHAIN_UNKNOWN_EXIT).toContain('absenceRemaining.length');
+    expect(CHAIN_UNKNOWN_EXIT).toContain('!observedRemaining.length');
+  });
+
+  it('reads those kinds from the module that decides the problems', () => {
+    // Deciding them anywhere else is the shape #1861 already caught in
+    // this file: two places computing overlapping verdicts, one quietly
+    // erasing the other.
+    expect(src).toContain('visitProblemKinds(v, ROLE)');
   });
 
   it('exits 1 rather than 2 — a finding, not an inconclusive run', () => {

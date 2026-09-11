@@ -104,7 +104,7 @@ import {
 } from './forcedCloseCard.mjs';
 import { requireSiteUrl } from './driver.mjs';
 import { redactUrl } from './redact.mjs';
-import { isDetailPath, visitVerdict } from './visitVerdict.mjs';
+import { isDetailPath, visitProblemKinds, visitVerdict } from './visitVerdict.mjs';
 import { walkOrderFor } from './walkOrder.mjs';
 import {
   EXECUTION_REVERTED,
@@ -1275,8 +1275,27 @@ if (ROLE === 'lender') {
   //
   // Loud AND correctly classified: `discovery()` prints what failed and
   // exits 2.
+  // ROUND 78 P2 — AND ONLY THE REQUESTED LENDER'S LOANS WHEN ONE WAS
+  // NAMED, exactly as the close-out pre-pass below already does.
+  //
+  // Cross-authority accepted-sale data informs the AUTHORITY CHOICE. With
+  // `OBSERVE_ADDRESS` set that choice is already made, and the walk that
+  // follows only ever sees `mine` — so every probe against another
+  // authority's loans is spent on a ranking nobody reads, sequentially,
+  // before the browser launches. Unrelated latency, a rate limit, or one
+  // non-revert failure could stall or BLOCK a perfectly valid observation
+  // of the lender that was actually asked for.
+  //
+  // The parallel-site shape once more, and on my own round-76 fix: I
+  // narrowed the pre-pass one loop below this and left this one.
+  const requestedAuthority = process.env.OBSERVE_ADDRESS?.toLowerCase();
+  const saleCandidates = eligible.filter(
+    (x) =>
+      x.status === STATUS_ACTIVE &&
+      (!requestedAuthority || x.authority.toLowerCase() === requestedAuthority),
+  );
   await discovery('ranking loans by accepted sale', async () => {
-    for (const l of eligible.filter((x) => x.status === STATUS_ACTIVE)) {
+    for (const l of saleCandidates) {
       try {
         if ((await saleLockedOn(l.lenderTokenId, l.id, undefined, l.authority)) === true) {
           acceptedSale.add(l.id);
@@ -1559,6 +1578,21 @@ const blockedHttp = [];
  * @type {Map<string, Promise<number|null>>}
  */
 const pageRpcChain = new Map();
+// ROUND 78 P2 — THE CHAIN THE PAGE'S OWN TRAFFIC ALREADY DISCLOSED.
+//
+// `watchPageHead` parses a real `eth_chainId` reply for every endpoint it
+// sees, and kept that evidence in its per-page closure. So an endpoint
+// whose chain was ESTABLISHED from the page's own request could still be
+// filed as unknown when the extra synthetic probe was refused or timed
+// out — and round 77's gate would then downgrade a real inferred failure
+// to BLOCKED on a chain it actually knew.
+//
+// Keyed by `res.url()`, the same string `pageRpcChain` uses, so the two
+// reconcile without a second notion of what an endpoint is. A
+// self-contradicting endpoint is deliberately NOT recorded: it has told
+// us it cannot say which chain it serves, which is unknown rather than
+// evidence.
+const observedPageChain = new Map();
 /**
  * A probe that never answers must not become a probe that never returns.
  * This promise is awaited unconditionally at verdict time, and
@@ -2099,6 +2133,8 @@ function watchPageHead(page) {
           return;
         }
         if (id !== null) {
+          // Recorded for the unknown-chain gate, whichever chain it is.
+          observedPageChain.set(key, id);
           if (id === CHAIN_ID) {
             // ROUND 51 P2 — AND THE EXCLUSION IS PERMANENT, so this
             // cannot re-admit.
@@ -8094,7 +8130,10 @@ const pageChainWrong = [];
 // third asserts nothing.
 const pageChainUnknown = [];
 for (const [url, probe] of pageRpcChain) {
-  const served = await probe;
+  // The synthetic probe FIRST, then what the page's own traffic already
+  // disclosed for the same endpoint (round 78). Either establishes the
+  // chain; only the absence of both leaves it unknown.
+  const served = (await probe) ?? observedPageChain.get(url) ?? null;
   if (served === null) {
     pageChainUnknown.push(redact(url).slice(0, 120));
   } else if (served !== CHAIN_ID) {
@@ -8145,12 +8184,27 @@ if (allowlistTooNarrow.length || httpGaps.length) {
 // the case this gate exists for, since a deterministic deploy answers
 // ordinary reads at the same address either way.
 //
-// GATED ON THERE BEING AN INFERENCE TO PROTECT. An unanswerable probe on
-// an otherwise clean run is not worth exiting 2 over: nothing was
-// concluded from it. So this blocks only where the run was about to
-// report a failure it INFERRED — which is what `failures` reaching here
-// means, the observed findings having already exited above.
-if (failures && pageChainUnknown.length) {
+// GATED ON EVERY REMAINING FAILURE BEING ONE THE CHAIN COULD EXPLAIN
+// (round 78 P2), which is NOT the same as `failures` being non-zero.
+//
+// I wrote that "the observed findings have already exited above, so
+// whatever remains in `failures` is inferred", and it was false:
+// `fcObserved` extracts only the forced-close ones. A hooks-order crash,
+// an uncaught page error, a dead Advanced anchor and a mis-ordered row
+// are all READ, all counted here, and none of them is explained by a
+// page built against another network — so this gate would have
+// downgraded a directly observed defect to "nothing was learned". That
+// is the exact swallow the whole exit ordering exists to prevent, added
+// by the fix that was meant to strengthen it.
+//
+// `visitProblemKinds` tags each problem at the one site that decides
+// them. An unanswerable probe on an otherwise clean run is still not
+// worth exiting 2 over, so this needs at least one absence-shaped
+// failure AND no observed one.
+const remaining = visited.flatMap((v) => visitProblemKinds(v, ROLE));
+const observedRemaining = remaining.filter((p) => p.kind === 'observed');
+const absenceRemaining = remaining.filter((p) => p.kind === 'absence');
+if (pageChainUnknown.length && absenceRemaining.length && !observedRemaining.length) {
   console.log(
     `\nBLOCKED: ${pageChainUnknown.length} of the page's own RPC endpoint(s)` +
       ` would not say which chain they serve, so this run cannot tell a` +

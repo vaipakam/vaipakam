@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   preRaced,
   visitBlockedReason,
+  visitProblemKinds,
   visitProblems,
   visitVerdict,
 } from './visitVerdict.mjs';
@@ -445,6 +446,66 @@ describe('the forced-close card is judged above the chooser suppressions', () =>
     // card; the nav failure is the only honest finding.
     expect(visitProblems({ path: '/positions/7', nav: 'timeout', forcedCloseVerdict: fail }, 'lender')).toEqual(
       ['nav: timeout'],
+    );
+  });
+});
+
+// ROUND 78 P2 — the TAGS the exit ordering reads.
+//
+// A page built against another network explains an ABSENCE and nothing
+// else. Gating the unknown-chain blocker on the aggregate failure count
+// would have downgraded a directly observed defect — a crash, an uncaught
+// error, a dead anchor — to "nothing was learned".
+describe('visitProblemKinds', () => {
+  const detail = (extra) => ({
+    path: '/positions/7',
+    http: 200,
+    chooser: true,
+    lenderBlurb: true,
+    waitRow: true,
+    sellNowRow: true,
+    listRow: true,
+    waitFirst: true,
+    ...extra,
+  });
+  const kindOf = (v, why) =>
+    visitProblemKinds(v, 'lender').find((p) => p.why.includes(why))?.kind;
+
+  it('tags what was READ as observed', () => {
+    expect(kindOf(detail({ hooks: true }), 'HOOKS-ORDER')).toBe('observed');
+    expect(kindOf(detail({ pageErrors: ['boom'] }), 'uncaught error')).toBe('observed');
+    expect(kindOf(detail({ waitFirst: false }), 'NOT first')).toBe('observed');
+    expect(
+      kindOf(
+        detail({ advancedAnchors: [{ target: '#x', present: false, reached: null }] }),
+        'did not reach its own anchor',
+      ),
+    ).toBe('observed');
+  });
+
+  it('tags what was MISSING as an absence', () => {
+    expect(kindOf(detail({ chooser: false }), 'chooser MISSING')).toBe('absence');
+    expect(kindOf(detail({ waitRow: false }), 'wait row MISSING')).toBe('absence');
+    expect(kindOf(detail({ listRow: false }), 'listing row MISSING')).toBe('absence');
+  });
+
+  it('takes the forced-close card’s own tag rather than deciding again', () => {
+    const read = detail({
+      forcedCloseVerdict: { verdict: 'fail', failKind: 'observed', why: 'stated an amount' },
+    });
+    const inferred = detail({
+      forcedCloseVerdict: { verdict: 'fail', failKind: 'inferred', why: 'route disagrees' },
+    });
+    expect(kindOf(read, 'forced-close card')).toBe('observed');
+    expect(kindOf(inferred, 'forced-close card')).toBe('absence');
+  });
+
+  it('reports the same strings as visitProblems, in the same order', () => {
+    // One decision site, two views — the property that keeps the tags
+    // from drifting away from the text they describe.
+    const v = detail({ hooks: true, chooser: false, pageErrors: ['x'] });
+    expect(visitProblemKinds(v, 'lender').map((p) => p.why)).toEqual(
+      visitProblems(v, 'lender'),
     );
   });
 });

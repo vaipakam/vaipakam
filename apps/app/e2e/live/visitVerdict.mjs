@@ -82,9 +82,31 @@ export function isDetailPath(path) {
  * @param {'lender'|'borrower'} role
  * @returns {string[]}
  */
-export function visitProblems(v, role) {
+/**
+ * Every problem this visit found, each tagged with WHETHER AN UNKNOWN
+ * PAGE CHAIN COULD EXPLAIN IT (round 78 P2).
+ *
+ * `observed` — something was READ: a crash, an uncaught error, a control
+ * that did not reach its anchor, a row in the wrong order. A page built
+ * against another network does not produce any of these.
+ *
+ * `absence` — something expected was NOT THERE. A wrong or unknown chain
+ * explains every one of them just as well as a regression does, which is
+ * why the drive's exit ordering puts a blocker ahead of them.
+ *
+ * ONE DECISION SITE, TWO VIEWS. `visitProblems` returns the strings and
+ * every existing caller is unchanged; `visitProblemKinds` returns the
+ * tags. Computing the tags anywhere else would be the shape #1861
+ * already caught here — two places deciding overlapping things, one
+ * quietly erasing the other.
+ *
+ * @returns {Array<{why: string, kind: 'observed' | 'absence'}>}
+ */
+function visitProblemList(v, role) {
   const problems = [];
-  if (v.nav) problems.push(`nav: ${v.nav}`);
+  const observed = (why) => problems.push({ why, kind: 'observed' });
+  const absence = (why) => problems.push({ why, kind: 'absence' });
+  if (v.nav) observed(`nav: ${v.nav}`);
   // A 404/500 does not throw and does not fire `pageerror`: page.goto
   // resolves and the status is merely recorded. Unchecked, a route that
   // never loaded counted toward "routes clean" (#1529 review).
@@ -92,10 +114,10 @@ export function visitProblems(v, role) {
     !v.nav &&
     (v.http === null || v.http === undefined || v.http < 200 || v.http >= 300)
   ) {
-    problems.push(`navigation returned ${v.http ?? 'no response'}`);
+    observed(`navigation returned ${v.http ?? 'no response'}`);
   }
-  if (v.hooks) problems.push('HOOKS-ORDER CRASH');
-  if (v.pageErrors?.length) problems.push(`${v.pageErrors.length} uncaught error(s)`);
+  if (v.hooks) observed('HOOKS-ORDER CRASH');
+  if (v.pageErrors?.length) observed(`${v.pageErrors.length} uncaught error(s)`);
 
   // A position DETAIL page for an eligible loan must show the chooser
   // AND both newly-exposed paths. Printing handover/offset without
@@ -124,19 +146,23 @@ export function visitProblems(v, role) {
   //
   // Its verdict is computed by its own module and only surfaced here.
   if (v.forcedCloseVerdict?.verdict === 'fail') {
-    problems.push(`forced-close card: ${v.forcedCloseVerdict.why}`);
+    // The card's verdict already states which kind it is, at each
+    // return site, so this reads the tag rather than deciding again.
+    (v.forcedCloseVerdict.failKind === 'observed' ? observed : absence)(
+      `forced-close card: ${v.forcedCloseVerdict.why}`,
+    );
   }
 
   if (preRaced(v)) return problems;
 
   if (!v.chooser) {
-    problems.push(`${role} chooser MISSING on an eligible loan`);
+    absence(`${role} chooser MISSING on an eligible loan`);
     return problems;
   }
 
   if (role !== 'lender') {
-    if (!v.handover) problems.push('handover path MISSING from the chooser');
-    if (!v.offset) problems.push('offset path MISSING from the chooser');
+    if (!v.handover) absence('handover path MISSING from the chooser');
+    if (!v.offset) absence('offset path MISSING from the chooser');
     return problems;
   }
 
@@ -145,13 +171,13 @@ export function visitProblems(v, role) {
   // than vanishing, precisely because a missing row reads as "no such
   // option". A row absent altogether is therefore a regression even on
   // a loan where that exit is shut.
-  if (!v.lenderBlurb) problems.push('lender card title without its own blurb');
-  if (!v.waitRow) problems.push('wait row MISSING from the lender card');
-  if (!v.sellNowRow) problems.push('sell-now row MISSING from the lender card');
-  if (!v.listRow) problems.push('listing row MISSING from the lender card');
+  if (!v.lenderBlurb) absence('lender card title without its own blurb');
+  if (!v.waitRow) absence('wait row MISSING from the lender card');
+  if (!v.sellNowRow) absence('sell-now row MISSING from the lender card');
+  if (!v.listRow) absence('listing row MISSING from the lender card');
   // `null` = not enough rows rendered to have an order; the missing row
   // is already reported above and must not be double-counted.
-  if (v.waitFirst === false) problems.push('wait row is NOT first on the lender card');
+  if (v.waitFirst === false) observed('wait row is NOT first on the lender card');
 
   // A PRODUCER THAT SAW A DEFECT SAYS SO (Codex #1853 r27). Every arm
   // below infers failure from a PATTERN of fields — a dead entry in
@@ -166,7 +192,7 @@ export function visitProblems(v, role) {
   // forgotten. Anything that observes a defect sets this, and this
   // function honours it without needing to recognise the shape.
   if (v.advancedFailed) {
-    problems.push(v.advancedWhy ?? 'the lender Advanced audit reported a failure');
+    observed(v.advancedWhy ?? 'the lender Advanced audit reported a failure');
   }
 
   // PER CHECK, NOT PER RUN (Codex #1853 r18). Round 13 suppressed the
@@ -192,7 +218,7 @@ export function visitProblems(v, role) {
     // the first and printed only the expected id, which on a swapped
     // binding — both anchors present — sends a reader looking for a
     // missing element that exists.
-    problems.push(
+    observed(
       'a lender jump button did not reach its own anchor: ' +
         deadAnchors.map((a) => `${a.target} → ${a.reached ?? 'nowhere'}`).join(', '),
     );
@@ -211,10 +237,20 @@ export function visitProblems(v, role) {
     // sentence above is not true of it — reporting it that way sent a
     // reader looking for a button that was never rendered. It states
     // its own finding instead (Codex #1853 r16).
-    problems.push(v.advancedWhy ?? 'the lender card offered the switch and rendered no jump');
+    absence(v.advancedWhy ?? 'the lender card offered the switch and rendered no jump');
   }
 
   return problems;
+}
+
+/** The problem strings, unchanged for every existing caller. */
+export function visitProblems(v, role) {
+  return visitProblemList(v, role).map((p) => p.why);
+}
+
+/** The same problems, with the tag the exit ordering needs. */
+export function visitProblemKinds(v, role) {
+  return visitProblemList(v, role);
 }
 
 /**
