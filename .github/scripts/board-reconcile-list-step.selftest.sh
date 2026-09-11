@@ -167,9 +167,101 @@ check s "the trace is NOT printed" "$s"
 grep -qF "$SECRET" "$work/out.txt" && s=1 || s=0
 check s "the token does NOT appear anywhere in the output" "$s"
 
-# ── scenario 3: the listing is truncated ─────────────────────────────────────
+# ── scenario 3: a paginated listing that fails on a LATER page ───────────────
+# The shape the first two scenarios missed, and both round-2 findings lived in
+# the gap. A GraphQL connection serves at most 100 items per page, so a board
+# past 900 items is a dozen requests: when one fails, everything before it is
+# successful pages and their bodies, and the trace is far larger than the cap.
+#
+# A prefix bound gets this exactly wrong twice over — it prints board contents
+# and cuts off the 403 and its headers — and `head` closing the pipe hands
+# `sed` a SIGPIPE that `pipefail` turns into an exit from the middle of the
+# branch, so the group never closes and the rate-limit table never runs.
+cat > "$work/bin/gh" <<SH
+#!/usr/bin/env bash
+if [ "\$1" = "api" ] && [ "\$2" = "rate_limit" ]; then
+  if [ "\$3" = "--jq" ]; then echo 5000; exit 0; fi
+  echo '{"resources":{"graphql":{"limit":5000,"remaining":5000}}}'; exit 0
+fi
+if [ "\$1" = "project" ] && [ "\$2" = "item-list" ]; then
+  if [ -n "\${GH_DEBUG:-}" ]; then
+    for page in \$(seq 1 12); do
+      echo "> POST /graphql HTTP/1.1 (page \$page)" >&2
+      echo "> Authorization: token $SECRET" >&2
+      echo "< HTTP/2.0 200 OK" >&2
+      # A page of board items: bulky, and the thing a prefix bound would show.
+      for i in \$(seq 1 100); do
+        echo "{\"id\":\"PVTI_page\${page}_item\${i}\",\"title\":\"BOARD_ITEM_BODY padding padding padding padding\"}" >&2
+      done
+    done
+    cat >&2 <<'TRACE'
+> POST /graphql HTTP/1.1 (page 13)
+< HTTP/2.0 403 Forbidden
+< Retry-After: 60
+< X-Ratelimit-Remaining: 0
+{"message":"You have exceeded a secondary rate limit. Please wait a few minutes before you try again."}
+TRACE
+  fi
+  echo "unknown owner type" >&2
+  exit 1
+fi
+exit 0
+SH
+chmod +x "$work/bin/gh"
+
+echo "paginated listing failing on a later page:"
+run_step && rc=0 || rc=$?
+check p "the step fails" "$([ "$rc" -ne 0 ] && echo 0 || echo 1)"
+# The branch must RUN TO THE END. Under the prefix bound it died at the pipe
+# and none of these three reached the log.
+grep -q '403 Forbidden' "$work/out.txt" && s=0 || s=1
+check p "the FAILED page's status survives the bound" "$s"
+grep -q 'X-Ratelimit-Remaining: 0' "$work/out.txt" && s=0 || s=1
+check p "the failed page's rate-limit header survives" "$s"
+grep -q 'secondary rate limit' "$work/out.txt" && s=0 || s=1
+check p "the error body survives" "$s"
+grep -q '::endgroup::' "$work/out.txt" && s=0 || s=1
+check p "the log group is closed" "$s"
+grep -q '"remaining":5000' "$work/out.txt" && s=0 || s=1
+check p "the rate_limit table is still collected afterwards" "$s"
+grep -q '::error::listing the board failed' "$work/out.txt" && s=0 || s=1
+check p "the error annotation is still emitted" "$s"
+grep -q 'showing the LAST' "$work/out.txt" && s=0 || s=1
+check p "the reader is told the trace was truncated, and from which end" "$s"
+# Earlier pages are what a prefix bound would have shown instead. The stub
+# serves 1,200 items across twelve pages; a byte-tail necessarily catches
+# whatever precedes the failing exchange, so the assertion is that the bulk
+# does not reach the log, not that none of it does.
+printed=$(grep -c 'BOARD_ITEM_BODY' "$work/out.txt" || true)
+[ "$printed" -lt 300 ] && s=0 || s=1
+check p "the successful pages' bodies are mostly NOT printed ($printed of 1200)" "$s"
+grep -qF "$SECRET" "$work/out.txt" && s=1 || s=0
+check p "the token does NOT appear anywhere in the output" "$s"
+
+# ── scenario 4: the listing is truncated ─────────────────────────────────────
 # This guard sits AFTER the call, so restructuring the call is exactly the edit
 # that drops it silently. It is here to notice that.
+#
+# ITS OWN STUB, deliberately. This scenario used to inherit whichever stub ran
+# last, and inserting a scenario above it handed it a `gh` that always fails —
+# so it stopped exercising truncation at all and said so only because the
+# assertion happened to be specific. A scenario that depends on the order of
+# the ones before it is a scenario that can be made vacuous by an edit
+# somewhere else.
+cat > "$work/bin/gh" <<SH
+#!/usr/bin/env bash
+if [ "\$1" = "api" ] && [ "\$2" = "rate_limit" ]; then
+  if [ "\$3" = "--jq" ]; then echo 5000; exit 0; fi
+  echo '{"resources":{}}'; exit 0
+fi
+if [ "\$1" = "project" ] && [ "\$2" = "item-list" ]; then
+  echo "{\"items\":[{\"a\":1},{\"a\":2}],\"totalCount\":\${FAKE_TOTAL:-2}}"
+  exit 0
+fi
+exit 0
+SH
+chmod +x "$work/bin/gh"
+
 echo "truncated listing:"
 run_step FAKE_TOTAL=970 && rc=0 || rc=$?
 check t "the step fails" "$([ "$rc" -ne 0 ] && echo 0 || echo 1)"

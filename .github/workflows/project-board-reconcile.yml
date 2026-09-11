@@ -265,11 +265,34 @@ jobs:
             # stubbed gh — including the case that actually happened, where
             # `/rate_limit` reports 5000 while the request itself came back 403
             # with the limit headers set.
+            #
+            # THE TAIL, NOT THE HEAD, and the reason is the shape of the
+            # operation. The board is past 900 items and a GraphQL connection
+            # serves at most 100 per page, so `--limit 4000` is necessarily a
+            # dozen requests: when one fails, everything BEFORE the failure is
+            # successful pages and their response bodies. A prefix would print
+            # board contents and cut off the 403 and its headers — the one
+            # thing this group exists to carry — so the bound keeps the END.
+            # `tail` also reads its input to completion, where `head` closes
+            # the pipe and hands `sed` a SIGPIPE that `pipefail` turns into an
+            # exit from the middle of this branch, before the group close, the
+            # rate-limit table and the error annotation.
+            #
+            # The window is small on purpose. Everything worth reading here is
+            # one exchange — a status line, a handful of headers and an error
+            # body — and every byte of budget beyond that is incidental board
+            # data from the successful pages before it. So the cap is sized to
+            # the evidence rather than generously.
+            bytes=$(wc -c < list-trace.txt | tr -d ' ')
+            cap=20000
+            if [ "$bytes" -gt "$cap" ]; then
+              echo "(trace is $bytes bytes — showing the LAST $cap, where the failure is)"
+            fi
             sed -E \
               -e 's/gh[pousr]_[A-Za-z0-9]{16,}/***redacted***/g' \
               -e 's/github_pat_[A-Za-z0-9_]{16,}/***redacted***/g' \
               -e 's/^([[:space:]]*[<>]?[[:space:]]*[Aa]uthorization:).*/\1 ***redacted***/' \
-              list-trace.txt | head -c 60000
+              list-trace.txt | tail -c "$cap"
             echo ""
             echo "::endgroup::"
             # SECONDARY evidence, and labelled as such: it is the right table
