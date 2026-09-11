@@ -6,8 +6,8 @@ three ways that question reads text which does not correspond to what runs.
 
 **It fixes none of them, and changes no behaviour at all.** Every attempt was
 withdrawn under review. What lands is the record of why, and tests that pin the
-wrong verdicts that remain — three silent passes and two false reports — so a later fix
-announces itself instead of passing unnoticed.
+wrong verdicts that remain — eight silent passes and seven false reports — so a
+later fix announces itself instead of passing unnoticed.
 
 That is worth landing on its own. Two of these designs are the kind a
 maintainer would reach for again, and one of them looks obviously correct until
@@ -64,11 +64,11 @@ No behaviour change. The check's logic is what it was.
 - The reasoning above, recorded beside the code that would have to change, in
   the functional specification, and here — so the next person does not rebuild
   one of these designs without knowing what happened to it.
-- Tests that **assert thirteen current wrong verdicts across nine defects**, so
+- Tests that **assert fifteen current wrong verdicts across ten defects**, so
   a later fix fails them and comes back to the question rather than passing
   silently.
 
-  **Seven assert a silent pass** — the direction this check must never fail in:
+  **Eight assert a silent pass** — the direction this check must never fail in:
   a build file variable holding a write is not seen when its assignment sits
   below the deployment; a recipe marked by something other than a tab is not
   read as a recipe; a helper whose deployment follows an unrelated line ending
@@ -78,43 +78,49 @@ No behaviour change. The check's logic is what it was.
   split at its newlines, so a flag on one of its lines covers a deployment on
   another; a variable whose name differs only in case is not resolved, though
   the shell in question resolves it, so the deployment's directory reads as
-  unknown; and a helper whose file name carries an upper-case extension is
-  never opened at all.
+  unknown; a binding closed with that shell's ordinary statement terminator is
+  not recognised at all, with the same consequence; and a helper whose file
+  name carries an upper-case extension is never opened at all.
 
-  **Six fail the other way and assert the report**: a runbook sentence naming a
+  **Seven fail the other way and assert the report**: a runbook sentence naming a
   write reports the deployment below it; a package manifest whose description
   merely names the command is reported as performing it, as is an unrelated
   data file of the same format, and as is a list of keywords once the file is
   written across several lines; and a command named inside a block the shell
   never executes is reported — which is what the two Windows normalisations
-  cost, pinned once for each.
+  cost, pinned once for each; and a line that is COMMENTED OUT, in the variant
+  of that format permitting comments, is read as a command although it is not a
+  property at all.
 - Two tests pinning that a bare command line and an inline command span in a
   document **are** read as commands — the two shapes that defeated the withdrawn
   designs, so a future attempt cannot quietly reintroduce the erasure.
-- Controls beside the last two, so neither can pass for an unrelated reason,
-  and — for the two found while correcting this record — tests pinning the
-  BOUNDS of each as well as the defect. Both turned out to be narrower than
-  first written: one applies only to text read as a shell and only where the
-  line ends immediately at the offending character, and the other reads
-  single-text values in any file of that format while passing over values
-  written as a list. Those bounds are pinned because a fix aimed at the
-  overstated version would change cases that behave correctly today.
+- A control beside each pinned defect, differing from it by the single
+  character or spelling at issue, so none can pass for an unrelated reason —
+  and, where a defect turned out narrower than first written, a test pinning
+  the BOUND as well. Every one of those bounds was discovered by disproving a
+  sentence in this record: the folding applies only where a body is split into
+  lines at all, and only where the line ends immediately at the offending
+  character; the value-by-value reading passes over a list only when the file
+  is written compactly. Bounds are pinned because a fix aimed at the overstated
+  version would change cases that behave correctly today.
 
 ### What is deferred
 
 Every symptom this work set out to fix, plus the limitations found while proving
-them — including **eight defects surfaced while correcting this record
-itself**, six of them silent passes and two false reports — is recorded as its
+them — including **nine defects surfaced while correcting this record
+itself**, seven of them silent passes and two false reports — is recorded as its
 own issue with a reproduction and what a fix would have to be true of. All are
-behaviour the check already had, so nothing is made worse. Nine are
-additionally pinned by tests that assert the current verdict — thirteen such
-tests in all, seven asserting a silent pass and six a false report.
+behaviour the check already had, so nothing is made worse. Ten are
+additionally pinned by tests that assert the current verdict — fifteen such
+tests in all, eight asserting a silent pass and seven a false report.
 
 That the correcting itself surfaced more defects than the original work is the
 most useful thing here, and it is not an accident of effort: each correction
 had to be REPRODUCED before it could be written down, and reproducing a claim
-is what finds the case the claim gets wrong. Three of the eight were found by
-disproving sentences this very document had asserted.
+is what finds the case the claim gets wrong. One of the nine came directly from
+disproving a sentence in this document, and two further corrections to the
+scope of issues already filed came the same way — which is the argument for
+writing the reason down at all, rather than only the fix.
 
 | | |
 | --- | --- |
@@ -134,6 +140,7 @@ disproving sentences this very document had asserted.
 | **#2121** | a script declared in a package manifest is never split at its newlines, so a safety flag on one line covers a deployment on another — *pinned (silent pass)*; the mirror of #2118, and the same root: line splitting belongs to the reader a body passes through, not to the body |
 | **#2122** | a variable whose name differs only in case is not resolved, though that shell resolves it, so the deployment's directory reads as unknown — *pinned (silent pass)* |
 | **#2123** | a helper whose file name carries an upper-case extension is never opened at all — *pinned (silent pass)*, and the broadest of the three, since no later rule can compensate for a file that was never read |
+| **#2124** | a binding closed with that shell's ordinary statement terminator is not recognised, so the deployment's directory reads as unknown — *pinned (silent pass)* |
 | **#2085** | whether this detection should be a declaration rather than an inference — the three withdrawals are the strongest evidence yet that it should |
 
 This PR closes none of them.

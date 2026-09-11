@@ -11868,16 +11868,16 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
   // exception turned out to carry a wrong verdict of its own (r20).
   //
   // So they pin two things: the shapes that defeated the withdrawn designs,
-  // and THIRTEEN WRONG VERDICTS across NINE defects, asserted so a later fix
+  // and FIFTEEN WRONG VERDICTS across TEN defects, asserted so a later fix
   // fails them and comes back to the question instead of passing unnoticed.
   //
-  // The direction matters and is not decoration. SEVEN assert a SILENT PASS —
-  // #2084, #2114, #2118 once per Windows dialect, #2121, #2122, #2123 — and
-  // SIX fail the opposite way, so their fixtures assert a REPORT: #2112,
-  // #2119 three times (manifest, data file and multi-line list, which reach
-  // it by different routes) and #2115 twice (the casing and separator
-  // rewrites). A fixture that pinned the wrong direction would pass while the
-  // guard did the wrong thing.
+  // The direction matters and is not decoration. EIGHT assert a SILENT PASS —
+  // #2084, #2114, #2118 once per Windows dialect, #2121, #2122, #2123, #2124
+  // — and SEVEN fail the opposite way, so their fixtures assert a REPORT:
+  // #2112, #2119 four times (manifest, data file, multi-line list and a
+  // COMMENTED-OUT line, which reach it by different routes) and #2115 twice
+  // (the casing and separator rewrites). A fixture that pinned the wrong
+  // direction would pass while the guard did the wrong thing.
   //
   // COUNT THESE FROM THE TREE, NOT FROM THIS COMMENT. It has gone stale five
   // times, twice while being corrected. Read the `it(...)` titles instead —
@@ -12332,6 +12332,50 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
     seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
     const r = runWith('apps/agent/d.ps1', 'cd apps/agent\nwrangler deploy\n');
+    expect(r.ok).toBe(false);
+  });
+
+  it('a semicolon-terminated pwsh assignment is not recognised (#2124, stated miss)', () => {
+    // A STATED MISS. A trailing `;` is an ordinary PowerShell statement
+    // terminator; the rewrite's pattern requires the closing quote to run to
+    // end of line, so the binding is never recognised, the directory stays
+    // unknown, and the unsafe deploy is not attributed. The control differs
+    // only by that character.
+    //
+    // Filed apart from #2122 deliberately: that one is about how a recognised
+    // binding is LOOKED UP, this is about whether it is recognised at all.
+    // Different code, either can land alone.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith(
+      'scripts/s.ps1',
+      "$target = 'apps/agent';\nSet-Location $target\nwrangler deploy\n",
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('the same helper without the semicolon IS reported (#2124 control)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith(
+      'scripts/s.ps1',
+      "$target = 'apps/agent'\nSet-Location $target\nwrangler deploy\n",
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a COMMENTED-OUT jsonc property is still read as a command (#2119 scope)', () => {
+    // THE EXTRACTION DOES NOT STRIP COMMENTS, so a commented-out pseudo-
+    // property in a format that permits comments is read and reported. There
+    // is no property here at all, live or otherwise.
+    //
+    // Pinned because #2119's sketched fix is expressed in terms of WHICH KEYS
+    // hold scripts — and a commented line has no key, so a key-based fix can
+    // pass its own tests and leave this reporting. Recorded on #2119 rather
+    // than as its own issue: same regex, same direction, same predicate.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent","scripts":{"deploy":"wrangler deploy --keep-vars"}}\n');
+    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith('apps/agent/metadata.jsonc', '{"name":"x"}\n// "note": "wrangler deploy"\n');
     expect(r.ok).toBe(false);
   });
 
