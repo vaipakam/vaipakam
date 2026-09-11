@@ -225,26 +225,59 @@ jobs:
           #
           # The reading is taken BEFORE the call and covers ONE resource, so
           # it cannot speak for the moment of failure and cannot see a limit
-          # binding anywhere else. Both gaps are closed where it matters:
-          # on failure, re-read the whole table.
+          # binding anywhere else.
+          #
+          # AND NO LATER SNAPSHOT FIXES THAT, which is the whole point.
+          # `docs/internal/ProjectProcedures.md` records it for this account:
+          # a secondary limit does NOT appear in `/rate_limit` — the endpoint
+          # keeps reporting 5000/5000 while requests come back 403 or 429 —
+          # and the same account has had the PRIMARY form while it read 5000
+          # too. So a second `/rate_limit` call after a failure can print the
+          # same healthy table and leave the log exactly as ambiguous. The
+          # evidence the procedure asks for is the FAILED REQUEST's own status
+          # and its `retry-after` / `x-ratelimit-*` headers.
           remaining=$(gh api rate_limit --jq '.resources.graphql.remaining')
           echo "GraphQL points remaining: $remaining"
 
-          if ! gh project item-list "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" \
-                 --format json --limit "$LIST_LIMIT" > board.json 2> list-err.txt; then
-            echo "::group::gh project item-list — stderr"
-            cat list-err.txt || true
+          # `GH_DEBUG=api` is how gh surfaces those headers, so the call is
+          # made under it with the trace kept in a file. On success the file
+          # is discarded UNREAD — the board listing never reaches the log.
+          set +e
+          GH_DEBUG=api gh project item-list "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" \
+            --format json --limit "$LIST_LIMIT" > board.json 2> list-trace.txt
+          rc=$?
+          set -e
+          if [ "$rc" -ne 0 ]; then
+            echo "::group::gh project item-list — request trace (status, headers, error body)"
+            # PRINTED, NOT PARSED, deliberately. gh's debug format is not
+            # pinned by anything here, and a regex over it would be one more
+            # unverified reading of text standing in for an observation — the
+            # exact mistake this step is being fixed for. Printing shows the
+            # status line and the rate-limit headers whatever shape they take.
+            #
+            # The only transformation is REDACTION: token-shaped strings and
+            # any Authorization line. It does not depend on the debug format
+            # being what anyone expects.
+            #
+            # All of this is exercised by
+            # `.github/scripts/board-reconcile-list-step.selftest.sh`, which
+            # EXTRACTS this step rather than copying it and runs it against a
+            # stubbed gh — including the case that actually happened, where
+            # `/rate_limit` reports 5000 while the request itself came back 403
+            # with the limit headers set.
+            sed -E \
+              -e 's/gh[pousr]_[A-Za-z0-9]{16,}/***redacted***/g' \
+              -e 's/github_pat_[A-Za-z0-9_]{16,}/***redacted***/g' \
+              -e 's/^([[:space:]]*[<>]?[[:space:]]*[Aa]uthorization:).*/\1 ***redacted***/' \
+              list-trace.txt | head -c 60000
+            echo ""
             echo "::endgroup::"
-            # EVERY resource, read AFTER the failure. `unknown owner type` is
-            # what gh prints when it cannot classify the owner as a user or an
-            # organisation, which a refused lookup and a token that may not
-            # carry project scope both produce. The two need opposite
-            # responses — wait, or fix the secret — and nothing in the old log
-            # told them apart.
-            echo "::group::rate_limit at the moment of failure (all resources)"
+            # SECONDARY evidence, and labelled as such: it is the right table
+            # for a PRIMARY limit and says nothing about a secondary one.
+            echo "::group::rate_limit after the failure (all resources — primary limits only)"
             gh api rate_limit || echo "(rate_limit itself failed)"
             echo "::endgroup::"
-            echo "::error::listing the board failed — see the stderr and rate_limit groups above"
+            echo "::error::listing the board failed — read the request trace first; the rate_limit table cannot see a secondary limit"
             exit 1
           fi
           items=$(jq '.items | length' board.json)

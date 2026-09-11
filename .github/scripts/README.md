@@ -48,6 +48,24 @@ or a copied number leaves behind text that nothing checks.
 
 All of these run in `release-notes-drift.yml`.
 
+**One file here is not a prose gate**, and is listed apart so the count above
+stays honest: `board-reconcile-list-step.selftest.sh` holds fixtures for the
+`List board items` step of `project-board-reconcile.yml`. It extracts that step
+from the workflow — never a copy, so the fixtures cannot pass while the real
+step drifts — and runs it against a stubbed `gh`, asserting what the step
+prints when the listing is refused, succeeds, or comes back truncated.
+
+It exists because that step's failure branch is a diagnostic, and a diagnostic
+only executes once something else is already broken. This one reported a
+healthy `5000` from `/rate_limit` beside gh's opaque `unknown owner type` for
+four consecutive runs while saying nothing that distinguished "wait for the
+limit" from "fix the secret" — two causes needing opposite responses (#2129).
+Nobody notices a diagnostic that has stopped diagnosing until they need it.
+
+```bash
+bash .github/scripts/board-reconcile-list-step.selftest.sh
+```
+
 The path checker is two files, both small:
 
 | File | Role |
