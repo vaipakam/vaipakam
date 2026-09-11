@@ -24,6 +24,9 @@
  *   revert            RpcRequestError             code=3       answered
  *   revert as -32000  InvalidInputRpcError        code=-32000  answered (bytes)
  *   invalid params    InvalidParamsRpcError       code=-32602  client-fault
+ *   ditto, with hex   InvalidParamsRpcError       code=-32602  client-fault
+ *                     `data` carrying hex diagnostics — the code wins
+ *                     over the bytes, because nothing executed (r82)
  *   rate limited      LimitExceededRpcError       code=-32005  unreachable
  *   unavailable       ResourceUnavailableRpcError code=-32002  unreachable
  *   internal          InternalRpcError            code=-32603  unreachable
@@ -110,11 +113,36 @@ export function revertData(e) {
 export function classifyRpcFailure(e) {
   const coded = codedError(e);
   const raw = revertData(e);
-  // Revert first: bytes are conclusive whatever code carried them, and
-  // some providers label a genuine revert -32000.
+  // An EXPLICIT execution-reverted code is conclusive and comes first.
   if (coded?.code === EXECUTION_REVERTED) return 'answered';
-  if (raw !== undefined && REVERT_BYTES.test(raw)) return 'answered';
+  // ROUND 82 P2 — A MALFORMED-REQUEST CODE OUTRANKS INCIDENTAL HEX DATA.
+  //
+  // The revert-bytes test used to sit here, justified by "bytes are
+  // conclusive whatever code carried them, and some providers label a
+  // genuine revert -32000". That argument is about -32000, an unspecified
+  // server error; it says nothing about the three codes below, each of
+  // which is the server stating it PARSED the request and would not run
+  // it. Nothing executed, so nothing can have reverted — and a provider
+  // is free to put hex in `data` beside that code.
+  //
+  // The old order therefore laundered a bad request into an answer, and
+  // the cost is worst where the answer is acted on: `probeCloseOut` reads
+  // 'answered' as the protocol REFUSING the close-out, so both bracket
+  // samples arriving in that shape would let the verdict accuse a ready
+  // card of offering a transaction that cannot succeed — a product FAIL
+  // manufactured out of this drive's own malformed call. The
+  // authority-ranking pre-pass reads the same `false` and would discard a
+  // usable target.
+  //
+  // Under the corrected order those probes classify 'client-fault',
+  // `isTransportFailure` already returns false for it (round 33 set that
+  // precedence for exactly this reason), and the error is rethrown — the
+  // loud failure a defect in this drive should get, instead of a quiet
+  // accusation against the product.
   if (JSONRPC_MALFORMED_REQUEST.has(coded?.code)) return 'client-fault';
+  // Bytes remain conclusive for every other code, which is what keeps a
+  // -32000-labelled revert an answer.
+  if (raw !== undefined && REVERT_BYTES.test(raw)) return 'answered';
   return 'unreachable';
 }
 

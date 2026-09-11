@@ -47,7 +47,21 @@ describe('a funds defect that was READ outranks every blocker', () => {
   /** Where a guard's condition appears, or -1. */
   const at = (needle) => src.indexOf(needle);
 
-  const FORCED_CLOSE_EXIT = 'if (fcObserved.length) {';
+  // ROUND 82 P3 — THERE IS NO LONGER A FORCED-CLOSE EXIT OF ITS OWN, and
+  // the cases below were rewritten rather than deleted.
+  //
+  // The drive used to carry two implementations of one exit policy: this
+  // `fcObserved` guard, and the `observedNow` promotion that already
+  // covered it. The second was unreachable — `visitProblemList` reads the
+  // card's `failKind` and pushes an observed one with `blockable: false`,
+  // which is exactly what `observedNow` selects, so the process had always
+  // exited first. Every case that pinned the dead copy now pins the live
+  // one, so the property survives the fold: a forced-close failure that
+  // was READ outranks every blocker, and one that was INFERRED does not.
+  //
+  // The tag half is asserted where it belongs — behaviourally, against
+  // `visitProblemKinds` in `visitVerdict.test.mjs`, which is a real
+  // function call rather than a string match on this file.
   const OBSERVED_NOW_EXIT = 'if (observedNow.length) {';
   const ROUTE_EXIT = 'if (routeFailures.length) {';
   const WS_EXIT = 'if (wsRpcMethods.size) {';
@@ -62,7 +76,6 @@ describe('a funds defect that was READ outranks every blocker', () => {
     // nothing — the vacuous-loop shape this suite has already been
     // caught by twice.
     for (const [name, needle] of [
-      ['forced-close', FORCED_CLOSE_EXIT],
       ['page-read defects', OBSERVED_NOW_EXIT],
       ['route failures', ROUTE_EXIT],
       ['websocket RPC', WS_EXIT],
@@ -102,18 +115,18 @@ describe('a funds defect that was READ outranks every blocker', () => {
   });
 
   it('reports the observed defect before the transport blocker', () => {
-    expect(at(FORCED_CLOSE_EXIT)).toBeLessThan(at(ROUTE_EXIT));
+    expect(at(OBSERVED_NOW_EXIT)).toBeLessThan(at(ROUTE_EXIT));
   });
 
   it('reports it before the unobservable-socket blocker', () => {
     // The one most likely to hide a finding in practice: it fires on any
     // deployment configured with a websocket RPC at all, regardless of
     // whether anything went wrong.
-    expect(at(FORCED_CLOSE_EXIT)).toBeLessThan(at(WS_EXIT));
+    expect(at(OBSERVED_NOW_EXIT)).toBeLessThan(at(WS_EXIT));
   });
 
   it('reports it before the wrong-chain blocker', () => {
-    expect(at(FORCED_CLOSE_EXIT)).toBeLessThan(at(CHAIN_EXIT));
+    expect(at(OBSERVED_NOW_EXIT)).toBeLessThan(at(CHAIN_EXIT));
   });
 
   // ROUND 77 P2 — and an UNESTABLISHED page chain outranks an inference.
@@ -132,13 +145,13 @@ describe('a funds defect that was READ outranks every blocker', () => {
     // The whole ranking in one line: content that was read outranks a
     // blocker, and a blocker outranks a conclusion inferred from an
     // absence the blocker could explain.
-    expect(at(FORCED_CLOSE_EXIT)).toBeLessThan(at(CHAIN_UNKNOWN_EXIT));
+    expect(at(OBSERVED_NOW_EXIT)).toBeLessThan(at(CHAIN_UNKNOWN_EXIT));
   });
 
   // ROUND 78 P2 — and it gates on the KIND of failure, not the count.
   //
-  // `failures` is not all-inferred: `fcObserved` extracts only the
-  // forced-close observed findings, while a hooks-order crash, an
+  // `failures` is not all-inferred: the exits above extract only the
+  // problems tagged unblockable, while a hooks-order crash, an
   // uncaught page error, a dead anchor and a mis-ordered row are read
   // directly and counted in the same total. Gating on the aggregate
   // downgraded those to "nothing was learned" — the swallow this whole
@@ -158,7 +171,7 @@ describe('a funds defect that was READ outranks every blocker', () => {
   it('exits 1 rather than 2 — a finding, not an inconclusive run', () => {
     // The distinction the batch acts on: 2 means "re-run, nothing was
     // learned", which is how a confirmed defect would disappear.
-    const block = src.slice(at(FORCED_CLOSE_EXIT), at(ROUTE_EXIT));
+    const block = src.slice(at(OBSERVED_NOW_EXIT), at(ROUTE_EXIT));
     expect(block).toContain('process.exit(1)');
     expect(block).not.toContain('process.exit(2)');
   });
@@ -179,18 +192,32 @@ describe('a funds defect that was READ outranks every blocker', () => {
   // reads the TAG rather than the bare verdict — the property the
   // original comment described all along.
   it('bypasses the blockers only for failures that were READ', () => {
-    const decl = src.slice(at('const fcObserved ='), at(FORCED_CLOSE_EXIT));
-    expect(decl).toContain("fc.failKind === 'observed'");
+    const decl = src.slice(at('const observedNow ='), at(OBSERVED_NOW_EXIT));
+    expect(decl).toContain('pr.blockable === false');
     expect(decl).not.toContain('failures');
   });
 
   it('does not let a bare verdict check stand in for the tag', () => {
     // The regression that would undo this is dropping the tag test and
-    // keeping `verdict === 'fail'`, which reads as a harmless
-    // simplification and restores the round-38 defect exactly.
-    const decl = src.slice(at('const fcObserved ='), at(FORCED_CLOSE_EXIT));
-    const tagged = decl.includes("failKind === 'observed'");
-    expect(tagged, 'the filter must require the observed tag').toBe(true);
+    // selecting on the bare verdict, which reads as a harmless
+    // simplification and restores the round-38 defect exactly. Since the
+    // fold there is no forced-close-shaped filter here to lose it in: the
+    // promotion selects on the tag alone and knows nothing about which
+    // card produced the problem.
+    const decl = src.slice(at('const observedNow ='), at(OBSERVED_NOW_EXIT));
+    expect(decl.includes('pr.blockable === false'), 'the promotion must read the tag').toBe(
+      true,
+    );
+    expect(decl).not.toContain("verdict === 'fail'");
+  });
+
+  // ROUND 82 P3 — and the duplicate must not come back.
+  //
+  // Two exits for one policy is how the copies drift: a future change
+  // edits whichever it finds first, and the dead one keeps its own
+  // operator message. The shared promotion is the only decision site.
+  it('keeps one exit for observed defects, not one per card', () => {
+    expect(src).not.toContain('const fcObserved');
   });
   // ROUND 41 P2 — the coverage gate now needs the ROLE, and it is
   // deliberately permissive when none is supplied so an older caller

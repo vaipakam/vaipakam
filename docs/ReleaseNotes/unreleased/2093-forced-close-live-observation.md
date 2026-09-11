@@ -115,6 +115,20 @@ always refused to make. The cost is a defect it may miss; the alternative
 is condemning copy the lender can read, which is what gets a check
 switched off.
 
+The oldest way of hiding text is simply to park it off the page, and
+catching it took three attempts because the first two asked about the
+wrong thing. Measuring the element's own rectangle catches text moved by
+positioning it off-screen, but not text moved out from under a box that
+stays exactly where it belongs — the standard image-replacement trick —
+and a rule sized on the element's width let a short label in a wide
+container through. The check now measures where the letters themselves
+landed. Text that sits entirely before the top-left corner of the page,
+which no amount of scrolling reaches, is not readable; text merely below
+the fold is, and stays admitted. The residual is stated rather than
+implied: the judgement is made for a block of text as a whole, so a
+wrapped run whose first line alone is pushed off the page still counts in
+full, on the grounds that the rest of it is plainly on screen.
+
 ### Asking the protocol rather than re-deriving it
 
 A card can be perfectly rendered and still be offering an action that
@@ -124,6 +138,14 @@ grace periods were retuned, and which ignores that those periods are
 governance-configurable — the check simulates the exact transaction the
 card would send, from the same account, against the same state, and asks
 whether it would succeed.
+
+That simulation is only allowed to stand for the protocol's answer when
+the protocol actually ran it. A provider replying that the request itself
+was malformed has not executed anything, and reading such a reply as a
+refusal would let a defect in the checking tool be reported as a defect
+in the card — an accusation that the card offers an action that cannot
+succeed, built out of a question that was never asked. Those replies now
+fail loudly as a fault in the tool instead.
 
 Where that answer and the page disagree, the check reports it as
 something inferred rather than something seen, because the commonest

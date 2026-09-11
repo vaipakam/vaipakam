@@ -719,6 +719,14 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
       <div class="body" id="indentedOut">
         <p style="text-indent:-9999px">This loan can be closed out now.</p>
       </div>
+      <!-- ROUND 82 P2 — the hole the round-81 heuristic left open. It
+           condemned an indent "at least as wide as the element", so a
+           SHORT label parked off-screen inside a WIDE container walked
+           through: 300 is not >= 600, and the word sits at x=-300. The
+           glyph rectangles do not care how wide the box is. -->
+      <div class="body" id="indentedShortLabel" style="width:600px">
+        <p style="text-indent:-300px; margin:0">Ready</p>
+      </div>
       <!-- A hanging indent is legitimate and stays painted, which is what
            keeps the rule from condemning ordinary typography. -->
       <div class="body" id="hangingIndent">
@@ -818,6 +826,7 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
         twoLinesPaintedText: scope.visibleTextOf(byId('twoLines')),
         offLeftPaintedText: scope.visibleTextOf(byId('offLeft')),
         indentedOutPaintedText: scope.visibleTextOf(byId('indentedOut')),
+        indentedShortLabelPaintedText: scope.visibleTextOf(byId('indentedShortLabel')),
         hangingIndentPaintedText: scope.visibleTextOf(byId('hangingIndent')),
         belowFoldPaintedText: scope.visibleTextOf(byId('belowFold')),
         flexRowPaintedText: scope.visibleTextOf(byId('flexRow')),
@@ -1009,4 +1018,15 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
   expect(result.hangingIndentPaintedText, 'but ordinary hanging indent is').toContain(
     'closed out now',
   );
+
+  // ROUND 82 P2 — and the hole that self-review's own patch left. Sizing
+  // the rule on the ELEMENT ("a negative indent at least as wide as the
+  // box") passes any short label in a wide container, which is the
+  // ordinary shape of a status word inside a card. Measuring where the
+  // GLYPHS landed asks the question directly and does not consult the
+  // width at all.
+  expect(
+    result.indentedShortLabelPaintedText,
+    'a short label indented out of a wide box is not painted either',
+  ).toBe('');
 });

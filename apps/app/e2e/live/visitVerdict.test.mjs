@@ -500,6 +500,37 @@ describe('visitProblemKinds', () => {
     expect(kindOf(inferred, 'forced-close card')).toBe('absence');
   });
 
+  // ROUND 82 P3 — and this is now the ONLY thing standing between an
+  // observed forced-close failure and the blockers that would swallow it.
+  //
+  // The drive carried a second, unreachable exit of its own for this card
+  // (`fcObserved`), pinned by four source-order cases in
+  // `exitOrdering.test.mjs`. Folding it away moved the whole property
+  // here: the promotion above the infrastructure gates selects on
+  // `blockable === false` and knows nothing about which card produced the
+  // problem, so if this tag were wrong the card's finding would be
+  // reported as an inconclusive run on any drive that also hit a blocked
+  // request — round 38's defect, restored silently.
+  it('lets a READ forced-close failure past the blockers, and an inferred one not', () => {
+    const blockable = (v) =>
+      visitProblemKinds(v, 'lender').find((p) => p.why.includes('forced-close card'))
+        ?.blockable;
+    expect(
+      blockable(
+        detail({
+          forcedCloseVerdict: { verdict: 'fail', failKind: 'observed', why: 'stated an amount' },
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      blockable(
+        detail({
+          forcedCloseVerdict: { verdict: 'fail', failKind: 'inferred', why: 'route disagrees' },
+        }),
+      ),
+    ).toBe(true);
+  });
+
   // SELF-REVIEW AFTER ROUND 79 — `blockable` is the second question, and
   // every arm answers it at its own site.
   it('marks what a blocked request could explain', () => {

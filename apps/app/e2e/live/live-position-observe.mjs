@@ -4400,32 +4400,75 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
           );
           if (!own) return true;
           const cs = getComputedStyle(node);
-          // SELF-REVIEW AFTER ROUND 81 — AND TEXT INDENTED OUT OF ITS OWN
-          // BOX IS NOT PAINTED EITHER.
+          // ROUND 82 P2 — ASKED OF THE GLYPHS, not of the element's box.
           //
-          // Found by probing the predicate with the hiding patterns it does
-          // NOT already cover, rather than waiting for the next round to
-          // name one. Round 81 closed `left: -9999px`; the same trick
-          // written as `text-indent: -9999px` still passed everything —
-          // the BOX is exactly where it should be, so geometry, clipping
-          // and the document-origin test all say yes while the line itself
-          // sits far outside.
+          // Round 81 closed `position: absolute; left: -9999px` with a
+          // document-origin test on the element RECT, and the self-review
+          // after it found `text-indent: -9999px` walking straight through:
+          // the indent moves the LINE and leaves the box exactly where it
+          // was, so every box-shaped test — geometry, clipping, the origin
+          // test — says yes while the text sits far outside. That was
+          // patched with a heuristic (a negative indent at least as wide as
+          // the element), and the heuristic was wrong in BOTH directions:
+          // too narrow for a short label in a wide container, too broad for
+          // wrapped text whose later lines stay on screen, which the patch
+          // recorded as a stated limit rather than fixing.
           //
-          // The condition is the one under which the line is fully gone:
-          // a negative indent at least as large as the element's own
-          // width. A hanging indent of a few pixels is legitimate and
-          // stays painted.
+          // The text nodes' own `Range` rectangles are where the glyphs
+          // actually are, and `notClipped` has been reading them for its
+          // clipping ratio since round 44. Asking the document-origin
+          // question of THOSE answers `text-indent`, a negative
+          // `margin-left` on an inline run, and anything else that parks
+          // the line without moving the box — one rule where the previous
+          // two rounds each added an arm per trick.
           //
-          // STATED LIMIT: `text-indent` moves only the FIRST line, so on
-          // wrapped text the later lines remain readable and this call is
-          // too broad. It is left that way deliberately — the pattern
-          // exists to hide a single-line label, and over-excluding here
-          // yields `blocked/incomplete` on an unrecognised state rather
-          // than a product FAIL, which is the safe direction.
-          const indent = parseFloat(cs.textIndent);
-          if (Number.isFinite(indent) && indent < 0) {
-            const w = node.getBoundingClientRect().width;
-            if (w > 0 && Math.abs(indent) >= w) return false;
+          // ANY reachable rectangle counts as painted, so wrapped text
+          // whose first line is indented out keeps the lines the lender can
+          // still read. Text this cannot measure — no rects, or a `Range`
+          // that throws — counts as painted too. Both are the direction
+          // this file takes everywhere: the residual is a missed defect,
+          // never an invented one.
+          //
+          // STATED LIMIT, and it is the price of that choice: the verdict
+          // is per ELEMENT, not per line, so the words on an indented-out
+          // FIRST line are still collected when a later line of the same
+          // run is readable. Slicing a text node by line rectangle would
+          // close it and would also start discarding copy on any line this
+          // drive mismeasures, which is the false-FAIL direction. The
+          // single-line label is what the pattern is actually used for and
+          // is fully covered.
+          //
+          // OWN TEXT NODES ONLY, matching what the rest of this predicate
+          // judges: `selectNodeContents(node)` would pull in a descendant's
+          // glyphs and let a visible child vouch for an indented-out
+          // parent.
+          //
+          // A SCROLLED ANCESTOR CANNOT TRIP THIS, which is why no scroll
+          // exemption sits beside it: scrolling moves the box and its
+          // glyphs together, and both drive call sites (`visible` and
+          // `visibleTextOf`) run `shownBox` first, so a box carried before
+          // the origin is already condemned there. What reaches here is
+          // text that left its own box behind.
+          const glyphs = [];
+          for (const c of node.childNodes) {
+            if (c.nodeType !== 3 || c.textContent.trim() === '') continue;
+            try {
+              const range = document.createRange();
+              range.selectNodeContents(c);
+              for (const q of range.getClientRects()) {
+                if (q.width > 0 && q.height > 0) glyphs.push(q);
+              }
+            } catch {
+              // Unmeasurable: leaves `glyphs` short, which reads as painted.
+            }
+          }
+          if (
+            glyphs.length > 0 &&
+            glyphs.every(
+              (q) => q.right + window.scrollX <= 0 || q.bottom + window.scrollY <= 0,
+            )
+          ) {
+            return false;
           }
           const fill = cs.webkitTextFillColor || cs.color || '';
           // ROUND 38 P2 — EVERY COMPUTED COLOUR FORM, not just `rgb()`/`rgba()`.
@@ -5902,10 +5945,32 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
               );
               if (!own) return true;
               const cs = getComputedStyle(node);
-              const indent = parseFloat(cs.textIndent);
-              if (Number.isFinite(indent) && indent < 0) {
-                const w = node.getBoundingClientRect().width;
-                if (w > 0 && Math.abs(indent) >= w) return false;
+              // Glyph rectangles rather than the element box — see the card
+              // copy's round-82 note. `text-indent` and friends move the LINE
+              // and leave the box in place, so the box-shaped tests all pass
+              // while the text sits before the document origin. Own text
+              // nodes only; any reachable rectangle, or none measurable at
+              // all, counts as painted.
+              const glyphs = [];
+              for (const c of node.childNodes) {
+                if (c.nodeType !== 3 || c.textContent.trim() === '') continue;
+                try {
+                  const range = document.createRange();
+                  range.selectNodeContents(c);
+                  for (const q of range.getClientRects()) {
+                    if (q.width > 0 && q.height > 0) glyphs.push(q);
+                  }
+                } catch {
+                  // Unmeasurable: leaves `glyphs` short, which reads as painted.
+                }
+              }
+              if (
+                glyphs.length > 0 &&
+                glyphs.every(
+                  (q) => q.right + window.scrollX <= 0 || q.bottom + window.scrollY <= 0,
+                )
+              ) {
+                return false;
               }
               const fill = cs.webkitTextFillColor || cs.color || '';
               // ROUND 38 P2 — EVERY COMPUTED COLOUR FORM, not just `rgb()`/`rgba()`.
@@ -8278,18 +8343,23 @@ if (observedNow.length) {
   observedNow.forEach(({ path, why }) => console.log(`  ${path}: ${why}`));
   process.exit(1);
 }
-const fcObserved = visited
-  .map((v) => ({ path: v.path, fc: v.forcedCloseVerdict }))
-  .filter(({ fc }) => fc && fc.verdict === 'fail' && fc.failKind === 'observed');
-if (fcObserved.length) {
-  console.log(
-    `\n${fcObserved.length} forced-close card(s) were observed stating` +
-      ` something the surface may not say. Reported ahead of any` +
-      ` infrastructure blocker: this was READ, not inferred.`,
-  );
-  fcObserved.forEach(({ path, fc }) => console.log(`  ${path}: ${fc.why}`));
-  process.exit(1);
-}
+// ROUND 82 P3 — THE FORCED-CLOSE EXIT USED TO BE WRITTEN TWICE HERE, and
+// the second copy was unreachable.
+//
+// An observed forced-close failure already arrives through the block
+// above: `visitProblemList` reads the card's own `failKind` and pushes it
+// with `blockable: false`, which is exactly what `observedNow` selects,
+// so the process had always exited before the duplicate could run. The
+// only shapes that reach neither are a nav failure and a non-detail path
+// — and `observeForcedClose` runs only for a detail path with a loan, and
+// a nav failure returns before the card is ever scraped, so no such
+// record carries a verdict at all.
+//
+// Two implementations of one exit policy, with two different operator
+// messages, is the drift this file has been caught on repeatedly; the
+// dead copy is the one a future change would have edited. The shared path
+// keeps the ordering argument and prints the same evidence, prefixed
+// `forced-close card:` by the producer.
 if (routeFailures.length) {
   console.log(
     `\nBLOCKED: ${routeFailures.length} page request(s) could not be` +
@@ -8421,7 +8491,8 @@ if (allowlistTooNarrow.length || httpGaps.length) {
 //
 // I wrote that "the observed findings have already exited above, so
 // whatever remains in `failures` is inferred", and it was false:
-// `fcObserved` extracts only the forced-close ones. A hooks-order crash,
+// the exits above extract only SOME of them — at the time, a forced-close
+// filter that has since been folded into the shared path. A hooks-order crash,
 // an uncaught page error, a dead Advanced anchor and a mis-ordered row
 // are all READ, all counted here, and none of them is explained by a
 // page built against another network — so this gate would have
