@@ -6305,7 +6305,13 @@ acknowledged in a committed file, keyed by the commit and struct of each
 forbidden change event (an insertion, removal, retype, namespace change, or
 an append inside a footprint-bearing struct), and CI fails on any other —
 acknowledging one means a fresh-redeploy plan exists for every live chain.
-Run 34 re-reads every deployment with all of it.
+Round 14 closed two more: the end-of-run revalidation of the inventory now
+keys on the deploy time and the facet set as well, so a record corrected on
+either while a long run was reading cannot pass on an identical key; and a
+getter-less Diamond whose storage scan finds a held or rebate row carries
+that row's amount into the reconciliation figures and the shortfall, where
+the shell return had left both null. Run 34 re-reads every deployment with
+all of it.
 
 ### 7a. What the provenance walk found, and how the design changes (2026-09-09)
 

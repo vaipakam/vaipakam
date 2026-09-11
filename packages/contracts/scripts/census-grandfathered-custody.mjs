@@ -2106,8 +2106,13 @@ async function censusDeployment(dep) {
       vpfiScopeAuthoritative: vpfiTokenSource === 'on-chain getVPFIToken()',
       provenBy: everyClassProven ? storage.kind : undefined,
       diamondVpfiBacking: diamondVpfiBalance === null ? null : diamondVpfiBalance.toString(),
-      vpfiRowsTotal: null,
-      backingShortfall: null,
+      // #2095 r14 P1 — a held or rebate row the storage scan found is a VPFI
+      // liability by construction (proven class or not): it reaches the
+      // reconciliation figures, and the shortfall follows from it
+      ...(() => {
+        const rows = BigInt(sum(classes.vpfiHeldCustody.rows ?? [], 'vpfiHeld')) + BigInt(sum(classes.rebateRows.rows ?? [], 'rebateAmount'));
+        return { vpfiRowsTotal: rows.toString(), backingShortfall: diamondVpfiBalance === null ? null : (rows > diamondVpfiBalance ? rows - diamondVpfiBalance : 0n).toString() };
+      })(),
       atBlock: atBlock.toString(),
       atBlockHash: censusBlock.hash,
       blockTag: censusBlock.tag,
@@ -2996,9 +3001,16 @@ async function main() {
     // correction — and this run's no-code creation evidence was read at the
     // OLD block.
     const scopeOfInv = (v) => (v ? String(v).toLowerCase() : 'none');
+    // #2095 r14 P1 — the facet population and deploy time are inputs of the
+    // verdict now: a record corrected on either while this run was reading
+    // would otherwise pass the revalidation on an identical key
+    const facetsOfInv = (d) => {
+      const list = d.manifestEntry?.facets ?? Object.values(d.addresses.facets ?? {});
+      return [...new Set(list.filter((v) => typeof v === 'string').map((v) => v.toLowerCase()))].sort().join(',');
+    };
     const inventoryKey = (d) =>
       `${d.slug}|${d.label}|${String(d.addresses.diamond ?? '').toLowerCase()}|${scopeOfInv(d.addresses.vpfiToken ?? d.addresses.vpfiMirror)}|` +
-      `${d.addresses.chainId ?? 'null'}|${d.addresses.deployBlock ?? 'null'}`;
+      `${d.addresses.chainId ?? 'null'}|${d.addresses.deployBlock ?? 'null'}|${deployedAtIso(d.manifestEntry?.deployedAt ?? d.addresses.deployedAt) ?? 'null'}|${facetsOfInv(d)}`;
     const scannedInv = new Set(everything.map(inventoryKey)); // the FULL snapshot taken at start — a --chain run scans a subset of it
     const generationAtStart = LIVE_GENERATION_SEEN;
     const nowInv = new Set(deployedDiamondsUnderLock().map(inventoryKey));
