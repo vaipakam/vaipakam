@@ -3352,6 +3352,108 @@ describe('round 45 review findings', () => {
   });
 });
 
+describe('round 55 review findings', () => {
+  const copy = {
+    unknownCopy: FORCED_CLOSE.unknown,
+    readyCopy: [FORCED_CLOSE.readyInKind, FORCED_CLOSE.readyInternalMatch, FORCED_CLOSE.readyRental],
+    withheldCopy: [FORCED_CLOSE.unknown, FORCED_CLOSE.notYet, FORCED_CLOSE.readyNeedsRoute],
+    recognisedCopy: [
+      FORCED_CLOSE.unknown,
+      FORCED_CLOSE.notYet,
+      FORCED_CLOSE.blockedPaused,
+      FORCED_CLOSE.blockedSequencer,
+      FORCED_CLOSE.blockedNoConsent,
+      FORCED_CLOSE.readyInKind,
+      FORCED_CLOSE.readyInternalMatch,
+      FORCED_CLOSE.readyRental,
+      FORCED_CLOSE.readyNeedsRoute,
+    ],
+    receiptLeads: [FORCED_CLOSE.receipt.youReceive, FORCED_CLOSE.rentalReceipt.youReceive],
+  };
+  const base = {
+    lenderHoldsActive: true,
+    mounted: true,
+    attached: true,
+    submitPresent: true,
+    submitVisible: true,
+    submitDisabled: false,
+    visibleSubmits: 1,
+    visibleCards: 1,
+    saleLocked: false,
+    settled: true,
+    bodyPresent: true,
+    bodyText: FORCED_CLOSE.readyInKind,
+    text: FORCED_CLOSE.readyInKind,
+    confirmExpected: true,
+    confirmText: `${FORCED_CLOSE.receipt.youReceive} …`,
+  };
+
+  describe('the answer must bracket the render it validates', () => {
+    // Round 54 read defaultability only AFTER the whole DOM
+    // observation, which can run for thirty seconds. A deadline
+    // crossing inside that window let a `true` read taken afterwards
+    // validate a ready render the protocol would have refused.
+    it('BLOCKS a deadline crossing inside the observation window', () => {
+      const v = forcedCloseVerdict(
+        { ...base, defaultableBefore: false, defaultable: true },
+        copy,
+      );
+      expect(v.verdict).toBe('blocked');
+      expect(v.blockedKind).toBe('incomplete');
+      expect(v.why).toMatch(/while the card was being observed/);
+    });
+
+    it('passes a quiet window', () => {
+      expect(
+        forcedCloseVerdict({ ...base, defaultableBefore: true, defaultable: true }, copy).verdict,
+      ).toBe('pass');
+    });
+
+    // The after-reading still FAILs on its own: a window that was never
+    // permitted is not ambiguous.
+    it('still FAILS when the protocol refuses at both ends', () => {
+      const v = forcedCloseVerdict(
+        { ...base, defaultableBefore: false, defaultable: false },
+        copy,
+      );
+      expect(v.verdict).toBe('fail');
+      expect(v.why).toMatch(/not yet defaultable/);
+    });
+
+    it('BLOCKS when the BEFORE reading could not answer', () => {
+      const v = forcedCloseVerdict(
+        { ...base, defaultableBefore: undefined, defaultable: true },
+        copy,
+      );
+      expect(v.verdict).toBe('blocked');
+      expect(v.blockedKind).toBe('incomplete');
+    });
+
+    it('says nothing for a record predating both fields', () => {
+      expect(forcedCloseVerdict(base, copy).verdict).toBe('pass');
+    });
+
+    // A WITHHELD card is unaffected by any of it — the arms are gated on
+    // the card actually offering the action.
+    it('does not report a crossing on a withheld card', () => {
+      const v = forcedCloseVerdict(
+        {
+          ...base,
+          text: FORCED_CLOSE.notYet,
+          bodyText: FORCED_CLOSE.notYet,
+          submitDisabled: true,
+          confirmExpected: false,
+          confirmText: null,
+          defaultableBefore: false,
+          defaultable: true,
+        },
+        copy,
+      );
+      expect(v.verdict).toBe('pass');
+    });
+  });
+});
+
 describe('round 54 review findings', () => {
   const LABELS = [
     enBundle.copy.receipt.youReceive,

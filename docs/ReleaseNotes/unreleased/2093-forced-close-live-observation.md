@@ -547,3 +547,25 @@ panel is false, which is what makes it the most misleading shape it can
 take. And the card's own button must carry a label the lender can read,
 which the confirmation's button has been required to do for some rounds
 while the one that opens it was not.
+
+The following round found two problems with that fix, both of them about
+what the protocol's answer actually covers.
+
+The question the check was asking turned out to be narrower than the
+action it was vouching for. Whether a loan is past its deadline is only
+one of the conditions the close-out requires: it can still be refused
+because the protocol is paused or because the network's sequencer is
+unhealthy, and the answer the check relied on says nothing about either.
+It now asks all three — the same three the page itself asks — and asks
+them of the chain rather than working them out from the contract's rules,
+because a copy of those rules is right only until they change.
+
+And the answer was being taken after the page had been watched, which can
+take up to half a minute. A deadline passing inside that window meant a
+card that had offered an invalid action was validated by an answer from
+after the fact — the very moment worth catching, erased by the delay. The
+question is now asked before as well. Where the answer changes during the
+window, the run reports that it could not match the two rather than
+guessing: the card may legitimately have become ready mid-observation,
+and the check cannot tell that from the fault without asking the chain
+once per redraw, which it does not do.

@@ -2020,6 +2020,35 @@ export function forcedCloseVerdict(obs, copy) {
       };
     }
   }
+  // ROUND 55 P2 — AND THE WINDOW HAS TO HAVE BEEN QUIET.
+  //
+  // The pinned answer is taken AFTER the whole DOM observation, which
+  // can run for thirty seconds. A grace deadline crossing inside that
+  // window meant a card that offered a ready action while the protocol
+  // would still have refused it was validated by a `true` read taken
+  // afterwards — the transient unsafe state resolved away by the passage
+  // of time, which is precisely what this drive exists to catch.
+  //
+  // Reported as INCOMPLETE rather than guessed at in either direction.
+  // The card may legitimately have started withheld and become ready
+  // inside the window, and telling that from the defect would need a
+  // chain answer per render, which this drive does not take. Saying so
+  // is the honest outcome; either guess would be an invention.
+  if (
+    obs.defaultableBefore === false &&
+    obs.defaultable === true &&
+    actionOffered &&
+    Array.isArray(copy?.readyCopy) &&
+    copy.readyCopy.some(
+      (sentence) => typeof sentence === 'string' && sentence && (obs.text ?? '').includes(sentence),
+    )
+  ) {
+    return {
+      verdict: 'blocked',
+      blockedKind: 'incomplete',
+      why: 'the protocol went from refusing this close-out to permitting it while the card was being observed — the ready render cannot be matched to a chain answer taken at the same moment',
+    };
+  }
   // And where the drive could not ASK, it says so rather than passing.
   //
   // A ready route offering the action is the strongest claim this drive
@@ -2029,8 +2058,8 @@ export function forcedCloseVerdict(obs, copy) {
   // the field is unaffected, since it carries no `defaultable` key at
   // all and `in` distinguishes the two.
   if (
-    'defaultable' in obs &&
-    obs.defaultable === undefined &&
+    (('defaultable' in obs && obs.defaultable === undefined) ||
+      ('defaultableBefore' in obs && obs.defaultableBefore === undefined)) &&
     actionOffered &&
     Array.isArray(copy?.readyCopy) &&
     copy.readyCopy.some(

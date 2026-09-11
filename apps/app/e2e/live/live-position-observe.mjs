@@ -3012,6 +3012,50 @@ async function readLenderCardText(page, card) {
  * still an answer.
  */
 /**
+ * The protocol's own answer about whether this close-out can run, plus
+ * every OTHER gate `triggerDefault` applies (round 55 P2).
+ *
+ * `isLoanDefaultable` checks Active status and the grace deadline and
+ * nothing else, so it returns `true` on a paused protocol and during a
+ * sequencer outage — both of which `triggerDefault` rejects
+ * independently, and both of which the app's own resolver treats as
+ * separate gates. Reading only the narrow view would have let a
+ * regressed ready card be substantiated by a probe that was never
+ * asking the whole question.
+ *
+ * The gates are ASKED OF THE CHAIN rather than reimplemented from the
+ * contract source, for the reason this file keeps relearning: a
+ * reimplementation is correct until the contract moves, and then it is
+ * silently wrong in the direction that vouches for a defect. These are
+ * the same three views the app consults, so they move with it.
+ *
+ * `undefined` when any of them could not answer — the verdict reports
+ * that as an incomplete observation rather than accusing or vouching.
+ *
+ * @param {bigint} loanId
+ * @param {bigint} [blockNumber] pin all three to one block when given
+ * @returns {Promise<boolean|undefined>}
+ */
+async function probeDefaultable(loanId, blockNumber) {
+  const at = blockNumber === undefined ? {} : { blockNumber };
+  const read = (functionName, args) =>
+    pub
+      .readContract({ address: DIAMOND, abi: DIAMOND_ABI_VIEM, functionName, args, ...at })
+      .catch(() => undefined);
+  const [defaultable, paused, sequencerHealthy] = await Promise.all([
+    read('isLoanDefaultable', [loanId]),
+    read('paused', []),
+    read('sequencerHealthy', []),
+  ]);
+  if (defaultable === undefined || paused === undefined || sequencerHealthy === undefined) {
+    return undefined;
+  }
+  // Every gate must agree. A `true` from the narrow view beside a paused
+  // Diamond is not a route the lender can take.
+  return defaultable === true && paused === false && sequencerHealthy === true;
+}
+
+/**
  * The forced-close observation, with its chain facts read AT THE SCRAPE.
  *
  * ROUND 2 P2, and the second half of round 1's staleness fix. Writing
@@ -3034,6 +3078,26 @@ async function readLenderCardText(page, card) {
  * answer is BLOCKED, never a finding about the app.
  */
 async function observeForcedClose(page, loan) {
+  // ROUND 55 P2 — BRACKET THE OBSERVATION, because the answer that
+  // validates a render must not come from after it.
+  //
+  // Round 54 read defaultability only in the pinned snapshot, which is
+  // taken AFTER the whole DOM observation — and that observation can
+  // run for thirty seconds before its interaction timeouts. A grace
+  // deadline crossing inside that window meant a card that exposed a
+  // ready action while the protocol would still have refused it was
+  // validated by a `true` read taken afterwards. The transient unsafe
+  // state, which is exactly what this drive exists to catch, was
+  // resolved away by the passage of time.
+  //
+  // So it is read BEFORE as well. The two together say whether the
+  // window was quiet: both `true` is a clean pairing, and a
+  // `false`-then-`true` crossing is reported as an INCOMPLETE
+  // observation rather than guessed at in either direction — the card
+  // may legitimately have started withheld and become ready, and this
+  // drive cannot tell that from the defect without sampling every
+  // render, which it does not.
+  const defaultableBefore = await probeDefaultable(loan.id);
   const card = await readForcedCloseCard(page);
   // BESIDE THE SCRAPE, not at confirmation time (round 14 P2). What
   // matters is the head the page had reached when it rendered — or
@@ -3106,19 +3170,16 @@ async function observeForcedClose(page, loan) {
         }),
         tokenOwnerOf(loan.lenderTokenId, blockNumber),
         saleLockedOn(loan.lenderTokenId, loan.id, blockNumber, loan.authority),
-        // `undefined` when the read could not answer, so the verdict can
-        // tell "the protocol says no" from "this drive could not ask" —
-        // the distinction every other probe in this file carries.
-        pub
-          .readContract({
-            address: DIAMOND,
-            abi: DIAMOND_ABI_VIEM,
-            functionName: 'isLoanDefaultable',
-            args: [loan.id],
-            blockNumber,
-          })
-          .then((v) => v === true)
-          .catch(() => undefined),
+        // ROUND 55 P2 — EVERY GATE, not just the narrow view.
+        // `isLoanDefaultable` checks Active status and the grace
+        // deadline only, so it answers `true` on a paused protocol and
+        // during a sequencer outage — both of which `triggerDefault`
+        // rejects on its own. See `probeDefaultable`.
+        //
+        // `undefined` when any of them could not answer, so the verdict
+        // can tell "the protocol says no" from "this drive could not
+        // ask" — the distinction every other probe in this file carries.
+        probeDefaultable(loan.id, blockNumber),
       ]);
     },
   );
@@ -3252,6 +3313,10 @@ async function observeForcedClose(page, loan) {
     // close-out can run, read at the pinned block beside the status it
     // is judged with. `undefined` where the read could not answer.
     defaultable: pinnedDefaultable,
+    // ROUND 55 P2 — and the SAME QUESTION asked BEFORE the DOM
+    // observation, so an answer taken afterwards cannot validate a
+    // render that preceded it. The verdict compares the two.
+    defaultableBefore,
     absenceUnconfirmed,
     // ROUND 24 P2 — and the REASON with it. Round 23 produced this
     // string and then dropped it here, so every diagnosis fell back to
