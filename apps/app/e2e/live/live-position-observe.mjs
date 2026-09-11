@@ -5370,17 +5370,23 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
       // `वापस`, `戻る`, `뒤로`, `பின் செல்லவும்` and `返回` all fail
       // `/back/i`.
       //
-      // So on any non-English run this locator finds nothing:
+      // On a non-English render this locator would find nothing:
       // `backAction.present` reads false and the missing-Back arm reports
       // a lender with no way to decline, while the in-page filter keeps
       // BOTH buttons and the duplicate-action arm reports more than one
-      // way to pay. Two false product FAILs, on nine of ten locales, from
-      // a check that only ever ran in English.
+      // way to pay. Two false product FAILs from one unmatched regex.
       //
-      // The marker resolves it, and the label stays as the fallback for
-      // builds deployed before the marker ships — the same trade as the
-      // in-page filter, and with the same honest limit: on such a build
-      // this drive remains English-only.
+      // THAT CANNOT HAPPEN TODAY, and saying so is the point of this
+      // note. The browser context pins `locale: 'en-US'`, so the whole
+      // drive is English BY CONSTRUCTION — `FORCED_CLOSE_COPY` reads
+      // `en.json` by name for the same reason, and the chooser, jump and
+      // switch locators are hard-coded English regexes on the same
+      // assumption. The exposure is latent behind that pin, not live.
+      //
+      // The marker is still the better identity: it removes a coupling to
+      // COPY, which can change within English — round 76's actual point,
+      // a confirm label containing the word "back". The label stays as
+      // the fallback for builds deployed before the marker ships.
       const backMarked = await card
         .locator('[data-testid="confirm-receipt-back"]')
         .count()
