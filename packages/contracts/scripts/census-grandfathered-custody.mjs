@@ -89,7 +89,7 @@
  */
 
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync, renameSync, rmSync } from 'node:fs';
-import { readManifest, regenerateEntries, withManifestLock, writeSnapshotGuarded, livePublicationsInProgress } from './archive-manifest.mjs';
+import { readManifest, regenerateEntries, withManifestLock, writeSnapshotGuarded, livePublicationsInProgress, sameEntry } from './archive-manifest.mjs';
 import { loadSlots, loadEras } from './storage-slots.mjs';
 import { commitsAround, deployedAtIso, interpolateTimestamp, CANDIDATES_FILE } from './storage-layout-eras.mjs';
 import { prepareStorageRead, readCountersByStorage, scanRowsByStorage, intentVerdictFromStorage, mergeHistoricalRows, markAliasedRows, splitByHeadSlot, getterAgreement, downgradeWithoutEraRead, attributeCounters, attributeFacetCode, downgradeProvenClasses, requireHexData, cutHistoryCompleteness, DIAMOND_CUT_SELECTOR, MAX_STORAGE_LOAN_SCAN } from './census-storage-read.mjs';
@@ -945,7 +945,7 @@ function deployedDiamondsUnderLock() {
   const missing = local.filter((e) => !byKey.has(`${e.slug}|${e.stamp}`));
   const changed = local.filter((e) => {
     const m = byKey.get(`${e.slug}|${e.stamp}`);
-    return m && ['chainId', 'diamond', 'deployBlock', 'vpfiToken'].some((k) => norm(m[k]) !== norm(e[k]));
+    return m && !sameEntry(m, e);
   });
   if (missing.length || changed.length) {
     throw new Error(
@@ -2231,7 +2231,15 @@ async function censusDeployment(dep) {
     for (const k of Object.keys(split.earlier)) split.earlier[k] = markAliasedRows(split.earlier[k], STORAGE_READ.occupied);
     // HEAD-slot rows are reconciled against the routed getters AFTER the
     // enumeration below has filled the routed row sets (see the post-merge block).
+    // #2095 r11 P1 — the HEAD-slot readings are the counters TODAY and are
+    // judged too: a live-commit counter above zero with no intent row found,
+    // or a lifetime counter above the id range, contradicts a routed proof
+    const headOf = (list, f) => list.find((x) => x.slot === headSlots[f]);
     historical = {
+      headCounters: {
+        totalLoansEverCreated: headOf(counters.totalLoansEverCreated, 'totalLoansEverCreated')?.value?.toString() ?? null,
+        intentLiveCommitCount: headOf(counters.intentLiveCommitCount, 'intentLiveCommitCount')?.value?.toString() ?? null,
+      },
       rows: split.earlier,
       headRows: split.head,
       aliasedCountersIgnored: aliased,
@@ -2457,7 +2465,7 @@ async function censusDeployment(dep) {
       custodySurfaceUnrouted: false,
       loupeRouted,
       // r3 P1 — what no routed getter can see: every class at every earlier era slot over 1..nextLoanId
-      earlierEraRead: historical ? { ...STORAGE_READ.evidence, slotsRead: historical.slotsRead, loansScanned: historical.loansScanned, truncated: historical.truncated, nextLoanIdFromStorage: historical.nextLoanIdFromStorage, erasPerField: historical.erasPerField, rowsFound: Object.fromEntries(Object.entries(historical.rows).map(([k, v]) => [k, v.length])), headSlotRows: Object.fromEntries(Object.entries(historical.headRows).map(([k, v]) => [k, v.length])), earlierEraCounters: historical.earlierEraCounters, aliasedCountersIgnored: historical.aliasedCountersIgnored } : undefined,
+      earlierEraRead: historical ? { ...STORAGE_READ.evidence, headCounters: historical.headCounters, slotsRead: historical.slotsRead, loansScanned: historical.loansScanned, truncated: historical.truncated, nextLoanIdFromStorage: historical.nextLoanIdFromStorage, erasPerField: historical.erasPerField, rowsFound: Object.fromEntries(Object.entries(historical.rows).map(([k, v]) => [k, v.length])), headSlotRows: Object.fromEntries(Object.entries(historical.headRows).map(([k, v]) => [k, v.length])), earlierEraCounters: historical.earlierEraCounters, aliasedCountersIgnored: historical.aliasedCountersIgnored } : undefined,
       intentSource: intentSurfaceRouted
         ? 'getIntentCommit view (live state, history-independent)'
         : intentStorage
@@ -2603,6 +2611,21 @@ async function censusDeployment(dep) {
         if (c.provenBy === 'no-loans-ever-created') result.classes[name] = { ...c, status: 'indeterminate', provenBy: undefined, indeterminateReason: why };
       }
       result.scanned.earlierEraCounterContradiction = why;
+    }
+    // #2095 r11 P1 — HEAD's own counters, judged like the earlier eras': the
+    // lifetime counter above the id range refuses every proof; a live-commit
+    // counter above zero with no intent row found contradicts the intent class
+    const hc = historical.headCounters ?? {};
+    if (hc.totalLoansEverCreated !== null && hc.totalLoansEverCreated !== undefined && BigInt(hc.totalLoansEverCreated) > BigInt(historical.nextLoanIdFromStorage)) {
+      const why = `totalLoansEverCreated at HEAD's slot (${hc.totalLoansEverCreated}) is ABOVE the loan-id range (nextLoanId=${historical.nextLoanIdFromStorage}) — rows the range cannot reach may exist; refusing to certify`;
+      result.provenBy = undefined;
+      result.classes = downgradeProvenClasses(result.classes, why);
+      result.scanned.headCounterContradiction = why;
+    }
+    if (hc.intentLiveCommitCount !== null && hc.intentLiveCommitCount !== undefined && BigInt(hc.intentLiveCommitCount) > 0n && result.classes.liveIntentCommits.status === 'proven' && !(result.classes.liveIntentCommits.count > 0)) {
+      const why = `intentLiveCommitCount at HEAD's slot reads ${hc.intentLiveCommitCount} while no live intent row was found by the routed getter or at any era slot — the protocol's own counter says a commit exists that no read reached; refusing to certify`;
+      result.classes.liveIntentCommits = { ...result.classes.liveIntentCommits, status: 'indeterminate', provenBy: undefined, counterContradiction: true, indeterminateReason: why };
+      result.scanned.headCounterContradiction = `${result.scanned.headCounterContradiction ? `${result.scanned.headCounterContradiction}; ` : ''}${why}`;
     }
     // #2095 r9 — a stale lifetime counter ABOVE the storage id range (the same
     // rule the shell path applies) means loans the range cannot reach

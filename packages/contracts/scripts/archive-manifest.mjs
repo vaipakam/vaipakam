@@ -66,7 +66,7 @@ export const MANIFEST_PURPOSE =
 
 /** The fields an entry carries — the census reads every one of them, so the
  *  staleness and conflict checks compare every one of them (r10 P1). */
-export const ENTRY_FIELDS = ['slug', 'stamp', 'chainId', 'diamond', 'deployBlock', 'vpfiToken'];
+export const ENTRY_FIELDS = ['slug', 'stamp', 'chainId', 'diamond', 'deployBlock', 'vpfiToken', 'deployedAt', 'facets'];
 
 export function emptyManifest() {
   return { purpose: MANIFEST_PURPOSE, generatedAt: null, entries: [] };
@@ -107,7 +107,10 @@ export function entryKey(e) {
 
 /** Field-by-field equality over ENTRY_FIELDS — the comparison the census's staleness check makes (r10 P1). */
 export function sameEntry(a, b) {
-  return ENTRY_FIELDS.every((f) => String(a[f] ?? '').toLowerCase() === String(b[f] ?? '').toLowerCase());
+  const norm = (f, v) => (f === 'facets'
+    ? [...new Set((Array.isArray(v) ? v : []).map((x) => String(x).toLowerCase()))].sort().join(',')  // order-independent (#2095 r11 P2)
+    : String(v ?? '').toLowerCase());
+  return ENTRY_FIELDS.every((f) => norm(f, a[f]) === norm(f, b[f]));
 }
 
 export function sortEntries(entries) {

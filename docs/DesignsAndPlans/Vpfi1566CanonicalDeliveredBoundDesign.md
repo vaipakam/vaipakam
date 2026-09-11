@@ -6268,7 +6268,18 @@ the endpoint prunes old logs — so the population is not exhaustive and the
 provenance standard withholds them too, with the routed verdict recorded
 beside the refusal. Exhaustiveness on a pruned endpoint needs an archive
 node or an operator attestation, which is the other half of the decision on
-#1566. Run 32 re-reads every deployment under `provenance`.
+#1566. Run 32 was started under that gate and superseded by run 33 after
+round 11, which closed three smaller doors: HEAD's own counter readings on
+the enumerable path are now judged like the earlier eras' (a lifetime
+counter above the id range refuses every proof; a live-commit counter above
+zero with no intent row found contradicts the intent class); the archive
+manifest's entry equality — and the census's staleness check, which is now
+that same comparison — covers the facet set (as a set) and the deploy time,
+so a corrected archive whose facets differ is never "already recorded"; and
+the era table is pinned in the excision-residue gate as a historical record,
+because its catalogue names every contract each past build produced, the
+retired buy surface among them. Run 33 re-reads every deployment under
+`provenance`.
 
 ### 7a. What the provenance walk found, and how the design changes (2026-09-09)
 
