@@ -624,3 +624,21 @@ thing being judged, which is the same error one step along. The position
 is now read before anything is looked at. The later reading is kept,
 because a different question — has the page caught up at all — genuinely
 wants the newest answer.
+
+Three more corrections of the same kind, all about what the check throws
+away when a loan changes hands or ends while it is looking. A card whose
+button carries no readable label, a receipt with one disclosure printed
+twice in place of another, and a receipt describing a different
+settlement route than the one being confirmed are all things the lender
+has already been shown — and the check was discarding them whenever the
+position stopped being applicable a moment later. Nothing that happens
+afterwards can unshow them, so they are now reported regardless. The one
+case that still yields is a receipt the check simply does not recognise:
+that may be the check's own wording being out of date rather than a
+fault, and a position that no longer applies is a perfectly good reason
+not to have judged it.
+
+And the fallback used when the page never reveals its chain position was
+still being taken after the page had been examined rather than before,
+so on that path the timing fix from the previous round had not actually
+taken effect.

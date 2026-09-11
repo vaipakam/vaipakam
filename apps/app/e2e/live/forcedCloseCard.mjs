@@ -956,6 +956,89 @@ export function reconcileEligibility(pinned, later) {
 }
 
 /**
+ * The receipt faults that NO STATE CHANGE CAN EXPLAIN (round 59 P2).
+ *
+ * A duplicated row, and a receipt describing the other settlement
+ * route, are both things the lender was already shown. A loan
+ * terminating, transferring or gaining an accepted sale a moment later
+ * does not unshow them — which is round 49's rule, applied to the two
+ * arms rounds 53 and 54 left below the applicability exits.
+ *
+ * Returns `null` for the UNRECOGNISED case deliberately. That one is a
+ * gap in this drive's vocabulary rather than a defect — its copy comes
+ * from the repo and the page's from the deployed bundle — so it stays
+ * below, where an inapplicable position is a perfectly good reason not
+ * to have judged it, and it is re-reported there.
+ *
+ * @returns {{verdict: 'fail', failKind: 'observed', why: string}|'unrecognised'|null}
+ */
+function receiptRowFault(obs, copy) {
+  const rowsSeen = Array.isArray(obs.confirmRowsText) ? obs.confirmRowsText : null;
+  const routeSets = copy?.receiptRowSets;
+  if (rowsSeen !== null && rowsSeen.length === 6 && routeSets) {
+    const distinct = new Set(rowsSeen.map((t) => t.trim()));
+    if (distinct.size !== rowsSeen.length) {
+      return {
+        verdict: 'fail',
+        failKind: 'observed',
+        why: `the confirmation rendered six receipt rows but only ${distinct.size} distinct one(s) — a duplicated row means a disclosure the lender needs is not on the panel at all`,
+      };
+    }
+    const stateText = obs.bodyText ?? obs.text ?? '';
+    const isRental =
+      typeof copy.rentalReadyCopy === 'string' &&
+      copy.rentalReadyCopy !== '' &&
+      stateText.includes(copy.rentalReadyCopy);
+    const expected = isRental ? routeSets.rental : routeSets.standard;
+    const other = isRental ? routeSets.standard : routeSets.rental;
+    // ROUND 54 P2 — PAIRED WITH THEIR LABELS, not merely all present.
+    //
+    // Round 53 checked the value SET, so the six right values under the
+    // six wrong headings satisfied it: every value present, all six
+    // distinct. A receipt whose every line is true and whose every line
+    // answers the wrong question — the loss disclosure filed under
+    // "Fees" — certified as scanned. That is the most misleading shape
+    // this panel can take, because nothing on it is false.
+    //
+    // Pairing is BY INDEX, which enforces the order too. That is not an
+    // extra demand: `ReviewReceipt` states it outright — "Six fixed
+    // rows, same order everywhere" — and renders from a fixed array.
+    //
+    // Labels are optional so a caller that supplies none keeps round
+    // 53's set-only behaviour rather than failing on a record this rule
+    // cannot judge.
+    const labels = Array.isArray(copy?.receiptRowLabels) ? copy.receiptRowLabels : null;
+    const covers = (set) => {
+      if (!Array.isArray(set) || set.length !== 6) return false;
+      if (labels === null || labels.length !== 6) {
+        return set.every((value) => rowsSeen.some((t) => t.includes(value)));
+      }
+      return set.every(
+        (value, i) => rowsSeen[i].includes(labels[i]) && rowsSeen[i].includes(value),
+      );
+    };
+    if (!covers(expected)) {
+      if (covers(other)) {
+        return {
+          verdict: 'fail',
+          failKind: 'observed',
+          why: `the card renders the ${isRental ? 'rental' : 'collateral'} route and its confirmation shows the ${isRental ? 'collateral' : 'rental'} receipt — the lender is being asked to confirm one transaction while reading the terms of another`,
+        };
+      }
+      // UNRECOGNISED copy is reported by the CALLER, below the
+      // applicability exits (round 59 P2). It is an incomplete
+      // observation rather than a defect — this drive's copy comes from
+      // the repo and the page's from the deployed bundle — so an
+      // inapplicable position is a perfectly good reason not to have
+      // judged it. Named rather than returned as a verdict so the
+      // caller decides where it lands.
+      return 'unrecognised';
+    }
+  }
+  return null;
+}
+
+/**
  * The verdict: `pass`, `fail` (a defect observed in the product), or
  * `blocked` (nothing was learned — never reported as a pass).
  *
@@ -1562,6 +1645,53 @@ export function forcedCloseVerdict(obs, copy) {
     }
   }
 
+  // ROUND 59 P2 — A WRONG-ROUTE OR DUPLICATED RECEIPT IS STRUCTURAL TOO.
+  //
+  // Rounds 53 and 54 put these below the applicability exits, so a
+  // confirmation visibly describing a DIFFERENT settlement route — or
+  // one with a disclosure duplicated over the top of another — was
+  // discarded as `inapplicable` whenever the loan terminated,
+  // transferred or gained an accepted sale before the pinned re-read.
+  // The lender had already read terms for a transaction other than the
+  // one they were confirming.
+  //
+  // Both pass round 49's test: no state change duplicates a row or
+  // swaps one receipt for another. The UNRECOGNISED case is different
+  // and stays below — it is a gap in this drive's vocabulary, and an
+  // inapplicable position is a good reason not to have judged it.
+  const receiptCheck = receiptRowFault(obs, copy);
+  if (receiptCheck !== null && receiptCheck !== 'unrecognised') return receiptCheck;
+
+  // ROUND 59 P2 — AND THE OUTER CONTROL'S LABEL, for the same reason.
+  //
+  // Round 54 added these and put them below the applicability exits, so
+  // a blank fee-paying control captured in the atomic snapshot was
+  // discarded as `inapplicable` whenever the loan terminated,
+  // transferred or gained an accepted sale before the pinned re-read.
+  // The lender had already been shown it; what the chain said a moment
+  // later cannot unshow it.
+  //
+  // They pass round 49's test for what may be hoisted: no state change
+  // renders a control with no label. `actionOffered` is recomputed here
+  // rather than waited for, because it is three fields of the same
+  // atomic snapshot and nothing between here and its old declaration
+  // changes them.
+  const offersAction = obs.submitVisible !== false && !obs.submitDisabled;
+  if (offersAction && obs.submitLabelled === false) {
+    return {
+      verdict: 'fail',
+      failKind: 'observed',
+      why: 'the card offers a visible, enabled action with no label at all — the lender is asked to open a forced close-out from a blank control',
+    };
+  }
+  if (offersAction && obs.submitLabelPainted === false) {
+    return {
+      verdict: 'fail',
+      failKind: 'observed',
+      why: 'the card offers a visible, enabled action whose label is in the markup but painted in nothing — the lender is asked to open a forced close-out from a control that reads as blank',
+    };
+  }
+
   // ROUND 49 P2 — THE CONFIRMATION'S STRUCTURAL FAULTS BELONG UP HERE.
   //
   // Round 9 settled the principle — "definite content failures are
@@ -1828,64 +1958,24 @@ export function forcedCloseVerdict(obs, copy) {
   //     bundle, so a divergence is a gap in the drive's vocabulary as
   //     readily as a defect. Round 11 settled that direction for the
   //     body copy; the same reasoning applies here.
-  const rowsSeen = Array.isArray(obs.confirmRowsText) ? obs.confirmRowsText : null;
-  const routeSets = copy?.receiptRowSets;
-  if (rowsSeen !== null && rowsSeen.length === 6 && routeSets) {
-    const distinct = new Set(rowsSeen.map((t) => t.trim()));
-    if (distinct.size !== rowsSeen.length) {
-      return {
-        verdict: 'fail',
-        failKind: 'observed',
-        why: `the confirmation rendered six receipt rows but only ${distinct.size} distinct one(s) — a duplicated row means a disclosure the lender needs is not on the panel at all`,
-      };
-    }
-    const stateText = obs.bodyText ?? obs.text ?? '';
-    const isRental =
-      typeof copy.rentalReadyCopy === 'string' &&
-      copy.rentalReadyCopy !== '' &&
-      stateText.includes(copy.rentalReadyCopy);
-    const expected = isRental ? routeSets.rental : routeSets.standard;
-    const other = isRental ? routeSets.standard : routeSets.rental;
-    // ROUND 54 P2 — PAIRED WITH THEIR LABELS, not merely all present.
-    //
-    // Round 53 checked the value SET, so the six right values under the
-    // six wrong headings satisfied it: every value present, all six
-    // distinct. A receipt whose every line is true and whose every line
-    // answers the wrong question — the loss disclosure filed under
-    // "Fees" — certified as scanned. That is the most misleading shape
-    // this panel can take, because nothing on it is false.
-    //
-    // Pairing is BY INDEX, which enforces the order too. That is not an
-    // extra demand: `ReviewReceipt` states it outright — "Six fixed
-    // rows, same order everywhere" — and renders from a fixed array.
-    //
-    // Labels are optional so a caller that supplies none keeps round
-    // 53's set-only behaviour rather than failing on a record this rule
-    // cannot judge.
-    const labels = Array.isArray(copy?.receiptRowLabels) ? copy.receiptRowLabels : null;
-    const covers = (set) => {
-      if (!Array.isArray(set) || set.length !== 6) return false;
-      if (labels === null || labels.length !== 6) {
-        return set.every((value) => rowsSeen.some((t) => t.includes(value)));
-      }
-      return set.every(
-        (value, i) => rowsSeen[i].includes(labels[i]) && rowsSeen[i].includes(value),
-      );
+  // ROUND 59 P2 — the UNRECOGNISED receipt stays HERE, below the
+  // applicability exits, while its structural siblings were hoisted.
+  //
+  // Six rows this drive cannot identify as either receipt is a gap in
+  // ITS vocabulary as readily as a defect — its copy comes from the repo
+  // and the page's from the deployed bundle — so an inapplicable
+  // position is a perfectly good reason not to have judged it. The
+  // duplicated and wrong-route cases are not like that: no state change
+  // produces either, and the lender was already shown them.
+  //
+  // Decided once, above, and only REPORTED here, so the two positions
+  // cannot drift into two different rules.
+  if (receiptCheck === 'unrecognised') {
+    return {
+      verdict: 'blocked',
+      blockedKind: 'incomplete',
+      why: 'the confirmation rendered six rows this drive could not identify as either receipt — its copy may have moved ahead of this drive, so nothing is claimed about what they say',
     };
-    if (!covers(expected)) {
-      if (covers(other)) {
-        return {
-          verdict: 'fail',
-          failKind: 'observed',
-          why: `the card renders the ${isRental ? 'rental' : 'collateral'} route and its confirmation shows the ${isRental ? 'collateral' : 'rental'} receipt — the lender is being asked to confirm one transaction while reading the terms of another`,
-        };
-      }
-      return {
-        verdict: 'blocked',
-        blockedKind: 'incomplete',
-        why: 'the confirmation rendered six rows this drive could not identify as either receipt — its copy may have moved ahead of this drive, so nothing is claimed about what they say',
-      };
-    }
   }
   if (!obs.settled) {
     return {
@@ -2126,20 +2216,6 @@ export function forcedCloseVerdict(obs, copy) {
   // `actionOffered` is the same gate the withheld-copy arm uses, so the
   // label rules now say what they were always meant to say: a control
   // the lender is BEING OFFERED must be readable.
-  if (actionOffered && obs.submitLabelled === false) {
-    return {
-      verdict: 'fail',
-      failKind: 'observed',
-      why: 'the card offers a visible, enabled action with no label at all — the lender is asked to open a forced close-out from a blank control',
-    };
-  }
-  if (actionOffered && obs.submitLabelPainted === false) {
-    return {
-      verdict: 'fail',
-      failKind: 'observed',
-      why: 'the card offers a visible, enabled action whose label is in the markup but painted in nothing — the lender is asked to open a forced close-out from a control that reads as blank',
-    };
-  }
   // ROUND 50 P2 — AN UNREACHABLE OUTER SUBMIT IS A DEFECT, not an
   // unread confirmation.
   //

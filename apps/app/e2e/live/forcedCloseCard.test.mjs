@@ -3352,6 +3352,131 @@ describe('round 45 review findings', () => {
   });
 });
 
+describe('round 59 review findings', () => {
+  const ROWS = {
+    standard: Object.values(FORCED_CLOSE.receipt),
+    rental: Object.values(FORCED_CLOSE.rentalReceipt),
+  };
+  const LABELS = [
+    enBundle.copy.receipt.youReceive,
+    enBundle.copy.receipt.youLock,
+    enBundle.copy.receipt.youMayOwe,
+    enBundle.copy.receipt.youCanLose,
+    enBundle.copy.receipt.fees,
+    enBundle.copy.receipt.whenThisEnds,
+  ];
+  const paired = (values) => values.map((v, i) => `${LABELS[i]}\n${v}`);
+  const copy = {
+    unknownCopy: FORCED_CLOSE.unknown,
+    readyCopy: [FORCED_CLOSE.readyInKind, FORCED_CLOSE.readyInternalMatch, FORCED_CLOSE.readyRental],
+    withheldCopy: [FORCED_CLOSE.unknown, FORCED_CLOSE.notYet, FORCED_CLOSE.readyNeedsRoute],
+    recognisedCopy: [
+      FORCED_CLOSE.unknown,
+      FORCED_CLOSE.notYet,
+      FORCED_CLOSE.blockedPaused,
+      FORCED_CLOSE.blockedSequencer,
+      FORCED_CLOSE.blockedNoConsent,
+      FORCED_CLOSE.readyInKind,
+      FORCED_CLOSE.readyInternalMatch,
+      FORCED_CLOSE.readyRental,
+      FORCED_CLOSE.readyNeedsRoute,
+    ],
+    receiptLeads: [FORCED_CLOSE.receipt.youReceive, FORCED_CLOSE.rentalReceipt.youReceive],
+    receiptRowSets: ROWS,
+    receiptRowLabels: LABELS,
+    rentalReadyCopy: FORCED_CLOSE.readyRental,
+  };
+  const base = {
+    lenderHoldsActive: true,
+    mounted: true,
+    attached: true,
+    submitPresent: true,
+    submitVisible: true,
+    submitDisabled: false,
+    visibleSubmits: 1,
+    visibleCards: 1,
+    saleLocked: false,
+    settled: true,
+    bodyPresent: true,
+    bodyText: FORCED_CLOSE.readyInKind,
+    text: FORCED_CLOSE.readyInKind,
+    confirmExpected: true,
+    confirmText: `${FORCED_CLOSE.receipt.youReceive} …`,
+  };
+  const gone = { ...base, lenderHoldsActive: false };
+  const sold = { ...base, saleLocked: true };
+
+  // Round 49's rule, applied to the three arms rounds 53/54 left below
+  // the applicability exits. The lender was already shown these; a loan
+  // terminating, transferring or gaining an accepted sale a moment
+  // later does not unshow them.
+  describe('structural faults survive a lifecycle change', () => {
+    it('reports a blank outer submit on a position that has gone', () => {
+      const v = forcedCloseVerdict({ ...gone, submitLabelled: false }, copy);
+      expect(v.verdict).toBe('fail');
+      expect(v.why).toMatch(/no label at all/);
+    });
+
+    it('reports an unpainted submit label on a position that has sold', () => {
+      const v = forcedCloseVerdict({ ...sold, submitLabelPainted: false }, copy);
+      expect(v.verdict).toBe('fail');
+      expect(v.why).toMatch(/reads as blank/);
+    });
+
+    it('reports a duplicated receipt row on a position that has gone', () => {
+      const rows = paired(ROWS.standard);
+      rows[5] = rows[0];
+      const v = forcedCloseVerdict({ ...gone, confirmRowsText: rows }, copy);
+      expect(v.verdict).toBe('fail');
+      expect(v.why).toMatch(/distinct one/);
+    });
+
+    it('reports the WRONG ROUTE receipt on a position that has gone', () => {
+      const v = forcedCloseVerdict(
+        {
+          ...gone,
+          bodyText: FORCED_CLOSE.readyRental,
+          text: FORCED_CLOSE.readyRental,
+          confirmRowsText: paired(ROWS.standard),
+        },
+        copy,
+      );
+      expect(v.verdict).toBe('fail');
+      expect(v.why).toMatch(/rental route and its confirmation shows the collateral receipt/);
+    });
+
+    // …and the UNRECOGNISED case deliberately does NOT survive: it is a
+    // gap in this drive's vocabulary, and an inapplicable position is a
+    // perfectly good reason not to have judged it.
+    it('does NOT report unrecognised rows on a position that has gone', () => {
+      const v = forcedCloseVerdict(
+        { ...gone, confirmRowsText: ['a', 'b', 'c', 'd', 'e', 'f'] },
+        copy,
+      );
+      expect(v.verdict).toBe('blocked');
+      expect(v.blockedKind).toBe('inapplicable');
+    });
+
+    it('still reports unrecognised rows on a LIVE position', () => {
+      const v = forcedCloseVerdict(
+        { ...base, confirmRowsText: ['a', 'b', 'c', 'd', 'e', 'f'] },
+        copy,
+      );
+      expect(v.verdict).toBe('blocked');
+      expect(v.blockedKind).toBe('incomplete');
+      expect(v.why).toMatch(/could not identify as either receipt/);
+    });
+
+    // A clean reading on an inapplicable position is still refused
+    // rather than banked — round 9's rule, unchanged by any of this.
+    it('still refuses to bank a clean reading once the position has gone', () => {
+      const v = forcedCloseVerdict({ ...gone, confirmRowsText: paired(ROWS.standard) }, copy);
+      expect(v.verdict).toBe('blocked');
+      expect(v.blockedKind).toBe('inapplicable');
+    });
+  });
+});
+
 describe('round 56 review findings', () => {
   const copy = {
     unknownCopy: FORCED_CLOSE.unknown,

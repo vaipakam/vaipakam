@@ -3135,23 +3135,6 @@ async function observeForcedClose(page, loan) {
   // is the right answer. Two samples, two different questions.
   await settleHeadReads(page);
   const headAtRender = pageHeadOf(page);
-  const card = await readForcedCloseCard(page);
-  // BESIDE THE SCRAPE, not at confirmation time (round 14 P2). What
-  // matters is the head the page had reached when it rendered — or
-  // declined to render — the card being judged. Sampling it later would
-  // let the page move on and set a bar this observer must clear for a
-  // render it never looked at.
-  //
-  // ROUND 48 P2 — AND THE READINGS IN FLIGHT ARE LET FINISH FIRST.
-  // Playwright does not await a response listener, so a `latest` reply
-  // that arrived just before the scrape can still be inside `res.json()`
-  // here. Sampling through that race reads a head the page has already
-  // passed — zero, which reports an incomplete observation for a reading
-  // taken too early, or a stale height, which lets the confirming
-  // observer settle below the head the DOM was showing and call a
-  // correctly absent card a regression.
-  await settleHeadReads(page);
-  const pageHead = pageHeadOf(page);
   // ROUND 57 P2 — THE OTHER END OF THE BRACKET, AT THE PAGE'S OWN HEAD.
   //
   // Round 55 took a pre-read on `OBSERVE_RPC` at wall-clock `latest`,
@@ -3176,6 +3159,36 @@ async function observeForcedClose(page, loan) {
     headAtRender === 0n
       ? await probeCloseOut(loan.id)
       : await probeCloseOut(loan.id, headAtRender);
+  //
+  // ROUND 59 P2 — AND THE PROBE ITSELF RUNS BEFORE THE OBSERVATION, not
+  // only its PIN.
+  //
+  // Round 58 moved the head SAMPLE ahead of the DOM read and left the
+  // probe where it was. For a pinned probe that is harmless — a
+  // simulation at block N answers the same whenever it is run — but the
+  // zero-head fallback is UNPINNED, so it was still executing after an
+  // observation that can spend thirty seconds polling and more
+  // inspecting the confirmation. A grace boundary crossed inside that
+  // window and both ends answered `true`: the bracket read as quiet and
+  // an unsafe render passed, which is the defect the bracket exists to
+  // catch, surviving in the one branch the fix did not move.
+  const card = await readForcedCloseCard(page);
+  // BESIDE THE SCRAPE, not at confirmation time (round 14 P2). What
+  // matters is the head the page had reached when it rendered — or
+  // declined to render — the card being judged. Sampling it later would
+  // let the page move on and set a bar this observer must clear for a
+  // render it never looked at.
+  //
+  // ROUND 48 P2 — AND THE READINGS IN FLIGHT ARE LET FINISH FIRST.
+  // Playwright does not await a response listener, so a `latest` reply
+  // that arrived just before the scrape can still be inside `res.json()`
+  // here. Sampling through that race reads a head the page has already
+  // passed — zero, which reports an incomplete observation for a reading
+  // taken too early, or a stale height, which lets the confirming
+  // observer settle below the head the DOM was showing and call a
+  // correctly absent card a regression.
+  await settleHeadReads(page);
+  const pageHead = pageHeadOf(page);
   // ROUND 4 P2 — ONE BLOCK FOR ALL THREE FACTS.
   //
   // `Promise.all` makes these concurrent; it does not pin them to a
