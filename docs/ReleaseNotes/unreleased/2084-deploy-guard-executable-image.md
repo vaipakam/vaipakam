@@ -64,7 +64,7 @@ No behaviour change. The check's logic is what it was.
 - The reasoning above, recorded beside the code that would have to change, in
   the functional specification, and here — so the next person does not rebuild
   one of these designs without knowing what happened to it.
-- Tests that **assert twenty-two current wrong verdicts across twelve defects**, so
+- Tests that **assert twenty-one current wrong verdicts across twelve defects**, so
   a later fix fails them and comes back to the question rather than passing
   silently.
 
@@ -72,7 +72,8 @@ No behaviour change. The check's logic is what it was.
   recorded at the fixtures and in the table below — not here.**
 
   That sentence is short on purpose, and the reason is the most transferable
-  thing in this document. Four review rounds were spent on the paragraph that
+  thing in this document. Review round after review round was spent on the
+  paragraph that
   used to sit here, which existed to explain the multiple pins: each round
   found it asserting something the fixtures did not support, each correction
   added prose to state the matter more precisely, and the added prose was
@@ -102,7 +103,8 @@ No behaviour change. The check's logic is what it was.
   read as a recipe; a deployment that follows an unrelated line ending in a
   backslash is read as one command with it, so a safety flag belonging to the
   earlier line covers the deployment — across both Windows shells and both
-  hosts, because the fold is in the shared line splitter; a script declared in
+  ingestion surfaces, a standalone helper and a workflow body, because the
+  fold is in the shared line splitter; a script declared in
   a package manifest is never split at its newlines, so a flag on one of its
   lines covers a deployment on another; a variable whose name differs only in
   case is not resolved, though the shell in question resolves it, so the
@@ -156,8 +158,8 @@ No behaviour change. The check's logic is what it was.
 
   Controls are per DEFECT, not per pin, and the difference is not cosmetic.
   Where one defect is pinned several times over shared machinery, a single
-  control can establish the distinction for the whole family; where the hosts
-  differ in what they would have to do to pass, each pin carries its own. So a
+  control can establish the distinction for the whole family; where the pins
+  differ in what they would have to do to pass, each carries its own. So a
   pin without its own sibling is usually a family sharing one, and reading the
   two counts as though they should match will suggest gaps that are not there.
 

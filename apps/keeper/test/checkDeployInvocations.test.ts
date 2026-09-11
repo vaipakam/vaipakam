@@ -12643,6 +12643,41 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     expect(r.ok).toBe(false);
   });
 
+  it('a POSIX helper\'s differently-cased variable stays UNRESOLVED (#2122 language boundary)', () => {
+    // THE OTHER SIDE OF THE BOUNDARY, and the control above does not cover it
+    // (r47). Both #2122 fixtures above keep the PowerShell assignment and its
+    // use identically cased, so the cheapest fix for that defect — lowering
+    // every key in the shared `shellVars` map — would flip the pin, keep the
+    // control reporting, and pass the suite while silently MERGING `$TARGET`
+    // and `$target` in POSIX shells, where they are two variables. That is a
+    // false report manufactured in the language this guard reads most often.
+    //
+    // So the boundary is pinned from the POSIX side too: here the deploy must
+    // stay unattributed, because `$TARGET` genuinely never received a value.
+    //
+    // NOT A DEFECT PIN — it asserts CORRECT behaviour, and it passes today.
+    // It is a regression guard for one specific wrong fix, which is why it is
+    // titled for the boundary rather than for a wrong verdict, and why it
+    // carries no `stated`.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith(
+      'scripts/v.sh',
+      "TARGET='apps/agent'\ncd $target\nwrangler deploy\n",
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('the same POSIX helper spelled consistently IS reported (#2122 language-boundary control)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith(
+      'scripts/v.sh',
+      "TARGET='apps/agent'\ncd $TARGET\nwrangler deploy\n",
+    );
+    expect(r.ok).toBe(false);
+  });
+
   it('an upper-case helper extension is never FOUND by the walk (#2123, stated false green)', () => {
     // A STATED FALSE GREEN, and the broadest of this family: the file is not
     // misread, it is never DISCOVERED. `walk` tests the filename against
@@ -12671,38 +12706,53 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     expect(r.ok).toBe(false);
   });
 
-  it('the command shell is skipped by the walk the same way (#2123, stated false green)', () => {
-    // #2123 IS NOT ABOUT `.ps1`. The gate is the shared, case-sensitive
-    // extension test in `walk`, so EVERY helper family is bypassed by an
-    // upper-case name — verified for `.CMD`, `.BAT`, `.SH`, `.JS` and `.PY`,
-    // each exit 0 against a lower-case exit 1 (r26).
-    //
-    // Two representatives are pinned rather than all five: this one, a second
-    // Windows dialect, and the POSIX one below. Without them a fix that
-    // special-cased `.PS1` would satisfy the fixture above and leave the same
-    // silent bypass everywhere else — which is the failure these pins exist
-    // to prevent, and the same shape as #2118 being pinned once per dialect.
-    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
-    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
-    const r = runWith('apps/agent/D.CMD', 'cd apps/agent\nwrangler deploy\n');
-    expect(r.ok).toBe(true);
+  // EVERY affected helper family, not three representatives (r47). The gate
+  // is the shared case-sensitive extension test in `walk`, so the bypass is
+  // the same for each of these — and pinning three of them let a correction
+  // limited to the tested suffixes satisfy all three pins while leaving the
+  // rest silently undiscovered. Each entry here is independently
+  // special-caseable, which is exactly why representatives were the wrong
+  // shape: the stated defect covers the family, so the fixture must too.
+  //
+  // These are the `EXTENSIONS` entries a bare `cd` + deploy body exercises.
+  // The list is written out rather than imported so that an extension REMOVED
+  // from the guard shows up here as a failure to investigate rather than
+  // silently shrinking the fixture's reach.
+  const WALK_HELPER_FAMILIES = [
+    'ps1',
+    'cmd',
+    'bat',
+    'sh',
+    'bash',
+    'zsh',
+    'ksh',
+  ];
+
+  it('EVERY helper family is skipped by the walk when upper-cased (#2123, stated false green)', () => {
+    // #2123 IS NOT ABOUT `.ps1`, and it is not about three families either.
+    for (const ext of WALK_HELPER_FAMILIES) {
+      seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+      seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
+      const r = runWith(
+        `apps/agent/D.${ext.toUpperCase()}`,
+        'cd apps/agent\nwrangler deploy\n',
+      );
+      expect(r.ok, `.${ext.toUpperCase()} should be bypassed by the walk`).toBe(
+        true,
+      );
+    }
   });
 
-  it('a POSIX helper is skipped by the walk the same way (#2123, stated false green)', () => {
-    // The non-Windows representative, and the one that shows the defect has
-    // nothing to do with the Windows normalisation it was found beside: a
-    // `.SH` helper is skipped for the same reason, on every platform.
-    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
-    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
-    const r = runWith('apps/agent/D.SH', 'cd apps/agent\nwrangler deploy\n');
-    expect(r.ok).toBe(true);
-  });
-
-  it('the same POSIX helper lower-cased IS scanned (#2123 posix control)', () => {
-    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
-    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
-    const r = runWith('apps/agent/d.sh', 'cd apps/agent\nwrangler deploy\n');
-    expect(r.ok).toBe(false);
+  it('the same bytes under each lower-case name ARE scanned (#2123 family control)', () => {
+    for (const ext of WALK_HELPER_FAMILIES) {
+      seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+      seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
+      const r = runWith(
+        `apps/agent/d.${ext}`,
+        'cd apps/agent\nwrangler deploy\n',
+      );
+      expect(r.ok, `.${ext} should be scanned and reported`).toBe(false);
+    }
   });
 
   it('a semicolon-terminated pwsh assignment is not recognised (#2124, stated miss)', () => {
