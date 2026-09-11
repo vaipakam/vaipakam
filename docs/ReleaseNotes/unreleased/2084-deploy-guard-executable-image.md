@@ -64,16 +64,20 @@ No behaviour change. The check's logic is what it was.
 - The reasoning above, recorded beside the code that would have to change, in
   the functional specification, and here — so the next person does not rebuild
   one of these designs without knowing what happened to it.
-- Tests that **assert five current wrong verdicts**, so a later fix fails them
-  and comes back to the question rather than passing silently. Three are silent
-  passes: a build file variable holding a write is not seen when its assignment
-  sits below the deployment; a recipe marked by something other than a tab is
-  not read as a recipe; and a Windows-shell helper whose deployment follows an
-  unrelated line ending in a backslash is read as one command, so a safety flag
-  that belongs to the earlier line is taken to cover the deployment. Two fail
-  the other way and their tests assert the **report**: a runbook sentence naming
-  a write reports the deployment below it, and a package manifest whose
-  description merely names the command is reported as performing it.
+- Tests that **assert eight current wrong verdicts across six defects**, so a
+  later fix fails them and comes back to the question rather than passing
+  silently. Four assert a **silent pass**: a build file variable holding a write
+  is not seen when its assignment sits below the deployment; a recipe marked by
+  something other than a tab is not read as a recipe; and — once per Windows
+  shell, since the two are separate branches and a fix aimed at one would leave
+  the other live — a helper whose deployment follows an unrelated line ending in
+  a backslash is read as one command, so a safety flag belonging to the earlier
+  line is taken to cover the deployment. Four fail the other way and assert the
+  **report**: a runbook sentence naming a write reports the deployment below it;
+  a package manifest whose description merely names the command is reported as
+  performing it, and so is an unrelated data file of the same format; and a
+  command named inside a block the shell never executes is reported, which is
+  what the casing normalisation costs.
 - Two tests pinning that a bare command line and an inline command span in a
   document **are** read as commands — the two shapes that defeated the withdrawn
   designs, so a future attempt cannot quietly reintroduce the erasure.
@@ -93,8 +97,8 @@ them — including five defects surfaced while correcting this record itself,
 three of them silent passes and two false reports —
 is recorded as its own issue with a reproduction and what a fix would have
 to be true of. All are behaviour the check already had, so nothing is made
-worse. Five are additionally pinned by tests that assert the current verdict —
-three of them a silent pass, two a false report:
+worse. Six are additionally pinned by tests that assert the current verdict —
+eight such tests in all, four asserting a silent pass and four a false report:
 
 | | |
 | --- | --- |
@@ -108,7 +112,7 @@ three of them a silent pass, two a false report:
 | **#2106** | a build file's prerequisites are ordered as written, not as they run |
 | **#2108** | a step naming another interpreter has its body read as shell |
 | **#2104** | a deployment written as a single-line workflow step whose configuration cannot be read is not reported |
-| **#2115** | a Windows helper spelling the command in upper or mixed case is not seen (lowercase and title case are) |
+| **#2115** | a Windows helper spelling the command in upper or mixed case is not seen (lowercase and title case are) — and the spelling that IS covered is matched inside a block the shell never executes, *pinned (false report)* as the trade any widening of that rule grows |
 | **#2117** | the PowerShell assignment rewrite has no string state, so an assignment inside a here-string can invent a deployment |
 | **#2116** | a manifest script that invokes a sibling does not see that sibling's config write |
 | **#2085** | whether this detection should be a declaration rather than an inference — the three withdrawals are the strongest evidence yet that it should |
