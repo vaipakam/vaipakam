@@ -4400,6 +4400,33 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
           );
           if (!own) return true;
           const cs = getComputedStyle(node);
+          // SELF-REVIEW AFTER ROUND 81 — AND TEXT INDENTED OUT OF ITS OWN
+          // BOX IS NOT PAINTED EITHER.
+          //
+          // Found by probing the predicate with the hiding patterns it does
+          // NOT already cover, rather than waiting for the next round to
+          // name one. Round 81 closed `left: -9999px`; the same trick
+          // written as `text-indent: -9999px` still passed everything —
+          // the BOX is exactly where it should be, so geometry, clipping
+          // and the document-origin test all say yes while the line itself
+          // sits far outside.
+          //
+          // The condition is the one under which the line is fully gone:
+          // a negative indent at least as large as the element's own
+          // width. A hanging indent of a few pixels is legitimate and
+          // stays painted.
+          //
+          // STATED LIMIT: `text-indent` moves only the FIRST line, so on
+          // wrapped text the later lines remain readable and this call is
+          // too broad. It is left that way deliberately — the pattern
+          // exists to hide a single-line label, and over-excluding here
+          // yields `blocked/incomplete` on an unrecognised state rather
+          // than a product FAIL, which is the safe direction.
+          const indent = parseFloat(cs.textIndent);
+          if (Number.isFinite(indent) && indent < 0) {
+            const w = node.getBoundingClientRect().width;
+            if (w > 0 && Math.abs(indent) >= w) return false;
+          }
           const fill = cs.webkitTextFillColor || cs.color || '';
           // ROUND 38 P2 — EVERY COMPUTED COLOUR FORM, not just `rgb()`/`rgba()`.
           //
@@ -5875,6 +5902,11 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
               );
               if (!own) return true;
               const cs = getComputedStyle(node);
+              const indent = parseFloat(cs.textIndent);
+              if (Number.isFinite(indent) && indent < 0) {
+                const w = node.getBoundingClientRect().width;
+                if (w > 0 && Math.abs(indent) >= w) return false;
+              }
               const fill = cs.webkitTextFillColor || cs.color || '';
               // ROUND 38 P2 — EVERY COMPUTED COLOUR FORM, not just `rgb()`/`rgba()`.
               //

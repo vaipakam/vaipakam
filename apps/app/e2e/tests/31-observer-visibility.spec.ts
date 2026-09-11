@@ -712,6 +712,18 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
       <div class="body" id="offLeft">
         <p style="position:absolute; left:-9999px">This loan can be closed out now.</p>
       </div>
+      <!-- SELF-REVIEW AFTER ROUND 81 — the same trick written as an
+           indent. The BOX is exactly where it belongs, so geometry,
+           clipping and the document-origin test all say yes while the
+           line sits far outside it. -->
+      <div class="body" id="indentedOut">
+        <p style="text-indent:-9999px">This loan can be closed out now.</p>
+      </div>
+      <!-- A hanging indent is legitimate and stays painted, which is what
+           keeps the rule from condemning ordinary typography. -->
+      <div class="body" id="hangingIndent">
+        <p style="text-indent:-12px; padding-left:12px">This loan can be closed out now.</p>
+      </div>
       <!-- The control that keeps the rule narrow: below the fold is
            painted, and must stay admitted. -->
       <div class="body" id="belowFold">
@@ -805,6 +817,8 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
         // not gain one.
         twoLinesPaintedText: scope.visibleTextOf(byId('twoLines')),
         offLeftPaintedText: scope.visibleTextOf(byId('offLeft')),
+        indentedOutPaintedText: scope.visibleTextOf(byId('indentedOut')),
+        hangingIndentPaintedText: scope.visibleTextOf(byId('hangingIndent')),
         belowFoldPaintedText: scope.visibleTextOf(byId('belowFold')),
         flexRowPaintedText: scope.visibleTextOf(byId('flexRow')),
         gridRowPaintedText: scope.visibleTextOf(byId('gridRow')),
@@ -982,6 +996,17 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
   // copy the lender can scroll to.
   expect(result.offLeftPaintedText, 'an off-screen sentence is not painted').toBe('');
   expect(result.belowFoldPaintedText, 'but below the fold still is').toContain(
+    'closed out now',
+  );
+
+  // SELF-REVIEW AFTER ROUND 81 — found by probing the predicate with the
+  // hiding patterns it did NOT already cover, rather than waiting to be
+  // told. The indent moves the line without moving the box, so every
+  // geometric test still says yes.
+  expect(result.indentedOutPaintedText, 'a line indented out of its box is not painted').toBe(
+    '',
+  );
+  expect(result.hangingIndentPaintedText, 'but ordinary hanging indent is').toContain(
     'closed out now',
   );
 });
