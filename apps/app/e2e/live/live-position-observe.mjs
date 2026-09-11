@@ -5396,7 +5396,15 @@ for (const v of visited) {
                   // on: the carriage becomes observable in the run
                   // output instead of resting on a reviewer having read
                   // all three sites.
-                  ` peak=${v.forcedCloseVerdict.visibleCardsPeak}`
+                  ` peak=${v.forcedCloseVerdict.visibleCardsPeak}` +
+                  // ROUND 39 — and the CONTROL peak beside the card one.
+                  // Both are carried by hand at three exits rather than
+                  // through the snapshot spread, so both need round 27's
+                  // remedy: a regression to `undefined` at any one of
+                  // those sites shows in the output instead of passing
+                  // confidently. I claimed on the review thread that this
+                  // was printed before it was; it is now.
+                  ` submitPeak=${v.forcedCloseVerdict.visibleSubmitsPeak}`
                 : '') +
               // ROUND 14 — WHETHER THE ABSENCE GATE COULD HAVE FIRED.
               //
