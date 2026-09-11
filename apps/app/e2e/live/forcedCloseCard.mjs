@@ -1657,6 +1657,30 @@ export function forcedCloseVerdict(obs, copy) {
         why: 'the confirmation action is visible and enabled but cannot receive a click — covered by another element, or not accepting pointer events',
       };
     }
+    // ROUND 47 P2 — AND AN UNTESTED ACTION IS NOT A PASS.
+    //
+    // The previous round's own fix created this. Leaving `clickable`
+    // unset when the re-read label did not match the snapshot's control
+    // was the honest thing to do about the reading, but the verdict then
+    // fell through to `pass` — so a lender run could exit 0 having never
+    // established that the fee-paying action is usable, which is the
+    // single claim the trial exists to make.
+    //
+    // BLOCKED, not FAIL: nothing was observed to be wrong. It is an
+    // incomplete observation, and `forcedCloseCoverage` already treats
+    // an incomplete observation as a gap that exits 2 — "re-run, this
+    // did not establish what it advertises" — rather than as a defect.
+    //
+    // `=== null` and not falsy: `undefined` still means a record from
+    // before the field existed, and accusing one of a gap it could not
+    // have filled would be inventing a finding from silence.
+    if (a.clickable === null) {
+      return {
+        verdict: 'blocked',
+        blockedKind: 'incomplete',
+        why: 'the confirmation opened but its action could not be identified for the click trial — the control the snapshot described was not the one found, so whether the lender can submit went untested',
+      };
+    }
   }
 
   if (obs.confirmExpected && obs.confirmText === null) {
@@ -1808,9 +1832,12 @@ export function forcedCloseVerdict(obs, copy) {
     // silently stopped running, and a usability test that quietly
     // switched itself off is the failure mode this file keeps finding.
     //
-    // So the run SAYS which: `true` means the fee-paying button was put
-    // through Playwright's actionability suite, `undefined` means it was
-    // not and nothing is claimed about it.
+    // So the run SAYS which. Round 47 narrowed what can appear here:
+    // `null` — this run did not test it — is now BLOCKED above, so the
+    // only values reaching a pass are `true` (trialled, actionable) and
+    // `undefined` (a record predating the field). The print distinguishes
+    // them, because a pass carrying `unrecorded` on a current run would
+    // mean the assignment had gone missing.
     confirmClickable: obs.confirmAction?.clickable,
   };
 }

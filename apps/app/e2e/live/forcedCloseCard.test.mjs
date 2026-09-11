@@ -3363,9 +3363,38 @@ describe('round 46 review findings', () => {
       expect(v.why).toMatch(/cannot receive a click/);
     });
 
-    it('says nothing when the trial was never run', () => {
+    // ROUND 47 P2 — AN UNTESTED ACTION IS NOT A PASS, and the two
+    // shapes of "no verdict" are no longer the same thing.
+    //
+    // `null` is THIS run declining to test the control (the re-read
+    // label did not match the snapshot's), and letting that fall through
+    // to `pass` meant a lender run could exit 0 having never established
+    // the fee-paying action is usable. BLOCKED, not FAIL: nothing was
+    // observed to be wrong, the observation is incomplete, and the
+    // coverage gate already exits 2 on that.
+    it('BLOCKS when this run declined to test the action', () => {
+      const v = forcedCloseVerdict({ ...opened, confirmAction: { ...usable, clickable: null } }, copy);
+      expect(v.verdict).toBe('blocked');
+      expect(v.blockedKind).toBe('incomplete');
+      expect(v.why).toMatch(/went untested/);
+    });
+
+    // ABSENT still says nothing, and that is not the same leniency: it
+    // means a record from before the field existed, and accusing one of
+    // a gap it could not have filled would be inventing a finding from
+    // silence. The drive writes the field unconditionally, so no current
+    // observation reaches this arm — `driveConfirmTrial` pins that.
+    it('says nothing where the field predates the trial entirely', () => {
       const { clickable, ...noTrial } = usable;
       expect(forcedCloseVerdict({ ...opened, confirmAction: noTrial }, copy).verdict).toBe('pass');
+    });
+
+    it('and an observed failure still outranks the untested case', () => {
+      // Ordering, not just presence: `false` must reach its FAIL arm
+      // rather than being swallowed by the blocked one beneath it.
+      const v = forcedCloseVerdict({ ...opened, confirmAction: { ...usable, clickable: false } }, copy);
+      expect(v.verdict).toBe('fail');
+      expect(v.failKind).toBe('observed');
     });
 
     it('PASSES a usable, single, clickable action', () => {
@@ -3383,7 +3412,11 @@ describe('round 46 review findings', () => {
       );
     });
 
-    it('reports that it did not, rather than implying it did', () => {
+    // ROUND 47 narrowed this: `null` is BLOCKED above, so the only
+    // values that can reach a pass are `true` and the older-record
+    // `undefined`. A pass printing `unrecorded` on a current run would
+    // mean the drive's assignment had gone missing.
+    it('reports an older record as unrecorded rather than implying a trial', () => {
       const { clickable, ...noTrial } = usable;
       expect(
         forcedCloseVerdict({ ...opened, confirmAction: noTrial }, copy).confirmClickable,

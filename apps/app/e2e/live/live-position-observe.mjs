@@ -4600,30 +4600,50 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
         // here at all: this drive is watch-only and the real click sends
         // a fee-paying transaction.
         //
-        // `undefined` rather than false when there is nothing to try, so
-        // the verdict can tell "could not be clicked" from "was never
-        // tested" — the distinction this file has had to restore three
-        // times under other names.
-        //
         // AND IT IS TRIALLED ONLY IF THE INDEX STILL ADDRESSES IT. The
         // index came from a snapshot; the trial re-queries the DOM. A
         // re-render in between can leave `nth(i)` on BACK, which is
         // always clickable — so a broken confirm control would be
-        // reported as usable. The label is re-read and compared first,
-        // and a mismatch leaves `clickable` undefined: the control was
-        // not tested, which is a different statement from "it could not
-        // be clicked" and must not be collapsed into it.
-        if (confirmAction && confirmAction.index >= 0) {
-          const target = card.locator('button').nth(confirmAction.index);
-          const labelNow = await target
-            .innerText({ timeout: 2_000 })
-            .then((t) => t.trim())
-            .catch(() => null);
-          if (labelNow !== null && labelNow === confirmAction.label) {
-            confirmAction.clickable = await target
-              .click({ trial: true, timeout: 3_000 })
-              .then(() => true)
-              .catch(() => false);
+        // reported as usable. The label is re-read and compared first.
+        //
+        // THREE OUTCOMES, ALL THREE WRITTEN (round 47 P2). `true` and
+        // `false` are the trial's verdict; `null` is "this run did not
+        // test it", which happens when the re-read label does not match
+        // the control the snapshot described.
+        //
+        // Writing `null` rather than leaving the field absent is the
+        // whole point. Absent has to keep meaning "a record predating
+        // this field", so that an older observation is not accused of a
+        // gap it could not have filled — but that made the CURRENT
+        // untested case indistinguishable from it, and the verdict then
+        // passed a lender run that had never established the fee-paying
+        // action was usable. The drive knows which case it is in, so it
+        // says so, and the verdict reports an untested confirmation as
+        // an incomplete observation rather than as a success.
+        //
+        // Assigned on every path below, unconditionally, for the reason
+        // this file keeps relearning: a field written at some exits and
+        // not others is how `visibleSubmits` went missing twice.
+        if (confirmAction) {
+          if (confirmAction.index >= 0) {
+            const target = card.locator('button').nth(confirmAction.index);
+            const labelNow = await target
+              .innerText({ timeout: 2_000 })
+              .then((t) => t.trim())
+              .catch(() => null);
+            confirmAction.clickable =
+              labelNow !== null && labelNow === confirmAction.label
+                ? await target
+                    .click({ trial: true, timeout: 3_000 })
+                    .then(() => true)
+                    .catch(() => false)
+                : null;
+          } else {
+            // No control to trial. The verdict FAILS this above on
+            // `present`, so this is unreachable on the passing path —
+            // written anyway so the field's meaning does not depend on
+            // which arm ran.
+            confirmAction.clickable = null;
           }
         }
         // Leave the page as it was found. Failing to close it is not a
@@ -5884,16 +5904,16 @@ for (const v of visited) {
                   // was printed before it was; it is now.
                   ` submitPeak=${v.forcedCloseVerdict.visibleSubmitsPeak}` +
                   // SELF-REVIEW AFTER ROUND 46 — and WHETHER THE TRIAL
-                  // CLICK RAN. `untested` is a legitimate outcome (the
-                  // re-read label did not match the control the snapshot
-                  // described, so nothing is claimed about it) and is
-                  // therefore indistinguishable, from the outside, from
-                  // the check having stopped running. Printed so the
-                  // difference is in the run output rather than in a
-                  // reviewer's head.
+                  // CLICK RAN, since round 47 left exactly one value
+                  // here that should never be seen. An untested action
+                  // is BLOCKED, so a pass can only carry `yes`; an
+                  // `unrecorded` on a current run means the assignment
+                  // went missing, which is round 27's remedy for a field
+                  // carried by hand — print it rather than pass
+                  // confidently.
                   ` confirmClickable=${
                     v.forcedCloseVerdict.confirmClickable === undefined
-                      ? 'untested'
+                      ? 'unrecorded'
                       : v.forcedCloseVerdict.confirmClickable
                         ? 'yes'
                         : 'no'

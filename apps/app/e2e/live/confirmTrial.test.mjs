@@ -1,25 +1,36 @@
 /**
- * The confirm control's TRIAL CLICK is aimed at the confirm control —
- * asserted against the drive's own source.
+ * The confirm control's TRIAL CLICK — aimed at the control it reported
+ * on, and RECORDED on every path. Asserted against the drive's own
+ * source.
  *
  * WHY A SOURCE TEST. Same reason as `exitOrdering.test.mjs`, and the
  * same caveat: `live-position-observe.mjs` is a top-level script that
  * runs the entire drive on import, so this branch cannot be executed
  * from a unit test. Extraction is tracked with the other one (#2120).
  *
- * WHAT IT PROTECTS. Round 46 added a trial click on the confirmation's
- * fee-paying button, addressed by the INDEX the in-page snapshot
- * recorded. The trial then re-queries the DOM. If the panel re-rendered
- * in between, `nth(i)` can land on BACK — which is always clickable —
- * and the drive would report a broken confirm control as usable. A false
- * PASS on the button that spends the lender's money is the precise
- * failure this whole probe exists to prevent, so the snapshot's label is
- * re-read and compared before the trial runs.
+ * TWO PROPERTIES, and they were added one round apart because the first
+ * created the need for the second.
  *
- * The realistic regression is someone deleting the comparison as
- * redundant — the index is "obviously" still right — which restores the
- * hazard silently and leaves every other signal green. That is what
- * these three cases fail on.
+ * 1. AIMED. `confirmAction.index` comes from the in-page snapshot and
+ *    the trial re-queries the DOM. A re-render in between can leave
+ *    `nth(i)` on BACK — which is always clickable — so a broken confirm
+ *    control would be reported as usable: a false PASS on the button
+ *    that spends the lender's money. The snapshot's label is re-read and
+ *    compared before the trial runs.
+ *
+ * 2. RECORDED. Declining to trial then left `clickable` unset, which the
+ *    verdict could not tell from a record predating the field — so the
+ *    run passed without ever establishing the action was usable (round
+ *    47 P2). The drive now writes `true` / `false` / `null` on every
+ *    path, and the verdict blocks on `null`. That only holds while the
+ *    assignment is unconditional, which is what the last case here is
+ *    for: a field written at some exits and not others is exactly how
+ *    `visibleSubmits` went missing twice on this PR.
+ *
+ * The realistic regression for (1) is deleting the comparison as
+ * redundant — the index is "obviously" still right — and for (2) is
+ * restoring the `if` around the assignment as a tidy-up. Both restore
+ * the hazard silently, with every other signal green.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -35,7 +46,8 @@ describe('the trial click is aimed at the control it reported on', () => {
   const src = fs.readFileSync(DRIVE, 'utf8');
   const at = (needle) => src.indexOf(needle);
 
-  const TRIAL_GATE = 'if (confirmAction && confirmAction.index >= 0) {';
+  /** The branch that owns the whole trial, whatever it decides. */
+  const TRIAL_GATE = 'if (confirmAction) {';
   /**
    * The trial CALL, searched from the gate rather than from the start of
    * the file. `trial: true` also appears in the comment ABOVE the gate
@@ -46,11 +58,13 @@ describe('the trial click is aimed at the control it reported on', () => {
    * all.
    */
   const trialCall = () => src.indexOf('trial: true', at(TRIAL_GATE));
+  /** The whole branch, generously bounded — it is ~30 lines. */
+  const branch = () => src.slice(at(TRIAL_GATE), at(TRIAL_GATE) + 1600);
 
   it('the branch this is written against still exists', () => {
-    // Guards the guard: if the block is renamed, the slices below would
-    // be taken from index -1 and assert nothing — the vacuous shape this
-    // PR has already been caught by twice.
+    // Guards the guard. If the block is renamed, the slices below are
+    // taken from index -1 and assert nothing — the vacuous-loop shape
+    // this PR has already been caught by three times.
     expect(at(TRIAL_GATE), 'the trial-click branch was not found').toBeGreaterThan(-1);
     expect(trialCall(), 'the trial click itself was not found').toBeGreaterThan(at(TRIAL_GATE));
   });
@@ -67,19 +81,32 @@ describe('the trial click is aimed at the control it reported on', () => {
     // what to compare against. Dropping the field would make
     // `confirmAction.label` undefined, and `labelNow === undefined` is
     // false for every real button — which fails CLOSED (never trialled,
-    // says nothing) rather than open, but silently switches the check
-    // off, so it is pinned too.
+    // and since round 47 that is BLOCKED rather than a pass) but still
+    // switches the check off silently, so it is pinned too.
     expect(src).toContain('label:');
     expect(src).toContain("(confirmButton.innerText ?? '').trim()");
   });
 
-  it('leaves clickable unset on a mismatch rather than reporting false', () => {
-    // "Was not tested" and "could not be clicked" are different
-    // statements, and the verdict distinguishes them by `=== false`.
-    // Collapsing the mismatch into false would invent an observed defect
-    // out of a re-render.
-    const block = src.slice(at(TRIAL_GATE), at(TRIAL_GATE) + 900);
+  it('writes the outcome on every path, never leaving it unset', () => {
+    // ROUND 47 P2, and the property the whole tri-state rests on.
+    // `undefined` must keep meaning "a record predating this field", so
+    // the current run must never produce it — otherwise the verdict's
+    // leniency for old records silently covers a live gap. Two
+    // assignments: the trial's own result, and the `null` for the paths
+    // that decline to trial.
+    const block = branch();
     const assignments = [...block.matchAll(/confirmAction\.clickable\s*=/g)];
-    expect(assignments).toHaveLength(1);
+    expect(assignments.length, 'the outcome must be assigned on both paths').toBe(2);
+    expect(block).toContain('= null;');
+  });
+
+  it('distinguishes untested from unclickable rather than collapsing them', () => {
+    // The trial's own failure is `false`; declining to trial is `null`.
+    // Collapsing the second into the first would invent an observed
+    // defect out of a re-render, which is the opposite error and the one
+    // this file guards against everywhere else.
+    const block = branch();
+    expect(block).toContain('.catch(() => false)');
+    expect(block).toContain(': null');
   });
 });

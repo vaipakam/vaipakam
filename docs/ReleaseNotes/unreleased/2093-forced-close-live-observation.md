@@ -316,3 +316,14 @@ and usable. It is now checked, with the leniency that matters in
 practice: a label that is partly hidden on purpose — the longer wording
 some interfaces provide for screen readers — is still a correctly
 labelled button, and the check says so rather than condemning it.
+
+The review then caught something the previous fix had introduced. When
+the check declines to test the confirmation button — because it can no
+longer be sure it is looking at the same control — it had been saying
+nothing at all, and "nothing" was indistinguishable from an older
+recording made before the test existed. The run therefore finished
+successfully without ever having established that the button works,
+which is the one thing that test is for. The check now records all three
+outcomes separately, and a run that did not manage to test the button
+reports itself as incomplete — re-run this, nothing was established —
+rather than as a success.
