@@ -89,6 +89,12 @@ test('both copies of the drive visibility predicate agree, and reject clipped co
     <div id="halfLines" style="height:20px; overflow:hidden; width:200px; font:16px/20px monospace">
       <p id="twoLines" style="margin:0">first line visible<br>second line clipped away</p>
     </div>
+    <dl class="receipt">
+      <div class="receipt-row" id="selfClipRow">
+        <dt style="width:118px">Fees</dt>
+        <dd id="selfClipped" style="height:1px; overflow:hidden; font:16px/20px monospace">2% of the interest, taken at settlement</dd>
+      </div>
+    </dl>
     <div id="cardClip" style="height:30px; overflow:hidden; width:200px; font:16px/20px monospace">
       <section id="cardish"><p style="margin:0">row one</p><p style="margin:0">row two</p><p style="margin:0">row three clipped</p></section>
     </div>
@@ -125,6 +131,10 @@ test('both copies of the drive visibility predicate agree, and reject clipped co
           // scoped to nodes carrying their OWN text, so this keeps the
           // element-rect behaviour it already had.
           cardish: visible(byId('cardish')),
+          // A leaf that clips its OWN text. The walk used to start at
+          // `parentElement`, so the one box that could catch this was
+          // the one box it skipped.
+          selfClipped: visible(byId('selfClipped')),
           plain: visible(byId('plain')),
           scrolledOut: visible(byId('scrolledOut')),
           // Recorded so a future failure says WHICH branch ran. The
@@ -180,6 +190,7 @@ test('both copies of the drive visibility predicate agree, and reject clipped co
     // visible", which is the wrong sentence about a card largely on
     // screen. Leaves are checked individually anyway.
     expect(result.cardish, `copy ${i}: a container whose last row is clipped`).toBe(true);
+    expect(result.selfClipped, `copy ${i}: a dd clipping its own text`).toBe(false);
     // The deliberate limit of the rule, pinned so it cannot be tightened
     // by accident: content merely scrolled out of a scroll container is
     // reachable, and condemning it would be a false failure — the

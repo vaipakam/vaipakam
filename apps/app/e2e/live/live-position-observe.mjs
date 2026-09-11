@@ -3284,7 +3284,19 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
               return [r];
             }
           })();
-          for (let n = node.parentElement; n; n = n.parentElement) {
+          // ROUND 44 P2 — STARTS AT THE NODE, not at its parent.
+          //
+          // A leaf that clips its OWN text was never examined: `height: 1px;
+          // overflow: hidden` on the `dd` itself leaves a positive rect (so the
+          // geometry test passes), `checkVisibility` positive, `paintsText`
+          // satisfied — and the only box that would have caught it was the one
+          // box this walk skipped. `innerText` then supplied the hidden
+          // disclosure and the confirmation scan recorded it as read.
+          //
+          // Including the node costs nothing on a normal leaf: `overflow:
+          // visible` skips the body of the loop, and a leaf sized to its own
+          // content contains its own line boxes by definition.
+          for (let n = node; n; n = n.parentElement) {
             const cs = getComputedStyle(n);
             const clipsY = cs.overflowY !== 'visible';
             const clipsX = cs.overflowX !== 'visible';
@@ -4108,7 +4120,19 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
                   return [r];
                 }
               })();
-              for (let n = node.parentElement; n; n = n.parentElement) {
+              // ROUND 44 P2 — STARTS AT THE NODE, not at its parent.
+              //
+              // A leaf that clips its OWN text was never examined: `height: 1px;
+              // overflow: hidden` on the `dd` itself leaves a positive rect (so the
+              // geometry test passes), `checkVisibility` positive, `paintsText`
+              // satisfied — and the only box that would have caught it was the one
+              // box this walk skipped. `innerText` then supplied the hidden
+              // disclosure and the confirmation scan recorded it as read.
+              //
+              // Including the node costs nothing on a normal leaf: `overflow:
+              // visible` skips the body of the loop, and a leaf sized to its own
+              // content contains its own line boxes by definition.
+              for (let n = node; n; n = n.parentElement) {
                 const cs = getComputedStyle(n);
                 const clipsY = cs.overflowY !== 'visible';
                 const clipsX = cs.overflowX !== 'visible';
