@@ -133,9 +133,11 @@ tests in all, twelve asserting a silent pass and nine a false report.
 That the correcting itself surfaced more defects than the original work is the
 most useful thing here, and it is not an accident of effort: each correction
 had to be REPRODUCED before it could be written down, and reproducing a claim
-is what finds the case the claim gets wrong. One of the nine came directly from
-disproving a sentence in this document, and two further corrections to the
-scope of issues already filed came the same way — which is the argument for
+is what finds the case the claim gets wrong. Two of the ten came directly from
+disproving a sentence in this document — the second of them from a case
+DISCARDED while correcting the first, which is the strongest form of the point
+— and two further corrections to the scope of issues already filed came the
+same way — which is the argument for
 writing the reason down at all, rather than only the fix.
 
 **Each row is a one-line symptom and a pointer.** The precise scope and bounds

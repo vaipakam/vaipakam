@@ -11875,7 +11875,7 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
   // position moved and the pointer sent readers to unrelated tests (r27).
   //
   // So they pin two things: the shapes that defeated the withdrawn designs,
-  // and TWENTY WRONG VERDICTS across TEN defects, asserted so a later fix
+  // and TWENTY-ONE WRONG VERDICTS across ELEVEN defects, asserted so a later fix
   // fails them and comes back to the question instead of passing unnoticed.
   //
   // The direction matters and is not decoration. TWELVE assert a SILENT PASS
@@ -11883,11 +11883,12 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
   // standalone helper and a workflow body, because the fold is in the shared
   // splitter and a fix scoped to any one of the four leaves the others live);
   // #2121, #2122; and #2123 three times (two command-shell families and a
-  // POSIX one, because that gate is shared too) — and EIGHT fail the opposite
+  // POSIX one, because that gate is shared too) — and NINE fail the opposite
   // way, so their fixtures assert a REPORT: #2112, #2119 four times (manifest,
-  // data file, multi-line list and a COMMENTED-OUT line) and #2115 three
-  // times (the casing rewrite in a helper and in a workflow body, and the
-  // separator rewrite). A fixture that pinned the wrong direction would pass
+  // data file, multi-line list and a COMMENTED-OUT line), #2115 three times
+  // (the casing rewrite in a helper and in a workflow body, and the separator
+  // rewrite), and #2126 (that same normalisation applied on a runner whose
+  // platform makes the normalised spelling a different program). A fixture that pinned the wrong direction would pass
   // while the guard did the wrong thing.
   //
   // NOT "four different routes" for the #2119 group, which overstated their
