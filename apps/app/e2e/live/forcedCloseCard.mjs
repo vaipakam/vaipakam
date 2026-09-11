@@ -2640,36 +2640,6 @@ export function forcedCloseVerdict(obs, copy) {
   // this condition used `!matchKnown`, shadowed that arm, and gave the
   // wrong explanation for a race. Caught by its test, which is what that
   // test is for.
-  const routeUnread =
-    obs.internalMatch === undefined || obs.internalMatchBefore === undefined;
-  if (routeUnread && actionOffered) {
-    const undecided =
-      paints(copy?.internalMatchReadyCopy) !== paints(copy?.inKindReadyCopy);
-    if (undecided) {
-      return {
-        verdict: 'blocked',
-        blockedKind: 'incomplete',
-        why: 'the card promises a specific settlement route and this drive could not read which route the protocol would take — the outcome copy the lender is shown was not substantiated',
-      };
-    }
-  }
-  //
-  // ROUND 69 P2 — ON EVERY CAPTURED RENDER, not only the settled one.
-  //
-  // The bracket proves the route did NOT change across the observation,
-  // so a render that painted the in-kind promise before the card settled
-  // on internal-match copy showed the lender the wrong funds outcome at
-  // a moment when the protocol's answer was already fixed. `seenRenders`
-  // preserved that render and this comparison read only the settled one.
-  //
-  // Thirteenth instance of the parallel-site shape, and one I should
-  // have closed myself: I made the HEADING arm per-render two cycles ago
-  // as a proactive sweep, and did not carry the same sweep to its
-  // sibling — applying the lesson to one arm and not the other is the
-  // lesson, restated.
-  //
-  // Same `renders` list the unsafe-control arm uses, so there is one
-  // notion of "what this drive saw" rather than two.
   //
   // ROUND 70 P2 — EACH RENDER CARRIES ITS OWN SUBMIT FACTS.
   //
@@ -2701,6 +2671,50 @@ export function forcedCloseVerdict(obs, copy) {
     sentence !== '' &&
     typeof renderText === 'string' &&
     renderText.includes(sentence);
+  const routeUnread =
+    obs.internalMatch === undefined || obs.internalMatchBefore === undefined;
+  // SELF-REVIEW OF ROUND 70 — and the same sweep, on the sibling arm.
+  //
+  // Round 70 paired each render with its own submit facts for the
+  // MISMATCH arm and left this one gated on `actionOffered` and reading
+  // only the settled body — so a card that promised a route on an
+  // earlier, pressable render and then withdrew the action reported a
+  // clean pass even though this drive could not read the route that
+  // promise depended on. I fixed one of two arms in the same file, one
+  // round after being told that is the recurring failure, so I checked
+  // for it this time instead of waiting to be told again.
+  if (routeUnread) {
+    const undecided = routeRenders.some(
+      (r) =>
+        r.offered &&
+        paintedIn(r.visibleText, copy?.internalMatchReadyCopy) !==
+          paintedIn(r.visibleText, copy?.inKindReadyCopy),
+    );
+    if (undecided) {
+      return {
+        verdict: 'blocked',
+        blockedKind: 'incomplete',
+        why: 'the card promises a specific settlement route and this drive could not read which route the protocol would take — the outcome copy the lender is shown was not substantiated',
+      };
+    }
+  }
+  //
+  // ROUND 69 P2 — ON EVERY CAPTURED RENDER, not only the settled one.
+  //
+  // The bracket proves the route did NOT change across the observation,
+  // so a render that painted the in-kind promise before the card settled
+  // on internal-match copy showed the lender the wrong funds outcome at
+  // a moment when the protocol's answer was already fixed. `seenRenders`
+  // preserved that render and this comparison read only the settled one.
+  //
+  // Thirteenth instance of the parallel-site shape, and one I should
+  // have closed myself: I made the HEADING arm per-render two cycles ago
+  // as a proactive sweep, and did not carry the same sweep to its
+  // sibling — applying the lesson to one arm and not the other is the
+  // lesson, restated.
+  //
+  // Same `renders` list the unsafe-control arm uses, so there is one
+  // notion of "what this drive saw" rather than two.
   if (matchKnown) {
     const wrongRender = routeRenders.find((r) => {
       // Each render on its OWN action state: a promise the lender could

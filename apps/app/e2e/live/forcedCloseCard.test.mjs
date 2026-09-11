@@ -6048,3 +6048,103 @@ describe('round 70 review findings', () => {
     });
   });
 });
+
+describe('self-review of round 70 — the unread-route arm takes the same sweep', () => {
+  // Round 70 paired each render with its own submit facts for the
+  // MISMATCH arm and left its sibling gated on `actionOffered`, reading
+  // only the settled body. So a card that promised a route on an
+  // earlier, pressable render and then withdrew the action reported a
+  // clean pass — even though this drive could not read the route that
+  // promise depended on.
+  //
+  // One of two arms in the same file, one round after being told that is
+  // the recurring failure. Checked here rather than waiting to be told.
+  const copy = {
+    unknownCopy: FORCED_CLOSE.unknown,
+    readyCopy: [FORCED_CLOSE.readyInKind, FORCED_CLOSE.readyInternalMatch, FORCED_CLOSE.readyRental],
+    withheldCopy: [FORCED_CLOSE.unknown, FORCED_CLOSE.notYet, FORCED_CLOSE.readyNeedsRoute],
+    recognisedCopy: [FORCED_CLOSE.unknown, FORCED_CLOSE.readyInKind, FORCED_CLOSE.readyInternalMatch],
+    receiptLeads: [enBundle.copy.receipt.youReceive],
+    receiptRowSets: {
+      standard: Object.values(FORCED_CLOSE.receipt),
+      rental: Object.values(FORCED_CLOSE.rentalReceipt),
+    },
+    rentalReadyCopy: FORCED_CLOSE.readyRental,
+    internalMatchReadyCopy: FORCED_CLOSE.readyInternalMatch,
+    inKindReadyCopy: FORCED_CLOSE.readyInKind,
+  };
+  const withdrawn = (earlier) => ({
+    lenderHoldsActive: true,
+    mounted: true,
+    attached: true,
+    submitPresent: true,
+    // Settled: the action is withdrawn.
+    submitVisible: true,
+    submitDisabled: true,
+    visibleSubmits: 1,
+    visibleCards: 1,
+    saleLocked: false,
+    settled: true,
+    bodyPresent: true,
+    bodyVisible: true,
+    confirmExpected: false,
+    confirmText: null,
+    defaultable: false,
+    defaultableBefore: false,
+    // The route could not be read at all.
+    internalMatch: undefined,
+    internalMatchBefore: undefined,
+    text: FORCED_CLOSE.unknown,
+    visibleText: FORCED_CLOSE.unknown,
+    bodyText: FORCED_CLOSE.unknown,
+    bodyVisibleText: FORCED_CLOSE.unknown,
+    seenRenders: [earlier],
+  });
+
+  it('reports INCOMPLETE for a route promised on an earlier PRESSABLE render', () => {
+    const v = forcedCloseVerdict(
+      withdrawn({
+        text: FORCED_CLOSE.readyInKind,
+        visibleText: FORCED_CLOSE.readyInKind,
+        bodyText: FORCED_CLOSE.readyInKind,
+        bodyVisibleText: FORCED_CLOSE.readyInKind,
+        submitVisible: true,
+        submitDisabled: false,
+      }),
+      copy,
+    );
+    expect(v.verdict).toBe('blocked');
+    expect(v.blockedKind).toBe('incomplete');
+    expect(v.why).toMatch(/could not read which route/);
+  });
+
+  it('says nothing when that render offered no action', () => {
+    const v = forcedCloseVerdict(
+      withdrawn({
+        text: FORCED_CLOSE.readyInKind,
+        visibleText: FORCED_CLOSE.readyInKind,
+        bodyText: FORCED_CLOSE.readyInKind,
+        bodyVisibleText: FORCED_CLOSE.readyInKind,
+        submitVisible: true,
+        submitDisabled: true,
+      }),
+      copy,
+    );
+    expect(v.why ?? '').not.toMatch(/could not read which route/);
+  });
+
+  it('says nothing when no render committed to a route', () => {
+    const v = forcedCloseVerdict(
+      withdrawn({
+        text: FORCED_CLOSE.unknown,
+        visibleText: FORCED_CLOSE.unknown,
+        bodyText: FORCED_CLOSE.unknown,
+        bodyVisibleText: FORCED_CLOSE.unknown,
+        submitVisible: true,
+        submitDisabled: false,
+      }),
+      copy,
+    );
+    expect(v.why ?? '').not.toMatch(/could not read which route/);
+  });
+});
