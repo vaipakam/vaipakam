@@ -2041,13 +2041,40 @@ async function censusDeployment(dep) {
   // Enumeration needs the metrics surface. Where it is unrouted and no bound
   // has already proven emptiness, the deployment is INDETERMINATE — a result,
   // not a thrown failure, so it stays inside coverage and blocks the verdict.
-  const statsSelector = toFunctionSelector(metrics.find((e) => e.name === 'getProtocolStats'));
+  // A selector is routed when the Diamond answers it with anything but its own
+  // FunctionDoesNotExist — a return, a validation revert, IntentNoCommit. Used
+  // wherever the loupe cannot be asked (#2095 r23 P2): cuts are per selector.
+  const zeroArgsFor = (item) => (item?.inputs ?? []).map(function z(i) {
+    if (i.type === 'tuple') return Object.fromEntries((i.components ?? []).map((c) => [c.name, z(c)]));
+    if (/\[\]$/.test(i.type)) return [];
+    if (/^tuple\[\d+\]$/.test(i.type)) return [];
+    if (/^u?int/.test(i.type)) return 0n;
+    if (i.type === 'address') return ZERO_ADDRESS;
+    if (i.type === 'bool') return false;
+    if (/^bytes\d+$/.test(i.type)) return `0x${'00'.repeat(Number(i.type.slice(5)))}`;
+    if (i.type === 'bytes') return '0x';
+    if (i.type === 'string') return '';
+    return 0n;
+  });
+  const selectorRoutedDirect = async (fn, args) => {
+    try { await read(fn, args); return true; } catch (err) {
+      if (isUnroutedOnDiamond(err)) return false;
+      rethrowUnlessRevert(err);
+      return true; // any other revert is the facet answering
+    }
+  };
+  const routedByLoupeOrProbe = async (fn, abiList, args) => {
+    const item = abiList.find((e) => e.name === fn);
+    if (loupeRouted) return (await read('facetAddress', [toFunctionSelector(item)])) !== ZERO_ADDRESS;
+    return selectorRoutedDirect(fn, args ?? zeroArgsFor(item));
+  };
+  // enumeration needs BOTH the stats and the pagination selector (#2095 r23 P2)
   let enumerable = false;
   if (!notADiamond) {
-    if (loupeRouted) enumerable = (await read('facetAddress', [statsSelector])) !== ZERO_ADDRESS;
-    else {
-      try { await read('getProtocolStats'); enumerable = true; } catch (err) { rethrowUnlessRevert(err); }
-    }
+    const statsRouted = await routedByLoupeOrProbe('getProtocolStats', metrics, []);
+    const pageRouted = statsRouted && await routedByLoupeOrProbe('getAllLoansPaginated', metrics, [0n, 1n]);
+    enumerable = statsRouted && pageRouted;
+    if (statsRouted && !pageRouted) process.stderr.write(`census: ${who} — getProtocolStats routed but getAllLoansPaginated is not; taking the storage path\n`);
   }
   if (!enumerable) {
     // #1566 §7a — a Diamond that routes no loan enumeration can still be READ:
@@ -2241,14 +2268,13 @@ async function censusDeployment(dep) {
   // INDETERMINATE pending a state read of the rows, which blocks the empty
   // verdict instead of passing as a zero.
   const intentSelector = toFunctionSelector(intentView.find((e) => e.name === 'getIntentCommit'));
-  const intentHost = await read('facetAddress', [intentSelector]);
-  const intentSurfaceRouted = intentHost && intentHost !== ZERO_ADDRESS;
+  // with the loupe unrouted the getter and the producer are probed directly (#2095 r23 P2)
+  const intentSurfaceRouted = await routedByLoupeOrProbe('getIntentCommit', intentView, [1n]);
 
   const producerSelector = toFunctionSelector(
     intentProducer.find((e) => e.name === 'commitSwapToRepayIntent'),
   );
-  const producerHost = await read('facetAddress', [producerSelector]);
-  const producerRouted = producerHost && producerHost !== ZERO_ADDRESS;
+  const producerRouted = await routedByLoupeOrProbe('commitSwapToRepayIntent', intentProducer);
 
   // Only needed when the getter is unrouted; when it IS routed we read live
   // state directly, which subsumes the history question entirely.

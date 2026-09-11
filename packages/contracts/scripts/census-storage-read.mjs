@@ -489,6 +489,10 @@ export function cutHistoryCompleteness({ verdict, cuts, constructorCutSeen, addr
   // (a rate-limited replica) leaves the current facet set unknown: that is an
   // incomplete population, never a skipped check
   if (loupeReadFailed) reasons.push('the loupe routes facets() but the call failed, so the current facet set could not be checked against the history');
+  // #2095 r23 P1 — no loupe, no enumeration of the current facets: a Diamond
+  // can route writers without a loupe, and an Add the history omitted for one
+  // of them would leave it out of attribution
+  else if (!Array.isArray(loupe)) reasons.push('the loupe is unrouted, so the current facet set could not be enumerated and checked against the history');
   if (verdict !== 'read' || !cuts) reasons.push(`the cut history was ${verdict === 'read' ? 'empty' : verdict}`);
   // VaipakamDiamond's constructor emits ONE DiamondCut with an EMPTY cut array
   // and installs the diamondCut selector by writing storage directly

@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { keccak256 } from 'viem';
 import { execFileSync } from 'node:child_process';
-import { bytecodeCatalogueFrom, depsFromMainAreIdentical, parseLsTree, deployedAtIso, commitsAround, deploymentBuildCandidates, interpolateTimestamp, contentDigestOf, tableIdentityOf, verifyTableContents } from './storage-layout-eras.mjs';
+import { bytecodeCatalogueFrom, depsFromMainAreIdentical, parseLsTree, deployedAtIso, commitsAround, deploymentBuildCandidates, interpolateTimestamp, contentDigestOf, tableIdentityOf, verifyTableContents, layoutDigestOf } from './storage-layout-eras.mjs';
 
 test('bytecodeCatalogueFrom hashes every src/ contract\'s runtime bytecode and nothing else (#2095 r9 P1)', () => {
   const out = mkdtempSync(join(tmpdir(), 'era-out-'));
@@ -105,4 +105,11 @@ test('an era edited after generation fails the content check even with its finge
   // the digest ignores commit, date, event and reasons: a HEAD era rebuilt at a new commit with the same layout and code keeps its identity
   assert.equal(contentDigestOf({ ...era, commit: 'b'.repeat(40), date: 'x', event: 'HEAD', reasons: ['r'] }, index), era.contentDigest);
   assert.equal(tableIdentityOf({ ...table, eras: [{ ...era, commit: 'b'.repeat(40) }] }), table.tableIdentity);
+});
+
+test('the layout digest ignores the bytecode catalogue and per-build struct ids, and sees a moved slot (#2095 r23 P1)', () => {
+  const e = { storagePosition: '0x00', fields: { nextLoanId: { slot: '0x01', relative: 1, offset: 0, type: 't_uint256' }, intentCommits: { slot: '0x02', relative: 2, offset: 0, type: 't_mapping(t_uint256,t_struct(SwapToRepayIntentCommit)123_storage)' } }, rows: { R: { a: { slot: 0, offset: 0, type: 't_uint256' } } }, bytecode: { '0x11': 'A' } };
+  assert.equal(layoutDigestOf(e), layoutDigestOf({ ...e, bytecode: { '0x22': 'B' } }), 'bytecode is not part of the layout');
+  assert.equal(layoutDigestOf(e), layoutDigestOf({ ...e, fields: { ...e.fields, intentCommits: { ...e.fields.intentCommits, type: 't_mapping(t_uint256,t_struct(SwapToRepayIntentCommit)999_storage)' } } }), 'struct ids are normalized');
+  assert.notEqual(layoutDigestOf(e), layoutDigestOf({ ...e, fields: { ...e.fields, nextLoanId: { ...e.fields.nextLoanId, slot: '0x09' } } }));
 });

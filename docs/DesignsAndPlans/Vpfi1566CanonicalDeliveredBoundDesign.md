@@ -6357,7 +6357,19 @@ fails even with its source fingerprint intact; the check also rebuilds the
 HEAD era in CI and compares, and `--verify-all` rebuilds every entry for the
 release path. The table's identity is the sorted set of those digests, which
 a HEAD-era rebuild at a new commit with the same layout and code leaves
-unchanged, and the census records it beside the table's head. Run 40
+unchanged, and the census records it beside the table's head. Round 23
+corrected the rebuild's target and closed three more doors: the CI rebuild
+is of the checkout's own HEAD — the table's head commit need not exist in a
+fresh clone after a squash, and CI reviews a merge commit — compared by
+LAYOUT with the era whose source fingerprint the checkout has, because a
+merge commit's facets are not the branch head's and a different forge
+release lays bytecode out differently while the storage layout is the
+compiler's alone (`--verify-all` still compares full contents at each entry's
+own commit, with the builder's forge, recorded in the table); a Diamond
+without a loupe has an unknown current facet set and its population is not
+exhaustive; enumeration needs both the stats and the pagination selector,
+since cuts are per selector; and where the loupe is unrouted the intent
+getter and producer are probed directly rather than through it. Run 41
 re-reads every deployment with all of it.
 
 ### 7a. What the provenance walk found, and how the design changes (2026-09-09)

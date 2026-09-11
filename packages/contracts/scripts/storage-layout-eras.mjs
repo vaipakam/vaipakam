@@ -166,6 +166,24 @@ export function contentDigestOf(entry, index) {
   return createHash('sha256').update(JSON.stringify(canon)).digest('hex');
 }
 
+/**
+ * The LAYOUT part of an entry's contents — position, field slots/types/offsets,
+ * row layouts, the occupied map — without the bytecode catalogue. This is what
+ * a rebuild of the checkout's HEAD is compared with (#2095 r23 P1): a PR's CI
+ * checkout is a merge commit whose facets are not the branch head's, and a
+ * different forge release lays bytecode out differently, but the storage
+ * layout is the compiler's and is the same for the same source. Pure.
+ */
+export function layoutDigestOf(entry) {
+  const canon = {
+    p: entry.storagePosition ?? null,
+    f: Object.fromEntries(Object.entries(entry.fields ?? {}).sort().map(([k, v]) => [k, v ? { s: v.slot, r: v.relative ?? null, o: v.offset ?? 0, t: normalizeFieldType(v.type) } : null])),
+    r: entry.rows ?? null,
+    o: entry.occupied ? entry.occupied.map((x) => [x.label, x.type, x.from, x.to, Boolean(x.isMapping)]) : null,
+  };
+  return createHash('sha256').update(JSON.stringify(canon)).digest('hex');
+}
+
 /** The identity of a whole table: its entries' content digests, sorted — stable across a HEAD-era rebuild at a new commit with the same layout and code. Pure. */
 export function tableIdentityOf(table) {
   const all = [...(table.eras ?? []), ...(table.deploymentBuilds ?? [])].map((e) => e.contentDigest ?? contentDigestOf(e, table.bytecodeIndex)).sort();
@@ -412,20 +430,27 @@ export function checkEraTable({ tablePath = OUT_DEFAULT, since = DEFAULT_SINCE, 
   // #2095 r22 P1 — the contents, not only the fingerprints
   const contentProblems = verifyTableContents(table).map((b) => `${b.commit === '(table)' ? 'table' : `entry ${b.commit.slice(0, 9)}`}: ${b.reason}`);
   const rebuilt = [];
-  const compareRebuilt = (label, sha, entry) => {
+  // --verify-all rebuilds every entry at its OWN commit and compares full contents (operator/release path, same forge as the builder);
+  // --rebuild-head rebuilds the CHECKOUT's HEAD (#2095 r23 P1 — the table's head commit need not exist in a fresh clone after a
+  // squash, and CI reviews a merge commit) and compares the LAYOUT with the entry whose source fingerprint the checkout has
+  const compareRebuilt = (label, sha, entry, layoutOnly) => {
     const r = buildEra(sha, { log });
-    const fresh = contentDigestOf({ ...r, occupied: entry.occupied ? r.occupied : undefined });
-    const recorded = contentDigestOf({ ...expandBytecode({ ...table, eras: [entry], deploymentBuilds: [] }).eras[0], occupied: entry.occupied });
-    if (fresh !== recorded) contentProblems.push(`${label} ${sha.slice(0, 9)}: a fresh build's contents differ from the table's (${recorded.slice(0, 12)} recorded, ${fresh.slice(0, 12)} rebuilt)`);
+    const fresh = layoutOnly ? layoutDigestOf({ ...r, occupied: entry.occupied ? r.occupied : undefined }) : contentDigestOf({ ...r, occupied: entry.occupied ? r.occupied : undefined });
+    const recordedEntry = { ...expandBytecode({ ...table, eras: [entry], deploymentBuilds: [] }).eras[0], occupied: entry.occupied };
+    const recorded = layoutOnly ? layoutDigestOf(recordedEntry) : contentDigestOf(recordedEntry);
+    if (fresh !== recorded) contentProblems.push(`${label} ${sha.slice(0, 9)}: a fresh build's ${layoutOnly ? 'layout' : 'contents'} differ${layoutOnly ? 's' : ''} from the table's (${recorded.slice(0, 12)} recorded, ${fresh.slice(0, 12)} rebuilt)`);
     rebuilt.push(sha);
   };
-  if (rebuildHead || verifyAll) {
-    const head = (table.eras ?? []).find((e) => e.commit === table.head);
-    if (!head) contentProblems.push('the table carries no HEAD era to rebuild'); else if (!verifyAll) compareRebuilt('HEAD era', head.commit, head);
+  if (rebuildHead && !verifyAll) {
+    const checkoutHead = sh('git', ['rev-parse', 'HEAD'], REPO_ROOT).trim();
+    const fp = layoutFingerprint(readFileSync(join(REPO_ROOT, LIB_PATH), 'utf8'), STRUCTS, FIELDS);
+    const entry = (table.eras ?? []).find((e) => e.fingerprint === fp);
+    if (!entry) contentProblems.push(`no era in the table carries the checkout's layout fingerprint ${fp.slice(0, 12)} — regenerate`);
+    else compareRebuilt('checkout HEAD vs era', checkoutHead, entry, true);
   }
   if (verifyAll) {
-    for (const e of table.eras ?? []) compareRebuilt('era', e.commit, e);
-    for (const b of table.deploymentBuilds ?? []) if (!b.sameAsEra) compareRebuilt('deployment build', b.commit, b);
+    for (const e of table.eras ?? []) compareRebuilt('era', e.commit, e, false);
+    for (const b of table.deploymentBuilds ?? []) if (!b.sameAsEra) compareRebuilt('deployment build', b.commit, b, false);
   }
   const walk = walkProvenance({ since, fields: FIELDS });
   const commitsAsc = sh('git', ['log', '--format=%H %cI', `--since=${since}`, '--', LIB_PATH], REPO_ROOT).trim().split('\n').filter(Boolean).map((l) => { const [sha, date] = l.split(' '); return { sha, date }; }).reverse();
@@ -591,6 +616,7 @@ export function main(argv = process.argv.slice(2)) {
     distinctSlots: distinct,
   };
   result.tableIdentity = tableIdentityOf(result);
+  try { result.forgeVersion = sh('forge', ['--version'], REPO_ROOT).split('\n')[0].trim(); } catch { result.forgeVersion = null; }
   mkdirSync(resolvePath(out, '..'), { recursive: true });
   // one-space indent: the drift gate refuses to scan a tracked file above 2 MiB, and a readable diff needs no more
   writeFileSync(out, JSON.stringify(result, null, 1) + '\n');
