@@ -503,7 +503,35 @@ export function monetaryAmountsIn(text) {
     // across locales here, so requiring digits only avoids deciding
     // which is the decimal mark.
     const integral = /^\p{Nd}+$/u.test(m[0]);
-    if (!trailingTicker && !hugsCurrency && !trailingGlyph && !trailingLower && integral) {
+    // ROUND 48 P2 — AND IT ENDS WHERE THE DIGITS END.
+    //
+    // `Loan 1k will be returned` and `Position 2m becomes claimable`
+    // walked straight through. `NUMBER` captures only the digit, so
+    // `integral` is true; `k` and `m` are neither a ticker nor one of the
+    // listed lower-case units, so nothing else objected and the
+    // identifier exemption swallowed a compact magnitude — the exact
+    // invented figure this scan exists to catch, wearing the one costume
+    // the scan is instructed to ignore.
+    //
+    // An id cannot carry a magnitude suffix, so a LETTER immediately
+    // after the digits means the run is not an id and the exemption must
+    // not apply. Testing the boundary rather than enumerating `k`/`m`/
+    // `bn`/`mm`: enumeration is the mistake this file has now made three
+    // times (the transport allowlist, the currency signs, the ASCII-only
+    // duration words), and the suffixes are open-ended across locales.
+    //
+    // A DIGIT after the match cannot occur — `NUMBER` is greedy — and
+    // punctuation, whitespace and end-of-text all read as a boundary, so
+    // `Loan 21.` and `Loan 21` keep their exemption.
+    const endsCleanly = !/^\p{L}/u.test(String(after));
+    if (
+      !trailingTicker &&
+      !hugsCurrency &&
+      !trailingGlyph &&
+      !trailingLower &&
+      integral &&
+      endsCleanly
+    ) {
       if (/[#]\s*$/.test(before)) continue;
       if (IDENTIFIER_LEAD.test(before)) continue;
     }

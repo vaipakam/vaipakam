@@ -327,3 +327,34 @@ which is the one thing that test is for. The check now records all three
 outcomes separately, and a run that did not manage to test the button
 reports itself as incomplete — re-run this, nothing was established —
 rather than as a success.
+
+The next review round found three more, all of them the same underlying
+theme: something that hides what the lender is meant to read, while every
+signal the check consults says the page is fine.
+
+A page can clip an element's painted area away entirely without changing
+anything else about it — the box stays full size, the colour stays
+opaque, and the text is still there to be read programmatically. It is
+the standard way to hide something from sight while leaving it available
+to screen readers, and the check had no defence against it, so a receipt
+whose fee and loss lines were clipped to nothing would have been recorded
+as read. The check now rejects a clipping region it can prove is empty,
+and deliberately does not guess about the shapes it cannot measure — a
+check that condemns readable content is worse than one that misses a
+rare case.
+
+The rule that lets a number after the word "loan" or "position" be
+treated as a reference rather than an amount was still too generous: it
+accepted "Loan 1k", because it only looked at the digit. Identifiers do
+not carry magnitude suffixes, so the rule now requires the number to end
+where the digits end, tested as a boundary rather than as a list of
+suffixes to recognise — lists like that go stale in exactly the way this
+one would.
+
+And the check's record of how far the page had caught up with the chain
+could be sampled while a reply was still being parsed. That made it
+possible to read a chain position the page had already passed, which in
+the worse direction would have reported a correctly absent card as a
+regression — a false alarm produced by timing rather than by anything on
+the page. The readings already in progress are now allowed to finish
+before that record is read.

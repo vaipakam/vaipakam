@@ -3326,6 +3326,33 @@ describe('round 46 review findings', () => {
       expect(monetaryAmountsIn('Position 4 is held.')).toEqual([]);
     });
 
+    // ROUND 48 P2 — AND THE IDENTIFIER ENDS WHERE THE DIGITS END.
+    //
+    // `NUMBER` captures only the digit in `Loan 1k`, so `integral` was
+    // true; `k` is neither a ticker nor one of the listed lower-case
+    // units, so nothing objected and the exemption swallowed a compact
+    // magnitude — an invented figure wearing the one costume the scan is
+    // instructed to ignore.
+    it('flags a compact magnitude after an identifier word', () => {
+      expect(monetaryAmountsIn('Loan 1k will be returned')).toHaveLength(1);
+      expect(monetaryAmountsIn('Position 2m becomes claimable')).toHaveLength(1);
+    });
+
+    // Tested as a BOUNDARY rather than by enumerating suffixes.
+    // Enumeration is the mistake this file has made three times, and
+    // magnitude suffixes are open-ended across locales.
+    it('flags any letter suffix, not a list of known ones', () => {
+      expect(monetaryAmountsIn('Loan 3bn will be returned')).toHaveLength(1);
+      expect(monetaryAmountsIn('Loan 4lakh will be returned')).toHaveLength(1);
+    });
+
+    it('still exempts an identifier that ends at punctuation or a space', () => {
+      expect(monetaryAmountsIn('Closing out Loan 21 now.')).toEqual([]);
+      expect(monetaryAmountsIn('Loan 21, closing')).toEqual([]);
+      expect(monetaryAmountsIn('Loan #21 now')).toEqual([]);
+      expect(monetaryAmountsIn('Loan 21')).toEqual([]);
+    });
+
     it('leaves the other exemptions alone', () => {
       expect(monetaryAmountsIn('The grace period is 3 days.')).toEqual([]);
       expect(monetaryAmountsIn('A 2% treasury share is deducted.')).toEqual([]);

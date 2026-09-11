@@ -1788,6 +1788,26 @@ await discovery('installing the provider init script', () =>
  */
 const pageRpcHeads = new WeakMap(); // page -> Map<key, bigint>
 const pageDiamondKeys = new WeakMap(); // page -> Set<key>
+/**
+ * Response handlers that have STARTED but not finished parsing.
+ *
+ * ROUND 48 P2. `page.on('response', …)` takes an async listener and
+ * Playwright does not await it, so a `latest`-block reply arriving just
+ * before the scrape can still be inside `res.json()` when `pageHeadOf`
+ * samples the map. The DOM already reflects block N; the map holds an
+ * older height, or none.
+ *
+ * Both directions are wrong and neither is loud. Zero disables the
+ * absence assertion, which reports an INCOMPLETE observation for a
+ * reading that was simply taken too early. A stale non-zero bound is
+ * worse: the confirming observer can settle below N and report a
+ * missing card as a regression — a false FAIL invented out of a race.
+ *
+ * The fix is to wait for the parses already in flight, which is bounded
+ * work: the set only ever holds responses that arrived before the
+ * sample. `page -> Set<Promise>`, each entry removing itself on settle.
+ */
+const pageHeadPending = new WeakMap(); // page -> Set<Promise<void>>
 
 function watchPageHead(page) {
   const heads = new Map();
@@ -1801,8 +1821,10 @@ function watchPageHead(page) {
   // all. Once an endpoint has identified itself as a different chain,
   // that is settled for the rest of the run.
   const foreign = new Set();
+  const pending = new Set();
   pageRpcHeads.set(page, heads);
   pageDiamondKeys.set(page, diamond);
+  pageHeadPending.set(page, pending);
 
   const recordHead = (key, seen) => {
     if (seen === null || seen === undefined) return;
@@ -1918,7 +1940,19 @@ function watchPageHead(page) {
       }
     });
   });
-  page.on('response', async (res) => {
+  // ROUND 48 P2 — REGISTERED BEFORE IT AWAITS ANYTHING.
+  //
+  // The listener is wrapped rather than having the tracking added inside
+  // it, because the registration has to happen SYNCHRONOUSLY with the
+  // event: anything after the first `await` is already too late to be
+  // seen by a sample taken in between, which is the race itself.
+  page.on('response', (res) => {
+    const done = handleResponse(res).catch(() => {});
+    pending.add(done);
+    done.finally(() => pending.delete(done));
+  });
+
+  async function handleResponse(res) {
     try {
       const req = res.request();
       if (req.method().toUpperCase() !== 'POST') return;
@@ -1950,7 +1984,7 @@ function watchPageHead(page) {
     } catch {
       // Observational only. See the note above.
     }
-  });
+  }
 }
 
 /**
@@ -1961,6 +1995,22 @@ function watchPageHead(page) {
  * to serve the deployment" — which is the honest answer rather than a
  * conservative guess, and the gate treats it as not-ready.
  */
+/**
+ * Let the head readings already in flight finish before they are read.
+ *
+ * ROUND 48 P2, and see `pageHeadPending`. Awaiting a SNAPSHOT of the set
+ * rather than the set itself: a parse that completes may start another
+ * response's work, and looping until empty would make this unbounded on
+ * a page that polls. Everything that arrived before the sample is what
+ * the sample needs; anything arriving after it is, by definition, not
+ * part of what the DOM was showing.
+ */
+async function settleHeadReads(page) {
+  const pending = pageHeadPending.get(page);
+  if (!pending || pending.size === 0) return;
+  await Promise.allSettled([...pending]);
+}
+
 function pageHeadOf(page) {
   const heads = pageRpcHeads.get(page);
   const diamond = pageDiamondKeys.get(page);
@@ -2875,6 +2925,16 @@ async function observeForcedClose(page, loan) {
   // declined to render — the card being judged. Sampling it later would
   // let the page move on and set a bar this observer must clear for a
   // render it never looked at.
+  //
+  // ROUND 48 P2 — AND THE READINGS IN FLIGHT ARE LET FINISH FIRST.
+  // Playwright does not await a response listener, so a `latest` reply
+  // that arrived just before the scrape can still be inside `res.json()`
+  // here. Sampling through that race reads a head the page has already
+  // passed — zero, which reports an incomplete observation for a reading
+  // taken too early, or a stale height, which lets the confirming
+  // observer settle below the head the DOM was showing and call a
+  // correctly absent card a regression.
+  await settleHeadReads(page);
   const pageHead = pageHeadOf(page);
   // ROUND 4 P2 — ONE BLOCK FOR ALL THREE FACTS.
   //
@@ -3310,8 +3370,62 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
           // Including the node costs nothing on a normal leaf: `overflow:
           // visible` skips the body of the loop, and a leaf sized to its own
           // content contains its own line boxes by definition.
+          // ROUND 48 P2 — A CLIP PATH HIDES TEXT THAT EVERY OTHER TEST VOUCHES FOR.
+          //
+          // `clip-path: inset(50%)` — the modern visually-hidden idiom — leaves the
+          // box laid out at full size, `checkVisibility` positive, the overflow walk
+          // satisfied (there is no overflow) and `paintsText` satisfied (the colour
+          // is opaque), while nothing is painted. `innerText` keeps yielding every
+          // word, so the receipt's fee and loss rows could be recorded as read with
+          // the lender seeing none of them. Same class as rounds 37, 43, 44 and 45:
+          // a property that hides the CONTENT rather than the box.
+          //
+          // ONLY `inset()`, and only where the region is PROVABLY EMPTY. A circle,
+          // an ellipse, a polygon, a `path()` or a `url()` reference can each be
+          // empty too, and deciding that in general is a geometry problem this
+          // predicate has no business attempting — getting it wrong condemns content
+          // the lender can see, which is the error that gets a whole check switched
+          // off. Anything it cannot read counts as painted, so the residual is a
+          // missed defect and never an invented one.
+          //
+          // The legacy `clip: rect(...)` idiom needs nothing here: this codebase's
+          // `.visually-hidden` pairs it with `width: 1px; height: 1px;
+          // overflow: hidden`, which the half-extent rule below already rejects.
+          const emptyClipRegion = (cs, box) => {
+            const raw = (cs.clipPath || 'none').trim();
+            const m = /^inset\(([^)]*)\)$/i.exec(raw);
+            if (!m) return false;
+            // `round <radii>` describes the corners, not the extent.
+            const parts = m[1].split(/\s+round\s+/i)[0].trim().split(/\s+/).filter(Boolean);
+            if (parts.length === 0 || parts.length > 4) return false;
+            const px = (t, extent) => {
+              const v = String(t);
+              if (v.endsWith('%')) {
+                const n = Number(v.slice(0, -1));
+                return Number.isFinite(n) ? (n / 100) * extent : null;
+              }
+              const n = Number(v.endsWith('px') ? v.slice(0, -2) : v);
+              return Number.isFinite(n) ? n : null;
+            };
+            // CSS shorthand order, top/right/bottom/left with the usual fill-ins.
+            const top = px(parts[0], box.height);
+            const right = px(parts[1] ?? parts[0], box.width);
+            const bottom = px(parts[2] ?? parts[0], box.height);
+            const left = px(parts[3] ?? parts[1] ?? parts[0], box.width);
+            if ([top, right, bottom, left].some((v) => v === null)) return false;
+            // Judged only on an axis with extent to lose. A degenerate box is
+            // someone else's finding, and calling it an empty clip would be
+            // asserting something this has not established.
+            return (
+              (box.height > 0 && top + bottom >= box.height) ||
+              (box.width > 0 && left + right >= box.width)
+            );
+          };
           for (let n = node; n; n = n.parentElement) {
             const cs = getComputedStyle(n);
+            // An empty clip region on the node or on any ancestor hides
+            // everything inside it, whatever the overflow rules say.
+            if (emptyClipRegion(cs, n.getBoundingClientRect())) return false;
             const clipsY = cs.overflowY !== 'visible';
             const clipsX = cs.overflowX !== 'visible';
             if (!clipsY && !clipsX) continue;
@@ -4178,8 +4292,62 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
               // Including the node costs nothing on a normal leaf: `overflow:
               // visible` skips the body of the loop, and a leaf sized to its own
               // content contains its own line boxes by definition.
+              // ROUND 48 P2 — A CLIP PATH HIDES TEXT THAT EVERY OTHER TEST VOUCHES FOR.
+              //
+              // `clip-path: inset(50%)` — the modern visually-hidden idiom — leaves the
+              // box laid out at full size, `checkVisibility` positive, the overflow walk
+              // satisfied (there is no overflow) and `paintsText` satisfied (the colour
+              // is opaque), while nothing is painted. `innerText` keeps yielding every
+              // word, so the receipt's fee and loss rows could be recorded as read with
+              // the lender seeing none of them. Same class as rounds 37, 43, 44 and 45:
+              // a property that hides the CONTENT rather than the box.
+              //
+              // ONLY `inset()`, and only where the region is PROVABLY EMPTY. A circle,
+              // an ellipse, a polygon, a `path()` or a `url()` reference can each be
+              // empty too, and deciding that in general is a geometry problem this
+              // predicate has no business attempting — getting it wrong condemns content
+              // the lender can see, which is the error that gets a whole check switched
+              // off. Anything it cannot read counts as painted, so the residual is a
+              // missed defect and never an invented one.
+              //
+              // The legacy `clip: rect(...)` idiom needs nothing here: this codebase's
+              // `.visually-hidden` pairs it with `width: 1px; height: 1px;
+              // overflow: hidden`, which the half-extent rule below already rejects.
+              const emptyClipRegion = (cs, box) => {
+                const raw = (cs.clipPath || 'none').trim();
+                const m = /^inset\(([^)]*)\)$/i.exec(raw);
+                if (!m) return false;
+                // `round <radii>` describes the corners, not the extent.
+                const parts = m[1].split(/\s+round\s+/i)[0].trim().split(/\s+/).filter(Boolean);
+                if (parts.length === 0 || parts.length > 4) return false;
+                const px = (t, extent) => {
+                  const v = String(t);
+                  if (v.endsWith('%')) {
+                    const n = Number(v.slice(0, -1));
+                    return Number.isFinite(n) ? (n / 100) * extent : null;
+                  }
+                  const n = Number(v.endsWith('px') ? v.slice(0, -2) : v);
+                  return Number.isFinite(n) ? n : null;
+                };
+                // CSS shorthand order, top/right/bottom/left with the usual fill-ins.
+                const top = px(parts[0], box.height);
+                const right = px(parts[1] ?? parts[0], box.width);
+                const bottom = px(parts[2] ?? parts[0], box.height);
+                const left = px(parts[3] ?? parts[1] ?? parts[0], box.width);
+                if ([top, right, bottom, left].some((v) => v === null)) return false;
+                // Judged only on an axis with extent to lose. A degenerate box is
+                // someone else's finding, and calling it an empty clip would be
+                // asserting something this has not established.
+                return (
+                  (box.height > 0 && top + bottom >= box.height) ||
+                  (box.width > 0 && left + right >= box.width)
+                );
+              };
               for (let n = node; n; n = n.parentElement) {
                 const cs = getComputedStyle(n);
+                // An empty clip region on the node or on any ancestor hides
+                // everything inside it, whatever the overflow rules say.
+                if (emptyClipRegion(cs, n.getBoundingClientRect())) return false;
                 const clipsY = cs.overflowY !== 'visible';
                 const clipsX = cs.overflowX !== 'visible';
                 if (!clipsY && !clipsX) continue;

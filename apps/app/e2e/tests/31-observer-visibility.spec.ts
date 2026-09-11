@@ -106,6 +106,19 @@ test('both copies of the drive visibility predicate agree, and reject clipped co
       </div>
     </dl>
     <p id="inherited" style="color: transparent"><span id="repainted" style="color: #111">visible again</span></p>
+    <dl class="receipt">
+      <div class="receipt-row" id="clipPathRow">
+        <dt id="clipPathLeaf" style="clip-path: inset(50%)">Fees</dt>
+        <dd id="clipPathPct" style="clip-path: inset(60% 0 60% 0)">the treasury share</dd>
+        <dd id="clipPathPx" style="width:200px; height:20px; clip-path: inset(10px 0 10px 0)">exactly collapsed in px</dd>
+      </div>
+    </dl>
+    <div id="clipPathAncestor" style="clip-path: inset(50%)">
+      <p id="underClippedAncestor">a loss disclosure under an emptied clip region</p>
+    </div>
+    <p id="clipPathPartial" style="clip-path: inset(10%)">trimmed at the edges, still readable</p>
+    <p id="clipPathRounded" style="clip-path: inset(10% round 4px)">rounded corners are not an extent</p>
+    <p id="clipPathCircle" style="clip-path: circle(0)">a shape this predicate does not judge</p>
   `);
 
   for (const [i, predicate] of predicates.entries()) {
@@ -143,6 +156,18 @@ test('both copies of the drive visibility predicate agree, and reject clipped co
           selfClippedAbs: visible(byId('selfClippedAbs')),
           plain: visible(byId('plain')),
           scrolledOut: visible(byId('scrolledOut')),
+          // ROUND 48 — `clip-path` hides the CONTENT and leaves every
+          // other signal intact: full-size box, `checkVisibility`
+          // positive, no overflow to walk, an opaque colour.
+          clipPathLeaf: visible(byId('clipPathLeaf')),
+          clipPathPct: visible(byId('clipPathPct')),
+          clipPathPx: visible(byId('clipPathPx')),
+          underClippedAncestor: visible(byId('underClippedAncestor')),
+          // The other direction, pinned so the rule cannot be widened
+          // into a false failure on ordinary decorative clipping.
+          clipPathPartial: visible(byId('clipPathPartial')),
+          clipPathRounded: visible(byId('clipPathRounded')),
+          clipPathCircle: visible(byId('clipPathCircle')),
           // Recorded so a future failure says WHICH branch ran. The
           // round-28 defect was invisible precisely because the branch
           // under test was not the branch in use.
@@ -206,6 +231,26 @@ test('both copies of the drive visibility predicate agree, and reject clipped co
     // reachable, and condemning it would be a false failure — the
     // direction that gets a check switched off.
     expect(result.scrolledOut, `copy ${i}: scrolled out of a scroller`).toBe(true);
+    // ROUND 48 P2 — `clip-path: inset(50%)` is the modern
+    // visually-hidden idiom, and every other test in this predicate
+    // vouches for it: the box is full size, `checkVisibility` is
+    // positive, there is no overflow to walk and the colour is opaque,
+    // while nothing is painted and `innerText` yields every word.
+    expect(result.clipPathLeaf, `copy ${i}: a dt under clip-path: inset(50%)`).toBe(false);
+    expect(result.clipPathPct, `copy ${i}: a dd clipped past collapse in %`).toBe(false);
+    expect(result.clipPathPx, `copy ${i}: a dd clipped to nothing in px`).toBe(false);
+    expect(
+      result.underClippedAncestor,
+      `copy ${i}: content under an emptied clip region`,
+    ).toBe(false);
+    // The deliberate limits, pinned in the direction that matters more.
+    // A partial inset is ordinary decorative clipping; `round` describes
+    // corners, not extent; and a `circle()` — even an empty one — is a
+    // geometry question this predicate does not attempt, so it counts as
+    // painted. The residual is a missed defect, never an invented one.
+    expect(result.clipPathPartial, `copy ${i}: a partial inset`).toBe(true);
+    expect(result.clipPathRounded, `copy ${i}: an inset with a corner radius`).toBe(true);
+    expect(result.clipPathCircle, `copy ${i}: a shape function, not judged`).toBe(true);
   }
 });
 
