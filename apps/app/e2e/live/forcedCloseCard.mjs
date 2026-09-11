@@ -2411,6 +2411,43 @@ export function forcedCloseVerdict(obs, copy) {
     sentence !== '' &&
     (obs.bodyVisibleText ?? obs.bodyText ?? obs.visibleText ?? obs.text ?? '').includes(sentence);
 
+  // EVERY RENDER THIS DRIVE CAPTURED, settled one first, each carrying
+  // its own submit facts.
+  //
+  // Declared here rather than beside the route arms that first needed it
+  // (round 70), because the REFUSAL arms below need the same list — and
+  // one notion of "what this drive saw" is the point. Hoisted by moving
+  // the whole declaration, not by slicing the file: an earlier attempt at
+  // that swept two unrelated arms above their own declarations and put
+  // 183 tests into a temporal dead zone.
+  //
+  // `offeredIn` is exactly the expression `actionOffered` uses, so one
+  // render is judged by one rule wherever it appears. It reads a render
+  // carrying NEITHER field as OFFERED — `!== false` passes and
+  // `!undefined` passes — which is the same default `actionOffered`
+  // takes: silence is not evidence against the offer. Confined to
+  // hand-written records either way, since the scrape sets both fields on
+  // every render and an absent control yields `submitVisible: false` with
+  // `submitDisabled: true` rather than silence.
+  const offeredIn = (r) => r?.submitVisible !== false && !r?.submitDisabled;
+  const capturedRenders = [
+    {
+      visibleText: obs.bodyVisibleText ?? obs.bodyText ?? obs.visibleText ?? obs.text,
+      offered: actionOffered,
+    },
+    ...(Array.isArray(obs.seenRenders)
+      ? obs.seenRenders.map((r) => ({
+          visibleText: r?.bodyVisibleText ?? r?.bodyText ?? r?.visibleText ?? r?.text,
+          offered: offeredIn(r),
+        }))
+      : []),
+  ];
+  const paintedIn = (renderText, sentence) =>
+    typeof sentence === 'string' &&
+    sentence !== '' &&
+    typeof renderText === 'string' &&
+    renderText.includes(sentence);
+
   // ROUND 65 P2 — CAN THE LENDER BACK OUT?
   //
   // The confirmation is a pre-signature panel, and Back is the one
@@ -2507,19 +2544,49 @@ export function forcedCloseVerdict(obs, copy) {
   // page-versus-protocol disagreement whose commonest cause is a
   // deployment on another chain, and a window that must have been quiet
   // before the disagreement means anything.
+  // ROUND 72 P2 — ON EVERY CAPTURED RENDER, each on its OWN withheld-ness.
+  //
+  // The settled-snapshot gate skipped this entirely whenever the card
+  // ended up ready: an earlier render stating `blocked-paused` with no
+  // submit, on a loan the protocol accepted at both ends of the bracket,
+  // passed clean. My own reason for scoping it to the settled render was
+  // that a card which withholds and then becomes ready denies the lender
+  // nothing, because they get the action — and that answers the wrong
+  // question. The harm named here is not the denial, it is the FALSE
+  // STATEMENT ABOUT PROTOCOL STATE, and a false statement is not undone
+  // by a later true one.
+  //
+  // Nor is such a render a legitimate loading state. A readiness whose
+  // reads have not settled paints `unknown`; painting `blocked-paused`
+  // means the pause read RESOLVED as paused, which the bracket says it
+  // should not have.
+  //
+  // Withheld-ness stays per render and stays REQUIRED: this arm's claim
+  // is that a card refused AND blamed the protocol. A render offering the
+  // action is not refusing, whatever it paints, and the unsafe-control
+  // arm is what judges that pairing.
+  //
+  // The three INCOMPLETE arms below keep the settled gate, and that is
+  // not the same omission: each has a ready-side counterpart that already
+  // covers a card which settles ready — the missing-probe arm, the
+  // bracket-disagrees arm, and for `false`/`false` the round-7 arm, which
+  // fails a ready offered card the protocol refuses. Widening all four
+  // would report the same gap twice and block runs nothing is wrong with.
   if (
-    !actionOffered &&
     Array.isArray(copy?.refusalStateCopy) &&
     obs.defaultable === true &&
     obs.defaultableBefore === true
   ) {
-    const claimed = copy.refusalStateCopy.find((sentence) => paints(sentence));
-    if (claimed) {
-      return {
-        verdict: 'fail',
-        failKind: 'inferred',
-        why: `the card withholds the action and states a refusal ("${claimed}"), but simulating that exact transaction against the protocol shows it would succeed — the lender is denied a close-out the protocol accepts, and given a reason that is not the protocol's`,
-      };
+    for (const r of capturedRenders) {
+      if (r.offered) continue;
+      const claimed = copy.refusalStateCopy.find((sentence) => paintedIn(r.visibleText, sentence));
+      if (claimed) {
+        return {
+          verdict: 'fail',
+          failKind: 'inferred',
+          why: `a render this drive read withholds the action and states a refusal ("${claimed}"), but simulating that exact transaction against the protocol shows it would succeed — the lender is denied a close-out the protocol accepts, and given a reason that is not the protocol's`,
+        };
+      }
     }
   }
 
@@ -2681,39 +2748,22 @@ export function forcedCloseVerdict(obs, copy) {
   // arm exists for. The unsafe-control arm does not cover it either: its
   // copy is a READY state, not a withheld one.
   //
-  // Exactly the expression `actionOffered` uses, so one render is judged
-  // by one rule wherever it appears.
+  // ROUND 72 P2 — A PROMISE IS A PROMISE WHETHER OR NOT IT CAN BE ACTED
+  // ON.
   //
-  // SELF-REVIEW — AND SAY WHAT IT DOES WITH SILENCE, since the earlier
-  // note here claimed the opposite. A render carrying NEITHER field is
-  // read as OFFERED: `!== false` passes and `!undefined` passes. That is
-  // the same default `actionOffered` takes for the same reason — silence
-  // is not evidence AGAINST the offer — but the two arms it feeds have
-  // opposite senses, so it is worth being exact. On the withheld-copy
-  // arm the default suppresses a finding; here it admits one.
+  // The three arms below used to require the render's own control to be
+  // enabled. That gate was mine, not a finding's, and it does not hold
+  // up: what this probe checks is whether the card COMMITTED to a funds
+  // outcome, and pressability is no part of that claim. A card painting
+  // "you receive the collateral" while the wallet client initialises has
+  // already told the lender the wrong thing — and it is not a loading
+  // placeholder, because a readiness the reads have not settled renders
+  // `unknown`, not a route. Painting a route means the app CONCLUDED one,
+  // and a conclusion drawn from incomplete reads is precisely the
+  // unsubstantiated outcome this file exists to catch.
   //
-  // It is confined to hand-written records either way: the scrape sets
-  // both fields on every render unconditionally, and an absent control
-  // yields `submitVisible: false` with `submitDisabled: true` rather
-  // than silence.
-  const offeredIn = (r) => r?.submitVisible !== false && !r?.submitDisabled;
-  const routeRenders = [
-    {
-      visibleText: obs.bodyVisibleText ?? obs.bodyText ?? obs.visibleText ?? obs.text,
-      offered: actionOffered,
-    },
-    ...(Array.isArray(obs.seenRenders)
-      ? obs.seenRenders.map((r) => ({
-          visibleText: r?.bodyVisibleText ?? r?.bodyText ?? r?.visibleText ?? r?.text,
-          offered: offeredIn(r),
-        }))
-      : []),
-  ];
-  const paintedIn = (renderText, sentence) =>
-    typeof sentence === 'string' &&
-    sentence !== '' &&
-    typeof renderText === 'string' &&
-    renderText.includes(sentence);
+  // The release note said this without the qualifier, so the code was the
+  // divergence — which is the direction this project resolves.
   const routeUnread =
     obs.internalMatch === undefined || obs.internalMatchBefore === undefined;
   // SELF-REVIEW OF ROUND 70 — and the same sweep, on the sibling arm.
@@ -2727,11 +2777,10 @@ export function forcedCloseVerdict(obs, copy) {
   // round after being told that is the recurring failure, so I checked
   // for it this time instead of waiting to be told again.
   if (routeUnread) {
-    const undecided = routeRenders.some(
+    const undecided = capturedRenders.some(
       (r) =>
-        r.offered &&
         paintedIn(r.visibleText, copy?.internalMatchReadyCopy) !==
-          paintedIn(r.visibleText, copy?.inKindReadyCopy),
+        paintedIn(r.visibleText, copy?.inKindReadyCopy),
     );
     if (undecided) {
       return {
@@ -2759,11 +2808,7 @@ export function forcedCloseVerdict(obs, copy) {
   // Same `renders` list the unsafe-control arm uses, so there is one
   // notion of "what this drive saw" rather than two.
   if (matchKnown) {
-    const wrongRender = routeRenders.find((r) => {
-      // Each render on its OWN action state: a promise the lender could
-      // not act on is not this arm's business, and a promise they COULD
-      // act on is, whatever the card settled into afterwards.
-      if (!r.offered) return false;
+    const wrongRender = capturedRenders.find((r) => {
       const m = paintedIn(r.visibleText, copy?.internalMatchReadyCopy);
       const k = paintedIn(r.visibleText, copy?.inKindReadyCopy);
       if (m === k) return false;
@@ -2787,7 +2832,7 @@ export function forcedCloseVerdict(obs, copy) {
   // its siblings were corrected on. Read as a matrix, the three arms
   // judging a painted route are the bracket agreeing, the bracket going
   // unread, and the bracket disagreeing; the first two traverse
-  // `routeRenders` and require a render to have actually COMMITTED to a
+  // `capturedRenders` and require a render to have actually COMMITTED to a
   // route, and this one did neither.
   //
   // It read `actionOffered` — the SETTLED snapshot — so a card promising
@@ -2805,11 +2850,10 @@ export function forcedCloseVerdict(obs, copy) {
     obs.internalMatchBefore !== undefined &&
     obs.internalMatch !== obs.internalMatchBefore
   ) {
-    const promised = routeRenders.some(
+    const promised = capturedRenders.some(
       (r) =>
-        r.offered &&
         paintedIn(r.visibleText, copy?.internalMatchReadyCopy) !==
-          paintedIn(r.visibleText, copy?.inKindReadyCopy),
+        paintedIn(r.visibleText, copy?.inKindReadyCopy),
     );
     if (promised) {
       return {

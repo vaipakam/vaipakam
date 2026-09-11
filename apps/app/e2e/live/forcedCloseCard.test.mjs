@@ -5224,11 +5224,11 @@ describe('round 64 P2 — the settlement route the card promises', () => {
       );
     });
 
-    it('reads a render carrying NEITHER submit fact as offered', () => {
-      // Pinning the documented reading rather than leaving it to a
-      // comment — the note here previously claimed the opposite. The
-      // scrape sets both fields on every render, so this is a
-      // hand-written record, and admitting it is the deliberate choice.
+    it('judges a render whatever its submit facts say', () => {
+      // ROUND 72 P2 — the route arms no longer consult the render's own
+      // control at all, so a record carrying neither submit field is
+      // judged like any other. The silence reading that matters is now
+      // the refusal arm's, and it is pinned there.
       const v = forcedCloseVerdict(
         {
           ...base,
@@ -5380,6 +5380,108 @@ describe('round 65 review findings', () => {
         copy,
       );
       expect(v.why ?? '').not.toMatch(/denied a close-out the protocol accepts/);
+    });
+
+    // ROUND 72 P2 — ON EVERY CAPTURED RENDER.
+    describe('an earlier render that refused', () => {
+      const ready = {
+        ...withheld(FORCED_CLOSE.readyInKind),
+        submitDisabled: false,
+        defaultable: true,
+        defaultableBefore: true,
+      };
+
+      it('reports a refusal stated before the card settled ready', () => {
+        const v = forcedCloseVerdict(
+          {
+            ...ready,
+            seenRenders: [
+              {
+                text: FORCED_CLOSE.blockedPaused,
+                bodyText: FORCED_CLOSE.blockedPaused,
+                visibleText: FORCED_CLOSE.blockedPaused,
+                bodyVisibleText: FORCED_CLOSE.blockedPaused,
+                submitVisible: true,
+                submitDisabled: true,
+              },
+            ],
+          },
+          copy,
+        );
+        expect(v.verdict).toBe('fail');
+        expect(v.failKind).toBe('inferred');
+        expect(v.why).toMatch(/denied a close-out the protocol accepts/);
+      });
+
+      it('skips a render that OFFERED the action — that is not a refusal', () => {
+        // Whatever it painted, a render exposing an enabled control is
+        // not withholding. The unsafe-control arm judges that pairing.
+        const v = forcedCloseVerdict(
+          {
+            ...ready,
+            seenRenders: [
+              {
+                text: FORCED_CLOSE.blockedPaused,
+                bodyText: FORCED_CLOSE.blockedPaused,
+                visibleText: FORCED_CLOSE.blockedPaused,
+                bodyVisibleText: FORCED_CLOSE.blockedPaused,
+                submitVisible: true,
+                submitDisabled: false,
+              },
+            ],
+          },
+          copy,
+        );
+        expect(v.why ?? '').not.toMatch(/denied a close-out the protocol accepts/);
+      });
+
+      it('reads a render carrying NEITHER submit fact as offered, so skips it', () => {
+        // The documented silence reading, pinned where it now decides
+        // something: `!== false` passes and `!undefined` passes.
+        const v = forcedCloseVerdict(
+          {
+            ...ready,
+            seenRenders: [
+              {
+                text: FORCED_CLOSE.blockedPaused,
+                bodyText: FORCED_CLOSE.blockedPaused,
+                visibleText: FORCED_CLOSE.blockedPaused,
+                bodyVisibleText: FORCED_CLOSE.blockedPaused,
+              },
+            ],
+          },
+          copy,
+        );
+        expect(v.why ?? '').not.toMatch(/denied a close-out the protocol accepts/);
+      });
+
+      it('still requires both ends of the bracket', () => {
+        for (const [a, b] of [
+          [false, false],
+          [true, false],
+          [undefined, undefined],
+        ]) {
+          const v = forcedCloseVerdict(
+            {
+              ...ready,
+              defaultable: a,
+              defaultableBefore: b,
+              seenRenders: [
+                {
+                  text: FORCED_CLOSE.blockedPaused,
+                  bodyText: FORCED_CLOSE.blockedPaused,
+                  visibleText: FORCED_CLOSE.blockedPaused,
+                  bodyVisibleText: FORCED_CLOSE.blockedPaused,
+                  submitVisible: true,
+                  submitDisabled: true,
+                },
+              ],
+            },
+            copy,
+          );
+          expect(v.why ?? '').not.toMatch(/denied a close-out the protocol accepts/);
+        }
+      });
     });
   });
 
@@ -6067,7 +6169,11 @@ describe('round 70 review findings', () => {
     expect(v.why).toMatch(/throughout the observation/);
   });
 
-  it('says nothing about a wrong promise the lender could not act on', () => {
+  // ROUND 72 P2 — AND A PROMISE THE LENDER COULD NOT ACT ON IS STILL A
+  // PROMISE. This test asserted the opposite until round 72: the
+  // `offered` gate was mine rather than a finding's, and pressability is
+  // no part of the claim the card made about funds.
+  it('reports a wrong promise even where the control was disabled', () => {
     const v = forcedCloseVerdict(
       {
         lenderHoldsActive: true,
@@ -6105,7 +6211,7 @@ describe('round 70 review findings', () => {
       },
       copy,
     );
-    expect(v.why ?? '').not.toMatch(/throughout the observation/);
+    expect(v.why).toMatch(/throughout the observation/);
   });
 
   // A CONFIRMATION WITH NO BACK CONTROL AT ALL. The panel used to be
@@ -6272,7 +6378,8 @@ describe('self-review of round 70 — the unread-route arm takes the same sweep'
     expect(v.why).toMatch(/could not read which route/);
   });
 
-  it('says nothing when that render offered no action', () => {
+  // ROUND 72 P2 — same correction on the sibling arm.
+  it('reports an unread route promised on a disabled render too', () => {
     const v = forcedCloseVerdict(
       withdrawn({
         text: FORCED_CLOSE.readyInKind,
@@ -6284,7 +6391,7 @@ describe('self-review of round 70 — the unread-route arm takes the same sweep'
       }),
       copy,
     );
-    expect(v.why ?? '').not.toMatch(/could not read which route/);
+    expect(v.why).toMatch(/could not read which route/);
   });
 
   it('says nothing when no render committed to a route', () => {

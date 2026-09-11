@@ -128,6 +128,15 @@ outcomes: a card that describes neither is not making the promise this
 comparison exists to check, and reporting it as unchecked would claim a
 gap that was never there.
 
+Every version of the card the check saw is judged, not only the one it
+settled on, and whether or not the lender could act on it at that moment.
+A wrong outcome shown while a button is still disabled has still been
+shown; and it is not a loading placeholder, because a card whose readings
+have not arrived says so in those words rather than naming an outcome.
+The same now goes for a card that blames the protocol: an explanation
+that was untrue when it was displayed is not made true by a later correct
+one.
+
 The comparison runs in both directions. A card that withholds the action
 and blames the protocol — saying the deadline has not passed, or that the
 protocol is paused — while the protocol would in fact accept the
@@ -254,6 +263,23 @@ to decline short of leaving the page. The panel is now recognised by
 either its Back control or its receipt lines, which fail independently,
 and a missing Back on a panel that did render is reported in its own
 right.
+
+### Which positions get looked at
+
+The check visits a bounded number of positions, so on a lender holding
+many of them the order decides which questions can be asked at all. It
+had been ranking candidates by whether the card would appear, and that is
+not the same as whether the card would offer anything — the confirmation
+can only be read on one that does. A lender whose first few positions
+were not yet closable could therefore use up the allowance on cards with
+nothing to confirm, and the run would report the confirmation unchecked
+while a usable position sat discovered and unvisited.
+
+Positions the protocol would accept a close-out on are now tried first.
+It improves which positions are looked at and changes nothing about the
+conclusions drawn from them: the protocol accepting is not the same as
+the card offering, so the run still says plainly when nothing it visited
+could exercise the confirmation.
 
 ### Stated limits
 

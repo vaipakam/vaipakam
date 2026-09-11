@@ -105,6 +105,7 @@ import {
 import { requireSiteUrl } from './driver.mjs';
 import { redactUrl } from './redact.mjs';
 import { isDetailPath, visitVerdict } from './visitVerdict.mjs';
+import { walkOrderFor } from './walkOrder.mjs';
 import {
   EXECUTION_REVERTED,
   REVERT_BYTES,
@@ -7280,55 +7281,44 @@ visited.push(await visit('/positions'));
 // if every sliced row raced out it reported BLOCKED while eligible
 // candidates sat untried behind the slice (#1529 review round 9).
 let observedDetails = 0;
-// ROUND 9 P2 — ON A LENDER RUN, ACTIVE CANDIDATES GO FIRST.
+// WHICH CANDIDATES GO FIRST — the rules, their three rounds of history
+// and the reasoning are in `walkOrder.mjs`, where they are a pure
+// function with tests rather than three comment blocks around one
+// expression. This file supplies the ANSWERS and does the asking.
 //
-// The forced-close card applies only to an ACTIVE position, while the
-// chooser pool this walk inherits admits FallbackPending too. In
-// discovery order the cap can therefore be filled by three
-// FallbackPending loans while an Active one sits untried behind it —
-// and `forcedCloseCoverage` then exits 2 saying the assertion never ran
-// on an applicable position, when a usable target had been discovered
-// and simply not visited.
+// `acceptedSale` is resolved once, above the authority choice, so the
+// walk consumes the same answer rather than asking again against a
+// different candidate set.
 //
-// A stable partition, not a sort: Active first, everything else in its
-// original order behind them. The chooser assertions are unaffected —
-// they apply to both statuses, so reordering changes which loans are
-// sampled, never whether a sampled one is judged.
-// ROUND 28 P2 — ACTIVE IS NOT THE SAME AS APPLICABLE.
-//
-// Round 9's partition put Active loans first because the forced-close
-// card applies only to those. But an Active position whose sale has been
-// ACCEPTED correctly unmounts the card, so its visit returns
-// `inapplicable` — and three of those fill the cap ahead of an Active,
-// unlocked position that would have exercised the assertion. The run
-// then exits 2 reporting that the card was never observed on an
-// applicable position, while a usable target sat discovered and
-// unvisited. Exactly the failure round 9 fixed, one class narrower.
-//
-// So the known-inapplicable Active loans are demoted behind the rest of
-// the Active ones. Same stable-partition shape, and the chooser
-// assertions are again unaffected — they apply to a locked position too,
-// so this changes which loans are sampled, never whether a sampled one
-// is judged.
-//
-// ONLY a positively established accepted sale demotes. `saleLockedOn`
-// returns `false` fast for an unlocked position (one `positionLock`
-// read, no simulate), and can answer `'unknown'` or throw on a transport
-// failure — neither of which is evidence of anything. Treating a failed
-// read as "inapplicable, deprioritise" would let one bad RPC response
-// reorder a good candidate to the back and quietly cost the run its
-// coverage, which is the same fail-toward-confident mistake round 12
-// caught in this predicate's other consumer.
-// Resolved once, above the authority choice — the walk consumes the same
-// answer rather than asking again against a different candidate set.
-const walkOrder =
-  ROLE === 'lender'
-    ? [
-        ...mine.filter((l) => l.status === STATUS_ACTIVE && !acceptedSale.has(l.id)),
-        ...mine.filter((l) => l.status === STATUS_ACTIVE && acceptedSale.has(l.id)),
-        ...mine.filter((l) => l.status !== STATUS_ACTIVE),
-      ]
-    : mine;
+// The close-out probe runs ONLY where the cap actually binds: below it
+// every candidate is visited whatever the order, and a simulate per loan
+// would be pure cost. It promotes on a positive answer only — `undefined`
+// means the drive could not ask, and ranking on a failed read would cost
+// the run the coverage the promotion exists to secure. Ordering only: no
+// verdict reads it.
+const acceptsCloseOut = new Set();
+if (ROLE === 'lender' && mine.length > MAX_POSITIONS) {
+  for (const l of mine) {
+    if (l.status !== STATUS_ACTIVE || acceptedSale.has(l.id)) continue;
+    if ((await probeCloseOut(l.id)) === true) acceptsCloseOut.add(l.id);
+  }
+}
+const readyFirst = walkOrderFor({
+  loans: mine,
+  role: ROLE,
+  activeStatus: STATUS_ACTIVE,
+  acceptedSale,
+  acceptsCloseOut,
+});
+if (acceptsCloseOut.size > 0) {
+  console.log(
+    `\npromoted ${acceptsCloseOut.size} position(s) the protocol would accept a close-out on` +
+      `\n  → ${mine.length} eligible loan(s) against a cap of ${MAX_POSITIONS}, so the order decides ` +
+      `whether the confirmation can be scanned at all.` +
+      `\n  → ordering only: the protocol accepting is not the card offering it, and no verdict reads this.`,
+  );
+}
+
 // Scoped to the OBSERVED authority's own loans. `acceptedSale` is now
 // resolved across every authority so the choice above can use it, and
 // naming its whole contents here would report positions this walk was
@@ -7341,7 +7331,7 @@ if (demoted.length > 0) {
       `\n  → the card is correctly unmounted there, so they cannot exercise it.`,
   );
 }
-for (const l of walkOrder) {
+for (const l of readyFirst) {
   if (observedDetails >= MAX_POSITIONS) break;
   const changed = await stillEligible(l);
   if (changed) {
