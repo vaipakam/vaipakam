@@ -429,8 +429,8 @@ export function attributeFacetCode({ facets, eras }) {
   const noCode = [];
   for (const f of facets) {
     if (!f.codeHash || f.codeHash === EMPTY) { noCode.push({ address: f.address, sources: f.sources }); continue; }
-    const hits = (eras ?? []).filter((e) => e.bytecode?.[f.codeHash]).map((e) => ({ commit: e.commit.slice(0, 9), date: String(e.date).slice(0, 10), name: e.bytecode[f.codeHash], kind: e.kind ?? 'era' }));
-    if (hits.length) attributed.push({ address: f.address, name: hits[0].name, eras: hits.map((h) => ({ commit: h.commit, date: h.date, kind: h.kind })), sources: f.sources });
+    const hits = (eras ?? []).filter((e) => e.bytecode?.[f.codeHash]).map((e) => ({ commit: e.commit.slice(0, 9), date: String(e.date).slice(0, 10), name: e.bytecode[f.codeHash], kind: e.kind ?? 'era', layoutEra: e.layoutEra ? String(e.layoutEra).slice(0, 9) : e.commit.slice(0, 9) }));
+    if (hits.length) attributed.push({ address: f.address, name: hits[0].name, eras: hits.map((h) => ({ commit: h.commit, date: h.date, kind: h.kind, layoutEra: h.layoutEra })), sources: f.sources });
     else unattributed.push({ address: f.address, codeHash: f.codeHash, sources: f.sources });
   }
   return { attributed, unattributed, noCode, verdict: unattributed.length ? 'unattributed' : 'attributed' };
@@ -544,4 +544,23 @@ export function refuseUnreadableCutSources(attribution) {
   attribution.noCode = keep;
   if (attribution.unattributed.length) attribution.verdict = 'unattributed';
   return attribution;
+}
+
+/**
+ * #2095 r24 P1 — whether two routed getters read the same layout: both hosts
+ * known and attributed, and their attributed layout eras intersect (a build's
+ * `layoutEra` counts as its era). An unknown or unattributed host shares
+ * nothing. Pure; exported for the test.
+ */
+export function gettersShareLayout(attributed, hostA, hostB) {
+  if (!hostA || !hostB) return { shared: false, reason: `a scope getter's host is unknown (${!hostA ? 'snapshot' : 'loan'} getter unrouted or the loupe unreadable)` };
+  const erasOf = (h) => {
+    const a = (attributed ?? []).find((x) => String(x.address).toLowerCase() === String(h).toLowerCase());
+    return a ? new Set(a.eras.map((e) => e.layoutEra ?? e.commit)) : null;
+  };
+  const A = erasOf(hostA); const B = erasOf(hostB);
+  if (!A || !B) return { shared: false, reason: `a scope getter's host is unattributed (${!A ? hostA : hostB})` };
+  if (String(hostA).toLowerCase() === String(hostB).toLowerCase()) return { shared: true, reason: 'one facet hosts both getters' };
+  const common = [...A].filter((e) => B.has(e));
+  return common.length ? { shared: true, reason: `both attribute to layout era ${common[0]}` } : { shared: false, reason: 'the two hosts attribute to different layout eras' };
 }

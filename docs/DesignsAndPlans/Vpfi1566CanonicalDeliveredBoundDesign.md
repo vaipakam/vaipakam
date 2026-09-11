@@ -6369,8 +6369,18 @@ own commit, with the builder's forge, recorded in the table); a Diamond
 without a loupe has an unknown current facet set and its population is not
 exhaustive; enumeration needs both the stats and the pagination selector,
 since cuts are per selector; and where the loupe is unrouted the intent
-getter and producer are probed directly rather than through it. Run 41
-re-reads every deployment with all of it.
+getter and producer are probed directly rather than through it. Round 24
+followed those probes to their ends and found one more scope hole: the
+producer's ABI now travels with the direct reads; `facetAddress(bytes4)` is
+probed as its own selector, since a cut can route `facetAddresses()` without
+it; without a loupe the routing history is unreadable rather than a thrown
+failure; and a fallback row filed non-VPFI by the loan getter counts as
+scoped only when the snapshot getter and the loan getter attribute to a
+common layout era — on a partially refreshed Diamond one can read today's
+`fallbackSnapshot` while the other reads an older `loans` mapping, and then
+the asset says nothing about the row, so those rows become unknown-asset
+and the class is not certified. Run 41 re-reads every deployment with all of
+it.
 
 ### 7a. What the provenance walk found, and how the design changes (2026-09-09)
 

@@ -92,7 +92,7 @@ import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync, rename
 import { readManifest, regenerateEntries, withManifestLock, writeSnapshotGuarded, livePublicationsInProgress, sameEntry } from './archive-manifest.mjs';
 import { loadSlots, loadEras } from './storage-slots.mjs';
 import { commitsAround, deployedAtIso, interpolateTimestamp, CANDIDATES_FILE } from './storage-layout-eras.mjs';
-import { prepareStorageRead, readCountersByStorage, scanRowsByStorage, intentVerdictFromStorage, mergeHistoricalRows, markAliasedRows, splitByHeadSlot, getterAgreement, downgradeWithoutEraRead, attributeCounters, attributeFacetCode, downgradeProvenClasses, downgradeStorageOnlyProofs, STORAGE_ONLY_PROOFS, requireHexData, cutHistoryCompleteness, refuseUnreadableCutSources, DIAMOND_CUT_SELECTOR, MAX_STORAGE_LOAN_SCAN } from './census-storage-read.mjs';
+import { prepareStorageRead, readCountersByStorage, scanRowsByStorage, intentVerdictFromStorage, mergeHistoricalRows, markAliasedRows, splitByHeadSlot, getterAgreement, downgradeWithoutEraRead, attributeCounters, attributeFacetCode, downgradeProvenClasses, downgradeStorageOnlyProofs, STORAGE_ONLY_PROOFS, requireHexData, cutHistoryCompleteness, refuseUnreadableCutSources, gettersShareLayout, DIAMOND_CUT_SELECTOR, MAX_STORAGE_LOAN_SCAN } from './census-storage-read.mjs';
 
 /** Sum a row field as a decimal string. A function declaration, so it is hoisted above every branch that returns early (#2095 r1 P2). */
 function sum(rows, field) {
@@ -500,7 +500,7 @@ function recordBuildCandidates(candidates) {
  * the loupe's current facets, every local record naming this Diamond, and
  * the cut history (refutation-only). Empty code never wrote (EIP-6780).
  */
-async function applyLayoutProvenance(result, { client, censusBlock, atBlock, diamond, slug, label, deployBlock, readFacets, who, manifestEntry = null }) {
+async function applyLayoutProvenance(result, { client, censusBlock, atBlock, diamond, slug, label, deployBlock, readFacets, who, manifestEntry = null, scopeSelectors = null }) {
   result.scanned.sourceRecord = sourceRecordFor(slug, label);
   result.proofStandard = PROOF_STANDARD;
   if (result.scanned.notADiamond) {
@@ -515,10 +515,12 @@ async function applyLayoutProvenance(result, { client, censusBlock, atBlock, dia
   let loupe = null;
   let cutFacetHost = null;
   let loupeReadFailed = false;
+  let hostOf = () => null;
   if (result.scanned.loupeRouted && readFacets) {
     try {
       const list = await readFacets();
       loupe = list.map((f) => `${f.facetAddress ?? f[0]}`.toLowerCase());
+      hostOf = (selector) => list.find((f) => (f.functionSelectors ?? f[1] ?? []).some((x) => String(x).toLowerCase() === String(selector).toLowerCase()))?.facetAddress?.toLowerCase() ?? null;
       // the facet hosting diamondCut was installed by the constructor's storage write, never by a cut
       cutFacetHost = list.find((f) => (f.functionSelectors ?? f[1] ?? []).some((x) => String(x).toLowerCase() === DIAMOND_CUT_SELECTOR))?.facetAddress?.toLowerCase() ?? null;
     } catch (err) {
@@ -542,6 +544,21 @@ async function applyLayoutProvenance(result, { client, censusBlock, atBlock, dia
   // an address the cut history names with empty code now is unreadable, not
   // "never wrote" (#2095 r15/r17 P1) — see refuseUnreadableCutSources
   refuseUnreadableCutSources(attribution);
+  // #2095 r24 P1 — a fallback row is filed non-VPFI by the LOAN getter's asset;
+  // on a partially refreshed Diamond the snapshot getter and the loan getter
+  // can read different layouts, and then the asset says nothing about the row.
+  // The two hosts must attribute to a common layout era for the exclusion to
+  // stand; otherwise the excluded rows are unknown-asset and the class is not
+  // certified.
+  if (scopeSelectors) {
+    const share = gettersShareLayout(attribution.attributed, hostOf(scopeSelectors.fallback), hostOf(scopeSelectors.loan));
+    result.scanned.layoutProvenance.scopeGetters = share;
+    const fb = result.classes.fallbackSnapshotCustody;
+    const excluded = fb?.nonVpfiRowsExcluded ?? [];
+    if (!share.shared && excluded.length) {
+      result.classes.fallbackSnapshotCustody = { ...fb, status: 'indeterminate', provenBy: undefined, unknownAssetRows: [...(fb.unknownAssetRows ?? []), ...excluded], nonVpfiRowsExcluded: [], indeterminateReason: `${excluded.length} fallback row(s) were filed non-VPFI by the loan getter, but the snapshot getter and the loan getter do not attribute to a common layout (${share.reason}) — the asset is not reconciled; refusing to certify` };
+    }
+  }
   const population = cutHistoryCompleteness({ verdict: cut.verdict.split(' ')[0], cuts: cut.cuts, constructorCutSeen: cut.constructorCutSeen, addresses: cut.addresses, loupe, cutFacetHost, loupeReadFailed, recordedFacets: recorded.facets.map((f) => f.address) });
   // For every unattributed facet: the commits around the moments it was cut
   // (block timestamps, hash-pinned by number under the census block) and
@@ -1815,7 +1832,7 @@ async function censusDeployment(dep) {
       () =>
         callAtHash(client, censusBlock, {
           address: diamond,
-          abi: [...claim, ...metrics, ...intentView, ...loupe, ...loanView, ...vpfiView],
+          abi: [...claim, ...metrics, ...intentView, ...intentProducer, ...loupe, ...loanView, ...vpfiView], // the producer too: it is probed directly where the loupe is unrouted (#2095 r24 P1)
           functionName,
           args,
         }),
@@ -2063,9 +2080,15 @@ async function censusDeployment(dep) {
       return true; // any other revert is the facet answering
     }
   };
+  // facetAddress(bytes4) is its own selector (#2095 r24 P2): cuts are per
+  // selector, so a Diamond may route facetAddresses() and not facetAddress()
+  let facetAddressRouted = false;
+  if (loupeRouted) {
+    try { await read('facetAddress', [toFunctionSelector(metrics.find((e) => e.name === 'getProtocolStats'))]); facetAddressRouted = true; } catch (err) { if (!isUnroutedOnDiamond(err)) rethrowUnlessRevert(err); }
+  }
   const routedByLoupeOrProbe = async (fn, abiList, args) => {
     const item = abiList.find((e) => e.name === fn);
-    if (loupeRouted) return (await read('facetAddress', [toFunctionSelector(item)])) !== ZERO_ADDRESS;
+    if (facetAddressRouted) return (await read('facetAddress', [toFunctionSelector(item)])) !== ZERO_ADDRESS;
     return selectorRoutedDirect(fn, args ?? zeroArgsFor(item));
   };
   // enumeration needs BOTH the stats and the pagination selector (#2095 r23 P2)
@@ -2360,17 +2383,18 @@ async function censusDeployment(dep) {
     // a state read the endpoint cannot misreport by omission.
     // The Diamond's CURRENT routed surface — the yardstick the cut history has
     // to explain for its continuity to be established.
-    const facetList = await read('facets');
-    const routedSelectors = facetList.flatMap((f) => f.functionSelectors ?? f[1] ?? []);
-    const cutHistory = await refuteProducerNeverRouted({
-      client,
-      diamond,
-      fromBlock: BigInt(addresses.deployBlock ?? 0),
-      toBlock: atBlock,
-      producerSelector,
-      producerRouted,
-      routedSelectors,
-    });
+    // #2095 r24 P2 — without a loupe the current surface cannot be enumerated,
+    // so the routing history is UNREADABLE (its continuity has no yardstick),
+    // not a thrown failure
+    const cutHistory = loupeRouted
+      ? await (async () => {
+          const facetList = await read('facets');
+          const routedSelectors = facetList.flatMap((f) => f.functionSelectors ?? f[1] ?? []);
+          return refuteProducerNeverRouted({ client, diamond, fromBlock: BigInt(addresses.deployBlock ?? 0), toBlock: atBlock, producerSelector, producerRouted, routedSelectors });
+        })()
+      : (producerRouted
+          ? { refuted: true, verdict: 'refuted', reason: 'the intent producer answers a direct probe now — rows may exist' }
+          : { refuted: false, verdict: 'unreadable', reason: 'the loupe is unrouted, so the current surface cannot be enumerated and the routing history has no continuity yardstick' });
     // Codex #2070 r6 P1 — a zero balance does NOT prove the intent rows are
     // absent (a payout may have spent the backing while the row survives), and
     // cut history can only refute. With the getter unrouted there is NO sound
@@ -2750,7 +2774,7 @@ async function censusDeployment(dep) {
     result.provenBy = undefined;
     result.classes = downgradeWithoutEraRead(result.classes, STORAGE_READ.reason);
   }
-  return applyLayoutProvenance(result, { client, censusBlock, atBlock, diamond, slug, label, deployBlock, readFacets: loupeRouted ? () => read('facets') : null, who, manifestEntry: dep.manifestEntry ?? null });
+  return applyLayoutProvenance(result, { client, censusBlock, atBlock, diamond, slug, label, deployBlock, readFacets: loupeRouted ? () => read('facets') : null, who, manifestEntry: dep.manifestEntry ?? null, scopeSelectors: { fallback: toFunctionSelector(claim.find((e) => e.name === 'getFallbackSnapshot')), loan: toFunctionSelector(loanView.find((e) => e.name === 'getLoanDetails')) } });
 }
 
 /**

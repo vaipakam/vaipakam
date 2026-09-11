@@ -1,7 +1,7 @@
 // census-storage-read.test.mjs — the era-complete storage read's rules (#1566 §7/§7a), over fake readers.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { prepareStorageRead, readCountersByStorage, scanRowsByStorage, intentVerdictFromStorage, eraSlotsExcept, mergeHistoricalRows, aliasOf, classifyEarlierCounters, markAliasedRows, splitByHeadSlot, getterAgreement, downgradeWithoutEraRead, attributeCounters, attributeFacetCode, downgradeProvenClasses, downgradeStorageOnlyProofs, requireHexData, cutHistoryCompleteness, refuseUnreadableCutSources, ROW } from './census-storage-read.mjs';
+import { prepareStorageRead, readCountersByStorage, scanRowsByStorage, intentVerdictFromStorage, eraSlotsExcept, mergeHistoricalRows, aliasOf, classifyEarlierCounters, markAliasedRows, splitByHeadSlot, getterAgreement, downgradeWithoutEraRead, attributeCounters, attributeFacetCode, downgradeProvenClasses, downgradeStorageOnlyProofs, requireHexData, cutHistoryCompleteness, refuseUnreadableCutSources, gettersShareLayout, ROW } from './census-storage-read.mjs';
 import { memberSlot, rowSlot } from './storage-slots.mjs';
 
 const H = (n) => '0x' + n.toString(16).padStart(64, '0');
@@ -355,4 +355,17 @@ test('the facet population is exhaustive only with a read history that holds the
   // routed standard: a storage-only proof still falls on a provenance refusal; a routed proof keeps
   const d = downgradeStorageOnlyProofs({ a: { status: 'proven', provenBy: undefined }, b: { status: 'proven', provenBy: 'no-loans-ever-created' }, c: { status: 'proven', provenBy: 'no-loans-ever-created-by-storage' }, e: { status: 'proven', provenBy: 'storage-read-calibrated' } }, 'why');
   assert.deepEqual(Object.fromEntries(Object.entries(d).map(([k, v]) => [k, v.status])), { a: 'proven', b: 'proven', c: 'indeterminate', e: 'indeterminate' });
+});
+
+test('the snapshot getter and the loan getter must attribute to a common layout for an excluded fallback row to be scoped (#2095 r24 P1)', () => {
+  const attributed = [
+    { address: '0xClaim', eras: [{ commit: 'e1', layoutEra: 'e1' }, { commit: 'b7', layoutEra: 'e2' }] },
+    { address: '0xLoanOld', eras: [{ commit: 'e0', layoutEra: 'e0' }] },
+    { address: '0xLoanNew', eras: [{ commit: 'e2', layoutEra: 'e2' }] },
+  ];
+  assert.equal(gettersShareLayout(attributed, '0xclaim', '0xloannew').shared, true, 'a deployment build attributed to era e2 shares with the era');
+  assert.equal(gettersShareLayout(attributed, '0xClaim', '0xLoanOld').shared, false, 'different layouts');
+  assert.equal(gettersShareLayout(attributed, '0xClaim', '0xClaim').shared, true, 'one facet hosting both');
+  assert.match(gettersShareLayout(attributed, null, '0xClaim').reason, /host is unknown/);
+  assert.match(gettersShareLayout(attributed, '0xClaim', '0xNobody').reason, /unattributed/);
 });
