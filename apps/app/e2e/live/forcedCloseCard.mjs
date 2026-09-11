@@ -165,7 +165,24 @@ function definiteConfirmActionFault(a) {
   }
   const oneClickShort = (what) =>
     `the confirmation opened but ${what} — the lender is left one click short of the action the card offered`;
-  if (!a.present) return oneClickShort('no confirmation action was rendered beside Back');
+  // ROUND 68 P2 — AND ONLY IF THE PANEL WAS STILL THERE.
+  //
+  // `ForcedCloseCard` legitimately removes the whole `ConfirmReceipt`
+  // when readiness changes after the panel opened, keeping the outer
+  // card mounted. The scrape then finds no actions and reports
+  // `present: false` — and this arm read that as "the confirmation
+  // opened but no action was rendered beside Back", a product FAIL
+  // invented out of a legitimate cross-render change. No atomic snapshot
+  // ever saw an open panel missing its action.
+  //
+  // `=== false` so a record predating the field still reports, and the
+  // fault and its excuse come from ONE DOM pass — comparing two moments
+  // is what round 9 forbade.
+  if (!a.present) {
+    return a.panelPresent === false
+      ? null
+      : oneClickShort('no confirmation action was rendered beside Back');
+  }
   if (!a.visible) return oneClickShort('its confirmation action is not visible');
   if (!a.labelled) return oneClickShort('its confirmation action has no label');
   // `labelled` reads `innerText`, which yields every word whatever its
@@ -2429,6 +2446,32 @@ export function forcedCloseVerdict(obs, copy) {
   // fields — and compare. That is four bracketed protocol reads rather
   // than a rewiring, so it is deferred rather than half-done here; the
   // tracked in #2133.
+  // ROUND 68 P2 — AND AN UNREAD SIMULATION IS NOT A PASS EITHER.
+  //
+  // The two arms around this one require the bracket to have ANSWERED —
+  // `true`/`true` for the mismatch, `false`/`false` for the unverified
+  // reason. When `probeCloseOut` could not classify either side, neither
+  // ran, and the missing-probe guard further down is scoped to
+  // `readyOffered`, so a card painting a specific refusal fell through
+  // to `pass`. The run then exits clean having established neither that
+  // the protocol refuses NOR that the reason shown is the real one.
+  //
+  // Above the `false`/`false` arm, because "we could not ask" is a
+  // different and weaker statement than "we asked and it refused".
+  if (
+    !actionOffered &&
+    (obs.defaultable === undefined || obs.defaultableBefore === undefined) &&
+    Array.isArray(copy?.refusalStateCopy)
+  ) {
+    const claimed = copy.refusalStateCopy.find((sentence) => paints(sentence));
+    if (claimed) {
+      return {
+        verdict: 'blocked',
+        blockedKind: 'incomplete',
+        why: `the card withholds the action and states a specific reason ("${claimed}"), and this drive could not simulate the close-out — so neither the refusal nor the reason given for it was established`,
+      };
+    }
+  }
   if (
     !actionOffered &&
     obs.defaultable === false &&
@@ -2472,6 +2515,41 @@ export function forcedCloseVerdict(obs, copy) {
     obs.internalMatch !== undefined &&
     obs.internalMatchBefore !== undefined &&
     obs.internalMatch === obs.internalMatchBefore;
+  // ROUND 68 P2 — AN UNREAD ROUTE IS NOT A PASS.
+  //
+  // When either probe could not answer — an unrecognised view revert, a
+  // transient observer-RPC failure — `matchKnown` is false, the
+  // comparison below is skipped, and the disagreement arm after it also
+  // requires both values. The verdict then returned `pass` carrying only
+  // `routeKnown: false`, which `forcedCloseCoverage` does not treat as a
+  // gap: an exit-0 run certifying in-kind or internal-match copy it
+  // never substantiated.
+  //
+  // Only where the card COMMITS to one of the two routes AND offers the
+  // action — a card painting neither route, or offering nothing, is not
+  // making the promise this probe exists to check, and blocking those
+  // would turn an unread view into a gap in coverage that was never
+  // there.
+  //
+  // UNREAD, not merely "not known". `matchKnown` is also false when both
+  // probes answered and DISAGREED, which is the mid-observation change
+  // the arm below reports in its own words — and the first version of
+  // this condition used `!matchKnown`, shadowed that arm, and gave the
+  // wrong explanation for a race. Caught by its test, which is what that
+  // test is for.
+  const routeUnread =
+    obs.internalMatch === undefined || obs.internalMatchBefore === undefined;
+  if (routeUnread && actionOffered) {
+    const undecided =
+      paints(copy?.internalMatchReadyCopy) !== paints(copy?.inKindReadyCopy);
+    if (undecided) {
+      return {
+        verdict: 'blocked',
+        blockedKind: 'incomplete',
+        why: 'the card promises a specific settlement route and this drive could not read which route the protocol would take — the outcome copy the lender is shown was not substantiated',
+      };
+    }
+  }
   if (matchKnown && actionOffered) {
     const paintsMatch = paints(copy?.internalMatchReadyCopy);
     const paintsInKind = paints(copy?.inKindReadyCopy);

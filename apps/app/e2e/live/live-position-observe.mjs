@@ -4692,7 +4692,23 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
     (v.submitDisabled || v.submitVisible === false) &&
     FORCED_CLOSE_COPY.readyCopy.some((sentence) => (v.text ?? '').includes(sentence));
 
-  let settled = !saysCheckRunning(snap.text ?? '', FORCED_CLOSE_COPY.unknownCopy);
+  // ROUND 68 P2 — SETTLEMENT IS DECIDED ON THE PAINTED TEXT.
+  //
+  // A card that visibly paints legitimate ready or blocked copy while
+  // retaining the `unknown` sentence in a transparent, clipped or
+  // filter-erased descendant kept this poll unsettled to the deadline —
+  // and the verdict then reported `blocked/incomplete` for a card the
+  // lender could read perfectly well. The verdict has recognised state
+  // from painted text since round 62; the poll that decides WHEN to stop
+  // reading was still classifying the raw DOM, which is the same
+  // parallel-site shape once more.
+  //
+  // `??` so a record predating the field falls back rather than treating
+  // an absent value as empty text, which would settle every poll at once.
+  let settled = !saysCheckRunning(
+    snap.visibleText ?? snap.text ?? '',
+    FORCED_CLOSE_COPY.unknownCopy,
+  );
   // ROUND 31 P2 — EVERY RENDER THIS DRIVE READ, not just the last one.
   //
   // The poll below overwrites `snap` each tick, so only the FINAL text
@@ -4921,7 +4937,12 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
       };
     }
     snap = again;
-    settled = !saysCheckRunning(snap.text ?? '', FORCED_CLOSE_COPY.unknownCopy);
+    // Same rule per tick as at the top — both sites, because fixing one
+    // of a pair is what this PR keeps being caught by.
+    settled = !saysCheckRunning(
+      snap.visibleText ?? snap.text ?? '',
+      FORCED_CLOSE_COPY.unknownCopy,
+    );
   }
 
   // ROUND 27 P2 — the field list is GONE, not lengthened.
@@ -5947,6 +5968,24 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
               // several parallel sites, and a new variant of it: the
               // right value was computed at the right moment and
               // discarded one line later.
+              // ROUND 68 P2 — WAS THE PANEL STILL THERE in this same pass?
+              //
+              // `ForcedCloseCard` legitimately removes the whole
+              // `ConfirmReceipt` when readiness changes after the panel
+              // opened — paused, sequencer-blocked, otherwise withheld —
+              // while keeping the outer card mounted. This evaluate then
+              // finds no actions and reports `present: false`, which the
+              // hoisted structural arm reads as "the confirmation opened
+              // but no action was rendered beside Back": a product FAIL
+              // invented out of a legitimate cross-render change, since
+              // no atomic snapshot ever saw an open panel missing its
+              // action.
+              //
+              // Recorded IN THIS PASS rather than inferred afterwards,
+              // which is the whole point — the fault and its excuse have
+              // to come from one DOM read or the comparison is between
+              // two different moments (round 9's rule).
+              panelPresent: rows.length > 0,
               rowsText: shown.map((r) => visibleTextOf(r)).filter((t) => t.trim() !== ''),
               otherText,
               // ROUND 64 P2 — the WHOLE panel's painted text, carried
@@ -5966,6 +6005,7 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
           : null;
         confirmVisibleText = receiptShown?.rowsOk ? (receiptShown.panelText ?? null) : null;
         confirmAction = receiptShown?.confirmAction;
+        if (confirmAction) confirmAction.panelPresent = receiptShown?.panelPresent;
         // ROUND 50 P2 — kept whatever `rowsOk` decided, so a figure on a
         // row the lender COULD see is scanned even when a different row
         // was unreadable.
