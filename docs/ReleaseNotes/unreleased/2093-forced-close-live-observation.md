@@ -170,14 +170,24 @@ as amounts would invent findings on correct copy.
 
 ### Stated limits
 
-Two, and they are gaps in coverage rather than in the checking. The pool
-of positions is inherited from the existing driver, so NFT rental loans
-are outside it and the card's rental route is not exercised by a live
-run — the run says so in its own output rather than leaving the reader to
-assume otherwise. And one limitation is intrinsic: a check that watches a
-live page can never rule out that the page changed between two of its own
-observations, so where that race is unavoidable the check reports what it
-saw and names the uncertainty instead of resolving it by assumption.
+Three, and the first two are gaps in coverage rather than in the
+checking.
+
+The pool of positions is inherited from the existing driver, so NFT
+rental loans are outside it and the card's rental route is not exercised
+by a live run. That same pool also drops any position whose holder is
+sanctions-flagged — which is correct for the card the existing driver
+checks, and wrong for this one: the specification deliberately keeps the
+forced close-out available to a flagged lender, because winding down an
+already defaulted loan is a close-out the protocol keeps open to
+everyone. So the one behaviour that most distinguishes this card is the
+one a live run cannot confirm. The run prints both gaps in its own output
+when they apply, rather than letting a clean tally imply otherwise.
+
+The third is intrinsic: a check that watches a live page can never rule
+out that the page changed between two of its own observations, so where
+that race is unavoidable the check reports what it saw and names the
+uncertainty instead of resolving it by assumption.
 
 Closes #2093. The round-by-round record of how each of these rules was
 arrived at — including several cases where a fix left its own new state
