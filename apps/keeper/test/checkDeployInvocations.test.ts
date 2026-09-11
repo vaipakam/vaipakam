@@ -12857,8 +12857,22 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     ['md', RUNBOOK_BODY, 'apps/agent', 'runs'],
     ['mdx', RUNBOOK_BODY, 'apps/agent', 'runs'],
     // A workflow is only READ as one under this directory.
-    ['yml', WORKFLOW_BODY, '.github/workflows', 'inert'],
-    ['yaml', WORKFLOW_BODY, '.github/workflows', 'inert'],
+    //
+    // 'runs', NOT 'inert' (r11), and the demonstration is worth keeping
+    // because it overturned the last classification I was confident in.
+    // A workflow body is a sequence of BARE SHELL LINES under some YAML
+    // keys, and bash executes a file whatever it is called: the key lines
+    // fail as commands, and then `wrangler deploy` runs.
+    //
+    //   bash D.YML               -> WRANGLER RAN (from the top directory)
+    //   bash -O lastpipe D.YML   -> WRANGLER RAN in apps/agent
+    //
+    // `lastpipe` only changes WHERE — it makes the `cd` in the piped
+    // `- run: |` line persist. The deploy runs either way, so the upper-case
+    // file is a genuine silent pass and the platform's name matching was
+    // never the only consumer that mattered.
+    ['yml', WORKFLOW_BODY, '.github/workflows', 'runs'],
+    ['yaml', WORKFLOW_BODY, '.github/workflows', 'runs'],
     // THESE TWO PIN DISCOVERY ONLY, and the distinction is sharper than the
     // Node one (r2). Their body is an inert `note` value, so the lower-case
     // REPORT is itself #2119's false report — reading every scalar as a
@@ -12978,18 +12992,30 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
   const UNKNOWN = WALK_HELPER_FAMILIES.filter(([, , , c]) => c === 'unknown');
 
   it('the consequence partition covers every family and is not degenerate (#2123 partition guard)', () => {
-    // ALL THREE CLASSES MUST STAY POPULATED (r9). The first version checked
-    // only `RUNNABLE`, and its sum assertion was TAUTOLOGICAL — the declared
-    // type admits exactly these three values, so the parts always sum to the
-    // whole. The published record claims a three-state consequence; that
-    // claim could therefore have regressed to two states, or one, with the
-    // emptied test running zero iterations and the guard still green.
+    // TWO CLASSES MUST STAY POPULATED; THE THIRD IS EMPTY AND THAT IS A
+    // FINDING, NOT AN OVERSIGHT (r11).
     //
-    // If a state legitimately empties — say the undetermined pair is finally
-    // settled — this SHOULD fail, so that the record is updated deliberately
-    // rather than silently losing a state it advertises.
+    // r9 required all three non-empty, so that the published three-state
+    // claim could not regress unnoticed. r11 then emptied `inert` by showing
+    // that a workflow body runs under plain `bash` whatever the file is
+    // called — and the guard FAILED, which is what it was for: the state did
+    // not disappear quietly, it stopped the suite and forced this decision.
+    //
+    // The decision is to keep the state DEFINED and allow it to be EMPTY,
+    // because on the evidence so far it may be very hard to occupy. A file
+    // the sweep skips can nearly always be handed to `bash`, which ignores
+    // the name, fails on the lines that are not commands, and runs the ones
+    // that are. Establishing "nothing runs this" therefore means ruling out
+    // every interpreter that would accept the body — and this suite has now
+    // twice classified something as inert and been wrong, once via Bun and
+    // once via bash.
+    //
+    // So `inert` stays in the type as the honest place for a family that is
+    // ever shown to have no consumer, and nothing is filed under it today.
+    // `runs` and `unknown` must stay populated: emptying either would make
+    // the silent-pass pin or the undetermined pin claim nothing while
+    // running zero iterations.
     expect(RUNNABLE.length, 'silent-pass families').toBeGreaterThan(0);
-    expect(INERT.length, 'discovery-only families').toBeGreaterThan(0);
     expect(UNKNOWN.length, 'undetermined families').toBeGreaterThan(0);
     expect(RUNNABLE.length + INERT.length + UNKNOWN.length).toBe(
       WALK_HELPER_FAMILIES.length,
