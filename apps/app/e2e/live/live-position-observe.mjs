@@ -4777,15 +4777,33 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
             // already applies to duplicate submit controls, one level
             // in, and the more dangerous level: these buttons send the
             // transaction rather than opening a panel.
+            // ROUND 51 P2 — COUNTED VISIBLE, which is what the outer
+            // card's duplicate rule has always done and this did not.
+            //
+            // A cluster holding one usable action beside a button hidden
+            // by CSS — responsive variants rendered together is the
+            // ordinary way that happens — counted 2 and produced "the
+            // lender is given more than one way to pay for it". That is a
+            // FALSE FAIL on a correct card, manufactured by the check
+            // added to catch a real one, and the false direction is the
+            // error this file says gets a whole check switched off.
+            //
+            // The same reasoning the card count already carries: a
+            // duplicate hidden in the DOM is not something the lender is
+            // being shown. Selecting from the filtered set too, so the
+            // control judged and trialled is one the lender can reach.
             const clusterActions =
               backButton && backButton.parentElement
                 ? [...backButton.parentElement.querySelectorAll('button')].filter(
-                    (b) => b !== backButton,
+                    (b) => b !== backButton && visible(b),
                   )
                 : [];
             const confirmButton = clusterActions[0];
             const confirmAction = {
               present: confirmButton !== undefined,
+              // Retained rather than folded into `present`: the two say
+              // different things to a reader, and an older record may
+              // carry a control that was found without being shown.
               visible: confirmButton !== undefined && visible(confirmButton),
               enabled: confirmButton !== undefined && confirmButton.disabled === false,
               labelled:

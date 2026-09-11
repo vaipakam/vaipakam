@@ -453,3 +453,14 @@ And the moment-by-moment safety check from the previous round was still
 being thrown away when the loan ended, transferred, or was sold. What the
 lender could have clicked, they could have clicked; what the chain says
 afterwards does not undo it.
+
+A fifth finding in the same round pointed the other way, and that
+direction matters more. The new rule about a confirmation offering more
+than one way to pay counted every button it found, including ones hidden
+by styling — which is how a page ordinarily carries two variants of the
+same control for different screen widths. A perfectly correct card would
+have been reported as offering the lender two ways to spend money. It now
+counts only what is actually shown, which is the rule the card's own
+duplicate check has always used. A check that condemns a correct page is
+worse than one that misses a rare bad one, because it is the kind of
+result that gets the whole check switched off.
