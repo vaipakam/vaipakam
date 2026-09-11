@@ -29,6 +29,7 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync, symlinkSync } from 'node:fs';
 import { keccak256 } from 'viem';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join, resolve as resolvePath } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -140,6 +141,47 @@ export function bytecodeCatalogueFrom(outDir) {
     count += 1;
   }
   return { catalogue, count };
+}
+
+/**
+ * #2095 r22 P1 — a digest of an entry's GENERATED contents: the storage
+ * position, every field's slot/type/offset, the row layouts, HEAD's occupied
+ * map, and the bytecode catalogue (hash → name, sorted). Not the commit, date,
+ * event or reasons. `--check` recomputes it, so an era edited after generation
+ * — a merge conflict resolved by hand, a stray edit — fails the gate even
+ * though its source fingerprint still matches; `--check --rebuild-head`
+ * additionally rebuilds the HEAD era and `--verify-all` every entry. Pure.
+ */
+export function contentDigestOf(entry, index) {
+  const bytecode = entry.bytecode
+    ? Object.entries(entry.bytecode)
+    : (entry.bytecodeIds ?? []).map((i) => index?.[i] ?? [`missing-${i}`, '']);
+  const canon = {
+    p: entry.storagePosition ?? null,
+    f: Object.fromEntries(Object.entries(entry.fields ?? {}).sort().map(([k, v]) => [k, v ? { s: v.slot, r: v.relative ?? null, o: v.offset ?? 0, t: v.type ?? null } : null])),
+    r: entry.rows ?? null,
+    o: entry.occupied ? entry.occupied.map((x) => [x.label, x.type, x.from, x.to, Boolean(x.isMapping)]) : null,
+    b: bytecode.map(([h, n]) => `${h}|${n}`).sort(),
+  };
+  return createHash('sha256').update(JSON.stringify(canon)).digest('hex');
+}
+
+/** The identity of a whole table: its entries' content digests, sorted — stable across a HEAD-era rebuild at a new commit with the same layout and code. Pure. */
+export function tableIdentityOf(table) {
+  const all = [...(table.eras ?? []), ...(table.deploymentBuilds ?? [])].map((e) => e.contentDigest ?? contentDigestOf(e, table.bytecodeIndex)).sort();
+  return createHash('sha256').update(all.join('\n')).digest('hex');
+}
+
+/** Every entry whose recorded content digest no longer matches its contents (edited after generation). Pure; exported for the test. */
+export function verifyTableContents(table) {
+  const bad = [];
+  for (const e of [...(table.eras ?? []), ...(table.deploymentBuilds ?? [])]) {
+    if (!e.contentDigest) { bad.push({ commit: e.commit, reason: 'no content digest — regenerate the table' }); continue; }
+    const now = contentDigestOf(e, table.bytecodeIndex);
+    if (now !== e.contentDigest) bad.push({ commit: e.commit, reason: `contents differ from the recorded digest (${e.contentDigest.slice(0, 12)} → ${now.slice(0, 12)}) — edited after generation` });
+  }
+  if (table.tableIdentity && tableIdentityOf(table) !== table.tableIdentity) bad.push({ commit: '(table)', reason: 'the table identity does not match its entries' });
+  return bad;
 }
 
 /** Rebuild per-era and per-build `bytecode` maps (hash → name) from a table's compact `bytecodeIndex` + `bytecodeIds`. Pure. */
@@ -365,8 +407,26 @@ export function buildEra(sha, { repo = REPO_ROOT, keep = false, log = () => {} }
  * landed since the table was generated and the census would read too few
  * eras. Exported for the CI job; returns the list of missing commits.
  */
-export function checkEraTable({ tablePath = OUT_DEFAULT, since = DEFAULT_SINCE, log = () => {} } = {}) {
+export function checkEraTable({ tablePath = OUT_DEFAULT, since = DEFAULT_SINCE, log = () => {}, rebuildHead = false, verifyAll = false } = {}) {
   const table = JSON.parse(readFileSync(tablePath, 'utf8'));
+  // #2095 r22 P1 — the contents, not only the fingerprints
+  const contentProblems = verifyTableContents(table).map((b) => `${b.commit === '(table)' ? 'table' : `entry ${b.commit.slice(0, 9)}`}: ${b.reason}`);
+  const rebuilt = [];
+  const compareRebuilt = (label, sha, entry) => {
+    const r = buildEra(sha, { log });
+    const fresh = contentDigestOf({ ...r, occupied: entry.occupied ? r.occupied : undefined });
+    const recorded = contentDigestOf({ ...expandBytecode({ ...table, eras: [entry], deploymentBuilds: [] }).eras[0], occupied: entry.occupied });
+    if (fresh !== recorded) contentProblems.push(`${label} ${sha.slice(0, 9)}: a fresh build's contents differ from the table's (${recorded.slice(0, 12)} recorded, ${fresh.slice(0, 12)} rebuilt)`);
+    rebuilt.push(sha);
+  };
+  if (rebuildHead || verifyAll) {
+    const head = (table.eras ?? []).find((e) => e.commit === table.head);
+    if (!head) contentProblems.push('the table carries no HEAD era to rebuild'); else if (!verifyAll) compareRebuilt('HEAD era', head.commit, head);
+  }
+  if (verifyAll) {
+    for (const e of table.eras ?? []) compareRebuilt('era', e.commit, e);
+    for (const b of table.deploymentBuilds ?? []) if (!b.sameAsEra) compareRebuilt('deployment build', b.commit, b);
+  }
   const walk = walkProvenance({ since, fields: FIELDS });
   const commitsAsc = sh('git', ['log', '--format=%H %cI', `--since=${since}`, '--', LIB_PATH], REPO_ROOT).trim().split('\n').filter(Boolean).map((l) => { const [sha, date] = l.split(' '); return { sha, date }; }).reverse();
   const needed = eraCommits(walk, commitsAsc);
@@ -386,6 +446,7 @@ export function checkEraTable({ tablePath = OUT_DEFAULT, since = DEFAULT_SINCE, 
   // commit the branch head is not an ancestor of either).
   if (table.headFingerprint !== walk.headFingerprint) problems.push(`the table's HEAD era was built from a different layout (fingerprint ${String(table.headFingerprint).slice(0, 12)} vs ${walk.headFingerprint.slice(0, 12)} now) — regenerate`);
   for (const m of missing) problems.push(`era ${m.sha.slice(0, 9)} (${m.date.slice(0, 10)}, ${m.event}) is not in the table`);
+  for (const p of contentProblems) problems.push(p);
   // every commit a deployed facet may have been built from must be catalogued (#2095 r9 P1)
   const haveBuilds = new Set([...(table.eras ?? []).map((e) => e.commit), ...(table.deploymentBuilds ?? []).filter((b) => b.bytecode || b.bytecodeIds).map((b) => b.commit)]);
   const advisory = [];
@@ -396,7 +457,7 @@ export function checkEraTable({ tablePath = OUT_DEFAULT, since = DEFAULT_SINCE, 
   }
   if (advisory.length) log(`storage-layout-eras --check: ${advisory.length} ref-derived candidate(s) not catalogued (advisory — they depend on this checkout's refs): ${advisory.slice(0, 5).join('; ')}${advisory.length > 5 ? '; …' : ''}`);
   if ((table.eras ?? []).some((e) => e.origin === 'deployment build' && !e.fields)) problems.push('an era promoted from a deployment build carries no slots — regenerate');
-  log(`storage-layout-eras --check: ${problems.length ? 'STALE' : 'OK'} — ${needed.length} era(s) implied by the walk, ${have.size} in the table${problems.length ? '\n  ' + problems.join('\n  ') : ''}`);
+  log(`storage-layout-eras --check: ${problems.length ? 'STALE' : 'OK'} — ${needed.length} era(s) implied by the walk, ${have.size} in the table, contents verified${rebuilt.length ? `, ${rebuilt.length} entr${rebuilt.length === 1 ? 'y' : 'ies'} rebuilt and compared` : ''}${problems.length ? '\n  ' + problems.join('\n  ') : ''}`);
   return { ok: problems.length === 0, problems, needed: needed.length, inTable: have.size };
 }
 
@@ -404,7 +465,7 @@ export function main(argv = process.argv.slice(2)) {
   const arg = (k, d) => { const i = argv.indexOf(k); return i >= 0 ? argv[i + 1] : d; };
   const since = arg('--since', DEFAULT_SINCE);
   const out = arg('--out', OUT_DEFAULT);
-  if (argv.includes('--check')) return checkEraTable({ tablePath: out, since, log: (m) => process.stderr.write(m + '\n') }).ok ? 0 : 1;
+  if (argv.includes('--check')) return checkEraTable({ tablePath: out, since, log: (m) => process.stderr.write(m + '\n'), rebuildHead: argv.includes('--rebuild-head'), verifyAll: argv.includes('--verify-all') }).ok ? 0 : 1;
   const onlyHead = argv.includes('--only-head');
   // --only-head is a pipeline diagnostic: it must never overwrite the production table (#2095 r2 P2)
   if (onlyHead && resolvePath(out) === resolvePath(OUT_DEFAULT)) {
@@ -508,7 +569,7 @@ export function main(argv = process.argv.slice(2)) {
   // rebuilds the per-build maps.
   const index = []; const idOf = new Map();
   const idsFor = (map) => Object.entries(map ?? {}).map(([h, name]) => { const k = `${h}|${name}`; if (!idOf.has(k)) { idOf.set(k, index.length); index.push([h, name]); } return idOf.get(k); }).sort((a, b) => a - b);
-  const compact = (b) => { const { bytecode, reasons, ...rest } = b; return { ...rest, ...(reasons ? { reasons: reasons.slice(0, 3), reasonsTotal: reasons.length } : {}), bytecodeIds: idsFor(bytecode) }; };
+  const compact = (b) => { const { bytecode, reasons, ...rest } = b; return { ...rest, ...(reasons ? { reasons: reasons.slice(0, 3), reasonsTotal: reasons.length } : {}), bytecodeIds: idsFor(bytecode), contentDigest: contentDigestOf(b) }; };
   const distinct = {};
   for (const f of FIELDS) distinct[f] = [...new Set(built.map((b) => b.fields[f]?.slot).filter(Boolean))];
   const result = {
@@ -529,6 +590,7 @@ export function main(argv = process.argv.slice(2)) {
     unavailable,
     distinctSlots: distinct,
   };
+  result.tableIdentity = tableIdentityOf(result);
   mkdirSync(resolvePath(out, '..'), { recursive: true });
   // one-space indent: the drift gate refuses to scan a tracked file above 2 MiB, and a readable diff needs no more
   writeFileSync(out, JSON.stringify(result, null, 1) + '\n');

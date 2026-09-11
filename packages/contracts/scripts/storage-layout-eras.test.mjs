@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { keccak256 } from 'viem';
 import { execFileSync } from 'node:child_process';
-import { bytecodeCatalogueFrom, depsFromMainAreIdentical, parseLsTree, deployedAtIso, commitsAround, deploymentBuildCandidates, interpolateTimestamp } from './storage-layout-eras.mjs';
+import { bytecodeCatalogueFrom, depsFromMainAreIdentical, parseLsTree, deployedAtIso, commitsAround, deploymentBuildCandidates, interpolateTimestamp, contentDigestOf, tableIdentityOf, verifyTableContents } from './storage-layout-eras.mjs';
 
 test('bytecodeCatalogueFrom hashes every src/ contract\'s runtime bytecode and nothing else (#2095 r9 P1)', () => {
   const out = mkdtempSync(join(tmpdir(), 'era-out-'));
@@ -86,4 +86,23 @@ test('a pruned cut block gets an estimated timestamp between two anchors (#2095 
   assert.equal(interpolateTimestamp({ block: 100, b0: 100, t0: '2026-07-01T00:00:00Z', b1: 200, t1: '2026-07-01T00:03:20Z' }), '2026-07-01T00:00:00Z');
   assert.equal(interpolateTimestamp({ block: 150, b0: 200, t0: '2026-07-01T00:00:00Z', b1: 100, t1: '2026-07-01T00:03:20Z' }), null, 'anchors out of order');
   assert.equal(interpolateTimestamp({ block: 150, b0: 100, t0: 'x', b1: 200, t1: '2026-07-01T00:03:20Z' }), null);
+});
+
+test('an era edited after generation fails the content check even with its fingerprint intact (#2095 r22 P1)', () => {
+  const index = [['0x11', 'RiskFacet'], ['0x22', 'ClaimFacet']];
+  const era = { commit: 'a'.repeat(40), date: 'd', fingerprint: 'fp', storagePosition: '0x00', fields: { nextLoanId: { slot: '0x01', relative: 1, offset: 0, type: 't_uint256' } }, rows: { BorrowerLifRebate: { vpfiHeld: { slot: 0, offset: 0, type: 't_uint256' } } }, bytecodeIds: [0, 1] };
+  era.contentDigest = contentDigestOf(era, index);
+  const table = { head: era.commit, eras: [era], deploymentBuilds: [], bytecodeIndex: index };
+  table.tableIdentity = tableIdentityOf(table);
+  assert.deepEqual(verifyTableContents(table), []);
+  // a moved slot, a swapped bytecode id, a deleted row member: each is caught; the fingerprint says nothing
+  const moved = JSON.parse(JSON.stringify(table)); moved.eras[0].fields.nextLoanId.slot = '0x02';
+  assert.match(verifyTableContents(moved)[0].reason, /edited after generation/);
+  const swapped = JSON.parse(JSON.stringify(table)); swapped.bytecodeIndex[0] = ['0x33', 'RiskFacet'];
+  assert.match(verifyTableContents(swapped)[0].reason, /edited after generation/);
+  const noDigest = JSON.parse(JSON.stringify(table)); delete noDigest.eras[0].contentDigest;
+  assert.match(verifyTableContents(noDigest)[0].reason, /no content digest/);
+  // the digest ignores commit, date, event and reasons: a HEAD era rebuilt at a new commit with the same layout and code keeps its identity
+  assert.equal(contentDigestOf({ ...era, commit: 'b'.repeat(40), date: 'x', event: 'HEAD', reasons: ['r'] }, index), era.contentDigest);
+  assert.equal(tableIdentityOf({ ...table, eras: [{ ...era, commit: 'b'.repeat(40) }] }), table.tableIdentity);
 });

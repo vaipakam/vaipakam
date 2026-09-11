@@ -124,6 +124,7 @@ export function prepareStorageRead({ slots, eras: rawEras }) {
       method: 'eth_getStorageAt pinned by the census block hash (EIP-1898, requireCanonical)',
       slotTable: 'contracts/deployments/storage-slots.json (forge probe; StorageSlotPinTest)',
       eraTable: `contracts/deployments/storage-slot-eras.json (${eras.eras.length} eras since ${eras.since}; head ${eras.head.slice(0, 9)})`,
+      eraTableIdentity: eras.tableIdentity ?? null, // the table's content identity — stable across a HEAD-era rebuild at a new commit with the same layout and code (#2095 r22)
       calibration: 'contracts/test/StorageSlotCalibrationTest.t.sol — derived slots vs routed getters on non-zero rows',
       distinctSlots: Object.fromEntries(Object.entries(eraSlots).map(([f, v]) => [f, v.length])),
     },

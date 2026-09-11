@@ -6349,7 +6349,16 @@ carries each census field's normalized compiler type and offset beside its
 slot, and the census refuses any era whose field is not the plain counter or
 the `mapping(uint256 => Row)` its readers decode — a mapping whose key or
 value shape changed keeps its name and head slot but is a layout the row
-formula cannot read. Run 38 re-reads every deployment with all of it.
+formula cannot read. Round 22 made the table's contents, not only its
+fingerprints, part of the gate: every era and build carries a digest of its
+generated contents — position, field slots and types, row layouts, the
+catalogue — that the check recomputes, so an entry edited after generation
+fails even with its source fingerprint intact; the check also rebuilds the
+HEAD era in CI and compares, and `--verify-all` rebuilds every entry for the
+release path. The table's identity is the sorted set of those digests, which
+a HEAD-era rebuild at a new commit with the same layout and code leaves
+unchanged, and the census records it beside the table's head. Run 40
+re-reads every deployment with all of it.
 
 ### 7a. What the provenance walk found, and how the design changes (2026-09-09)
 
