@@ -12,9 +12,20 @@
  * so the suite never touches the repo.
  */
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import {
+  SHELL_EXTENSIONS,
+  EXTENSIONS,
+} from '../scripts/lib/deployScanExtensions.mjs';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 const SCRIPT = new URL('../scripts/check-deploy-invocations.mjs', import.meta.url).pathname;
@@ -12741,27 +12752,205 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
   // `*.mk` and runs its recipes — and it was missing from the first two
   // versions of this table (r51). The recipe line needs a real tab.
   const MAKE_BODY = 'deploy:\n\tcd apps/agent && wrangler deploy\n';
+  // A RUNBOOK IS EXECUTABLE TOO, in the only sense this check cares about: a
+  // bare, unindented command line in a document is treated as an actionable
+  // instruction, which is why a runbook's deploy is reported at all — and
+  // `EXTENSIONS` carries `.md` and `.mdx`. Both were missing from the first
+  // three versions of this table (r55). The body is the runbook shape, not a
+  // shell one: no `cd`, the config named on the line itself.
+  const RUNBOOK_BODY =
+    'Deploy it:\n\nwrangler deploy --config apps/agent/wrangler.jsonc\n';
 
-  const WALK_HELPER_FAMILIES: ReadonlyArray<readonly [string, string]> = [
-    ['ps1', SHELL_BODY],
-    ['cmd', SHELL_BODY],
-    ['bat', SHELL_BODY],
-    ['sh', SHELL_BODY],
-    ['bash', SHELL_BODY],
-    ['zsh', SHELL_BODY],
-    ['ksh', SHELL_BODY],
+  const WORKFLOW_BODY =
+    'name: d\non: push\njobs:\n  d:\n    runs-on: ubuntu-latest\n    steps:\n' +
+    '      - run: |\n          cd apps/agent\n          wrangler deploy\n';
+  const JSON_VALUE_BODY = '{"note": "cd apps/agent && wrangler deploy"}\n';
+
+  /**
+   * EVERY extension `walk` accepts, with the body and location each needs.
+   *
+   * The list is DERIVED-CHECKED, not hand-trusted: `walk yields exactly these
+   * families` below IMPORTS the scanner's own extension arrays — from the
+   * shared module both sides read since r7, never by locating them in the
+   * guard's source — and fails if this table and that list disagree in either
+   * direction. The earlier source-reading versions are why that matters; the
+   * guard's own note records how each of them failed. That guard exists
+   * because this table was a SUBSET SEVEN TIMES — three representatives, then
+   * seven shell families, fourteen, fifteen, seventeen, each widening made
+   * BECAUSE the previous was too narrow and each stopping short again. At
+   * seven the pattern is the defect, and the remedy is the one this work
+   * reached for everywhere else: stop maintaining the enumeration by hand.
+   *
+   * Bodies stay explicit per family rather than generated, because an
+   * unrecognised body is not reported either — a shared body would make some
+   * families pass for the wrong reason, which is the vacuity trap this suite
+   * has already hit. The DIRECTORY matters too: a workflow is only read as one
+   * under `.github/workflows`.
+   *
+   * THE FOURTH FIELD DECLARES WHAT THE BYPASS COSTS FOR THIS ROW — the
+   * body AND the name together, not the suffix on its own (r10). That
+   * distinction is load-bearing and was not stated until Codex made the case
+   * concrete: `bun D.YML` happily executes a JAVASCRIPT body, because Bun
+   * reads the file as source and ignores the extension. So a `.YML` file is
+   * runnable or not depending on what is IN it, and a state attached to the
+   * suffix alone would be a claim nobody can make.
+   *
+   * Each row therefore classifies ITS OWN FIXTURE, and the `.yml` row is the
+   * worked example — including the part that went wrong. It carries a
+   * WORKFLOW body, which Bun does refuse (verified: it fails on the YAML) and
+   * which the platform discovers by name, and on that pair of observations
+   * the row was filed `inert`. It is `runs` (r11): a workflow body is a
+   * sequence of bare shell lines under some YAML keys, and `bash D.YML`
+   * executes it — the key lines fail as commands, then the deploy runs. Two
+   * consumers ruled out is not every consumer, which is the same gap Bun
+   * exposed in the Node rows one round earlier.
+   *
+   * It has three positions because two could not hold the truth (r6):
+   *
+   *   'runs'    — something runs the file whatever it is called: `bash D.SH`,
+   *               `python D.PY`, `make -f D.MK`, or a person who reads
+   *               `RUNBOOK.MD` and copies the command out of it. An unsafe
+   *               deployment survives, so this is a genuine SILENT PASS and
+   *               its pin is titled as a wrong verdict.
+   *   'inert'   — nothing runs it under that name: a DISCOVERY BLIND SPOT,
+   *               pinned but not counted as a wrong verdict. DEFINED AND
+   *               CURRENTLY EMPTY, deliberately. Both examples this bullet
+   *               once gave were overturned — `node D.JS` does exit on the
+   *               unknown extension but `bun D.JS` runs it, and the workflow
+   *               engine does match only lower-case suffixes but `bash D.YML`
+   *               runs the body anyway. Occupying this state means ruling out
+   *               every interpreter that would accept the body, which is much
+   *               harder than it looks; see the partition guard.
+   *   'unknown' — the bypass is real and its cost is NOT ESTABLISHED. These
+   *               were filed as 'inert' when the field was a boolean, which
+   *               asserted something no fixture shows.
+   *
+   * The field PARTITIONS the pins, so a wrong declaration moves a family
+   * under a title claiming something different rather than costing nothing.
+   * What it cannot do is verify itself: the harness never executes a fixture,
+   * so each value rests on evidence gathered outside and recorded beside it.
+   * Do not let a new family default to whichever value makes the table tidy.
+   */
+  const WALK_HELPER_FAMILIES: ReadonlyArray<
+    readonly [
+      ext: string,
+      body: string,
+      dir: string,
+      upperCaseConsequence: 'runs' | 'inert' | 'unknown',
+    ]
+  > = [
+    ['ps1', SHELL_BODY, 'apps/agent', 'runs'],
+    ['cmd', SHELL_BODY, 'apps/agent', 'runs'],
+    ['bat', SHELL_BODY, 'apps/agent', 'runs'],
+    ['sh', SHELL_BODY, 'apps/agent', 'runs'],
+    ['bash', SHELL_BODY, 'apps/agent', 'runs'],
+    ['zsh', SHELL_BODY, 'apps/agent', 'runs'],
+    ['ksh', SHELL_BODY, 'apps/agent', 'runs'],
     // ESM: `.mjs`/`.mts` by extension, and `.js`/`.ts` because the seeded
-    // manifest below declares `"type": "module"` exactly as apps/agent does.
-    ['js', ARGV_ESM],
-    ['mjs', ARGV_ESM],
-    ['ts', ARGV_ESM],
-    ['mts', ARGV_ESM],
+    // manifest declares `"type": "module"` exactly as apps/agent does.
+    //
+    // 'runs', NOT 'inert' (r9). These six were filed as inert because `node
+    // D.JS` exits ERR_UNKNOWN_FILE_EXTENSION — which is true, and was only
+    // half the question. The guard itself models `(?:node|bun|tsx)` as ways a
+    // helper gets launched, and BUN RUNS ALL SIX REGARDLESS OF CASE: verified
+    // directly on Bun 1.3.11, every one of D.JS D.MJS D.TS D.MTS D.CJS D.CTS
+    // executing its body. So `bun D.JS` really does run an unsafe deploy that
+    // this check exits 0 on — a genuine silent pass, wrongly excluded from
+    // that class while I tested one runtime out of the three the guard names.
+    ['js', ARGV_ESM, 'apps/agent', 'runs'],
+    ['mjs', ARGV_ESM, 'apps/agent', 'runs'],
+    ['ts', ARGV_ESM, 'apps/agent', 'runs'],
+    ['mts', ARGV_ESM, 'apps/agent', 'runs'],
     // CommonJS by extension, whatever the manifest says.
-    ['cjs', ARGV_CJS],
-    ['cts', ARGV_CJS],
-    ['py', ARGV_PY],
-    ['mk', MAKE_BODY],
+    ['cjs', ARGV_CJS, 'apps/agent', 'runs'],
+    ['cts', ARGV_CJS, 'apps/agent', 'runs'],
+    ['py', ARGV_PY, 'apps/agent', 'runs'],
+    ['mk', MAKE_BODY, 'apps/agent', 'runs'],
+    ['md', RUNBOOK_BODY, 'apps/agent', 'runs'],
+    ['mdx', RUNBOOK_BODY, 'apps/agent', 'runs'],
+    // A workflow is only READ as one under this directory.
+    //
+    // 'runs', NOT 'inert' (r11), and the demonstration is worth keeping
+    // because it overturned the last classification I was confident in.
+    // A workflow body is a sequence of BARE SHELL LINES under some YAML
+    // keys, and bash executes a file whatever it is called: the key lines
+    // fail as commands, and then `wrangler deploy` runs.
+    //
+    //   bash D.YML               -> WRANGLER RAN (from the top directory)
+    //   bash -O lastpipe D.YML   -> WRANGLER RAN in apps/agent
+    //
+    // `lastpipe` only changes WHERE — it makes the `cd` in the piped
+    // `- run: |` line persist. The deploy runs either way, so the upper-case
+    // file is a genuine silent pass and the platform's name matching was
+    // never the only consumer that mattered.
+    ['yml', WORKFLOW_BODY, '.github/workflows', 'runs'],
+    ['yaml', WORKFLOW_BODY, '.github/workflows', 'runs'],
+    // THESE TWO PIN DISCOVERY ONLY, and the distinction is sharper than the
+    // Node one (r2). Their body is an inert `note` value, so the lower-case
+    // REPORT is itself #2119's false report — reading every scalar as a
+    // command. Skipping the upper-case file is therefore the CORRECT verdict
+    // for this particular input, not a harmful silent pass, and the pair must
+    // not be read as demonstrating one.
+    //
+    // What the pair does establish is the same discovery fact as everywhere
+    // else: the sweep yields one name and not the other. That is why they
+    // belong in this table and in the parity guard. A fixture showing a
+    // genuinely actionable file of this format bypassed — where the
+    // lower-case report would be CORRECT — is not available while
+    // value-by-value reading is itself the defect, so the harmful-consequence
+    // question for these two is OPEN, not answered here.
+    //
+    // ONE CONCRETE ROUTE HAS BEEN PROPOSED AND DOES NOT CLOSE IT (r12),
+    // recorded so it is not rediscovered as new. On a CASE-FOLDING checkout
+    // — Windows, or macOS at its default — `apps/agent/package.JSON` is what
+    // the package manager resolves when it looks up `package.json`, so
+    // `pnpm run deploy` would execute that manifest's `scripts.deploy`, while
+    // `readdirSync` reports the stored upper-case name and the sweep skips
+    // it. An actionable body and a real consumer, which is exactly what this
+    // row lacks.
+    //
+    // It fails on the SYMMETRY of the same folding, and that is the part
+    // worth keeping: `packageScripts(dir)` reads
+    // `<dir>/package.json` BY EXACT NAME through `readFileSync` rather than
+    // through the sweep, so on the very host where the package manager finds
+    // the upper-case manifest, so does the scanner — the manifest-script
+    // analysis is not bypassed there at all. Which way that lands depends on
+    // whether the file sits in the selected entry-point chain, and this
+    // harness cannot tell: it runs on a case-sensitive filesystem, where
+    // neither resolution happens. Filing the row `runs` on that route would
+    // assert a host property nobody here observed, which is the mistake the
+    // consequence field exists to prevent — the runner-lookup lesson one
+    // level out, with the filesystem in the runner's place.
+    ['json', JSON_VALUE_BODY, 'apps/agent', 'unknown'],
+    ['jsonc', JSON_VALUE_BODY, 'apps/agent', 'unknown'],
   ];
+
+  it('walk yields exactly these families — parity with EXTENSIONS (#2123 guard)', () => {
+    // THE LIST IS IMPORTED, NOT LOCATED (r7). Six versions of this guard tried
+    // to find the scanner's extension arrays by reading its source: a regex
+    // over quoted strings, then comment-stripping, then stripping trailing
+    // comments too, then evaluating the initialiser. Each fixed the previous
+    // corner and left a new one — quote style, then a commented-out
+    // `const EXTENSIONS = [...]` shadowing the live declaration, which the
+    // evaluator evaluated instead while the real array grew unchecked.
+    //
+    // Evaluation fixed value SPELLING and not declaration SELECTION, which is
+    // the same lesson one level in: reading text is not observing behaviour.
+    // So the values moved to a side-effect-free module and both sides import
+    // them. There is no longer a "list the test checks" and a "list the
+    // scanner reads" — it is one object, and this guard can only fail for the
+    // reason it exists.
+    const production = new Set(
+      [...SHELL_EXTENSIONS, ...EXTENSIONS].map((e) => e.replace(/^\./, '')),
+    );
+    const covered = new Set(WALK_HELPER_FAMILIES.map(([e]) => e));
+    const missing = [...production].filter((e) => !covered.has(e)).sort();
+    const extra = [...covered].filter((e) => !production.has(e)).sort();
+    expect(missing, `families in EXTENSIONS but not pinned: ${missing}`).toEqual(
+      [],
+    );
+    expect(extra, `families pinned but not in EXTENSIONS: ${extra}`).toEqual([]);
+  });
 
   /**
    * Run one family's helper with NO OTHER HELPER PRESENT.
@@ -12816,66 +13005,198 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     return r;
   };
 
-  it('EVERY executable helper family is skipped by the walk when upper-cased (#2123, stated false green)', () => {
-    // #2123 IS NOT ABOUT `.ps1`, not about three families, and not about
-    // shells. The gate is the shared case-sensitive extension test in `walk`,
-    // so it is about every family the walk is supposed to yield.
+  /**
+   * THE BYPASS IS THE CASE-SENSITIVE COMPARISON, NOT THE UPPER-CASE SPELLING
+   * (r12).
+   *
+   * The faulty gate is `entry.endsWith(e)` against a lower-case `e`, so EVERY
+   * spelling that is not exactly lower-case slips through — `D.Ps1` as surely
+   * as `D.PS1`. Pinning only what `toUpperCase()` produces would let a
+   * correction that admits the two tested spellings and nothing else pass
+   * every pin here while leaving the same silent pass for the rest, which is
+   * the enumeration trap this suite keeps walking into from the other side.
+   *
+   * So each family is pinned under BOTH spellings, derived rather than
+   * listed. Two is not "every spelling" — `2^n - 1` of them exist per family
+   * and no fixture set enumerates that — but the pair spans the distinction a
+   * fix must make: one is reachable by folding the whole name, the other only
+   * by comparing case-insensitively. A fix that normalises passes both; a fix
+   * that special-cases the upper-case form fails the second.
+   */
+  const BYPASS_SPELLINGS: ReadonlyArray<
+    readonly [label: string, spell: (ext: string) => string]
+  > = [
+    ['fully upper-case', (e) => e.toUpperCase()],
+    ['mixed-case', (e) => e[0].toUpperCase() + e.slice(1)],
+  ];
+
+  it('each family is pinned under two DISTINCT non-lower-case spellings (#2123 spelling guard)', () => {
+    // A single-character extension would collapse the pair into one spelling
+    // and halve the loops below without failing anything — the family would
+    // still be "covered twice", by the same name twice. Nothing in the type
+    // prevents such an extension being added upstream, and the parity guard
+    // would import it happily.
     //
-    // WHAT IS PINNED IS THE VERDICT: the file is never examined. The
-    // CONSEQUENCE differs by family and the distinction is recorded rather
-    // than smoothed over (r53).
-    //
-    //   - Shell families, `.py` and `.mk`: the interpreter does not care what
-    //     the file is called. `bash D.SH`, `python D.PY`, `make -f D.MK` all
-    //     run, so an unsafe deployment really does pass silently.
-    //   - The Node families: `node D.JS` does NOT run. It exits
-    //     `ERR_UNKNOWN_FILE_EXTENSION` before executing anything, for every
-    //     one of `.JS .MJS .TS .MTS .CJS .CTS` — verified on the Node in this
-    //     tree. So for those six, "an unsafe deployment passes silently"
-    //     overstates it: what is established is that the guard never looks at
-    //     the file, not that a deployment written there would run when
-    //     invoked by that name.
-    //
-    // They are pinned anyway, and not as a courtesy: the gate is SHARED, so a
-    // correction that special-cased the runnable families would leave these
-    // six unscanned — and a file the guard never opens is invisible for every
-    // purpose, not just for the deploy it might contain. What the pin must
-    // not do is claim a deployment that cannot happen, which is the
-    // right-verdict-impossible-premise trap this suite has now hit twice.
-    for (const [ext, body] of WALK_HELPER_FAMILIES) {
-      const r = runFamilyAlone(`apps/agent/D.${ext.toUpperCase()}`, body);
-      expect(r.ok, `.${ext.toUpperCase()} should be bypassed by the walk`).toBe(
-        true,
+    // The COUNT is asserted for the same reason the partition guard refuses a
+    // degenerate split: the distinctness check above is self-relative, so
+    // trimming the list back to the single fully-upper-case spelling would
+    // halve every loop below and leave all of them, and this guard, green.
+    expect(
+      BYPASS_SPELLINGS.length,
+      'spellings pinned per family',
+    ).toBeGreaterThan(1);
+    for (const [ext] of WALK_HELPER_FAMILIES) {
+      const spelled = BYPASS_SPELLINGS.map(([, s]) => s(ext));
+      expect(new Set(spelled).size, `.${ext} spellings collapsed: ${spelled}`).toBe(
+        BYPASS_SPELLINGS.length,
       );
+      for (const s of spelled) {
+        expect(s, `.${ext} spelling is not distinguishable from lower-case`).not.toBe(
+          ext,
+        );
+      }
     }
   });
+
+  // THE DECLARED CONSEQUENCE IS CONSUMED, NOT JUST DOCUMENTED (r4). The field
+  // was required by the type and read by nothing, so flipping a row changed no
+  // test — dead metadata wearing the shape of a check. It now PARTITIONS the
+  // pins, so a wrong declaration moves a family into a test that claims
+  // something different about it, and the partition guard below refuses a
+  // degenerate split.
+  //
+  // WHAT THIS CANNOT DO, stated because the gap is the whole lesson of this
+  // suite: the harness never executes a fixture, so nothing here can verify
+  // that `bash D.SH` runs or that `node D.JS` does not. The field is a
+  // DECLARATION resting on evidence gathered outside — each `false` above
+  // cites what was observed and where. Making it partition the pins is the
+  // strongest thing available: it cannot catch a wrong declaration, but it
+  // stops one being FREE, since the family then sits under a title asserting
+  // a consequence nobody checked. Treating that as verification would be the
+  // same mistake, one level up.
+  const RUNNABLE = WALK_HELPER_FAMILIES.filter(([, , , c]) => c === 'runs');
+  const INERT = WALK_HELPER_FAMILIES.filter(([, , , c]) => c === 'inert');
+  const UNKNOWN = WALK_HELPER_FAMILIES.filter(([, , , c]) => c === 'unknown');
+
+  it('the consequence partition covers every family and is not degenerate (#2123 partition guard)', () => {
+    // TWO CLASSES MUST STAY POPULATED; THE THIRD IS EMPTY AND THAT IS A
+    // FINDING, NOT AN OVERSIGHT (r11).
+    //
+    // r9 required all three non-empty, so that the published three-state
+    // claim could not regress unnoticed. r11 then emptied `inert` by showing
+    // that a workflow body runs under plain `bash` whatever the file is
+    // called — and the guard FAILED, which is what it was for: the state did
+    // not disappear quietly, it stopped the suite and forced this decision.
+    //
+    // The decision is to keep the state DEFINED and allow it to be EMPTY,
+    // because on the evidence so far it may be very hard to occupy. A file
+    // the sweep skips can nearly always be handed to `bash`, which ignores
+    // the name, fails on the lines that are not commands, and runs the ones
+    // that are. Establishing "nothing runs this" therefore means ruling out
+    // every interpreter that would accept the body — and this suite has now
+    // twice classified something as inert and been wrong, once via Bun and
+    // once via bash.
+    //
+    // So `inert` stays in the type as the honest place for a family that is
+    // ever shown to have no consumer, and nothing is filed under it today.
+    // `runs` and `unknown` must stay populated: emptying either would make
+    // the silent-pass pin or the undetermined pin claim nothing while
+    // running zero iterations.
+    expect(RUNNABLE.length, 'silent-pass families').toBeGreaterThan(0);
+    expect(UNKNOWN.length, 'undetermined families').toBeGreaterThan(0);
+    expect(RUNNABLE.length + INERT.length + UNKNOWN.length).toBe(
+      WALK_HELPER_FAMILIES.length,
+    );
+  });
+
+  // AN EXPLICIT TIMEOUT, because each of these spawns the guard once per
+  // family and vitest's default is 5 s (r4). Measured near 1.1 s here, but a
+  // loaded runner reproduced a timeout — and a timeout in THIS test reads as
+  // a deploy-guard regression rather than a slow machine, which is the
+  // expensive way to find out.
+  const FAMILY_TIMEOUT_MS = 60_000;
+
+  it('every family something STILL RUNS is skipped by the walk (#2123, stated false green)', () => {
+    // The genuine silent passes: `bash D.SH`, `python D.PY`, `make -f D.MK`,
+    // and a runbook a human reads and copies from. An unsafe deployment
+    // survives here, which is the direction this check must never fail in.
+    for (const [ext, body, dir] of RUNNABLE) {
+      for (const [label, spell] of BYPASS_SPELLINGS) {
+        const rel = `${dir}/D.${spell(ext)}`;
+        const r = runFamilyAlone(rel, body);
+        expect(r.ok, `${rel} (${label}) should be bypassed by the walk`).toBe(
+          true,
+        );
+      }
+    }
+  }, FAMILY_TIMEOUT_MS);
+
+  it('every family nothing runs is skipped too — discovery only (#2123)', () => {
+    // NOT titled as a wrong verdict, and CURRENTLY ITERATING NOTHING — the
+    // class is empty by decision, not by omission, and the partition guard
+    // above carries that decision rather than this comment restating it.
+    //
+    // The loop stays so the class has somewhere to land the day a family is
+    // genuinely shown to have no consumer. Two families sat here and left:
+    // the Node ones when Bun ran them (r9), the workflow ones when plain
+    // `bash` ran them (r11). Both had been filed on a real observation about
+    // a real consumer; what was missing each time was the next consumer. A
+    // row arriving here needs the negative across every interpreter that
+    // would accept its body, gathered outside this harness — there is no
+    // runner in here to try anything on.
+    for (const [ext, body, dir] of INERT) {
+      for (const [label, spell] of BYPASS_SPELLINGS) {
+        const rel = `${dir}/D.${spell(ext)}`;
+        const r = runFamilyAlone(rel, body);
+        expect(r.ok, `${rel} (${label}) should be bypassed by the walk`).toBe(
+          true,
+        );
+      }
+    }
+  }, FAMILY_TIMEOUT_MS);
+
+  it('families whose consequence is UNDETERMINED are skipped too — discovery only (#2123)', () => {
+    // A THIRD STATE, because a boolean could not hold it (r6). These two were
+    // filed under "nothing runs them", which their own fixture note and the
+    // release note both contradict: their body is inert, so the LOWER-CASE
+    // report is #2119's false report, and no fixture can show a genuinely
+    // actionable file of this format bypassed while value-by-value reading is
+    // itself the defect. So whether the bypass could ever hide a real
+    // deployment here is OPEN — not answered, and now not silently answered
+    // by a field with only two positions.
+    //
+    // The discovery fact still holds and is what this pins.
+    for (const [ext, body, dir] of UNKNOWN) {
+      for (const [label, spell] of BYPASS_SPELLINGS) {
+        const rel = `${dir}/D.${spell(ext)}`;
+        const r = runFamilyAlone(rel, body);
+        expect(r.ok, `${rel} (${label}) should be bypassed by the walk`).toBe(
+          true,
+        );
+      }
+    }
+  }, FAMILY_TIMEOUT_MS);
 
   it('the same bytes under each lower-case name ARE scanned (#2123 family control)', () => {
     // Load-bearing beyond the usual control role: it is what proves each pin
     // above fails for the EXTENSION and not for an unrecognised body — which
     // is only true while each iteration runs ALONE. See `runFamilyAlone`.
     //
-    // `ok: false` ALONE IS NOT ENOUGH HERE (r52). `runWith` maps EVERY
-    // `execFileSync` failure to `ok: false`, so a guard that CRASHED or timed
-    // out on one family would satisfy a bare `toBe(false)` — and the
-    // upper-case sibling could not catch it either, since its file is skipped
-    // before any family-specific processing could throw. Both tests would
-    // stay green while a lower-case helper broke the guard rather than being
-    // reported, which is the opposite of what this control claims to show.
-    //
-    // So it asserts the REPORT ITSELF: the violation banner, and the file at
-    // the line the deploy sits on. A crash produces neither.
-    for (const [ext, body] of WALK_HELPER_FAMILIES) {
-      const r = runFamilyAlone(`apps/agent/d.${ext}`, body);
+    // `ok: false` ALONE IS NOT ENOUGH HERE (r52 on #2105). `runWith` maps
+    // EVERY `execFileSync` failure to `ok: false`, so a guard that CRASHED on
+    // one family would satisfy a bare `toBe(false)`. So it asserts the REPORT
+    // ITSELF: the violation banner, and the offending path.
+    for (const [ext, body, dir] of WALK_HELPER_FAMILIES) {
+      const r = runFamilyAlone(`${dir}/d.${ext}`, body);
       expect(r.ok, `.${ext} should be scanned and reported`).toBe(false);
       expect(r.out, `.${ext} should produce a violation report`).toContain(
         'missing --keep-vars',
       );
       expect(r.out, `.${ext} should name the offending helper`).toContain(
-        `apps/agent/d.${ext}`,
+        `${dir}/d.${ext}`,
       );
     }
-  });
+  }, FAMILY_TIMEOUT_MS);
 
   it('a semicolon-terminated pwsh assignment is not recognised (#2124, stated miss)', () => {
     // A STATED MISS. A trailing `;` is an ordinary PowerShell statement

@@ -1,3 +1,30 @@
+# Release Notes — 2026-09-11
+
+Two entries, and between them they close nothing. A guard that must decide
+whether a deployment's checked-in configuration is the one that will actually
+load had three plausible ways to read the file more faithfully; all three were
+built and all three were withdrawn, along with two smaller corrections that
+looked obviously safe and regressed in opposite directions. What lands is the
+account of why none of them can work, the intent stated where it binds, and
+tests that assert the wrong answers the guard still gives — so that a later,
+correct fix fails them loudly instead of passing unnoticed.
+
+The first entry changed no executable code at all, and said so as a load-bearing
+claim. The second gives that claim up, deliberately and in one narrow place: a
+list of file suffixes moved into its own module so a test could import it rather
+than repeatedly failing to work it out from the source. Both entries are below,
+and the second explains why keeping the stronger claim would have meant keeping
+a check that could not do its job.
+
+The most transferable part is not about deployments at all. Each withdrawn
+design failed for the same reason: it asked a question about a file that only
+another system's execution model can answer — a continuous-integration
+system's, a document format's grammar, a build tool's variable language — while
+this check is a scanner. Where such a model is genuinely needed, the answer is
+a declaration from the thing being deployed, not a better approximation in the
+reader. That conclusion is now recorded as a requirement, and the gap between
+it and the current implementation is registered rather than quietly carried.
+
 ## Thread — three attempts at the deploy guard's rewrite question, all withdrawn (PR #2105)
 
 The deploy guard refuses to trust a configuration's checked-in contents when the
@@ -28,7 +55,7 @@ withdrawn under review.
 
 **What each cost, why none can be rebuilt, and the admissibility rule the
 rounds converged on are recorded once**, in
-[`DeployGuardRewriteScanRecord.md`](../../DesignsAndPlans/DeployGuardRewriteScanRecord.md).
+[`DeployGuardRewriteScanRecord.md`](../DesignsAndPlans/DeployGuardRewriteScanRecord.md).
 
 This section used to carry all of that in full. It was reduced to the table
 above because keeping it here meant a second copy of exactly the material whose
@@ -92,25 +119,37 @@ No behaviour change. The check's logic is what it was.
   case is not resolved, though the shell in question resolves it, so the
   deployment's directory reads as unknown; a binding closed with that shell's
   ordinary statement terminator is not recognised at all, with the same
-  consequence; and a helper whose file name carries an upper-case extension is
+  consequence; and a helper whose file name spells its extension in anything
+  but lower case is
   never FOUND by the sweep that discovers files to read — though one explicitly
   named by a file already being read is still opened, so the bypass is in the
   discovery and not in the reading — across EVERY executable family the sweep
-  is meant to yield, because the gate that skips them is shared.
+  is meant to yield, because the gate that skips them is shared, and under a
+  fully upper-case and a mixed-case spelling of each, because the gate compares
+  case-sensitively and a correction that merely admitted the upper-case form
+  would leave every other spelling exactly as it is.
 
-  **That last one carries a distinction the others do not, and it is the
-  difference between a silent pass and a blind spot.** For the shell families,
-  for Python and for a build fragment, the interpreter does not care what the
-  file is called, so a deployment written there really does run and really is
-  missed. For the six JavaScript and TypeScript spellings it does not: invoking
-  such a file by that name fails on the unknown extension before anything
-  executes. What is established for those six is that **the guard never
-  examines the file** — not that a deployment in it would have run. They are
-  pinned all the same, because the gate is shared and a fix aimed only at the
-  runnable families would leave them unexamined, and because a file the sweep
-  never opens is invisible for every purpose rather than only for a deployment.
-  Calling all fifteen a silent pass, as this paragraph did, claimed an outcome
-  that cannot occur for six of them.
+  **That last one carries a distinction the others do not, and getting it
+  right took four attempts.** Whether the bypass matters depends on whether
+  anything would run the file under that name — and that is a question about
+  the file's CONTENTS and every tool that might accept them, not about its
+  extension. Two families were filed as harmless on the strength of one
+  interpreter refusing them, and both turned out to be reachable by another:
+  one by a second JavaScript runtime the check itself already models, and one
+  by an ordinary shell, which ignores the name, fails on the lines that are
+  not commands, and runs the ones that are. For one format the question is
+  still open, because the report that would settle it is itself one of the
+  false reports catalogued here.
+
+  **Which family falls where is declared at the fixtures and deliberately not
+  listed here.** It was listed here, and the list went stale three times —
+  every family added changed the membership while the sentence did not. It is
+  now a required field on each fixture that partitions the tests, so a wrong
+  classification moves a family under a different claim rather than quietly
+  contradicting a paragraph. Every family is pinned whatever its state,
+  because the gate is shared: a fix aimed only at some of them would leave the
+  rest unexamined, and a file the sweep never opens is invisible for every
+  purpose rather than only for a deployment.
 
   **The rest fail the other way and assert the report**: a runbook sentence
   naming a write reports the deployment below it; a package manifest whose
@@ -213,7 +252,7 @@ specification — and the copies drifted exactly as the table's restatements had
 a scope correction reached two of them and not the third, leaving the
 specification prescribing a remedy that would have introduced a silent pass.
 The record now has one home,
-[`DeployGuardRewriteScanRecord.md`](../../DesignsAndPlans/DeployGuardRewriteScanRecord.md);
+[`DeployGuardRewriteScanRecord.md`](../DesignsAndPlans/DeployGuardRewriteScanRecord.md);
 the specification carries the binding invariants and nothing else; this note
 says what landed. That split is itself part of what landed, and it is the same
 lesson the three withdrawn designs taught, applied to the documents rather than
@@ -236,10 +275,10 @@ to the code.
 | **#2116** | a manifest script that invokes a sibling does not see that sibling's config write |
 | **#2121** | a script declared in a package manifest is never split at its newlines, so a safety flag on one line covers a deployment on another — *pinned (silent pass)*; the mirror of #2118 |
 | **#2122** | a variable whose name differs only in case is not resolved, though that shell resolves it, so the deployment's directory reads as unknown — *pinned (silent pass)* |
-| **#2123** | a helper whose file name carries an upper-case extension is never found by the sweep that discovers files to read — *pinned (silent pass)*, and the broadest of the three, since a file the sweep never yields is never examined at all — though one named explicitly by a file already being read IS opened, so the gap is in the discovery and not in the reading |
+| **#2123** | a file whose name spells its extension in anything but lower case is never found by the sweep that discovers files to read — *pinned*, table-driven across every family the sweep accepts and under two spellings of each, with a parity guard against the production list so the table cannot quietly become a subset again and a guard that refuses a single spelling. **Mixed consequence.** For all but one format it is a SILENT PASS: something runs the file whatever it is called, since a shell will execute the command lines of almost any text handed to it — which is how two families first classified as harmless turned out not to be. For one format the consequence is NOT ESTABLISHED, because the report that would demonstrate it is itself #2119. A third state, for a family shown to have no consumer at all, is defined and currently empty. Which family is where is declared at the fixtures, deliberately not restated here |
 | **#2124** | a binding closed with that shell's ordinary statement terminator is not recognised, so the deployment's directory reads as unknown — *pinned (silent pass)* |
 | **#2126** | the command-name normalisation is applied on the strength of the INTERPRETER alone, without establishing how the runner resolves command names — so where that lookup is case-SENSITIVE the normalised spelling names a program the runner does not have, and the check reports it — *pinned (false report)*. Stating this as interpreter-versus-platform, as this row did, does not describe the pinned report: a host on another platform may resolve case-insensitively, and there the normalisation is harmless and the #2115 miss is the real defect. What is missing is not a platform test but an established lookup mode. The check's own comment states this must not happen. A companion claim about the path-separator normalisation was withdrawn, and the withdrawal is narrower than "that rewrite is fine": what was checked is a path given to the SHELL'S OWN commands, which reads the same either way on every platform, so the report there is correct. The same documentation warns the alternate separator "may not work when used with native applications that only expect the native directory separator" — and a deployment command is a native application. Nothing pins that case, because nothing demonstrates it; it is an open question, not an approval |
-| **#2085** | **no longer an open question — an open implementation gap.** The specification now REQUIRES a declaration from the deployment wherever answering would need another system's execution model, and the check still infers, so this is required work rather than design exploration. The three withdrawals are the evidence that settled it; the divergence is registered in [`_CodeVsDocsAudit.md`](../../FunctionalSpecs/_CodeVsDocsAudit.md) as the principal one of this set |
+| **#2085** | **no longer an open question — an open implementation gap.** The specification now REQUIRES a declaration from the deployment wherever answering would need another system's execution model, and the check still infers, so this is required work rather than design exploration. The three withdrawals are the evidence that settled it; the divergence is registered in [`_CodeVsDocsAudit.md`](../FunctionalSpecs/_CodeVsDocsAudit.md) as the principal one of this set |
 
 This PR closes none of them.
 
@@ -249,3 +288,61 @@ continuous-integration system's execution model, a document format's grammar, a
 build tool's variable language — and this check is a scanner. Where such a model
 is genuinely needed, the answer is a declaration from the deployment itself
 rather than a better approximation here.
+<!-- assembled-fragment: 2084-deploy-guard-executable-image.md sha256=5269bf02e2af76f375f834350152591a348cf7adf891e3ad921911e720143754 -->
+
+## The deploy guard's extension list moved, so a test could stop guessing at it (PR #2132)
+
+No change to what the deploy guard does. The list of file suffixes its sweep
+opens now lives in its own small module, which the guard imports, and so does
+the test that checks the guard's fixtures cover every one of them.
+
+That sounds like tidying. It is the end of a six-round argument, and the reason
+is worth more than the change.
+
+### Why it moved
+
+A test pins the fixture table against the real list, so the table cannot
+quietly shrink to a subset of what the sweep accepts — a failure this work hit
+seven times. To do that the test had to know the real list, and the list lived
+inside the guard, which cannot be imported: it scans the tree and exits the
+moment it is loaded.
+
+So the test read the guard's SOURCE and tried to work the list out. Each
+version was wrong about membership in a new way, and each fix was the previous
+version with one more corner handled:
+
+1. Match the quoted suffixes — but a suffix merely named in a comment counted,
+   and a commented-out entry still counted.
+2. Strip comments — but only at the start of a line, so a trailing comment
+   still counted.
+3. Strip comments anywhere in the array — but only single-quoted suffixes were
+   matched, so a double-quoted or backtick-quoted addition was invisible.
+4. Evaluate the array instead of matching its text — which fixed every spelling
+   at once, and still picked the declaration by searching the file, so a
+   commented-out declaration placed above the real one was evaluated instead
+   while the real list grew unchecked.
+
+Each of those was found by someone deliberately trying to slip a change past
+the check, which is the only way this kind of hole gets found.
+
+### The conclusion, which is the same one this guard's own history keeps reaching
+
+**Reading text is not observing behaviour, and a narrower way of reading text
+is not a fix for that.** Six corners is not a nearly-finished pattern match; it
+is the wrong instrument being sharpened. The list is now exported and imported,
+so the test and the guard hold the same list rather than two readings of one
+file, and the check can only fail for the reason it exists.
+
+The values are unchanged, verified against the previous version character for
+character. What changed is where they live.
+
+### One claim this retires
+
+Earlier entries about this guard said its executable code was untouched — true,
+deliberate, and the basis for saying the work changed no behaviour. That is no
+longer true as of this change: two definitions moved out and one import moved
+in. The behaviour is intended to be identical and the test suite and both
+tree-wide guards agree, but the stronger claim has been given up on purpose,
+because keeping it meant keeping a check that six rounds had shown could not
+work.
+<!-- assembled-fragment: 2132-deploy-scan-extension-list.md sha256=6a6bbbd9726b54a01be855d4a6721068f84a81d69a3cd4099097153a36a87ac7 -->
