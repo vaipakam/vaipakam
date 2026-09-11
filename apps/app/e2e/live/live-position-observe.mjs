@@ -2134,7 +2134,21 @@ function watchPageHead(page) {
         }
         if (id !== null) {
           // Recorded for the unknown-chain gate, whichever chain it is.
-          observedPageChain.set(key, id);
+          //
+          // ROUND 79 P2 — AND A SECOND, DIFFERENT ANSWER IS A CONTRADICTION.
+          //
+          // `set` let a later reply overwrite an earlier one, so an
+          // endpoint that answered two different chains across two
+          // responses looked consistent to the gate — the same laundering
+          // round 52 closed for a single batch, arriving by a slower
+          // door. `CHAIN_ID_CONFLICT` is the value the gate already reads
+          // as "this endpoint cannot say", so recording it here needs no
+          // new vocabulary.
+          const prior = observedPageChain.get(key);
+          observedPageChain.set(
+            key,
+            prior !== undefined && prior !== id ? CHAIN_ID_CONFLICT : id,
+          );
           if (id === CHAIN_ID) {
             // ROUND 51 P2 — AND THE EXCLUSION IS PERMANENT, so this
             // cannot re-admit.
@@ -4651,15 +4665,56 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
           // intact: `<b>Loan</b>s` must not become `Loan s`. `inline-block` and
           // `contents` do not break, matching what `innerText` does; `<br>` does,
           // unless it is display:none.
-          const breaksLine = (el) => {
+          // ROUND 79 P2 — GEOMETRY DECIDES, not the child's `display` alone.
+          //
+          // A flex or grid ITEM is blockified, so `display` reads `block`
+          // while the items sit side by side on one rendered row. Breaking
+          // on that inserted a newline between, say, `Loan 100` and
+          // `USDC principal` — and `monetaryAmountsIn` reads a newline as a
+          // CLAUSE BOUNDARY, so the ticker stopped cancelling the identifier
+          // exemption and a visible unsubstantiated amount got a clean
+          // verdict. A false PASS on funds copy, from the fix that stopped a
+          // false FAIL on it one round earlier.
+          //
+          // Rects answer the question the rule is actually asking — did the
+          // lender see these on the same line? Two boxes whose vertical
+          // ranges OVERLAP are on one line whatever their display says, and
+          // a box below the previous one starts a new line whatever the
+          // parent's formatting context is. That also covers a column flex,
+          // a wrapped row and a multi-row grid, which a parent-display test
+          // would each get wrong.
+          //
+          // `display` is still consulted FIRST, as the cheap negative: an
+          // inline element never breaks, which is what keeps a bolded word
+          // from becoming two. Zero-area boxes fall back to the display
+          // rule, since a rect of nothing cannot place anything.
+          const breaksLine = (el, prev) => {
             const d = getComputedStyle(el).display;
-            return d !== 'contents' && !d.startsWith('inline') && !d.startsWith('ruby');
+            if (d === 'contents' || d.startsWith('inline') || d.startsWith('ruby')) return false;
+            if (!prev) return true;
+            const a = el.getBoundingClientRect();
+            const b = prev.getBoundingClientRect();
+            if (a.height === 0 || b.height === 0) return true;
+            return !(a.top < b.bottom && b.top < a.bottom);
           };
+          // `prevBox` is the last element that actually laid a box down, so
+          // adjacency is judged against what was rendered before this
+          // child rather than against its parent.
+          let prevBox = null;
           const walk = (node) => {
             const ownPainted = paintsText(node);
             for (const child of node.childNodes) {
               if (child.nodeType === 3) {
-                if (ownPainted) parts.push(child.textContent);
+                // ROUND 79 P2 — SOURCE WHITESPACE IS NOT A RENDERED BREAK.
+                //
+                // A text node between two elements carries the markup's own
+                // indentation, newlines included, and the normalisation
+                // below deliberately preserves newlines — so the way the
+                // HTML happened to be formatted leaked in as a clause
+                // boundary. Collapsed here instead: a break comes from
+                // layout, which is `breaksLine` and `<br>`, and never from
+                // how the source was typed.
+                if (ownPainted) parts.push(child.textContent.replace(/\s+/g, ' '));
               } else if (child.nodeType === 1) {
                 if (unpainted.test(child.tagName)) continue;
                 if (child.tagName === 'BR') {
@@ -4667,10 +4722,10 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
                   continue;
                 }
                 if (!shownBox(child)) continue;
-                const boundary = breaksLine(child);
+                const boundary = breaksLine(child, prevBox);
                 if (boundary) parts.push('\n');
+                prevBox = child;
                 walk(child);
-                if (boundary) parts.push('\n');
               }
             }
           };
@@ -6257,15 +6312,21 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
               // intact: `<b>Loan</b>s` must not become `Loan s`. `inline-block` and
               // `contents` do not break, matching what `innerText` does; `<br>` does,
               // unless it is display:none.
-              const breaksLine = (el) => {
+              const breaksLine = (el, prev) => {
                 const d = getComputedStyle(el).display;
-                return d !== 'contents' && !d.startsWith('inline') && !d.startsWith('ruby');
+                if (d === 'contents' || d.startsWith('inline') || d.startsWith('ruby')) return false;
+                if (!prev) return true;
+                const a = el.getBoundingClientRect();
+                const b = prev.getBoundingClientRect();
+                if (a.height === 0 || b.height === 0) return true;
+                return !(a.top < b.bottom && b.top < a.bottom);
               };
+              let prevBox = null;
               const walk = (node) => {
                 const ownPainted = paintsText(node);
                 for (const child of node.childNodes) {
                   if (child.nodeType === 3) {
-                    if (ownPainted) parts.push(child.textContent);
+                    if (ownPainted) parts.push(child.textContent.replace(/\s+/g, ' '));
                   } else if (child.nodeType === 1) {
                     if (unpainted.test(child.tagName)) continue;
                     if (child.tagName === 'BR') {
@@ -6273,10 +6334,10 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
                       continue;
                     }
                     if (!shownBox(child)) continue;
-                    const boundary = breaksLine(child);
+                    const boundary = breaksLine(child, prevBox);
                     if (boundary) parts.push('\n');
+                    prevBox = child;
                     walk(child);
-                    if (boundary) parts.push('\n');
                   }
                 }
               };
@@ -7734,10 +7795,24 @@ const readyFirst = walkOrderFor({
   acceptsCloseOut,
 });
 if (acceptsCloseOut.size > 0) {
+  // ROUND 79 P2 — SAY WHAT THIS RUN ACTUALLY DID.
+  //
+  // The message claimed the probe ran "across every authority" and
+  // decided "which lender is observed". Once `OBSERVE_ADDRESS` narrows
+  // the pre-pass (round 78) both claims are false in that mode: the
+  // lender was fixed by the override before any probing, and only that
+  // lender's loans were probed. A run report that overstates what it
+  // covered is the same defect as a verdict that does, one layer out.
+  const scoped = process.env.OBSERVE_ADDRESS !== undefined;
   console.log(
-    `\nresolved close-out capability on ${acceptsCloseOut.size} position(s) across every authority` +
-      `\n  → ${mine.length} eligible loan(s) here against a cap of ${MAX_POSITIONS}, so this decides both ` +
-      `which lender is observed and whether the confirmation can be scanned at all.` +
+    `\nresolved close-out capability on ${acceptsCloseOut.size} position(s)` +
+      (scoped
+        ? ` held by the requested lender` +
+          `\n  → the lender was fixed by OBSERVE_ADDRESS, so this decides the visit ORDER only.`
+        : ` across every authority` +
+          `\n  → this decides both which lender is observed and, within that lender, the visit order.`) +
+      `\n  → ${mine.length} eligible loan(s) here against a cap of ${MAX_POSITIONS}, so the order decides ` +
+      `whether the confirmation can be scanned at all.` +
       `\n  → ordering only: the protocol accepting is not the card offering it, and no verdict reads this.`,
   );
 }
@@ -8063,6 +8138,51 @@ if (malformedRpc.length) {
 // explicitly — not defaulted — so a fail added later has to state
 // whether it was READ or INFERRED instead of inheriting whichever
 // default happened to be there.
+// ROUND 79 P2 — AND THE PROMOTION COVERS EVERY DEFECT THE SURFACE ITSELF
+// SHOWED, not only the forced-close card's.
+//
+// Round 78 tagged each problem `observed` or `absence`, and used the tags
+// only at the unknown-chain gate. So a dead Advanced anchor or a
+// mis-ordered row — read off a page that rendered — was still swallowed
+// by the route, WebSocket, wrong-chain and allowlist blockers as "nothing
+// was learned", which is round 38's finding surviving in every guard it
+// was not applied to.
+//
+// NOT EVERY `observed` TAG IS PROMOTED, and the line is deliberate rather
+// than convenient. The tags answer "could an unknown CHAIN explain this";
+// promotion answers the harder "could a blocked REQUEST explain this".
+// Those differ:
+//
+//   promoted   a dead jump anchor, a mis-ordered row, and the card's own
+//              observed findings — DOM facts about a page that rendered.
+//              A refused RPC does not reorder static markup or rebind a
+//              button to another anchor.
+//   not        a hooks-order crash, an uncaught page error, a nav failure
+//              or a non-2xx. Every one of those is a plausible CONSEQUENCE
+//              of the drive's own allowlist refusing a request, and round
+//              69 added the allowlist gate precisely because this drive
+//              can break the page it is judging. Promoting them would
+//              blame the product for the harness.
+//
+// So the residual is a real defect reported as BLOCKED on a run that also
+// had a transport failure — loud, re-runnable, and the direction this
+// file chooses every time.
+const PROMOTED_OBSERVED = /did not reach its own anchor|is NOT first on the lender card/;
+const observedNow = visited.flatMap((v) =>
+  visitProblemKinds(v, ROLE)
+    .filter((pr) => pr.kind === 'observed' && PROMOTED_OBSERVED.test(pr.why))
+    .map((pr) => ({ path: v.path, why: pr.why })),
+);
+if (observedNow.length) {
+  console.log(
+    `\n${observedNow.length} defect(s) were READ off a page that rendered.` +
+      ` Reported ahead of any infrastructure blocker, for the reason the` +
+      ` forced-close findings are: a blocked request does not reorder` +
+      ` static markup or rebind a control to another anchor.`,
+  );
+  observedNow.forEach(({ path, why }) => console.log(`  ${path}: ${why}`));
+  process.exit(1);
+}
 const fcObserved = visited
   .map((v) => ({ path: v.path, fc: v.forcedCloseVerdict }))
   .filter(({ fc }) => fc && fc.verdict === 'fail' && fc.failKind === 'observed');
@@ -8130,10 +8250,27 @@ const pageChainWrong = [];
 // third asserts nothing.
 const pageChainUnknown = [];
 for (const [url, probe] of pageRpcChain) {
-  // The synthetic probe FIRST, then what the page's own traffic already
-  // disclosed for the same endpoint (round 78). Either establishes the
-  // chain; only the absence of both leaves it unknown.
-  const served = (await probe) ?? observedPageChain.get(url) ?? null;
+  // ROUND 79 P2 — TWO SOURCES THAT DISAGREE ESTABLISH NOTHING.
+  //
+  // Round 78 preferred the synthetic probe and fell back to the page's
+  // own traffic, which quietly discarded a CONTRADICTION: a synthetic
+  // reply of the expected chain beside captured traffic reporting another
+  // one was accepted, and an inferred missing-surface finding could then
+  // exit 1 against the product on an endpoint that had contradicted
+  // itself. Round 52 settled this for one batch — an endpoint giving two
+  // answers can be relied on for neither — and the rule does not weaken
+  // because the two answers arrived through different doors.
+  //
+  // So: agree, or one source alone, establishes the chain. Disagreement,
+  // and a self-contradicting capture, are UNKNOWN — which the gate below
+  // already treats as a reason to withhold an inference rather than to
+  // accuse the page.
+  const synthetic = await probe;
+  const captured = observedPageChain.get(url);
+  const conflicted =
+    captured === CHAIN_ID_CONFLICT ||
+    (synthetic !== null && captured !== undefined && synthetic !== captured);
+  const served = conflicted ? null : (synthetic ?? captured ?? null);
   if (served === null) {
     pageChainUnknown.push(redact(url).slice(0, 120));
   } else if (served !== CHAIN_ID) {

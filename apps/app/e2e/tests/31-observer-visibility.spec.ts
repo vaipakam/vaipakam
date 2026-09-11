@@ -548,13 +548,23 @@ test('a receipt row with a blank label is not a readable row', async ({ page }) 
   // (`<b>Loan</b>s`) does not become `Loan s` when compared against
   // shipped copy with `includes`.
   //
-  // ROUND 74 P2 — but a LINE BREAK survives. `dt` and `dd` are separate
-  // boxes, so `innerText` puts them on separate lines, and round 24 made
-  // that newline a clause boundary the amount scanner relies on: without
-  // it a duration on one line and a ticker on the next read as one
-  // clause and produced a false funds FAIL. This assertion said
-  // `—2% of interest` until the boundary came back.
-  expect(result.fillerRowPaintedText, 'the painted runs, joined').toBe('—\n2% of interest');
+  // ROUND 74 P2 — a rendered LINE BREAK survives the join, because round
+  // 24 made that newline a clause boundary the amount scanner relies on:
+  // without it a duration on one line and a ticker on the next read as
+  // one clause and produced a false funds FAIL.
+  //
+  // ROUND 79 P2 — AND THIS ROW IS NOT A LINE BREAK. Round 74 decided
+  // breaks from the child's `display`, which reads `block` for a flex or
+  // grid ITEM even though the items sit side by side; that inserted a
+  // boundary between a label and its value and stopped the ticker
+  // qualifying the number beside it — a false PASS on funds copy, from
+  // the fix for a false FAIL on it. Breaks now come from GEOMETRY, and
+  // these two boxes overlap vertically, so the row is one clause again.
+  //
+  // The value below therefore went `—2% of interest` → `—\n2% of
+  // interest` → `—2% of interest` across two rounds. Recorded rather than
+  // quietly restored: the second change was mine and wrong.
+  expect(result.fillerRowPaintedText, 'the painted runs, joined').toBe('—2% of interest');
   expect(result.fillerRowPaintedText, 'and NOT the erased label').not.toContain('Fees');
   expect(result.fillerRowInnerText, 'while innerText still carries it').toContain('Fees');
 
@@ -695,6 +705,25 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
            two words and stops matching shipped copy. -->
       <div class="body" id="inlineSplit"><b>Loan</b>s are closed out</div>
       <div class="body" id="withBreak">Wait 3 days<br>USDC is returned later</div>
+      <!-- ROUND 79 P2 — flex and grid ITEMS are blockified, so their
+           computed display reads as block while they sit side by side on
+           one rendered row. Inserting a break here stopped the ticker
+           qualifying the number beside it and let a visible
+           unsubstantiated amount pass. -->
+      <div class="body" id="flexRow" style="display:flex; gap:4px">
+        <span style="display:block">Loan 100</span>
+        <span style="display:block">USDC principal</span>
+      </div>
+      <div class="body" id="gridRow" style="display:grid; grid-template-columns:auto auto; gap:4px">
+        <span style="display:block">Loan 100</span>
+        <span style="display:block">USDC principal</span>
+      </div>
+      <!-- A COLUMN flex really is two lines, which a parent-display test
+           would have got wrong and geometry gets right. -->
+      <div class="body" id="flexColumn" style="display:flex; flex-direction:column">
+        <span style="display:block">Wait 3 days</span>
+        <span style="display:block">USDC is returned later</span>
+      </div>
       <!-- ROUND 75 P2 — a transparent FILL is not the only way glyphs get
            painted: a text-shadow draws them, and so does a paint-order
            stroke. Condemning either accuses copy the lender can read. -->
@@ -763,6 +792,9 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
         // ROUND 74 P2 — rendered line boundaries survive, inline runs do
         // not gain one.
         twoLinesPaintedText: scope.visibleTextOf(byId('twoLines')),
+        flexRowPaintedText: scope.visibleTextOf(byId('flexRow')),
+        gridRowPaintedText: scope.visibleTextOf(byId('gridRow')),
+        flexColumnPaintedText: scope.visibleTextOf(byId('flexColumn')),
         shadowPaintedText: scope.visibleTextOf(byId('shadowPainted')),
         strokePaintedText: scope.visibleTextOf(byId('strokePainted')),
         noShadowPaintedText: scope.visibleTextOf(byId('noShadow')),
@@ -889,6 +921,28 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
     'Loans are closed out',
   );
   expect(result.withBreakPaintedText, 'a <br> breaks the line').toBe(
+    'Wait 3 days\nUSDC is returned later',
+  );
+
+  // ROUND 79 P2 — adjacency comes from GEOMETRY, not the child's display.
+  //
+  // Flex and grid items are blockified, so a display-based rule inserted
+  // a clause boundary between two halves of one rendered row — which is
+  // how a visible unsubstantiated amount could pass, the ticker no longer
+  // sitting in the same clause as the number. The column case is the
+  // control: it IS two lines, and a parent-display test would have called
+  // it one.
+  // The separating SPACE is the markup's own indentation, collapsed the
+  // way the browser collapses it — not a break. Before round 79 that
+  // whitespace carried the source's newlines straight through, so how the
+  // HTML happened to be typed decided where a clause ended.
+  expect(result.flexRowPaintedText, 'a flex row is one clause').toBe(
+    'Loan 100 USDC principal',
+  );
+  expect(result.gridRowPaintedText, 'and so is a grid row').toBe(
+    'Loan 100 USDC principal',
+  );
+  expect(result.flexColumnPaintedText, 'but a column really is two lines').toBe(
     'Wait 3 days\nUSDC is returned later',
   );
 

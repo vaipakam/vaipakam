@@ -48,6 +48,7 @@ describe('a funds defect that was READ outranks every blocker', () => {
   const at = (needle) => src.indexOf(needle);
 
   const FORCED_CLOSE_EXIT = 'if (fcObserved.length) {';
+  const OBSERVED_NOW_EXIT = 'if (observedNow.length) {';
   const ROUTE_EXIT = 'if (routeFailures.length) {';
   const WS_EXIT = 'if (wsRpcMethods.size) {';
   const CHAIN_EXIT = 'if (pageChainWrong.length) {';
@@ -62,6 +63,7 @@ describe('a funds defect that was READ outranks every blocker', () => {
     // caught by twice.
     for (const [name, needle] of [
       ['forced-close', FORCED_CLOSE_EXIT],
+      ['page-read defects', OBSERVED_NOW_EXIT],
       ['route failures', ROUTE_EXIT],
       ['websocket RPC', WS_EXIT],
       ['wrong chain', CHAIN_EXIT],
@@ -70,6 +72,33 @@ describe('a funds defect that was READ outranks every blocker', () => {
     ]) {
       expect(at(needle), `${name} guard not found in the drive`).toBeGreaterThan(-1);
     }
+  });
+
+  // ROUND 79 P2 — and the promotion is not the card's alone.
+  //
+  // Round 78's tags were used only at the unknown-chain gate, so a dead
+  // anchor or a mis-ordered row was still swallowed by the route,
+  // WebSocket, wrong-chain and allowlist blockers — round 38's finding
+  // surviving in every guard it had not been applied to.
+  it('promotes page-read defects ahead of the transport blocker too', () => {
+    expect(at(OBSERVED_NOW_EXIT)).toBeGreaterThan(-1);
+    expect(at(OBSERVED_NOW_EXIT)).toBeLessThan(at(ROUTE_EXIT));
+    expect(at(OBSERVED_NOW_EXIT)).toBeLessThan(at(WS_EXIT));
+    expect(at(OBSERVED_NOW_EXIT)).toBeLessThan(at(CHAIN_EXIT));
+  });
+
+  it('promotes only defects a blocked request cannot explain', () => {
+    // The tags answer "could an unknown CHAIN explain this"; promotion
+    // answers "could a blocked REQUEST explain this". A hooks crash, an
+    // uncaught error and a nav failure are all plausible consequences of
+    // this drive's own allowlist refusing something, so they stay behind
+    // the blockers — round 69 added that gate because the drive can break
+    // the page it is judging.
+    const decl = src.slice(at('const PROMOTED_OBSERVED ='), at(OBSERVED_NOW_EXIT));
+    expect(decl).toContain('did not reach its own anchor');
+    expect(decl).toContain('is NOT first on the lender card');
+    expect(decl).not.toContain('HOOKS-ORDER');
+    expect(decl).not.toContain('uncaught');
   });
 
   it('reports the observed defect before the transport blocker', () => {
