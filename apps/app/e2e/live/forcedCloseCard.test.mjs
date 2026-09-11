@@ -5507,3 +5507,109 @@ describe('round 67 review findings', () => {
     });
   });
 });
+
+describe('the heading/body contradiction is judged on every render', () => {
+  // SELF-REVIEW of the round-67 arm, checked proactively rather than
+  // waiting for the next round to point at the parallel site — which is
+  // this PR's single most frequent finding.
+  //
+  // A transient mismatch here IS a real one, and that is not the general
+  // rule in this file: round 10 forgives a transiently disabled control,
+  // because that is a legitimate intermediate state. This pair is
+  // different. `ForcedCloseCard` derives the heading and the body from
+  // ONE `view` in ONE render, so they cannot legitimately disagree even
+  // for a frame.
+  const copy = {
+    unknownCopy: FORCED_CLOSE.unknown,
+    notYetCopy: FORCED_CLOSE.notYet,
+    overdueTitleCopy: FORCED_CLOSE.title,
+    pendingTitleCopy: FORCED_CLOSE.titlePending,
+    readyCopy: [FORCED_CLOSE.readyInKind, FORCED_CLOSE.readyInternalMatch, FORCED_CLOSE.readyRental],
+    recognisedCopy: [FORCED_CLOSE.unknown, FORCED_CLOSE.notYet, FORCED_CLOSE.readyInKind],
+  };
+  const settled = {
+    lenderHoldsActive: true,
+    mounted: true,
+    attached: true,
+    submitPresent: true,
+    submitVisible: true,
+    submitDisabled: true,
+    visibleSubmits: 1,
+    visibleCards: 1,
+    saleLocked: false,
+    settled: true,
+    bodyPresent: true,
+    bodyVisible: true,
+    confirmExpected: false,
+    confirmText: null,
+    defaultable: false,
+    defaultableBefore: false,
+    // The settled render is consistent — heading and body agree.
+    text: `${FORCED_CLOSE.titlePending} ${FORCED_CLOSE.notYet}`,
+    visibleText: `${FORCED_CLOSE.titlePending} ${FORCED_CLOSE.notYet}`,
+    bodyText: FORCED_CLOSE.notYet,
+    bodyVisibleText: FORCED_CLOSE.notYet,
+  };
+
+  it('reports a contradiction seen only in an EARLIER render', () => {
+    const v = forcedCloseVerdict(
+      {
+        ...settled,
+        seenRenders: [
+          {
+            text: `${FORCED_CLOSE.title} ${FORCED_CLOSE.notYet}`,
+            visibleText: `${FORCED_CLOSE.title} ${FORCED_CLOSE.notYet}`,
+            bodyText: FORCED_CLOSE.notYet,
+            bodyVisibleText: FORCED_CLOSE.notYet,
+            submitVisible: true,
+            submitDisabled: true,
+          },
+        ],
+      },
+      copy,
+    );
+    expect(v.verdict).toBe('fail');
+    expect(v.why).toMatch(/both on screen, disagreeing/);
+  });
+
+  it('says nothing when every render agrees', () => {
+    const v = forcedCloseVerdict(
+      {
+        ...settled,
+        seenRenders: [
+          {
+            text: `${FORCED_CLOSE.titlePending} ${FORCED_CLOSE.unknown}`,
+            visibleText: `${FORCED_CLOSE.titlePending} ${FORCED_CLOSE.unknown}`,
+            bodyText: FORCED_CLOSE.unknown,
+            bodyVisibleText: FORCED_CLOSE.unknown,
+            submitVisible: true,
+            submitDisabled: true,
+          },
+        ],
+      },
+      copy,
+    );
+    expect(v.why ?? '').not.toMatch(/both on screen, disagreeing/);
+  });
+
+  it('judges an earlier render on its PAINTED text', () => {
+    // A heading erased in that render's DOM was never shown either.
+    const v = forcedCloseVerdict(
+      {
+        ...settled,
+        seenRenders: [
+          {
+            text: `${FORCED_CLOSE.title} ${FORCED_CLOSE.notYet}`,
+            visibleText: FORCED_CLOSE.notYet,
+            bodyText: FORCED_CLOSE.notYet,
+            bodyVisibleText: FORCED_CLOSE.notYet,
+            submitVisible: true,
+            submitDisabled: true,
+          },
+        ],
+      },
+      copy,
+    );
+    expect(v.why ?? '').not.toMatch(/both on screen, disagreeing/);
+  });
+});

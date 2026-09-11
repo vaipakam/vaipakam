@@ -2312,6 +2312,18 @@ export function forcedCloseVerdict(obs, copy) {
   // Both headings must be DISTINGUISHABLE and the card must paint
   // exactly one of them; anything else is not a comparison this can make.
   // `observed`, because both halves are read off the page.
+  //
+  // JUDGED ON EVERY RENDER THIS DRIVE READ, not only the settled one —
+  // checked proactively rather than waiting for the next round to point
+  // at the parallel site, which is this PR's most frequent finding.
+  //
+  // A transient mismatch here is a real one, and that is NOT the general
+  // rule in this file: round 10 forgives a transiently disabled control
+  // because it is a legitimate intermediate state. This pair is
+  // different. `ForcedCloseCard` derives the heading and the body from
+  // ONE `view` in ONE render, so they cannot legitimately disagree even
+  // for a frame; any render showing both is a contradiction the lender
+  // was shown.
   if (
     typeof copy?.overdueTitleCopy === 'string' &&
     typeof copy?.pendingTitleCopy === 'string' &&
@@ -2319,28 +2331,35 @@ export function forcedCloseVerdict(obs, copy) {
     copy.pendingTitleCopy !== '' &&
     copy.overdueTitleCopy !== copy.pendingTitleCopy
   ) {
-    const headText = obs.visibleText ?? obs.text ?? '';
-    const saysOverdue = headText.includes(copy.overdueTitleCopy);
-    const saysPending = headText.includes(copy.pendingTitleCopy);
-    if (saysOverdue !== saysPending) {
-      const bodySaysNotYet = paints(copy?.notYetCopy);
-      const bodySaysReady =
-        Array.isArray(copy?.readyCopy) && copy.readyCopy.some((sentence) => paints(sentence));
-      if (bodySaysNotYet && saysOverdue) {
-        return {
-          verdict: 'fail',
-          failKind: 'observed',
-          why: 'the card is headed "this loan is overdue" while its body says the borrower still has time — two statements about the same deadline, both on screen, disagreeing',
-        };
+    const headingFault = (cardText, bodyText) => {
+      const head = cardText ?? '';
+      const saysOverdue = head.includes(copy.overdueTitleCopy);
+      const saysPending = head.includes(copy.pendingTitleCopy);
+      // Exactly one heading painted, or there is no comparison to make.
+      if (saysOverdue === saysPending) return null;
+      const body = bodyText ?? cardText ?? '';
+      const has = (sentence) =>
+        typeof sentence === 'string' && sentence !== '' && body.includes(sentence);
+      if (has(copy?.notYetCopy) && saysOverdue) {
+        return 'the card is headed "this loan is overdue" while its body says the borrower still has time — two statements about the same deadline, both on screen, disagreeing';
       }
-      if (bodySaysReady && saysPending) {
-        return {
-          verdict: 'fail',
-          failKind: 'observed',
-          why: 'the card offers a close-out that is ready while its heading still says the loan is only approaching its deadline — two statements about the same deadline, both on screen, disagreeing',
-        };
+      if (
+        saysPending &&
+        Array.isArray(copy?.readyCopy) &&
+        copy.readyCopy.some((sentence) => has(sentence))
+      ) {
+        return 'the card offers a close-out that is ready while its heading still says the loan is only approaching its deadline — two statements about the same deadline, both on screen, disagreeing';
       }
-    }
+      return null;
+    };
+    const why =
+      headingFault(obs.visibleText ?? obs.text, obs.bodyVisibleText ?? obs.bodyText) ??
+      (Array.isArray(obs.seenRenders)
+        ? obs.seenRenders
+            .map((r) => headingFault(r?.visibleText ?? r?.text, r?.bodyVisibleText ?? r?.bodyText))
+            .find((hit) => hit)
+        : undefined);
+    if (why) return { verdict: 'fail', failKind: 'observed', why };
   }
 
   // ROUND 65 P2 — AND THE REVERSE DIRECTION, which nothing checked.
