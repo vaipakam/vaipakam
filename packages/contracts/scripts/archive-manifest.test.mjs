@@ -413,3 +413,12 @@ test('no process group, no marker and no --force: live-begin refuses a pid it ca
   // the matching token still ends it normally: the protocol's own path needs no proof of death
   assert.equal(endLivePublication(manifest, { slug: 'n', token: 'old', diamond: '0x' }) > 0, true);
 });
+
+test('entry equality covers the provenance fields: a different facet set or deploy time is a different entry, order of facets is not (#2095 r11 P2)', async () => {
+  const { sameEntry } = await import('./archive-manifest.mjs');
+  const base = { slug: 'a', stamp: 's', chainId: 1, diamond: '0x1', deployBlock: 5, vpfiToken: '0x2', deployedAt: '1-unix', facets: ['0xAA', '0xbb'] };
+  assert.equal(sameEntry(base, { ...base, facets: ['0xBB', '0xaa'] }), true, 'facets compare as a set, case-insensitively');
+  assert.equal(sameEntry(base, { ...base, facets: ['0xaa'] }), false, 'a missing facet is a difference');
+  assert.equal(sameEntry(base, { ...base, deployedAt: '2-unix' }), false, 'a different deploy time is a difference');
+  assert.equal(sameEntry({ ...base, facets: undefined }, { ...base, facets: [] }), true, 'absent and empty facet sets are the same');
+});

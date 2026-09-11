@@ -1,0 +1,33 @@
+{
+  "derivedFrom": "vm.record/vm.accesses over LibVaipakam.storageSlot() reads, and storage-pointer .slot for mappings",
+  "example": {
+    "borrowerLifRebateRebateAmount": "0x6b0ece44f0ed86ec5928d05e01a166ebdf56f00247de09d2952c7c432a912763",
+    "borrowerLifRebateVpfiHeld": "0x6b0ece44f0ed86ec5928d05e01a166ebdf56f00247de09d2952c7c432a912762",
+    "fallbackSnapshotActive": "0x1637e970a6873756930fee0c9da9f3d9111c9e979741250947376de355cfc4e2",
+    "intentCommitsOrderHash": "0x702582e0ca4a0086c750599e52c529f87ae10f054263c95ff713e008b9e4579c",
+    "loanId": 1
+  },
+  "fields": {
+    "borrowerLifRebate": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10e89",
+    "fallbackSnapshot": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10e2d",
+    "intentCommits": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10ec2",
+    "intentLiveCommitCount": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10ec1",
+    "nextLoanId": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10e01",
+    "totalLoansEverCreated": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10e56"
+  },
+  "purpose": "Absolute storage slots the grandfathered-custody census reads where a Diamond routes no getter (#1566, design section 7). Written by forge script script/StorageSlotProbe.s.sol from the compiler's own loads; pinned by test/deploy/StorageSlotPinTest. Never hand-edit.",
+  "rowLayout": {
+    "borrowerLifRebate.rebateAmount": 1,
+    "borrowerLifRebate.vpfiHeld": 0,
+    "fallbackSnapshot.activeAndRetryAttempted": 5,
+    "fallbackSnapshot.borrowerCollateral": 2,
+    "fallbackSnapshot.lenderCollateral": 0,
+    "fallbackSnapshot.lenderPrincipalDue": 3,
+    "fallbackSnapshot.treasuryCollateral": 1,
+    "fallbackSnapshot.treasuryPrincipalDue": 4,
+    "intentCommits.orderHash": 0
+  },
+  "rowSlot": "keccak256(abi.encode(uint256 loanId, bytes32 mappingSlot)) + memberOffset",
+  "storagePosition": "0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10e00",
+  "storagePositionDerivation": "keccak256(abi.encode(uint256(keccak256(\"vaipakam.storage\")) - 1)) & ~bytes32(uint256(0xff))  (ERC-7201)"
+}

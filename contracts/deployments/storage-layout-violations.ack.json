@@ -1,0 +1,401 @@
+{
+  "purpose": "Acknowledged storage-layout changes (#2092): each forbidden change event \u2014 an insertion, removal, retype or namespace change in LibVaipakam.Storage or a row struct, or an append inside a footprint-bearing inline struct \u2014 keyed by its CONTENT (struct|kind|index|before|after), which a squash merge preserves where a commit id is rewritten. The walker (storage-layout-provenance.mjs --ack) fails CI on any forbidden change NOT listed here. Acknowledging one asserts a --fresh redeploy plan exists for every live chain (CLAUDE.md, the Diamond section). Never hand-add an entry without that plan.",
+  "acknowledged": [
+    {
+      "key": "Storage|insertion|58|uint256 interactionLaunchTimestamp|mapping(address => UserVpfiDiscountState) userVpfiDiscountState",
+      "firstSeenCommit": "1b45282b477e0a9f4db9aaa941a993faf762fc5f",
+      "date": "2026-04-24T03:22:31+05:30",
+      "struct": "Storage",
+      "kind": "insertion",
+      "index": 58,
+      "reason": "historical \u2014 predates #2092; its era is in the table and every live chain's in-place-refresh exposure is tracked on #2092"
+    },
+    {
+      "key": "ProtocolConfig|insertion|12|uint256 vpfiTier1Min|uint16 fallbackLenderBonusBps",
+      "firstSeenCommit": "1b45282b477e0a9f4db9aaa941a993faf762fc5f",
+      "date": "2026-04-24T03:22:31+05:30",
+      "struct": "ProtocolConfig",
+      "kind": "insertion",
+      "index": 12,
+      "reason": "historical \u2014 predates #2092; its era is in the table and every live chain's in-place-refresh exposure is tracked on #2092"
+    },
+    {
+      "key": "Storage|insertion|109|mapping(uint256 => RewardEntry) rewardEntries|mapping(address => FeedOverride) feedOverrides",
+      "firstSeenCommit": "1db86a6be19e08be119a6b16a369c7133af3c68c",
+      "date": "2026-04-24T11:56:05+05:30",
+      "struct": "Storage",
+      "kind": "insertion",
+      "index": 109,
+      "reason": "historical \u2014 predates #2092; its era is in the table and every live chain's in-place-refresh exposure is tracked on #2092"
+    },
+    {
+      "key": "Storage|insertion|110|uint32 currentTosVersion|address pythEndpoint",
+      "firstSeenCommit": "5719ff5166839711a51f5dd6f801a736314c49f8",
+      "date": "2026-04-24T12:52:06+05:30",
+      "struct": "Storage",
+      "kind": "insertion",
+      "index": 110,
+      "reason": "historical \u2014 predates #2092; its era is in the table and every live chain's in-place-refresh exposure is tracked on #2092"
+    },
+    {
+      "key": "Storage|insertion|112|uint32 currentTosVersion|address sanctionsOracle",
+      "firstSeenCommit": "2e0cf87d0ed4b0058a7885a5b1bced2e9cbc9b89",
+      "date": "2026-04-24T14:14:08+05:30",
+      "struct": "Storage",
+      "kind": "insertion",
+      "index": 112,
+      "reason": "historical \u2014 predates #2092; its era is in the table and every live chain's in-place-refresh exposure is tracked on #2092"
+    },
+    {
+      "key": "Storage|insertion|38|FeeEvent[] feeEventsLog|mapping(uint256 => mapping(address => bool)) loanKeeperEnabled",
+      "firstSeenCommit": "6bbe7a287bc9c84d4cd9450dc993b9ea2fbcafeb",
+      "date": "2026-04-24T23:13:16+05:30",
+      "struct": "Storage",
+      "kind": "insertion",
+      "index": 38,
+      "reason": "historical \u2014 predates #2092; its era is in the table and every live chain's in-place-refresh exposure is tracked on #2092"
+    },
+    {
+      "key": "Storage|insertion|112|address pythEndpoint|address sanctionsOracle",
+      "firstSeenCommit": "116e4b6d9c819ba5f3189aa71307d0f9b783edb1",
+      "date": "2026-04-25T12:09:22+05:30",
+      "struct": "Storage",
+      "kind": "insertion",
+      "index": 112,
+      "reason": "historical \u2014 predates #2092; its era is in the table and every live chain's in-place-refresh exposure is tracked on #2092"
+    },
+    {
+      "key": "ProtocolConfig|insertion|14|uint256 vpfiTier1Min|bool rangeAmountEnabled",
+      "firstSeenCommit": "5f950b215e803b94213fb567598de6a02d1f0261",
+      "date": "2026-04-30T04:19:52+05:30",
+      "struct": "ProtocolConfig",
+      "kind": "insertion",
+      "index": 14,
+      "reason": "historical \u2014 predates #2092; its era is in the table and every live chain's in-place-refresh exposure is tracked on #2092"
+    },
+    {
+      "key": "MatchOverride|insertion|3|address matcher|address counterparty",
+      "firstSeenCommit": "19f4f6fa3ba3e97949f523ebd757cf8512235334",
+      "date": "2026-04-30T14:42:17+05:30",
+      "struct": "MatchOverride",
+      "kind": "insertion",
+      "index": 3,
+      "reason": "historical \u2014 predates #2092; its era is in the table and every live chain's in-place-refresh exposure is tracked on #2092"
+    },
+    {
+      "key": "ProtocolConfig|insertion|14|bool rangeAmountEnabled|uint16 lifMatcherFeeBps",
+      "firstSeenCommit": "9e9683deac97b232bd87e99edd7daa1e34c69e65",
+      "date": "2026-05-01T00:22:43+05:30",
+      "struct": "ProtocolConfig",
+      "kind": "insertion",
+      "index": 14,
+      "reason": "historical \u2014 predates #2092; its era is in the table and every live chain's in-place-refresh exposure is tracked on #2092"
+    },
+    {
+      "key": "ProtocolConfig|insertion|15|bool rangeAmountEnabled|uint32 autoPauseDurationSeconds",
+      "firstSeenCommit": "df01ade9eca65bbcaeb375cf9bb0c3de09e487a2",
+      "date": "2026-05-01T02:00:05+05:30",
+      "struct": "ProtocolConfig",
+      "kind": "insertion",
+      "index": 15,
+      "reason": "historical \u2014 predates #2092; its era is in the table and every live chain's in-place-refresh exposure is tracked on #2092"
+    },
+    {
+      "key": "ProtocolConfig|insertion|16|bool rangeAmountEnabled|uint16 maxOfferDurationDays",
+      "firstSeenCommit": "d6ca0f9c6e0c7ccf07fa2cfaac36af901a99d1e1",
+      "date": "2026-05-01T15:13:30+05:30",
+      "struct": "ProtocolConfig",
+      "kind": "insertion",
+      "index": 16,
+      "reason": "historical \u2014 predates #2092; its era is in the table and every live chain's in-place-refresh exposure is tracked on #2092"
+    },
+    {
+      "key": "Storage|insertion|97|uint256 activeOffersCount|uint256 notificationFeesAccrued",
+      "firstSeenCommit": "5d6aae2017496d79d7e3f7491c2893619d4c2488",
+      "date": "2026-05-02T00:37:44+05:30",
+      "struct": "Storage",
+      "kind": "insertion",
+      "index": 97,
+      "reason": "historical \u2014 predates #2092; its era is in the table and every live chain's in-place-refresh exposure is tracked on #2092"
+    },
+    {
+      "key": "ProtocolConfig|append|24|(end)|uint256 notificationFeeUsd",
+      "firstSeenCommit": "5d6aae2017496d79d7e3f7491c2893619d4c2488",
+      "date": "2026-05-02T00:37:44+05:30",
+      "struct": "ProtocolConfig",
+      "kind": "append",
+      "index": 24,
+      "reason": "historical \u2014 predates #2092; its era is in the table and every live chain's in-place-refresh exposure is tracked on #2092"
+    },
+    {
+      "key": "Storage|insertion|142|mapping(address => mapping(uint32 => uint256)) vpfiFixedRateSoldToByEid|address pythOracle",
+      "firstSeenCommit": "0980a2ca344f3b59274a5f45e50710ea64d0cec2",
+      "date": "2026-05-02T05:17:03+05:30",
+      "struct": "Storage",
+      "kind": "insertion",
+      "index": 142,
+      "reason": "historical \u2014 predates #2092; its era is in the table and every live chain's in-place-refresh exposure is tracked on #2092"
+    },
+    {
+      "key": "ProtocolConfig|append|26|(end)|address numeraireOracle",
+      "firstSeenCommit": "57ba9ebe6474561bafacb014e67d9aa617667cc7",
+      "date": "2026-05-02T22:05:38+05:30",
+      "struct": "ProtocolConfig",
+      "kind": "append",
+      "index": 26,
+      "reason": "historical \u2014 predates #2092; its era is in the table and every live chain's in-place-refresh exposure is tracked on #2092"
+    },
+    {
+      "key": "ProtocolConfig|removal|25|address notificationFeeUsdOracle|address numeraireOracle",
+      "firstSeenCommit": "5e8a8325ac3c1e7eb2d54bbeda49cf96c13295dd",
+      "date": "2026-05-03T01:55:21+05:30",
+      "struct": "ProtocolConfig",
+      "kind": "removal",
+      "index": 25,
+      "reason": "historical \u2014 predates #2092; its era is in the table and every live chain's in-place-refresh exposure is tracked on #2092"
+    },
+    {
+      "key": "Storage|insertion|8|address chainlnkRegistry|bytes32 numeraireSymbol",
+      "firstSeenCommit": "7316a7cf2b0a92bd9ed133a4dac03bb6804d939e",
+      "date": "2026-05-03T04:02:13+05:30",
+      "struct": "Storage",
+      "kind": "insertion",
+      "index": 8,
+      "reason": "historical \u2014 predates #2092; its era is in the table and every live chain's in-place-refresh exposure is tracked on #2092"
+    },
+    {
+      "key": "ProtocolConfig|removal|25|address numeraireOracle|uint256 minPrincipalForFinerCadence",
+      "firstSeenCommit": "c57a7f2dc6208721076439bffc7a182d960213f7",
+      "date": "2026-05-03T04:22:46+05:30",
+      "struct": "ProtocolConfig",
+      "kind": "removal",
+      "index": 25,
+      "reason": "historical \u2014 predates #2092; its era is in the table and every live chain's in-place-refresh exposure is tracked on #2092"
+    },
+    {
+      "key": "Storage|insertion|9|address chainlnkRegistry|address predominantDenominator",
+      "firstSeenCommit": "52a5687d783ffaa3b7034bf9414bd52456d99d05",
+      "date": "2026-05-03T09:06:52+05:30",
+      "struct": "Storage",
+      "kind": "insertion",
+      "index": 9,
+      "reason": "historical \u2014 predates #2092; its era is in the table and every live chain's in-place-refresh exposure is tracked on #2092"
+    },
+    {
+      "key": "Storage|insertion|156|mapping(address => mapping(address => uint256)) protocolTrackedEscrowBalance|mapping(address => uint256) recoveryNonce",
+      "firstSeenCommit": "ab1270ae3f05ba7a7b12274f6885e437d395c634",
+      "date": "2026-05-04T02:54:43+05:30",
+      "struct": "Storage",
+      "kind": "insertion",
+      "index": 156,
+      "reason": "historical \u2014 predates #2092; its era is in the table and every live chain's in-place-refresh exposure is tracked on #2092"
+    },
+    {
+      "key": "Storage|insertion|24|mapping(address => string) userCountry|mapping(address => mapping(uint256 => uint256)) treasuryAccrualByDay",
+      "firstSeenCommit": "0277ae76a4bf8d35eb94997b4557dd3bfc8aca99",
+      "date": "2026-05-07T17:12:28+05:30",
+      "struct": "Storage",
+      "kind": "insertion",
+      "index": 24,
+      "reason": "historical \u2014 predates #2092; its era is in the table and every live chain's in-place-refresh exposure is tracked on #2092"
+    },
+    {
+      "key": "Storage|insertion|26|mapping(address => string) userCountry|mapping(address => mapping(address => uint256[])) assetPairActiveOfferIds",
+      "firstSeenCommit": "ca1f87b6a06bcbe927eb7860fd37a0a33b46b4f3",
+      "date": "2026-05-08T00:45:00+05:30",
+      "struct": "Storage",
+      "kind": "insertion",
+      "index": 26,
+      "reason": "historical \u2014 predates #2092; its era is in the table and every live chain's in-place-refresh exposure is tracked on #2092"
+    },
+    {
+      "key": "Storage|insertion|113|uint256[] activeLoanIdsList|mapping(uint256 => uint256) offerIdByPositionTokenId",
+      "firstSeenCommit": "bf6a3efef348beaf52c4e4dca5e02fd463460244",
+      "date": "2026-05-11T06:19:46+05:30",
+      "struct": "Storage",
+      "kind": "insertion",
+      "index": 113,
+      "reason": "historical \u2014 predates #2092; its era is in the table and every live chain's in-place-refresh exposure is tracked on #2092"
+    },
+    {
+      "key": "ProtocolConfig|append|29|(end)|bool depthTieredLtvEnabled",
+      "firstSeenCommit": "5b290deb155dc720b6d174dcb68c333ae6d797ff",
+      "date": "2026-05-13T04:01:44+05:30",
+      "struct": "ProtocolConfig",
+      "kind": "append",
+      "index": 29,
+      "reason": "historical \u2014 predates #2092; its era is in the table and every live chain's in-place-refresh exposure is tracked on #2092"
+    },
+    {
+      "key": "ProtocolConfig|insertion|15|uint32 autoPauseDurationSeconds|uint16 maxPartialLiquidationCloseFactorBps",
+      "firstSeenCommit": "1ca7cbaa5cd6a85dc48432b1f2f53f9f8e4e0033",
+      "date": "2026-05-13T15:58:57+05:30",
+      "struct": "ProtocolConfig",
+      "kind": "insertion",
+      "index": 15,
+      "reason": "historical \u2014 predates #2092; its era is in the table and every live chain's in-place-refresh exposure is tracked on #2092"
+    },
+    {
+      "key": "ProtocolConfig|append|41|(end)|bool discountPathEnabled",
+      "firstSeenCommit": "a63d5efaebc22f8a67b7cbcfdf6f4778941c8b97",
+      "date": "2026-05-14T10:56:34+05:30",
+      "struct": "ProtocolConfig",
+      "kind": "append",
+      "index": 41,
+      "reason": "historical \u2014 predates #2092; its era is in the table and every live chain's in-place-refresh exposure is tracked on #2092"
+    },
+    {
+      "key": "ProtocolConfig|append|45|(end)|uint16 tier1LiquidationLtvBps",
+      "firstSeenCommit": "4c84eb5f2fb0a097bc15851bbeb3d4e19ece5325",
+      "date": "2026-05-15T01:58:35+05:30",
+      "struct": "ProtocolConfig",
+      "kind": "append",
+      "index": 45,
+      "reason": "historical \u2014 predates #2092; its era is in the table and every live chain's in-place-refresh exposure is tracked on #2092"
+    },
+    {
+      "key": "ProtocolConfig|append|48|(end)|bool internalMatchEnabled",
+      "firstSeenCommit": "3037a7a9a0f15b96e538d930b67280fd793602c2",
+      "date": "2026-05-15T02:32:36+05:30",
+      "struct": "ProtocolConfig",
+      "kind": "append",
+      "index": 48,
+      "reason": "historical \u2014 predates #2092; its era is in the table and every live chain's in-place-refresh exposure is tracked on #2092"
+    },
+    {
+      "key": "ProtocolConfig|append|51|(end)|uint16 treasuryConvertEthBps",
+      "firstSeenCommit": "f5cdf105b4a158d50f31a634aad985e4df116a08",
+      "date": "2026-05-17T01:50:43+05:30",
+      "struct": "ProtocolConfig",
+      "kind": "append",
+      "index": 51,
+      "reason": "historical \u2014 predates #2092; its era is in the table and every live chain's in-place-refresh exposure is tracked on #2092"
+    },
+    {
+      "key": "Storage|retype-or-swap|177|address treasuryWbtcAsset|TreasuryConvertTarget[] treasuryConvertTargets",
+      "firstSeenCommit": "d7e5f209c3fd1bf42055817407f169e87833877b",
+      "date": "2026-05-17T02:49:02+05:30",
+      "struct": "Storage",
+      "kind": "retype-or-swap",
+      "index": 177,
+      "reason": "historical \u2014 predates #2092; its era is in the table and every live chain's in-place-refresh exposure is tracked on #2092"
+    },
+    {
+      "key": "ProtocolConfig|removal|51|uint16 treasuryConvertEthBps|uint256 treasuryConvertUsdThreshold",
+      "firstSeenCommit": "d7e5f209c3fd1bf42055817407f169e87833877b",
+      "date": "2026-05-17T02:49:02+05:30",
+      "struct": "ProtocolConfig",
+      "kind": "removal",
+      "index": 51,
+      "reason": "historical \u2014 predates #2092; its era is in the table and every live chain's in-place-refresh exposure is tracked on #2092"
+    },
+    {
+      "key": "ProtocolConfig|insertion|21|uint256 vpfiTier1Min|bool rangeCollateralEnabled",
+      "firstSeenCommit": "79d0c331e211f9576d1c7ab8e52657e909a86ebb",
+      "date": "2026-05-21T11:16:17+05:30",
+      "struct": "ProtocolConfig",
+      "kind": "insertion",
+      "index": 21,
+      "reason": "historical \u2014 predates #2092; its era is in the table and every live chain's in-place-refresh exposure is tracked on #2092"
+    },
+    {
+      "key": "ProtocolConfig|append|54|(end)|uint16 maxSwapToRepaySlippageBps",
+      "firstSeenCommit": "c70a9383c8770ec4358210468e80e7754701779c",
+      "date": "2026-06-06T22:52:49+05:30",
+      "struct": "ProtocolConfig",
+      "kind": "append",
+      "index": 54,
+      "reason": "historical \u2014 predates #2092; its era is in the table and every live chain's in-place-refresh exposure is tracked on #2092"
+    },
+    {
+      "key": "ProtocolConfig|append|55|(end)|bool cfgAutoLendEnabled",
+      "firstSeenCommit": "c33230200550c7b98a6851d95d1eda824053ff19",
+      "date": "2026-06-11T13:17:12+05:30",
+      "struct": "ProtocolConfig",
+      "kind": "append",
+      "index": 55,
+      "reason": "historical \u2014 predates #2092; its era is in the table and every live chain's in-place-refresh exposure is tracked on #2092"
+    },
+    {
+      "key": "ProtocolConfig|append|58|(end)|bool lenderIntentEnabled",
+      "firstSeenCommit": "db86bd021459be7213943c2cc52b0eabf339e918",
+      "date": "2026-06-17T01:28:46+05:30",
+      "struct": "ProtocolConfig",
+      "kind": "append",
+      "index": 58,
+      "reason": "historical \u2014 predates #2092; its era is in the table and every live chain's in-place-refresh exposure is tracked on #2092"
+    },
+    {
+      "key": "ProtocolConfig|append|59|(end)|bool backstopEnabled",
+      "firstSeenCommit": "f7fc022626498f7de3f1370079b73c791688a094",
+      "date": "2026-06-18T21:23:53+05:30",
+      "struct": "ProtocolConfig",
+      "kind": "append",
+      "index": 59,
+      "reason": "historical \u2014 predates #2092; its era is in the table and every live chain's in-place-refresh exposure is tracked on #2092"
+    },
+    {
+      "key": "ProtocolConfig|append|62|(end)|bool backstopAbsorbEnabled",
+      "firstSeenCommit": "cdf5d27d0ce9a32822c267acee8a7f0840b7b49f",
+      "date": "2026-06-19T00:25:29+05:30",
+      "struct": "ProtocolConfig",
+      "kind": "append",
+      "index": 62,
+      "reason": "historical \u2014 predates #2092; its era is in the table and every live chain's in-place-refresh exposure is tracked on #2092"
+    },
+    {
+      "key": "ProtocolConfig|append|63|(end)|bool aggregatorAdaptersPaused",
+      "firstSeenCommit": "e66c1aef831a9a8cd1d93a3e95e90deb0aee56fc",
+      "date": "2026-06-19T05:37:33+05:30",
+      "struct": "ProtocolConfig",
+      "kind": "append",
+      "index": 63,
+      "reason": "historical \u2014 predates #2092; its era is in the table and every live chain's in-place-refresh exposure is tracked on #2092"
+    },
+    {
+      "key": "Storage|removal|56|uint256 vpfiFixedRateGlobalCap|address vpfiDiscountEthPriceAsset",
+      "firstSeenCommit": "4b2b6cbabaca8116830e85a804fe0ce550e4f7ff",
+      "date": "2026-06-23T07:29:21+05:30",
+      "struct": "Storage",
+      "kind": "removal",
+      "index": 56,
+      "reason": "historical \u2014 predates #2092; its era is in the table and every live chain's in-place-refresh exposure is tracked on #2092"
+    },
+    {
+      "key": "Storage|removal|58|uint256 stakingRewardPerTokenStored|mapping(address => UserVpfiDiscountState) userVpfiDiscountState_DEPRECATED",
+      "firstSeenCommit": "d2b7a6b3d358cddb2cc3cd451b77590b02b93b74",
+      "date": "2026-06-23T10:19:47+05:30",
+      "struct": "Storage",
+      "kind": "removal",
+      "index": 58,
+      "reason": "historical \u2014 predates #2092; its era is in the table and every live chain's in-place-refresh exposure is tracked on #2092"
+    },
+    {
+      "key": "ProtocolConfig|removal|7|uint16 vpfiStakingAprBps|uint16 vpfiTier1DiscountBps",
+      "firstSeenCommit": "d2b7a6b3d358cddb2cc3cd451b77590b02b93b74",
+      "date": "2026-06-23T10:19:47+05:30",
+      "struct": "ProtocolConfig",
+      "kind": "removal",
+      "index": 7,
+      "reason": "historical \u2014 predates #2092; its era is in the table and every live chain's in-place-refresh exposure is tracked on #2092"
+    },
+    {
+      "key": "Storage|removal|214|uint256 stakingPoolBuybackBudget|uint8 cfgTwaRecentDays",
+      "firstSeenCommit": "ca951517e6b7d190fd31ea2009f0ac806f2e756e",
+      "date": "2026-06-23T11:26:13+05:30",
+      "struct": "Storage",
+      "kind": "removal",
+      "index": 214,
+      "reason": "historical \u2014 predates #2092; its era is in the table and every live chain's in-place-refresh exposure is tracked on #2092"
+    },
+    {
+      "key": "Storage|removal|209|address baseAuthorizedMessenger|mapping(uint256 => mapping(address => bool)) buybackAllowedToken",
+      "firstSeenCommit": "1cc21ca1a3ace2167326c0d1086425ed10b04fac",
+      "date": "2026-08-16T18:45:51+05:30",
+      "struct": "Storage",
+      "kind": "removal",
+      "index": 209,
+      "reason": "historical \u2014 predates #2092; its era is in the table and every live chain's in-place-refresh exposure is tracked on #2092"
+    }
+  ]
+}

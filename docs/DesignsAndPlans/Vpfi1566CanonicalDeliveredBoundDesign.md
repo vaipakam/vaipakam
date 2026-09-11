@@ -5536,7 +5536,48 @@ reported a comfortable answer it had not earned:
   latter as a failure on op-sepolia rather than silently counting it as an
   absent commit.
 
-**RESULT (2026-09-09, run 26 — all TWENTY retained deployments across five
+**RESULT (2026-09-11, run 31 — the run-26 population and rules, plus the
+calibrated storage read of §7/§7a where a Diamond routes no getter, plus the
+era-complete read of every class at every era slot on every enumerable
+deployment, reconciled against the routed getters (review rounds 3 to 8),
+plus the layout-provenance rule of round 9 — every facet that may have
+written attributed by its code to a catalogued build; runs 27 to 30 reached
+seventeen of twenty under the earlier rules and are superseded): TEN of the
+twenty deployments are PROVEN EMPTY on every class; ten are INDETERMINATE,
+six of them solely because a facet of theirs attributes to no build.** 215
+loan reads across the twenty artifacts, zero rows in any class on any
+deployment where rows could be read, every chain at its `finalized` block, no
+chain failed, no live-commit counter contradicting an empty scan, no
+disagreement between a routed getter and the storage at HEAD's slot, every
+non-zero earlier-era reading either attributed to a current value field or
+kept as a stale counter at a mapping head, and 2,330 facet addresses
+hash-checked across the twenty records — 1,328 attributed to a catalogued
+build, 1,002 not. Of the ten, eight are proven by routed-getter enumeration
+and two by a routed loan counter that reads zero; the six deployments whose
+intent getter is unrouted had their intent rows read from storage at all
+three era slots for every enumerated loan (11,265 hash-pinned slot reads
+across the nineteen deployments read from storage, the era-complete read of
+the sixteen enumerable ones included; the evidence — method, slot table, era
+table, calibration test, per-class disagreement and aliasing counts, and
+per-facet layout provenance — is recorded on each result). The ten that are
+not proven: six withheld solely by the provenance rule — the live Diamonds of
+base-sepolia and arb-sepolia (arb's 07-01 archive is the same Diamond), the
+three base-sepolia shells of 2026-07-01 and the 00-54 record of that day,
+and bnb-testnet's live Diamond and April archive — each recording the
+verdict its routed reads and era-complete storage read had reached
+(`withoutProvenanceRule`), which is run 30's; and the three already
+undetermined — the base-sepolia record of 2026-07-01T01-03 naming a
+non-Diamond (an artifact correction, operator-gated), the arb-sepolia archive
+of 2026-07-01T01-36 recording no VPFI token (operator-gated), and
+arb-sepolia's live Diamond on the fallback and intent classes, whose scope
+comes from the artifact because the token getter is unrouted (item 4 below).
+The round-9 note in §7 states the decision the provenance rule puts to the
+owner. `migrationRetirable` stays
+`false` for the reason recorded since run 8: sixteen deployments still route
+a custody surface.
+
+**RESULT (2026-09-09, run 26 — superseded by run 27 above; kept as the
+standing of the census before the storage read — all TWENTY retained deployments across five
 chains, inventory from the committed manifest (fifteen archived, one of them
 the quick-loop sidecar round 25 found uncounted), the two unsound bounds
 withdrawn, every chain read at or above the height the previous committed run
@@ -5634,9 +5675,12 @@ returned zero on both unrouted chains and reported both as proven** — an empty
 scan manufacturing the comfortable answer, which is the exact failure this
 census exists to refuse, reintroduced by the machinery meant to prevent it.
 
-**Outstanding — four items, and none is an archive endpoint.**
+**Outstanding — four items, and none is an archive endpoint.** Item 1 is
+DONE as of run 27 (§7, §7a): the nine deployments it named are proven, and
+the list below is kept as it stood so the reasoning survives; items 2 to 4
+remain, all operator-gated or scope work.
 
-1. **A calibrated storage read.** The eight deployments indeterminate for
+1. **A calibrated storage read — DONE in run 27.** The eight deployments indeterminate for
    want of a getter (five on class 3, three shells on every class) can be
    settled only by reading the rows' storage directly: the slot of
    `intentCommits[loanId].orderHash` (and, for the shells, the loan counter and
@@ -5814,3 +5858,595 @@ What should NOT happen is a sixth subtraction. That is the one path with
 evidence against it in this repository's own history — and the near-miss above
 is a reminder that "cheap and strictly better" is exactly how that path gets
 taken.
+
+## 7. The calibrated storage read — design (decided 2026-09-09)
+
+Item 1 of the outstanding list above. The owner delegated the remaining
+census decisions on 2026-09-07 ("architecturally clean even if it takes more
+time"), so this section records a decision, not a proposal; the alternatives
+it rejects are listed at the end so the reasoning survives.
+
+**What it must settle.** Twelve deployments are indeterminate in run 26, and
+the storage read reaches nine of their cells. Six are indeterminate on the
+live-intent class only, because their intent getter is unrouted while every
+loan can be enumerated: arb-sepolia archived 2026-05-10 and 2026-07-01T01-28,
+base-sepolia archived 2026-06-30, op-sepolia live and its rehearsal sidecar,
+sepolia archived 2026-05-10. Three are bare shells whose cut never ran and
+route nothing at all. The arb-sepolia archive of 2026-07-01T01-36 and the
+arb-sepolia live Diamond are indeterminate on that class too, and the read
+settles it for them as well, since a row that does not exist needs no token to
+scope it. The base-sepolia record naming a non-Diamond is untouched: that is
+an artifact correction, operator-gated.
+
+**Four questions, and the read is sound only when all four are answered.**
+
+1. *Where.* The state lives at the ERC-7201 position the library calls
+   `VANGKI_STORAGE_POSITION`, which is `keccak256(abi.encode(uint256(keccak256("vaipakam.storage")) - 1)) & ~0xff`
+   — not the plain hash the top-level guidance file states, which is corrected
+   with this slice. The absolute slot of every field the read needs (the loan
+   counter `nextLoanId`, `totalLoansEverCreated`, `intentLiveCommitCount`,
+   and the three loan-keyed mappings `intentCommits`, `borrowerLifRebate`,
+   `fallbackSnapshot`) is obtained from the COMPILER, through a forge probe
+   that reads each field's `.slot` in assembly, never by counting the
+   struct's fields by hand. A mapping's row for a loan id sits at
+   `keccak256(abi.encode(loanId, mappingSlot))`; inside a row the member
+   offsets follow the struct: the intent commit's `orderHash` at +0, the
+   rebate row's `vpfiHeld` at +0 and `rebateAmount` at +1, the fallback
+   snapshot's five amounts at +0..+4 with its two booleans packed at +5. The
+   probe pins every one of these into one committed JSON that the census
+   reads, and a forge test asserts the JSON against the probe on every run —
+   the pin is the check, so a reordered struct fails CI before it can fail
+   the census.
+
+2. *Whether the slot means the same thing on an older Diamond.* No artifact
+   records the source it was compiled from, and 172 commits have touched the
+   library since the earliest deployment in the inventory. A slot derived
+   from today's layout is sound for an older Diamond only if the struct has
+   been append-only up to that field since the field appeared — the same
+   discipline an in-place facet refresh of a live Diamond already depends on,
+   but never checked. A provenance script walks every commit of the library
+   since 2026-05-01, extracts the struct's declaration sequence (names and
+   types), and requires each historical sequence to be a prefix of today's;
+   it also reports the commit that introduced each target field
+   (`intentCommits` arrived on 2026-06-08). Under that property a deployment
+   older than a field has never run code able to write the field's slot, and
+   the slot was unused, so a zero read there is honest rather than
+   manufactured. The script runs in CI; if the property ever fails, the
+   census refuses the read and names the commit, and the cells stay
+   indeterminate.
+
+3. *Whether the read agrees with the code's own view.* The plan called for a
+   live intent commit on anvil, because no deployed chain has one. The
+   calibration is a forge test instead, which is the same evidence run in
+   CI rather than as a ceremony. For each of the three rows it writes a
+   non-zero row through the test mutator — compiled against the same
+   library, so the compiler chooses the very slot the production writers
+   use — reads it back through the ROUTED getter, which is the production
+   read path, and requires the raw storage at the derived slot to equal
+   both. (The intent facet's own suite has no successful commit: a valid
+   commit needs Fusion's canonical extension and a priced loan for the
+   health-factor gate, which the unit harness does not provide, so the
+   production write path is not driven here; the slot is the compiler's
+   either way.) The census's own row-slot arithmetic is pinned against a
+   forge-computed example, so the script computes the slot the compiler
+   computes.
+
+4. *Which block.* The read is `eth_getStorageAt` under EIP-1898, pinned by the
+   census block's hash with the canonical requirement, exactly like every
+   other state read since round 28.
+
+**What the read certifies, and what it does not.** The intent class is proven
+for a deployment only when the `orderHash` slot is zero for EVERY loan id the
+routed enumeration returns; `intentLiveCommitCount` reading zero is recorded
+as corroboration and is never sufficient alone. A bare shell is proven on every
+class only when `nextLoanId` is zero (ids are assigned as `++nextLoanId`, so
+zero means no loan was ever created), `totalLoansEverCreated` is zero and
+`intentLiveCommitCount` is zero — the storage twin of the routed
+zero-loans-ever proof, and sound for the same reason: every custody class is
+loan-keyed. The result records the slots used, the provenance verdict, the
+calibration test's name and the block hash, under new proof kinds
+(`storage-read-calibrated`, `no-loans-ever-created-by-storage`). A storage read
+is a proof of absence or nothing; it is never a bound, and it never replaces
+a routed getter where one exists.
+
+**Alternatives considered and rejected.** An archive endpoint re-run:
+history can only refute, and this document already spent a chapter learning
+that. Routing the getter onto the archived Diamonds by a facet cut:
+operator-gated, and impossible where the deployer keys of a rehearsal are
+retired. An anvil ceremony: subsumed by the calibration test, which is the
+same act with a permanent record. Identifying each deployment's exact source
+commit from its bytecode metadata and compiling that layout: correct but
+heavy, and unnecessary once append-only is proven from history. Hand-counted
+offsets: a slot that is merely computed fails silently as zero, which is the
+one answer this census must never manufacture.
+
+**Sequence.** Probe and pinned JSON; provenance script with its CI wiring;
+calibration test; census integration with the two proof kinds; the
+guidance-file correction and the release-note fragment; partial runs per
+chain; then a full run that writes run 27 as the new canonical artifact.
+
+**Outcome (run 27, 2026-09-10).** Seventeen of twenty proven, up from
+eight, with zero rows in 215 loans and no chain failed. The read settled
+every cell it was designed for: the three shells by their counters, the six
+unrouted-intent deployments — including two that predate the intent mapping
+and one that lived across the June removals — by the row read at all three
+era slots. Nothing it read was non-zero. The three cells left are the
+non-Diamond record, the token-less archive and arb-sepolia's live scope,
+which are items 2 to 4 above and were never within this read's reach.
+
+**Review round 1 (PR #2095) found the era set incomplete, and run 27 was
+superseded.** The walk tracked `struct Storage` and the three row structs,
+but `Storage` inlines two structs of its own before the targets —
+`ProtocolConfig` ahead of the rebate mapping and `MatchOverride` ahead of
+the intent fields — and an inline struct's members occupy slots in place, so
+a member appended to `ProtocolConfig` shifts every field after it with no
+`Storage` declaration changing at all. `ProtocolConfig` changed nineteen
+times since May, five of them between 2026-06-11 and 2026-06-19 while the
+intent mapping already existed — so the walker had to assume the intent rows
+had more slots in that window than the three eras run 27 read. The compiler
+then answered what the walker cannot: those five appends were small types
+that packed into partly filled slots of `ProtocolConfig`, so `intentCommits`
+kept one slot across the whole window and run 27's three intent slots were
+complete; the rebate mapping gained three May-era slots that no deployment's
+read had needed. The verdicts of run 27 therefore stand, and run 28 re-reads
+every deployment only so the evidence each result records names the
+complete 32-era table. The walker now discovers every inline struct
+that precedes a target (external ones — OpenZeppelin's sets, all after the
+targets — are reported and assumed stable under the pinned submodule),
+counts any length change in an inline or row struct as a change event, and
+the era tool builds at each; a `--check` mode, run in CI on a full-history
+checkout, fails when the committed era table lacks an era the current walk
+implies. The same round tightened three rules: an era whose mapping exists
+without its row layout is refused rather than read with today's offsets; a
+non-zero `intentLiveCommitCount` at any era slot contradicts an empty row
+scan and leaves the class indeterminate; and the shell path no longer sums
+an intent amount storage never read. Run 28 re-read every deployment against the complete era table and reached the
+same seventeen-of-twenty with no contradiction; run 29, below, superseded it
+as the canonical artifact.
+
+**Review round 2 closed the remaining doors.** A change of the storage
+namespace itself — the ERC-7201 position, or its derivation — is now an era
+for every field, recorded by the walker as a namespace-change event (the
+position has been the same constant since the repository's first commit, so
+no era was missing, but nothing had checked). The era table's freshness is
+pinned to a content fingerprint of everything it depends on — the position
+and the declaration sequences of `Storage`, the row structs and the inline
+structs before a target — rather than to the commit it was generated at,
+because a feature-branch commit is an ancestor of nothing after a squash
+merge and the CI check would have failed on every merge. The diagnostic
+`--only-head` mode can no longer write the production table and marks its
+output incomplete. On the shell path a lifetime counter above the loan-id
+range, or any counter non-zero while the range is empty, contradicts the
+verdict and nothing is certified; the shell return keeps the live-producer
+classification the retirement rule reads; and on the enumerable path a row
+the storage read finds is counted, not hidden under a zero count. The
+predictable temporary path the era tool used for its worktrees is replaced
+by a fresh directory per build.
+
+**Review round 3 closed the argument on the enumerable path.** A routed
+getter reads today's layout and nothing else, so a Diamond refreshed in place
+across a layout change could hold a row written by an earlier facet at an
+earlier era's slot where no getter looks — and the routed proof would call
+the class empty. Every enumerable deployment is now also read at every
+EARLIER era's slot for every class, over the id range the era-stable loan
+counter gives rather than today's pagination, and the era counters are read
+too: a non-zero counter at an earlier era withdraws the routed zero-loans
+proof. A rebate or held row found under an earlier layout is VPFI custody
+and counts; a fallback or intent row found there has no readable asset and
+leaves the class indeterminate. Era identity, finally, is a layout
+fingerprint per era rather than a commit, so a table regenerated on a branch
+still matches after the squash merge. The first live smoke of that read on
+base-sepolia showed the trap in it: an earlier era's slot for one field is
+today's slot for another, so three "non-zero earlier-era counters" on the
+live Diamond were current fields living where the old counters once did. A
+zero at every era slot is still a sound proof of absence, but a non-zero
+must be attributed before it may count. The era table's HEAD era now carries
+every top-level member's occupied slot span, and each earlier-era reading is
+classified against it: a non-zero at a slot a current field occupies is that
+field's value and is ignored as a counter, a non-zero at a slot no field
+occupies is a genuine contradiction, and a row candidate whose old mapping
+head is a current mapping's head is reported as ambiguous with the field it
+aliases. Run 29 re-read every deployment with it, and with round 4.
+
+**Review round 4 removed the last assumption in the read.** The round-3 read
+had left HEAD's slot out of the era scan on the grounds that the routed getter
+covers it. That assumes the routed getter was compiled from today's layout,
+which a partially refreshed Diamond need not satisfy: a newer writer can put a
+fallback snapshot at HEAD's slot while an older routed getter still reads an
+earlier slot, and then neither read sees the row. The storage read now scans
+EVERY era's slot, HEAD's included, and what it finds at HEAD's slot is not
+merged but reconciled against the routed getter per loan id in both
+directions — a row storage sees that the getter did not report, a row the
+getter reported that storage does not see, or an amount that differs, means
+the cut getter reads some other layout, and the class is indeterminate rather
+than certified. The same test catches a gap in the routed pagination. Where
+the intent getter is unrouted the intent class was already read at every era
+and is not read twice, so a row is neither double-counted nor double-listed.
+The top-level liability figures are recomputed after the historical rows
+merge, so a held or rebate row found under an earlier layout reaches the
+reconciliation shortfall as well as its class. And an unexplained non-zero
+live-commit counter at an earlier era contradicts the intent class on every
+path, not only where the zero-loans shortcut had been taken: on a deployment
+with ordinary loans the routed getter and the row scan can both come back
+empty while the protocol's own counter says a commit was missed. Run 29
+re-read every deployment with all of it: the same seventeen of twenty, zero
+rows, zero getter disagreements over 215 loans, twenty-four earlier-era
+readings attributed to current fields and ignored, 10,380 hash-pinned slot
+reads in all; run 30, below, superseded it as the canonical artifact.
+
+**Review round 5 closed two doors the read had left on its own frame.** The
+walker discovered the inline structs that precede a target only from HEAD's
+source, so a struct that preceded a target at an earlier revision and was
+later renamed or removed would have shifted every field after it while it
+lived — and a member added to it then would have opened an era the table
+never built. The walker now discovers those structs at every revision it
+walks, compares each while it exists, and reports the ones HEAD no longer
+embeds; a struct HEAD lacks is not held to the prefix property, because its
+removal from `Storage` is already `Storage`'s own event. On the real history
+the set is unchanged — the two inline structs HEAD embeds are the only ones
+that ever preceded a target — so the table stands. And the enumerable path
+had recorded an unavailable era-complete read as a note while leaving every
+getter-derived class proven, which is exactly the case where a routed getter
+reading its own facet's layout can be wrong: without the read there is no
+proof, and every such class is now indeterminate with the reason the read
+was refused.
+
+**Review round 6 made the attribution rule one rule.** Round 3 had taught
+the enumerable path that a non-zero at an earlier era's counter slot must be
+attributed before it may count, but the shell path and the intent-only read
+still judged the raw readings: the committed table has an old
+`totalLoansEverCreated` slot that is now a list's length and an old
+`intentLiveCommitCount` slot that is now the tier-table version, so a bare
+Diamond with offers but no loans would have read as a counter contradiction
+rather than as proven empty. Every counter read now passes through the same
+attribution: a reading at HEAD's slot is the counter today; a non-zero at an
+earlier slot a current field occupies is that field and is set aside and
+recorded; a non-zero at an earlier slot no field occupies is kept and is the
+contradiction it looks like. No verdict of run 29 moves — all twenty-four
+readings it set aside were on the enumerable path, and the three shells read
+zero at every slot — so run 29 stands.
+
+**Review round 7 corrected what a bare shell is allowed to claim, and what
+an old getter is allowed to count.** The four probes that classify a Diamond
+without a loupe are GETTERS, so their all being unrouted said nothing about
+writers; the shell path had nevertheless recorded its producers as not live,
+which is the input the migration-retirement rule reads. A bare shell is now
+treated as able to write until its writer surface is known — only a
+non-Diamond has no live producers — which changes no verdict and, since the
+population is not established empty, no retirement answer either; run 30
+re-recorded the three shells accordingly and is the canonical artifact. And a routed getter compiled against
+an earlier layout returns the very row the era scan finds at that era's slot,
+so merging the scan's row again doubled the count, the total and the
+shortfall while the reconciliation only marked the layout disagreement. Each
+getter row now absorbs at most one historical row with the same key (and the
+same amount where the row carries one); the disagreement is still recorded.
+
+**Review round 8 tightened both of round 7's rules.** The HEAD-slot
+reconciliation compared amounts for held and rebate rows but only presence
+for a fallback snapshot, so an old getter's stale fallback amount could pass
+as agreement while the class stayed proven on the wrong total; a fallback
+snapshot's collateral total is now compared like every other amount. And the
+absorption rule had let an intent candidate be absorbed on the loan id alone,
+which the getter cannot justify: storage reads a commit's order hash and the
+routed getter returns the order, not the hash, so a commit left behind under
+an old layout and a newer commit for the same loan are indistinguishable by
+key and are two candidates. An intent row is therefore never absorbed — it
+survives as an unknown-asset candidate and leaves the class indeterminate —
+and the amount rule absorbs only what it can prove identical.
+
+**Review round 9 closed the assumption the era table rested on, and four
+smaller doors.** The era table covers every layout that was ever COMMITTED,
+and the census had assumed that every facet ever cut was compiled from one
+of them. The deployment records say otherwise: the arb-sepolia, op-sepolia
+and sepolia artifacts carry a `(dirty)` source stamp, and most archived
+records carry no source stamp at all. A dirty stamp means the tree had
+uncommitted changes, not which files — and an uncommitted change to the
+storage library is a layout the walk never saw. The census now attributes
+every facet to a layout era by its CODE: each era's build catalogues the
+keccak256 of every `src/` contract's runtime bytecode, and the census hashes
+the code of every facet that may have written to a Diamond — the loupe's
+current facets, every local record naming that Diamond (an archived record of
+a Diamond later refreshed in place is the only record of the facets that
+wrote before the refresh), and every facet the cut history ever added, the
+last being refutation-only because a pruned endpoint returns an empty history.
+The metadata trailer hashes every source in a contract's import closure, so a
+facet built from a tree whose dirt reached the storage library matches no
+era, and a deployment with one such facet is not certified on any class;
+empty code never wrote (EIP-6780). The first live attribution showed the
+catalogue's limit: an era is one commit, and a facet compiled from any
+other commit differs wherever its own sources changed since — sepolia's
+live Diamond attributed eighteen of thirty-four facets to eras and the other
+sixteen to nothing, and a build of the commit its record names explained all
+sixteen exactly, so the dirt that produced its stamp lay outside those
+facets. The table therefore also catalogues DEPLOYMENT BUILDS: the commit
+each record names, the main commits on either side of each record's
+deploy time (a refresh rewrites it), and the commits on either side of every
+moment the cut history shows a facet being cut — the last being derived on
+chain, so the census writes them to a candidates file the era tool reads,
+and a run that proposes new candidates ends by saying so; the next
+regeneration builds them and the next run attributes against them. A
+deployment build whose storage-library layout no era holds would mean the
+walk is incomplete, and the check fails on it — where "holds" is a question
+about SHAPE, the size-bearing type sequence of the layout-bearing prefix
+(`Storage` up to the last target, the row structs, the inline structs before
+a target), because a rename opens no era and an append after the last target
+moves nothing the census reads, while both change the content fingerprint;
+the first attempt compared content and rejected twenty-six valid builds. The
+candidates around a moment are not only main's: a refresh run from a feature
+branch builds that branch's tree, which a squash merge need not reproduce,
+and merged branches are kept — so every branch or tag whose tip lies within
+three days before or one day after the moment contributes its last commit at
+or before it, nearest tips first. A
+cut below an endpoint's pruning floor has no readable header, so its moment
+is estimated between two anchors (the record's deploy time at its deploy
+block, the census block's own time) and the candidate window widened by six
+hours either side; a wrong candidate merely fails to match, since attribution
+is by code. The walk itself now starts at the library's first commit rather
+than at May, because two archived records were deployed in April. Beside that: a mapping stores nothing
+at its head slot, so a non-zero at an old counter slot that a mapping now
+occupies is the old counter and stays a contradiction candidate — the
+committed table has an old live-commit slot now under a mapping head; a
+lifetime counter above the storage id range refuses every proof on the
+enumerable path as it already did on the shell path; an era whose row member
+keeps its slot but narrows its type is refused before any read, because a
+full-word read would fold the neighbour into the amount; a shell scan cut
+off at the id cap reports the rows and exact totals of the prefix it did read
+while withholding only the verdict; and the era builder may substitute the
+main checkout's dependencies only when the era's whole `lib` tree, submodule
+gitlinks included, is identical to HEAD's and every submodule checkout sits
+at its gitlink — otherwise the era is unavailable rather than built from
+sources that never existed together.
+
+**What the attribution found, and the decision it puts to the owner.** With
+forty-four eras and one hundred and twenty deployment builds catalogued,
+every facet of sepolia's three records, op-sepolia's two, arb-sepolia's two
+older archives and base-sepolia's three May–June archives attributes to a
+build, and those ten cells are proven exactly as before. The other ten are
+not: the four base-sepolia records of 2026-07-01 and bnb-testnet's April
+archive were deployed from trees no commit or branch tip reproduces — they
+carry no source stamp, and no candidate around their deploy moments matches
+a single facet — and the live Diamonds of base-sepolia and arb-sepolia
+(arb's 07-01 archive is the same Diamond) each carry about two hundred and
+fifty historical facets, cut by in-place refreshes across July to September,
+plus four current ones, that match no build either: the refresh scripts were
+run from working trees during development, and a working tree is not a
+commit. bnb-testnet's live Diamond attributes seventy-four of seventy-five,
+the last named only by its record and never seen cut. Every such cell now
+records, beside the refusal, the verdict its routed reads and era-complete
+storage read had reached (`withoutProvenanceRule`), the verdict of run 30 in
+each case. So the census's headline moves from seventeen of twenty to ten of
+twenty, not because a row was found but because the standard rose: the
+programme's ratified standard treats a routed-getter enumeration as a sound
+proof, and this round's rule treats it as sound only when every facet that
+ever wrote is attributed to a catalogued layout. Which standard governs the
+live Diamonds is the owner's decision, put in the PR and on #1566: ratify
+the routed standard for in-place-refreshed Diamonds (the era-complete read
+stays as defence in depth), or keep the provenance rule and accept that the
+two live Diamonds stay undetermined until their history is re-established
+some other way — a fresh deploy from a committed tree makes the NEW Diamond
+attributable but leaves the old one's custody where it is. Run 31 carries
+the strict verdict: ten of twenty proven, 2,330 facet addresses checked,
+1,328 attributed, 1,002 not, zero rows, zero disagreements.
+
+**Review round 10 made the provenance rule honest about its own inputs, and
+made the standard a recorded switch.** Three doors. The facet population the
+rule attributes was not exhaustive: the archived records that name the
+facets of a Diamond later refreshed in place live in a gitignored directory,
+so a clean checkout attributed fewer facets than the operator's, and a
+transient writer — cut in and out between two records — appears in no record
+at all; the cut history is the only source that sees it, and a pruned
+endpoint returns an empty history without an error. The committed archive
+manifest now carries each record's facet set and deploy time, and the
+population counts as exhaustive only when the cut history was read, holds
+the deploy-time cut (the constructor's Add of `diamondCut`, which sits at the
+first block and is the first thing pruning removes), and names every facet
+the loupe routes today; an omitted Add/Remove pair inside a returned window
+is undetectable by any test over logs and stays the stated residual. Then
+the names-free shape of round 9 could not see two same-typed members swapped,
+so a build's layout now counts as held by an era only when the compiler puts
+every census field at the same slot and every row member at the same slot,
+offset and type — and a build whose layout no era holds is promoted to an
+era of its own, its slots computed by the same probe, so the era-complete
+read covers it rather than refusing it. Then a replica answering `null` for
+a state lookup had become a zero or an empty code: every state read now
+demands hex data and throws otherwise. Beside those, the era table's
+catalogue is a global hash index with per-build id lists (the drift gate
+refuses to scan a tracked file above two megabytes), candidate refs are
+origin's branches and the tags only — never a local head — so the operator's
+checkout and CI derive the same candidates, and the check demands only the
+candidates derived from committed inputs (a record's stamp, the census's
+candidates file), reporting ref-derived ones as advisory. And the standard
+itself is now `--proof-standard provenance|routed`, recorded on the artifact
+and every result: `provenance` (the default this PR ships) withholds a
+verdict on an unattributed facet or an incomplete population; `routed` —
+the programme's ratified standard — records the same provenance verdict
+beside a routed proof without gating on it. Ratifying one is a flag, not a
+change of evidence. The first smoke of the population gate showed its
+cost on a public endpoint: sepolia's three records attribute every facet,
+yet their cut histories come back empty or without the deploy-time cut —
+the endpoint prunes old logs — so the population is not exhaustive and the
+provenance standard withholds them too, with the routed verdict recorded
+beside the refusal. Exhaustiveness on a pruned endpoint needs an archive
+node or an operator attestation, which is the other half of the decision on
+#1566. Run 32 was started under that gate and superseded by run 33 after
+round 11, which closed three smaller doors: HEAD's own counter readings on
+the enumerable path are now judged like the earlier eras' (a lifetime
+counter above the id range refuses every proof; a live-commit counter above
+zero with no intent row found contradicts the intent class); the archive
+manifest's entry equality — and the census's staleness check, which is now
+that same comparison — covers the facet set (as a set) and the deploy time,
+so a corrected archive whose facets differ is never "already recorded"; and
+the era table is pinned in the excision-residue gate as a historical record,
+because its catalogue names every contract each past build produced, the
+retired buy surface among them. Round 12 corrected the new live-commit rule
+itself: the counter is protocol-wide, so an intent the getter filed as
+non-VPFI or unknown-asset is a live commit it counts, and every candidate of
+every scope is accounted before the counter may contradict. Run 33 re-reads
+every deployment under `provenance` — from the round-11 head; the round-12
+correction changes no verdict, since a HEAD live-commit counter above zero
+occurs only where the intent class is already withheld for scope.
+
+**Review round 13 found the population gate could never pass, and closed
+three doors beside it.** `VaipakamDiamond`'s constructor emits one
+`DiamondCut` with an EMPTY cut array and installs the `diamondCut` selector
+by writing storage directly, so no history ever holds an Add of that
+selector and the cut facet it installed never appears as an Add: the
+deploy-time marker is now that empty cut at the head of the history, and the
+facet the loupe maps `diamondCut` to is exempt from the every-facet test —
+without this every deployment of this protocol was non-exhaustive by
+construction, which is why the first smoke withheld sepolia. Under the
+routed standard only a class proven by a routed getter keeps its proof when
+provenance refuses; a class proven by the storage read alone — a getter-less
+shell's counter twin, the intent read at every era slot — still depends on
+the era table covering every writer's layout, which is exactly what the
+refusal denies, so it falls under either standard. And the walk's exit code
+no longer tolerates every violation as "known": the historical ones are
+acknowledged in a committed file, keyed by the commit and struct of each
+forbidden change event (an insertion, removal, retype, namespace change, or
+an append inside a footprint-bearing struct), and CI fails on any other —
+acknowledging one means a fresh-redeploy plan exists for every live chain.
+Round 14 closed two more: the end-of-run revalidation of the inventory now
+keys on the deploy time and the facet set as well, so a record corrected on
+either while a long run was reading cannot pass on an identical key; and a
+getter-less Diamond whose storage scan finds a held or rebate row carries
+that row's amount into the reconciliation figures and the shortfall, where
+the shell return had left both null. Round 15 added the one writer the
+population had not counted: a cut's non-zero initializer is delegatecalled in
+the Diamond's context and can write any slot, so every initializer the cut
+history names joins the population under its own tag and is attributed like a
+facet — and one whose code cannot be read now is unattributable, not
+"never wrote", because it was called. Round 17 hardened the population gate
+on four sides: the constructor's marker is authenticated — the first cut must
+have the constructor's exact shape (empty cut, zero initializer, empty
+calldata) and sit in the transaction that created the Diamond, or in the
+first block the Diamond has code, because a later initializer-only cut has
+the same empty shape and a truncated history's first surviving cut is never
+the creation; a loupe that answered the selector probe but not `facets()` is
+an incomplete population, never a skipped check; any address the cut history
+names with empty code now is unreadable rather than "never wrote" — a cut
+proves the facet had code, and a contract created and destroyed in one
+transaction can still vanish; and the intent-only storage read scans
+`1..nextLoanId` from storage, never the routed pagination, which a partially
+refreshed metrics facet may skip an older loan of. Round 18 added the
+recorded facets to the gate: on a Diamond that routes today, a facet its
+records name that the history never added is a cut the endpoint omitted —
+and an endpoint that omitted one cut may have omitted a transient writer —
+so the population is not exhaustive; on a shell whose cut never ran, the same
+absence is exactly what the record says. Round 19 found no major issue; it
+tidied the proof labels — a zero-loans bound the event corroboration refuted
+no longer carries a `provenBy` on the class or on the deployment. Round 20
+closed three doors: the slot table must pin every census field, because a
+missing one read downstream as an empty era-slot list and certified a class
+never read; a getter row may absorb a same-valued earlier-slot row only when
+storage holds no row for that loan at HEAD's slot — otherwise the getter is
+reading HEAD's row and the older one is a distinct liability; and two
+records naming the same Diamond reuse a result only when their facet
+populations and deploy times are identical too, since provenance is a
+per-record verdict. Round 21 closed two more: an acknowledgement covers one
+occurrence of a change, in walk order, so a change reverted and reintroduced
+needs its own entry with its own redeploy plan; and a layout's identity
+carries each census field's normalized compiler type and offset beside its
+slot, and the census refuses any era whose field is not the plain counter or
+the `mapping(uint256 => Row)` its readers decode — a mapping whose key or
+value shape changed keeps its name and head slot but is a layout the row
+formula cannot read. Round 22 made the table's contents, not only its
+fingerprints, part of the gate: every era and build carries a digest of its
+generated contents — position, field slots and types, row layouts, the
+catalogue — that the check recomputes, so an entry edited after generation
+fails even with its source fingerprint intact; the check also rebuilds the
+HEAD era in CI and compares, and `--verify-all` rebuilds every entry for the
+release path. The table's identity is the sorted set of those digests, which
+a HEAD-era rebuild at a new commit with the same layout and code leaves
+unchanged, and the census records it beside the table's head. Round 23
+corrected the rebuild's target and closed three more doors: the CI rebuild
+is of the checkout's own HEAD — the table's head commit need not exist in a
+fresh clone after a squash, and CI reviews a merge commit — compared by
+LAYOUT with the era whose source fingerprint the checkout has, because a
+merge commit's facets are not the branch head's and a different forge
+release lays bytecode out differently while the storage layout is the
+compiler's alone (`--verify-all` still compares full contents at each entry's
+own commit, with the builder's forge, recorded in the table); a Diamond
+without a loupe has an unknown current facet set and its population is not
+exhaustive; enumeration needs both the stats and the pagination selector,
+since cuts are per selector; and where the loupe is unrouted the intent
+getter and producer are probed directly rather than through it. Round 24
+followed those probes to their ends and found one more scope hole: the
+producer's ABI now travels with the direct reads; `facetAddress(bytes4)` is
+probed as its own selector, since a cut can route `facetAddresses()` without
+it; without a loupe the routing history is unreadable rather than a thrown
+failure; and a fallback row filed non-VPFI by the loan getter counts as
+scoped only when the snapshot getter and the loan getter attribute to a
+common layout era — on a partially refreshed Diamond one can read today's
+`fallbackSnapshot` while the other reads an older `loans` mapping, and then
+the asset says nothing about the row, so those rows become unknown-asset
+and the class is not certified. Round 25 caught a crash the previous round
+had introduced — the scope check ran before the provenance record it writes
+to existed, which a smoke of the enumerable path would have shown and which
+one now precedes every push — and closed four more doors: the token getter
+joins every exclusion, since a row is filed non-VPFI by comparing the row
+getter's asset with `getVPFIToken()`, so the snapshot, loan and token getters
+must share a layout for a fallback exclusion and the intent and token
+getters for an intent exclusion; the VPFI discovery falls back to a direct
+call when `facetAddress(bytes4)` is cut out; each custody getter is probed
+before the enumeration and an unrouted one leaves its classes indeterminate
+with what storage found reported; and the era tool reuses an entry only when
+its recorded content digest still matches, rebuilding any other rather than
+re-signing it. Run 41 re-reads every deployment with all of it.
+
+### 7a. What the provenance walk found, and how the design changes (2026-09-09)
+
+The walk in question 2 was built first, and it answered before a single slot
+was read: `LibVaipakam.Storage` has NOT been append-only since the earliest
+deployment. Since 2026-05-01 the struct saw eight insertions in the first
+week of May (the last on 2026-05-08, before the first deployment on
+2026-05-10), one more on 2026-05-11 and a same-size swap on 2026-05-17, then
+**three removals on 2026-06-23** — the #687-A excision of the fixed-rate VPFI
+sale (PR #711) took fourteen fields out ahead of the intent rows — and **one
+removal on 2026-08-16** (`baseAuthorizedMessenger`, at index 209), which shifts
+every field after it. A mid-July retype of a mapping's value type shifts
+nothing and is not counted. The walker distinguishes a field that MOVED from
+one that was merely renamed by asking whether either name exists elsewhere in
+the other sequence; a same-typed insertion looks exactly like a rename to a
+type-only comparison, which the first cut of the rule missed.
+
+Two consequences, one for the census and one beyond it.
+
+**For the census: read every era, and no provenance gate is needed.** The
+intent mapping did not exist before 2026-06-08 and has sat at three different
+indices since (205, then 198, then 191 after the June removals); the rebate
+mapping and the two counters moved with it; the fallback snapshot has held
+index 45 since 2026-05-08 and the loan counter index 1 throughout. A slot
+derived from today's layout is therefore right for any facet compiled after
+2026-06-23 and wrong for anything earlier — and a Diamond that lived across a
+change may hold rows written under either layout, because in-place refreshes
+cut newer facets over older state. Rather than identify each deployment's
+source and gate the read on it, the census reads **every layout era since the
+walk began**: the walker's change events bound the eras, the compiler at one
+commit per era gives that era's slots (a throwaway contract holding the
+struct, inspected with `forge inspect … storage-layout` at that commit), and
+the committed slot table lists, per field, every distinct slot any era used.
+A row is proven absent only when it reads zero at EVERY era's slot for every
+enumerated loan id; the loan-id range itself comes from `nextLoanId`, whose
+slot never moved, so the range is complete whatever era wrote the loans. This
+is history-free — every read is state at the census block — and it needs no
+identification of any deployment's source. Its one stated assumption is that
+every facet ever cut was compiled from a commit in the walked history (main
+and everything merged into it); a facet built from an unmerged branch could
+carry a layout the walk never saw, which is recorded as the residual and is
+why the era table is regenerated from history rather than typed once.
+
+**Beyond the census: an in-place facet refresh across either removal
+mis-maps the live state.** The live testnets were deployed on 2026-05-06
+(op-sepolia, as its artifact records — that record is known to be wrong, and
+the true date is one of the artifact corrections), 2026-05-11 (sepolia) and
+2026-07-01 (base-sepolia, arb-sepolia, bnb-testnet). Any of them refreshed in
+place after 2026-08-16 now runs facets that read every field after index
+209 — the buyback, reward-emission, recycle and perk ledgers, and the reward
+role's configured flag — one slot away from where earlier facets wrote them;
+sepolia and op-sepolia additionally straddle the June removals, which shift
+everything from index 56 on, loans included. The refresh scripts carry no
+layout guard, and nothing in the repository checks the property an in-place
+upgrade depends on. That is outside this document's scope and is raised as
+its own issue with the walker's evidence; the census's own reads are
+unaffected, because they are era-complete by construction.
+
