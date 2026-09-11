@@ -12698,15 +12698,30 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
   // and still said "every affected helper family" — overclaiming inside the
   // fix for overclaiming. `EXTENSIONS` also admits the JavaScript/TypeScript
   // families and `.py`, and a helper in any of them can carry an argv deploy
-  // that `ARGV_DEPLOY_RE` recognises. Verified for all thirteen: lower-case
-  // reported, upper-case silently skipped.
+  // that `ARGV_DEPLOY_RE` recognises. Every entry below was probed directly:
+  // lower-case reported, upper-case silently skipped. The count is not
+  // restated here — it is the length of the table, and writing it out went
+  // stale the first time the table grew (r50).
   //
-  // Each family therefore carries the BODY ITS OWN LANGUAGE NEEDS. Reusing
-  // the shell body everywhere would have made the script families pass for
-  // the wrong reason — an unrecognised body is not reported either, so the
-  // pin would have been vacuous and the control would have failed.
-  const ARGV_JS =
-    "const {spawnSync}=require('child_process');spawnSync('wrangler',['deploy']);\n";
+  // Each family carries the BODY ITS OWN LANGUAGE NEEDS, and the MODULE
+  // SYSTEM ITS OWN EXTENSION IMPLIES. Reusing one body everywhere would make
+  // the script families pass for the wrong reason — an unrecognised body is
+  // not reported either, so the pin would be vacuous and the control would
+  // fail.
+  //
+  // THE MODULE SPLIT IS NOT PEDANTRY (r50). A `require` call is a syntax
+  // error under ESM, so a `.mjs` or `.mts` helper written that way throws
+  // before it can spawn anything — and `apps/agent` really does declare
+  // `"type": "module"`, which makes a plain `.js` helper there ESM too. The
+  // scanner never executes the fixture, so the verdicts would have been
+  // identical either way; what would have been wrong is the CLAIM. A pin
+  // labelled "an unsafe deployment passes silently" has to describe a body
+  // that would actually deploy, or it pins the right verdict about a
+  // deployment that could never happen.
+  const ARGV_ESM =
+    "import {spawnSync} from 'node:child_process';\nspawnSync('wrangler',['deploy']);\n";
+  const ARGV_CJS =
+    "const {spawnSync}=require('node:child_process');\nspawnSync('wrangler',['deploy']);\n";
   const ARGV_PY = "import subprocess\nsubprocess.check_call(['wrangler','deploy'])\n";
   const SHELL_BODY = 'cd apps/agent\nwrangler deploy\n';
 
@@ -12718,12 +12733,15 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     ['bash', SHELL_BODY],
     ['zsh', SHELL_BODY],
     ['ksh', SHELL_BODY],
-    ['js', ARGV_JS],
-    ['mjs', ARGV_JS],
-    ['cjs', ARGV_JS],
-    ['ts', ARGV_JS],
-    ['mts', ARGV_JS],
-    ['cts', ARGV_JS],
+    // ESM: `.mjs`/`.mts` by extension, and `.js`/`.ts` because the seeded
+    // manifest below declares `"type": "module"` exactly as apps/agent does.
+    ['js', ARGV_ESM],
+    ['mjs', ARGV_ESM],
+    ['ts', ARGV_ESM],
+    ['mts', ARGV_ESM],
+    // CommonJS by extension, whatever the manifest says.
+    ['cjs', ARGV_CJS],
+    ['cts', ARGV_CJS],
     ['py', ARGV_PY],
   ];
 
@@ -12744,7 +12762,12 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
    * regrow the problem.
    */
   const runFamilyAlone = (rel: string, body: string) => {
-    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    // `"type": "module"` mirrors the real apps/agent manifest, so `.js` and
+    // `.ts` helpers here are ESM exactly as they would be in the tree (r50).
+    seed(
+      'apps/agent/package.json',
+      '{"name":"@vaipakam/agent","type":"module"}\n',
+    );
     seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
     const r = runWith(rel, body);
     rmSync(join(root, rel), { force: true });
