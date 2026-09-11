@@ -60,6 +60,7 @@ test('both copies of the drive visibility predicate agree, and reject clipped co
 }) => {
   const src = fs.readFileSync(DRIVE, 'utf8');
   const clipHelpers = arrowBlocks(src, 'notClipped');
+  const paintHelpers = arrowBlocks(src, 'paintsText');
   const predicates = arrowBlocks(src, 'visible');
 
   // Pinned counts, deliberately. If the drive grows a third copy, or
@@ -67,6 +68,7 @@ test('both copies of the drive visibility predicate agree, and reject clipped co
   // longer exists and must be revisited rather than quietly passing over
   // whichever copies it still happens to find.
   expect(clipHelpers).toHaveLength(2);
+  expect(paintHelpers).toHaveLength(2);
   expect(predicates).toHaveLength(2);
 
   await page.setContent(`
@@ -84,19 +86,32 @@ test('both copies of the drive visibility predicate agree, and reject clipped co
     <div id="trimmer" style="height:19px; overflow:hidden">
       <p id="trimmed" style="height:20px; margin:0">clipped by one pixel, still readable</p>
     </div>
+    <dl class="receipt">
+      <div class="receipt-row" id="ghostRow">
+        <dt style="color: transparent">Fees</dt>
+        <dd style="color: transparent">the treasury share</dd>
+      </div>
+    </dl>
+    <p id="inherited" style="color: transparent"><span id="repainted" style="color: #111">visible again</span></p>
   `);
 
   for (const [i, predicate] of predicates.entries()) {
     const result = await page.evaluate(
-      ([clipSrc, visSrc]) => {
+      ([clipSrc, paintSrc, visSrc]) => {
         // One shared scope for the pair: `visible` calls `notClipped`,
         // and `eval` of a `const` would not leak either into scope here.
         const visible = new Function(
-          `${clipSrc}\n${visSrc}\nreturn visible;`,
+          `${clipSrc}\n${paintSrc}\n${visSrc}\nreturn visible;`,
         )() as (n: Element | null) => boolean;
         const byId = (id: string) => document.getElementById(id);
         return {
           clipped: visible(byId('clipped')),
+          transparentLeaf: visible(byId('ghostRow')!.querySelector('dd')),
+          // A wrapper whose own colour is transparent but whose text
+          // lives in a repainted child must NOT be condemned: `color`
+          // inherits, so judging wrappers would fail a whole card.
+          transparentWrapper: visible(byId('inherited')),
+          repaintedChild: visible(byId('repainted')),
           slivered: visible(byId('slivered')),
           trimmed: visible(byId('trimmed')),
           plain: visible(byId('plain')),
@@ -108,7 +123,7 @@ test('both copies of the drive visibility predicate agree, and reject clipped co
             typeof byId('plain')!.checkVisibility === 'function',
         };
       },
-      [clipHelpers[i], predicate] as const,
+      [clipHelpers[i], paintHelpers[i], predicate] as const,
     );
 
     expect(result.usesCheckVisibility, 'the engine exposes checkVisibility').toBe(
@@ -127,6 +142,13 @@ test('both copies of the drive visibility predicate agree, and reject clipped co
     expect(result.slivered, `copy ${i}: content inside height:1px/overflow:hidden`).toBe(
       false,
     );
+    // `checkVisibility` says nothing about colour, and neither did any
+    // geometry test — so `color: transparent` left every receipt value
+    // laid out, measurable and readable through `innerText` while the
+    // lender saw nothing.
+    expect(result.transparentLeaf, `copy ${i}: a dd painted in transparent`).toBe(false);
+    expect(result.transparentWrapper, `copy ${i}: a wrapper with no own text`).toBe(true);
+    expect(result.repaintedChild, `copy ${i}: a child that repaints itself`).toBe(true);
     expect(result.plain, `copy ${i}: ordinary content`).toBe(true);
     // The other end of the same rule, pinned so the threshold cannot be
     // tightened into a false failure: a row clipped by a single pixel is
@@ -166,6 +188,7 @@ test('the drive addresses the card its own predicate judged, not Playwright’s'
 }) => {
   const src = fs.readFileSync(DRIVE, 'utf8');
   const clipSrc = arrowBlocks(src, 'notClipped')[0];
+  const paintSrc = arrowBlocks(src, 'paintsText')[0];
   const visSrc = arrowBlocks(src, 'visible')[0];
 
   await page.setContent(`
@@ -190,15 +213,20 @@ test('the drive addresses the card its own predicate judged, not Playwright’s'
   // What the DOM pass actually chooses, and the index it now reports so
   // the interaction can address the same element.
   const chosenIndex = await page.evaluate(
-    ([clip, vis]) => {
-      const visible = new Function(`${clip}\n${vis}\nreturn visible;`)() as (
+    ([clip, paint, vis]) => {
+      // All THREE helpers, in dependency order. `visible` calls both
+      // `notClipped` and `paintsText`, and injecting a subset throws a
+      // `ReferenceError` inside the page — which is how this was caught:
+      // adding `paintsText` to the drive broke this second injection
+      // while the first, already updated, went on passing.
+      const visible = new Function(`${clip}\n${paint}\n${vis}\nreturn visible;`)() as (
         n: Element | null,
       ) => boolean;
       const all = [...document.querySelectorAll('[data-testid="forced-close-card"]')];
       const shown = all.filter(visible);
       return all.indexOf(shown[0]);
     },
-    [clipSrc, visSrc] as const,
+    [clipSrc, paintSrc, visSrc] as const,
   );
 
   expect(chosenIndex, 'the predicate skips the transparent card').toBe(1);

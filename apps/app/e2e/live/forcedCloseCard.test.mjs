@@ -2403,3 +2403,123 @@ describe('round 36 self-review: the peak is reported, not just consumed', () => 
     expect(v.visibleCardsPeak).toBeUndefined();
   });
 });
+
+describe('round 37 review findings', () => {
+  const copy = {
+    unknownCopy: FORCED_CLOSE.unknown,
+    readyCopy: [FORCED_CLOSE.readyInKind, FORCED_CLOSE.readyInternalMatch, FORCED_CLOSE.readyRental],
+    withheldCopy: [FORCED_CLOSE.unknown, FORCED_CLOSE.notYet, FORCED_CLOSE.readyNeedsRoute],
+    recognisedCopy: [
+      FORCED_CLOSE.unknown,
+      FORCED_CLOSE.notYet,
+      FORCED_CLOSE.blockedPaused,
+      FORCED_CLOSE.blockedSequencer,
+      FORCED_CLOSE.blockedNoConsent,
+      FORCED_CLOSE.readyInKind,
+      FORCED_CLOSE.readyInternalMatch,
+      FORCED_CLOSE.readyRental,
+      FORCED_CLOSE.readyNeedsRoute,
+    ],
+    receiptLead: FORCED_CLOSE.receipt.youReceive,
+  };
+
+  describe('a currency sign reached across a typographic separator', () => {
+    it('flags a figure separated from its sign by a dash or a comma', () => {
+      expect(monetaryAmountsIn('Loan 100 — ₽')).toHaveLength(1);
+      expect(monetaryAmountsIn('Loan 100 – ₽')).toHaveLength(1);
+      expect(monetaryAmountsIn('Loan 100, ₽')).toHaveLength(1);
+      expect(monetaryAmountsIn('Position 2 — $')).toHaveLength(1);
+    });
+
+    // WHY THIS IS SAFE, and why it is a deliberate asymmetry with
+    // `hasTickerNear`, which treats these same characters as clause
+    // BOUNDARIES. A ticker is a word and can appear in unrelated prose
+    // after a dash (round 23 found exactly that). A currency sign is not
+    // a word — it does not occur as a standalone token in a sentence —
+    // so one sitting immediately after the figure belongs to it.
+    //
+    // The bound is that no WORD may intervene, and that is what stops
+    // the comma reaching into a following clause.
+    it('does not reach across a clause into unrelated prose', () => {
+      expect(monetaryAmountsIn('Loan 100, fees are paid in ₽')).toEqual([]);
+      expect(monetaryAmountsIn('Loan 100 — the borrower repays in $')).toEqual([]);
+      expect(monetaryAmountsIn('Wait 3 days, fees are paid in $')).toEqual([]);
+    });
+
+    it('still leaves a sentence end alone', () => {
+      expect(monetaryAmountsIn('Closing out Loan 21. Fees apply.')).toEqual([]);
+    });
+  });
+
+  describe('the check-running / refusal contradiction is judged per render', () => {
+    // The invariant is ABOUT the unresolved state, and it was reading
+    // only the render the poll settled on — so a card that said both
+    // things WHILE its checks ran and then reached clean copy had the
+    // contradiction overwritten, and the arm could not fire on the one
+    // moment it exists for.
+    const base = {
+      lenderHoldsActive: true,
+      mounted: true,
+      attached: true,
+      submitPresent: true,
+      submitVisible: true,
+      submitDisabled: false,
+      visibleSubmits: 1,
+      visibleCards: 1,
+      visibleCardsPeak: 1,
+      saleLocked: false,
+      settled: true,
+      bodyPresent: true,
+      bodyText: FORCED_CLOSE.readyInKind,
+      text: FORCED_CLOSE.readyInKind,
+      confirmText: null,
+      confirmExpected: false,
+    };
+
+    it('FAILS on a contradiction that only a superseded render carried', () => {
+      const v = forcedCloseVerdict(
+        { ...base, seenTexts: [`${FORCED_CLOSE.unknown} This loan is not available for closing out.`] },
+        copy,
+      );
+      expect(v.verdict).toBe('fail');
+      expect(v.why).toMatch(/check still running AND claims unavailability/);
+    });
+
+    // THE PAIRING MUST BE WITHIN ONE RENDER. A card that said "still
+    // checking" and later said something unavailable is a card that
+    // RESOLVED — pairing those across renders would manufacture a FAIL
+    // out of an ordinary transition, which is the false-FAIL direction.
+    it('does NOT pair a check-running render with a later unavailable one', () => {
+      const v = forcedCloseVerdict(
+        {
+          ...base,
+          seenTexts: [FORCED_CLOSE.unknown, 'This sale route is not available.'],
+        },
+        copy,
+      );
+      expect(v.verdict).not.toBe('fail');
+    });
+
+    it('still passes the shipped unresolved copy, whose refusal is negated', () => {
+      const v = forcedCloseVerdict(
+        { ...base, seenTexts: [FORCED_CLOSE.unknown] },
+        copy,
+      );
+      expect(v.verdict).toBe('pass');
+    });
+
+    it('still FAILS the settled-render contradiction it already caught', () => {
+      const v = forcedCloseVerdict(
+        {
+          ...base,
+          settled: false,
+          text: `${FORCED_CLOSE.unknown} This loan is not available for closing out.`,
+          bodyText: FORCED_CLOSE.unknown,
+          seenTexts: [],
+        },
+        copy,
+      );
+      expect(v.verdict).toBe('fail');
+    });
+  });
+});

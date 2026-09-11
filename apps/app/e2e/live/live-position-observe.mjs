@@ -3274,6 +3274,43 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
           }
           return true;
         };
+        const paintsText = (node) => {
+          // ROUND 37 P2 — TEXT CAN BE HIDDEN BY ITS OWN COLOUR, and nothing else
+          // in this predicate looks at colour. `color: transparent` leaves the
+          // element laid out, `checkVisibility` positive, the rect non-zero and
+          // the clipping walk satisfied, while `innerText` keeps yielding every
+          // word — so the receipt's fee and loss values could be recorded as
+          // read with nothing painted on screen. Same class as the opacity and
+          // clipping holes before it: a property that hides the CONTENT rather
+          // than the box.
+          //
+          // Only elements carrying their OWN text are judged. `color` inherits,
+          // so testing a wrapper would condemn a whole card whose children set
+          // their own colour — a false FAIL, on the very element the run exists
+          // to vouch for. The leaves are where this matters anyway: the
+          // receipt's `dt`/`dd` are exactly the nodes whose values get blanked.
+          //
+          // `-webkit-text-fill-color` is read first because it OVERRIDES `color`
+          // for painting wherever it is set, which is how this is usually done
+          // in a real stylesheet.
+          //
+          // Alpha ZERO only, never a contrast judgement. Deciding text is too
+          // faint against its background needs the background, the stacking and
+          // whatever image sits behind it, and getting that wrong condemns
+          // legible copy — the direction this file keeps saying gets a check
+          // switched off.
+          const own = [...node.childNodes].some(
+            (c) => c.nodeType === 3 && c.textContent.trim() !== '',
+          );
+          if (!own) return true;
+          const cs = getComputedStyle(node);
+          const fill = cs.webkitTextFillColor || cs.color || '';
+          const m = /rgba?\(([^)]+)\)/.exec(fill);
+          if (!m) return true;
+          const channels = m[1].split(/[,\s/]+/).filter(Boolean);
+          const alpha = channels.length > 3 ? Number(channels[3]) : 1;
+          return !(alpha === 0);
+        };
         const visible = (node) => {
           if (node === null) return false;
           // ROUND 23 P2 — SUPPLEMENTS the geometry test, never replaces
@@ -3303,7 +3340,7 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
             // helper was rewritten wholesale and did get it, which is
             // why the live run looked like it confirmed the change: the
             // canary I checked exercised the copy that worked.
-            return notClipped(node);
+            return notClipped(node) && paintsText(node);
           }
           const cs = getComputedStyle(node);
           if (cs.display === 'none' || cs.visibility === 'hidden' || cs.visibility === 'collapse') {
@@ -3314,7 +3351,7 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
           }
           const r = node.getBoundingClientRect();
           if (!(r.width > 0 && r.height > 0)) return false;
-          return notClipped(node);
+          return notClipped(node) && paintsText(node);
         };
         const all = [...document.querySelectorAll('[data-testid="forced-close-card"]')];
         const shown = all.filter(visible);
@@ -3850,6 +3887,43 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
               }
               return true;
             };
+            const paintsText = (node) => {
+              // ROUND 37 P2 — TEXT CAN BE HIDDEN BY ITS OWN COLOUR, and nothing else
+              // in this predicate looks at colour. `color: transparent` leaves the
+              // element laid out, `checkVisibility` positive, the rect non-zero and
+              // the clipping walk satisfied, while `innerText` keeps yielding every
+              // word — so the receipt's fee and loss values could be recorded as
+              // read with nothing painted on screen. Same class as the opacity and
+              // clipping holes before it: a property that hides the CONTENT rather
+              // than the box.
+              //
+              // Only elements carrying their OWN text are judged. `color` inherits,
+              // so testing a wrapper would condemn a whole card whose children set
+              // their own colour — a false FAIL, on the very element the run exists
+              // to vouch for. The leaves are where this matters anyway: the
+              // receipt's `dt`/`dd` are exactly the nodes whose values get blanked.
+              //
+              // `-webkit-text-fill-color` is read first because it OVERRIDES `color`
+              // for painting wherever it is set, which is how this is usually done
+              // in a real stylesheet.
+              //
+              // Alpha ZERO only, never a contrast judgement. Deciding text is too
+              // faint against its background needs the background, the stacking and
+              // whatever image sits behind it, and getting that wrong condemns
+              // legible copy — the direction this file keeps saying gets a check
+              // switched off.
+              const own = [...node.childNodes].some(
+                (c) => c.nodeType === 3 && c.textContent.trim() !== '',
+              );
+              if (!own) return true;
+              const cs = getComputedStyle(node);
+              const fill = cs.webkitTextFillColor || cs.color || '';
+              const m = /rgba?\(([^)]+)\)/.exec(fill);
+              if (!m) return true;
+              const channels = m[1].split(/[,\s/]+/).filter(Boolean);
+              const alpha = channels.length > 3 ? Number(channels[3]) : 1;
+              return !(alpha === 0);
+            };
             const visible = (node) => {
               if (!node) return false;
               if (typeof node.checkVisibility === 'function') {
@@ -3868,7 +3942,7 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
               }
               const r = node.getBoundingClientRect();
               if (!(r.width > 0 && r.height > 0)) return false;
-              return notClipped(node);
+              return notClipped(node) && paintsText(node);
             };
             // ROUND 24 P2 — THE RECEIPT, not anything with text in it.
             //

@@ -363,7 +363,25 @@ export function monetaryAmountsIn(text) {
     // `3 days and fees in $` report the `3` — a false FAIL on the grace
     // window this card is explicitly allowed to show. Only SEPARATORS
     // may intervene; no word may.
-    const SEP = '[\\s(\\[{:«»"\'‘’“”)\\]}-]*';
+    // ROUND 37 P2 — THE TYPOGRAPHIC SEPARATORS TOO. The class reached
+    // ASCII `-` and `:` and stopped there, so `Loan 100 — ₽` and
+    // `Loan 100, ₽` still left through the identifier exemption.
+    //
+    // These are the characters `hasTickerNear` treats as CLAUSE
+    // BOUNDARIES, and admitting them here is a deliberate asymmetry
+    // rather than an inconsistency. A ticker is a WORD and can appear in
+    // unrelated prose after a dash — round 23 found exactly that — so it
+    // must not be attached across a boundary. A currency SIGN is not a
+    // word: `₽` does not occur as a standalone token in a sentence, so
+    // one sitting immediately after the figure with nothing but
+    // punctuation between belongs to it.
+    //
+    // The rule stays "no WORD may intervene", which is what bounds this.
+    // `Loan 100, fees are paid in ₽` does not match — the first
+    // non-separator after the figure is `f` — so admitting the comma
+    // cannot reach across a clause into unrelated prose. `.` and `!?`
+    // are deliberately still absent: a sentence really has ended there.
+    const SEP = '[\\s(\\[{:,;«»"\'‘’“”)\\]}\\u2013\\u2014-]*';
     const currencyAfter = new RegExp(`^${SEP}\\p{Sc}`, 'u');
     const currencyBefore = new RegExp(`\\p{Sc}${SEP}$`, 'u');
     const hugsCurrency = currencyBefore.test(before) || currencyAfter.test(after);
@@ -1106,18 +1124,46 @@ export function forcedCloseVerdict(obs, copy) {
   // app's ignorance and the protocol's refusal at once, and they are
   // opposite claims.
   //
-  // Narrow by construction: this fires only while the card is ALSO
-  // reporting a check in flight, so it is a self-contradiction rather
+  // Narrow by construction: this fires only where a render ALSO
+  // reported a check in flight, so it is a self-contradiction rather
   // than a judgement about wording. Copy that merely says a route is
   // unavailable — which several legitimate states do — is untouched.
-  if (checkRunning) {
+  //
+  // NOT GATED ON `checkRunning`, deliberately (round 37 P2). That
+  // variable reads the SETTLED render, and gating on it would have
+  // reintroduced the very defect being fixed one line up: a card that
+  // contradicted itself mid-poll and then settled clean has
+  // `checkRunning === false`, so the scan below would never run. Each
+  // part now carries its own check-running test instead, which is both
+  // the gate and the pairing.
+  {
     // EVERY match, not the first one. The shipped `unknown` copy itself
     // contains "not what the protocol has refused" — correctly negated —
     // and examining only the first hit let that legitimate occurrence
     // vouch for an affirmative claim later in the same card. Fourth
     // variant in this PR of stopping at the first thing found; caught
     // here by the round-7 case failing rather than by review.
-    const refusal = firstUnnegatedRefusal(obs.text ?? '');
+    // ROUND 37 P2 — EVERY CAPTURED RENDER, not only the settled one.
+    //
+    // This invariant is ABOUT the unresolved state — "an unresolved
+    // check is never reported as 'not available'" — and it was reading
+    // only `obs.text`, which is the render the poll finally settled on.
+    // A card that said both things WHILE its checks ran and then reached
+    // clean ready copy had the contradiction overwritten by the ordinary
+    // readiness update, so the arm could not fire on the exact moment it
+    // exists to catch.
+    //
+    // Scanned PER PART, never over the joined text, for round 35's
+    // reason: the pairing must be two claims in ONE render. A render
+    // saying "still checking" and a different one later saying
+    // "unavailable" is a card that resolved, which is correct
+    // behaviour — pairing those across renders would manufacture a FAIL
+    // out of a normal transition.
+    const refusal = parts
+      .map((part) =>
+        saysCheckRunning(part, copy?.unknownCopy ?? '') ? firstUnnegatedRefusal(part) : null,
+      )
+      .find((hit) => hit);
     if (refusal) {
       return {
         verdict: 'fail',

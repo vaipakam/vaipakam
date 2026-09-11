@@ -176,3 +176,35 @@ at all. Rather than leave that as an argument, it is now something the
 suite checks, because the two halves of it are maintained in separate
 places and a future disagreement between them would otherwise surface as
 a surprise on a live run rather than as a failing test.
+
+A third way of hiding content turned out to be unchecked: text can be
+made invisible by its own colour. A receipt row set to a transparent
+colour keeps its size, is reported as displayed, and its words can still
+be read programmatically — so the run could record that a lender had been
+shown the fees and losses while nothing was painted. Visibility now
+requires the text to be painted as well as the element to be there.
+Only elements carrying their own text are judged, because colour is
+inherited and judging containers would condemn a whole card whose rows
+set their own colour. Nothing attempts to decide whether text is too
+faint to read against its background; that needs more than this check can
+see, and getting it wrong would reject readable copy.
+
+Two existing checks were also looking at too little. The scan for
+currency figures now reaches its sign across a dash or a comma, so a
+figure written that way is no longer mistaken for a reference number —
+while still stopping at the first real word, so a sentence that merely
+mentions a currency later on is untouched. And the rule that a card must
+never say both "a check is still running" and "this is not available" is
+now applied to every screen the check saw rather than only the last one,
+which is the state the rule is actually about: a card that contradicted
+itself while its checks ran and then settled cleanly used to have the
+contradiction overwritten before anything looked at it. Two claims made
+on two different screens are still not treated as a contradiction — that
+is simply a card resolving.
+
+One documentation correction belongs here too, because it was misleading
+rather than merely incomplete. The coverage notes both stated that the
+websocket capture is inert today and, a few lines later, credited it with
+narrowing the timing window the missing-card check depends on. Only the
+first is true. An operator reading the second would have believed in a
+protection that is not currently in force.
