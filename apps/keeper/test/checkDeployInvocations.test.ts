@@ -12,7 +12,14 @@
  * so the suite never touches the repo.
  */
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -12750,28 +12757,85 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
   const RUNBOOK_BODY =
     'Deploy it:\n\nwrangler deploy --config apps/agent/wrangler.jsonc\n';
 
-  const WALK_HELPER_FAMILIES: ReadonlyArray<readonly [string, string]> = [
-    ['ps1', SHELL_BODY],
-    ['cmd', SHELL_BODY],
-    ['bat', SHELL_BODY],
-    ['sh', SHELL_BODY],
-    ['bash', SHELL_BODY],
-    ['zsh', SHELL_BODY],
-    ['ksh', SHELL_BODY],
+  const WORKFLOW_BODY =
+    'name: d\non: push\njobs:\n  d:\n    runs-on: ubuntu-latest\n    steps:\n' +
+    '      - run: |\n          cd apps/agent\n          wrangler deploy\n';
+  const JSON_VALUE_BODY = '{"note": "cd apps/agent && wrangler deploy"}\n';
+
+  /**
+   * EVERY extension `walk` accepts, with the body and location each needs.
+   *
+   * The list is DERIVED-CHECKED, not hand-trusted: `walk yields exactly these
+   * families` below reads `EXTENSIONS` out of the guard's source and fails if
+   * this table and that list disagree in either direction. That guard exists
+   * because this table was a SUBSET SEVEN TIMES — three representatives, then
+   * seven shell families, fourteen, fifteen, seventeen, each widening made
+   * BECAUSE the previous was too narrow and each stopping short again. At
+   * seven the pattern is the defect, and the remedy is the one this work
+   * reached for everywhere else: stop maintaining the enumeration by hand.
+   *
+   * Bodies stay explicit per family rather than generated, because an
+   * unrecognised body is not reported either — a shared body would make some
+   * families pass for the wrong reason, which is the vacuity trap this suite
+   * has already hit. The DIRECTORY matters too: a workflow is only read as one
+   * under `.github/workflows`.
+   */
+  const WALK_HELPER_FAMILIES: ReadonlyArray<
+    readonly [ext: string, body: string, dir: string]
+  > = [
+    ['ps1', SHELL_BODY, 'apps/agent'],
+    ['cmd', SHELL_BODY, 'apps/agent'],
+    ['bat', SHELL_BODY, 'apps/agent'],
+    ['sh', SHELL_BODY, 'apps/agent'],
+    ['bash', SHELL_BODY, 'apps/agent'],
+    ['zsh', SHELL_BODY, 'apps/agent'],
+    ['ksh', SHELL_BODY, 'apps/agent'],
     // ESM: `.mjs`/`.mts` by extension, and `.js`/`.ts` because the seeded
-    // manifest below declares `"type": "module"` exactly as apps/agent does.
-    ['js', ARGV_ESM],
-    ['mjs', ARGV_ESM],
-    ['ts', ARGV_ESM],
-    ['mts', ARGV_ESM],
+    // manifest declares `"type": "module"` exactly as apps/agent does.
+    ['js', ARGV_ESM, 'apps/agent'],
+    ['mjs', ARGV_ESM, 'apps/agent'],
+    ['ts', ARGV_ESM, 'apps/agent'],
+    ['mts', ARGV_ESM, 'apps/agent'],
     // CommonJS by extension, whatever the manifest says.
-    ['cjs', ARGV_CJS],
-    ['cts', ARGV_CJS],
-    ['py', ARGV_PY],
-    ['mk', MAKE_BODY],
-    ['md', RUNBOOK_BODY],
-    ['mdx', RUNBOOK_BODY],
+    ['cjs', ARGV_CJS, 'apps/agent'],
+    ['cts', ARGV_CJS, 'apps/agent'],
+    ['py', ARGV_PY, 'apps/agent'],
+    ['mk', MAKE_BODY, 'apps/agent'],
+    ['md', RUNBOOK_BODY, 'apps/agent'],
+    ['mdx', RUNBOOK_BODY, 'apps/agent'],
+    // A workflow is only READ as one under this directory.
+    ['yml', WORKFLOW_BODY, '.github/workflows'],
+    ['yaml', WORKFLOW_BODY, '.github/workflows'],
+    // Read value-by-value, which is #2119's subject — and equally bypassed
+    // when the name is upper-cased, which is this defect's.
+    ['json', JSON_VALUE_BODY, 'apps/agent'],
+    ['jsonc', JSON_VALUE_BODY, 'apps/agent'],
   ];
+
+  it('walk yields exactly these families — parity with EXTENSIONS (#2123 guard)', () => {
+    // THE FIX FOR SEVEN ROUNDS OF SUBSETS. Reads the production list rather
+    // than trusting the table above, and fails in BOTH directions: an
+    // extension added to the guard and not here, or dropped there and left
+    // here. Either way the suite says so instead of quietly covering less.
+    const src = readFileSync(SCRIPT, 'utf8');
+    const shell = /const SHELL_EXTENSIONS = \[([^\]]*)\]/.exec(src);
+    const rest = /const EXTENSIONS = \[([\s\S]*?)\n\];/.exec(src);
+    expect(shell, 'SHELL_EXTENSIONS should be locatable').not.toBeNull();
+    expect(rest, 'EXTENSIONS should be locatable').not.toBeNull();
+    const pick = (blob: string) =>
+      [...blob.matchAll(/'\.([A-Za-z0-9]+)'/g)].map((m) => m[1]);
+    const production = new Set([
+      ...pick(shell![1]),
+      ...pick(rest![1]),
+    ]);
+    const covered = new Set(WALK_HELPER_FAMILIES.map(([e]) => e));
+    const missing = [...production].filter((e) => !covered.has(e)).sort();
+    const extra = [...covered].filter((e) => !production.has(e)).sort();
+    expect(missing, `families in EXTENSIONS but not pinned: ${missing}`).toEqual(
+      [],
+    );
+    expect(extra, `families pinned but not in EXTENSIONS: ${extra}`).toEqual([]);
+  });
 
   /**
    * Run one family's helper with NO OTHER HELPER PRESENT.
@@ -12852,8 +12916,8 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     // purpose, not just for the deploy it might contain. What the pin must
     // not do is claim a deployment that cannot happen, which is the
     // right-verdict-impossible-premise trap this suite has now hit twice.
-    for (const [ext, body] of WALK_HELPER_FAMILIES) {
-      const r = runFamilyAlone(`apps/agent/D.${ext.toUpperCase()}`, body);
+    for (const [ext, body, dir] of WALK_HELPER_FAMILIES) {
+      const r = runFamilyAlone(`${dir}/D.${ext.toUpperCase()}`, body);
       expect(r.ok, `.${ext.toUpperCase()} should be bypassed by the walk`).toBe(
         true,
       );
@@ -12875,14 +12939,14 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     //
     // So it asserts the REPORT ITSELF: the violation banner, and the file at
     // the line the deploy sits on. A crash produces neither.
-    for (const [ext, body] of WALK_HELPER_FAMILIES) {
-      const r = runFamilyAlone(`apps/agent/d.${ext}`, body);
+    for (const [ext, body, dir] of WALK_HELPER_FAMILIES) {
+      const r = runFamilyAlone(`${dir}/d.${ext}`, body);
       expect(r.ok, `.${ext} should be scanned and reported`).toBe(false);
       expect(r.out, `.${ext} should produce a violation report`).toContain(
         'missing --keep-vars',
       );
       expect(r.out, `.${ext} should name the offending helper`).toContain(
-        `apps/agent/d.${ext}`,
+        `${dir}/d.${ext}`,
       );
     }
   });
