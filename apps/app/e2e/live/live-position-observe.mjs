@@ -4146,7 +4146,7 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
         if (shown.length === 0) return { hiddenNow: true };
         const el = shown[0];
         const body = el.querySelector('[data-testid="forced-close-body"]');
-        // ROUND 61 P2 — THE BODY'S TEXT-BEARING LEAVES, not the wrapper.
+        // ROUND 61 P2 — THE BODY'S TEXT, not the wrapper's presence.
         //
         // `visible(body)` alone cannot answer "can the lender read the
         // explanation", and `paintsText` says why in its own comment:
@@ -4160,51 +4160,66 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
         // yielding the sentence: the heading-only surface round 21 added
         // `bodyVisible` to catch, reached one level down.
         //
-        // The receipt pass and the submit labels have judged leaves
-        // since rounds 44 and 46. This is the same rule at the third
-        // site — seventh instance on this PR of a fix applied to one of
-        // several parallel sites.
+        // ROUND 62 P2 — AND THE RECOGNISED SENTENCE ITSELF, not merely
+        // some painted text somewhere in the body.
         //
-        // `some`, NOT `every`, and the difference is the whole safety
-        // margin. A screen-reader-only span is ordinary, accessible,
-        // correct markup and is clipped by design; `every` would fail
-        // the card for having one. The residual is stated rather than
-        // hidden: a body with two text leaves where only one is erased
-        // still passes here. That is the missed-defect direction, which
-        // is the one this file always takes.
+        // Round 61 answered this with "at least one visible text leaf",
+        // and stated its own residual: a body with two text leaves where
+        // only one is erased still passed. That residual is the whole
+        // defect, because the leaf the verdict MATCHES is the one that
+        // governs the action — an erased explanation beside a visible
+        // secondary note satisfied `some` while the lender read nothing
+        // that justified the button.
         //
-        // An EMPTY body has no leaves and must not be caught here — the
-        // verdict has its own arm for a body that rendered nothing, and
-        // reporting it as invisible would name the wrong defect.
-        // NAMED, so the fixture suite can extract and exercise it the
-        // way it does `rowShown` — the rule is the thing under test and
-        // a copy of it written into the test would prove nothing.
-        const textLeavesOf = (root) => {
-          if (root === null) return [];
-          // Elements whose text is NEVER PAINTED are not leaves, however
-          // much text they hold. `innerText` — which is what `bodyText`
-          // reads — already skips them, so counting one would make the
-          // two disagree about what the body says.
-          //
-          // NOT REACHABLE TODAY, and the first version of this comment
-          // claimed otherwise. A body holding only a `<style>` has no
-          // height, so `visible` rejects it on geometry before the leaf
-          // rule is consulted at all — the fixture asserts exactly that.
-          // What the exclusion does is stop the rule from CONTRIBUTING a
-          // false FAIL if such a body ever gains height from something
-          // else, and keep it agreeing with the text `bodyText` reports.
-          // Defence in depth, stated as such rather than dressed up as a
-          // live defect.
+        // Binding the check to the recognised copy is strictly better
+        // than both of round 61's candidates. `every` would have failed a
+        // card for carrying a screen-reader-only span, which is correct,
+        // accessible markup clipped by design — the false-FAIL direction.
+        // `some` accepted an unrelated leaf. Reporting the VISIBLE TEXT
+        // and recognising state from that is neither: an sr-only span
+        // simply is not in the string, and an erased sentence is not in
+        // it either.
+        //
+        // Collected by walking TEXT NODES and keeping those whose element
+        // chain is visible, rather than by collecting "leaf elements": a
+        // parent with its own text beside a child with more would be
+        // counted twice by the latter, and the text is what the verdict
+        // needs anyway.
+        //
+        // Joined with NOTHING and then whitespace-collapsed. A space
+        // between every text node would split `<b>Loan</b>s` into
+        // "Loan s", and this string is compared against shipped copy with
+        // `includes`.
+        //
+        // Elements whose text is NEVER PAINTED (`script`, `style`,
+        // `template`, `title`, `noscript`) are skipped, so this agrees
+        // with the `innerText` that `bodyText` reports. Defence in depth
+        // rather than a live defect — a body holding only a `<style>` has
+        // no height and `visible` already rejects it on geometry, which
+        // the fixture asserts.
+        //
+        // NAMED, so the fixture suite can extract and exercise it the way
+        // it does `rowShown` — the rule is the thing under test and a copy
+        // of it written into the test would prove nothing.
+        const visibleTextOf = (root) => {
+          if (root === null) return '';
           const unpainted = /^(script|style|template|title|noscript)$/i;
-          return [root, ...root.querySelectorAll('*')].filter(
-            (n) =>
-              !unpainted.test(n.tagName) &&
-              [...n.childNodes].some(
-                (c) => c.nodeType === 3 && c.textContent.trim() !== '',
-              ),
-          );
+          const parts = [];
+          const walk = (node) => {
+            for (const child of node.childNodes) {
+              if (child.nodeType === 3) {
+                parts.push(child.textContent);
+              } else if (child.nodeType === 1) {
+                if (unpainted.test(child.tagName)) continue;
+                if (!visible(child)) continue;
+                walk(child);
+              }
+            }
+          };
+          walk(root);
+          return parts.join('').replace(/\s+/g, ' ').trim();
         };
-        const textLeaves = textLeavesOf(body);
+        const bodyVisibleText = visibleTextOf(body);
         // ROUND 26 P2 — EVERY SUBMIT CONTROL, not whichever is first.
         //
         // `querySelector` described control number one and nothing else.
@@ -4260,9 +4275,30 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
           // different facts about the body and the verdict needs all
           // three.
           //
-          // ROUND 61 P2 — and its text-bearing leaves, see `textLeaves`.
+          // ROUNDS 61 + 62 P2 — and its PAINTED TEXT, see `visibleTextOf`.
+          //
+          // The `innerText`-non-empty guard is what keeps an EMPTY body
+          // out of this arm: it has no text either way, and the verdict
+          // has its own, more accurate arm for a body that rendered
+          // nothing. Reporting it as invisible would name the wrong
+          // defect. (It is already rejected on geometry today — a
+          // zero-height box — so this is defence in depth, and the
+          // fixture says which of the two is doing the work.)
           bodyVisible:
-            visible(body) && (textLeaves.length === 0 || textLeaves.some(visible)),
+            visible(body) &&
+            ((body?.innerText ?? '').trim() === '' || bodyVisibleText !== ''),
+          // The text the lender can actually READ, which is what the
+          // verdict recognises the card's state from. `bodyText` stays
+          // the raw `innerText` beside it: the two differing IS the
+          // finding, and collapsing them would hide it.
+          bodyVisibleText,
+          // The same for the WHOLE card, because state is also
+          // recognised from the card's text where the body is absent or
+          // says nothing — `saysCheckRunning` reads it. Leaving that one
+          // site on raw `innerText` would have closed one instance of
+          // this defect and left its sibling open, which is the shape
+          // this PR has now been caught by eight times.
+          visibleText: visibleTextOf(el),
           bodyText: body === null ? null : body.innerText,
           submitPresent: submits.length > 0,
           submitVisible: shownSubmits.length > 0,
@@ -5441,8 +5477,53 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
             // invisible to it. Writing it the short way silently left the
             // spec unable to inject it — which the spec caught, because
             // it asserts it found exactly one.
-            const hasText = (el) => {
-              return (el.innerText ?? '').trim() !== '';
+            // ROUND 62 P2 — THE TEXT THE LENDER CAN ACTUALLY READ, which
+            // is not what `innerText` reports.
+            //
+            // `hasText` asked `innerText` of the `dt`/`dd` WRAPPER, and
+            // `visible` on a wrapper is deliberately lenient: `paintsText`
+            // exempts an element with no own text, and the opacity, filter
+            // and clip rules look at the element and its ANCESTORS. So
+            // `<dt><span style="color: transparent">Fees</span></dt>` keeps
+            // its geometry, passes `visible`, and `innerText` still yields
+            // "Fees". All six rows could satisfy `rowsOk` with not one of
+            // them painted — a funds receipt substantiated by text nobody
+            // can see, on the panel that spends the lender's money.
+            //
+            // Same defect as round 61's body, at the site round 61 cited as
+            // already doing it right. It was right about DESCENDING to the
+            // `dt`/`dd`; it stopped one level short of their content.
+            // Eighth instance on this PR of a fix applied to one of several
+            // parallel sites, and the first where the earlier fix's own
+            // comment named this site as the example to follow.
+            //
+            // Collected by walking TEXT NODES and keeping those whose
+            // element chain is visible, rather than by collecting "leaf
+            // elements": a parent with its own text beside a child with
+            // more would be counted twice by the latter, and the text is
+            // what the caller needs anyway.
+            //
+            // Joined with NOTHING and then whitespace-collapsed. A space
+            // between every text node would split `<b>Loan</b>s` into
+            // "Loan s", and this string is compared against shipped copy
+            // with `includes`.
+            const visibleTextOf = (root) => {
+              if (root === null) return '';
+              const unpainted = /^(script|style|template|title|noscript)$/i;
+              const parts = [];
+              const walk = (node) => {
+                for (const child of node.childNodes) {
+                  if (child.nodeType === 3) {
+                    parts.push(child.textContent);
+                  } else if (child.nodeType === 1) {
+                    if (unpainted.test(child.tagName)) continue;
+                    if (!visible(child)) continue;
+                    walk(child);
+                  }
+                }
+              };
+              walk(root);
+              return parts.join('').replace(/\s+/g, ' ').trim();
             };
             const rowShown = (row) => {
               if (!visible(row)) return false;
@@ -5450,7 +5531,7 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
               const dd = row.querySelector('dd');
               if (dt === null || dd === null) return false;
               if (!visible(dt) || !visible(dd)) return false;
-              return hasText(dt) && hasText(dd);
+              return visibleTextOf(dt) !== '' && visibleTextOf(dd) !== '';
             };
             // An OBJECT now, not a boolean: the caller needs the
             // confirm-action facts as well as whether the rows read.

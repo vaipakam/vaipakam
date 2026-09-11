@@ -1002,7 +1002,20 @@ function receiptRowFault(obs, copy) {
         why: `the confirmation rendered six receipt rows but only ${distinct.size} distinct one(s) — a duplicated row means a disclosure the lender needs is not on the panel at all`,
       };
     }
-    const stateText = obs.bodyText ?? obs.text ?? '';
+    // ROUND 62 P2 — RECOGNISED FROM WHAT IS PAINTED, not from the DOM.
+    //
+    // `bodyText` is raw `innerText`, which keeps yielding a sentence that
+    // is transparent, clipped or filter-erased. Recognising the card's
+    // state from it lets an unreadable explanation substantiate the very
+    // action it is supposed to justify. `bodyVisibleText` is the same
+    // body with the unpainted parts left out.
+    //
+    // `??`, so a record predating the field falls back rather than
+    // recognising nothing — which would turn every old fixture into a
+    // finding. BOTH call sites take it; they are the parallel pair this
+    // PR keeps being caught by.
+    const stateText =
+      obs.bodyVisibleText ?? obs.bodyText ?? obs.visibleText ?? obs.text ?? '';
     const isRental =
       typeof copy.rentalReadyCopy === 'string' &&
       copy.rentalReadyCopy !== '' &&
@@ -1879,7 +1892,13 @@ export function forcedCloseVerdict(obs, copy) {
   const actionOffered = obs.submitVisible !== false && !obs.submitDisabled;
 
 
-  const checkRunning = saysCheckRunning(obs.text ?? '', copy?.unknownCopy ?? '');
+  // ROUND 62 P2 — from the PAINTED card text, for the same reason the
+  // body's recognition is. An erased "we are checking" sentence would
+  // otherwise excuse a card the lender sees no explanation on at all.
+  const checkRunning = saysCheckRunning(
+    obs.visibleText ?? obs.text ?? '',
+    copy?.unknownCopy ?? '',
+  );
 
   // ROUND 7 P2 — A READY ROUTE MUST OFFER THE ACTION.
   //
@@ -2308,7 +2327,20 @@ export function forcedCloseVerdict(obs, copy) {
     // own comment says that note does not describe the current state —
     // so matching against the card text let a broken readiness body be
     // vouched for by a history line (round 12 P2).
-    const stateText = obs.bodyText ?? obs.text ?? '';
+    // ROUND 62 P2 — RECOGNISED FROM WHAT IS PAINTED, not from the DOM.
+    //
+    // `bodyText` is raw `innerText`, which keeps yielding a sentence that
+    // is transparent, clipped or filter-erased. Recognising the card's
+    // state from it lets an unreadable explanation substantiate the very
+    // action it is supposed to justify. `bodyVisibleText` is the same
+    // body with the unpainted parts left out.
+    //
+    // `??`, so a record predating the field falls back rather than
+    // recognising nothing — which would turn every old fixture into a
+    // finding. BOTH call sites take it; they are the parallel pair this
+    // PR keeps being caught by.
+    const stateText =
+      obs.bodyVisibleText ?? obs.bodyText ?? obs.visibleText ?? obs.text ?? '';
     const known = copy.recognisedCopy.filter(
       (sentence) => typeof sentence === 'string' && sentence && stateText.includes(sentence),
     );

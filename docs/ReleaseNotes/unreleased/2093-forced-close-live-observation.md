@@ -711,3 +711,34 @@ accessible. The remaining gap is stated plainly: an explanation split
 into two parts where only one is erased still passes. As everywhere else
 in this check, the error it can make is missing a fault, never inventing
 one.
+
+Two more corrections, and they turned out to be one idea.
+
+The first repeats the previous one on the confirmation receipt. Each row
+of that receipt has a label and a value, and the check confirmed both
+were readable — but it asked the question of the box holding the words
+rather than of the words. A label or value hidden one level inside its
+box left the box looking perfectly normal while the underlying markup
+still reported the text, so in principle all six rows of a receipt could
+have been certified as read with not one of them painted on screen. That
+is the panel that commits the lender's money, so it is the last place
+that should be taking text on trust.
+
+The second closes a gap the previous change openly left. It required
+that *something* in the explanation be readable, which is not the same as
+requiring that the sentence the check actually relies on be readable: an
+erased explanation sitting beside a visible secondary note passed, while
+the lender saw nothing that justified the button.
+
+Both now go through one rule: gather the text whose every enclosing
+element is visible, and treat that — not the page's underlying text — as
+what the card says. The check recognises the card's state from it
+everywhere it makes that judgement, rather than at one of the three
+places and not the others. Choosing it this way avoids both wrong
+answers: demanding that every piece of text be visible would fail a card
+for carrying text placed off-screen for screen-reader users, which is
+correct and deliberate, and accepting any visible text at all was the
+gap being closed.
+
+Verified against the live testnet card, which reads exactly as before —
+the stricter rule does not reject real, correct markup.

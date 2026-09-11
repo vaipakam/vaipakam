@@ -4702,3 +4702,123 @@ describe('round 46 review findings', () => {
     });
   });
 });
+
+describe('round 62 review findings', () => {
+  const ROWS = {
+    standard: Object.values(FORCED_CLOSE.receipt),
+    rental: Object.values(FORCED_CLOSE.rentalReceipt),
+  };
+  const LABELS = [
+    enBundle.copy.receipt.youReceive,
+    enBundle.copy.receipt.youLock,
+    enBundle.copy.receipt.youMayOwe,
+    enBundle.copy.receipt.youCanLose,
+    enBundle.copy.receipt.fees,
+    enBundle.copy.receipt.whenThisEnds,
+  ];
+  const copy = {
+    unknownCopy: FORCED_CLOSE.unknown,
+    readyCopy: [FORCED_CLOSE.readyInKind, FORCED_CLOSE.readyInternalMatch, FORCED_CLOSE.readyRental],
+    withheldCopy: [FORCED_CLOSE.unknown, FORCED_CLOSE.notYet, FORCED_CLOSE.readyNeedsRoute],
+    recognisedCopy: [
+      FORCED_CLOSE.unknown,
+      FORCED_CLOSE.notYet,
+      FORCED_CLOSE.blockedPaused,
+      FORCED_CLOSE.blockedSequencer,
+      FORCED_CLOSE.blockedNoConsent,
+      FORCED_CLOSE.readyInKind,
+      FORCED_CLOSE.readyInternalMatch,
+      FORCED_CLOSE.readyRental,
+      FORCED_CLOSE.readyNeedsRoute,
+    ],
+    receiptLeads: [FORCED_CLOSE.receipt.youReceive, FORCED_CLOSE.rentalReceipt.youReceive],
+    receiptRowSets: ROWS,
+    receiptRowLabels: LABELS,
+    rentalReadyCopy: FORCED_CLOSE.readyRental,
+  };
+  const base = {
+    lenderHoldsActive: true,
+    mounted: true,
+    attached: true,
+    submitPresent: true,
+    submitVisible: true,
+    submitDisabled: false,
+    visibleSubmits: 1,
+    visibleCards: 1,
+    saleLocked: false,
+    settled: true,
+    bodyPresent: true,
+    bodyVisible: true,
+    bodyText: FORCED_CLOSE.readyRental,
+    text: FORCED_CLOSE.readyRental,
+    confirmExpected: true,
+    confirmText: `${FORCED_CLOSE.rentalReceipt.youReceive} …`,
+  };
+
+  // THE STATE IS RECOGNISED FROM WHAT IS PAINTED.
+  //
+  // `bodyText` is raw `innerText` and keeps yielding a sentence that is
+  // transparent, clipped or filter-erased. The rental route is the
+  // cheapest observable proof that the SOURCE changed, because which
+  // receipt row-set is expected turns on recognising one copy string.
+  describe('state recognition reads the painted body', () => {
+    it('prefers the painted text over the raw DOM text', () => {
+      // Raw text says rental; painted text does not carry it. The rental
+      // route must no longer be selected on the strength of a sentence
+      // the lender cannot read.
+      const v = forcedCloseVerdict(
+        { ...base, bodyVisibleText: 'Something else entirely.' },
+        copy,
+      );
+      // The standard row-set is expected now, and the rental confirm
+      // panel does not satisfy it — the verdict must not be a clean pass
+      // reached through the wrong route.
+      expect(v.verdict).not.toBe('pass');
+    });
+
+    it('still passes when the painted text carries the recognised copy', () => {
+      const v = forcedCloseVerdict(
+        { ...base, bodyVisibleText: FORCED_CLOSE.readyRental },
+        copy,
+      );
+      expect(v.verdict).toBe(forcedCloseVerdict(base, copy).verdict);
+    });
+
+    it('falls back for a record predating the field', () => {
+      // `undefined` must keep meaning "this observation did not report
+      // painted text", never "nothing was painted" — otherwise every
+      // older fixture becomes a finding. This is the same tri-state
+      // discipline `clickable` carries.
+      const { bodyVisibleText, ...old } = { ...base, bodyVisibleText: undefined };
+      expect(bodyVisibleText).toBeUndefined();
+      expect(forcedCloseVerdict(old, copy)).toEqual(forcedCloseVerdict(base, copy));
+    });
+
+    it('reads the card’s painted text where there is no body', () => {
+      // `saysCheckRunning` reads the CARD, and leaving that one site on
+      // raw `innerText` would have closed one instance of this defect
+      // and left its sibling open.
+      const noBody = {
+        ...base,
+        bodyPresent: false,
+        bodyText: null,
+        bodyVisibleText: undefined,
+        text: FORCED_CLOSE.unknown,
+        visibleText: FORCED_CLOSE.unknown,
+        submitPresent: false,
+        submitVisible: false,
+        visibleSubmits: 0,
+        confirmExpected: false,
+        confirmText: null,
+      };
+      const v = forcedCloseVerdict(noBody, copy);
+      // Whatever the arm, it must be reached having READ the card — the
+      // assertion that matters is that the painted text is consulted at
+      // all, which the identical verdict for an absent `visibleText`
+      // would not show.
+      expect(v.verdict).toBe(
+        forcedCloseVerdict({ ...noBody, visibleText: undefined }, copy).verdict,
+      );
+    });
+  });
+});

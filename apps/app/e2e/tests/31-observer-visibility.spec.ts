@@ -383,14 +383,23 @@ test('a receipt row with a blank label is not a readable row', async ({ page }) 
   const clipSrc = arrowBlocks(src, 'notClipped')[0];
   const paintSrc = arrowBlocks(src, 'paintsText')[0];
   const visSrc = arrowBlocks(src, 'visible')[0];
-  const textSrc = arrowBlocks(src, 'hasText', 'el')[0];
+  // ROUND 62 P2 — `hasText` is GONE. It asked `innerText` of the
+  // `dt`/`dd` WRAPPER, and `visible` on a wrapper is deliberately
+  // lenient, so a label in a transparent child passed both. Replaced by
+  // `visibleTextOf`, which collects only the text whose element chain is
+  // visible.
+  //
+  // Index [1] is the RECEIPT scope's copy — the same ordering as
+  // `visible` above, and the reason the copies are counted.
+  const textSrc = arrowBlocks(src, 'visibleTextOf', 'root')[1];
   const rowSrc = arrowBlocks(src, 'rowShown', 'row')[0];
 
-  // One `rowShown` and one `hasText`: unlike `visible`, these are not
-  // duplicated. If that changes this test is describing a shape that no
-  // longer exists.
+  // One `rowShown`, and `visibleTextOf` in the same two copies `visible`
+  // has (#2102). If either changes this test is describing a shape that
+  // no longer exists.
   expect(arrowBlocks(src, 'rowShown', 'row')).toHaveLength(1);
-  expect(arrowBlocks(src, 'hasText', 'el')).toHaveLength(1);
+  expect(arrowBlocks(src, 'visibleTextOf', 'root')).toHaveLength(2);
+  expect(arrowBlocks(src, 'hasText', 'el'), 'hasText was replaced').toHaveLength(0);
 
   await page.setContent(`
     <style>
@@ -403,6 +412,10 @@ test('a receipt row with a blank label is not a readable row', async ({ page }) 
       <div class="receipt-row" id="blankLabel"><dt></dt><dd>2% of interest</dd></div>
       <div class="receipt-row" id="spaceLabel"><dt>   </dt><dd>2% of interest</dd></div>
       <div class="receipt-row" id="blankValue"><dt>Fees</dt><dd></dd></div>
+      <div class="receipt-row" id="ghostLabel"><dt><span style="color: transparent">Fees</span></dt><dd>2% of interest</dd></div>
+      <div class="receipt-row" id="ghostValue"><dt>Fees</dt><dd><span style="filter: opacity(0)">2% of interest</span></dd></div>
+      <div class="receipt-row" id="clippedValue"><dt>Fees</dt><dd><span style="clip-path: inset(50%)">2% of interest</span></dd></div>
+      <div class="receipt-row" id="wrappedOk"><dt><span>Fees</span></dt><dd><span>2% of interest</span></dd></div>
     </dl>
   `);
 
@@ -417,6 +430,18 @@ test('a receipt row with a blank label is not a readable row', async ({ page }) 
         blankLabel: scope.rowShown(byId('blankLabel')),
         spaceLabel: scope.rowShown(byId('spaceLabel')),
         blankValue: scope.rowShown(byId('blankValue')),
+        // ROUND 62 P2 — the label or value erased ONE LEVEL DOWN.
+        ghostLabel: scope.rowShown(byId('ghostLabel')),
+        ghostValue: scope.rowShown(byId('ghostValue')),
+        clippedValue: scope.rowShown(byId('clippedValue')),
+        wrappedOk: scope.rowShown(byId('wrappedOk')),
+        // The hole itself: each wrapper still passes the predicate on its
+        // own, and `innerText` still yields the text. Recorded so that if
+        // this ever stops being true the rows are being rejected by
+        // something else and the leaf rule is no longer under test.
+        ghostLabelWrapperVisible: scope.visible(byId('ghostLabel').querySelector('dt')),
+        ghostLabelInnerText:
+          (byId('ghostLabel').querySelector('dt') as HTMLElement).innerText.trim(),
         // The reason this was reachable: geometry alone accepts the
         // empty label, because the fixed width and the flex stretch give
         // it a full-size box.
@@ -430,6 +455,15 @@ test('a receipt row with a blank label is not a readable row', async ({ page }) 
   expect(result.blankLabel, 'an empty label').toBe(false);
   expect(result.spaceLabel, 'a whitespace-only label').toBe(false);
   expect(result.blankValue, 'an empty value').toBe(false);
+  expect(result.ghostLabel, 'a label painted in nothing, one level down').toBe(false);
+  expect(result.ghostValue, 'a value under a zero-opacity filter').toBe(false);
+  expect(result.clippedValue, 'a value clipped away').toBe(false);
+  expect(result.wrappedOk, 'a readable row whose text is merely wrapped').toBe(true);
+  expect(
+    result.ghostLabelWrapperVisible,
+    'the dt wrapper still passes the predicate — which is why the text rule must descend',
+  ).toBe(true);
+  expect(result.ghostLabelInnerText, 'and innerText still yields the label').toBe('Fees');
   // Recorded rather than assumed: if this ever becomes false the rows
   // are being rejected by geometry and the text rule is no longer the
   // thing under test.
@@ -463,12 +497,17 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
   const clipSrc = arrowBlocks(src, 'notClipped')[0];
   const paintSrc = arrowBlocks(src, 'paintsText')[0];
   const visSrc = arrowBlocks(src, 'visible')[0];
-  const leafSrc = arrowBlocks(src, 'textLeavesOf', 'root')[0];
-
-  // One definition, like `rowShown`. If it is ever duplicated this test
-  // is exercising whichever copy came first — the split-predicate shape
-  // rounds 29 and 51 were both about.
-  expect(arrowBlocks(src, 'textLeavesOf', 'root')).toHaveLength(1);
+  // ROUND 62 P2 — `textLeavesOf` became `visibleTextOf`. "At least one
+  // visible leaf" accepted an unrelated leaf while the sentence the
+  // verdict MATCHES was erased; reporting the painted TEXT and
+  // recognising state from that binds the check to the copy that
+  // governs the action.
+  //
+  // Index [0] is the CARD-SCRAPE scope's copy, the same ordering as
+  // `visible`.
+  const leafSrc = arrowBlocks(src, 'visibleTextOf', 'root')[0];
+  expect(arrowBlocks(src, 'visibleTextOf', 'root')).toHaveLength(2);
+  expect(arrowBlocks(src, 'textLeavesOf', 'root'), 'replaced').toHaveLength(0);
 
   await page.setContent(`
     <style>
@@ -490,6 +529,10 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
       <div class="body" id="erased"><p class="erased">This loan can be closed out now.</p></div>
       <div class="body" id="clipped"><p class="clipped">This loan can be closed out now.</p></div>
       <div class="body" id="empty"></div>
+      <div class="body" id="twoLeaves">
+        <p class="transparent">This loan can be closed out now.</p>
+        <p>You can change your mind until you confirm.</p>
+      </div>
       <div class="body" id="styleOnly"><style>.x { color: red; }</style></div>
       <div class="body" id="styleBeside"><style>.x { color: red; }</style><p>This loan can be closed out now.</p></div>
       <div class="body" id="withSrOnly">
@@ -502,17 +545,17 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
   const result = await page.evaluate(
     ([clip, paint, vis, leaf]) => {
       const scope = new Function(
-        `${clip}\n${paint}\n${vis}\n${leaf}\nreturn { visible, textLeavesOf };`,
+        `${clip}\n${paint}\n${vis}\n${leaf}\nreturn { visible, visibleTextOf };`,
       )() as {
         visible: (n: Element | null) => boolean;
-        textLeavesOf: (r: Element | null) => Element[];
+        visibleTextOf: (r: Element | null) => string;
       };
       const byId = (id: string) => document.getElementById(id)!;
       // EXACTLY the expression the drive assigns to `bodyVisible`.
-      const bodyVisible = (b: Element | null) => {
-        const leaves = scope.textLeavesOf(b);
-        return scope.visible(b) && (leaves.length === 0 || leaves.some(scope.visible));
-      };
+      const bodyVisible = (b: Element | null) =>
+        scope.visible(b) &&
+        (((b as HTMLElement | null)?.innerText ?? '').trim() === '' ||
+          scope.visibleTextOf(b) !== '');
       return {
         plain: bodyVisible(byId('plain')),
         ownText: bodyVisible(byId('ownText')),
@@ -522,12 +565,20 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
         empty: bodyVisible(byId('empty')),
         styleOnly: bodyVisible(byId('styleOnly')),
         styleBeside: bodyVisible(byId('styleBeside')),
-        styleLeafCount: scope.textLeavesOf(byId('styleOnly')).length,
-        // The LEAF RULE's own answer for the empty body, separated from
+        styleLeafText: scope.visibleTextOf(byId('styleOnly')),
+        // ROUND 62 P2 — THE RESIDUAL ROUND 61 LEFT, closed.
+        //
+        // Two leaves, the RECOGNISED sentence erased and a secondary
+        // note painted. Round 61's "at least one visible leaf" passed
+        // this while the lender read nothing justifying the button.
+        twoLeavesVisible: bodyVisible(byId('twoLeaves')),
+        twoLeavesPaintedText: scope.visibleTextOf(byId('twoLeaves')),
+        twoLeavesInnerText: (byId('twoLeaves') as HTMLElement).innerText.replace(/\s+/g, ' ').trim(),
+        // The TEXT RULE's own answer for the empty body, separated from
         // the predicate's. See the assertion for why the split matters.
-        emptyLeafRule: (() => {
-          const leaves = scope.textLeavesOf(byId('empty'));
-          return leaves.length === 0 || leaves.some(scope.visible);
+        emptyTextRule: (() => {
+          const b = byId('empty') as HTMLElement;
+          return (b.innerText ?? '').trim() === '' || scope.visibleTextOf(b) !== '';
         })(),
         withSrOnly: bodyVisible(byId('withSrOnly')),
         // The hole itself, recorded rather than assumed: each wrapper
@@ -565,7 +616,7 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
   // text — and this pair of assertions is what says so: the predicate
   // rejects it, the leaf rule does not.
   expect(result.empty, 'an empty body is rejected — by geometry').toBe(false);
-  expect(result.emptyLeafRule, 'not by the leaf rule, which abstains').toBe(true);
+  expect(result.emptyTextRule, 'not by the text rule, which abstains').toBe(true);
   // `some`, not `every`: a screen-reader-only span is correct,
   // accessible markup and is clipped by design. `every` would fail a
   // card for having one, which is the false-FAIL direction.
@@ -586,7 +637,24 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
   // exclusion is defence in depth rather than a live defect: it stops
   // the rule CONTRIBUTING a false FAIL if such a body ever gains height
   // from something else.
-  expect(result.styleLeafCount, 'a <style> is not a text leaf').toBe(0);
+  expect(result.styleLeafText, 'a <style> contributes no painted text').toBe('');
+
+  // ROUND 62 P2 — and the point of reporting TEXT rather than a verdict.
+  //
+  // The body still counts as visible, correctly: something in it IS
+  // painted, so "the lender sees a heading and no reason" would be the
+  // wrong accusation. What changes is the string the verdict recognises
+  // the card's state from — the erased sentence is simply not in it, so
+  // it can no longer substantiate the action it was supposed to justify.
+  // `innerText` still yields it, which is exactly the disagreement the
+  // finding is about.
+  expect(result.twoLeavesVisible, 'something in the body is painted').toBe(true);
+  expect(result.twoLeavesPaintedText, 'but not the sentence').toBe(
+    'You can change your mind until you confirm.',
+  );
+  expect(result.twoLeavesInnerText, 'which innerText still reports').toBe(
+    'This loan can be closed out now. You can change your mind until you confirm.',
+  );
   expect(result.styleOnly, 'rejected by geometry, not by the leaf rule').toBe(false);
   expect(result.styleBeside, 'a readable explanation beside a <style>').toBe(true);
 
