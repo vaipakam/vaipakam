@@ -3425,7 +3425,19 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
             const cs = getComputedStyle(n);
             // An empty clip region on the node or on any ancestor hides
             // everything inside it, whatever the overflow rules say.
-            if (emptyClipRegion(cs, n.getBoundingClientRect())) return false;
+            //
+            // The string test comes FIRST so the rect is not measured on
+            // every ancestor of every node on every poll tick. `clip-path`
+            // is `none` almost everywhere, and forcing a layout read to
+            // discover that was a cost my own first version added silently.
+            const clipPath = cs.clipPath;
+            if (
+              clipPath &&
+              clipPath !== 'none' &&
+              emptyClipRegion(cs, n.getBoundingClientRect())
+            ) {
+              return false;
+            }
             const clipsY = cs.overflowY !== 'visible';
             const clipsX = cs.overflowX !== 'visible';
             if (!clipsY && !clipsX) continue;
@@ -4347,7 +4359,19 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
                 const cs = getComputedStyle(n);
                 // An empty clip region on the node or on any ancestor hides
                 // everything inside it, whatever the overflow rules say.
-                if (emptyClipRegion(cs, n.getBoundingClientRect())) return false;
+                //
+                // The string test comes FIRST so the rect is not measured on
+                // every ancestor of every node on every poll tick. `clip-path`
+                // is `none` almost everywhere, and forcing a layout read to
+                // discover that was a cost my own first version added silently.
+                const clipPath = cs.clipPath;
+                if (
+                  clipPath &&
+                  clipPath !== 'none' &&
+                  emptyClipRegion(cs, n.getBoundingClientRect())
+                ) {
+                  return false;
+                }
                 const clipsY = cs.overflowY !== 'visible';
                 const clipsX = cs.overflowX !== 'visible';
                 if (!clipsY && !clipsX) continue;
