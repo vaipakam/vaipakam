@@ -6,7 +6,7 @@ three ways that question reads text which does not correspond to what runs.
 
 **It fixes none of them, and changes no behaviour at all.** Every attempt was
 withdrawn under review. What lands is the record of why, and tests that pin the
-wrong verdicts that remain — eight silent passes and seven false reports — so a
+wrong verdicts that remain — ten silent passes and seven false reports — so a
 later fix announces itself instead of passing unnoticed.
 
 That is worth landing on its own. Two of these designs are the kind a
@@ -64,11 +64,11 @@ No behaviour change. The check's logic is what it was.
 - The reasoning above, recorded beside the code that would have to change, in
   the functional specification, and here — so the next person does not rebuild
   one of these designs without knowing what happened to it.
-- Tests that **assert fifteen current wrong verdicts across ten defects**, so
+- Tests that **assert seventeen current wrong verdicts across ten defects**, so
   a later fix fails them and comes back to the question rather than passing
   silently.
 
-  **Eight assert a silent pass** — the direction this check must never fail in:
+  **Ten assert a silent pass** — the direction this check must never fail in:
   a build file variable holding a write is not seen when its assignment sits
   below the deployment; a recipe marked by something other than a tab is not
   read as a recipe; a helper whose deployment follows an unrelated line ending
@@ -79,8 +79,11 @@ No behaviour change. The check's logic is what it was.
   another; a variable whose name differs only in case is not resolved, though
   the shell in question resolves it, so the deployment's directory reads as
   unknown; a binding closed with that shell's ordinary statement terminator is
-  not recognised at all, with the same consequence; and a helper whose file
-  name carries an upper-case extension is never opened at all.
+  not recognised at all, with the same consequence; and a helper whose file name
+  carries an upper-case extension is never opened at all — pinned three times,
+  for two command-shell families and a POSIX one, because the gate that skips
+  them is shared and a fix scoped to one family would satisfy a single
+  fixture while leaving every other family bypassed.
 
   **Seven fail the other way and assert the report**: a runbook sentence naming a
   write reports the deployment below it; a package manifest whose description
@@ -94,10 +97,15 @@ No behaviour change. The check's logic is what it was.
 - Two tests pinning that a bare command line and an inline command span in a
   document **are** read as commands — the two shapes that defeated the withdrawn
   designs, so a future attempt cannot quietly reintroduce the erasure.
-- A control beside each pinned defect, differing from it by the single
-  character or spelling at issue, so none can pass for an unrelated reason —
-  and, where a defect turned out narrower than first written, a test pinning
-  the BOUND as well. Every one of those bounds was discovered by disproving a
+- A control beside almost every pinned defect, differing from it by the single
+  character or spelling at issue, so it cannot pass for an unrelated reason.
+  One pinned report has NO such control and says so in place of claiming one:
+  for it, the already-normalised spelling is understood without the rewrite
+  and so reports too, meaning no single-character sibling distinguishes them;
+  its coupling rests on a deliberate mutation of the rewrite instead, and a
+  fixture that passed either way would have been worse than that admission.
+  And, where a defect turned out narrower than first written, there is a test
+  pinning the BOUND as well. Every one of those bounds was discovered by disproving a
   sentence in this record: the folding applies only where a body is split into
   lines at all, and only where the line ends immediately at the offending
   character; the value-by-value reading passes over a list only when the file
@@ -111,8 +119,8 @@ them — including **nine defects surfaced while correcting this record
 itself**, seven of them silent passes and two false reports — is recorded as its
 own issue with a reproduction and what a fix would have to be true of. All are
 behaviour the check already had, so nothing is made worse. Ten are
-additionally pinned by tests that assert the current verdict — fifteen such
-tests in all, eight asserting a silent pass and seven a false report.
+additionally pinned by tests that assert the current verdict — seventeen such
+tests in all, ten asserting a silent pass and seven a false report.
 
 That the correcting itself surfaced more defects than the original work is the
 most useful thing here, and it is not an accident of effort: each correction
@@ -128,7 +136,7 @@ writing the reason down at all, rather than only the fix.
 | **#2112** | a runbook sentence naming a write reports the deployment below it — *pinned (false report)* |
 | **#2114** | a recipe marked by something other than a tab is not read as a recipe — *pinned (miss)* |
 | **#2118** | a Windows-shell helper's deployment is lent a safety flag by the unrelated line above it, when that line ends in a character that shell does not treat as a continuation — *pinned (silent pass) in BOTH Windows shells, since a fix aimed at one dialect would leave the other live, and with both of its bounds pinned too: it applies only to text read as a shell, and only where the line ends immediately at that character* |
-| **#2119** | a single-text property value in any file of the manifest's format is read as a command, so a description naming the deployment is reported as performing it — *pinned (false report), with its bounds: unrelated files of that format behave the same way, and a value written as a list is not read at all* |
+| **#2119** | text in any file of the manifest's format is read as a command, so a description naming the deployment is reported as performing it — *pinned (false report) four times, because the scope was wrong in four different ways*: unrelated files of that format behave the same way; a value written as a LIST is skipped only where the file is written compactly, and is read when it is written across several lines; and a line that is COMMENTED OUT is read although it is not a property at all, which matters because the sketched remedy is expressed in terms of which keys hold scripts and a commented line has no key |
 | **#2110** | a folded workflow scalar's positions are not comparable with the file's |
 | **#2113** | a write assigned by a live conditional branch is not seen |
 | **#2106** | a build file's prerequisites are ordered as written, not as they run |

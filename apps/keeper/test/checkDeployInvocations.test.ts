@@ -11871,18 +11871,36 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
   // and FIFTEEN WRONG VERDICTS across TEN defects, asserted so a later fix
   // fails them and comes back to the question instead of passing unnoticed.
   //
-  // The direction matters and is not decoration. EIGHT assert a SILENT PASS —
-  // #2084, #2114, #2118 once per Windows dialect, #2121, #2122, #2123, #2124
-  // — and SEVEN fail the opposite way, so their fixtures assert a REPORT:
-  // #2112, #2119 four times (manifest, data file, multi-line list and a
-  // COMMENTED-OUT line, which reach it by different routes) and #2115 twice
-  // (the casing and separator rewrites). A fixture that pinned the wrong
-  // direction would pass while the guard did the wrong thing.
+  // The direction matters and is not decoration. TEN assert a SILENT PASS —
+  // #2084, #2114 and #2124 as misses; #2118 once per Windows dialect, #2121,
+  // #2122, and #2123 three times (two Windows dialects and a POSIX helper,
+  // because the gate is shared and a fix scoped to one family would satisfy
+  // a single fixture) — and SEVEN fail the opposite way, so their fixtures
+  // assert a REPORT: #2112, #2119 four times (manifest, data file, multi-line
+  // list and a COMMENTED-OUT line) and #2115 twice (the casing and separator
+  // rewrites). A fixture that pinned the wrong direction would pass while the
+  // guard did the wrong thing.
   //
-  // COUNT THESE FROM THE TREE, NOT FROM THIS COMMENT. It has gone stale five
-  // times, twice while being corrected. Read the `it(...)` titles instead —
-  // they carry the issue number and the word "stated" where a wrong verdict
-  // is asserted.
+  // NOT "four different routes" for the #2119 group, which overstated their
+  // independence (r26). Three of them — the manifest description, the
+  // non-manifest scalar and the commented-out line — take the SAME scalar
+  // branch of `jsonValueLines`; only the multi-line array reaches the
+  // raw-line fallback. They are kept as four because each fixes a different
+  // SCOPE claim the record got wrong, not because each is a separate
+  // ingestion path, and a fix should expect three of them to move together.
+  //
+  // COUNT THESE FROM THE TREE, NOT FROM THIS COMMENT. It has gone stale six
+  // times, twice while being corrected. The criterion: every test title
+  // asserting a wrong verdict contains the lower-case word s-t-a-t-e-d, and
+  // no other title does — so counting the titles that contain it gives the
+  // number above.
+  //
+  // Spelled out like that on purpose. The first version of this rule said to
+  // count the titles carrying that word, which was FALSE when written (ten of
+  // fifteen were marked); the second gave a grep pattern that MATCHED ITSELF,
+  // since the pattern appeared in this comment, and returned one too many.
+  // A self-verifying instruction has to survive being read by the thing it
+  // describes.
   //
   //   - COLLECTING the executable parts. Six ingestion paths missed, every
   //     omission a false green; two enumerations of "all the paths" incomplete.
@@ -12082,7 +12100,7 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     expect(r.ok).toBe(false);
   });
 
-  it('the casing rewrite reaches into a here-string nothing runs (#2115, the trade)', () => {
+  it('the casing rewrite reaches into a here-string nothing runs (#2115, stated false report)', () => {
     // WHAT THE CASING RULE COSTS, pinned rather than described — promised on
     // #2115 when its proposed fix was being argued, and owed because that fix
     // WIDENS this.
@@ -12236,7 +12254,7 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     expect(r.ok).toBe(true);
   });
 
-  it('the SAME array across several lines IS read (#2119, the layout half)', () => {
+  it('the SAME array across several lines IS read (#2119, stated false report)', () => {
     // THE SIBLING THAT MAKES THE BOUND HONEST. Identical manifest content to
     // the fixture above, written across lines with one element per line. The
     // element's line carries no colon-introduced scalar, so the extraction
@@ -12335,6 +12353,40 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     expect(r.ok).toBe(false);
   });
 
+  it('the command shell is bypassed the same way (#2123, stated false green)', () => {
+    // #2123 IS NOT ABOUT `.ps1`. The gate is the shared, case-sensitive
+    // extension test in `walk`, so EVERY helper family is bypassed by an
+    // upper-case name — verified for `.CMD`, `.BAT`, `.SH`, `.JS` and `.PY`,
+    // each exit 0 against a lower-case exit 1 (r26).
+    //
+    // Two representatives are pinned rather than all five: this one, a second
+    // Windows dialect, and the POSIX one below. Without them a fix that
+    // special-cased `.PS1` would satisfy the fixture above and leave the same
+    // silent bypass everywhere else — which is the failure these pins exist
+    // to prevent, and the same shape as #2118 being pinned once per dialect.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith('apps/agent/D.CMD', 'cd apps/agent\nwrangler deploy\n');
+    expect(r.ok).toBe(true);
+  });
+
+  it('a POSIX helper is bypassed the same way (#2123, stated false green)', () => {
+    // The non-Windows representative, and the one that shows the defect has
+    // nothing to do with the Windows normalisation it was found beside: a
+    // `.SH` helper is skipped for the same reason, on every platform.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith('apps/agent/D.SH', 'cd apps/agent\nwrangler deploy\n');
+    expect(r.ok).toBe(true);
+  });
+
+  it('the same POSIX helper lower-cased IS scanned (#2123 posix control)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith('apps/agent/d.sh', 'cd apps/agent\nwrangler deploy\n');
+    expect(r.ok).toBe(false);
+  });
+
   it('a semicolon-terminated pwsh assignment is not recognised (#2124, stated miss)', () => {
     // A STATED MISS. A trailing `;` is an ordinary PowerShell statement
     // terminator; the rewrite's pattern requires the closing quote to run to
@@ -12364,7 +12416,7 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     expect(r.ok).toBe(false);
   });
 
-  it('a COMMENTED-OUT jsonc property is still read as a command (#2119 scope)', () => {
+  it('a COMMENTED-OUT jsonc property is still read as a command (#2119, stated false report)', () => {
     // THE EXTRACTION DOES NOT STRIP COMMENTS, so a commented-out pseudo-
     // property in a format that permits comments is read and reported. There
     // is no property here at all, live or otherwise.
@@ -12379,7 +12431,7 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     expect(r.ok).toBe(false);
   });
 
-  it('the separator rewrite also changes a verdict (#2115, the other rewrite)', () => {
+  it('the separator rewrite also changes a verdict (#2115, stated false report)', () => {
     // THE CASING RULE IS NOT THE ONLY ONE THAT ERRS BOTH WAYS, which the
     // record claimed until r23. Nothing in this file deploys anything — the
     // here-string is inert data — but the separator rewrite turns
@@ -12391,13 +12443,23 @@ describe('check-deploy-invocations — #2084 the rewrite model, and three withdr
     // and no report, not merely between two spellings of one — a stronger
     // effect than the casing rule's, which only widens which spellings reach
     // an already-fallible reading.
+    //
+    // THIS PIN HAS NO SIBLING CONTROL, deliberately, and the release note
+    // says so rather than claiming one (r26). A control would have to hold
+    // the inert here-string constant and vary only the separator — but the
+    // already-normalised spelling (`apps/agent`) is understood WITHOUT the
+    // rewrite, so it reports too and flips nothing. There is no
+    // single-character sibling that distinguishes them; the coupling is
+    // established by the mutant above and by nothing else. Writing a
+    // passing-either-way fixture and calling it a control would be worse than
+    // admitting that.
     seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
     seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
     const r = runWith('scripts/sep.ps1', "$doc = @'\ncd apps\\agent\nwrangler deploy\n'@\nWrite-Output $doc\n");
     expect(r.ok).toBe(false);
   });
 
-  it('an inert value in a NON-manifest JSON file reports by a SECOND route (#2119)', () => {
+  it('an inert value in a NON-manifest JSON file is reported too (#2119, stated false report)', () => {
     // A SECOND, INDEPENDENT ROUTE TO THE SAME WRONG VERDICT — and the
     // mutation check is what established that, after an earlier version of
     // this fixture claimed something it did not show.
