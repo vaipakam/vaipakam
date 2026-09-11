@@ -438,21 +438,43 @@ export const DIAMOND_CUT_SELECTOR = '0x1f931c1c';
  * #2095 r10 P1 — whether the facet POPULATION is exhaustive. The cut history
  * is the only source that sees a facet cut in and out between records, and a
  * pruned endpoint returns an empty history without an error. The history
- * counts as complete only when it was read, it contains the deploy-time cut
- * (an Add of the `diamondCut` selector — the constructor's own cut, which sits
- * at the very first block and is therefore the first thing pruning removes),
- * and every facet the loupe routes today appears in it. An omitted Add/Remove
+ * counts as complete only when it was read, its FIRST log is the constructor's
+ * own empty cut (the first thing pruning removes), and every facet the loupe
+ * routes today appears in it — except the cut facet the constructor installed
+ * by writing storage, which no cut ever added. An omitted Add/Remove
  * PAIR inside a returned window is undetectable by any test over logs and is
  * the stated residual. Pure; exported for the test.
  */
-export function cutHistoryCompleteness({ verdict, cuts, addedDiamondCut, addresses, loupe }) {
+export function cutHistoryCompleteness({ verdict, cuts, constructorCutSeen, addresses, loupe, cutFacetHost }) {
   const reasons = [];
   if (verdict !== 'read' || !cuts) reasons.push(`the cut history was ${verdict === 'read' ? 'empty' : verdict}`);
-  else if (!addedDiamondCut) reasons.push('the deploy-time cut (the Add of diamondCut) is not in the returned history — its first blocks are pruned');
+  // VaipakamDiamond's constructor emits ONE DiamondCut with an EMPTY cut array
+  // and installs the diamondCut selector by writing storage directly
+  // (#2095 r13 P1): the deploy-time marker is that empty cut at the head of
+  // the history, and the cut facet it installed never appears as an Add.
+  else if (!constructorCutSeen) reasons.push('the deploy-time cut (the constructor\'s empty DiamondCut) is not at the head of the returned history — its first blocks are pruned');
   if (Array.isArray(loupe)) {
     const known = new Set((addresses ?? []).map((a) => a.toLowerCase()));
-    const missing = loupe.map((a) => a.toLowerCase()).filter((a) => !known.has(a));
+    const exempt = cutFacetHost ? String(cutFacetHost).toLowerCase() : null;
+    const missing = loupe.map((a) => a.toLowerCase()).filter((a) => a !== exempt && !known.has(a));
     if (missing.length) reasons.push(`${missing.length} facet(s) the loupe routes today never appear as an Add in the returned history`);
   }
   return { complete: reasons.length === 0, reasons };
+}
+
+/**
+ * #2095 r13 P1 — under the ROUTED standard only a class proven by a routed
+ * getter keeps its proof when provenance refuses; a class proven by the
+ * storage read alone (a getter-less shell's counter twin, or the intent read
+ * at every era slot) still depends on the era table covering every writer's
+ * layout, which is exactly what an unattributed facet or an incomplete
+ * population denies. Pure; exported for the test.
+ */
+export const STORAGE_ONLY_PROOFS = new Set(['no-loans-ever-created-by-storage', 'storage-read-calibrated']);
+export function downgradeStorageOnlyProofs(classes, reason) {
+  const out = {};
+  for (const [name, c] of Object.entries(classes)) {
+    out[name] = c.status === 'proven' && STORAGE_ONLY_PROOFS.has(c.provenBy) ? { ...c, status: 'indeterminate', provenBy: undefined, indeterminateReason: reason } : c;
+  }
+  return out;
 }

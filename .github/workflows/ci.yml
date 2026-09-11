@@ -1131,7 +1131,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Walk the library's history (append-only property, change events)
         working-directory: packages/contracts
-        run: node scripts/storage-layout-provenance.mjs || test $? -eq 1   # exit 1 = violations reported (known: #2092); exit 2 = walked nothing
+        # exit 1 only for a layout change nobody acknowledged (#2092 — a --fresh redeploy plan is the acknowledgement); exit 2 = walked nothing
+        run: node scripts/storage-layout-provenance.mjs --ack ../../contracts/deployments/storage-layout-violations.ack.json
       - name: Era table covers every era the walk implies
         working-directory: packages/contracts
         run: node scripts/storage-layout-eras.mjs --check

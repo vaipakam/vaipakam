@@ -385,6 +385,23 @@ export function walkProvenance({ repo = REPO_ROOT, libPath = LIB_PATH, since = D
   };
 }
 
+/**
+ * #2095 r13 P1 — a violation is a layout change the append-only rule forbids
+ * (#2092). The historical ones are acknowledged in a committed file; any
+ * OTHER violation fails the walk, so CI turns red on a new insertion,
+ * removal or retype until it is acknowledged with a reason and a redeploy
+ * plan. Pure; exported for the test.
+ */
+export const GATED_CHANGE_KINDS = new Set(['insertion', 'removal', 'retype-or-swap', 'namespace-change']);
+/** A change event the append-only rule forbids: any gated kind, or an append inside a footprint-bearing (non-Storage) struct. */
+export function isLayoutViolation(e) {
+  return GATED_CHANGE_KINDS.has(e.kind) || (e.kind === 'append' && e.struct !== 'Storage');
+}
+export function unacknowledgedViolations(changeEvents, ack) {
+  const acked = new Set((ack?.acknowledged ?? []).map((a) => `${a.commit}|${a.struct}`));
+  return (changeEvents ?? []).filter((e) => isLayoutViolation(e) && !acked.has(`${e.commit}|${e.struct}`));
+}
+
 function main() {
   const argv = process.argv.slice(2);
   const arg = (k, d) => { const i = argv.indexOf(k); return i >= 0 ? argv[i + 1] : d; };
@@ -416,7 +433,20 @@ function main() {
     for (const [f, eras] of Object.entries(v.indexEras)) if (eras.length > 1) process.stdout.write(`  eras ${f}: ${eras.map((e) => `index ${e.index} ${e.from.slice(0, 10)}..${e.to.slice(0, 10)}`).join(' | ')}\n`);
     process.stdout.write(`  violations: ${v.violations.length} commit(s) whose type sequence is not a prefix of HEAD's\n`);
   }
-  process.exit(v.ok ? 0 : 1);
+  // --ack <file>: only violations NOT acknowledged there fail the walk
+  const ackPath = arg('--ack', null);
+  let unacked = v.violations;
+  if (ackPath) {
+    let ack = null;
+    try { ack = JSON.parse(readFileSync(ackPath, 'utf8')); } catch (err) { process.stderr.write(`storage-layout-provenance: cannot read --ack ${ackPath}: ${err.message}\n`); process.exitCode = 2; return; }
+    const gated = v.changeEvents.filter(isLayoutViolation);
+    unacked = unacknowledgedViolations(v.changeEvents, ack);
+    process.stdout.write(`  layout changes the append-only rule forbids: ${gated.length} (acknowledged ${gated.length - unacked.length}); UNACKNOWLEDGED: ${unacked.length}${unacked.length ? ` — ${unacked.map((e) => `${e.commit.slice(0, 9)} ${e.struct} ${e.kind} @${e.firstDifferentIndex}`).join('; ')} — a layout-bearing field was inserted, removed or retyped (#2092); acknowledge it in ${ackPath} with a reason and a --fresh redeploy plan for every live chain` : ''}\n`);
+  }
+  // exitCode, not exit(): a large --json write to a pipe must flush first.
+  // Without --ack the historical violations alone make this exit 1 (#2092);
+  // with --ack only an unacknowledged layout change does.
+  process.exitCode = ackPath ? (unacked.length === 0 ? 0 : 1) : (v.violations.length === 0 ? 0 : 1);
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === resolvePath(process.argv[1])) main();

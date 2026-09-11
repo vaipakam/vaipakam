@@ -92,7 +92,7 @@ import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync, rename
 import { readManifest, regenerateEntries, withManifestLock, writeSnapshotGuarded, livePublicationsInProgress, sameEntry } from './archive-manifest.mjs';
 import { loadSlots, loadEras } from './storage-slots.mjs';
 import { commitsAround, deployedAtIso, interpolateTimestamp, CANDIDATES_FILE } from './storage-layout-eras.mjs';
-import { prepareStorageRead, readCountersByStorage, scanRowsByStorage, intentVerdictFromStorage, mergeHistoricalRows, markAliasedRows, splitByHeadSlot, getterAgreement, downgradeWithoutEraRead, attributeCounters, attributeFacetCode, downgradeProvenClasses, requireHexData, cutHistoryCompleteness, DIAMOND_CUT_SELECTOR, MAX_STORAGE_LOAN_SCAN } from './census-storage-read.mjs';
+import { prepareStorageRead, readCountersByStorage, scanRowsByStorage, intentVerdictFromStorage, mergeHistoricalRows, markAliasedRows, splitByHeadSlot, getterAgreement, downgradeWithoutEraRead, attributeCounters, attributeFacetCode, downgradeProvenClasses, downgradeStorageOnlyProofs, STORAGE_ONLY_PROOFS, requireHexData, cutHistoryCompleteness, DIAMOND_CUT_SELECTOR, MAX_STORAGE_LOAN_SCAN } from './census-storage-read.mjs';
 
 /** Sum a row field as a decimal string. A function declaration, so it is hoisted above every branch that returns early (#2095 r1 P2). */
 function sum(rows, field) {
@@ -391,17 +391,19 @@ async function facetsFromCutHistory(client, diamond, fromBlock, toBlock) {
   try {
     const logs = await getLogsChunked(client, { address: diamond, events: [DIAMOND_CUT_EVENT], fromBlock, toBlock });
     const blocksOf = new Map();
-    let addedDiamondCut = false;
+    // the constructor's own DiamondCut carries an EMPTY cut array; it is the
+    // first log of a complete history (#2095 r13 P1)
+    const ordered = [...logs].sort((a, b) => (BigInt(a.blockNumber ?? 0) === BigInt(b.blockNumber ?? 0) ? Number(a.logIndex ?? 0) - Number(b.logIndex ?? 0) : BigInt(a.blockNumber ?? 0) < BigInt(b.blockNumber ?? 0) ? -1 : 1));
+    const constructorCutSeen = ordered.length > 0 && (ordered[0].args?._diamondCut ?? []).length === 0;
     for (const log of logs) for (const cut of log.args?._diamondCut ?? []) {
       if (Number(cut.action) === 2 || typeof cut.facetAddress !== 'string') continue;
-      if (Number(cut.action) === 0 && (cut.functionSelectors ?? []).some((x) => String(x).toLowerCase() === DIAMOND_CUT_SELECTOR)) addedDiamondCut = true;
       const k = cut.facetAddress.toLowerCase();
       if (!blocksOf.has(k)) blocksOf.set(k, new Set());
       if (log.blockNumber !== undefined && log.blockNumber !== null) blocksOf.get(k).add(BigInt(log.blockNumber));
     }
-    return { addresses: [...blocksOf.keys()], blocksOf, cuts: logs.length, addedDiamondCut, verdict: logs.length ? 'read' : 'empty (proves nothing — a pruned endpoint returns empty)' };
+    return { addresses: [...blocksOf.keys()], blocksOf, cuts: logs.length, constructorCutSeen, verdict: logs.length ? 'read' : 'empty (proves nothing — a pruned endpoint returns empty)' };
   } catch (err) {
-    return { addresses: [], blocksOf: new Map(), cuts: 0, addedDiamondCut: false, verdict: 'unreadable', reason: String(err?.shortMessage ?? err?.message ?? err).slice(0, 200) };
+    return { addresses: [], blocksOf: new Map(), cuts: 0, constructorCutSeen: false, verdict: 'unreadable', reason: String(err?.shortMessage ?? err?.message ?? err).slice(0, 200) };
   }
 }
 
@@ -471,10 +473,13 @@ async function applyLayoutProvenance(result, { client, censusBlock, atBlock, dia
   }
   const recorded = recordedFacetAddresses(slug, diamond, manifestEntry);
   let loupe = null;
+  let cutFacetHost = null;
   if (result.scanned.loupeRouted && readFacets) {
     try {
       const list = await readFacets();
       loupe = list.map((f) => `${f.facetAddress ?? f[0]}`.toLowerCase());
+      // the facet hosting diamondCut was installed by the constructor's storage write, never by a cut
+      cutFacetHost = list.find((f) => (f.functionSelectors ?? f[1] ?? []).some((x) => String(x).toLowerCase() === DIAMOND_CUT_SELECTOR))?.facetAddress?.toLowerCase() ?? null;
     } catch (err) {
       loupe = null;
       result.scanned.layoutProvenanceLoupeError = String(err?.shortMessage ?? err?.message ?? err).slice(0, 200);
@@ -492,7 +497,7 @@ async function applyLayoutProvenance(result, { client, censusBlock, atBlock, dia
     facets.push({ address, sources: [...sources], codeHash });
   }
   const attribution = attributeFacetCode({ facets, eras: STORAGE_READ.eras });
-  const population = cutHistoryCompleteness({ verdict: cut.verdict.split(' ')[0], cuts: cut.cuts, addedDiamondCut: cut.addedDiamondCut, addresses: cut.addresses, loupe });
+  const population = cutHistoryCompleteness({ verdict: cut.verdict.split(' ')[0], cuts: cut.cuts, constructorCutSeen: cut.constructorCutSeen, addresses: cut.addresses, loupe, cutFacetHost });
   // For every unattributed facet: the commits around the moments it was cut
   // (block timestamps, hash-pinned by number under the census block) and
   // around the deployedAt of every record that names it — the era tool builds
@@ -576,7 +581,12 @@ async function applyLayoutProvenance(result, { client, censusBlock, atBlock, dia
       result.classes = downgradeProvenClasses(result.classes, why);
       result.scanned.layoutProvenanceContradiction = why;
     } else {
+      // the routed exception covers a routed-getter proof only (#2095 r13 P1):
+      // a class proven by the storage read alone still needs every writer's
+      // layout in the era table, which is what the refusal denies
       result.scanned.layoutProvenance.wouldRefuseUnderProvenanceStandard = true;
+      result.classes = downgradeStorageOnlyProofs(result.classes, `${why} — a storage-only proof keeps no exception under the routed standard`);
+      if (STORAGE_ONLY_PROOFS.has(result.provenBy)) result.provenBy = undefined;
     }
   }
   return result;

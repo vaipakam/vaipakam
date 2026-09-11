@@ -6286,6 +6286,27 @@ every deployment under `provenance` — from the round-11 head; the round-12
 correction changes no verdict, since a HEAD live-commit counter above zero
 occurs only where the intent class is already withheld for scope.
 
+**Review round 13 found the population gate could never pass, and closed
+three doors beside it.** `VaipakamDiamond`'s constructor emits one
+`DiamondCut` with an EMPTY cut array and installs the `diamondCut` selector
+by writing storage directly, so no history ever holds an Add of that
+selector and the cut facet it installed never appears as an Add: the
+deploy-time marker is now that empty cut at the head of the history, and the
+facet the loupe maps `diamondCut` to is exempt from the every-facet test —
+without this every deployment of this protocol was non-exhaustive by
+construction, which is why the first smoke withheld sepolia. Under the
+routed standard only a class proven by a routed getter keeps its proof when
+provenance refuses; a class proven by the storage read alone — a getter-less
+shell's counter twin, the intent read at every era slot — still depends on
+the era table covering every writer's layout, which is exactly what the
+refusal denies, so it falls under either standard. And the walk's exit code
+no longer tolerates every violation as "known": the historical ones are
+acknowledged in a committed file, keyed by the commit and struct of each
+forbidden change event (an insertion, removal, retype, namespace change, or
+an append inside a footprint-bearing struct), and CI fails on any other —
+acknowledging one means a fresh-redeploy plan exists for every live chain.
+Run 34 re-reads every deployment with all of it.
+
 ### 7a. What the provenance walk found, and how the design changes (2026-09-09)
 
 The walk in question 2 was built first, and it answered before a single slot

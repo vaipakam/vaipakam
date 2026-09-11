@@ -7,7 +7,7 @@ import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { extractDeclarations, isPrefix, walkProvenance, stripComments, inlineStructsBefore, layoutFingerprint, layoutShapeFingerprint, storagePositionOf } from './storage-layout-provenance.mjs';
+import { extractDeclarations, isPrefix, walkProvenance, stripComments, inlineStructsBefore, layoutFingerprint, layoutShapeFingerprint, storagePositionOf, unacknowledgedViolations, isLayoutViolation } from './storage-layout-provenance.mjs';
 
 const SRC = (extra = '', rowExtra = '') => `
 // SPDX-License-Identifier: MIT
@@ -187,4 +187,18 @@ test('the layout SHAPE ignores names: a rename keeps it, an insertion or a retyp
   const appendedAfter = SRC('uint256 totalLoansEverCreated; uint256 laterField; mapping(address => uint256) laterMap;');
   assert.equal(T(SRC('uint256 totalLoansEverCreated;')), T(appendedAfter), 'an append after the last target keeps the shape');
   assert.notEqual(T(SRC('uint256 totalLoansEverCreated;')), T(SRC('uint256 x; uint256 totalLoansEverCreated;')), 'an insertion before it does not');
+});
+
+test('only layout changes the rule forbids and nobody acknowledged fail the walk (#2095 r13 P1)', () => {
+  const A = 'a'.repeat(40); const B = 'b'.repeat(40); const C = 'c'.repeat(40);
+  const events = [
+    { commit: A, struct: 'Storage', kind: 'insertion', firstDifferentIndex: 3 },
+    { commit: B, struct: 'Storage', kind: 'append', firstDifferentIndex: 300 },     // a Storage append is allowed
+    { commit: B, struct: 'ProtocolConfig', kind: 'append', firstDifferentIndex: 9 }, // an inline-struct append shifts fields: forbidden
+    { commit: C, struct: 'Storage', kind: 'removal', firstDifferentIndex: 56 },
+  ];
+  assert.deepEqual(events.map(isLayoutViolation), [true, false, true, true]);
+  const un = unacknowledgedViolations(events, { acknowledged: [{ commit: A, struct: 'Storage', reason: 'historical' }, { commit: C, struct: 'Storage', reason: 'historical' }] });
+  assert.deepEqual(un.map((e) => `${e.struct} ${e.kind}`), ['ProtocolConfig append'], 'the inline-struct append at B is the one unacknowledged change');
+  assert.equal(unacknowledgedViolations(events, null).length, 3, 'no acknowledgement file: every forbidden change counts');
 });

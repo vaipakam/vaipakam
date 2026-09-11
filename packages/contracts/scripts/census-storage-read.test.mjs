@@ -1,7 +1,7 @@
 // census-storage-read.test.mjs — the era-complete storage read's rules (#1566 §7/§7a), over fake readers.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { prepareStorageRead, readCountersByStorage, scanRowsByStorage, intentVerdictFromStorage, eraSlotsExcept, mergeHistoricalRows, aliasOf, classifyEarlierCounters, markAliasedRows, splitByHeadSlot, getterAgreement, downgradeWithoutEraRead, attributeCounters, attributeFacetCode, downgradeProvenClasses, requireHexData, cutHistoryCompleteness, ROW } from './census-storage-read.mjs';
+import { prepareStorageRead, readCountersByStorage, scanRowsByStorage, intentVerdictFromStorage, eraSlotsExcept, mergeHistoricalRows, aliasOf, classifyEarlierCounters, markAliasedRows, splitByHeadSlot, getterAgreement, downgradeWithoutEraRead, attributeCounters, attributeFacetCode, downgradeProvenClasses, downgradeStorageOnlyProofs, requireHexData, cutHistoryCompleteness, ROW } from './census-storage-read.mjs';
 import { memberSlot, rowSlot } from './storage-slots.mjs';
 
 const H = (n) => '0x' + n.toString(16).padStart(64, '0');
@@ -309,11 +309,14 @@ test('a state response that is not hex data throws instead of reading as zero or
 });
 
 test('the facet population is exhaustive only with a read history that holds the deploy-time cut and every routed facet (#2095 r10 P1)', () => {
-  const ok = cutHistoryCompleteness({ verdict: 'read', cuts: 3, addedDiamondCut: true, addresses: ['0xa', '0xb'], loupe: ['0xA', '0xb'] });
-  assert.deepEqual(ok, { complete: true, reasons: [] });
-  assert.match(cutHistoryCompleteness({ verdict: 'empty', cuts: 0, addedDiamondCut: false, addresses: [], loupe: ['0xa'] }).reasons.join(' '), /empty/);
-  assert.match(cutHistoryCompleteness({ verdict: 'unreadable', cuts: 0, addedDiamondCut: false, addresses: [], loupe: null }).reasons.join(' '), /unreadable/);
-  assert.match(cutHistoryCompleteness({ verdict: 'read', cuts: 2, addedDiamondCut: false, addresses: ['0xa'], loupe: ['0xa'] }).reasons.join(' '), /deploy-time cut/);
-  assert.match(cutHistoryCompleteness({ verdict: 'read', cuts: 2, addedDiamondCut: true, addresses: ['0xa'], loupe: ['0xa', '0xc'] }).reasons.join(' '), /1 facet\(s\) the loupe routes today never appear/);
-  assert.equal(cutHistoryCompleteness({ verdict: 'read', cuts: 1, addedDiamondCut: true, addresses: [], loupe: null }).complete, true, 'a shell with no loupe: the history alone decides');
+  const ok = cutHistoryCompleteness({ verdict: 'read', cuts: 3, constructorCutSeen: true, addresses: ['0xa', '0xb'], loupe: ['0xA', '0xb', '0xCUT'], cutFacetHost: '0xcut' });
+  assert.deepEqual(ok, { complete: true, reasons: [] }, 'the constructor-installed cut facet never appears as an Add and is exempt');
+  assert.match(cutHistoryCompleteness({ verdict: 'empty', cuts: 0, constructorCutSeen: false, addresses: [], loupe: ['0xa'] }).reasons.join(' '), /empty/);
+  assert.match(cutHistoryCompleteness({ verdict: 'unreadable', cuts: 0, constructorCutSeen: false, addresses: [], loupe: null }).reasons.join(' '), /unreadable/);
+  assert.match(cutHistoryCompleteness({ verdict: 'read', cuts: 2, constructorCutSeen: false, addresses: ['0xa'], loupe: ['0xa'] }).reasons.join(' '), /constructor's empty DiamondCut/);
+  assert.match(cutHistoryCompleteness({ verdict: 'read', cuts: 2, constructorCutSeen: true, addresses: ['0xa'], loupe: ['0xa', '0xc'] }).reasons.join(' '), /1 facet\(s\) the loupe routes today never appear/);
+  assert.equal(cutHistoryCompleteness({ verdict: 'read', cuts: 1, constructorCutSeen: true, addresses: [], loupe: null }).complete, true, 'a shell with no loupe: the history alone decides');
+  // routed standard: a storage-only proof still falls on a provenance refusal; a routed proof keeps
+  const d = downgradeStorageOnlyProofs({ a: { status: 'proven', provenBy: undefined }, b: { status: 'proven', provenBy: 'no-loans-ever-created' }, c: { status: 'proven', provenBy: 'no-loans-ever-created-by-storage' }, e: { status: 'proven', provenBy: 'storage-read-calibrated' } }, 'why');
+  assert.deepEqual(Object.fromEntries(Object.entries(d).map(([k, v]) => [k, v.status])), { a: 'proven', b: 'proven', c: 'indeterminate', e: 'indeterminate' });
 });
