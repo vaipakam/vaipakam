@@ -2164,6 +2164,29 @@ const pageFirstReadAt = new WeakMap(); // page -> Map<key, number>
 const knownPageRpcEndpoints = new Set();
 
 /**
+ * Endpoints PROVEN to serve another chain, across all pages.
+ *
+ * ROUND 89 P2 — the per-page `foreign` set cannot keep one out of the
+ * module-wide set above, and the set above is what the pre-navigation
+ * head probe reads.
+ *
+ * An endpoint admitted by the raw-address heuristic and later caught
+ * answering `eth_chainId` with a different chain was removed from that
+ * page's `diamond` set and left in `knownPageRpcEndpoints`. Every later
+ * visit then asked it for a head — and if the real provider's probe
+ * failed while the foreign one answered, a height from an unrelated chain
+ * became the floor a product accusation is measured against. Bounding a
+ * claim about this deployment with another chain's block number is the
+ * worst shape this floor can take.
+ *
+ * Permanent and module-wide, matching round 51's rule for the per-page
+ * set: an endpoint that has identified itself as another chain is settled
+ * for the rest of the run, and a later page's heuristic must not re-admit
+ * it.
+ */
+const foreignPageRpcEndpoints = new Set();
+
+/**
  * The head THE PAGE'S OWN PROVIDER is at, asked directly.
  *
  * ROUND 87 — and this is what finally makes the bracket's lower end sound
@@ -2388,6 +2411,11 @@ function watchPageHead(page) {
         if (id === CHAIN_ID_CONFLICT) {
           foreign.add(key);
           diamond.delete(key);
+          // ROUND 89 P2 — and out of the module-wide set the pre-navigation
+          // head probe reads, or a later visit asks a self-contradicting
+          // endpoint for the floor a product accusation rests on.
+          foreignPageRpcEndpoints.add(key);
+          knownPageRpcEndpoints.delete(key);
           // ROUND 80 P2 — AND THE EXIT GATE HAS TO HEAR ABOUT IT.
           //
           // There are TWO ways this endpoint can contradict itself: one
@@ -2452,20 +2480,27 @@ function watchPageHead(page) {
             // admission, since the heuristic may have run first.
             foreign.add(key);
             diamond.delete(key);
+            // ROUND 89 P2 — the same revocation, module-wide. This is the
+            // path the finding named: admitted by the address heuristic,
+            // then caught answering for another chain.
+            foreignPageRpcEndpoints.add(key);
+            knownPageRpcEndpoints.delete(key);
             return;
           }
         }
       }
       if (foreign.has(key)) return;
-      if (typeof body === 'string' && body.toLowerCase().includes(DIAMOND_HEX)) {
+      // A key proven foreign on ANY page stays out, whichever page is
+      // asking (round 89). `foreign` is per-page and cannot answer this.
+      const admit = () => {
         diamond.add(key);
-        knownPageRpcEndpoints.add(key);
+        if (!foreignPageRpcEndpoints.has(key)) knownPageRpcEndpoints.add(key);
+      };
+      if (typeof body === 'string' && body.toLowerCase().includes(DIAMOND_HEX)) {
+        admit();
         return;
       }
-      if (callsTargetContract(rpcCallsFromBody(body), DIAMOND)) {
-        diamond.add(key);
-        knownPageRpcEndpoints.add(key);
-      }
+      if (callsTargetContract(rpcCallsFromBody(body), DIAMOND)) admit();
     } catch {
       // Observational only.
     }
@@ -4264,7 +4299,31 @@ async function observeForcedClose(page, loan, headBeforeNav, pageHeadBeforeNav) 
   // the announcement-ordering test is not needed; where it does not — the
   // endpoint was not yet known, or would not answer — the ordering test is
   // still the best available evidence and decides.
-  const floorSound = pageNav > 0n || floorEstablishedFor(page);
+  // ROUND 89 P2 — AND THE UPPER END HAS TO REACH THE RENDER TOO.
+  //
+  // Every round from 84 on has worked on the bracket's FLOOR, and the
+  // ceiling had the mirror-image hole. This drive's provider and the
+  // page's are independent: when the page is at N and `OBSERVE_RPC` is
+  // still at M < N, the floor takes the lower of its sources (M) and the
+  // pinned snapshot is also at M — so `stableAcross(M, M, …)` finds no
+  // interior, answers `true`, and a card correctly rendered from N is
+  // compared against protocol state from M. Just after a grace
+  // transition that accuses a ready card of offering what the protocol
+  // "would refuse", on evidence taken entirely before the state it is
+  // judging.
+  //
+  // The catch-up rule already exists for the ABSENT-card path (round 8's
+  // confirming re-read) and was never applied here. The wrong-chain gate
+  // does not cover it either: both endpoints are on the same chain and
+  // simply disagree about how far along it is.
+  //
+  // So the comparison needs the snapshot to have reached the head the
+  // PAGE was seen to reach. `pageHead` is exactly that, and it is
+  // sampled after the scrape, so it is the newest thing the page can have
+  // been showing. Where the snapshot is behind it, both answers stay
+  // `null` and the verdict reports an incomplete observation.
+  const observerCaughtUp = pageHead === 0n || pinnedBlock >= pageHead;
+  const floorSound = (pageNav > 0n || floorEstablishedFor(page)) && observerCaughtUp;
   const defaultableStable =
     floorSound &&
     defaultableBefore !== undefined &&
