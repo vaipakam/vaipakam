@@ -49,28 +49,31 @@ MAX_WAIT=86400
 # it is not a run of digits (surrounding whitespace ignored). Leading zeros
 # are dropped FIRST, so `0000000000000001` is 1 and a padded `0` is 0; only
 # THEN is the length bounded — a run of more than fifteen significant digits
-# is a number larger than any sane header and is represented by a
-# fifteen-digit ceiling, which is what makes `10#` safe (fifteen digits
-# cannot overflow) and lets clamp_wait treat it like any oversized wait.
+# is not a value this script will read (it returns 1, and the caller treats
+# the header as unreadable), which is what makes `10#` safe: fifteen digits
+# cannot overflow. An earlier version substituted a fifteen-digit ceiling
+# and then formatted it as the instant the response had named — fabricated
+# evidence (#2149 r14). A header this cannot read is reported as unreadable.
 header_int() {
   local v=$1
   v=${v#"${v%%[![:space:]]*}"}; v=${v%"${v##*[![:space:]]}"}
   [[ "$v" =~ ^[0-9]+$ ]] || return 1
   v=${v#"${v%%[!0]*}"}
   [ -n "$v" ] || v=0
-  if [ "${#v}" -gt 15 ]; then printf '%s' 999999999999999; return 0; fi
+  [ "${#v}" -le 15 ] || return 1
   printf '%s' "$(( 10#$v ))"
 }
 
-# clamp_wait <seconds> — prints "<seconds> <clamped>" where <clamped> is 1
-# if the bound was applied and 0 if the value came through unchanged. The
-# flag is tracked, not inferred from the output: a wait of exactly MAX_WAIT
-# was not clamped and must not be reported as if it were (#2149 r13).
+# clamp_wait <seconds> — prints "<seconds> <bound>" where <bound> is `none`
+# if the value came through unchanged, `low` if it was raised to 0, `high`
+# if it was cut to MAX_WAIT. Tracked, not inferred from the output: a wait
+# of exactly MAX_WAIT was not clamped (#2149 r13), and a reset already
+# passed is a clamp to ZERO, not to the ceiling (#2149 r14).
 clamp_wait() {
-  local w=$1 c=0
-  if [ "$w" -lt 0 ]; then w=0; c=1; fi
-  if [ "$w" -gt "$MAX_WAIT" ]; then w=$MAX_WAIT; c=1; fi
-  printf '%s %s' "$w" "$c"
+  local w=$1 b=none
+  if [ "$w" -lt 0 ]; then w=0; b=low; fi
+  if [ "$w" -gt "$MAX_WAIT" ]; then w=$MAX_WAIT; b=high; fi
+  printf '%s %s' "$w" "$b"
 }
 
 # Where the trace formats its lines: gh prefixes response headers with `< `
@@ -136,10 +139,13 @@ analyse() { # analyse <trace> <now-epoch>  -> prints "<seconds>\t<reason>", exit
   [ "$remaining_n" = "0" ] || return 1
   reset_n=$(header_int "${reset:-}") || return 1
 
-  local wait clamped
-  read -r wait clamped <<<"$(clamp_wait $(( reset_n - now )))"
+  local wait bound
+  read -r wait bound <<<"$(clamp_wait $(( reset_n - now )))"
   local reason="remaining 0, reset at $(date -u -d "@$reset_n" +%Y-%m-%dT%H:%M:%SZ)"
-  [ "$clamped" -eq 0 ] || reason="$reason (wait clamped to ${MAX_WAIT}s)"
+  case "$bound" in
+    low)  reason="$reason — already passed, wait 0" ;;
+    high) reason="$reason (wait clamped to ${MAX_WAIT}s)" ;;
+  esac
   [ -z "${retry:-}" ] || reason="$reason; a Retry-After header was also present and is not used"
   printf '%s\t%s\n' "$wait" "$reason"
 }
@@ -196,12 +202,19 @@ selftest() {
 {"message":"API rate limit already exceeded for user ID 275282153."}' \
     1789188167 0 360
 
-  # A reset already in the past is a wait of zero, never a negative one.
+  # A reset already in the past is a wait of zero, never a negative one —
+  # and the reason says it passed, not that it was clamped to the CEILING
+  # (#2149 r14: the two clamp directions are reported as what they are).
   expect "reset already passed" \
 '< HTTP/2.0 200 OK
 < X-Ratelimit-Remaining: 0
 < X-Ratelimit-Reset: 1789188527' \
-    1789188999 0 0
+    1789188999 0 0 'already passed, wait 0'
+  expect "reset already passed is not reported as clamped to the ceiling" \
+'< HTTP/2.0 200 OK
+< X-Ratelimit-Remaining: 0
+< X-Ratelimit-Reset: 1789188527' \
+    1789188999 0 0 '!clamped to'
 
   # Paginated: eleven good pages, then the limited one. The LAST headers win.
   local pages='' p
@@ -324,11 +337,14 @@ selftest() {
 < X-Ratelimit-Remaining: 0
 < X-Ratelimit-Reset: 1820724167' \
     1789188167 0 "$MAX_WAIT" 'clamped'
-  expect "a reset near INT64_MAX is clamped to MAX_WAIT, not wrapped" \
+  # A reset with more than fifteen significant digits is not a value this
+  # script will read: it is unreadable, and unreadable is a named miss —
+  # NOT a ceiling formatted as the instant the response named (#2149 r14).
+  expect "a reset near INT64_MAX is unreadable, not a fabricated instant" \
 '< HTTP/2.0 200 OK
 < X-Ratelimit-Remaining: 0
 < X-Ratelimit-Reset: 9223372036854775807' \
-    1789188167 0 "$MAX_WAIT" 'clamped'
+    1789188167 1
   # A wait of EXACTLY MAX_WAIT was not clamped and must not say it was
   # (#2149 r13): the flag is tracked, not inferred from the output.
   expect "a reset exactly MAX_WAIT away is not reported as clamped" \
