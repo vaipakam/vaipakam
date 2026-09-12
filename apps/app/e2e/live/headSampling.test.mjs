@@ -585,6 +585,37 @@ describe('the head facts survive the projection (round 106)', () => {
   });
 });
 
+// ROUND 108 P2 — AN ENDPOINT PROVEN FOREIGN STAYS OUT OF BOTH SETS.
+//
+// `foreignPageRpcEndpoints` is module-wide and permanent (round 89) because
+// the per-page `foreign` set starts empty on every visit, so a later page's
+// raw-address heuristic would otherwise re-admit an endpoint already caught
+// answering for another chain. The module-wide check guarded
+// `knownPageRpcEndpoints` and not `diamond`, which is the set `pageHeadOf`,
+// `pageHeadFloorOf` and `floorEstablishedFor` all read — so another chain's
+// heights could become the floor a product accusation is measured against.
+//
+// A source assertion because `admit` is a closure inside `watchPageHead`,
+// which cannot be imported: the module runs the whole drive on import. It is
+// scoped to that closure rather than grepping the file, and it pins the
+// ORDER — the guard has to precede the add, or it guards nothing.
+describe('a proven-foreign endpoint stays out of the head sets (round 108)', () => {
+  const src = fs.readFileSync(DRIVE, 'utf8');
+
+  it('guards the diamond set, not only the known-endpoint set', () => {
+    const i = src.indexOf('const admit = () => {');
+    expect(i, 'the admit closure was not found').toBeGreaterThan(-1);
+    const body = src.slice(i, src.indexOf('};', i) + 2);
+    const guard = body.indexOf('foreignPageRpcEndpoints.has(key)');
+    const add = body.indexOf('diamond.add(key)');
+    expect(guard, 'the module-wide foreign check is inside admit').toBeGreaterThan(-1);
+    expect(add, 'the diamond add is inside admit').toBeGreaterThan(-1);
+    expect(guard, 'the guard precedes the add, or it guards nothing').toBeLessThan(add);
+    // And it RETURNS on a foreign key rather than merely skipping one set.
+    expect(body).toContain('if (foreignPageRpcEndpoints.has(key)) return;');
+  });
+});
+
 describe('the forced-close report emits distinct keys (round 106)', () => {
   const src = fs.readFileSync(DRIVE, 'utf8');
 

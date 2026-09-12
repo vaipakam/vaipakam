@@ -1830,6 +1830,15 @@ const rpcLedger = [];
 // advertises itself as read-only and a page regression must not be able
 // to POST to a backend while we scrape.
 const routeHandler = async (route) => {
+  // ROUND 108 P2 — WHEN THIS REQUEST WAS BEGUN, on the ordering clock.
+  //
+  // The ledger's retry rule needs to tell a RETRY from an already-in-flight
+  // SIBLING, and the distinguishing fact is causal: a retry is sent after
+  // the failure came back, a sibling was sent before it. Stamped at the top
+  // of the handler, which is the earliest this drive sees the request, and
+  // on the same monotonic clock `recordRpcResponse` stamps arrival with —
+  // two origins would make the comparison meaningless.
+  const requestedAt = orderingNow();
   const req = route.request();
   const method = req.method().toUpperCase();
   if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) {
@@ -1959,6 +1968,7 @@ const routeHandler = async (route) => {
         requestBody: req.postData(),
         // Redact BEFORE truncating, as the catch path does below.
         url: redact(req.url()).slice(0, 160),
+        requestedAt,
       },
       rpcLedger,
     );
@@ -2683,9 +2693,21 @@ function watchPageHead(page) {
       if (foreign.has(key)) return;
       // A key proven foreign on ANY page stays out, whichever page is
       // asking (round 89). `foreign` is per-page and cannot answer this.
+      //
+      // ROUND 108 P2 — AND THAT NOW GUARDS BOTH SETS, which is what this
+      // note already claimed. The module-wide check sat on
+      // `knownPageRpcEndpoints` alone, so on a LATER page — where `foreign`
+      // starts empty again — the raw-address heuristic re-admitted a proven
+      // foreign endpoint to `diamond`. Everything downstream reads that set:
+      // `pageHeadOf`, `pageHeadFloorOf` and `floorEstablishedFor` would then
+      // take heights from an unrelated chain, and bounding a claim about
+      // this deployment with another chain's block number is the worst shape
+      // the floor can take — round 89's own words, applied to one of the two
+      // sets it was written for.
       const admit = () => {
+        if (foreignPageRpcEndpoints.has(key)) return;
         diamond.add(key);
-        if (!foreignPageRpcEndpoints.has(key)) knownPageRpcEndpoints.add(key);
+        knownPageRpcEndpoints.add(key);
       };
       if (typeof body === 'string' && body.toLowerCase().includes(DIAMOND_HEX)) {
         admit();
@@ -10516,12 +10538,29 @@ if (failures) process.exit(1);
 const advBlocked = visited
   .map((v) => ({ v, why: visitVerdict(v, ROLE).blocked }))
   .filter(({ why }) => why !== null);
+// ROUND 108 P2 — AND THE FORCED-CLOSE GAP IS NAMED BEFORE THIS EXITS.
+//
+// Both incompletenesses can hold on one visit — shared RPC trouble leaves
+// the chooser's readiness unresolved AND the forced-close card unsettled —
+// and this exit ran first, so a funds-facing gap the run explicitly
+// promises to disclose was never computed, let alone mentioned. The
+// RANKING is not the problem and is unchanged: the Advanced arm still
+// decides the exit. What was wrong is that the other gap went unsaid.
+//
+// Computed once, above both exits, so the two readings cannot disagree.
+const fcGap = forcedCloseCoverage(visited, ROLE);
 if (advBlocked.length) {
   console.log(
     `\nBLOCKED: the Advanced probe could not complete on ${advBlocked.length}` +
       ` page(s) — the jump-anchor assertion did not run.`,
   );
   advBlocked.forEach(({ v, why }) => console.log(`  ${v.path}: ${why}`));
+  if (fcGap) {
+    console.log(
+      `  and, separately: ${fcGap} — reported here because this exit would` +
+        ` otherwise have taken the run before that gap was named.`,
+    );
+  }
   process.exit(2);
 }
 // Every candidate moved out from under us: the list route alone proves
@@ -10539,7 +10578,6 @@ if (!visited.some((v) => /^\/positions\/\d+$/.test(v.path))) {
 // check that never once executed. Ranked after `failures` and after the
 // Advanced BLOCKED arm, for the same reason those are ordered as they
 // are: a real regression is still reported as one.
-const fcGap = forcedCloseCoverage(visited, ROLE);
 if (fcGap) {
   console.log(`\nBLOCKED: ${fcGap}.`);
   process.exit(2);

@@ -856,6 +856,59 @@ describe('recordRpcResponse + summariseRpcLedger', () => {
     });
   });
 
+  // ROUND 108 P2 — A CONCURRENT SIBLING IN A SEPARATE RESPONSE IS NOT A
+  // RETRY EITHER.
+  //
+  // Round 95 excluded siblings decoded from the SAME response. Separate
+  // responses can be siblings too: three independent hooks on one mount each
+  // call the same pinned read, producing identical `callKey`s in different
+  // HTTP responses. If one errors and a concurrent sibling succeeds, a
+  // time-only test calls the failure recovered — while the failing caller
+  // consumed its error and may have rendered a degraded funds surface.
+  //
+  // The distinguishing fact is causal: a retry is SENT after the failure
+  // came back; an already-in-flight sibling was sent before it.
+  describe('recovery requires causal ordering (round 108)', () => {
+    const failed = (at) => ({
+      key: 'eth_call|[]',
+      method: 'eth_call',
+      verdict: 'unreachable',
+      why: 'HTTP 429',
+      url: 'https://rpc.example',
+      at,
+      response: 1,
+    });
+    const ok = (at, requestedAt) => ({
+      key: 'eth_call|[]',
+      method: 'eth_call',
+      verdict: 'ok',
+      at,
+      response: 2,
+      requestedAt,
+    });
+
+    it('does NOT clear a failure with a sibling requested before it landed', () => {
+      // Both in flight together: the success was asked for at 900, before
+      // the failure came back at 1000.
+      const out = summariseRpcLedger([failed(1_000), ok(1_200, 900)]);
+      expect(out.unreachable).toEqual([
+        { url: 'https://rpc.example', why: 'eth_call — HTTP 429' },
+      ]);
+    });
+
+    it('still clears one with a retry requested AFTER the failure landed', () => {
+      const out = summariseRpcLedger([failed(1_000), ok(1_200, 1_050)]);
+      expect(out.unreachable).toEqual([]);
+    });
+
+    it('leaves a record without request times behaving as it did', () => {
+      // `undefined` means a shape predating the field — keep the old
+      // behaviour, never read it as evidence.
+      const out = summariseRpcLedger([failed(1_000), ok(1_200, undefined)]);
+      expect(out.unreachable).toEqual([]);
+    });
+  });
+
   describe('reconciliation across attempts (round 23)', () => {
     it('clears a failure that a LATER attempt recovered', () => {
       // viem retries, and wagmi wraps these transports in fallback([...]).

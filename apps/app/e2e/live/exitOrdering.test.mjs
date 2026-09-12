@@ -178,6 +178,32 @@ describe('a funds defect that was READ outranks every blocker', () => {
     expect(src).toContain('const absenceRemaining =');
   });
 
+  // ROUND 108 P2 — THE FORCED-CLOSE GAP IS NAMED EVEN WHEN ANOTHER BLOCKER
+  // TAKES THE EXIT.
+  //
+  // Both incompletenesses can hold on one visit — shared RPC trouble leaves
+  // the chooser's readiness unresolved AND the forced-close card unsettled.
+  // The Advanced arm exits first, so the funds-facing gap this run promises
+  // to disclose was never computed. The ranking is right and is unchanged;
+  // what was wrong is that the other gap went unsaid.
+  it('computes the forced-close gap ABOVE the Advanced blocked exit', () => {
+    const compute = at('const fcGap = forcedCloseCoverage(visited, ROLE);');
+    const advExit = at('if (advBlocked.length) {');
+    expect(compute, 'the coverage computation was not found').toBeGreaterThan(-1);
+    expect(advExit, 'the Advanced blocked exit was not found').toBeGreaterThan(-1);
+    expect(compute, 'the gap is computed before the earlier exit').toBeLessThan(advExit);
+    // Computed ONCE, so the two exits cannot report different readings.
+    expect(
+      [...src.matchAll(/forcedCloseCoverage\(visited, ROLE\)/g)],
+      'one computation, two readers',
+    ).toHaveLength(1);
+  });
+
+  it('names it inside the Advanced blocked branch too', () => {
+    const branch = src.slice(at('if (advBlocked.length) {'), at('if (advBlocked.length) {') + 900);
+    expect(branch, 'the Advanced exit mentions the forced-close gap').toContain('fcGap');
+  });
+
   it('reads those kinds from the module that decides the problems', () => {
     // Deciding them anywhere else is the shape #1861 already caught in
     // this file: two places computing overlapping verdicts, one quietly

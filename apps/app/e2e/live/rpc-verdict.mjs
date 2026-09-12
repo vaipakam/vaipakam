@@ -1030,10 +1030,21 @@ export function classifyRpcResponse(status, body, requestBody) {
  */
 let responseSeq = 0;
 
-export function recordRpcResponse({ status, body, requestBody, url }, ledger) {
+export function recordRpcResponse({ status, body, requestBody, url, requestedAt }, ledger) {
   // WHEN, as well as what (round 94 P2). Recovery is scoped by time
   // because nothing else can scope it — see `RETRY_RECOVERY_WINDOW_MS`.
-  const at = Date.now();
+  //
+  // ROUND 108 P2 — ON A MONOTONIC CLOCK, and no longer only by time.
+  //
+  // Round 102 moved the floor's ordering proof off `Date.now()` and left
+  // this one on it deliberately, because a backward clock step here
+  // under-reports rather than accuses. That reasoning still holds on its
+  // own, and is now beside the point: `requestedAt` below is compared
+  // against this value, so the two must be on the SAME clock or the
+  // comparison is meaningless. `performance.now()` counts from an arbitrary
+  // origin and is unaffected by clock adjustment; only differences are ever
+  // read here, so the changed origin costs nothing.
+  const at = performance.now();
   // ROUND 95 P2 — AND *WHICH RESPONSE*, because time alone cannot separate
   // a retry from a SIBLING. A JSON-RPC batch is one request carrying many
   // calls, and viem's batch scheduler will happily put two reads of the
@@ -1050,7 +1061,7 @@ export function recordRpcResponse({ status, body, requestBody, url }, ledger) {
   // per-response, never reused — is what says so.
   const response = ++responseSeq;
   for (const outcome of classifyRpcResponse(status, body, requestBody)) {
-    ledger.push({ ...outcome, url, at, response });
+    ledger.push({ ...outcome, url, at, response, requestedAt });
   }
 }
 
@@ -1121,7 +1132,7 @@ export function summariseRpcLedger(ledger) {
   ledger.forEach((e, i) => {
     if (e.verdict !== 'ok') return;
     const list = oks.get(e.key);
-    const ok = { i, at: e.at, response: e.response };
+    const ok = { i, at: e.at, response: e.response, requestedAt: e.requestedAt };
     if (list) list.push(ok);
     else oks.set(e.key, [ok]);
   });
@@ -1129,7 +1140,7 @@ export function summariseRpcLedger(ledger) {
   const recoveredAfter = (e, i) => {
     const list = oks.get(e.key);
     if (!list) return false;
-    return list.some(({ i: j, at, response }) => {
+    return list.some(({ i: j, at, response, requestedAt }) => {
       if (j <= i) return false;
       // A SIBLING IN THE SAME RESPONSE IS NOT A RETRY (round 95 P2), and
       // this is checked before the window rather than inside it: siblings
@@ -1148,6 +1159,25 @@ export function summariseRpcLedger(ledger) {
       // must keep behaving as it did — the `undefined`-means-older rule
       // every field in this project follows.
       if (typeof at !== 'number' || typeof e.at !== 'number') return true;
+      // ROUND 108 P2 — A RETRY IS INITIATED AFTER THE FAILURE IS KNOWN.
+      //
+      // Round 95 excluded siblings decoded from the SAME response. Separate
+      // responses can be siblings too: three independent hooks on one mount
+      // each call the same pinned read, producing identical `callKey`s in
+      // different HTTP responses. If one errors and a concurrent sibling
+      // succeeds, a time-only test calls the failure recovered — while the
+      // failing caller consumed its error and may have rendered a degraded
+      // funds surface.
+      //
+      // The distinguishing fact is causal, not temporal: a retry is SENT
+      // after the failure came back, an already-in-flight sibling was sent
+      // before it. `requestedAt` is stamped when this drive begins serving
+      // the request, so a success requested before the failure landed cannot
+      // be that failure's retry.
+      //
+      // Same `undefined`-means-older rule as everything else here: a record
+      // written before request times were carried is judged the way it was.
+      if (typeof requestedAt === 'number' && requestedAt < e.at) return false;
       return at - e.at <= RETRY_RECOVERY_WINDOW_MS;
     });
   };
