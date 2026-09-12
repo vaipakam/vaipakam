@@ -928,6 +928,24 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
         <p style="margin:0">This loan can be closed out now.</p>
         <div style="position:absolute; inset:0; background:#123456; filter:opacity(.5)"></div>
       </div>
+      <!-- ROUND 115 P2 — A CLIPPING ANCESTOR ABOVE THE CONTAINING BLOCK.
+           The leaf is absolutely positioned, so the walk skips ancestors
+           until it reaches its containing block. That containing block is
+           positioned but its own overflow is VISIBLE, and the fast path
+           for visible overflow used to run before the containing-block
+           state was recorded — so the block was skipped without being
+           marked, and the static ancestor above it with overflow:hidden
+           was then mistaken for one below it and skipped too. That
+           ancestor really does clip the leaf, and the sentence is not on
+           screen at all.
+           (No backticks in here: this block is inside a template literal,
+           and putting one in has broken spec discovery four times now.) -->
+      <div id="clippedAboveCB" style="width:320px; height:20px; overflow:hidden">
+        <div style="position:relative; overflow:visible; width:320px">
+          <p class="body" id="clippedAboveCBLeaf"
+             style="position:absolute; top:400px; margin:0">This loan can be closed out now.</p>
+        </div>
+      </div>
       <!-- The percentage spelling of the same thing. -->
       <div class="body" id="coveredByPercentFilter" style="position:relative; width:320px">
         <p style="margin:0">This loan can be closed out now.</p>
@@ -1112,6 +1130,7 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
         coveredByOpaqueChildSeen: seenScrolled(byId('coveredByOpaqueChild')),
         coveredUnderCatcherSeen: seenScrolled(byId('coveredUnderCatcher')),
         catcherOverGhostSeen: seenScrolled(byId('catcherOverGhost')),
+        clippedAboveCB: bodyVisible(byId('clippedAboveCBLeaf')),
         coveredByHalfFilterSeen: seenScrolled(byId('coveredByHalfFilter')),
         coveredByPercentFilterSeen: seenScrolled(byId('coveredByPercentFilter')),
         coveredByFullFilterSeen: seenScrolled(byId('coveredByFullFilter')),
@@ -1463,4 +1482,20 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
     result.coveredByFullFilterSeen,
     'but a fully opaque filter still covers',
   ).toBe('');
+
+  // ROUND 115 P2 — a clipping ancestor ABOVE the containing block. The
+  // walk skips ancestors until it reaches the out-of-flow leaf's
+  // containing block; that block is positioned but its own overflow is
+  // visible, and the visible-overflow fast path used to run before the
+  // containing-block state was recorded. The block was skipped unmarked,
+  // so the overflow:hidden ancestor above it looked like one below it and
+  // was skipped too — and copy scrolled 400px out of a 20px window read
+  // as shown.
+  // Read WITHOUT `scrollIntoView`: an overflow:hidden box is still
+  // programmatically scrollable, so scrolling the leaf into view is
+  // exactly the thing that would hide the defect.
+  expect(
+    result.clippedAboveCB,
+    'a hidden ancestor above the containing block still clips',
+  ).toBe(false);
 });

@@ -2513,16 +2513,25 @@ async function pageProviderHead() {
  * combination this file treats as worth closing rather than noting.
  *
  * `performance.now()` is monotonic in Node: it counts from an arbitrary
- * origin and is unaffected by clock adjustment. Only the two ORDERING
- * stamps use it — everything else here measures durations against
- * deadlines, where a wall clock is fine and a different origin would be
- * confusing.
+ * origin and is unaffected by clock adjustment. Every ORDERING stamp uses
+ * it — everything else here measures durations against deadlines, where a
+ * wall clock is fine and a different origin would be confusing.
  *
- * NOT applied to `rpc-verdict.mjs`'s retry-recovery window, deliberately.
- * That one is also wall-clock, but a backward step there makes a failure
- * look MORE recoverable — it under-reports rather than accusing — and
- * changing it would mean changing what `at` means for every caller. Noted
- * rather than swept in.
+ * ROUND 115 P2 — AND THE LEDGER IS ON THIS CLOCK TOO NOW.
+ *
+ * This note used to say the retry-recovery window in `rpc-verdict.mjs` was
+ * deliberately left on the wall clock, because a backward step there
+ * under-reports rather than accuses and moving it would mean changing what
+ * `at` means for every caller. That reasoning was sound on its own and was
+ * overtaken: round 108 established that `requestedAt` is COMPARED against
+ * `at`, so two clock origins there make the comparison meaningless, and the
+ * caller-wide work the note called a reason not to has since been done —
+ * `requestedAt` and `deliveredAt` are both stamped here with `orderingNow`,
+ * and the ledger falls back to its own `performance.now()`.
+ *
+ * Left as a correction rather than deleted: a note calling the opposite
+ * design deliberate is exactly what steers a maintenance change back into
+ * the mixed-origin comparison this replaced.
  */
 const orderingNow = () => performance.now();
 
@@ -4726,24 +4735,36 @@ async function observeForcedClose(page, loan, headBeforeNav, pageHeadBeforeNav, 
           head = await pub.getBlockNumber({ cacheTime: 0 });
         }
         if (!confirmationReady(head, pinnedBlock, pageHead, confirmBar)) {
-          // NAME WHICH CONDITION FAILED (round 23 P2). The two causes
-          // send an operator to different places: a stale OBSERVE_RPC,
-          // or page-head instrumentation that saw nothing. Collapsing
-          // them into one sentence about "never advanced" was false in
-          // the second case and pointed at the wrong thing.
+          // NAME WHICH CONDITION FAILED (round 23 P2). The causes send an
+          // operator to different places: a stale OBSERVE_RPC, or page-head
+          // instrumentation that saw nothing. Collapsing them into one
+          // sentence about "never advanced" was false in the second case and
+          // pointed at the wrong thing.
+          //
+          // ROUND 115 P2 — AND A MISSING SIGHTING IS ONLY A CAUSE WHEN
+          // NOTHING STANDS IN FOR IT.
+          //
+          // Round 114 made the overheard sighting optional wherever a sound
+          // ceiling exists, and this ladder still tested `pageHead === 0n`
+          // first — so a run with a sound ceiling at N and an observer at
+          // N-1 was told its head instrumentation was the problem. The
+          // instrumentation was working as designed; the observer was simply
+          // behind. That sends an operator to investigate something that is
+          // not broken while omitting the threshold actually unmet, which is
+          // the one number they need.
+          //
+          // The unestablished-ceiling arm leads now, and says which kind of
+          // nothing was established: no ceiling, or no ceiling AND no
+          // sighting either.
           return {
             unconfirmed: true,
-            why:
-              pageHead === 0n
-                ? 'the card was absent, but this drive never observed the page announce a head on the deployment endpoint, so it could not be shown to have caught up'
-                : // ROUND 102 P2 — an unestablished ceiling is its own cause,
-                  // and pointing an operator at "the observer is behind" for
-                  // it would send them somewhere the problem is not.
-                  !ceilingSound
-                  ? 'the card was absent, but the page\u2019s own RPC endpoint(s) would not say what block they had reached after the scrape, so there is no upper bound to have caught up to'
-                  : head <= pinnedBlock
-                    ? "the card was absent, but this observer's chain view never advanced past the block it scraped at, so a page reading ahead of it could not be ruled out"
-                    : `the card was absent, and this observer reached ${head} but the page had reached at least ${ceiling.head > pageHead ? ceiling.head : pageHead}, so it was still behind the view that rendered the page`,
+            why: !ceilingSound
+              ? pageHead === 0n
+                ? 'the card was absent, but this drive neither overheard the page announce a head nor could get its endpoint(s) to say what block they had reached after the scrape, so there is no upper bound to have caught up to'
+                : 'the card was absent, but the page\u2019s own RPC endpoint(s) would not say what block they had reached after the scrape, so there is no upper bound to have caught up to'
+              : head <= pinnedBlock
+                ? "the card was absent, but this observer's chain view never advanced past the block it scraped at, so a page reading ahead of it could not be ruled out"
+                : `the card was absent, and this observer reached ${head} but the page had reached at least ${ceiling.head > pageHead ? ceiling.head : pageHead}, so it was still behind the view that rendered the page`,
           };
         }
         const [status, holder, sale] = await Promise.all([
@@ -5608,12 +5629,21 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
             ) {
               return false;
             }
-            const clipsY = cs.overflowY !== 'visible';
-            const clipsX = cs.overflowX !== 'visible';
-            if (!clipsY && !clipsX) continue;
-            const box = n.getBoundingClientRect();
-            if (clipsY && box.height === 0) return false;
-            if (clipsX && box.width === 0) return false;
+            // ROUND 115 P2 — BEFORE THE VISIBLE-OVERFLOW FAST PATH, NOT AFTER.
+            //
+            // `if (!clipsY && !clipsX) continue` used to run first, so a POSITIONED
+            // containing block whose own overflow is visible was skipped without ever
+            // setting `reachedCB`. A higher STATIC ancestor with `overflow: hidden` —
+            // which genuinely does clip the leaf, being above the containing block —
+            // then failed the `!reachedCB` test, was treated as lying below it, and
+            // was skipped too. Fully hidden funds copy satisfied `shownBox`.
+            //
+            // Where an element sits relative to the containing block has nothing to
+            // do with whether it clips, so that question is answered first for every
+            // ancestor. The box tests below therefore run only at or above the
+            // containing block, which is the same correction in the other direction:
+            // an ancestor BELOW it does not clip an out-of-flow descendant, so a
+            // zero-height one there was never evidence of hidden text.
             // ROUND 45 P2 — the out-of-flow exemption is about ANCESTORS, never
             // about the node's own clipping box.
             //
@@ -5638,6 +5668,12 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
                 continue;
               }}
             }}
+            const clipsY = cs.overflowY !== 'visible';
+            const clipsX = cs.overflowX !== 'visible';
+            if (!clipsY && !clipsX) continue;
+            const box = n.getBoundingClientRect();
+            if (clipsY && box.height === 0) return false;
+            if (clipsX && box.width === 0) return false;
             const scrollsY =
               (cs.overflowY === 'auto' || cs.overflowY === 'scroll') &&
               n.scrollHeight > n.clientHeight;
@@ -7481,12 +7517,21 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
                 ) {
                   return false;
                 }
-                const clipsY = cs.overflowY !== 'visible';
-                const clipsX = cs.overflowX !== 'visible';
-                if (!clipsY && !clipsX) continue;
-                const box = n.getBoundingClientRect();
-                if (clipsY && box.height === 0) return false;
-                if (clipsX && box.width === 0) return false;
+                // ROUND 115 P2 — BEFORE THE VISIBLE-OVERFLOW FAST PATH, NOT AFTER.
+                //
+                // `if (!clipsY && !clipsX) continue` used to run first, so a POSITIONED
+                // containing block whose own overflow is visible was skipped without ever
+                // setting `reachedCB`. A higher STATIC ancestor with `overflow: hidden` —
+                // which genuinely does clip the leaf, being above the containing block —
+                // then failed the `!reachedCB` test, was treated as lying below it, and
+                // was skipped too. Fully hidden funds copy satisfied `shownBox`.
+                //
+                // Where an element sits relative to the containing block has nothing to
+                // do with whether it clips, so that question is answered first for every
+                // ancestor. The box tests below therefore run only at or above the
+                // containing block, which is the same correction in the other direction:
+                // an ancestor BELOW it does not clip an out-of-flow descendant, so a
+                // zero-height one there was never evidence of hidden text.
                 // ROUND 45 P2 — the out-of-flow exemption is about ANCESTORS, never
                 // about the node's own clipping box.
                 //
@@ -7511,6 +7556,12 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
                     continue;
                   }}
                 }}
+                const clipsY = cs.overflowY !== 'visible';
+                const clipsX = cs.overflowX !== 'visible';
+                if (!clipsY && !clipsX) continue;
+                const box = n.getBoundingClientRect();
+                if (clipsY && box.height === 0) return false;
+                if (clipsX && box.width === 0) return false;
                 const scrollsY =
                   (cs.overflowY === 'auto' || cs.overflowY === 'scroll') &&
                   n.scrollHeight > n.clientHeight;

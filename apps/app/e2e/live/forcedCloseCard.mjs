@@ -821,7 +821,22 @@ export function monetaryAmountsIn(text) {
         // immediately after the unit, so `1m (USDC)` exempted `m` as
         // minutes and never reached the bracketed symbol. Two
         // exemptions asking the same question needed the same answer.
-        if (trailingTicker) {
+        //
+        // ROUND 115 P2 — AND ONLY FOR THE UNITS IT CAN DECIDE.
+        //
+        // Rounds 3 and 11 are both about AMBIGUOUS units: `m` might be
+        // minutes or millions, so what follows it is evidence. `days`,
+        // `%` and `bps` are not ambiguous at all — no ticker later in the
+        // clause makes them money — and letting the widened lookahead
+        // cancel them turned correct copy into a product FAIL.
+        // `Wait 3 days before USDC returns` and `Fee: 2% of USDC
+        // principal` are both things this card is allowed to say, and
+        // both named an asset in the same clause.
+        //
+        // The false-positive direction is the one this file argues at
+        // length gets a check switched off, and here it fired on the two
+        // exemptions most likely to appear in real sentences.
+        if (AMBIGUOUS_UNIT.test(unit) && trailingTicker) {
           hits.push(fragment(text, start, end));
         }
         continue;

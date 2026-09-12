@@ -3391,6 +3391,25 @@ describe('rounds 42–43 review findings', () => {
       expect(monetaryAmountsIn('Position 2 y')).toEqual([]);
     });
 
+    // ROUND 115 P2 — AN UNAMBIGUOUS UNIT KEEPS ITS EXEMPTION.
+    //
+    // Rounds 3 and 11 taught the scanner to consult a widened lookahead
+    // when a unit is AMBIGUOUS: `m` might be minutes or millions, so
+    // `1m USDC` is money. `days`, `%` and `bps` are not ambiguous, and
+    // letting a ticker anywhere in the clause cancel them turned correct
+    // copy into a product FAIL — on the two exemptions most likely to
+    // appear in real sentences.
+    it('keeps a duration or proportion exempt when the asset is named later', () => {
+      expect(monetaryAmountsIn('Wait 3 days before USDC returns')).toEqual([]);
+      expect(monetaryAmountsIn('Fee: 2% of USDC principal')).toEqual([]);
+      expect(monetaryAmountsIn('Settles within 5 blocks once WETH is sold')).toEqual([]);
+      expect(monetaryAmountsIn('A 50 bps cut of the USDC interest')).toEqual([]);
+      // The ambiguous unit still reads the lookahead, which is rounds 3
+      // and 11 and must survive this.
+      expect(monetaryAmountsIn('You receive 1m USDC')).toHaveLength(1);
+      expect(monetaryAmountsIn('You receive 1m (USDC)')).toHaveLength(1);
+    });
+
     it('does not fire on ordinary prose after a figure', () => {
       expect(monetaryAmountsIn('Loan 100 is overdue.')).toEqual([]);
       expect(monetaryAmountsIn('The grace period is 3 days.')).toEqual([]);
