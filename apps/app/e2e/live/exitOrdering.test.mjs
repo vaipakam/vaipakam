@@ -272,6 +272,39 @@ describe('a funds defect that was READ outranks every blocker', () => {
     expect(src).toContain('forcedCloseCoverage(visited, ROLE)');
   });
 
+  // ROUND 108 P2 — A SKIPPED VISIT MUST NOT SPEND THE CAP.
+  //
+  // `acceptedSale` ranks the walk once, up front. A sale accepted after
+  // that leaves the loan in its old band; the visit then observes a
+  // correctly absent card, records it inapplicable, and — before this —
+  // still spent one of `OBSERVE_MAX_POSITIONS`. Where the cap binds, an
+  // applicable loan further down went unvisited and the run reported
+  // BLOCKED for want of a candidate it had.
+  //
+  // Two properties, and the second is what makes the first worth having.
+  it('re-reads the accepted sale before a lender visit, and skips without spending the cap', () => {
+    const fn = src.slice(
+      src.indexOf('async function stillEligible(loan)'),
+      src.indexOf('The lender card’s observable shape'),
+    );
+    expect(fn.length, 'stillEligible was not found').toBeGreaterThan(0);
+    expect(fn, 'the sale is re-read, not taken from the upfront ranking').toContain(
+      'saleLockedOn(loan.lenderTokenId, loan.id, undefined,',
+    );
+    // TRI-STATE: only a definite `true` demotes. An unreadable answer must
+    // not invent a demotion out of a transport failure, which is the rule
+    // every other read in this file follows.
+    expect(fn).toContain('if (soldNow === true)');
+    // And the loop: a skip `continue`s BEFORE the counter moves, so the
+    // budget is spent on visits that observed something.
+    const loop = src.slice(src.indexOf('for (const l of readyFirst) {'));
+    const skip = loop.indexOf('continue;');
+    const spend = loop.indexOf('observedDetails += 1;');
+    expect(skip, 'the skip was not found').toBeGreaterThan(-1);
+    expect(spend, 'the cap increment was not found').toBeGreaterThan(-1);
+    expect(skip, 'a skipped visit must not reach the increment').toBeLessThan(spend);
+  });
+
   // ROUND 111 P2 — AND THE DRIVE'S OWN SETUP FAILURES ARE BLOCKED, NOT FAIL.
   //
   // The copy bundle is read at module scope, and the read threw. An

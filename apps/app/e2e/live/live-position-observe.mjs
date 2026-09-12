@@ -3409,6 +3409,34 @@ async function stillEligible(loan) {
   ) {
     return 'no longer active';
   }
+  // ROUND 108 P2 — AND THE ACCEPTED SALE, which is as volatile as the
+  // status and was ranked once, up front, minutes earlier.
+  //
+  // `acceptedSale` orders the walk: a lender position whose sale has been
+  // accepted carries no forced-close card, so it is demoted. A sale
+  // accepted AFTER that ranking leaves the loan in its old band, the visit
+  // observes a correctly absent card, records it as inapplicable — and
+  // still spends one of `OBSERVE_MAX_POSITIONS`. Where the cap binds, an
+  // applicable loan further down goes unvisited and the run reports
+  // BLOCKED for want of a candidate it had.
+  //
+  // Re-read here rather than rationed at the cap, because this function is
+  // exactly the "nothing decided minutes ago" gate and the other volatile
+  // inputs already come through it. Lender-only: the borrower card is not
+  // gated on the lender's sale.
+  if (ROLE === 'lender') {
+    const soldNow = await discovery(
+      `re-reading the accepted sale on loan ${loan.id} before visiting it`,
+      () => saleLockedOn(loan.lenderTokenId, loan.id, undefined, authorityNow ?? loan.authority),
+    );
+    // TRI-STATE, like every other read in this file: `true` demotes, and
+    // an unreadable answer leaves the loan where it was rather than
+    // inventing a demotion out of a transport failure.
+    if (soldNow === true) {
+      acceptedSale.add(loan.id);
+      return 'its sale was accepted since discovery';
+    }
+  }
   // ROUND 1 P2 — CARRY THE FRESH READS BACK ONTO THE LOAN.
   //
   // This function re-reads status and authority and then threw both
