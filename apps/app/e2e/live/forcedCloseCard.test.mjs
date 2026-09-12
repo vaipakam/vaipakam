@@ -1370,6 +1370,42 @@ describe('confirmationReady — round 14: caught up, not merely moved', () => {
     expect(confirmationReady(null, null, null)).toBe(false);
   });
 
+  // ROUND 102 P2 — AND THE ASKED CEILING IS PART OF THE BAR.
+  //
+  // `pageHead` is the head this drive OVERHEARD. Round 101 established it
+  // does not bound an unpinned read the page issues afterwards and added a
+  // ceiling asked after the scrape — which only the stability arm consumed.
+  // So a card correctly absent because the position went terminal ABOVE the
+  // overheard head was re-read below it and reported as a failure.
+  describe('the asked ceiling raises the bar (round 102)', () => {
+    const sound = (head) => ({ sound: true, head });
+
+    it('requires the observer to clear the ceiling, not just the overheard head', () => {
+      // Overheard 11, asked ceiling 20: passing 12 is no longer enough.
+      expect(confirmationReady(12n, 10n, 11n, sound(20n))).toBe(false);
+      expect(confirmationReady(21n, 10n, 11n, sound(20n))).toBe(true);
+    });
+
+    it('keeps the overheard head as the bar when it is the higher of the two', () => {
+      expect(confirmationReady(12n, 10n, 11n, sound(5n))).toBe(true);
+      expect(confirmationReady(11n, 10n, 11n, sound(5n))).toBe(false);
+    });
+
+    it('treats an UNSOUND ceiling as not ready, never as a fallback', () => {
+      // A ceiling that could not be established is not a reason to trust
+      // the lower number that happens to be available.
+      expect(confirmationReady(99n, 10n, 11n, { sound: false, head: 0n })).toBe(false);
+      expect(confirmationReady(99n, 10n, 11n, { sound: true, head: 0n })).toBe(false);
+    });
+
+    it('leaves a caller that passes no ceiling behaving as it did', () => {
+      // `undefined` means a caller predating the field, which every rule in
+      // this project treats as "keep the old behaviour".
+      expect(confirmationReady(12n, 10n, 11n)).toBe(true);
+      expect(confirmationReady(12n, 10n, 11n, undefined)).toBe(true);
+    });
+  });
+
   it('an unready confirmation reports the absence as incomplete, not as a defect', () => {
     const out = reconcileEligibility(
       { lenderHoldsActive: true, saleLocked: false },

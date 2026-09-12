@@ -2436,6 +2436,34 @@ async function pageProviderHead() {
  * and it is the same irreducible class as the observer/confirmer race this
  * PR already states as a limit.
  */
+/**
+ * The clock the floor's ordering proof is measured on.
+ *
+ * ROUND 102 P2 — `Date.now()` IS NOT MONOTONIC, and this is a proof.
+ *
+ * The floor accepts an endpoint when its head ANSWER was stamped before its
+ * read was ASKED. Both stamps came from the wall clock, which an NTP step or
+ * a VM clock correction can move BACKWARDS between the two — manufacturing
+ * `head < read` for a head that actually arrived afterwards. The floor is
+ * then accepted on evidence that never happened, and if the read was served
+ * at M while the later head reports M+1 the interior scan excludes the
+ * card's real block. Rare, and in the accusing direction, which is the
+ * combination this file treats as worth closing rather than noting.
+ *
+ * `performance.now()` is monotonic in Node: it counts from an arbitrary
+ * origin and is unaffected by clock adjustment. Only the two ORDERING
+ * stamps use it — everything else here measures durations against
+ * deadlines, where a wall clock is fine and a different origin would be
+ * confusing.
+ *
+ * NOT applied to `rpc-verdict.mjs`'s retry-recovery window, deliberately.
+ * That one is also wall-clock, but a backward step there makes a failure
+ * look MORE recoverable — it under-reports rather than accusing — and
+ * changing it would mean changing what `at` means for every caller. Noted
+ * rather than swept in.
+ */
+const orderingNow = () => performance.now();
+
 function floorEstablishedFor(page, sampledBeforeNav) {
   const diamond = pageDiamondKeys.get(page);
   const heads = pageFirstHeadAt.get(page);
@@ -2757,7 +2785,7 @@ function watchPageHead(page) {
       const body = req.postData();
       if (!body || !body.includes('eth_call')) return;
       const key = req.url();
-      if (!firstReadAt.has(key)) firstReadAt.set(key, Date.now());
+      if (!firstReadAt.has(key)) firstReadAt.set(key, orderingNow());
     } catch {
       // Observational only: a request whose body cannot be read simply
       // leaves this endpoint unstamped, which the predicate treats as
@@ -2813,7 +2841,7 @@ function watchPageHead(page) {
       // fails that, which is the honest answer: the batch says the two
       // happened together, not in an order.
       const stamp = (map) => {
-        if (!map.has(key)) map.set(key, Date.now());
+        if (!map.has(key)) map.set(key, orderingNow());
       };
       // The read stamp moved to the REQUEST listener above (round 101). It
       // is deliberately not re-stamped here: `stamp` keeps the first value,
@@ -3187,6 +3215,8 @@ async function visit(path, { expectChooser = false, loan = null } = {}) {
     // The bracket's lower end, reported beside its upper one so the span
     // the protocol comparison was made over is visible (round 84).
     forcedCloseHeadFloor: forcedClose ? (forcedClose.headFloor ?? null) : null,
+    forcedCloseHeadCeiling: forcedClose ? (forcedClose.headCeiling ?? null) : null,
+    forcedCloseCeilingSound: forcedClose ? (forcedClose.headCeilingSound ?? null) : null,
     // DETAIL PAGES ONLY, gated on `loan` (self-inflicted, caught by
     // running it). The lender card exists only on `/positions/<id>`, and
     // on the LIST route the card locator matches nothing — but a
@@ -4570,11 +4600,16 @@ async function observeForcedClose(page, loan, headBeforeNav, pageHeadBeforeNav, 
         // page head as not-ready rather than as satisfied.
         let head = await pub.getBlockNumber({ cacheTime: 0 });
         const until = Date.now() + 20_000;
-        while (!confirmationReady(head, pinnedBlock, pageHead) && Date.now() < until) {
+        // ROUND 102 P2 — the bar includes the ASKED ceiling, not only the
+        // head this drive overheard. See `confirmationReady`: an unpinned
+        // read served above that head is exactly what round 101's ceiling
+        // was added to bound, and this loop was not consuming it.
+        const confirmBar = { sound: ceilingSound, head: ceiling.head };
+        while (!confirmationReady(head, pinnedBlock, pageHead, confirmBar) && Date.now() < until) {
           await new Promise((r) => setTimeout(r, 1_000));
           head = await pub.getBlockNumber({ cacheTime: 0 });
         }
-        if (!confirmationReady(head, pinnedBlock, pageHead)) {
+        if (!confirmationReady(head, pinnedBlock, pageHead, confirmBar)) {
           // NAME WHICH CONDITION FAILED (round 23 P2). The two causes
           // send an operator to different places: a stale OBSERVE_RPC,
           // or page-head instrumentation that saw nothing. Collapsing
@@ -4585,9 +4620,14 @@ async function observeForcedClose(page, loan, headBeforeNav, pageHeadBeforeNav, 
             why:
               pageHead === 0n
                 ? 'the card was absent, but this drive never observed the page announce a head on the deployment endpoint, so it could not be shown to have caught up'
-                : head <= pinnedBlock
-                  ? "the card was absent, but this observer's chain view never advanced past the block it scraped at, so a page reading ahead of it could not be ruled out"
-                  : `the card was absent, and this observer reached ${head} but the page had already announced ${pageHead}, so it was still behind the view that rendered the page`,
+                : // ROUND 102 P2 — an unestablished ceiling is its own cause,
+                  // and pointing an operator at "the observer is behind" for
+                  // it would send them somewhere the problem is not.
+                  !ceilingSound
+                  ? 'the card was absent, but the page\u2019s own RPC endpoint(s) would not say what block they had reached after the scrape, so there is no upper bound to have caught up to'
+                  : head <= pinnedBlock
+                    ? "the card was absent, but this observer's chain view never advanced past the block it scraped at, so a page reading ahead of it could not be ruled out"
+                    : `the card was absent, and this observer reached ${head} but the page had reached at least ${ceiling.head > pageHead ? ceiling.head : pageHead}, so it was still behind the view that rendered the page`,
           };
         }
         const [status, holder, sale] = await Promise.all([
@@ -4798,6 +4838,23 @@ async function observeForcedClose(page, loan, headBeforeNav, pageHeadBeforeNav, 
     // comparison was made over, rather than leaving a reader to assume it
     // was a point read at the head. Also report-only.
     headFloor: headBefore === 0n ? null : String(headBefore),
+    // ROUND 102 P2 — THE UPPER EDGE THE RUN ACTUALLY USED, not the one it
+    // overheard.
+    //
+    // The report printed `heads=<floor>..<pageHead>`, and since round 101
+    // the bar is the higher of `pageHead` and the ceiling ASKED after the
+    // scrape. So an operator was shown a narrower window than the one the
+    // verdict required, on a surface whose release note promises it states
+    // the span it used. Reporting a bound the run did not use is the same
+    // defect class as any other unstated figure here.
+    //
+    // `headCeiling` is what the bar resolved to, or null when the ceiling
+    // could not be established — in which case the run did not have an
+    // upper edge at all, and saying so is the point.
+    headCeiling: ceilingSound
+      ? String(ceiling.head > pageHead ? ceiling.head : pageHead)
+      : null,
+    headCeilingSound: ceilingSound,
   };
 }
 
@@ -9868,7 +9925,13 @@ for (const v of visited) {
               // SILENT: printed on every visit so a reader can tell a
               // gate that is armed from one that structurally cannot
               // fire.
-              ` heads=${v.forcedCloseHeadFloor ?? 'unobserved'}..${v.forcedClosePageHead ?? 'unobserved'}`
+              // ROUND 102 P2 — the upper edge is the one the verdict used:
+              // the higher of the overheard head and the asked ceiling.
+              // `unestablished` is not the same as `unobserved`, and the
+              // two send an operator to different places.
+              ` heads=${v.forcedCloseHeadFloor ?? 'unobserved'}..${
+                v.forcedCloseHeadCeiling ?? (v.forcedCloseCeilingSound === false ? 'unestablished' : 'unobserved')
+              }`
             : '')
         : `      chooser=${v.chooser} handover=${v.handover} offset=${v.offset}` +
         ` holdCard=${v.holdCard} freeHeldBtn=${v.freeHeld}`,

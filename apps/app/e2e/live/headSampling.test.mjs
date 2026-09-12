@@ -236,7 +236,7 @@ describe('the head sample waits for the readings in flight', () => {
     );
     const reqListener = functionBody(src, "page.on('request', (req) => {");
     expect(reqListener).toContain("body.includes('eth_call')");
-    expect(reqListener).toContain('firstReadAt.set(key, Date.now())');
+    expect(reqListener).toContain('firstReadAt.set(key, orderingNow())');
     // And NOT re-stamped on arrival, which would reintroduce the unsound
     // comparison for any endpoint the request listener missed.
     expect(src, 'no arrival-time read stamp remains').not.toContain(
@@ -244,6 +244,26 @@ describe('the head sample waits for the readings in flight', () => {
     );
     // The head keeps its answer-time stamp (round 92).
     expect(src).toContain('stamp(firstHeadAt)');
+  });
+
+  // ROUND 102 P2 — AND THE PROOF IS MEASURED ON A MONOTONIC CLOCK.
+  //
+  // The floor accepts an endpoint when its head ANSWER was stamped before
+  // its read was ASKED. Taken from the wall clock, an NTP step or a VM clock
+  // correction between the two manufactures `head < read` for a head that
+  // actually arrived afterwards — the floor accepted on evidence that never
+  // happened, in the accusing direction.
+  it('measures the ordering proof on a monotonic clock', () => {
+    expect(src, 'the ordering clock is declared once').toContain(
+      'const orderingNow = () => performance.now();',
+    );
+    // BOTH stamps, or the comparison mixes two origins and means nothing.
+    const stamps = [...src.matchAll(/(firstReadAt\.set\(key, |map\.set\(key, )([A-Za-z.]+\(\))/g)];
+    expect(stamps, 'both ordering stamps were found').toHaveLength(2);
+    for (const m of stamps) expect(m[2], 'ordering stamps use orderingNow').toBe('orderingNow()');
+    // And the wall clock is still what deadlines use — a monotonic origin
+    // there would be a different, confusing change.
+    expect(src).toContain('const until = Date.now() + 20_000;');
   });
 
   it('only trusts the floor when every endpoint the page used is bounded', () => {

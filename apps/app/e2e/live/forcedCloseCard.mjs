@@ -962,15 +962,39 @@ export function saysCheckRunning(text, unknownCopy) {
  * absence as incomplete — conservative, loudly, rather than confidently
  * wrong.
  *
+ * ROUND 102 P2 — AND THE ASKED CEILING IS PART OF THE BAR.
+ *
+ * `pageHead` is the highest head this drive OVERHEARD the page announce.
+ * Round 101 established that it does not bound an unpinned read the page
+ * issues afterwards, and added a ceiling ASKED from the page's own
+ * providers after the scrape. Only the stability arm consumed it. So this
+ * loop still stopped as soon as the observer passed the overheard head:
+ * a card correctly absent because the position went terminal at N, above
+ * that head, was re-read at M+1 and reported as a product failure — the
+ * accusing direction, and the exact case the ceiling was added for.
+ *
+ * The bar is now the HIGHER of the two, and an UNSOUND ceiling makes this
+ * not-ready rather than falling back to the overheard head: a ceiling that
+ * could not be established is not a reason to trust a lower number.
+ *
+ * `ceiling` is optional, and `undefined` keeps the pre-round-102 behaviour
+ * — the `undefined`-means-older rule every field in this project follows.
+ *
  * @param {bigint} observerHead  head this drive has reached
  * @param {bigint} pinnedBlock   block the snapshot was taken at
  * @param {bigint} pageHead      highest block the PAGE was seen to know
+ * @param {{sound: boolean, head: bigint}} [ceiling] asked after the scrape
  * @returns {boolean}
  */
-export function confirmationReady(observerHead, pinnedBlock, pageHead) {
+export function confirmationReady(observerHead, pinnedBlock, pageHead, ceiling) {
   if (typeof observerHead !== 'bigint' || typeof pinnedBlock !== 'bigint') return false;
   if (typeof pageHead !== 'bigint' || pageHead === 0n) return false;
-  return observerHead > pinnedBlock && observerHead > pageHead;
+  let bar = pageHead;
+  if (ceiling !== undefined) {
+    if (!ceiling?.sound || typeof ceiling.head !== 'bigint' || ceiling.head === 0n) return false;
+    if (ceiling.head > bar) bar = ceiling.head;
+  }
+  return observerHead > pinnedBlock && observerHead > bar;
 }
 
 /**
