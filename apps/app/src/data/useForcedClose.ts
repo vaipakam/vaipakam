@@ -70,8 +70,10 @@ export interface ForcedCloseReads {
   ltvCollapsed: boolean | undefined;
   /** The block every fact above was evaluated at — `block.number` of
    *  the aggregate's own execution, not a sighting taken beside it.
-   *  `undefined` while unread, when the aggregate failed, or in the one
-   *  case where only the block call inside it failed. */
+   *  `undefined` while unread or when the aggregate failed — and the
+   *  facts are `undefined` whenever this is, since a failed block read
+   *  unreads them (`forcedCloseFacts`), so a resolved state always has
+   *  a block to name. */
   block: bigint | undefined;
   /** When the decision inputs last settled.
    *

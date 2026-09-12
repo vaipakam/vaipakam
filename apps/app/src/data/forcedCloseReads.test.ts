@@ -138,12 +138,23 @@ describe('forcedCloseFacts', () => {
     expect(forcedCloseFacts(plan, allGood(plan)).collateralIlliquid).toBeUndefined();
   });
 
-  it('keeps the facts when only the block call failed, and names no block', () => {
+  // #2148 round 4 P2 — the inverse of what this case first asserted. A
+  // resolved state must carry the block it was resolved at, so facts the
+  // app cannot date are not stated: a failed block call unreads them all.
+  it('unreads every fact when the block call failed — a decision it cannot date is not stated', () => {
     const plan = planWith(ASSET);
     const slots = allGood(plan).map((s, i) => (plan[i].key === 'block' ? fail : s));
     const facts = forcedCloseFacts(plan, slots);
     expect(facts.block).toBeUndefined();
-    expect(facts.defaultable).toBe(true);
+    for (const [key, value] of Object.entries(facts)) {
+      expect(value, key).toBeUndefined();
+    }
+  });
+
+  it('treats a block of the wrong shape the same as a failed one', () => {
+    const plan = planWith(ASSET);
+    const slots = allGood(plan).map((s, i) => (plan[i].key === 'block' ? ok('46725021') : s));
+    expect(forcedCloseFacts(plan, slots).defaultable).toBeUndefined();
   });
 
   // #2148 round 1 P1 — the loan's OWN status, consent and shape come from

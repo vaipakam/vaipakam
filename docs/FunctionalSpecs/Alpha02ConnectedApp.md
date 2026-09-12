@@ -388,8 +388,10 @@ Thin-market honesty rules apply.
 - The card states what it decided and as of when. Beside its wording it
   carries, in a form a machine can read, the state it resolved and the block
   at which every fact behind that state was evaluated — one block for all of
-  them, because they are read together. The block is omitted, never stated as
-  zero, when there is none to name, and it is withheld when the app has set
+  them, because they are read together. Every resolved state names its block;
+  a decision the app cannot date is not stated, and shows as still checking
+  instead. The block is omitted, never stated as zero, only beside that
+  still-checking state — while the facts are unread, or when the app has set
   the state aside as unknown for a reason of its own rather than resolved it
   from those facts. A reviewer, or an automated check, can therefore ask the
   protocol the same questions at the same block and compare the answers to

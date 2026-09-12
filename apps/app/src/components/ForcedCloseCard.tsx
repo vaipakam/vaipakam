@@ -151,7 +151,10 @@ export function ForcedCloseCard({
    *  `undefined` while the facts are unread, when the aggregate failed,
    *  or when the page has overridden `readiness` to `unknown` for a
    *  reason of its own — a declared block beside a state that was not
-   *  resolved from facts read at it would be a claim, not a fact. Like
+   *  resolved from facts read at it would be a claim, not a fact. Every
+   *  one of those renders `unknown`, so a RESOLVED state always has a
+   *  block: `forcedCloseFacts` unreads every fact when the block call
+   *  fails, precisely so this pairing holds by construction. Like
    *  `readiness`, never derived here. */
   resolvedBlock: bigint | undefined;
   /** Where the close-out lands if the internal-match candidate is gone

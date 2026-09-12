@@ -93,8 +93,9 @@ export interface MulticallSlot {
  *  block) rather than dating it. */
 export interface ForcedCloseFacts {
   /** `block.number` of the execution that produced every other field.
-   *  `undefined` only if that one call failed — the facts are still
-   *  facts, of a block the card then cannot name. */
+   *  `undefined` only if that one call failed — and then every other
+   *  field is `undefined` with it: facts the app cannot date are not
+   *  stated (#2148 round 4 P2). */
   block: bigint | undefined;
   /** `loan.status === Active`, from the struct read in the aggregate. */
   active: boolean | undefined;
@@ -182,10 +183,35 @@ export function forcedCloseFacts(
     const slot = slots[i];
     if (slot.status === 'success') ok.set(entry.key, slot.result);
   });
+
+  // A DECISION THE APP CANNOT DATE IS NOT STATED (#2148 round 4 P2). The
+  // block is what makes the other facts a snapshot the card can vouch
+  // for, so if the one call that names it failed, the facts are treated
+  // as unread too and the card renders `unknown` with no block — rather
+  // than a resolved state whose provenance the card promised and cannot
+  // give. `Multicall3.getBlockNumber()` is a pure view on the contract
+  // executing the aggregate and cannot revert on its own, so in practice
+  // this branch is reached only when the whole aggregate is malformed;
+  // making the invariant hold by construction costs nothing real.
+  const blockRaw = ok.get('block');
+  if (typeof blockRaw !== 'bigint') {
+    return {
+      block: undefined,
+      active: undefined,
+      consentFromBoth: undefined,
+      assetType: undefined,
+      collateralIsNft: undefined,
+      defaultable: undefined,
+      sequencerHealthy: undefined,
+      paused: undefined,
+      internalMatchCandidate: undefined,
+      collateralIlliquid: undefined,
+      ltvCollapsed: undefined,
+    };
+  }
   const bool = (key: ForcedCloseReadKey): boolean | undefined =>
     ok.has(key) ? Boolean(ok.get(key)) : undefined;
 
-  const blockRaw = ok.get('block');
   const loanRaw = ok.get('loan');
   const matchRaw = ok.get('match');
   const liquidityRaw = ok.get('liquidity');
@@ -232,7 +258,7 @@ export function forcedCloseFacts(
     askedAsset.toLowerCase() === structAsset.toLowerCase();
 
   return {
-    block: typeof blockRaw === 'bigint' ? blockRaw : undefined,
+    block: blockRaw,
     active: status === undefined ? undefined : status === LOAN_STATUS_ACTIVE,
     consentFromBoth:
       typeof loan?.riskAndTermsConsentFromBoth === 'boolean'

@@ -13,11 +13,14 @@ states what it knows.
 
 The card now carries two machine-readable attributes beside its text:
 the resolver's own name for the state it rendered, and the block every
-polled fact behind that state was evaluated at. The block is omitted
-rather than zeroed when there is none to name, and it is withheld when
-the page itself overrides the state to "unknown" for a reason of its
-own, because dating a state that was not resolved from those facts
-would be a claim rather than a fact.
+polled fact behind that state was evaluated at. Every resolved state
+names its block: if the read that names it fails, the facts read beside
+it are treated as unread too and the card says it is still checking,
+because a decision the app cannot date is not stated. The block is
+omitted rather than zeroed only beside that still-checking state,
+including when the page itself sets the state aside as "unknown" for a
+reason of its own, since dating a state that was not resolved from those
+facts would be a claim rather than a fact.
 
 The block comes from where the facts come from. The readiness reads
 used to be one request per fact, on purpose: the loan-to-value read

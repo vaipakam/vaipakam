@@ -1546,9 +1546,15 @@ function judgeDeclared(obs, copy) {
   // the drive re-reads the chain at the block that render named, and an
   // intermediate render's block was not re-read.
   const renders = [
-    { declaredState: declared, painted: obs.visibleText ?? obs.text ?? '', settled: true },
+    {
+      declaredState: declared,
+      declaredBlock: obs.declaredBlock,
+      painted: obs.visibleText ?? obs.text ?? '',
+      settled: true,
+    },
     ...(Array.isArray(obs.seenRenders) ? obs.seenRenders : []).map((r) => ({
       declaredState: typeof r?.declaredState === 'string' ? r.declaredState : null,
+      declaredBlock: r?.declaredBlock,
       painted: r?.visibleText ?? r?.text ?? '',
       settled: false,
     })),
@@ -1558,6 +1564,34 @@ function judgeDeclared(obs, copy) {
     copy.recognisedCopy.some(
       (sentence) => typeof sentence === 'string' && sentence && painted.includes(sentence),
     );
+  // ROUND 4 P2 — THE SPECIFIC STATE, not only its class. `stateCopy` maps
+  // each resolver state to the body the card paints for it, so a render
+  // declaring one state while painting another's body is judged as the
+  // contradiction it is — `ready-in-kind` declared over the routed-sale
+  // sentence promises the lender collateral the protocol would sell.
+  // Absent from an older constructed record, in which case only the
+  // class checks run.
+  const stateCopy = copy?.stateCopy && typeof copy.stateCopy === 'object' ? copy.stateCopy : null;
+  const paintedStateOtherThan = (state, painted) => {
+    if (!stateCopy) return null;
+    const own = stateCopy[state];
+    if (typeof own === 'string' && own && painted.includes(own)) return null;
+    for (const [other, sentence] of Object.entries(stateCopy)) {
+      if (other === state) continue;
+      if (typeof sentence === 'string' && sentence && painted.includes(sentence)) return other;
+    }
+    return null;
+  };
+  // ROUND 4 P2 — A RESOLVED DECLARATION NAMES ITS BLOCK, OR IT IS A DEFECT.
+  // The spec has every resolved state carry the block it was resolved at,
+  // and the app now makes that true by construction (a failed block read
+  // fails the whole aggregate, so no resolved state can render without
+  // one). A resolved state with the block absent, zero or malformed is
+  // therefore not an older bundle — that publishes NEITHER attribute —
+  // but a card stating a funds outcome without the provenance it
+  // promised, and `unjudged` was letting it pass. `unknown` may carry no
+  // block: the page withholds it when it set the state aside itself.
+  const validBlock = (b) => typeof b === 'string' && /^[1-9]\d*$/.test(b);
   for (const r of renders) {
     if (r.declaredState === null) continue;
     const paintsChecking = saysCheckRunning(r.painted, copy?.unknownCopy ?? '');
@@ -1572,6 +1606,23 @@ function judgeDeclared(obs, copy) {
       return fail(
         `${where} declares its state unknown while painting a resolved readiness state — two answers about one decision`,
         'contradicted',
+      );
+    }
+    const other = paintedStateOtherThan(r.declaredState, r.painted);
+    if (other !== null) {
+      return fail(
+        `${where} declares "${r.declaredState}" while painting the "${other}" explanation — the machine-readable decision and the one the lender reads disagree`,
+        'contradicted',
+      );
+    }
+    if (r.declaredState !== 'unknown' && !validBlock(r.declaredBlock)) {
+      const how =
+        r.declaredBlock === null || r.declaredBlock === undefined
+          ? 'names no block'
+          : `names the block "${r.declaredBlock}"`;
+      return fail(
+        `${where} declares the resolved state "${r.declaredState}" and ${how} — a resolved decision states the block it was made at`,
+        'malformed',
       );
     }
   }

@@ -556,6 +556,24 @@ function readForcedCloseCopy() {
       need(fc.readyRental, 'readyRental'),
       need(fc.readyNeedsRoute, 'readyNeedsRoute'),
     ],
+    // #2148 ROUND 4 P2 — THE SAME NINE, KEYED BY THE STATE THE CARD DECLARES.
+    // `data-forced-close-state` carries the resolver's name for the state,
+    // and the verdict compares that name with the copy the card paints —
+    // not merely "resolved versus still checking", which let a card declare
+    // `ready-in-kind` while painting the routed-sale sentence. Keys are
+    // `ForcedCloseReadiness` values; the card's own PRESENTATION table is
+    // the pairing being pinned.
+    stateCopy: {
+      unknown: need(fc.unknown, 'unknown'),
+      'not-yet': need(fc.notYet, 'notYet'),
+      'blocked-paused': need(fc.blockedPaused, 'blockedPaused'),
+      'blocked-sequencer': need(fc.blockedSequencer, 'blockedSequencer'),
+      'blocked-no-consent': need(fc.blockedNoConsent, 'blockedNoConsent'),
+      'ready-in-kind': need(fc.readyInKind, 'readyInKind'),
+      'ready-internal-match': need(fc.readyInternalMatch, 'readyInternalMatch'),
+      'ready-rental': need(fc.readyRental, 'readyRental'),
+      'ready-needs-route': need(fc.readyNeedsRoute, 'readyNeedsRoute'),
+    },
     // ROUND 7 P2 — positive evidence that the RECEIPT rendered, not
     // merely that its shell opened.
     // ROUND 43 P2 — BOTH receipts. `ready-rental` renders

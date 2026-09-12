@@ -329,8 +329,19 @@ describe('forcedCloseVerdict', () => {
     const declaredCopy = {
       unknownCopy: FORCED_CLOSE.unknown,
       readyCopy: [FORCED_CLOSE.readyInKind],
-      withheldCopy: [FORCED_CLOSE.unknown, FORCED_CLOSE.notYet],
-      recognisedCopy: [FORCED_CLOSE.unknown, FORCED_CLOSE.notYet, FORCED_CLOSE.readyInKind],
+      withheldCopy: [FORCED_CLOSE.unknown, FORCED_CLOSE.notYet, FORCED_CLOSE.readyNeedsRoute],
+      recognisedCopy: [
+        FORCED_CLOSE.unknown,
+        FORCED_CLOSE.notYet,
+        FORCED_CLOSE.readyInKind,
+        FORCED_CLOSE.readyNeedsRoute,
+      ],
+      stateCopy: {
+        unknown: FORCED_CLOSE.unknown,
+        'not-yet': FORCED_CLOSE.notYet,
+        'ready-in-kind': FORCED_CLOSE.readyInKind,
+        'ready-needs-route': FORCED_CLOSE.readyNeedsRoute,
+      },
       receiptLead: FORCED_CLOSE.receipt.youReceive,
     };
     const painting = (sentence) => ({ ...held, text: sentence, bodyText: sentence });
@@ -420,7 +431,10 @@ describe('forcedCloseVerdict', () => {
       );
       expect(declined.verdict).toBe('pass');
       expect(declined.declaredFacts).toMatch(/^unjudged \(isLoanDefaultable could not be read/);
-      const silent = forcedCloseVerdict({ ...notYet, declaredState: 'not-yet' }, declaredCopy);
+      const silent = forcedCloseVerdict(
+        { ...notYet, declaredState: 'not-yet', declaredBlock: '100' },
+        declaredCopy,
+      );
       expect(silent.declaredFacts).toBe('unjudged (no reason recorded)');
     });
 
@@ -490,6 +504,84 @@ describe('forcedCloseVerdict', () => {
         declaredCopy,
       );
       expect(v.verdict).toBe('pass');
+    });
+
+    // Round 4 P2 — the SPECIFIC state, not only its class.
+    it('FAILS a card declaring one resolved state while painting another\'s explanation', () => {
+      const v = forcedCloseVerdict(
+        {
+          ...painting(FORCED_CLOSE.readyNeedsRoute),
+          declaredState: 'ready-in-kind',
+          declaredBlock: '100',
+          declaredChain: { defaultable: true, internalMatch: false },
+        },
+        declaredCopy,
+      );
+      expect(v.verdict).toBe('fail');
+      expect(v.why).toMatch(/declares "ready-in-kind" while painting the "ready-needs-route" explanation/);
+      expect(v.declaredFacts).toBe('contradicted');
+    });
+
+    it('passes a declaration that matches its painted explanation, and makes no claim where neither is painted', () => {
+      const match = forcedCloseVerdict(
+        {
+          ...painting(FORCED_CLOSE.readyNeedsRoute),
+          declaredState: 'ready-needs-route',
+          declaredBlock: '100',
+          declaredChain: { defaultable: true, internalMatch: false },
+        },
+        declaredCopy,
+      );
+      expect(match.verdict).toBe('pass');
+      // A record predating `stateCopy` runs only the class checks.
+      const { stateCopy: _dropped, ...older } = declaredCopy;
+      const legacy = forcedCloseVerdict(
+        {
+          ...painting(FORCED_CLOSE.readyNeedsRoute),
+          declaredState: 'ready-in-kind',
+          declaredBlock: '100',
+          declaredChain: { defaultable: true, internalMatch: false },
+        },
+        older,
+      );
+      expect(legacy.verdict).toBe('pass');
+    });
+
+    it('judges the specific state on intermediate renders too', () => {
+      const v = forcedCloseVerdict(
+        {
+          ...notYet,
+          declaredState: 'not-yet',
+          declaredBlock: '100',
+          declaredChain: { defaultable: false, internalMatch: false },
+          seenRenders: [
+            { ...withheldControl, text: FORCED_CLOSE.readyNeedsRoute, visibleText: FORCED_CLOSE.readyNeedsRoute, declaredState: 'not-yet', declaredBlock: '99' },
+          ],
+        },
+        declaredCopy,
+      );
+      expect(v.verdict).toBe('fail');
+      expect(v.why).toMatch(/a render this drive read declares "not-yet" while painting the "ready-needs-route" explanation/);
+    });
+
+    // Round 4 P2 — a resolved declaration without a valid block is a
+    // defect, not an older bundle.
+    it('FAILS a resolved declaration that names no block, a zero block, or a malformed one', () => {
+      for (const declaredBlock of [null, undefined, '0', '', 'abc', '-5', '1.5']) {
+        const v = forcedCloseVerdict({ ...notYet, declaredState: 'not-yet', declaredBlock }, declaredCopy);
+        expect(v.verdict, String(declaredBlock)).toBe('fail');
+        expect(v.declaredFacts).toBe('malformed');
+        expect(v.why).toMatch(/a resolved decision states the block it was made at/);
+      }
+    });
+
+    it('lets a declared unknown carry no block — the page withholds it deliberately there', () => {
+      const v = forcedCloseVerdict({ ...checking, declaredState: 'unknown', declaredBlock: null }, declaredCopy);
+      expect(v.verdict).not.toBe('fail');
+    });
+
+    it('still reports an older bundle that declares neither attribute as undeclared', () => {
+      expect(forcedCloseVerdict({ ...notYet, declaredState: null, declaredBlock: null }, declaredCopy).declaredFacts).toBe('undeclared');
     });
 
     it('a contradiction outranks a merely incomplete observation', () => {
