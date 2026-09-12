@@ -100,21 +100,27 @@ analyse() { # analyse <trace> <now-epoch>  -> prints "<seconds>\t<reason>", exit
   [ -n "${last_status:-}" ] || return 2
   local last
   last=$(tail -n "+$last_status" "$trace")
-  local remaining reset retry
+  local remaining reset retry message
   remaining=$(printf '%s\n' "$last" | last_header 'x-ratelimit-remaining')
   reset=$(printf '%s\n' "$last" | last_header 'x-ratelimit-reset')
   retry=$(printf '%s\n' "$last" | last_header 'retry-after')
+  message=$(printf '%s\n' "$last" \
+    | grep -aoE '"message"[[:space:]]*:[[:space:]]*"[^"]{0,300}"' | tail -n 1 || true)
 
   # THE ONE SHAPE. This script recognises exactly the shape the board listing
   # has been observed to fail with — twice, on 2026-09-12, both times the
   # same (#2129, #2134) — and nothing else:
   #
-  #   the bucket is spent: `X-Ratelimit-Remaining` is 0, and
-  #   `X-Ratelimit-Reset` names the epoch second it refills.
+  #   the bucket is spent: `X-Ratelimit-Remaining` is 0,
+  #   `X-Ratelimit-Reset` names the epoch second it refills, AND the body's
+  #   `message` says the request was rejected for it ("rate limit").
   #
   # GraphQL answers this with HTTP 200 and the error in the body, REST with
-  # 403, so the status is not part of the shape. The wait is the time to the
-  # reset, which belongs to THIS bucket precisely because remaining is 0.
+  # 403, so the status is not part of the shape — the body IS. Without it,
+  # a 401 that merely happens to carry a spent bucket's headers would be
+  # read as the limit (#2149 r15); with it, the response has to say so.
+  # The wait is the time to the reset, which belongs to THIS bucket
+  # precisely because remaining is 0.
   #
   # An earlier version also recognised a SECONDARY shape — 403/429 with
   # `Retry-After` or an abuse-detection body — and eleven review rounds of
@@ -128,6 +134,10 @@ analyse() { # analyse <trace> <now-epoch>  -> prints "<seconds>\t<reason>", exit
   #     headers, so an operator sees exactly what it was;
   #   - a spent bucket whose reset header is missing or unreadable is NOT
   #     retried either — a wait with no stated length would be a guess;
+  #   - a response carrying a spent bucket's headers whose body does NOT
+  #     say it was rate limited (a 401 "Bad credentials", a 503) is not
+  #     the shape: the headers describe the bucket, the body describes the
+  #     refusal, and only the second says why this request failed;
   #   - a 503 with `Retry-After`, a 401, anything else: exit 1, which says
   #     only that the shape did not match.
   #
@@ -138,6 +148,7 @@ analyse() { # analyse <trace> <now-epoch>  -> prints "<seconds>\t<reason>", exit
   remaining_n=$(header_int "${remaining:-}") || return 1
   [ "$remaining_n" = "0" ] || return 1
   reset_n=$(header_int "${reset:-}") || return 1
+  printf '%s' "$message" | grep -qi 'rate limit' || return 1
 
   local wait bound
   read -r wait bound <<<"$(clamp_wait $(( reset_n - now )))"
@@ -208,12 +219,14 @@ selftest() {
   expect "reset already passed" \
 '< HTTP/2.0 200 OK
 < X-Ratelimit-Remaining: 0
-< X-Ratelimit-Reset: 1789188527' \
+< X-Ratelimit-Reset: 1789188527
+{"message":"API rate limit already exceeded for user ID 275282153."}' \
     1789188999 0 0 'already passed, wait 0'
   expect "reset already passed is not reported as clamped to the ceiling" \
 '< HTTP/2.0 200 OK
 < X-Ratelimit-Remaining: 0
-< X-Ratelimit-Reset: 1789188527' \
+< X-Ratelimit-Reset: 1789188527
+{"message":"API rate limit already exceeded for user ID 275282153."}' \
     1789188999 0 0 '!clamped to'
 
   # Paginated: eleven good pages, then the limited one. The LAST headers win.
@@ -287,6 +300,21 @@ selftest() {
 < X-Ratelimit-Remaining: 4998
 {"message":"Bad credentials"}' \
     1789188167 1
+  # THE HEADERS ALONE ARE NOT THE SHAPE (#2149 r15). A 401 that happens to
+  # carry a spent bucket's headers was refused for its credentials, and the
+  # body says so; waiting fifteen minutes and calling it a rate limit would
+  # be the misdiagnosis this exists to prevent.
+  expect "a 401 carrying a spent bucket's headers is still not the shape" \
+'< HTTP/2.0 401 Unauthorized
+< X-Ratelimit-Remaining: 0
+< X-Ratelimit-Reset: 1789188527
+{"message":"Bad credentials"}' \
+    1789188167 1
+  expect "a spent bucket's headers with no body at all is not the shape" \
+'< HTTP/2.0 200 OK
+< X-Ratelimit-Remaining: 0
+< X-Ratelimit-Reset: 1789188527' \
+    1789188167 1
   expect "an unreadable trace" \
 '=== some future debug format nothing here knows ===' \
     1789188167 2
@@ -297,26 +325,30 @@ selftest() {
 '< HTTP/2.0 403 Forbidden
 < Retry-After: 600
 < X-Ratelimit-Remaining: 0
-< X-Ratelimit-Reset: 1789188527' \
+< X-Ratelimit-Reset: 1789188527
+{"message":"API rate limit exceeded for user ID 275282153."}' \
     1789188167 0 360 'Retry-After header was also present and is not used'
 
   # Header names are matched case-insensitively — gh has spelled them both ways.
   expect "lower-case header names" \
 '< HTTP/2.0 200 OK
 < x-ratelimit-remaining: 0
-< x-ratelimit-reset: 1789188527' \
+< x-ratelimit-reset: 1789188527
+{"message":"API rate limit already exceeded for user ID 275282153."}' \
     1789188167 0 360
 
   # ── numbers: one normaliser, one clamp (#2149 r11–r13) ─────────────────────
   expect "zero-padded reset is normalised" \
 '< HTTP/2.0 200 OK
 < X-Ratelimit-Remaining: 0
-< X-Ratelimit-Reset: 01789188527' \
+< X-Ratelimit-Reset: 01789188527
+{"message":"API rate limit already exceeded for user ID 275282153."}' \
     1789188167 0 360
   expect "zero-padded Remaining is still an exhausted bucket" \
 '< HTTP/2.0 200 OK
 < X-Ratelimit-Remaining: 00
-< X-Ratelimit-Reset: 1789188527' \
+< X-Ratelimit-Reset: 1789188527
+{"message":"API rate limit already exceeded for user ID 275282153."}' \
     1789188167 0 360
   # Leading zeros are dropped BEFORE the length bound (#2149 r13): sixteen
   # characters of padding do not make a small number a ceiling, and sixteen
@@ -324,18 +356,21 @@ selftest() {
   expect "a reset padded past fifteen characters is still its value" \
 '< HTTP/2.0 200 OK
 < X-Ratelimit-Remaining: 0
-< X-Ratelimit-Reset: 0000001789188527' \
+< X-Ratelimit-Reset: 0000001789188527
+{"message":"API rate limit already exceeded for user ID 275282153."}' \
     1789188167 0 360
   expect "Remaining padded past fifteen characters is still an exhausted bucket" \
 '< HTTP/2.0 200 OK
 < X-Ratelimit-Remaining: 0000000000000000
-< X-Ratelimit-Reset: 1789188527' \
+< X-Ratelimit-Reset: 1789188527
+{"message":"API rate limit already exceeded for user ID 275282153."}' \
     1789188167 0 360
   # THE OUTPUT IS BOUNDED. A reset far out is clamped to MAX_WAIT and says so.
   expect "a reset a year out is clamped to MAX_WAIT" \
 '< HTTP/2.0 200 OK
 < X-Ratelimit-Remaining: 0
-< X-Ratelimit-Reset: 1820724167' \
+< X-Ratelimit-Reset: 1820724167
+{"message":"API rate limit already exceeded for user ID 275282153."}' \
     1789188167 0 "$MAX_WAIT" 'clamped'
   # A reset with more than fifteen significant digits is not a value this
   # script will read: it is unreadable, and unreadable is a named miss —
@@ -350,7 +385,8 @@ selftest() {
   expect "a reset exactly MAX_WAIT away is not reported as clamped" \
 "< HTTP/2.0 200 OK
 < X-Ratelimit-Remaining: 0
-< X-Ratelimit-Reset: $(( 1789188167 + MAX_WAIT ))" \
+< X-Ratelimit-Reset: $(( 1789188167 + MAX_WAIT ))
+{\"message\":\"API rate limit already exceeded for user ID 275282153.\"}" \
     1789188167 0 "$MAX_WAIT" '!clamped'
 
   # A LARGE BODY ON THE LIMITED RESPONSE (#2149 r4). A limited GraphQL page
