@@ -1,4 +1,4 @@
-## Thread — Live-drive page-head tracker extracted and run under test (PR #TBD)
+## Thread — Live-drive page-head tracker extracted and run under test (PR #2155)
 
 The live position-observe drive judges the forced close-out card against
 the protocol at a bracket of blocks, and that bracket is built from what the
