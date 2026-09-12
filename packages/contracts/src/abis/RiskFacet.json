@@ -556,6 +556,11 @@
   },
   {
     "type": "error",
+    "name": "ArmedFreshPaidAlreadyRebased",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "ArmedFreshPaidAlreadySeeded",
     "inputs": []
   },
@@ -2456,6 +2461,69 @@
   {
     "type": "error",
     "name": "ReportAfterFinalization",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RewardCustodyHolderAlreadyBound",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RewardCustodyHolderNotBound",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RewardCustodyHolderNotOurs",
+    "inputs": [
+      {
+        "name": "holder",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RewardCustodyHolderUnchanged",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RewardCustodyMoveUnverified",
+    "inputs": [
+      {
+        "name": "expected",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "delta",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RewardCustodySuccessorNotEmpty",
+    "inputs": [
+      {
+        "name": "successor",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "balance",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RewardCustodyTokenUnset",
     "inputs": []
   },
   {

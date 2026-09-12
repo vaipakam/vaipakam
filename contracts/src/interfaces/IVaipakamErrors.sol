@@ -219,6 +219,46 @@ interface IVaipakamErrors {
     /// @dev    One-shot on purpose: the seed ADDS to the paid counter, so a
     ///         second call would double-charge the bound and strand funding.
     error ArmedFreshPaidAlreadySeeded();
+
+    /// @notice #1566 slice 4 PR A — the one-shot paid-side rebase
+    ///         (`rebaseArmedFreshPaid`) has already run on this chain.
+    /// @dev    One-shot because it installs an ABSOLUTE figure and, on the
+    ///         canonical chain, resets `received` to it: a second call could
+    ///         only lower delivered headroom that has since been earned.
+    error ArmedFreshPaidAlreadyRebased();
+    /// @notice #1566 slice 4 PR A — the custody holder is already bound;
+    ///         binding is one-shot and changes only through the paused
+    ///         replacement ceremony.
+    error RewardCustodyHolderAlreadyBound();
+    /// @notice #1566 slice 4 PR A — no custody holder is bound yet.
+    error RewardCustodyHolderNotBound();
+    /// @notice #1566 slice 4 PR A — the address offered as a holder does not
+    ///         answer to THIS Diamond (its `DIAMOND()` is another address, or
+    ///         it has no code) — binding it would hand custody to a contract
+    ///         the Diamond cannot release from.
+    /// @param holder The address offered.
+    error RewardCustodyHolderNotOurs(address holder);
+    /// @notice #1566 slice 4 PR A — the replacement successor is the holder
+    ///         already bound.
+    error RewardCustodyHolderUnchanged();
+    /// @notice #1566 slice 4 PR A — the Diamond has no VPFI token configured,
+    ///         so the replacement ceremony cannot read or move a custody
+    ///         balance; it refuses rather than flip a pointer away from a
+    ///         balance it cannot see.
+    error RewardCustodyTokenUnset();
+    /// @notice #1566 slice 4 PR A — the successor's balance did not grow by
+    ///         exactly the amount released from the old holder, so the
+    ///         ledger would describe a custody the successor does not hold.
+    /// @param expected The old holder's whole balance.
+    /// @param delta    What the successor's balance actually grew by.
+    error RewardCustodyMoveUnverified(uint256 expected, uint256 delta);
+    /// @notice #1566 slice 4 PR A — the replacement successor already holds
+    ///         tokens. A pre-funded successor would carry value no
+    ///         attribution row describes, and the move's delta check cannot
+    ///         see a starting balance — so the ceremony refuses it.
+    /// @param successor The successor offered.
+    /// @param balance   What it already held.
+    error RewardCustodySuccessorNotEmpty(address successor, uint256 balance);
     /// @notice #1460 — the claim's FRESH component exceeds the un-earmarked
     ///         VPFI behind it (`balanceOf(diamond) - recycleBucket`), so
     ///         paying it would leave the recycle bucket claiming tokens that

@@ -898,6 +898,52 @@ library LibVaipakam {
     }
 
     /**
+     * @notice #1566 slice 4 (design §5b / §5d) — the attribution rows of the
+     *         delivered reward custody. The `RewardCustodyHolder` keeps no
+     *         ledger; these rows, in {Storage.rewardCustodyRows}, say what
+     *         each part of its balance IS, and only the Diamond credits or
+     *         debits them. Two invariants hold across every writer: the sum
+     *         of the rows never exceeds the holder's balance, and no row
+     *         goes negative.
+     *
+     *         Append-only, like every enum a mapping is keyed on: a
+     *         reordering would relabel live balances.
+     *
+     *         - `LiveFresh`      — delivered, counted, not yet paid: the
+     *           backing the delivered-fresh bound spends.
+     *         - `Recycled`       — value relocated from elsewhere in the
+     *           system; already bounded by the recycled ledger.
+     *         - `Recovery`       — stranded returns awaiting redispatch,
+     *           entitlement-bounded. The `…FromRecovery` dispatches draw
+     *           ONLY here.
+     *         - `Overage`        — arrived above what any entitlement can
+     *           claim.
+     *         - `PendingSurplus` — a `Detached` era's terminal remainder,
+     *           awaiting an active era. Distinct from `Recovery` on purpose:
+     *           a recovery dispatch must never be able to draw a surplus.
+     *         - `Intent`         — held against a stated, not yet executed
+     *           intent.
+     *         - `Unclassified`   — arrived without a composition the ledger
+     *           can attribute; visible, never spendable as fresh.
+     *         - `Restitution`    — the deficit-covering portion of an
+     *           ingress on a chain whose paid side exceeds its received
+     *           side (the §5c deficit split).
+     *
+     *         Retired-ERA rows (one per era) are a separate, era-keyed
+     *         mapping that lands with the era registry (slice 4 PR C).
+     */
+    enum RewardCustodyRow {
+        LiveFresh,
+        Recycled,
+        Recovery,
+        Overage,
+        PendingSurplus,
+        Intent,
+        Unclassified,
+        Restitution
+    }
+
+    /**
      * @notice Enum for offer types.
      * @dev Lender offers to lend, Borrower requests to borrow.
      */
@@ -7302,6 +7348,37 @@ library LibVaipakam {
         ///         declared-detached chain that reads Unconfigured. Any other
         ///         upgrade path MUST carry the same step.
         bool rewardRoleConfigured;
+        /// @dev #1566 slice 4 PR A — APPENDED AT THE TAIL (#2092 rule). The
+        ///      dedicated custody address for delivered reward funding
+        ///      (`RewardCustodyHolder`). Bound ONCE by
+        ///      `RewardCustodyFacet.bindRewardCustodyHolder`; changed only by
+        ///      the paused replacement ceremony
+        ///      (`replaceRewardCustodyHolder`), which moves the old holder's
+        ///      whole balance to the successor in the same transaction that
+        ///      flips this pointer. An in-place facet refresh never deploys
+        ///      or rebinds a holder — a refresh that did would leave the
+        ///      attributed balance at the old address while the Diamond read
+        ///      an empty one. Zero until bound; no payout, gate or funding
+        ///      path reads it until slice 4 PR B's role-branched cutover.
+        address rewardCustodyHolder;
+        /// @dev #1566 slice 4 PR A — the custody attribution ledger, keyed by
+        ///      {RewardCustodyRow}. Lives HERE, not in the holder, so the
+        ///      holder is replaceable without copying anything unbounded.
+        ///      Credited only after a delta-checked ingress or a registered
+        ///      attribution transfer, debited only by a reward outflow to a
+        ///      named recipient — both of which arrive with PR B; PR A adds
+        ///      no writer, so every row reads zero on a PR-A Diamond.
+        mapping(RewardCustodyRow => uint256) rewardCustodyRows;
+        /// @dev #1566 slice 4 PR A — one-shot guard for
+        ///      `RewardCustodyFacet.rebaseArmedFreshPaid`, the paid-side
+        ///      importer for a chain carrying history the vintage-blind
+        ///      ledger (#1566 closure 2) now charges. Independent of
+        ///      {armedFreshPaidSeeded} so the rebase is available whether or
+        ///      not the P1-b seeder ran; the rebase sets BOTH guards so the
+        ///      additive seeder can never run after an absolute total has
+        ///      been installed. A fresh deploy consumes it at deploy with a
+        ///      zero total, exactly as the seeder is consumed.
+        bool armedFreshPaidRebased;
     }
 
     /// @notice #1434 P2-w4 (§5.2 R6a) — a lapsed day's recorded loss: the

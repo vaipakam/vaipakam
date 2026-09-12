@@ -15,6 +15,10 @@ import {VPFIDiscountFacet} from "../../src/facets/VPFIDiscountFacet.sol";
 import {RewardAggregatorFacet} from "../../src/facets/RewardAggregatorFacet.sol";
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
 import {VPFITokenFacet} from "../../src/facets/VPFITokenFacet.sol";
+import {RewardCustodyFacet} from "../../src/facets/RewardCustodyFacet.sol";
+import {RewardReporterFacet} from "../../src/facets/RewardReporterFacet.sol";
+import {RewardCustodyHolder} from "../../src/RewardCustodyHolder.sol";
+import {IVaipakamErrors} from "../../src/interfaces/IVaipakamErrors.sol";
 
 /**
  * @title  DeployDiamondIntegrationTest
@@ -188,7 +192,7 @@ contract DeployDiamondIntegrationTest is Test, DiamondFacetNames {
     ///         is observable from outside the deploy script.
     function test_DeployedDiamond_HasExactCutFacetCount() public {
         (address diamond,,) = _deploy(true);
-        string[77] memory names = cutFacetNames();
+        string[78] memory names = cutFacetNames();
         uint256 observed = DiamondLoupeFacet(diamond).facetAddresses().length;
         assertEq(
             observed,
@@ -312,6 +316,43 @@ contract DeployDiamondIntegrationTest is Test, DiamondFacetNames {
             .getVaipakamVaultImplementationAddress();
         assertTrue(impl != address(0), "vault impl not initialized");
         assertGt(impl.code.length, 0, "vault impl has no code");
+    }
+
+    /// @notice #1566 slice 4 PR A — a fresh deploy binds a
+    ///         `RewardCustodyHolder` built for THIS Diamond, and consumes
+    ///         BOTH one-shot paid-side migration guards (the P1-b seed and
+    ///         the slice-4 rebase) so neither writer can ever run on a chain
+    ///         that has no history to import.
+    function test_DeployedDiamond_RewardCustodyHolderBoundAndRebaseConsumed()
+        public
+    {
+        (address diamond, address admin,) = _deploy(true);
+        address holder = RewardCustodyFacet(diamond).rewardCustodyHolder();
+        assertTrue(holder != address(0), "holder not bound");
+        assertGt(holder.code.length, 0, "holder has no code");
+        assertEq(
+            RewardCustodyHolder(holder).DIAMOND(),
+            diamond,
+            "holder answers to another diamond"
+        );
+        assertTrue(
+            RewardCustodyFacet(diamond).armedFreshPaidRebased(),
+            "rebase guard not consumed at deploy"
+        );
+        assertTrue(
+            RewardReporterFacet(diamond).armedFreshPaidSeeded(),
+            "seed guard not consumed at deploy"
+        );
+
+        // Neither migration writer is callable afterwards, even by the
+        // admin and even paused.
+        vm.startPrank(admin);
+        AdminFacet(diamond).pause();
+        vm.expectRevert(IVaipakamErrors.ArmedFreshPaidAlreadyRebased.selector);
+        RewardCustodyFacet(diamond).rebaseArmedFreshPaid(1);
+        vm.expectRevert(IVaipakamErrors.ArmedFreshPaidAlreadySeeded.selector);
+        RewardReporterFacet(diamond).seedArmedFreshPaid(1);
+        vm.stopPrank();
     }
 
     // ─── 5. Skip-artifacts gate is purely opt-in ──────────────────────
