@@ -1002,9 +1002,28 @@ export function confirmationReady(observerHead, pinnedBlock, pageHead, ceiling) 
   // block has covered all of them, and demanding one more blocks an
   // otherwise conclusive run for nothing. `>=` is the honest comparison for
   // a bound, where `>` is the honest one for a sighting.
-  if (observerHead <= pinnedBlock || observerHead <= pageHead) return false;
-  if (ceiling === undefined) return true;
+  if (observerHead <= pinnedBlock) return false;
+  if (ceiling === undefined) return observerHead > pageHead;
   if (!ceiling?.sound || typeof ceiling.head !== 'bigint' || ceiling.head === 0n) return false;
+  // ROUND 104 P2 — A SOUND CEILING SUBSUMES THE SIGHTING IT COVERS.
+  //
+  // Round 103 kept both tests unconditionally, so with the sighting and the
+  // ceiling BOTH at 20 and the snapshot at 19, an observer that reached 20
+  // was rejected and the run waited for 21 before reporting the absence
+  // unconfirmed. That is the equality case, and it is the common one — the
+  // ceiling is sampled from the same endpoints that produced the sighting,
+  // so the two agree whenever nothing moved in between.
+  //
+  // The sighting is compared strictly only because it does not say how far
+  // PAST it the page went. A sound ceiling answers exactly that question, so
+  // where it is at or above the sighting it replaces it: reaching the
+  // ceiling has covered every block the card could have rendered from.
+  //
+  // Where the ceiling is somehow BELOW the sighting — which should not
+  // happen, since heads do not go backwards and the ceiling is sampled
+  // later, but is not worth assuming away — the sighting is not covered and
+  // keeps its strict test.
+  if (ceiling.head < pageHead && observerHead <= pageHead) return false;
   return observerHead >= ceiling.head;
 }
 

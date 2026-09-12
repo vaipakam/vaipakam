@@ -3216,7 +3216,9 @@ async function visit(path, { expectChooser = false, loan = null } = {}) {
     // the protocol comparison was made over is visible (round 84).
     forcedCloseHeadFloor: forcedClose ? (forcedClose.headFloor ?? null) : null,
     forcedCloseHeadScanned: forcedClose ? (forcedClose.headScanned ?? null) : null,
-    forcedCloseHeadBar: forcedClose ? (forcedClose.headBar ?? null) : null,
+    forcedCloseHeadPinned: forcedClose ? (forcedClose.headPinned ?? null) : null,
+    forcedCloseHeadPageSighting: forcedClose ? (forcedClose.headPageSighting ?? null) : null,
+    forcedCloseHeadCeiling: forcedClose ? (forcedClose.headCeiling ?? null) : null,
     forcedCloseCeilingSound: forcedClose ? (forcedClose.headCeilingSound ?? null) : null,
     // DETAIL PAGES ONLY, gated on `loan` (self-inflicted, caught by
     // running it). The lender card exists only on `/positions/<id>`, and
@@ -4849,21 +4851,30 @@ async function observeForcedClose(page, loan, headBeforeNav, pageHeadBeforeNav, 
     // the span it used. Reporting a bound the run did not use is the same
     // defect class as any other unstated figure here.
     //
-    // ROUND 103 P2 — AND THE SCANNED SPAN IS THE ONE THAT GETS PRINTED.
+    // ROUND 104 P2 — THE FACTS, NOT A SUMMARY OF THEM.
     //
-    // Round 102 replaced `pageHead` here with the BAR the confirmation has
-    // to clear — which is a third quantity, and still not the one the note
-    // promises. `stableAcross` scans `headBefore..pinnedBlock`, and where
-    // the verdict is issued at all `pinnedBlock` is at or above both the
-    // overheard head and the asked ceiling, so reporting the bar understates
-    // the range actually read. One wrong number swapped for another.
+    // Three rounds were spent on this one line, each replacing one derived
+    // number with a differently-derived number: the overheard head, then the
+    // bar the confirmation must clear, then the scan endpoint. The last
+    // finding is what settles it — the thresholds carry DIFFERENT comparison
+    // semantics (strictly past the pinned block, strictly past a sighting,
+    // AT OR PAST an asked bound), so no single figure can state what had to
+    // be cleared. Combining them was the defect, not which combination.
     //
-    // The span is `headFloor..headScanned`. The bar is a different fact and
-    // is reported separately below, because "what was read" and "what the
-    // observer had to clear before it was trusted" are two questions and
-    // collapsing them is what produced two rounds of this.
-    headScanned: String(pinnedBlock),
-    headBar: ceilingSound ? String(ceiling.head > pageHead ? ceiling.head : pageHead) : null,
+    // So each is reported as itself, and the reader does the combining with
+    // the semantics stated beside them.
+    //
+    // `headScanned` is null unless the interior was actually READ.
+    // `stableAcross` returns null without probing anything when the floor is
+    // unsound, when an endpoint disagrees, or when the span exceeds
+    // `SPAN_PROBE_BUDGET` — and reporting `floor..pinned` in those cases
+    // claims a span the run explicitly could not establish, which is the
+    // same unstated-figure defect one level up.
+    headScanned:
+      defaultableStable !== null || internalMatchStable !== null ? String(pinnedBlock) : null,
+    headPinned: String(pinnedBlock),
+    headPageSighting: pageHead === 0n ? null : String(pageHead),
+    headCeiling: ceilingSound ? String(ceiling.head) : null,
     headCeilingSound: ceilingSound,
   };
 }
@@ -9939,11 +9950,14 @@ for (const v of visited) {
               // the higher of the overheard head and the asked ceiling.
               // `unestablished` is not the same as `unobserved`, and the
               // two send an operator to different places.
-              // ROUND 103 P2 — the SPAN SCANNED, plus the bar as its own
-              // figure. `unestablished` is not `unobserved`, and neither is
-              // the same as the range that was read.
-              ` heads=${v.forcedCloseHeadFloor ?? 'unobserved'}..${v.forcedCloseHeadScanned ?? 'unobserved'}` +
-              ` bar=${v.forcedCloseHeadBar ?? (v.forcedCloseCeilingSound === false ? 'unestablished' : 'unobserved')}`
+              // ROUND 104 P2 — each threshold as itself. They are compared
+              // differently (`>pinned`, `>sighting`, `>=ceiling`), so one
+              // combined number cannot say what had to be cleared; and the
+              // scanned span is printed ONLY when the interior was read.
+              ` span=${v.forcedCloseHeadFloor ?? 'unobserved'}..${v.forcedCloseHeadScanned ?? 'not-scanned'}` +
+              ` pinned=${v.forcedCloseHeadPinned ?? 'unobserved'}` +
+              ` sighting=${v.forcedCloseHeadPageSighting ?? 'unobserved'}` +
+              ` ceiling=${v.forcedCloseHeadCeiling ?? (v.forcedCloseCeilingSound === false ? 'unestablished' : 'unobserved')}`
             : '')
         : `      chooser=${v.chooser} handover=${v.handover} offset=${v.offset}` +
         ` holdCard=${v.holdCard} freeHeldBtn=${v.freeHeld}`,

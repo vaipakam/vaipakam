@@ -1402,6 +1402,30 @@ describe('confirmationReady — round 14: caught up, not merely moved', () => {
       expect(confirmationReady(11n, 10n, 11n, sound(5n))).toBe(false);
     });
 
+    // ROUND 104 P2 — AND THAT INCLUDES WHEN THE CEILING EQUALS THE SIGHTING,
+    // which is the COMMON case: the ceiling is sampled from the same
+    // endpoints that produced the sighting, so the two agree whenever
+    // nothing moved in between. Round 103 kept both tests unconditionally,
+    // so an observer at 20 with both bounds at 20 was rejected and the run
+    // waited for 21 before reporting the absence unconfirmed.
+    //
+    // The sighting is strict only because it does not say how far PAST it
+    // the page went; a sound ceiling answers exactly that, so where it
+    // covers the sighting it replaces it.
+    it('accepts the ceiling when it EQUALS the overheard sighting', () => {
+      expect(confirmationReady(20n, 19n, 20n, sound(20n))).toBe(true);
+      // Still strictly past the pinned block — that test is about this
+      // observer having moved at all, and is untouched.
+      expect(confirmationReady(20n, 20n, 20n, sound(20n))).toBe(false);
+    });
+
+    it('keeps the sighting strict where the ceiling does NOT cover it', () => {
+      // Should not arise — heads do not go backwards and the ceiling is
+      // sampled later — but it is not worth assuming away.
+      expect(confirmationReady(11n, 9n, 11n, sound(5n))).toBe(false);
+      expect(confirmationReady(12n, 9n, 11n, sound(5n))).toBe(true);
+    });
+
     it('keeps the overheard head as the bar when it is the higher of the two', () => {
       expect(confirmationReady(12n, 10n, 11n, sound(5n))).toBe(true);
       expect(confirmationReady(11n, 10n, 11n, sound(5n))).toBe(false);
