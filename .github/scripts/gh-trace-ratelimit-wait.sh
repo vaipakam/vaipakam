@@ -5,8 +5,12 @@
 #
 #   bash .github/scripts/gh-trace-ratelimit-wait.sh <trace-file>
 #     stdout : "<seconds>\t<reason>"   (only when the trace shows a limit)
-#     exit 0 : the last response was rate limited; stdout says how long to wait
-#     exit 1 : it was not — whatever failed, waiting will not fix it
+#     exit 0 : the last response matched a supported rate-limit shape; stdout
+#              says how long to wait
+#     exit 1 : no supported rate-limit shape was recognised. That is ALL it
+#              says — not that a retry would be pointless. A 503 with
+#              Retry-After exits 1 and might well succeed on a retry; this
+#              script only refuses to call it a rate limit.
 #     exit 2 : no response could be read from the trace at all
 #
 #   bash .github/scripts/gh-trace-ratelimit-wait.sh --selftest

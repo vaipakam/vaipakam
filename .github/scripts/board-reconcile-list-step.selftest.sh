@@ -194,6 +194,10 @@ check r "exactly two attempts were made ($(attempts))" "$s"
 check r "it waited Retry-After + margin = 65 s (got '$(tr '\n' ' ' < "$work/sleeps.txt")')" "$s"
 grep -q 'first attempt was rate limited' "$work/out.txt" && s=0 || s=1
 check r "the diagnostic says the failure shown is the retry" "$s"
+# A secondary wait comes from Retry-After (or a default) and names no reset;
+# the warning must not claim one (#2149 r5).
+grep '::warning::' "$work/out.txt" | grep -q 'for the reset' && s=1 || s=0
+check r "the wait warning does not claim a reset for a secondary limit" "$s"
 
 # ── scenario 2: the listing succeeds ─────────────────────────────────────────
 # The trace holds the whole board listing on success, so it must be discarded
