@@ -2179,6 +2179,15 @@ const pageFirstReadAt = new WeakMap(); // page -> Map<key, number>
  * announcements themselves are not state reads, and treating them as such
  * would make this permanently false and silently retire the protocol arms.
  *
+ * EVERY Diamond-serving endpoint has to satisfy it, not merely one. A
+ * deployment reading through two endpoints, where the second served a
+ * contract read without ever announcing a head, answers `false` and the
+ * comparison stays incomplete. Deliberately conservative: this drive
+ * cannot tell which endpoint served the card's own query, so a single
+ * unordered one is enough to make the floor unproven. The cost is
+ * `span=unknown` on such a deployment, which the run prints rather than
+ * leaving a reader to infer from a clean line.
+ *
  * THE RESIDUAL, stated: this assumes an endpoint's head does not go
  * BACKWARDS. A load-balanced pool serving one request from a lagging node
  * can break that, and no amount of observation from outside will show it.
@@ -2453,6 +2462,14 @@ function watchPageHead(page) {
       // `eth_call` only for the read side: `eth_chainId` and the head
       // announcements are not state reads, and counting them would make
       // the test permanently false and quietly retire three arms.
+      //
+      // A BATCH CARRYING BOTH counts as the announcement, and that is the
+      // right answer rather than a gap in this branch (self-review). viem
+      // batches, so a single body can hold `eth_blockNumber` beside the
+      // card's `eth_call` — and when it does, the head was known no later
+      // than the read was served, which is exactly what the ordering test
+      // needs to conclude. Leaving the read unstamped there says "nothing
+      // preceded the announcement", which is true.
       const stamp = (map) => {
         if (!map.has(key)) map.set(key, Date.now());
       };

@@ -182,6 +182,18 @@ block of the window it watched, which is a handful of readings, and says
 so plainly when it could not cover the window instead of treating two
 matching ends as proof.
 
+Both of those rest on the earlier end of the window genuinely sitting at
+or below the state the card displayed, and that took three attempts to
+stop guessing at. A page's own data source can answer a read from a block
+behind the one this check has already seen, so no estimate of "early
+enough" is a guarantee. What can be established is an ordering: whether
+the page's data source reported its current block *before* it served the
+card's first read. Where it did, a later read cannot have come from
+further back; where it did not, nothing bounds that read and the check
+says the comparison was not established rather than making it anyway.
+The run reports which of the two happened, so a window that could not be
+covered is visible rather than looking like a clean result.
+
 Where that answer and the page disagree, the check reports it as
 something inferred rather than something seen, because the commonest
 cause is a deployment pointed at a different chain — a configuration
