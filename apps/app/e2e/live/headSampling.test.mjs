@@ -176,9 +176,20 @@ describe('the head sample waits for the readings in flight', () => {
   // exhaustively it is read. The evidence is the ORDER of the endpoint's
   // first head announcement and its first `eth_call`, which this drive can
   // see because every page request goes through its interception.
-  it('only trusts the floor when the endpoint announced a head before reading', () => {
-    expect(at('function floorEstablishedFor(page)')).toBeGreaterThan(-1);
-    const fn = src.slice(at('function floorEstablishedFor(page)'), at('function floorEstablishedFor(page)') + 1600);
+  //
+  // AMENDED IN ROUND 90 — the rule is PER ENDPOINT and has two ways to be
+  // satisfied. The pre-navigation sample covers only the endpoints earlier
+  // visits proved, so a page falling back to a new one left its reads
+  // unbounded while `pageNav > 0n ||` marked the whole floor sound. A key
+  // now counts as bounded when it was sampled OR when its own announcement
+  // ordering holds — and this case failed on the signature change, which
+  // is what its first assertion is for.
+  it('only trusts the floor when every endpoint the page used is bounded', () => {
+    const sig = 'function floorEstablishedFor(page, sampledBeforeNav)';
+    expect(at(sig), 'the floor predicate was not found').toBeGreaterThan(-1);
+    const fn = src.slice(at(sig), at(sig) + 2600);
+    // Either way of bounding ONE endpoint, inside the per-key loop.
+    expect(fn).toContain('sampledBeforeNav?.has(key)');
     // Both stamps, and the ordering test between them.
     expect(fn).toContain('pageFirstHeadAt');
     expect(fn).toContain('pageFirstReadAt');
@@ -191,8 +202,11 @@ describe('the head sample waits for the readings in flight', () => {
     // announcements themselves would make this permanently false and
     // silently retire three protocol arms.
     expect(src).toContain("body.includes('eth_call')");
-    // And the gate is actually consumed by both stability reads.
+    // And the gate is actually consumed by both stability reads — with no
+    // global shortcut past it, which is the round-90 finding.
     const both = src.slice(at('const floorSound ='), at('const floorSound =') + 1200);
+    expect(both).toContain('floorEstablishedFor(page, pageSampledBeforeNav)');
+    expect(both).not.toMatch(/pageNav > 0n \|\|/);
     expect(both).toMatch(/defaultableStable =\s*\n?\s*floorSound &&/);
     expect(both).toMatch(/internalMatchStable =\s*\n?\s*floorSound &&/);
   });
