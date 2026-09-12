@@ -12,10 +12,17 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
+  blockNumberFromRpcPair,
+  CHAIN_ID_CONFLICT,
+  blockNumberFromWsFrame,
+  believableResult,
+  chainIdFromRpcPair,
   callsTargetContract,
   classifyRpcFailure,
   classifyRpcResponse,
+  isTransportFailure,
   recordRpcResponse,
+  rpcMethodNamesIn,
   rpcRequestCalls,
   summariseRpcLedger,
 } from './rpc-verdict.mjs';
@@ -133,6 +140,232 @@ describe('classifyRpcResponse', () => {
       rpcReq(call(1)),
     );
     expect(verdicts(out)).toEqual(['ok']);
+  });
+
+  // ROUND 74 P2 — a notification asks for nothing, so nothing is missing.
+  describe('notifications and response completeness', () => {
+    const notify = (method) => ({ jsonrpc: '2.0', method, params: [] });
+
+    it('records nothing for an all-notification batch answered with no body', () => {
+      expect(
+        classifyRpcResponse(204, '', JSON.stringify([notify('eth_call')])),
+      ).toEqual([]);
+    });
+
+    it('records nothing for a single notification answered with no body', () => {
+      expect(classifyRpcResponse(200, '', JSON.stringify(notify('eth_call')))).toEqual([]);
+    });
+
+    it('does not report a notification omitted from a mixed batch', () => {
+      const out = classifyRpcResponse(
+        200,
+        JSON.stringify([{ jsonrpc: '2.0', id: 1, result: '0x1' }]),
+        JSON.stringify([{ jsonrpc: '2.0', id: 1, method: 'eth_call', params: [] }, notify('eth_chainId')]),
+      );
+      expect(verdicts(out)).toEqual(['ok']);
+    });
+
+    it('still reports every call when the STATUS failed', () => {
+      // A status the page cannot see past means the request never landed,
+      // and a notification that never landed was not delivered either.
+      const out = classifyRpcResponse(503, 'nope', JSON.stringify([notify('eth_call')]));
+      expect(verdicts(out)).toEqual(['unreachable']);
+    });
+  });
+
+  // ROUND 74 P2 — ids must be one of the three types the spec allows.
+  describe('request ids outside the JSON-RPC types', () => {
+    for (const [label, id] of [
+      ['a boolean', true],
+      ['an array', [1]],
+      ['an object', { a: 1 }],
+    ]) {
+      it(`refuses ${label} id as a well-formed request`, () => {
+        expect(
+          rpcRequestCalls([{ jsonrpc: '2.0', id, method: 'eth_call', params: [] }]),
+        ).toBeUndefined();
+      });
+    }
+
+    it('accepts the three the spec allows, and an absent one', () => {
+      for (const c of [
+        { jsonrpc: '2.0', id: 1, method: 'eth_call', params: [] },
+        { jsonrpc: '2.0', id: 'a', method: 'eth_call', params: [] },
+        { jsonrpc: '2.0', id: null, method: 'eth_call', params: [] },
+        { jsonrpc: '2.0', method: 'eth_call', params: [] },
+      ]) {
+        expect(rpcRequestCalls([c])).toHaveLength(1);
+      }
+    });
+  });
+
+  // ROUND 73 P2 — ids are how a batch's answers are attributed.
+  describe('a batch that reuses a request id', () => {
+    it('is a client fault, whatever came back', () => {
+      const out = classifyRpcResponse(
+        200,
+        JSON.stringify([{ jsonrpc: '2.0', id: 1, result: '0x1' }]),
+        rpcReq(call(1, 'eth_call'), call(1, 'eth_blockNumber')),
+      );
+      expect(verdicts(out)).toEqual(['client-fault', 'client-fault']);
+      expect(out[0].why).toMatch(/duplicate id/);
+    });
+
+    it('is judged before the response, so a healthy body does not excuse it', () => {
+      const out = classifyRpcResponse(
+        200,
+        JSON.stringify([
+          { jsonrpc: '2.0', id: 7, result: '0x1' },
+          { jsonrpc: '2.0', id: 7, result: '0x2' },
+        ]),
+        rpcReq(call(7, 'eth_call'), call(7, 'eth_call')),
+      );
+      expect(verdicts(out)).toEqual(['client-fault', 'client-fault']);
+    });
+
+    it('says nothing about a batch with distinct ids', () => {
+      const out = classifyRpcResponse(
+        200,
+        JSON.stringify([
+          { jsonrpc: '2.0', id: 1, result: '0x1' },
+          { jsonrpc: '2.0', id: 2, result: '0x2' },
+        ]),
+        rpcReq(call(1), call(2)),
+      );
+      expect(verdicts(out)).toEqual(['ok', 'ok']);
+    });
+
+    it('matches a REQUESTED null id normally (round 75)', () => {
+      // Round 74 made `"id": null` a present id; this branch still read
+      // every null reply as the absent id of a whole-request error, so a
+      // mixed batch with one legitimate null-id call reported every
+      // sibling unreachable even though all replies arrived.
+      const out = classifyRpcResponse(
+        200,
+        JSON.stringify([
+          { jsonrpc: '2.0', id: null, result: '0x1' },
+          { jsonrpc: '2.0', id: 2, result: '0x2' },
+        ]),
+        JSON.stringify([
+          { jsonrpc: '2.0', id: null, method: 'eth_call', params: [] },
+          { jsonrpc: '2.0', id: 2, method: 'eth_chainId', params: [] },
+        ]),
+      );
+      expect(verdicts(out)).toEqual(['ok', 'ok']);
+    });
+
+    it('still treats an UNREQUESTED null error as whole-request (round 75)', () => {
+      // A parse error carries no id because the server never read them.
+      const out = classifyRpcResponse(
+        200,
+        JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'parse' } }),
+        rpcReq(call(1, 'eth_call'), call(2, 'eth_chainId')),
+      );
+      expect(verdicts(out)).toEqual(['client-fault', 'client-fault']);
+    });
+
+    it('treats an explicit null id as PRESENT (round 74)', () => {
+      // A notification OMITS the member. An explicit null is an id the
+      // spec discourages but allows, and the response must echo it — so
+      // two of them collide like any other pair.
+      const nulled = (method) => ({ jsonrpc: '2.0', id: null, method, params: [] });
+      const out = classifyRpcResponse(
+        200,
+        JSON.stringify([{ jsonrpc: '2.0', id: null, result: '0x1' }]),
+        JSON.stringify([nulled('eth_call'), nulled('eth_blockNumber')]),
+      );
+      expect(verdicts(out)).toEqual(['client-fault', 'client-fault']);
+      expect(out[0].why).toMatch(/duplicate id/);
+    });
+
+    it('does not treat two ID-LESS notifications as a collision', () => {
+      // A notification legitimately carries no id and expects no reply.
+      // Reading absent ids as equal would invent a product FAIL out of a
+      // shape JSON-RPC allows.
+      const notify = (method) => ({ jsonrpc: '2.0', method, params: [] });
+      const out = classifyRpcResponse(
+        200,
+        JSON.stringify([{ jsonrpc: '2.0', id: null, error: { code: -32600, message: 'x' } }]),
+        JSON.stringify([notify('eth_call'), notify('eth_blockNumber')]),
+      );
+      expect(out.every((o) => o.verdict !== 'client-fault' || !/duplicate id/.test(o.why))).toBe(
+        true,
+      );
+    });
+  });
+
+  // ROUND 72 P2 — a revert answers a CALL, not a head or a receipt.
+  describe('the revert exemption is scoped to methods that execute code', () => {
+    for (const method of [
+      'eth_blockNumber',
+      'eth_getBlockByNumber',
+      'eth_getTransactionReceipt',
+      'eth_getLogs',
+      'eth_chainId',
+    ]) {
+      it(`records a revert-shaped error from ${method} as unreachable`, () => {
+        const out = classifyRpcResponse(
+          200,
+          errBody(1, { code: 3, message: 'reverted' }),
+          rpcReq(call(1, method)),
+        );
+        expect(verdicts(out)).toEqual(['unreachable']);
+        expect(out[0].why).toMatch(/executes no code/);
+      });
+    }
+
+    it('still exempts every method that does execute code', () => {
+      for (const method of [
+        'eth_call',
+        'eth_estimateGas',
+        'eth_createAccessList',
+        'eth_sendRawTransaction',
+        'eth_sendTransaction',
+        'debug_traceCall',
+      ]) {
+        const out = classifyRpcResponse(
+          200,
+          errBody(1, { code: 3, message: 'reverted' }),
+          rpcReq(call(1, method)),
+        );
+        expect(verdicts(out)).toEqual(['ok']);
+      }
+    });
+
+    it('decides PER CALL when one whole-request error covers a mixed batch', () => {
+      // An error carrying no id attributes to every call, and the calls
+      // in a batch need not share a method — so the exemption cannot be
+      // resolved once for the response.
+      const out = classifyRpcResponse(
+        200,
+        JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: 3, message: 'reverted' } }),
+        rpcReq(call(1, 'eth_call'), call(2, 'eth_blockNumber')),
+      );
+      expect(verdicts(out)).toEqual(['ok', 'unreachable']);
+    });
+
+    it('decides PER MEMBER in an ordinary batch too', () => {
+      const out = classifyRpcResponse(
+        200,
+        JSON.stringify([
+          { jsonrpc: '2.0', id: 1, error: { code: 3, message: 'reverted' } },
+          { jsonrpc: '2.0', id: 2, error: { code: 3, message: 'reverted' } },
+        ]),
+        rpcReq(call(1, 'eth_getLogs'), call(2, 'eth_estimateGas')),
+      );
+      expect(verdicts(out)).toEqual(['unreachable', 'ok']);
+    });
+
+    it('is decided by the method, not by how the revert was labelled', () => {
+      // The bytes path reaches `answered` without code 3 at all, and it
+      // must be scoped identically or the exemption simply moves.
+      const out = classifyRpcResponse(
+        200,
+        errBody(1, { code: -32000, message: 'reverted', data: '0x7e273289' }),
+        rpcReq(call(1, 'eth_getBlockByNumber')),
+      );
+      expect(verdicts(out)).toEqual(['unreachable']);
+    });
   });
 
   it('calls a rate-limited read unreachable, naming the method', () => {
@@ -496,6 +729,58 @@ describe('callsTargetContract', () => {
  * is the same defect in a different coat: `malformed` exits 1 as an app
  * finding, `unreachable` exits 2 as "re-run".
  */
+/**
+ * ROUND 116 P3 — the LAX method reader, and why it is separate.
+ *
+ * The strict reader refuses a body with a bad `id`, a missing `jsonrpc`
+ * or non-array `params`. The drive still wants to name what the page was
+ * TRYING to do in that case, and its fallback called the strict reader a
+ * second time — so the name was never recovered and every
+ * malformed-envelope report degraded to the generic wording. A fallback
+ * that cannot succeed is worse than none: it reads as though the method
+ * was looked for and not found.
+ *
+ * It returns NAMES, not calls, so its laxness cannot be mistaken for a
+ * validated read and leak into a decision about whether a request was
+ * legitimate.
+ */
+describe('rpcMethodNamesIn', () => {
+  it('names the method in an envelope the strict reader refuses', () => {
+    expect(rpcMethodNamesIn({ jsonrpc: '2.0', id: true, method: 'eth_call', params: [] })).toEqual([
+      'eth_call',
+    ]);
+    expect(rpcMethodNamesIn({ method: 'eth_getLogs' })).toEqual(['eth_getLogs']);
+    expect(rpcMethodNamesIn({ jsonrpc: '2.0', id: 1, method: 'eth_call', params: 'nope' })).toEqual([
+      'eth_call',
+    ]);
+  });
+
+  it('reads a batch, and reports each name once', () => {
+    expect(
+      rpcMethodNamesIn([{ method: 'eth_call' }, { method: 'eth_call' }, { method: 'eth_chainId' }]),
+    ).toEqual(['eth_call', 'eth_chainId']);
+  });
+
+  it('names nothing when there is nothing to name', () => {
+    // No invention: an absent, empty or non-string method yields no name,
+    // so the report falls back to the generic wording honestly rather
+    // than printing something that was never in the request.
+    expect(rpcMethodNamesIn({})).toEqual([]);
+    expect(rpcMethodNamesIn({ method: '' })).toEqual([]);
+    expect(rpcMethodNamesIn({ method: 42 })).toEqual([]);
+    expect(rpcMethodNamesIn([])).toEqual([]);
+    expect(rpcMethodNamesIn(null)).toEqual([]);
+    expect(rpcMethodNamesIn('eth_call')).toEqual([]);
+  });
+
+  it('skips malformed members and keeps the readable ones', () => {
+    expect(rpcMethodNamesIn([null, { method: 'eth_call' }, 7, { method: 'eth_chainId' }])).toEqual([
+      'eth_call',
+      'eth_chainId',
+    ]);
+  });
+});
+
 describe('recordRpcResponse + summariseRpcLedger', () => {
   const ledgerOf = (...responses) => {
     const l = [];
@@ -538,6 +823,284 @@ describe('recordRpcResponse + summariseRpcLedger', () => {
     expect(out).toEqual({ malformed: [], unreachable: [] });
   });
 
+  // ROUND 94 P2 — a LATER POLL is not a retry, and `callKey` cannot tell
+  // them apart: it is method plus params, and a page polls the same method
+  // and params forever. One poll exhausting every retry — with the card
+  // possibly rendering a degraded funds surface from it — was cleared by
+  // the next poll's success, and the run passed.
+  //
+  // Nothing identifies a logical request from outside the page: viem takes
+  // a fresh id per attempt, so two retries and two polls differ in no
+  // observable way. Time is the discriminator that remains, and these
+  // cases pin both of its edges.
+  describe('recovery is scoped to the retry window (round 94)', () => {
+    const failed = (at) => ({
+      key: 'eth_call|[]',
+      method: 'eth_call',
+      verdict: 'unreachable',
+      why: 'HTTP 429',
+      url: 'https://rpc.example',
+      at,
+    });
+    const ok = (at) => ({ key: 'eth_call|[]', method: 'eth_call', verdict: 'ok', at });
+
+    it('still clears a failure a retry recovered', () => {
+      const out = summariseRpcLedger([failed(1_000), ok(1_650)]);
+      expect(out.unreachable).toEqual([]);
+    });
+
+    it('does NOT clear it from a poll seconds later', () => {
+      const out = summariseRpcLedger([failed(1_000), ok(4_000)]);
+      expect(out.unreachable).toEqual([
+        { url: 'https://rpc.example', why: 'eth_call — HTTP 429' },
+      ]);
+    });
+
+    it('leaves a record without timestamps behaving as it did', () => {
+      // `undefined` means a shape predating the field, which every rule in
+      // this project treats as "keep the old behaviour" rather than as
+      // evidence of anything.
+      const out = summariseRpcLedger([
+        { key: 'eth_call|[]', method: 'eth_call', verdict: 'unreachable', why: 'HTTP 429', url: 'u' },
+        { key: 'eth_call|[]', method: 'eth_call', verdict: 'ok' },
+      ]);
+      expect(out.unreachable).toEqual([]);
+    });
+  });
+
+  // ROUND 95 P2 — a SIBLING IN THE SAME BATCH is not a retry either, and
+  // time cannot say so: both outcomes are decoded from one response body
+  // and stamped with one `at`, so the later array slot satisfied every
+  // window the round-94 rule could express. The first caller had already
+  // consumed its error.
+  describe('recovery excludes siblings of the same response (round 95)', () => {
+    const batchOfSameCall = (first, second) =>
+      ledgerOf(
+        attempt(200, `[${first},${second}]`, rpcReq(call(1), call(2))),
+      );
+
+    it('does NOT let a batch sibling clear its neighbour', () => {
+      const out = summariseRpcLedger(
+        batchOfSameCall(errBody(1, rpcErr(-32005, 'limit')), okBody(2)),
+      );
+      expect(out.unreachable).toEqual([
+        { url: 'https://rpc.example', why: 'eth_call — json-rpc -32005' },
+      ]);
+    });
+
+    it('still clears it when the success is a SEPARATE response in time', () => {
+      // The same two outcomes, one per response — which is what a retry
+      // actually looks like — recover exactly as they did before.
+      const ledger = ledgerOf(
+        attempt(200, errBody(1, rpcErr(-32005, 'limit')), rpcReq(call(1))),
+        attempt(200, okBody(1), rpcReq(call(1))),
+      );
+      expect(summariseRpcLedger(ledger)).toEqual({ malformed: [], unreachable: [] });
+    });
+
+    it('leaves a record without response ids behaving as it did', () => {
+      // `undefined` means a shape predating the field — keep the old
+      // behaviour, never read it as evidence.
+      const out = summariseRpcLedger([
+        { key: 'eth_call|[]', method: 'eth_call', verdict: 'unreachable', why: 'HTTP 429', url: 'u', at: 10 },
+        { key: 'eth_call|[]', method: 'eth_call', verdict: 'ok', at: 10 },
+      ]);
+      expect(out.unreachable).toEqual([]);
+    });
+  });
+
+  // ROUND 108 P2 — A CONCURRENT SIBLING IN A SEPARATE RESPONSE IS NOT A
+  // RETRY EITHER.
+  //
+  // Round 95 excluded siblings decoded from the SAME response. Separate
+  // responses can be siblings too: three independent hooks on one mount each
+  // call the same pinned read, producing identical `callKey`s in different
+  // HTTP responses. If one errors and a concurrent sibling succeeds, a
+  // time-only test calls the failure recovered — while the failing caller
+  // consumed its error and may have rendered a degraded funds surface.
+  //
+  // The distinguishing fact is causal: a retry is SENT after the failure
+  // came back; an already-in-flight sibling was sent before it.
+  describe('recovery requires causal ordering (round 108)', () => {
+    const failed = (at) => ({
+      key: 'eth_call|[]',
+      method: 'eth_call',
+      verdict: 'unreachable',
+      why: 'HTTP 429',
+      url: 'https://rpc.example',
+      at,
+      response: 1,
+    });
+    const ok = (at, requestedAt) => ({
+      key: 'eth_call|[]',
+      method: 'eth_call',
+      verdict: 'ok',
+      at,
+      response: 2,
+      requestedAt,
+    });
+
+    it('does NOT clear a failure with a sibling requested before it landed', () => {
+      // Both in flight together: the success was asked for at 900, before
+      // the failure came back at 1000.
+      const out = summariseRpcLedger([failed(1_000), ok(1_200, 900)]);
+      expect(out.unreachable).toEqual([
+        { url: 'https://rpc.example', why: 'eth_call — HTTP 429' },
+      ]);
+    });
+
+    it('still clears one with a retry requested AFTER the failure landed', () => {
+      const out = summariseRpcLedger([failed(1_000), ok(1_200, 1_050)]);
+      expect(out.unreachable).toEqual([]);
+    });
+
+    // ROUND 109 P2 — and EQUAL timestamps carry no order either. Two
+    // handlers can read the same monotonic value; the floor's ordering test
+    // settled this in round 87 and refuses equality for the same reason.
+    it('does NOT clear one with a sibling requested at the same instant', () => {
+      const out = summariseRpcLedger([failed(1_000), ok(1_200, 1_000)]);
+      expect(out.unreachable).toEqual([
+        { url: 'https://rpc.example', why: 'eth_call — HTTP 429' },
+      ]);
+    });
+
+    it('leaves a record without request times behaving as it did', () => {
+      // `undefined` means a shape predating the field — keep the old
+      // behaviour, never read it as evidence.
+      const out = summariseRpcLedger([failed(1_000), ok(1_200, undefined)]);
+      expect(out.unreachable).toEqual([]);
+    });
+
+    // ROUND 112 P2 — AND THE FAILURE IS STAMPED WHEN THE PAGE GETS IT.
+    //
+    // The causal test is only as good as the instant it compares against.
+    // The drive records a response AFTER handing it to the page, on purpose
+    // — the page must get the provider's real answer whatever we conclude
+    // about it — so the page can receive a failure, viem can issue its
+    // retry, and only THEN does the arrival get stamped. The retry's
+    // `requestedAt` is therefore at or before that stamp, and the rule
+    // above reads a genuine retry as an in-flight sibling: the failure
+    // stays in the ledger and a correctly rendered page exits BLOCKED.
+    //
+    // So the caller stamps the instant of delivery and the ledger uses it.
+    it('uses the delivery stamp the caller supplies as the arrival time', () => {
+      const l = [];
+      recordRpcResponse(
+        {
+          status: 429,
+          body: 'slow down',
+          requestBody: rpcReq(call(1, 'eth_call')),
+          url: 'https://rpc.example',
+          deliveredAt: 1_000,
+        },
+        l,
+      );
+      expect(l[0].at, 'the supplied delivery stamp is the arrival time').toBe(1_000);
+    });
+
+    it('clears a retry sent in the gap between delivery and recording', () => {
+      // The shape the drive actually produces: delivery at 1000, the retry
+      // asked for at 1050, the record written at 1100. Stamped at record
+      // time the retry looks simultaneous-or-earlier and is refused;
+      // stamped at delivery it is plainly later.
+      const l = [];
+      recordRpcResponse(
+        {
+          status: 429,
+          body: 'slow down',
+          requestBody: rpcReq(call(1, 'eth_call')),
+          url: 'https://rpc.example',
+          deliveredAt: 1_000,
+        },
+        l,
+      );
+      recordRpcResponse(
+        {
+          status: 200,
+          body: okBody(1),
+          requestBody: rpcReq(call(1, 'eth_call')),
+          url: 'https://rpc.example',
+          deliveredAt: 1_100,
+          requestedAt: 1_050,
+        },
+        l,
+      );
+      expect(summariseRpcLedger(l).unreachable).toEqual([]);
+    });
+
+    // ROUND 113 P2 — AND A REQUEST BEGUN *DURING* DELIVERY PROVES NOTHING.
+    //
+    // The first version of the round-112 fix stamped the near edge, before
+    // the awaited fulfill. Fulfillment takes time, so a sibling started
+    // while it was pending was stamped LATER than the failure's arrival
+    // even though the page had not seen the failure and it could not be a
+    // reaction to it — and a later success then cleared a call whose
+    // original caller consumed an error. There is no stamp for "the page
+    // received this", so the ambiguous interval is closed at its far edge:
+    // `deliveredAt` is the instant delivery COMPLETED, and anything begun
+    // before that cannot prove recovery.
+    it('does NOT clear a failure with a request begun while it was being delivered', () => {
+      const l = [];
+      recordRpcResponse(
+        {
+          status: 429,
+          body: 'slow down',
+          requestBody: rpcReq(call(1, 'eth_call')),
+          url: 'https://rpc.example',
+          // Delivery began around 1000 and completed at 1100.
+          deliveredAt: 1_100,
+        },
+        l,
+      );
+      recordRpcResponse(
+        {
+          status: 200,
+          body: okBody(1),
+          requestBody: rpcReq(call(1, 'eth_call')),
+          url: 'https://rpc.example',
+          deliveredAt: 1_300,
+          // Begun mid-delivery. Later than the near edge, earlier than
+          // receipt — no evidence of causation either way, so refused.
+          requestedAt: 1_050,
+        },
+        l,
+      );
+      expect(summariseRpcLedger(l).unreachable).toEqual([
+        { url: 'https://rpc.example', why: 'eth_call — HTTP 429' },
+      ]);
+    });
+
+    it('still refuses a sibling that was in flight before delivery', () => {
+      // The fix must not undo round 108: asked for at 900, delivered at
+      // 1000 — never a reaction to it.
+      const l = [];
+      recordRpcResponse(
+        {
+          status: 429,
+          body: 'slow down',
+          requestBody: rpcReq(call(1, 'eth_call')),
+          url: 'https://rpc.example',
+          deliveredAt: 1_000,
+        },
+        l,
+      );
+      recordRpcResponse(
+        {
+          status: 200,
+          body: okBody(1),
+          requestBody: rpcReq(call(1, 'eth_call')),
+          url: 'https://rpc.example',
+          deliveredAt: 1_100,
+          requestedAt: 900,
+        },
+        l,
+      );
+      expect(summariseRpcLedger(l).unreachable).toEqual([
+        { url: 'https://rpc.example', why: 'eth_call — HTTP 429' },
+      ]);
+    });
+  });
+
   describe('reconciliation across attempts (round 23)', () => {
     it('clears a failure that a LATER attempt recovered', () => {
       // viem retries, and wagmi wraps these transports in fallback([...]).
@@ -559,6 +1122,24 @@ describe('recordRpcResponse + summariseRpcLedger', () => {
         ),
       );
       expect(out).toEqual({ malformed: [], unreachable: [] });
+    });
+
+    // ROUND 74 P2 — but an ENVELOPE fault is not recoverable, because
+    // `callKey` is method plus params and carries no id at all, so the
+    // very next refresh of the same read shared its key and erased it.
+    it('keeps a duplicate-id fault despite a later success on the same key', () => {
+      const out = summariseRpcLedger(
+        ledgerOf(
+          attempt(
+            200,
+            JSON.stringify([{ jsonrpc: '2.0', id: 1, result: '0x1' }]),
+            rpcReq(call(1, 'eth_call'), call(1, 'eth_call')),
+          ),
+          attempt(200, okBody(1), rpcReq(call(1, 'eth_call'))),
+        ),
+      );
+      expect(out.malformed).toHaveLength(1);
+      expect(out.malformed[0].why).toMatch(/duplicate id/);
     });
 
     it('does NOT let an earlier success clear a later failure', () => {
@@ -621,5 +1202,622 @@ describe('recordRpcResponse + summariseRpcLedger', () => {
       expect(out.unreachable).toHaveLength(1);
       expect(out.unreachable[0].why).toContain('eth_getLogs');
     });
+  });
+});
+
+describe('blockNumberFromRpcPair — the page disclosing its own head', () => {
+  // SHAPED THE WAY VIEM SENDS THEM — `jsonrpc: '2.0'` included. The
+  // first version of these fixtures omitted it and every case returned
+  // null, because `rpcRequestCalls` validates the envelope before the
+  // allowlist. That was the fixtures being unrealistic rather than the
+  // parser being wrong, and it is exactly what extracting this made
+  // visible: inline in the response listener, nothing would have told
+  // me whether the real shape parsed at all.
+  const req = (calls) => {
+    const envelope = calls.map((c) => ({ jsonrpc: '2.0', ...c }));
+    return JSON.stringify(envelope.length === 1 ? envelope[0] : envelope);
+  };
+
+  it('reads a single eth_blockNumber exchange', () => {
+    expect(
+      blockNumberFromRpcPair(req([{ id: 1, method: 'eth_blockNumber' }]), {
+        id: 1,
+        result: '0x2c7a5f2',
+      }),
+    ).toBe(0x2c7a5f2n);
+  });
+
+  // MATCHED BY ID, NOT POSITION. A batch may be answered in any order,
+  // and lining the arrays up would attribute one call's result to a
+  // different method — here, a log count read as a block height.
+  it('does not attribute another method’s result to eth_blockNumber', () => {
+    const body = req([
+      { id: 7, method: 'eth_getLogs', params: [] },
+      { id: 8, method: 'eth_blockNumber' },
+    ]);
+    expect(
+      blockNumberFromRpcPair(body, [
+        { id: 8, result: '0x64' },
+        { id: 7, result: '0xdeadbeef' },
+      ]),
+    ).toBe(0x64n);
+  });
+
+  it('takes the highest when a batch asks more than once', () => {
+    const body = req([
+      { id: 1, method: 'eth_blockNumber' },
+      { id: 2, method: 'eth_blockNumber' },
+    ]);
+    expect(
+      blockNumberFromRpcPair(body, [
+        { id: 1, result: '0x10' },
+        { id: 2, result: '0x12' },
+      ]),
+    ).toBe(0x12n);
+  });
+
+  it('accepts a lone reply whose id does not match', () => {
+    // One call asked, one answer came back: there is nothing else the
+    // reply could be about, so a rewritten or absent id is not a reason
+    // to discard it.
+    expect(
+      blockNumberFromRpcPair(req([{ id: 1, method: 'eth_blockNumber' }]), {
+        result: '0x2a',
+      }),
+    ).toBe(0x2an);
+  });
+
+  it('does NOT apply that leniency inside a batch', () => {
+    const body = req([
+      { id: 1, method: 'eth_getLogs', params: [] },
+      { id: 2, method: 'eth_blockNumber' },
+    ]);
+    expect(blockNumberFromRpcPair(body, [{ id: 99, result: '0x2a' }])).toBeNull();
+  });
+
+  it('ignores an error member where a result was expected', () => {
+    expect(
+      blockNumberFromRpcPair(req([{ id: 1, method: 'eth_blockNumber' }]), {
+        id: 1,
+        error: { code: -32005, message: 'rate limited' },
+      }),
+    ).toBeNull();
+  });
+
+  it('returns null for bodies that disclose nothing', () => {
+    expect(blockNumberFromRpcPair(req([{ id: 1, method: 'eth_call' }]), { id: 1, result: '0x1' }))
+      .toBeNull();
+    expect(blockNumberFromRpcPair(undefined, { result: '0x1' })).toBeNull();
+    expect(blockNumberFromRpcPair('not json', { result: '0x1' })).toBeNull();
+    expect(blockNumberFromRpcPair(req([{ id: 1, method: 'eth_blockNumber' }]), null)).toBeNull();
+  });
+
+  it('does not throw on a non-hex result', () => {
+    expect(
+      blockNumberFromRpcPair(req([{ id: 1, method: 'eth_blockNumber' }]), {
+        id: 1,
+        result: 'later',
+      }),
+    ).toBeNull();
+  });
+});
+
+describe('blockNumberFromRpcPair — envelope strictness', () => {
+  it('discloses nothing for a body missing the JSON-RPC envelope', () => {
+    // `rpcRequestCalls` validates `jsonrpc: "2.0"` before anything else,
+    // and this function inherits that. viem always sets it, so the
+    // production path is unaffected — and the failure direction is the
+    // safe one: no head observed means the absence gate reports
+    // incomplete rather than accusing the app. Pinned because it is a
+    // real constraint on what this can read, not an accident.
+    expect(
+      blockNumberFromRpcPair(JSON.stringify({ id: 1, method: 'eth_blockNumber' }), {
+        id: 1,
+        result: '0x2a',
+      }),
+    ).toBeNull();
+  });
+});
+
+describe('round 50 P2 — a QUANTITY is hex, everywhere it is read', () => {
+  // `BigInt` accepts `"100000"` and `"-1"`. The `catch` in
+  // `blockNumberFromRpcPair` carried the comment "not a hex quantity"
+  // since it was written and checked nothing, and two more readers in
+  // this file leaned on the same conversion.
+  //
+  // TOO LOW is the dangerous direction, by an indirect route: the
+  // absence gate makes the confirming observer clear the head the PAGE
+  // reached, so an artificially low bound lets it settle below what the
+  // DOM was showing and report a correctly absent card as a regression.
+  // Request as the JSON viem sends; RESPONSE as the parsed object the
+  // caller hands over — the shape the surrounding suites already use.
+  const req = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_blockNumber' });
+  const reply = (result) => ({ id: 1, result });
+
+  it('reads a proper hex height', () => {
+    expect(blockNumberFromRpcPair(req, reply('0x2c8a1f'))).toBe(0x2c8a1fn);
+  });
+
+  it('refuses a DECIMAL height rather than reading it 19x too low', () => {
+    expect(blockNumberFromRpcPair(req, reply('100000'))).toBeNull();
+  });
+
+  it('refuses a signed value', () => {
+    expect(blockNumberFromRpcPair(req, reply('-1'))).toBeNull();
+    expect(blockNumberFromRpcPair(req, reply('-0x1'))).toBeNull();
+  });
+
+  it('refuses a bare 0x and other near-misses', () => {
+    expect(blockNumberFromRpcPair(req, reply('0x'))).toBeNull();
+    expect(blockNumberFromRpcPair(req, reply('0X1f'))).toBeNull();
+    expect(blockNumberFromRpcPair(req, reply(' 0x1f '))).toBeNull();
+    expect(blockNumberFromRpcPair(req, reply('0x1fz'))).toBeNull();
+  });
+
+  // THE PARALLEL SITES, which is why the rule was extracted rather than
+  // written out at the one place the finding named.
+  it('applies the same rule to a newHeads push', () => {
+    const push = (number) =>
+      JSON.stringify({
+        jsonrpc: '2.0',
+        method: 'eth_subscription',
+        params: { subscription: '0x1', result: { number } },
+      });
+    expect(blockNumberFromWsFrame(push('0x2c8a1f'))).toBe(0x2c8a1fn);
+    expect(blockNumberFromWsFrame(push('100000'))).toBeNull();
+    expect(blockNumberFromWsFrame(push('-1'))).toBeNull();
+  });
+
+  it('applies it to a chain id, which is a quantity too', () => {
+    const idReq = JSON.stringify({ jsonrpc: '2.0', id: 7, method: 'eth_chainId' });
+    const idReply = (result) => ({ id: 7, result });
+    expect(chainIdFromRpcPair(idReq, idReply('0x14a34'))).toBe(84532);
+    expect(chainIdFromRpcPair(idReq, idReply('84532'))).toBeNull();
+  });
+});
+
+// ROUND 99 P2 — A MEMBER MAY CARRY A RESULT AND AN ERROR, AND viem TAKES
+// THE ERROR. So the page never consumed that value, and no reader here may
+// believe it.
+//
+// Round 98 taught the HEAD parser this and left the two chain-ID readers
+// with the same bug — the parallel-site pattern that is the single most
+// common defect on this change. The rule lives in one exported helper now,
+// and these cases pin the helper AND each reader that uses it, because a
+// reader quietly reaching for `.result` again is precisely what happened.
+describe('an error-bearing member is not a result (round 99)', () => {
+  it('believableResult refuses a member carrying a non-null error', () => {
+    expect(believableResult({ result: '0x14a34', error: { code: -32000 } })).toBeUndefined();
+    expect(believableResult({ result: '0x14a34', error: null })).toBe('0x14a34');
+    expect(believableResult({ result: '0x14a34' })).toBe('0x14a34');
+    // A legitimately absent block is `result: null` with no error, and the
+    // callers already distinguish that from "nothing usable here".
+    expect(believableResult({ result: null })).toBeNull();
+    expect(believableResult(undefined)).toBeUndefined();
+    expect(believableResult('not an object')).toBeUndefined();
+  });
+
+  it('the chain-ID reader refuses it', () => {
+    const idReq = JSON.stringify({ jsonrpc: '2.0', id: 7, method: 'eth_chainId' });
+    expect(chainIdFromRpcPair(idReq, { id: 7, result: '0x14a34' })).toBe(84532);
+    expect(
+      chainIdFromRpcPair(idReq, { id: 7, result: '0x14a34', error: { code: -32000 } }),
+      'the chain gate must report unknown, not certify',
+    ).toBeNull();
+  });
+
+  it('the head reader refuses it', () => {
+    const req = JSON.stringify({ jsonrpc: '2.0', id: 3, method: 'eth_blockNumber' });
+    expect(blockNumberFromRpcPair(req, { id: 3, result: '0x2c8a1f' })).toBe(0x2c8a1fn);
+    expect(
+      blockNumberFromRpcPair(req, { id: 3, result: '0x2c8a1f', error: { code: -32000 } }),
+    ).toBeNull();
+  });
+});
+
+describe('round 60 P2 — a reused JSON-RPC id names no call', () => {
+  // `wanted` was a Set, so a batch reusing one id for `eth_blockNumber`
+  // and something else collapsed the two into a single identity: every
+  // member carrying that id became eligible as a head result. A lone
+  // `eth_chainId` answer of `0x14a34` was recorded as page block 84532
+  // — an artificially LOW absence bound, the direction that lets a
+  // correctly absent card be reported as a regression.
+  const batch = (...calls) => JSON.stringify(calls.map((c) => ({ jsonrpc: '2.0', ...c })));
+
+  it('reads a well-formed batch with distinct ids', () => {
+    expect(
+      blockNumberFromRpcPair(
+        batch({ id: 1, method: 'eth_chainId' }, { id: 2, method: 'eth_blockNumber' }),
+        [
+          { id: 1, result: '0x14a34' },
+          { id: 2, result: '0x2c8a1f' },
+        ],
+      ),
+    ).toBe(0x2c8a1fn);
+  });
+
+  it('refuses a height from a REUSED id', () => {
+    expect(
+      blockNumberFromRpcPair(
+        batch({ id: 1, method: 'eth_chainId' }, { id: 1, method: 'eth_blockNumber' }),
+        [{ id: 1, result: '0x14a34' }],
+      ),
+    ).toBeNull();
+  });
+
+  // Refused rather than repaired: an id naming two calls names neither,
+  // and picking one would be a guess. "No height" is already handled as
+  // not-ready.
+  it('refuses even when the reused id carries a plausible height', () => {
+    expect(
+      blockNumberFromRpcPair(
+        batch({ id: 7, method: 'eth_getLogs', params: [] }, { id: 7, method: 'eth_blockNumber' }),
+        [{ id: 7, result: '0x2c8a1f' }],
+      ),
+    ).toBeNull();
+  });
+});
+
+describe('round 52 P2 — an endpoint that answers with two chains', () => {
+  // Returning on the FIRST match ignored a batch answering `eth_chainId`
+  // twice with different chains, so the endpoint could be admitted as
+  // deployment-serving on half of its own answer and its later heights
+  // trusted — exactly the endpoint round 51's permanent exclusion is
+  // for, reaching the same wrong-chain bound by an earlier door.
+  const batch = (...calls) =>
+    JSON.stringify(calls.map((c) => ({ jsonrpc: '2.0', ...c })));
+
+  it('reads a single consistent answer', () => {
+    expect(
+      chainIdFromRpcPair(batch({ id: 1, method: 'eth_chainId' }), [{ id: 1, result: '0x14a34' }]),
+    ).toBe(84532);
+  });
+
+  it('reads agreeing answers as that one chain', () => {
+    expect(
+      chainIdFromRpcPair(
+        batch({ id: 1, method: 'eth_chainId' }, { id: 2, method: 'eth_chainId' }),
+        [
+          { id: 1, result: '0x14a34' },
+          { id: 2, result: '0x14a34' },
+        ],
+      ),
+    ).toBe(84532);
+  });
+
+  it('reports a CONFLICT when they disagree', () => {
+    expect(
+      chainIdFromRpcPair(
+        batch({ id: 1, method: 'eth_chainId' }, { id: 2, method: 'eth_chainId' }),
+        [
+          { id: 1, result: '0x14a34' },
+          { id: 2, result: '0x1' },
+        ],
+      ),
+    ).toBe(CHAIN_ID_CONFLICT);
+  });
+
+  it('reports it whichever order the replies arrive in', () => {
+    // The defect was order-dependent: the expected chain first made the
+    // endpoint look fine. Both orders must reach the same answer.
+    expect(
+      chainIdFromRpcPair(
+        batch({ id: 1, method: 'eth_chainId' }, { id: 2, method: 'eth_chainId' }),
+        [
+          { id: 2, result: '0x1' },
+          { id: 1, result: '0x14a34' },
+        ],
+      ),
+    ).toBe(CHAIN_ID_CONFLICT);
+  });
+
+  // A CONFLICT is not `null`, and the distinction is the whole fix:
+  // `null` means "no chain evidence here", which lets the caller fall
+  // through to its address heuristic and ADMIT the endpoint.
+  it('is distinguishable from having no evidence at all', () => {
+    expect(
+      chainIdFromRpcPair(batch({ id: 1, method: 'eth_blockNumber' }), [{ id: 1, result: '0x1' }]),
+    ).toBeNull();
+    expect(CHAIN_ID_CONFLICT).not.toBeNull();
+  });
+});
+
+describe('blockNumberFromWsFrame — a newHeads push', () => {
+  it('reads the height from an eth_subscription header', () => {
+    expect(
+      blockNumberFromWsFrame(
+        JSON.stringify({
+          jsonrpc: '2.0',
+          method: 'eth_subscription',
+          params: { subscription: '0xabc', result: { number: '0x2c7a5f2', hash: '0xdead' } },
+        }),
+      ),
+    ).toBe(0x2c7a5f2n);
+  });
+
+  it('ignores a bare id/result reply on the socket', () => {
+    // Without the paired request there is nothing to say this result is
+    // a height rather than any other read, and guessing is how a log
+    // count gets recorded as a block number.
+    expect(blockNumberFromWsFrame(JSON.stringify({ id: 1, result: '0x2c7a5f2' }))).toBeNull();
+  });
+
+  it('ignores a subscription that carries no header number', () => {
+    expect(
+      blockNumberFromWsFrame(
+        JSON.stringify({ method: 'eth_subscription', params: { result: ['0xlog'] } }),
+      ),
+    ).toBeNull();
+  });
+
+  it('returns null rather than throwing on junk', () => {
+    expect(blockNumberFromWsFrame('not json')).toBeNull();
+    expect(blockNumberFromWsFrame(undefined)).toBeNull();
+    expect(blockNumberFromWsFrame(Buffer.from([1, 2, 3]))).toBeNull();
+    expect(
+      blockNumberFromWsFrame(
+        JSON.stringify({ method: 'eth_subscription', params: { result: { number: 'soon' } } }),
+      ),
+    ).toBeNull();
+  });
+});
+
+describe('chainIdFromRpcPair — which chain an endpoint speaks for', () => {
+  const req = (calls) => {
+    const envelope = calls.map((c) => ({ jsonrpc: '2.0', ...c }));
+    return JSON.stringify(envelope.length === 1 ? envelope[0] : envelope);
+  };
+
+  it('reads the id from a single exchange', () => {
+    expect(
+      chainIdFromRpcPair(req([{ id: 1, method: 'eth_chainId' }]), { id: 1, result: '0x14a34' }),
+    ).toBe(84532);
+  });
+
+  it('matches by id inside a batch rather than by position', () => {
+    const body = req([
+      { id: 4, method: 'eth_blockNumber' },
+      { id: 5, method: 'eth_chainId' },
+    ]);
+    expect(
+      chainIdFromRpcPair(body, [
+        { id: 5, result: '0x1' },
+        { id: 4, result: '0x2c7a5f2' },
+      ]),
+    ).toBe(1);
+  });
+
+  it('discloses nothing when the endpoint was not asked', () => {
+    expect(chainIdFromRpcPair(req([{ id: 1, method: 'eth_call', params: [{}] }]), { id: 1, result: '0x1' }))
+      .toBeNull();
+  });
+
+  it('returns null rather than throwing on junk', () => {
+    expect(chainIdFromRpcPair('not json', { result: '0x1' })).toBeNull();
+    expect(chainIdFromRpcPair(req([{ id: 1, method: 'eth_chainId' }]), { id: 1, error: { code: -1 } }))
+      .toBeNull();
+    expect(chainIdFromRpcPair(req([{ id: 1, method: 'eth_chainId' }]), { id: 1, result: 'soon' }))
+      .toBeNull();
+  });
+});
+
+describe('blockNumberFromRpcPair — a head announced as a BLOCK (round 33 P2)', () => {
+  const req = (calls) => {
+    const envelope = calls.map((c) => ({ jsonrpc: '2.0', ...c }));
+    return JSON.stringify(envelope.length === 1 ? envelope[0] : envelope);
+  };
+
+  // The app asks for its head this way far more often than it asks for a
+  // number: `getBlock({ blockTag: 'latest' })` is what `loanLive.ts` and
+  // every pending-state read use, and viem sends it as
+  // `eth_getBlockByNumber`. Reading only `eth_blockNumber` left
+  // `pageHeadOf` at zero on those pages, which does not weaken the
+  // forced-close absence gate so much as switch it off.
+  it('reads the head out of eth_getBlockByNumber(latest)', () => {
+    expect(
+      blockNumberFromRpcPair(
+        req([{ id: 1, method: 'eth_getBlockByNumber', params: ['latest', false] }]),
+        { id: 1, result: { number: '0x2c7a5f2', hash: '0xabc' } },
+      ),
+    ).toBe(0x2c7a5f2n);
+  });
+
+  it('ignores a HISTORICAL block, whose number is not the head', () => {
+    expect(
+      blockNumberFromRpcPair(
+        req([{ id: 1, method: 'eth_getBlockByNumber', params: ['0x1234', false] }]),
+        { id: 1, result: { number: '0x1234' } },
+      ),
+    ).toBeNull();
+  });
+
+  // `pending` is the one that would be WRONG in the dangerous direction:
+  // it reports a height above the chain's, for a block nobody has mined,
+  // and this value is the lower bound an absence is confirmed against.
+  it('ignores a PENDING block, which would overstate the head', () => {
+    expect(
+      blockNumberFromRpcPair(
+        req([{ id: 1, method: 'eth_getBlockByNumber', params: ['pending', false] }]),
+        { id: 1, result: { number: '0x2c7a5f3' } },
+      ),
+    ).toBeNull();
+  });
+
+  it('still matches by id inside a batch, and takes the highest', () => {
+    const body = req([
+      { id: 4, method: 'eth_getLogs', params: [] },
+      { id: 5, method: 'eth_getBlockByNumber', params: ['latest', false] },
+      { id: 6, method: 'eth_blockNumber' },
+    ]);
+    expect(
+      blockNumberFromRpcPair(body, [
+        { id: 4, result: ['0xdeadbeef'] },
+        { id: 6, result: '0x10' },
+        { id: 5, result: { number: '0x11' } },
+      ]),
+    ).toBe(0x11n);
+  });
+
+  it('reads nothing from a null block or a headerless result', () => {
+    const body = req([{ id: 1, method: 'eth_getBlockByNumber', params: ['latest', false] }]);
+    expect(blockNumberFromRpcPair(body, { id: 1, result: null })).toBeNull();
+    expect(blockNumberFromRpcPair(body, { id: 1, result: {} })).toBeNull();
+    expect(blockNumberFromRpcPair(body, { id: 1, result: { number: 12345 } })).toBeNull();
+    expect(blockNumberFromRpcPair(body, { id: 1, error: { code: -32000 } })).toBeNull();
+  });
+});
+
+describe('isTransportFailure — an outage, or this drive asking wrongly (round 33 P2)', () => {
+  // SHAPED THE WAY VIEM DELIVERS THEM. `buildRequest` maps the JSON-RPC
+  // code to a specific class and passes the generic `RpcRequestError` as
+  // its `cause`, so the generic name is present in the chain of EVERY
+  // error reply — which is what made walking for it accept a malformed
+  // request as an outage.
+  const err = (name, extra = {}) => Object.assign(new Error(name), { name, ...extra });
+  const wrap = (outer, cause) => Object.assign(outer, { cause });
+  // viem's BaseError exposes `walk`; `classifyRpcFailure` uses it when it
+  // is there and falls back to the object itself when it is not.
+  const withWalk = (top) => {
+    top.walk = (fn) => {
+      for (let cur = top; cur; cur = cur.cause) if (fn(cur)) return cur;
+      return undefined;
+    };
+    return top;
+  };
+
+  it('calls a dead endpoint a transport failure', () => {
+    const e = withWalk(
+      wrap(err('ContractFunctionExecutionError'), err('HttpRequestError')),
+    );
+    expect(isTransportFailure(e)).toBe(true);
+  });
+
+  it('calls a rate limit a transport failure', () => {
+    expect(isTransportFailure(withWalk(err('LimitExceededRpcError', { code: -32005 })))).toBe(true);
+  });
+
+  // THE DEFECT THIS ROUND FIXED. `-32602` is the node telling this file
+  // its request was malformed — a bad `account`, a wrong argument list.
+  // Classifying it as an outage left the loan ranked usable and said
+  // nothing, and silence on a self-inflicted error is how two inert
+  // fixes rode for a round each.
+  it('does NOT launder a malformed request as an outage', () => {
+    const e = withWalk(
+      wrap(
+        err('InvalidParamsRpcError'),
+        wrap(err('RpcRequestError'), { code: -32602, message: 'invalid params' }),
+      ),
+    );
+    expect(isTransportFailure(e)).toBe(false);
+  });
+
+  it('does not launder a parse error or an invalid request either', () => {
+    for (const code of [-32700, -32600]) {
+      const e = withWalk(wrap(err('RpcRequestError'), { code, message: 'bad' }));
+      expect(isTransportFailure(e), `code ${code}`).toBe(false);
+    }
+  });
+
+  // The boundary the existing classifier already argues, kept rather than
+  // re-litigated: a method the endpoint does not implement describes the
+  // SERVER's capability surface, not a defect in what was asked.
+  it('keeps method-not-found on the transport side', () => {
+    const e = withWalk(wrap(err('RpcRequestError'), { code: -32601, message: 'no method' }));
+    expect(isTransportFailure(e)).toBe(true);
+  });
+
+  // Deliberate: `saleLockedOn` rethrows only the reverts it could not
+  // read, and "the EVM answered something I cannot parse" is a failure to
+  // determine rather than a defect to report.
+  it('leaves an undecodable revert classified as transport', () => {
+    const e = withWalk(wrap(err('ContractFunctionExecutionError'), err('RpcRequestError', { code: 3, data: '0xdeadbeef' })));
+    expect(isTransportFailure(e)).toBe(true);
+  });
+
+  it('calls a plain programming error what it is', () => {
+    expect(isTransportFailure(new TypeError('saleLockedOn: account is required'))).toBe(false);
+    expect(isTransportFailure(new ReferenceError("Cannot access 'observed' before initialization"))).toBe(false);
+    expect(isTransportFailure(withWalk(err('AbiEncodingLengthMismatchError')))).toBe(false);
+  });
+
+  // NO `withWalk` HERE, and that is the point rather than an omission.
+  // The guard under test is this function's OWN `seen` set. Handing the
+  // cyclic chain to the `walk` stand-in instead hangs the whole suite —
+  // it did, for three runs — because neither that stand-in nor viem's
+  // real `BaseError.walk` carries a cycle guard. viem never builds one,
+  // so this is a statement about the loop written here, not a claim that
+  // the classifier above survives a cycle.
+  it('does not loop on a cyclic cause chain', () => {
+    const a = err('SomethingElse');
+    const b = err('AlsoNotTransport');
+    a.cause = b;
+    b.cause = a;
+    expect(isTransportFailure(a)).toBe(false);
+  });
+});
+
+describe('round 63 P2 — the chain-id reader refuses a reused id too', () => {
+  // ROUND 60 closed this in `blockNumberFromRpcPair` and left the
+  // sibling reader collapsing duplicates. This is the same defect by the
+  // door that matters MORE: a chain id is what ADMITS an endpoint, so a
+  // wrong one buys trust in every height that endpoint reports
+  // afterwards, not just the one exchange.
+  //
+  // Round 60's own note said "same id-matching rule as
+  // `blockNumberFromRpcPair`, for the same reason" — the comment stayed
+  // true and the code stopped being.
+  const batch = (...calls) => JSON.stringify(calls.map((c) => ({ jsonrpc: '2.0', ...c })));
+
+  it('reads a well-formed batch with distinct ids', () => {
+    expect(
+      chainIdFromRpcPair(
+        batch({ id: 1, method: 'eth_blockNumber' }, { id: 2, method: 'eth_chainId' }),
+        [
+          { id: 1, result: '0x2c8a1f' },
+          { id: 2, result: '0x14a34' },
+        ],
+      ),
+    ).toBe(84532);
+  });
+
+  it('refuses a chain id from a REUSED id', () => {
+    // The exact shape from the finding: a height answer of `0x14a34`
+    // reading as "this endpoint speaks for Base Sepolia".
+    expect(
+      chainIdFromRpcPair(
+        batch({ id: 1, method: 'eth_chainId' }, { id: 1, method: 'eth_blockNumber' }),
+        [{ id: 1, result: '0x14a34' }],
+      ),
+    ).toBeNull();
+  });
+
+  it('keeps an unambiguous chain call when a DIFFERENT pair collides', () => {
+    // Refusing the whole exchange because two unrelated calls collided
+    // would be the over-correction: the `eth_chainId` id here names
+    // exactly one call and is still good evidence.
+    expect(
+      chainIdFromRpcPair(
+        batch(
+          { id: 7, method: 'eth_chainId' },
+          { id: 9, method: 'eth_call' },
+          { id: 9, method: 'eth_getLogs' },
+        ),
+        [
+          { id: 7, result: '0x14a34' },
+          { id: 9, result: '0x' },
+        ],
+      ),
+    ).toBe(84532);
+  });
+
+  it('still allows the single-call leniency', () => {
+    // One call, one answer: there is nothing else the reply could be
+    // about, so a rewritten or absent id is not a reason to discard it.
+    expect(
+      chainIdFromRpcPair(
+        JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_chainId' }),
+        { id: 99, result: '0x14a34' },
+      ),
+    ).toBe(84532);
   });
 });

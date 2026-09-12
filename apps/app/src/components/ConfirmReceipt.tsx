@@ -33,9 +33,16 @@ export function ConfirmReceipt({
       {children}
       <ReviewReceipt data={data} />
       <div className="cluster" style={{ marginTop: 12 }}>
+        {/* The two controls carry markers so an automated check can tell
+            them apart without reading their labels. Identifying the
+            fee-paying action by "not the one labelled Back" couples
+            control identity to copy: it breaks in any locale, and it
+            already misfires in English on a confirm label containing the
+            word (#2093 round 76). */}
         <button
           type="button"
           className="btn btn-secondary"
+          data-testid="confirm-receipt-back"
           onClick={onBack}
           disabled={busy}
         >
@@ -44,6 +51,7 @@ export function ConfirmReceipt({
         <button
           type="button"
           className="btn btn-primary"
+          data-testid="confirm-receipt-confirm"
           style={{ flex: 1 }}
           disabled={busy || disabled}
           onClick={onConfirm}

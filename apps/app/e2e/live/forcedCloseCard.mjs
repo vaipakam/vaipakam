@@ -1,0 +1,3694 @@
+/**
+ * Does the DEPLOYED forced-close card keep the two promises its spec
+ * makes about what it may say?
+ *
+ * Extracted as a pure module, for the reason `jumpability.mjs` was: a
+ * predicate that only ever runs inside a live drive is a predicate no
+ * test has executed, and this card's history is four review rounds
+ * spent on a branch that could not fire. Everything here is a function
+ * of TEXT and two booleans, so `forcedCloseCard.test.mjs` can exercise
+ * every arm without a chain, a browser or a deployment.
+ *
+ * The two promises, both from `docs/FunctionalSpecs/Alpha02ConnectedApp.md`
+ * under "Forced close-out of an overdue loan":
+ *
+ *   1. "Nothing on this surface states an amount. The settlement path is
+ *      chosen while the transaction executes, so no figure is knowable
+ *      in advance, and a predicted one would be invented."
+ *
+ *   2. "Withholding an action for safety must not withhold the
+ *      explanation with it… the surface stays visible in its unresolved
+ *      state and says a check is running. Removing it entirely leaves
+ *      the lender with neither the action nor a reason." — and, from the
+ *      same section, "An unresolved check is never reported as 'not
+ *      available'."
+ *
+ * Both are checkable against rendered text plus whether the card
+ * mounted, which is exactly what a watch-only drive can observe.
+ */
+
+/**
+ * Token tickers and currency marks that turn an adjacent number into a
+ * MONETARY amount.
+ *
+ * Deliberately a list of shapes rather than a list of assets: the card
+ * renders on whatever collateral a real loan carries, and enumerating
+ * the testnet mocks would pass on mainnet by accident. See `isTicker`
+ * below for the symbol shape; these are the currency signs a fiat
+ * figure would use.
+ *
+ * ROUND 35 P2 — `\p{Sc}`, BECAUSE A HAND-LISTED FIVE WAS A DENYLIST
+ * WEARING AN ALLOWLIST'S CLOTHES.
+ *
+ * The class was `[$€£¥₹]`, and a sign outside it made `hugsCurrency`
+ * false — which does not merely fail to flag the figure, it hands it to
+ * the identifier exemption. `Loan 100 ₽` and `Position 2 ₩` therefore
+ * read as names for things rather than amounts and the scanner returned
+ * clean, on a surface whose one absolute promise is that no figure
+ * appears. Won is the currency of a SHIPPED locale.
+ *
+ * This is the same failure the transport allowlist had in round 33,
+ * arriving from the opposite direction: there a set that was too WIDE
+ * waved defects through, here a set too NARROW did. Both were
+ * hand-maintained lists standing in for a closed one that already
+ * exists. Unicode's `Sc` general category IS the complete set of
+ * currency symbols — it carries ₽, ₩, ₺, ₫, ฿, ₴, ₦, ₪, ¢, ₱, ₸, ₿ and
+ * the fullwidth forms (`￥`), and no provider or translator can add to
+ * it — so there is nothing left to keep in sync.
+ *
+ * Widening cannot make the scanner cry wolf on shipped copy: a currency
+ * sign adjacent to a figure IS the thing being forbidden, and the
+ * all-locale calibration over every shipped `forcedClose` string is what
+ * demonstrates none of them carries one.
+ */
+const CURRENCY_MARK = /\p{Sc}/u;
+
+/**
+ * Is this word a token symbol?
+ *
+ * ROUND 1 P2 — the first version required ALL-UPPERCASE, which misses
+ * `stETH`, `cbETH`, `wstETH`, `rETH` and every other mixed-case symbol
+ * in wide use. Those are exactly the assets a real loan carries, so the
+ * scanner was blind on the collateral most likely to appear.
+ *
+ * Widening to "any word" would be the wrong repair: it would fire on
+ * ordinary prose after a number (`1 lender`, `2 rows`), and a scanner
+ * that cries wolf gets switched off, losing its true positives. The
+ * distinguishing feature of a ticker is an INTERNAL UPPERCASE RUN —
+ * `stETH` and `WETH` have one, `days` and `Position` do not. So: two or
+ * more consecutive upper-case letters somewhere in an alphanumeric word.
+ *
+ * ROUND 85 P2 — AND NO LENGTH CAP, which was the same mistake in a third
+ * costume.
+ *
+ * The first version required all-caps; round 1 widened the CASE rule and
+ * left a `{1,11}` bound, so a symbol of thirteen characters or more was
+ * refused. ERC-20 places no limit on `symbol()`, so that bound was a
+ * guess about other people's tokens sitting in a funds check — and it
+ * failed in the expensive direction: with the symbol unrecognised, the
+ * identifier exemption read `Loan 100 LONGTOKENABCDE principal` as a loan
+ * NUMBER and the scanner returned nothing, certifying an unsubstantiated
+ * amount as clean.
+ *
+ * The discriminator was never the length; it is the uppercase run, which
+ * is what actually separates a ticker from prose. Removing the cap is
+ * therefore not a loosening of the rule but the removal of something that
+ * was never part of it. Two characters minimum is kept: a one-letter word
+ * is not a symbol anyone writes copy around.
+ *
+ * ROUND 109 P2 — AND THE OTHER EDGE OF THE SAME BOUND.
+ *
+ * Round 85 removed the upper length cap as a guess about other people's
+ * tokens, and the sentence above kept the lower one on the same kind of
+ * guess: "a one-letter word is not a symbol anyone writes copy around."
+ * `symbol()` has no minimum length either, so `Loan 100 A principal` fell
+ * through both tests, the identifier exemption read `100` as a loan
+ * NUMBER, and the scanner certified an unsubstantiated amount as clean —
+ * the identical false PASS round 85 fixed at the opposite end, left open
+ * in the same commit that argued the length was never the discriminator.
+ *
+ * A single character cannot carry an internal uppercase RUN, so it needs
+ * its own test rather than a widened one: an all-uppercase single letter.
+ * That is the same signal one step down — a lone capital is as far from
+ * prose as `WETH` is — and it does not reach lower-case `a` or `i`, which
+ * are words in several of the shipped locales.
+ *
+ * ROUND 116 P2 — AND NOT ONLY IN ASCII, which was the third guess about
+ * other people's tokens in the same function.
+ *
+ * `symbol()` is an arbitrary string. `Loan 100 ＵＳＤＣ principal` — the
+ * full-width forms, which a locale or a paste can produce — matched no
+ * ticker, no currency mark, no glyph and no lower-case unit, so the
+ * identifier exemption read `100` as a loan NUMBER and the scan came back
+ * clean on a visible amount. The same false PASS as the length bounds, by
+ * alphabet rather than by length.
+ *
+ * The discriminator is unchanged and is what makes widening safe: an
+ * UPPERCASE RUN, now asked of Unicode rather than of ASCII. Scripts with
+ * no case — CJK, Arabic, Devanagari — have no `\p{Lu}`, so ordinary words
+ * in them still do not read as tickers, which is the property that keeps
+ * this from firing on prose in the shipped locales.
+ *
+ * Demonstrated rather than argued — the all-locale calibration puts every
+ * shipped `forcedClose` string in all twenty bundles through the scanner,
+ * and it stays green, so nothing any of these widenings newly recognises
+ * appears in the product's own copy.
+ */
+function isTicker(word) {
+  if (typeof word !== 'string') return false;
+  if (/^\p{Lu}$/u.test(word)) return true;
+  if (!/^\p{L}[\p{L}\p{N}]+$/u.test(word)) return false;
+  return /\p{Lu}{2}/u.test(word);
+}
+
+/**
+ * Words that make a following number a NAME for something rather than a
+ * quantity of it — `loan 21`, `position 4`, `token 9`.
+ */
+const IDENTIFIER_LEAD = /\b(loan|position|offer|token|id|no|number|nft|item)\s*$/i;
+
+/**
+ * Words that turn the digits before them into a QUANTITY, whatever word
+ * came first — `Loan 1 million will be returned` names no loan.
+ *
+ * ROUND 49 P2. Round 48 closed the joined form (`Loan 1k`) with a
+ * boundary test and I argued there, correctly, that enumerating suffixes
+ * is the mistake this file keeps making. The spaced form needs the list
+ * anyway, and it is worth being plain about why rather than pretending
+ * this is the same kind of rule: `Loan 21 will be returned` and
+ * `Loan 1 million will be returned` differ ONLY in what the following
+ * word means. No boundary, shape or punctuation test can separate them.
+ * A vocabulary is the only instrument that works here.
+ *
+ * Which means it carries the weakness of every vocabulary in this file,
+ * and it is the SAME weakness as the open ASCII-only duration bug
+ * (#2125): a magnitude word in a locale not listed here walks through.
+ * The app ships twenty locale bundles. Stated here rather than
+ * discovered later, and tracked with its sibling.
+ *
+ * Direction of the residual is deliberate, as everywhere else: a
+ * magnitude this does not know is a MISSED amount, never an invented
+ * one.
+ */
+const MAGNITUDE_WORD =
+  /^(k|m|mm|bn|b|t|thousand|thousands|million|millions|billion|billions|trillion|trillions|lakh|lakhs|crore|crores)$/i;
+
+/**
+ * The confirmation action's faults that NO STATE CHANGE CAN EXPLAIN.
+ *
+ * ROUND 49 P2. These are judged ahead of the applicability exits,
+ * because they are direct lender-visible evidence: a panel that opened
+ * with no action beside Back, or with two, or with one that cannot be
+ * seen or read, is wrong whatever the chain says about the position a
+ * moment later. Discarding them as `inapplicable` throws away the
+ * strongest observation this drive makes.
+ *
+ * WHAT IS DELIBERATELY NOT HERE, and this is the substance of the rule
+ * rather than an omission: `enabled` and `clickable`. A loan going
+ * terminal, a token transferring or a sale being accepted between the
+ * DOM pass and the pinned re-read produces exactly a disabled control,
+ * or one briefly covered by a transition overlay. Reporting either as a
+ * product defect would be a false FAIL invented out of a race, which is
+ * the error this file refuses everywhere else — so they stay below the
+ * applicability exits where a state change can still account for them.
+ *
+ * Each arm returns its own full sentence rather than a fragment: the
+ * two framings differ, and stitching them was how an earlier version
+ * reported an unpainted label as "has no label".
+ *
+ * @param {{count?: number, present?: boolean, visible?: boolean,
+ *          labelled?: boolean, labelPainted?: boolean}|undefined} a
+ * @returns {string|null} the reason to fail, or null
+ */
+function definiteConfirmActionFault(a) {
+  // Absent says nothing: an older record predates the field, and
+  // inventing a finding from silence is the failure mode this file
+  // guards against everywhere else.
+  if (!a) return null;
+  // TWO ACTIONS BESIDE BACK is a finding in itself, and ranked ahead of
+  // the usability tests for the same reason the duplicate-card arm
+  // outranks the content scan: the remaining fields describe the FIRST
+  // control, so a clean reading of it says nothing about the second.
+  // One level in from the duplicate-submit rule and the more dangerous
+  // level — these buttons send the transaction rather than opening a
+  // panel.
+  if (typeof a.count === 'number' && a.count > 1) {
+    return (
+      `the confirmation offers ${a.count} actions beside Back — the receipt ` +
+      'explains one decision while the lender is given more than one way to ' +
+      'pay for it, and this drive inspected only the first'
+    );
+  }
+  const oneClickShort = (what) =>
+    `the confirmation opened but ${what} — the lender is left one click short of the action the card offered`;
+  // ROUND 68 P2 — AND ONLY IF THE PANEL WAS STILL THERE.
+  //
+  // `ForcedCloseCard` legitimately removes the whole `ConfirmReceipt`
+  // when readiness changes after the panel opened, keeping the outer
+  // card mounted. The scrape then finds no actions and reports
+  // `present: false` — and this arm read that as "the confirmation
+  // opened but no action was rendered beside Back", a product FAIL
+  // invented out of a legitimate cross-render change. No atomic snapshot
+  // ever saw an open panel missing its action.
+  //
+  // `=== false` so a record predating the field still reports, and the
+  // fault and its excuse come from ONE DOM pass — comparing two moments
+  // is what round 9 forbade.
+  if (!a.present) {
+    return a.panelPresent === false
+      ? null
+      : oneClickShort('no confirmation action was rendered beside Back');
+  }
+  if (!a.visible) return oneClickShort('its confirmation action is not visible');
+  if (!a.labelled) return oneClickShort('its confirmation action has no label');
+  // `labelled` reads `innerText`, which yields every word whatever its
+  // colour, and the button's own visibility check cannot cover this:
+  // `paintsText` exempts a node with no own text, and a button that
+  // wraps its label in a span — the usual way to write one — is that
+  // node. Round 37 fixed this for the receipt's leaves and not for the
+  // button beside them.
+  //
+  // Its own arm rather than folding into `labelled`, because the two are
+  // different defects and the lender's experience of them differs: an
+  // unlabelled button is a blank control, an unpainted one is a control
+  // that is not there at all until it is hovered.
+  //
+  // `=== false`, so a record predating the field says nothing.
+  if (a.labelPainted === false) {
+    return (
+      'the confirmation action carries a label in the markup but none of it is ' +
+      'painted — the lender is asked to confirm a forced close-out on a control ' +
+      'that reads as blank'
+    );
+  }
+  return null;
+}
+
+/**
+ * Glyphs that stand in for an ASSET the way a ticker does — `Ξ` for
+ * ether, `Ƀ` for bitcoin, `Ð` for doge, `◎` for sol.
+ *
+ * A hand-list, stated as one (round 38 P2). `isTicker` cannot reach them
+ * (ASCII-only, and they carry no internal uppercase run) and `\p{Sc}`
+ * does not contain them (`Ξ` is a Greek capital LETTER, U+039E). No
+ * Unicode category groups them, so there is no closed set to defer to
+ * the way the currency widening could — which means this list can only
+ * be wrong by omission, and the all-locale calibration is what would
+ * surface a shipped string carrying an unlisted one.
+ *
+ * `₿` is deliberately absent: it is `\p{Sc}` and already covered.
+ */
+const ASSET_GLYPH = /[\u039E\u03BE\u0243\u00D0\u25CE]/u;
+
+/**
+ * Lower-case DENOMINATIONS, which `isTicker` cannot reach.
+ *
+ * ROUND 43 P2. `isTicker` requires an internal uppercase RUN, and that
+ * requirement is doing real work: it is what separates `stETH` from the
+ * ordinary words that follow numbers in prose (`1 lender`, `2 rows`).
+ * Lower-case denominations have no such shape, so `Loan 100 eth` and
+ * `Position 2 wei` fell through the identifier exemption as reference
+ * numbers — the commonest way an ether figure is actually written.
+ *
+ * A HAND-LIST, and unlike the ticker test it cannot be anything else.
+ * The module's rule is "a list of shapes rather than a list of assets",
+ * and that rule is about the UPPERCASE test, which has a shape to key
+ * on. Here there is none: `eth` and `is` are the same shape, so only
+ * membership distinguishes them. Kept to DENOMINATIONS and the majors
+ * rather than every ticker, because the further this reaches the closer
+ * it comes to matching ordinary words — `sol` is a Spanish noun, and
+ * Spanish ships.
+ *
+ * The residual is stated rather than hidden: a lower-case unit not
+ * listed is missed. The all-locale calibration is the guard — a shipped
+ * string carrying one fails there, on named copy, rather than
+ * surprising a live run. The direction is deliberate and the same as
+ * everywhere else in this file: a denomination this does not know is a
+ * MISSED amount, never an invented one.
+ *
+ * ROUND 60 P2 — THE SPELLED-OUT FORMS TOO. The list carried every
+ * abbreviation and not one written-out denomination, so `Loan 100 ether
+ * will be returned` and `Token 5 bitcoins` walked through the
+ * identifier exemption on the same mechanism round 43 closed for
+ * `Loan 100 eth`: the trailing word IS a denomination, but membership
+ * is the only thing that can say so.
+ *
+ * This is the third vocabulary in this file — `MAGNITUDE_WORD` and the
+ * duration words are the others — and it inherits their weakness across
+ * twenty shipped locale bundles. Round 49 argued why a vocabulary is
+ * unavoidable where the distinction is semantic (`Loan 21 will be
+ * returned` and `Loan 100 ether will be returned` differ only in what
+ * the following word MEANS), and that argument applies here unchanged.
+ * Tracked with its siblings in #2125.
+ */
+const LOWERCASE_ASSET_UNIT =
+  /^(eth|weth|wei|gwei|btc|wbtc|sats|usdc|usdt|dai|ether|ethers|bitcoin|bitcoins|satoshi|satoshis|szabo|finney)$/;
+
+/**
+ * Wording that asserts the protocol has REFUSED, as opposed to the app
+ * not yet knowing. Checked only against a card that is simultaneously
+ * reporting a check in flight, so this is a contradiction test rather
+ * than a style rule (round 7 P2).
+ */
+const REFUSAL_CLAIM =
+  /\b(not available|unavailable|cannot be closed|can't be closed|is not possible|not permitted|has refused|was refused|has been refused|protocol refused)\b/i;
+
+/**
+ * The shipped `unknown` sentence contains the word "refused" in its
+ * NEGATED form — "this is what the app has not read yet, not what the
+ * protocol has refused" — which is the surface being CORRECT about the
+ * distinction, not claiming a refusal. Adding refusal vocabulary to the
+ * matcher above without excluding it would fire on the very copy the
+ * rule exists to protect (round 11 P2).
+ *
+ * So a hit is discarded when a negation GOVERNS it. Deliberately
+ * narrow: it only rescues the negated form, and an affirmative "the
+ * protocol has refused this" still fails.
+ *
+ * ROUND 13 P2 — PROXIMITY IS NOT GOVERNMENT.
+ *
+ * The first version accepted any negation within 40 non-period
+ * characters, which is a distance test wearing a grammar test's
+ * clothes. `The check is not complete, but the protocol has refused
+ * this` puts a `not` inside that window belonging to a DIFFERENT
+ * clause, so an affirmative refusal claim — the contradiction this
+ * check exists to catch — was discarded and the card reported as merely
+ * unsettled.
+ *
+ * A negation governs a refusal when nothing separates them but the
+ * words in between: no clause boundary, no coordinating conjunction.
+ * The shipped copy satisfies that (`not what the protocol has refused`
+ * → ` what the protocol `), and the counterexample does not
+ * (`complete, but the protocol ` → a comma AND a `but`).
+ */
+const NEGATION = /\b(not|never|isn't|isn’t|no|nothing)\b/gi;
+/**
+ * A comma, a dash, a semicolon or a conjunction — a new clause starts.
+ *
+ * ROUND 93 P2 — SUBORDINATORS TOO, not only the coordinating ones.
+ *
+ * `The check is not complete because the protocol has refused this` has
+ * its `not` governing "complete"; the refusal after `because` is
+ * affirmative, and the card is therefore showing two states at once. With
+ * no break recognised, the negation reached across and the contradiction
+ * was discarded — the card reported merely incomplete instead of
+ * mutually inconsistent, which is the weaker verdict on the surface that
+ * most needs the stronger one.
+ *
+ * CONSERVATIVELY CHOSEN, because this list moves the rule in the
+ * accusing direction: a word added here stops a negation governing, so
+ * more refusals count as stated. Only subordinators that reliably open a
+ * new clause are in — `because`, `since`, `unless`, `until`, `whenever`,
+ * `while`. `as`, `if`, `when`, `so`, `after` and `before` are left out
+ * deliberately: each is common enough inside an ordinary negated span
+ * that including it would start inventing contradictions.
+ *
+ * The residual is therefore a MISSED contradiction on a subordinator not
+ * listed, which is the direction this file takes everywhere else.
+ */
+const CLAUSE_BREAK =
+  /[,;:—–]|\b(but|however|yet|although|though|whereas|and|because|since|unless|until|whenever|while)\b/i;
+
+/** Does a negation in `prefix` govern a refusal beginning right after it? */
+function refusalIsNegated(prefix) {
+  const scan = new RegExp(NEGATION.source, 'gi');
+  let m;
+  let lastEnd = -1;
+  while ((m = scan.exec(prefix)) !== null) lastEnd = m.index + m[0].length;
+  if (lastEnd < 0) return false;
+  const between = prefix.slice(lastEnd);
+  // Still bounded — a negation forty characters back is not governing
+  // anything either, clause break or no clause break.
+  return between.length <= 40 && !CLAUSE_BREAK.test(between);
+}
+
+/** The first refusal claim in `text` that no negation governs, or null. */
+function firstUnnegatedRefusal(text) {
+  const scan = new RegExp(REFUSAL_CLAIM.source, 'gi');
+  let m;
+  while ((m = scan.exec(text)) !== null) {
+    // Sentence-scoped: a negation in an EARLIER sentence never governs
+    // this one, which the old `[^.]{0,40}` encoded as a side effect of
+    // its character class and is stated directly here.
+    const prefix = text.slice(0, m.index);
+    // ROUND 24 P2 — `?` and `!` end sentences too, as do the CJK stops
+    // the shipped bundles use, and a rendered line break separates rows.
+    // Slicing on `.` alone let `Is the check not ready? The protocol has
+    // refused this` keep both sentences together, so the earlier `not`
+    // suppressed a definite refusal claim.
+    const lastStop = Math.max(
+      ...['.', '!', '?', '。', '！', '？', '\n'].map((ch) => prefix.lastIndexOf(ch)),
+    );
+    const sentence = prefix.slice(lastStop + 1);
+    if (!refusalIsNegated(sentence)) return m[0];
+  }
+  return null;
+}
+
+/**
+ * A token symbol somewhere in the short run that follows a figure,
+ * across the delimiters real copy uses — spaces, brackets, colons,
+ * dashes, commas. Used only to WITHHOLD an exemption, never to create a
+ * hit on its own, so widening it cannot introduce a false positive on
+ * text that carries no figure.
+ */
+function hasTickerNear(after) {
+  // ROUND 23 P2 — STOP AT THE CLAUSE BOUNDARY.
+  //
+  // The window is a fixed number of characters, so it runs straight
+  // through a sentence end into whatever follows: `Wait 3 days. USDC
+  // returns later` and `Loan 21. USDC is lent` both put an unrelated
+  // ticker inside it, cancelling the duration and identifier exemptions
+  // and reporting correct copy as an invented amount.
+  //
+  // That is the FALSE-POSITIVE direction, which this file argues at
+  // length is the one that gets a check switched off — and it would
+  // have fired on the two exemptions most likely to appear in real
+  // sentences. A ticker belongs to the figure only if nothing separates
+  // them, so the search stops at the first boundary.
+  // ROUND 24 P2 — `\n` IS A BOUNDARY, and the likeliest one.
+  //
+  // `innerText` inserts a newline between rendered elements, so the
+  // separator between a card's sections is a line break rather than
+  // punctuation — `Wait 3 days\nUSDC later` is two rows, not one
+  // sentence. Splitting on punctuation alone left exactly the boundary
+  // that real card markup produces.
+  const clause = String(after).split(/[\n.;!?—–]|,\s/)[0] ?? '';
+  for (const word of clause.split(/[^\p{L}\p{N}]+/u)) {
+    if (isTicker(word)) return true;
+  }
+  return false;
+}
+
+/**
+ * Units that make a number a DURATION or a PROPORTION rather than an
+ * amount of money. The card is explicitly allowed to show the grace
+ * window ("may show the grace window to explain a wait"), so a naive
+ * digit scan would fail on correct copy — which is worse than no check,
+ * because it would be silenced rather than fixed.
+ */
+const NON_MONETARY_UNIT =
+  /^(%|bps|day|days|hour|hours|hr|hrs|h|minute|minutes|min|mins|m|second|seconds|sec|secs|s|week|weeks|month|months|year|years|block|blocks)$/i;
+
+/**
+ * Single-letter units are AMBIGUOUS and the rest are not.
+ *
+ * `m` is minutes or millions, `h` is hours or nothing, `s` is seconds or
+ * a plural. `mins`, `hours` and `days` carry no such reading. Round 3
+ * closed `1m USDC` by consulting the trailing ticker, but the absolute
+ * contract says a BARE figure fails too — and `You receive 1m` has no
+ * ticker to cancel the exemption, so the scanner read a promise of a
+ * million as a promise of a minute (round 21 P2).
+ *
+ * So an ambiguous unit is exempt only when something in front of the
+ * number actually reads as a duration. `unlocks in 30m` is a wait;
+ * `You receive 1m` is an amount.
+ */
+const AMBIGUOUS_UNIT = /^[hms]$/i;
+/**
+ * Context that ESTABLISHES TIME, not merely context that precedes a
+ * number (round 22 P2).
+ *
+ * My first list swept in generic modifiers — `for`, `about`, `around`,
+ * `under`, `over`, `another` — which read perfectly naturally in front
+ * of an amount: `Sell for 1m`, `You receive about 1m`, `Worth over 1m`.
+ * Every one of those was exempted as a duration, so the round-21 fix
+ * still let a compact amount through, in the phrasings a regression is
+ * most likely to use.
+ *
+ * Only prepositions and verbs that cannot introduce a quantity survive:
+ * `in 30m` is a wait, `for 1m` is a price. Kept deliberately small,
+ * because a word that is wrong here silently disarms the check, while a
+ * missing word merely produces a loud false hit somebody fixes.
+ *
+ * ROUND 24 P2 — `next` and `every` went the same way, for the same
+ * reason, on the same list: `The next 1m is claimable` and `Withdraw
+ * every 1m` are quantities. That is now the THIRD time this list has
+ * been trimmed for admitting a word that can precede an amount, which
+ * is the argument recorded on the PR for narrowing what this scanner is
+ * asked to judge rather than continuing to curate vocabulary.
+ */
+const DURATION_LEAD = /\b(in|within|after|wait|waits|waiting|takes|lasts|expires)\s+$/i;
+/**
+ * The other half: a temporal word AFTER the unit.
+ *
+ * ROUND 23 P2 — and `remaining`, `remain`, `remains` and `left` are NOT
+ * such words. They describe a residual QUANTITY at least as naturally
+ * as a residual duration: `Balance: 1m remaining`, `Only 1m left to
+ * claim`. Including them recreated the bare-amount hole on the trailing
+ * side, one round after closing it on the leading side, and for the
+ * identical reason — I listed words that appear near durations instead
+ * of words that cannot appear near amounts.
+ *
+ * What survives is unambiguous: nothing measures money in `ago` or
+ * `from now`. The cost is that `2h remaining` now reports, which is a
+ * false hit on plausible-sounding copy — but the shipped strings spell
+ * their units out (`72 hours`, `3 days`, `30 minutes`), so no real copy
+ * uses this shape, and the all-locale calibration is what proves that
+ * rather than my judgement. A loud false hit on copy that does not
+ * exist is the affordable error; a silent miss on an invented figure is
+ * not.
+ */
+const DURATION_TRAIL = /^\s*(ago|to go|from now|of grace|earlier|later)\b/i;
+
+/**
+ * A number with something money-shaped attached to it.
+ *
+ * Scans for a numeric run and then looks at what sits immediately
+ * either side of it. `$120` and `120 USDC` and `USDC 120` all count;
+ * `3 days`, `2%`, `500 bps` and a bare `#21` do not.
+ *
+ * ABSOLUTE SINCE ROUND 2. The spec forbids stating an amount, full
+ * stop, so what remains after the named exclusions — durations,
+ * proportions, identifiers — is reported. A bare `1.5` fails.
+ *
+ * STATED LIMIT: this is a heuristic over rendered TEXT, not a parse, so
+ * it can only judge what a number sits next to. A figure spelled out in
+ * words would pass, and so would one rendered outside the scraped
+ * elements. Saying so is the point: a check that overstated its reach
+ * would let the next reviewer skip the reading.
+ *
+ * @param {string} text rendered card text
+ * @returns {string[]} the offending fragments, empty when clean
+ */
+export function monetaryAmountsIn(text) {
+  if (typeof text !== 'string' || text === '') return [];
+  const hits = [];
+  // Numbers with optional grouping and decimals. The separators are
+  // locale-dependent — the console formats for the reader's language —
+  // so both `,` and `.` are accepted as either role.
+  // ROUND 13 P2 — UNICODE DECIMAL DIGITS, NOT ASCII.
+  //
+  // `\d` without the `u` flag is `[0-9]`, so `١٫٥ USDC`, `१.५ USDC` and
+  // full-width `１２ USDC` produced NO numeric run at all and the scanner
+  // returned clean. Arabic and Hindi are SHIPPED locales, so the
+  // all-locale calibration was passing for those bundles because it
+  // could not tokenize them — the worst way for a guard on funds copy to
+  // be green, since it looks exactly like coverage.
+  //
+  // `\p{Nd}` covers every decimal-digit script. The separator class gains
+  // the Arabic decimal and thousands marks for the same reason: a figure
+  // written with them would otherwise split into two runs, and each half
+  // would then be judged on its own neighbours rather than as one number.
+  //
+  // ROUND 63 P2 — AND VULGAR FRACTIONS, which are not `\p{Nd}` at all.
+  //
+  // `½`, `¼` and their siblings are Unicode category `No`, so
+  // `You receive ½ ETH` produced NO numeric run: the scanner returned
+  // clean and the drive could certify a card stating an invented outcome
+  // in an entirely ordinary compact form.
+  //
+  // ENUMERATED rather than taken as `\p{No}` wholesale, and the
+  // distinction is the usual one about direction. `\p{No}` also contains
+  // the superscript digits, so a footnote marker (`Fees¹`) would become
+  // a "number" whose following word is then judged — an invented finding
+  // on correct copy, which is the failure that gets a check switched off.
+  // The vulgar fractions are a closed, enumerable set: U+00BC-BE, the
+  // U+2150-215E block, and U+2189. Listing them is not the "list of
+  // assets" mistake this file warns about, because unlike a ticker
+  // vocabulary this list cannot grow with the market.
+  //
+  // A fraction is matched on its own and as the tail of a mixed number,
+  // so `1½ ETH` is one run rather than a `1` beside an unread glyph.
+  const VULGAR = '\u00BC-\u00BE\u2150-\u215E\u2189';
+  const NUMBER = new RegExp(
+    `\\p{Nd}[\\p{Nd}.,٫٬  ']*\\p{Nd}[${VULGAR}]?` +
+      `|\\p{Nd}[${VULGAR}]?` +
+      `|[${VULGAR}]`,
+    'gu',
+  );
+  let m;
+  while ((m = NUMBER.exec(text)) !== null) {
+    const start = m.index;
+    const end = start + m[0].length;
+    // 16 chars, not 8: the identifier words below are up to 8 long on
+    // their own (`position `), so a shorter window could not see them.
+    const before = text.slice(Math.max(0, start - 16), start);
+    // 16, not 10: a symbol can sit behind a unit word AND a delimiter
+    // (`1m (USDC)`), and the window has to reach it (round 11 P2).
+    const after = text.slice(end, end + 16);
+
+    // A unit word immediately after. `2%` and `3 days` are fine; a
+    // ticker is not. Parsed BEFORE the exemptions below, because every
+    // exemption has to be able to consult it.
+    // ROUND 53 P2 — A HYPHEN IS PART OF A COMPOUND DURATION.
+    //
+    // `Wait 3-day grace period` and its en-dash form stopped this parse
+    // dead: the unit word was never reached, no duration exemption
+    // applied, and the `3` was reported as an amount the card cannot
+    // know. `docs/FunctionalSpecs/Alpha02ConnectedApp.md` explicitly
+    // permits showing the grace window, so that is a correct deployed
+    // card exiting as a product FAIL — the false direction this file
+    // says gets a whole check switched off.
+    //
+    // Only the separator widens. The duration-context guard downstream
+    // is untouched, so `3-day` is exempt for the same reason `3 days`
+    // is and for no new one: a compound adjective is how English writes
+    // that phrase, not a different claim about the number.
+    const trailing = after.match(
+      /^[\s‐-―-]*([\p{L}%][\p{L}\p{N}]*)\s*([\p{L}][\p{L}\p{N}]*)?/u,
+    );
+    // ROUND 11 P2 — LOOK PAST PUNCTUATION, not only whitespace.
+    //
+    // `1m (USDC)` and `Loan 100: USDC principal` put a bracket or a
+    // colon between the figure and its symbol, and a whitespace-only
+    // parse never reached the ticker — so the duration and identifier
+    // exemptions fired and the amount escaped. Third variant of the
+    // look-before-exempting rule: rounds 3 and 5 widened WHICH
+    // exemptions consult the trailing symbol, and this widens what
+    // counts as reaching it.
+    const trailingTicker = hasTickerNear(after);
+    // ROUND 35, SELF-REVIEW — LOOK PAST PUNCTUATION HERE TOO.
+    //
+    // Found while verifying the `\p{Sc}` widening above, by probing its
+    // edges rather than by reading: the sign set was only half of why
+    // `Loan 100 ₽` escaped. The other half is that this test read a
+    // TWO-CHARACTER window, so the sign had to be immediately adjacent.
+    // `Loan 100  ₽` (two spaces), `Loan 100 ($)` and `Loan 100: ₽` all
+    // still returned clean after the widening — and, as above, not
+    // merely unflagged: `hugsCurrency` guards the identifier exemption,
+    // so each was read as a loan NUMBER.
+    //
+    // This is round 11's finding one branch over. That round taught the
+    // TICKER lookahead to see past a bracket or a colon — its comment
+    // names `Loan 100: USDC principal` specifically — and left the
+    // currency test on its original window. Two exemptions asking the
+    // same question again needed the same answer.
+    //
+    // Deliberately NOT `hasTickerNear`'s clause scan. A ticker anywhere
+    // in the clause is evidence, but a currency sign later in the same
+    // sentence is not: `hugsCurrency` short-circuits to a HIT above the
+    // duration check, so scanning a whole clause would make
+    // `3 days and fees in $` report the `3` — a false FAIL on the grace
+    // window this card is explicitly allowed to show. Only SEPARATORS
+    // may intervene; no word may.
+    // ROUND 37 P2 — THE TYPOGRAPHIC SEPARATORS TOO. The class reached
+    // ASCII `-` and `:` and stopped there, so `Loan 100 — ₽` and
+    // `Loan 100, ₽` still left through the identifier exemption.
+    //
+    // These are the characters `hasTickerNear` treats as CLAUSE
+    // BOUNDARIES, and admitting them here is a deliberate asymmetry
+    // rather than an inconsistency. A ticker is a WORD and can appear in
+    // unrelated prose after a dash — round 23 found exactly that — so it
+    // must not be attached across a boundary. A currency SIGN is not a
+    // word: `₽` does not occur as a standalone token in a sentence, so
+    // one sitting immediately after the figure with nothing but
+    // punctuation between belongs to it.
+    //
+    // The rule stays "no WORD may intervene", which is what bounds this.
+    // `Loan 100, fees are paid in ₽` does not match — the first
+    // non-separator after the figure is `f` — so admitting the comma
+    // cannot reach across a clause into unrelated prose. `.` and `!?`
+    // are deliberately still absent: a sentence really has ended there.
+    const SEP = '[\\s(\\[{:,;«»"\'‘’“”)\\]}\\u2013\\u2014-]*';
+    const currencyAfter = new RegExp(`^${SEP}\\p{Sc}`, 'u');
+    const currencyBefore = new RegExp(`\\p{Sc}${SEP}$`, 'u');
+    const hugsCurrency = currencyBefore.test(before) || currencyAfter.test(after);
+
+    // An IDENTIFIER, never an amount — UNLESS a symbol follows it.
+    //
+    // ROUND 5 P2, and the second instance of one mistake: an exemption
+    // that `continue`s before inspecting what comes next. Round 3 had
+    // it with `1m USDC`, where `m` was read as minutes; this is `Loan
+    // 100 USDC principal`, where `Loan` made the figure an identifier
+    // and the ticker behind it was never reached. Both exemptions now
+    // look before they leave.
+    // ROUND 38 P2 — AN ASSET GLYPH IS NOT A TICKER AND NOT A CURRENCY
+    // SIGN, and `Loan 100 Ξ` fell through the gap between them.
+    //
+    // `isTicker` is ASCII-only and wants an internal uppercase RUN, so a
+    // single `Ξ` fails it. `\p{Sc}` does not contain `Ξ` either — U+039E
+    // is a Greek capital LETTER, not a currency symbol. With both false
+    // the identifier exemption fired and an ether-denominated figure
+    // left as a loan number, which is the commonest way an amount would
+    // actually be written on this surface.
+    //
+    // THIS IS A HAND-LIST, and unlike the currency widening I am not
+    // going to pretend otherwise. There is no Unicode category for
+    // "asset glyph" to defer to, so the closed-set argument that
+    // justified `\p{Sc}` is simply unavailable here. The honest
+    // consequence: a glyph not listed will be missed, and the guard is
+    // the all-locale calibration — if shipped copy ever carries one, it
+    // fails there, on named copy, rather than surprising a live run.
+    //
+    // Deliberately NOT widened to "any non-ASCII character after a
+    // figure". Japanese, Hindi and Tamil ship, and `3日` is a duration:
+    // that rule would report the grace window as an invented amount in
+    // three locales at once — the false-FAIL direction, on the exemption
+    // the spec explicitly protects.
+    const trailingGlyph = ASSET_GLYPH.test(after.replace(/^[\s(\[{:,;«»"'‘’“”)\]}\u2013\u2014-]*/, '').slice(0, 2));
+    // ROUND 43 P2 — a lower-case denomination counts too, and it is read
+    // from a CLAUSE-BOUNDED lookahead rather than from `trailing`.
+    //
+    // My first version used `trailing[1]` and lower-cased it, which
+    // broke round 24's case on the spot: `trailing`'s `\s*` crosses a
+    // newline, and `innerText` puts a newline between rendered elements
+    // — so `Loan 21\nUSDC is lent` matched `usdc` after case-folding and
+    // cancelled the identifier exemption on an unrelated next line. The
+    // fix for reaching across a boundary, reaching across a boundary.
+    //
+    // Two corrections, and the second is the principled one:
+    //
+    //   - no case folding. The finding is about LOWER-CASE units;
+    //     `USDC` is already `isTicker`'s job, and that path respects the
+    //     clause boundary through `hasTickerNear`.
+    //   - the same clause split `hasTickerNear` uses, because a WORD may
+    //     be ordinary prose on the next line and must not be attached
+    //     across the break.
+    //
+    // That is the line between this and the currency/glyph tests, which
+    // DO cross a newline deliberately: a symbol is never prose, so one
+    // sitting after a figure belongs to it wherever it is rendered. A
+    // word is not, so it does not.
+    const firstWordAfter = (() => {
+      const clause = String(after).split(/[\n.;!?—–]|,\s/)[0] ?? '';
+      const w = clause.match(/^[\s(\[{:,;«»"'‘’“”)\]}\u2013\u2014-]*([\p{L}][\p{L}\p{N}]*)/u);
+      return w ? w[1] : '';
+    })();
+    const trailingLower = LOWERCASE_ASSET_UNIT.test(firstWordAfter);
+    // ROUND 46 P2 — AN IDENTIFIER IS INTEGRAL.
+    //
+    // `Loan 1.5 will be returned` and `Position 2.75 becomes claimable`
+    // were exempted as reference numbers. Loan, position, offer and
+    // token ids are whole numbers — a fractional value after one of
+    // those words is not naming a thing, it is stating a quantity of
+    // one, which is exactly the invented figure the rule forbids.
+    //
+    // Whole DIGITS, not merely "no decimal point": a grouped `1,000`
+    // after an identifier word is not an id either, and ids are not
+    // rendered with separators. Both roles of `.` and `,` are ambiguous
+    // across locales here, so requiring digits only avoids deciding
+    // which is the decimal mark.
+    const integral = /^\p{Nd}+$/u.test(m[0]);
+    // ROUND 48 P2 — AND IT ENDS WHERE THE DIGITS END.
+    //
+    // `Loan 1k will be returned` and `Position 2m becomes claimable`
+    // walked straight through. `NUMBER` captures only the digit, so
+    // `integral` is true; `k` and `m` are neither a ticker nor one of the
+    // listed lower-case units, so nothing else objected and the
+    // identifier exemption swallowed a compact magnitude — the exact
+    // invented figure this scan exists to catch, wearing the one costume
+    // the scan is instructed to ignore.
+    //
+    // An id cannot carry a magnitude suffix, so a LETTER immediately
+    // after the digits means the run is not an id and the exemption must
+    // not apply. Testing the boundary rather than enumerating `k`/`m`/
+    // `bn`/`mm`: enumeration is the mistake this file has now made three
+    // times (the transport allowlist, the currency signs, the ASCII-only
+    // duration words), and the suffixes are open-ended across locales.
+    //
+    // A DIGIT after the match cannot occur — `NUMBER` is greedy — and
+    // punctuation, whitespace and end-of-text all read as a boundary, so
+    // `Loan 21.` and `Loan 21` keep their exemption.
+    const endsCleanly = !/^\p{L}/u.test(String(after));
+    // ROUND 49 P2 — AND THE SPACED FORM OF THE SAME THING.
+    //
+    // `Loan 1 million will be returned` cleared round 48's boundary test
+    // the moment it was written: `after` begins with whitespace, so the
+    // digits "end cleanly", and `million` is neither a ticker nor a
+    // lower-case asset unit. The joined form was closed and the spaced
+    // form beside it was not — one fix, two shapes, which is the
+    // recurring miss on this PR.
+    //
+    // Reuses `firstWordAfter`, so it inherits the CLAUSE boundary: a
+    // magnitude word on the next line is prose, not a suffix, exactly as
+    // the asset-unit test already treats it.
+    const spacedMagnitude = MAGNITUDE_WORD.test(firstWordAfter);
+    if (
+      !trailingTicker &&
+      !hugsCurrency &&
+      !trailingGlyph &&
+      !trailingLower &&
+      !spacedMagnitude &&
+      integral &&
+      endsCleanly
+    ) {
+      if (/[#]\s*$/.test(before)) continue;
+      if (IDENTIFIER_LEAD.test(before)) continue;
+    }
+
+    // A currency mark hugging the number on either side.
+    if (hugsCurrency) {
+      hits.push(fragment(text, start, end));
+      continue;
+    }
+    if (trailing) {
+      const unit = trailing[1];
+      const next = trailing[2];
+      // ROUND 3 P2 — A MAGNITUDE ABBREVIATION IS NOT A DURATION WHEN A
+      // TICKER FOLLOWS IT. `1m USDC` reads `m` as minutes, exempts the
+      // figure and never looks at `USDC` — so the scanner missed
+      // precisely the promise it exists to catch, on the shortest way
+      // of writing a large one. The exemption now only applies when
+      // nothing token-shaped follows.
+      if (NON_MONETARY_UNIT.test(unit)) {
+        // ROUND 21 P2 — a one-letter unit needs duration CONTEXT, not
+        // just the absence of a ticker. See `AMBIGUOUS_UNIT`.
+        // Strip the UNIT only — `trailing[0]` also swallows the word
+        // after it, which is precisely the word being looked for.
+        const afterUnit = after.replace(/^\s*[\p{L}%][\p{L}\p{N}]*/u, '');
+        const temporal = DURATION_LEAD.test(before) || DURATION_TRAIL.test(afterUnit);
+        if (AMBIGUOUS_UNIT.test(unit) && !temporal) {
+          hits.push(fragment(text, start, end));
+          continue;
+        }
+        // ROUND 11 P2 — consult the SAME widened lookahead the
+        // identifier exemption uses. Round 3 checked only the word
+        // immediately after the unit, so `1m (USDC)` exempted `m` as
+        // minutes and never reached the bracketed symbol. Two
+        // exemptions asking the same question needed the same answer.
+        //
+        // ROUND 115 P2 — AND ONLY FOR THE UNITS IT CAN DECIDE.
+        //
+        // Rounds 3 and 11 are both about AMBIGUOUS units: `m` might be
+        // minutes or millions, so what follows it is evidence. `days`,
+        // `%` and `bps` are not ambiguous at all — no ticker later in the
+        // clause makes them money — and letting the widened lookahead
+        // cancel them turned correct copy into a product FAIL.
+        // `Wait 3 days before USDC returns` and `Fee: 2% of USDC
+        // principal` are both things this card is allowed to say, and
+        // both named an asset in the same clause.
+        //
+        // The false-positive direction is the one this file argues at
+        // length gets a check switched off, and here it fired on the two
+        // exemptions most likely to appear in real sentences.
+        if (AMBIGUOUS_UNIT.test(unit) && trailingTicker) {
+          hits.push(fragment(text, start, end));
+        }
+        continue;
+      }
+      if (isTicker(unit)) {
+        hits.push(fragment(text, start, end));
+        continue;
+      }
+    }
+
+    // A ticker immediately BEFORE the number — `USDC 120`.
+    const leading = before.match(/([\p{L}][\p{L}\p{N}]*)\s*$/u);
+    if (leading && isTicker(leading[1])) {
+      hits.push(fragment(text, start, end));
+      continue;
+    }
+
+    // ROUND 2 P2 — ANYTHING LEFT IS A FIGURE, AND THE SPEC FORBIDS
+    // FIGURES.
+    //
+    // The rule is "Nothing on this surface states an amount", not
+    // "nothing states a unit-bearing amount". `You will receive 1.5`
+    // carries no ticker and no currency mark, and the first version let
+    // it through while advertising the absolute invariant — narrowing
+    // the claim to what the scanner happened to implement.
+    //
+    // Safe to make absolute BECAUSE the exclusions above are real ones:
+    // durations, proportions and identifiers are removed by name, and
+    // the calibration case over every shipped `forcedClose` string is
+    // what demonstrates there is no third legitimate category. That
+    // test is the guard on this arm — if the card ever gains a
+    // legitimate bare number, it fails there first, on named copy,
+    // rather than surprising a live run.
+    hits.push(fragment(text, start, end));
+  }
+  return hits;
+}
+
+function fragment(text, start, end) {
+  return text.slice(Math.max(0, start - 12), Math.min(text.length, end + 12)).trim();
+}
+
+/**
+ * Copy that reports the app's own ignorance. The spec forbids dressing
+ * an unresolved check as a protocol answer, so a card that is BOTH
+ * unresolved and saying "not available" is the defect.
+ *
+ * Matched against the shipped `copy.forcedClose.unknown` sentence
+ * rather than a paraphrase — the caller passes the expected strings in,
+ * so there is no second copy of the wording here to drift out of step
+ * with `copy.ts`.
+ */
+export function saysCheckRunning(text, unknownCopy) {
+  if (typeof text !== 'string' || typeof unknownCopy !== 'string') return false;
+  // The first clause is enough and survives a later sentence being
+  // appended; matching the whole paragraph would fail on an edit that
+  // changed nothing about the claim.
+  const head = unknownCopy.split(/[.。]/)[0]?.trim();
+  return Boolean(head) && text.includes(head);
+}
+
+/**
+ * @typedef {object} ForcedCloseObservation
+ * @property {boolean} mounted   the card rendered AND was visible. Round
+ *   3 P2 — `attached` alone passes a card left in the DOM by a CSS
+ *   regression with `display: none`, whose text still reads fine from
+ *   the DOM while the lender sees neither the action nor its
+ *   explanation. Visibility does not require the viewport, so this
+ *   costs nothing on an off-screen card.
+ * @property {boolean} attached  in the DOM at all, visible or not — kept
+ *   apart from `mounted` so the failure can say WHICH of the two
+ *   happened rather than reporting a hidden card as an absent one.
+ * @property {string|null} text  its rendered text, null when absent
+ * @property {boolean|undefined} bodyPresent  did a `forced-close-body`
+ *   element exist at all. Round 5 P2: with `bodyText`, this gives the
+ *   three states that matter — no element (the heading-only shell, a
+ *   defect), element but unreadable (incomplete), element read and
+ *   blank (a defect). Round 4's single `bodyRead` flag collapsed the
+ *   middle two by treating existence as a successful read.
+ * @property {string|null} bodyText  the `forced-close-body` paragraph
+ *   ALONE. Round 1 P2 — checking only whether the whole card is empty
+ *   passes a rendered shell: a heading with no body is precisely the
+ *   withheld-action-without-explanation state this module claims to
+ *   detect, and it has text.
+ * @property {string|null} confirmText  the confirmation panel's text
+ *   when it was opened, null when it was not
+ * @property {boolean} confirmExpected  a submit control was present and
+ *   enabled, so a confirmation SHOULD have been readable
+ * @property {boolean} submitDisabled  the submit control's state
+ * @property {boolean} settled   the readiness reads finished
+ * @property {boolean} lenderHoldsActive  chain says: this wallet holds
+ *   the lender position AND the loan is Active
+ * @property {boolean|'unknown'} saleLocked  does an ACCEPTED sale
+ *   awaiting completion explain this card's absence? TRI-STATE since
+ *   round 12: `false` no, `true` yes, `'unknown'` the probe could not
+ *   classify. `'unknown'` is not a weak `true` — it is the absence of
+ *   an answer, and the verdict reports the two differently
+ */
+
+/**
+ * Has this observer caught up far enough to JUDGE an absent card?
+ *
+ * The absence FAIL is the one verdict whose cost is a wrongly accused
+ * product, so it is gated on a re-read that can actually see what the
+ * page saw. Two conditions, and round 13 shipped only the first:
+ *
+ *   1. `observerHead > pinnedBlock` — this client moved at all. Round
+ *      13's fix, and necessary: viem served the head from a 4-second
+ *      cache, so the "later" read was routinely the same block.
+ *   2. `observerHead >= pageHead` — this client reached what the page
+ *      had ALREADY SEEN. Round 14's finding, and the one that makes the
+ *      gate sound: condition 1 proves only that we advanced. A page
+ *      whose provider is two blocks ahead can correctly drop the card
+ *      for a transition at N+2 while we confirm at N+1, re-read a
+ *      still-eligible position, and emit the same false FAIL one block
+ *      further along.
+ *
+ * STRICTLY AHEAD of the page's announced head, not merely level (round
+ * 16 P2). `pageHead` is a LOWER BOUND on what the page knows: it is the
+ * last height the page was seen to ANNOUNCE, and the read that actually
+ * unmounted the card is an `eth_call` the page issues at `latest`, which
+ * carries no block number on the wire in either direction. So the page
+ * can have evaluated at a height above anything we recorded. Requiring
+ * the observer to pass that bound rather than match it closes the
+ * one-block case and re-reads every fact at a height where a transition
+ * at or below it would be visible to us as well.
+ *
+ * IT DOES NOT CLOSE THE GENERAL CASE, and this comment is the place that
+ * says so rather than implying an airtight gate. If the page's real head
+ * runs several blocks beyond its last announced one AND a transition
+ * lands in that window, an absence can still be reported as a defect.
+ * One thing shrinks it — the gate requires this observer to PASS the
+ * announced bound rather than draw level with it — but shrinking is not
+ * eliminating.
+ *
+ * ROUND 41 P2 — THE `newHeads` CREDIT IS STRUCK, here as it was in the
+ * coverage notes. This comment still said socket pushes are "recorded
+ * alongside HTTP `eth_blockNumber`, so the bound tracks the real head
+ * far more closely". They are recorded, and the bound does not track
+ * anything better for it: `live-position-observe.mjs` exits 2 at the
+ * `wsRpcMethods.size` gate on ANY WebSocket JSON-RPC traffic, before a
+ * verdict or coverage is computed — so on precisely the runs where
+ * socket heads would matter, nothing downstream ever reads them. Round
+ * 37 corrected the operational account and left this one, which is the
+ * duplicate-site pattern again, across a file boundary. The complete fix is for
+ * the card to publish the block its readiness resolved at, the way the
+ * chooser publishes its readiness (#1855); this drive would then compare
+ * two stated facts instead of racing an unobservable one. Tracked in
+ * #2098.
+ *
+ * `pageHead === 0n` means the page's head was never observed, and that
+ * is NOT treated as satisfied. Nothing is known about the relationship
+ * between the two views, and an absence judged on an unknown
+ * relationship is exactly the accusation this gate exists to withhold.
+ * A drive that cannot see the page's head therefore reports every
+ * absence as incomplete — conservative, loudly, rather than confidently
+ * wrong.
+ *
+ * ROUND 114 P2 — UNLESS A SOUND CEILING WAS OBTAINED, in which case the
+ * missing sighting costs nothing.
+ *
+ * The sentence above is right about what an unobserved sighting proves,
+ * and it was applied one step too early: as an unconditional first test,
+ * before the ceiling was looked at. A page can issue Diamond `eth_call`s
+ * without ever emitting a block-number reply — the endpoints are
+ * identified from the call traffic, not from head announcements — so a
+ * ceiling can be asked of every one of them after the scrape while the
+ * sighting stays `0n`. That ceiling already bounds every block the card
+ * could have rendered from, which is the whole question; the sighting
+ * would add nothing to it. Refusing there reports a bound as
+ * unestablished on a run that established it, and the deployment exits
+ * BLOCKED for want of evidence it had.
+ *
+ * So the zero-sighting refusal applies only where there is no sound
+ * ceiling to stand in for it.
+ *
+ * ROUND 102 P2 — AND THE ASKED CEILING IS PART OF THE BAR.
+ *
+ * `pageHead` is the highest head this drive OVERHEARD the page announce.
+ * Round 101 established that it does not bound an unpinned read the page
+ * issues afterwards, and added a ceiling ASKED from the page's own
+ * providers after the scrape. Only the stability arm consumed it. So this
+ * loop still stopped as soon as the observer passed the overheard head:
+ * a card correctly absent because the position went terminal at N, above
+ * that head, was re-read at M+1 and reported as a product failure — the
+ * accusing direction, and the exact case the ceiling was added for.
+ *
+ * The bar is now the HIGHER of the two, and an UNSOUND ceiling makes this
+ * not-ready rather than falling back to the overheard head: a ceiling that
+ * could not be established is not a reason to trust a lower number.
+ *
+ * `ceiling` is optional, and `undefined` keeps the pre-round-102 behaviour
+ * — the `undefined`-means-older rule every field in this project follows.
+ *
+ * @param {bigint} observerHead  head this drive has reached
+ * @param {bigint} pinnedBlock   block the snapshot was taken at
+ * @param {bigint} pageHead      highest block the PAGE was seen to know
+ * @param {{sound: boolean, head: bigint}} [ceiling] asked after the scrape
+ * @returns {boolean}
+ */
+export function confirmationReady(observerHead, pinnedBlock, pageHead, ceiling) {
+  if (typeof observerHead !== 'bigint' || typeof pinnedBlock !== 'bigint') return false;
+  if (typeof pageHead !== 'bigint') return false;
+  // ROUND 103 P2 — THE TWO BOUNDS ARE NOT COMPARED THE SAME WAY, and round
+  // 102 collapsing them into one `bar` erased the difference.
+  //
+  // `pageHead` is a head the page was OVERHEARD to announce. The page can
+  // read at that height or beyond it, so clearing it needs STRICTLY more —
+  // round 14's rule, unchanged.
+  //
+  // The asked ceiling is a height sampled from the page's own providers
+  // AFTER the scrape. Heads do not go backwards, so it already bounds every
+  // block the card could have rendered from: an observer that has READ that
+  // block has covered all of them, and demanding one more blocks an
+  // otherwise conclusive run for nothing. `>=` is the honest comparison for
+  // a bound, where `>` is the honest one for a sighting.
+  if (observerHead <= pinnedBlock) return false;
+  if (ceiling === undefined) return pageHead > 0n && observerHead > pageHead;
+  if (!ceiling?.sound || typeof ceiling.head !== 'bigint' || ceiling.head === 0n) return false;
+  // ROUND 104 P2 — A SOUND CEILING SUBSUMES THE SIGHTING IT COVERS.
+  //
+  // Round 103 kept both tests unconditionally, so with the sighting and the
+  // ceiling BOTH at 20 and the snapshot at 19, an observer that reached 20
+  // was rejected and the run waited for 21 before reporting the absence
+  // unconfirmed. That is the equality case, and it is the common one — the
+  // ceiling is sampled from the same endpoints that produced the sighting,
+  // so the two agree whenever nothing moved in between.
+  //
+  // The sighting is compared strictly only because it does not say how far
+  // PAST it the page went. A sound ceiling answers exactly that question, so
+  // where it is at or above the sighting it replaces it: reaching the
+  // ceiling has covered every block the card could have rendered from.
+  //
+  // Where the ceiling is somehow BELOW the sighting — which should not
+  // happen, since heads do not go backwards and the ceiling is sampled
+  // later, but is not worth assuming away — the sighting is not covered and
+  // keeps its strict test.
+  if (ceiling.head < pageHead && observerHead <= pageHead) return false;
+  return observerHead >= ceiling.head;
+}
+
+/**
+ * Fold the CONFIRMING re-read into the pinned snapshot's eligibility.
+ *
+ * The driver pins status / ownership / sale to one block beside the DOM
+ * scrape, and then — only when the card was ABSENT on a position that
+ * snapshot calls eligible — re-reads all three at a later head, because
+ * the deployed bundle can be a block ahead of this observer and the
+ * card may be correctly absent. This decides what that second read did
+ * to the first one's verdict.
+ *
+ * IT IS HERE, AND NOT IN THE DRIVER, FOR THE REASON `visitVerdict.mjs`
+ * IS: as an inline predicate it could only be exercised by driving a
+ * live chain into each state, and the live chain does not carry them —
+ * so every defect in it has had to be found by reading. It was written
+ * inline, and the first thing that happened was a defect:
+ * `later.sale` was consulted with a TRUTHINESS test after round 12 made
+ * the probe tri-state, so `'unknown'` marked the position ineligible.
+ * That reports `inapplicable` — nothing is wrong — for a missing card
+ * on the strength of an accepted sale that was never established. It is
+ * precisely the finding round 12 raised, surviving in the one branch
+ * whose job is deciding whether an absent card is a FAIL.
+ *
+ * ORDER IS THE WHOLE CONTENT of this function, and it runs
+ * established-facts-first:
+ *
+ *   1. Terminal, or transferred away — ESTABLISHED. The position has
+ *      left the eligible set, which explains the absent card exactly,
+ *      so this outranks an unresolved sale probe: a known reason beats
+ *      an unknown one.
+ *   2. An accepted sale — ESTABLISHED. Also explains it, and naming the
+ *      sale is a better reason than the generic ineligibility the old
+ *      code reported for this case.
+ *   3. The probe could not classify — NOT ESTABLISHED. Nothing is
+ *      concluded; the caller's verdict reports an incomplete
+ *      observation, which trips coverage rather than passing quietly.
+ *
+ * @param {object} pinned      `{lenderHoldsActive, saleLocked}` from the
+ *   snapshot taken beside the DOM scrape
+ * @param {object|null} later  `{active, stillHeld, sale}` from the
+ *   confirming head read, or null when no confirmation was needed
+ * @returns {{lenderHoldsActive: boolean, saleLocked: boolean|'unknown'}}
+ */
+export function reconcileEligibility(pinned, later) {
+  const lenderHoldsActive = Boolean(pinned?.lenderHoldsActive);
+  const saleLocked = pinned?.saleLocked ?? false;
+  if (!later) return { lenderHoldsActive, saleLocked };
+
+  // ROUND 13 P2 — THE CONFIRMATION CAN FAIL TO HAPPEN.
+  //
+  // The confirming read only means something if it observed a STRICTLY
+  // NEWER block than the snapshot: its whole job is to catch a page
+  // whose provider is ahead of this observer. viem served the head from
+  // a 4-second cache, so the "later" read was routinely the SAME block —
+  // a re-read that could only agree with itself, waving through the
+  // false missing-card FAIL it was added to prevent.
+  //
+  // When no newer head arrives, nothing was confirmed, and the absence
+  // must not be reported as a product defect on evidence never
+  // obtained. Eligibility is left as the snapshot found it and the
+  // absence is flagged unconfirmed, which the verdict reports as an
+  // incomplete observation.
+  if (later.unconfirmed) {
+    return {
+      lenderHoldsActive,
+      saleLocked,
+      absenceUnconfirmed: true,
+      // The SPECIFIC condition that failed, so the report does not send
+      // an operator to a stale RPC when the real gap is that the page's
+      // head was never observed (round 23 P2).
+      absenceUnconfirmedWhy: later.why,
+    };
+  }
+
+  if (!later.active || !later.stillHeld) {
+    return { lenderHoldsActive: false, saleLocked };
+  }
+  if (later.sale === true) {
+    return { lenderHoldsActive, saleLocked: true };
+  }
+  if (later.sale === 'unknown') {
+    return { lenderHoldsActive, saleLocked: 'unknown' };
+  }
+  // The head agrees the position is still eligible and carries no sale.
+  // The pinned reading stands — INCLUDING a pinned `'unknown'`, which a
+  // later `false` does not retroactively resolve: the two probes ran at
+  // different blocks and the earlier one still did not answer.
+  return { lenderHoldsActive, saleLocked };
+}
+
+/**
+ * The receipt faults that NO STATE CHANGE CAN EXPLAIN (round 59 P2).
+ *
+ * A duplicated row, and a receipt describing the other settlement
+ * route, are both things the lender was already shown. A loan
+ * terminating, transferring or gaining an accepted sale a moment later
+ * does not unshow them — which is round 49's rule, applied to the two
+ * arms rounds 53 and 54 left below the applicability exits.
+ *
+ * Returns `null` for the UNRECOGNISED case deliberately. That one is a
+ * gap in this drive's vocabulary rather than a defect — its copy comes
+ * from the repo and the page's from the deployed bundle — so it stays
+ * below, where an inapplicable position is a perfectly good reason not
+ * to have judged it, and it is re-reported there.
+ *
+ * @returns {{verdict: 'fail', failKind: 'observed', why: string}|'unrecognised'|null}
+ */
+function receiptRowFault(obs, copy) {
+  const rowsSeen = Array.isArray(obs.confirmRowsText) ? obs.confirmRowsText : null;
+  const routeSets = copy?.receiptRowSets;
+  if (rowsSeen !== null && rowsSeen.length === 6 && routeSets) {
+    const distinct = new Set(rowsSeen.map((t) => t.trim()));
+    if (distinct.size !== rowsSeen.length) {
+      return {
+        verdict: 'fail',
+        failKind: 'observed',
+        why: `the confirmation rendered six receipt rows but only ${distinct.size} distinct one(s) — a duplicated row means a disclosure the lender needs is not on the panel at all`,
+      };
+    }
+    // ROUND 62 P2 — RECOGNISED FROM WHAT IS PAINTED, not from the DOM.
+    //
+    // `bodyText` is raw `innerText`, which keeps yielding a sentence that
+    // is transparent, clipped or filter-erased. Recognising the card's
+    // state from it lets an unreadable explanation substantiate the very
+    // action it is supposed to justify. `bodyVisibleText` is the same
+    // body with the unpainted parts left out.
+    //
+    // `??`, so a record predating the field falls back rather than
+    // recognising nothing — which would turn every old fixture into a
+    // finding. BOTH call sites take it; they are the parallel pair this
+    // PR keeps being caught by.
+    const stateText =
+      obs.bodyVisibleText ?? obs.bodyText ?? obs.visibleText ?? obs.text ?? '';
+    const isRental =
+      typeof copy.rentalReadyCopy === 'string' &&
+      copy.rentalReadyCopy !== '' &&
+      stateText.includes(copy.rentalReadyCopy);
+    const expected = isRental ? routeSets.rental : routeSets.standard;
+    const other = isRental ? routeSets.standard : routeSets.rental;
+    // ROUND 54 P2 — PAIRED WITH THEIR LABELS, not merely all present.
+    //
+    // Round 53 checked the value SET, so the six right values under the
+    // six wrong headings satisfied it: every value present, all six
+    // distinct. A receipt whose every line is true and whose every line
+    // answers the wrong question — the loss disclosure filed under
+    // "Fees" — certified as scanned. That is the most misleading shape
+    // this panel can take, because nothing on it is false.
+    //
+    // Pairing is BY INDEX, which enforces the order too. That is not an
+    // extra demand: `ReviewReceipt` states it outright — "Six fixed
+    // rows, same order everywhere" — and renders from a fixed array.
+    //
+    // Labels are optional so a caller that supplies none keeps round
+    // 53's set-only behaviour rather than failing on a record this rule
+    // cannot judge.
+    const labels = Array.isArray(copy?.receiptRowLabels) ? copy.receiptRowLabels : null;
+    const covers = (set) => {
+      if (!Array.isArray(set) || set.length !== 6) return false;
+      if (labels === null || labels.length !== 6) {
+        return set.every((value) => rowsSeen.some((t) => t.includes(value)));
+      }
+      return set.every(
+        (value, i) => rowsSeen[i].includes(labels[i]) && rowsSeen[i].includes(value),
+      );
+    };
+    // ROUND 68 P2 — AND THE ROWS MUST NOT ALSO CARRY THE OTHER ROUTE.
+    //
+    // `covers` is a substring test, so it validates that the REQUIRED
+    // content is present and says nothing about what else is. Append
+    // every rental value to the corresponding standard row and the panel
+    // still has six distinct rows, still satisfies all six expected
+    // label/value pairs, and the wrong-route arm below is never reached
+    // — while the lender reads two incompatible sets of funds terms on
+    // one receipt. Round 54 made the panel prove it says the right
+    // thing; it could not notice the panel also saying the wrong one.
+    //
+    // Checked ONLY against the other route's values, not against
+    // "anything extra": a receipt legitimately carries its labels, its
+    // heading and whatever prose the row wraps its value in, and
+    // demanding that a row contain nothing but its expected pair would
+    // fail every real panel. The other route's values are the one thing
+    // that cannot be there innocently.
+    //
+    // SCOPED TO A RECEIPT THAT ALREADY SATISFIES THE EXPECTED SET, and
+    // the first version was not — it ran above the coverage test and
+    // promptly stole the wrong-route arm's cases, because a receipt that
+    // is WHOLLY the other route naturally contains the other route's
+    // values. Its three tests caught it. A receipt showing the wrong
+    // route is that defect and is named that way; this arm is for the
+    // one that says both.
+    if (covers(expected) && Array.isArray(other) && other.length === 6) {
+      const strayIndex = rowsSeen.findIndex((rowText) =>
+        other.some(
+          (value) =>
+            typeof value === 'string' &&
+            value !== '' &&
+            !expected.includes(value) &&
+            rowText.includes(value),
+        ),
+      );
+      if (strayIndex !== -1) {
+        return {
+          verdict: 'fail',
+          failKind: 'observed',
+          why: `the confirmation's receipt carries terms from BOTH settlement routes — row ${strayIndex + 1} states the ${isRental ? 'collateral' : 'rental'} outcome beside the ${isRental ? 'rental' : 'collateral'} one, so the lender is reading two incompatible sets of funds terms on one panel`,
+        };
+      }
+    }
+    if (!covers(expected)) {
+      if (covers(other)) {
+        return {
+          verdict: 'fail',
+          failKind: 'observed',
+          why: `the card renders the ${isRental ? 'rental' : 'collateral'} route and its confirmation shows the ${isRental ? 'collateral' : 'rental'} receipt — the lender is being asked to confirm one transaction while reading the terms of another`,
+        };
+      }
+      // UNRECOGNISED copy is reported by the CALLER, below the
+      // applicability exits (round 59 P2). It is an incomplete
+      // observation rather than a defect — this drive's copy comes from
+      // the repo and the page's from the deployed bundle — so an
+      // inapplicable position is a perfectly good reason not to have
+      // judged it. Named rather than returned as a verdict so the
+      // caller decides where it lands.
+      return 'unrecognised';
+    }
+  }
+  return null;
+}
+
+/**
+ * The verdict: `pass`, `fail` (a defect observed in the product), or
+ * `blocked` (nothing was learned — never reported as a pass).
+ *
+ * A blocked result also carries `blockedKind`:
+ *
+ *   `inapplicable` — this position could never have exercised the
+ *                    assertion (not held, not Active, correctly
+ *                    unmounted by a sale lock). Nothing is missing.
+ *   `incomplete`   — this position WAS applicable and the observation
+ *                    failed anyway (never settled, confirmation
+ *                    unreadable). Something IS missing, and round 3 P2
+ *                    is that the two must not be pooled: a run where
+ *                    one position passes and another is incomplete has
+ *                    left a distinct copy path unscanned.
+ *
+ * ORDER MATTERS HERE, and round 3 P2 is the reason. Content defects are
+ * judged FIRST, before eligibility. `observeForcedClose` scrapes the DOM
+ * and THEN reads status and ownership, so a loan going terminal in
+ * between would otherwise discard an empty body or an invented amount
+ * that was actually observed — eligibility qualifying an absence is
+ * correct, eligibility suppressing a positive finding is not.
+ *
+ * @param {ForcedCloseObservation} obs
+ * @param {{unknownCopy: string}} copy
+ */
+export function forcedCloseVerdict(obs, copy) {
+  if (!obs || typeof obs !== 'object') {
+    return { verdict: 'blocked', blockedKind: 'incomplete', why: 'no observation recorded' };
+  }
+
+  // ---- 1. What was actually SEEN on a card that rendered. -----------
+  //
+  // ORDERING IS THE RULE HERE, and round 6 is the third time it has had
+  // to be applied: judge the DEFINITE observation before any uncertain
+  // one. Round 3 put content ahead of eligibility; this puts the amount
+  // scan ahead of the body reads, because a card whose own text was
+  // captured and contains an invented figure is a defect already
+  // observed — downgrading it to `blocked` because a LATER, narrower
+  // read failed reports "we could not check" about something we did
+  // check.
+  // 1-pre. THE AMOUNT EVIDENCE IS GATHERED HERE; WHERE IT IS REPORTED
+  //        depends on whether a card rendered (round 33 P2).
+  //
+  // This arm used to live inside the `obs.mounted` block below, which
+  // made the drive's one ABSOLUTE claim conditional on the card still
+  // being there when the poll stopped. A card that stated a figure while
+  // its readiness reads were outstanding and then VANISHED — the loan
+  // went terminal, the token transferred, a sale was accepted — was
+  // positively observed stating it, and every one of those exits skipped
+  // the scan. Worse, the accepted-sale case then returns `inapplicable`
+  // at section 2, so the run reported "nothing to see here" about a
+  // figure a lender had actually been shown.
+  //
+  // It is also what makes it safe for a vanished card to report
+  // `mounted: false` — without this, classifying the vanish honestly
+  // would have silently disarmed the scan for exactly the records that
+  // carry the evidence.
+  //
+  // THE EVIDENCE IS GATHERED HERE AND REPORTED IN TWO PLACES, and the
+  // first draft of this fix got that wrong in a way the existing suite
+  // caught immediately. Returning the FAIL from here outranks the
+  // duplicate-card and duplicate-control arms, and those deliberately
+  // outrank the content scan: the scan only ever read the FIRST card, so
+  // a finding drawn from it must not be handed to a reader as the verdict
+  // on a surface this drive has only partly interrogated. That ordering
+  // is round 19's and round 26's, and it stands.
+  //
+  // So the scan runs twice from one computation: inside the mounted
+  // block, in its original position BELOW the duplicate arms, and again
+  // for records where no card rendered — the branch that had no scan at
+  // all and is the whole point of this round's finding.
+  //
+  // ROUND 8 P2 — `bodyText` is scanned TOO. It is captured independently,
+  // a moment after the whole-card read, so the card can update in between
+  // and the body can positively carry a figure the card text does not.
+  // Scanning only `text` and `confirmText` ignored a value this drive had
+  // actually read.
+  //
+  // ROUND 31 P2 — INCLUDING the renders the readiness poll superseded.
+  // `obs.text` / `obs.bodyText` are the SETTLED render; `seenTexts`
+  // carries every render the drive actually read.
+  //
+  // Absent on records that predate the field, and on every path that
+  // never polls, so it is spread defensively rather than assumed — the
+  // same `typeof` discipline the duplicate-control arm uses, and for the
+  // same reason: a record without the field must not change the verdict.
+  //
+  // ROUND 35 P2 — SCANNED SEPARATELY, NEVER JOINED. The `\n` join I
+  // added last round let one render supply CONTEXT for another's digits,
+  // and the scanner's exemptions are all context. A render ending in
+  // `Loan` followed by one beginning `1.5` became `Loan\n1.5`, whose
+  // `IDENTIFIER_LEAD` crosses the synthetic newline through `\s*` — so
+  // the figure was exempted as a loan NUMBER and the verdict passed,
+  // while scanning that render on its own reports it.
+  //
+  // Joining could only ever have hurt: each part is a complete rendered
+  // string, so no real amount spans two of them, and the only thing an
+  // adjacency creates is a neighbour that was never on screen together.
+  // The hits are concatenated instead, which is what was wanted all
+  // along — every render judged on its own text.
+  //
+  // ROUND 50 P2 — AND THE ROWS THAT WERE READABLE, whatever happened to
+  // the rest of the receipt.
+  //
+  // `confirmText` is the whole card's text and is set only when ALL SIX
+  // rows rendered readably. So one row missing, hidden or clipped
+  // discarded the text of the five that were on screen — and an invented
+  // amount stated in one of THOSE was downgraded to `blocked/incomplete`
+  // instead of being reported. A gap in what was read was suppressing a
+  // figure that was read, which is the same ordering error round 46
+  // found in the confirm-action gate and round 26 found in the row scan
+  // itself.
+  //
+  // `confirmRowsText` carries the readable rows and nothing else, so
+  // `confirmText` keeps its one job — deciding whether the receipt was
+  // COMPLETELY covered — and the amount scan stops depending on that
+  // answer. Each row is its own part, never joined: round 35's rule.
+  //
+  // ROUND 64 P2 — BUILT FROM PAINTED TEXT, because everything downstream
+  // of it makes an ACCUSATION.
+  //
+  // `parts` feeds three rules that all return `fail`: the amount scan,
+  // the check-running-versus-refusal contradiction, and the two-states-
+  // at-once scan. On raw `innerText` a sentence that is transparent,
+  // clipped or filter-erased counts as something the lender was shown —
+  // so a card displaying exactly one legitimate readiness state, with a
+  // second recognised sentence erased in its DOM, is reported as having
+  // shown two. An accusation assembled entirely from copy nobody can
+  // read, on the surface this drive exists to vouch for.
+  //
+  // THE AMOUNT SCAN TAKES IT TOO, and that is a deliberate widening
+  // beyond the finding. Its rule is that the card must state no amount
+  // it cannot substantiate — and an erased figure is not something the
+  // card is STATING to anyone. Keeping that one rule on raw text while
+  // its two siblings move would leave the most consequential check in
+  // the file able to invent a finding from invisible copy, which is the
+  // inconsistency the finding names in its last sentence. The residual
+  // runs the other way — an invented figure hidden by CSS goes
+  // unreported — and that is the direction this file always takes.
+  //
+  // `??` at every position: `undefined` keeps meaning "this record
+  // predates the field", so an older observation falls back to its raw
+  // text rather than scanning nothing.
+  const parts = [
+    obs.visibleText ?? obs.text,
+    obs.bodyVisibleText ?? obs.bodyText,
+    obs.confirmVisibleText ?? obs.confirmText,
+    ...(Array.isArray(obs.confirmRowsText) ? obs.confirmRowsText : []),
+    // ROUND 53 P2 — and the panel's other visible regions. Round 50's
+    // fix kept the readable ROWS and still discarded a warning banner, a
+    // gas note, or the confirm control's own label, so `Confirm 100
+    // USDC` beside one hidden row read as an incomplete scan rather than
+    // an invented figure.
+    ...(Array.isArray(obs.confirmOtherText) ? obs.confirmOtherText : []),
+    ...(Array.isArray(obs.seenVisibleTexts)
+      ? obs.seenVisibleTexts
+      : Array.isArray(obs.seenTexts)
+        ? obs.seenTexts
+        : []),
+  ].filter((part) => typeof part === 'string' && part !== '');
+  //
+  // De-duplicated for the MESSAGE only. The whole card's text contains
+  // its body's, so a figure in the body is reported by both parts, and
+  // two identical fragments say nothing a reader can act on differently.
+  // The verdict turns on whether there were any, which dedup cannot
+  // change.
+  const amounts = [...new Set(parts.flatMap((part) => monetaryAmountsIn(part)))];
+  const amountFinding = () => ({
+    verdict: 'fail',
+    failKind: 'observed',
+    why: `states an amount it cannot know: ${amounts.join(' | ')}`,
+    amounts,
+  });
+
+  // ROUND 116 P2 — GENERATED CONTENT THE DRIVE COULD NOT RESOLVE MEANS
+  // THE NO-AMOUNT CLAIM IS UNVERIFIED, not satisfied.
+  //
+  // Round 111 taught the walk to read `::before` / `::after`, because the
+  // lender reads that text and it appears in no `childNodes`. It reads the
+  // QUOTED parts. A content value mixing a dynamic component with a
+  // literal unit — `attr(data-amount) " USDC"`, `counter(balance) " USDC"`
+  // — therefore yielded `USDC` with the number silently dropped, so the
+  // scan saw no digits and certified a card that visibly states an amount.
+  // The same false PASS the pseudo-element work was written to close,
+  // reopened by reading only half of what is painted.
+  //
+  // `attr()` is resolved, because the value is right there on the element.
+  // A counter is not: its value comes from the document's counter state at
+  // paint time, which nothing cheap can read back. So where an
+  // unresolvable component remains, this declines to certify rather than
+  // guessing in either direction — inventing an amount would be a false
+  // FAIL on ordinary decorative content, and ignoring it is the false PASS
+  // this arm exists to prevent.
+  //
+  // Scoped to the case where nothing else was found: a card that already
+  // states an amount is reported as stating one, and the unresolved part
+  // adds nothing to that.
+  if (amounts.length === 0 && obs.generatedUnresolved === true) {
+    return {
+      verdict: 'blocked',
+      blockedKind: 'incomplete',
+      why: 'the card paints generated text this drive cannot resolve, so whether it states an amount was not established',
+    };
+  }
+
+  // A FAILED SCRAPE IS NOT A MOUNTED CARD WITH UNREADABLE TEXT. Its
+  // record carries `mounted: true` so the absence rules below cannot
+  // turn it into a missing-card FAIL, but arm 1a would describe it as
+  // "the card was visible but its text could not be read" — a statement
+  // about the page, when the truth is that the pass never ran.
+  if (obs.mounted && !obs.scrapeFailed) {
+    // 1a. Nothing was read at all. `text: null` is not empty text: the
+    //     card can unmount, or the locator read time out, after the
+    //     visibility wait. Coercing that to '' reported an empty-card
+    //     defect over an observation that never happened.
+    if (obs.text === null || obs.text === undefined) {
+      return {
+        verdict: 'blocked',
+        blockedKind: 'incomplete',
+        why: 'the card was visible but its text could not be read — nothing was observed about its content',
+      };
+    }
+
+    // 1a-bis. MORE THAN ONE CARD IS ITSELF A FINDING (round 19 P2).
+    //
+    // Every read and every click this drive makes is scoped to the FIRST
+    // match, so a second visible card was silently discarded — and the
+    // contracts asserted here are about the whole surface, not about
+    // whichever element matched first. A clean first card would let a
+    // second state an amount it cannot know, withhold its explanation,
+    // or offer a control the first correctly withholds, and the run
+    // would still pass.
+    //
+    // Reported BEFORE the content scan below rather than after: the scan
+    // only ever saw the first card, so a pass from it says nothing about
+    // the others, and a reader must not be handed a clean-looking
+    // content verdict for a surface that was never fully read.
+    if (typeof obs.visibleCards === 'number' && obs.visibleCards > 1) {
+      return {
+        verdict: 'fail',
+        failKind: 'observed',
+        why: `${obs.visibleCards} forced-close cards are visible at once — this drive reads only the first, so the others are unchecked and the surface states its case more than once`,
+      };
+    }
+
+    // 1a-bis-2. AND A DUPLICATE THAT HAS SINCE GONE (round 35 P2).
+    //
+    // The arm above reads the SETTLED render. A second card present on
+    // an intermediate readiness tick and gone by the time the card
+    // settled was counted and then discarded by the poll's `snap =
+    // again`, so the final record said `visibleCards: 1` and passed.
+    // The drive only ever scraped the first card's text, so that second
+    // surface was never read at all — it could have stated an amount or
+    // offered an action while the run reported the page clean.
+    //
+    // A separate sentence rather than the one above, because the two
+    // describe different situations and an operator reading "2 cards are
+    // visible" about a page now showing one would go looking for
+    // something that is not there.
+    if (typeof obs.visibleCardsPeak === 'number' && obs.visibleCardsPeak > 1) {
+      return {
+        verdict: 'fail',
+        failKind: 'observed',
+        why: `${obs.visibleCardsPeak} forced-close cards were visible at once during the readiness wait, though only one remains — the drive read the first and never the other, so a surface it could not vouch for was shown to the lender`,
+      };
+    }
+
+    // 1a-ter-2. THE SAME, ONE LEVEL DOWN (round 39 P2). Round 35 gave
+    // the CARD count a peak and left the CONTROL count reading the
+    // settled snapshot, so two visible submit controls on an
+    // intermediate tick were counted and then overwritten. That is the
+    // more dangerous duplicate of the two: the copy explains one
+    // decision while the lender is offered it twice, and the drive
+    // inspected only the first.
+    if (typeof obs.visibleSubmitsPeak === 'number' && obs.visibleSubmitsPeak > 1) {
+      return {
+        verdict: 'fail',
+        failKind: 'observed',
+        why: `${obs.visibleSubmitsPeak} forced-close submit controls were visible at once during the readiness wait, though only one remains — the lender was briefly offered the same fee-paying action twice and this drive clicked only the first`,
+      };
+    }
+
+    // 1a-ter. MORE THAN ONE SUBMIT CONTROL, same rule one level down
+    // (round 26 P2).
+    //
+    // The card-level duplicate check above does not see two controls
+    // inside ONE card, and that arrangement is the more dangerous of the
+    // two: the readiness copy explains a single decision while the
+    // surface offers the lender two buttons for it. Whichever is
+    // pressed, at most one can be the action the copy describes.
+    //
+    // Reported as a FAIL rather than folded into the actionability
+    // flags, because the flags now answer "is an action offered" from
+    // the visible set and would answer YES here — correctly, and while
+    // hiding that the surface offers the action twice. Ranked beside the
+    // duplicate-card arm and before the content scan for the same
+    // reason: a clean content verdict must not be handed to a reader
+    // over a surface this drive has only partly interrogated.
+    if (typeof obs.visibleSubmits === 'number' && obs.visibleSubmits > 1) {
+      return {
+        verdict: 'fail',
+        failKind: 'observed',
+        why: `${obs.visibleSubmits} forced-close submit controls are visible in one card — the copy explains a single decision while the lender is offered it more than once, and this drive clicks only the first`,
+      };
+    }
+
+    // 1b. THE DEFINITE FINDING, before anything that might be missing.
+    //     Gathered at `1-pre`, reported here — below the duplicate arms
+    //     above, which outrank it, and above the body reads below, which
+    //     it outranks. Do not move either boundary without reading the
+    //     note at `1-pre`: both directions have been wrong once.
+    if (amounts.length > 0) return amountFinding();
+
+    // 1c. Read, and genuinely empty.
+    if (obs.text.trim() === '') {
+      return {
+        verdict: 'fail',
+        failKind: 'observed',
+        why: 'card mounted with no text — withheld the explanation with the action',
+      };
+    }
+
+    // 1d-f. THREE STATES for the body, not two (round 5 P2).
+    //
+    // Round 4 split "read and blank" from "could not read" and then
+    // implemented the split as `bodyText !== null || count() > 0`,
+    // which sets read=true because an element EXISTS even though the
+    // read failed. Existence is not a successful read.
+    //
+    //   bodyPresent false        → no body element rendered at all.
+    //                              That IS the heading-only shell.
+    //   present, bodyText null   → the element is there and the read
+    //                              did not land. Nothing observed.
+    //   present, bodyText blank  → read, and genuinely empty.
+    if (obs.bodyPresent === false) {
+      return {
+        verdict: 'fail',
+        failKind: 'observed',
+        why: 'card mounted with no explanatory body element — the withheld-action-without-explanation state',
+      };
+    }
+    // ROUND 21 P2 — A FOURTH STATE: present, read, and NOT VISIBLE.
+    //
+    // A CSS regression that hides only the body leaves the element in
+    // place, and `innerText` can still yield its DOM text — so a
+    // heading-only surface, which is exactly the
+    // withheld-action-without-explanation shape, was passing on text
+    // the lender cannot see. Presence, text and visibility are three
+    // different facts and the first two do not imply the third.
+    //
+    // `=== false` rather than a falsy test, so an observation predating
+    // the field says nothing rather than manufacturing a finding.
+    if (obs.bodyVisible === false && obs.bodyPresent === true) {
+      return {
+        verdict: 'fail',
+        failKind: 'observed',
+        why: 'card mounted with an explanatory body that is not visible — the lender sees the heading and no reason',
+      };
+    }
+    // ROUND 8 P2 — a card that vanished mid-scrape is INCOMPLETE, not
+    // a pass. Round 7 introduced `undefined` to stop the vanished case
+    // being reported as the heading-only shell, and then let it fall
+    // through to the final `pass` — so a run could exit clean having
+    // never established that the required body existed. My own test
+    // asserted that pass, which is the assertion being corrected here.
+    if (obs.bodyPresent === undefined) {
+      return {
+        verdict: 'blocked',
+        blockedKind: 'incomplete',
+        why: 'the card was read and then vanished before its body could be checked — the explanation was never established',
+      };
+    }
+    if (obs.bodyPresent === true && obs.bodyText === null) {
+      return {
+        verdict: 'blocked',
+        blockedKind: 'incomplete',
+        why: 'the body element is present but its text could not be read — nothing was observed about the explanation',
+      };
+    }
+    // Only when the body was actually observed. `bodyPresent:
+    // undefined` means the whole CARD vanished mid-scrape (round 7 P2),
+    // and a blank read taken from a card that is no longer there is not
+    // evidence of anything.
+    if (obs.bodyPresent !== undefined && (obs.bodyText ?? '').trim() === '') {
+      return {
+        verdict: 'fail',
+        failKind: 'observed',
+        why: 'card mounted with no explanatory body — the withheld-action-without-explanation state',
+      };
+    }
+  }
+
+  // 1-post. THE SAME FINDING, for a record where no card rendered.
+  //
+  // This is the branch the round-33 P2 was about. A card that stated a
+  // figure while its readiness reads were outstanding and then VANISHED —
+  // the loan went terminal, the token transferred, a sale was accepted —
+  // was positively observed stating it, and every unmounted path skipped
+  // the scan entirely. Worse, an accepted sale then returns `inapplicable`
+  // just below, so the run reported nothing to see about an amount a
+  // lender had actually been shown.
+  //
+  // Above section 2 for the reason that section already states about
+  // mounted cards: eligibility qualifying an ABSENCE is correct,
+  // eligibility suppressing a POSITIVE finding is not. The duplicate-card
+  // arms are not a concern here — no card rendered, so there is no
+  // partly-read surface to misrepresent.
+  if ((!obs.mounted || obs.scrapeFailed) && amounts.length > 0) return amountFinding();
+
+  // 1-post-2. The duplicate the poll saw, on a record where no card
+  //           survived to be counted (round 35 P2). Same reasoning as
+  //           the arm inside the mounted block; the card vanishing
+  //           afterwards does not unsee it.
+  if ((!obs.mounted || obs.scrapeFailed) && typeof obs.visibleCardsPeak === 'number' && obs.visibleCardsPeak > 1) {
+    return {
+      verdict: 'fail',
+      failKind: 'observed',
+      why: `${obs.visibleCardsPeak} forced-close cards were visible at once during the readiness wait, and the card is now gone — the drive read the first and never the other`,
+    };
+  }
+
+  // 1-post-3. THE CONTROL PEAK, on the same path (round 40 P2).
+  //
+  // Round 39 added the submit peak inside the mounted block and I did not
+  // add its unmounted twin, though the card peak has had one since round
+  // 35 — the fourth time in this PR a fix has landed on one of two
+  // parallel sites. The consequence is the one this ordering exists to
+  // prevent: both poll exits carry the peak and set `mounted: false`, so
+  // the check was skipped, and if the pinned snapshot then found an
+  // accepted sale the verdict returned `inapplicable` — reporting nothing
+  // to see about a lender who had been offered the same fee-paying action
+  // twice.
+  if ((!obs.mounted || obs.scrapeFailed) && typeof obs.visibleSubmitsPeak === 'number' && obs.visibleSubmitsPeak > 1) {
+    return {
+      verdict: 'fail',
+      failKind: 'observed',
+      why: `${obs.visibleSubmitsPeak} forced-close submit controls were visible at once during the readiness wait, and the card is now gone — the lender was offered the same fee-paying action twice and this drive clicked only the first`,
+    };
+  }
+
+  // 1-post-4. THE PER-RENDER CONTENT SCANS, AHEAD OF APPLICABILITY
+  //           (round 41 P2).
+  //
+  // Both of these judge what a render SAID, and both sat after section
+  // 2 — so an accepted sale found by the pinned snapshot returned
+  // `inapplicable` and discarded a contradiction the lender had been
+  // shown. The amounts and the duplicate counts were moved ahead of that
+  // exit in rounds 33 and 40 for exactly this reason; these two were
+  // left behind. Fifth instance in this PR of a rule applied to some of
+  // its sites and not the rest.
+  //
+  // The rule they are being brought under is the one this module states
+  // in its own header: eligibility qualifying an ABSENCE is correct,
+  // eligibility suppressing a POSITIVE finding is not.
+  //
+  // Below the mounted block, so the duplicate-card and duplicate-control
+  // arms still outrank them — a finding drawn from the first card must
+  // not be presented as the verdict on a surface only partly read.
+  // ROUND 7 P2 — AN UNRESOLVED CHECK MAY NOT CLAIM UNAVAILABILITY.
+  //
+  // The module names this invariant in its own header — "An unresolved
+  // check is never reported as 'not available'" — and then used the
+  // unresolved copy only as a readiness SIGNAL, never enforcing it. A
+  // card saying both "still checking" and "not available" states the
+  // app's ignorance and the protocol's refusal at once, and they are
+  // opposite claims.
+  //
+  // Narrow by construction: this fires only where a render ALSO
+  // reported a check in flight, so it is a self-contradiction rather
+  // than a judgement about wording. Copy that merely says a route is
+  // unavailable — which several legitimate states do — is untouched.
+  //
+  // NOT GATED ON `checkRunning`, deliberately (round 37 P2). That
+  // variable reads the SETTLED render, and gating on it would have
+  // reintroduced the very defect being fixed one line up: a card that
+  // contradicted itself mid-poll and then settled clean has
+  // `checkRunning === false`, so the scan below would never run. Each
+  // part now carries its own check-running test instead, which is both
+  // the gate and the pairing.
+  {
+    // EVERY match, not the first one. The shipped `unknown` copy itself
+    // contains "not what the protocol has refused" — correctly negated —
+    // and examining only the first hit let that legitimate occurrence
+    // vouch for an affirmative claim later in the same card. Fourth
+    // variant in this PR of stopping at the first thing found; caught
+    // here by the round-7 case failing rather than by review.
+    // ROUND 37 P2 — EVERY CAPTURED RENDER, not only the settled one.
+    //
+    // This invariant is ABOUT the unresolved state — "an unresolved
+    // check is never reported as 'not available'" — and it was reading
+    // only `obs.text`, which is the render the poll finally settled on.
+    // A card that said both things WHILE its checks ran and then reached
+    // clean ready copy had the contradiction overwritten by the ordinary
+    // readiness update, so the arm could not fire on the exact moment it
+    // exists to catch.
+    //
+    // Scanned PER PART, never over the joined text, for round 35's
+    // reason: the pairing must be two claims in ONE render. A render
+    // saying "still checking" and a different one later saying
+    // "unavailable" is a card that resolved, which is correct
+    // behaviour — pairing those across renders would manufacture a FAIL
+    // out of a normal transition.
+    const refusal = parts
+      .map((part) =>
+        saysCheckRunning(part, copy?.unknownCopy ?? '') ? firstUnnegatedRefusal(part) : null,
+      )
+      .find((hit) => hit);
+    if (refusal) {
+      return {
+        verdict: 'fail',
+        failKind: 'observed',
+        why: `card reports a check still running AND claims unavailability ("${refusal}") — opposite claims about the app's knowledge and the protocol's answer`,
+      };
+    }
+  }
+
+
+  // Two recognised readiness states inside ONE captured render. The
+  // settled-render form of this check lives further down, where the
+  // recognised-copy vocabulary is consulted; this is the form that
+  // survives the poll overwriting `bodyText`, and it has to clear
+  // applicability for the same reason the refusal scan does.
+  if (Array.isArray(copy?.recognisedCopy) && copy.recognisedCopy.length > 0) {
+    const twoStateSeen = parts
+      .map((part) =>
+        copy.recognisedCopy.filter(
+          (sentence) => typeof sentence === 'string' && sentence && part.includes(sentence),
+        ),
+      )
+      .find((hits) => hits.length > 1);
+    if (twoStateSeen) {
+      return {
+        verdict: 'fail',
+        failKind: 'observed',
+        why: `a render this drive read stated ${twoStateSeen.length} recognised readiness states at once, though the card settled on one — the lender was shown two different things about the same decision`,
+      };
+    }
+  }
+
+  // 1-post-5. A BODY PRESENT AND HIDDEN, on any render (round 41 P2).
+  //
+  // The heading-without-a-reason state is what the absence rule exists
+  // to catch, and `remember` kept the texts and the counts while
+  // dropping this. Observed on a render, then discarded when the card
+  // vanished — and explained away as `inapplicable` if a sale had been
+  // accepted meanwhile.
+  //
+  // SCOPED TO UNMOUNTED RECORDS, and that is a correction to my own
+  // first version of this fix, found by re-reading it rather than by
+  // review.
+  //
+  // Unscoped, this latch fires on ANY tick of a ~30-second poll — so a
+  // body that reads as present-but-invisible for a single frame and then
+  // paints correctly becomes a FAIL on a card that ends up entirely
+  // right. Round 10 established the opposite convention for precisely
+  // this situation: a transient ready-but-disabled control is a
+  // legitimate intermediate state and the FAIL requires the condition to
+  // PERSIST to the deadline. Applying a stricter rule to the body than
+  // to the control would be an inconsistency with no argument behind it,
+  // and false FAILs on funds checks are what get them switched off.
+  //
+  // The hole the finding actually describes is narrower: evidence
+  // discarded when the card VANISHES, where the settled render can no
+  // longer speak for itself. For a mounted record the settled
+  // `bodyVisible === false` arm above already applies and is the right
+  // test. So this covers exactly the case the settled arm cannot reach.
+  //
+  // `=== true`, so a record predating the field says nothing rather than
+  // manufacturing a finding.
+  if ((!obs.mounted || obs.scrapeFailed) && obs.bodyHiddenSeen === true) {
+    return {
+      verdict: 'fail',
+      failKind: 'observed',
+      why: 'a render this drive read had its explanatory body present but not visible — the lender was shown the heading and no reason, whether or not the card settled that way',
+    };
+  }
+
+  // 1-post-6. THE SCRAPE ITSELF DID NOT RUN (round 41 P2, REPOSITIONED
+  //           by round 42 P2).
+  //
+  // I put this arm FIRST when I added it, reasoning that every arm below
+  // reasons from an observation and this record is the absence of one.
+  // That is true of an INITIAL scrape failure and false of a mid-poll
+  // one: the loop's exit deliberately carries `seenTexts`, both peaks
+  // and `bodyHiddenSeen`, so a card already observed stating a forbidden
+  // amount, showing duplicate controls, or hiding its body had that
+  // evidence discarded and the run downgraded to exit 2. My own fix
+  // turned a confirmed funds defect into "nothing was learned" — the
+  // exact failure the exit-ranking work of rounds 38–39 was about.
+  //
+  // One position serves both cases. An initial failure carries no
+  // accumulated evidence, so the arms above find nothing and fall
+  // through to here; a later failure is judged on what was seen first.
+  //
+  // Still ABOVE applicability and absence: a scrape that did not run
+  // must never become a missing-card FAIL, and must not be explained
+  // away by an accepted sale either.
+  if (obs.scrapeFailed) {
+    return {
+      verdict: 'blocked',
+      blockedKind: 'incomplete',
+      why: 'the DOM pass over the card could not be completed — nothing further was observed, so neither its content nor its absence says anything about the page',
+    };
+  }
+
+  // ROUND 51 P2 — AND SO DOES AN UNSAFE RENDER, for the same reason.
+  //
+  // Round 50 taught this arm to read `seenRenders`, and then left it in
+  // section 4 where the applicability exits still reached it first. So a
+  // tick that caught withheld copy beside a live, pressable, fee-paying
+  // button — now correctly preserved — was still discarded as
+  // `inapplicable` the moment the loan terminated, transferred or gained
+  // an accepted sale. The fix preserved the evidence and the ordering
+  // threw it away.
+  //
+  // It passes round 49's own test for what may be hoisted: no state
+  // change explains it. The copy and the control come from ONE atomic
+  // DOM pass (round 9), and the app renders both from the same
+  // `readiness` value, so a render carrying withheld copy AND an enabled
+  // submit is internally inconsistent rather than a transition artefact.
+  // The lender could have pressed it; what the chain said a moment later
+  // does not un-press it.
+  // ROUND 50 P2 — ON EVERY RENDER SEEN, not only the settled one.
+  //
+  // `seenTexts` kept the copy from intermediate ticks and the peaks kept
+  // the control counts, and nothing kept the PAIR. So a render showing
+  // withheld copy beside a live button — the safety check still running,
+  // the fee-paying action already pressable — was positively observed
+  // and then discarded the moment the card settled into a clean ready
+  // state, because this arm matched the FINAL copy against the FINAL
+  // control and found nothing wrong.
+  //
+  // Round 10's exemption does not cover this and was never meant to: it
+  // forgives a transiently DISABLED control, an intermediate state that
+  // costs the lender nothing. A transiently ENABLED one beside copy
+  // saying the decision is not yet safe is the expensive direction, and
+  // it is exactly what this arm exists for. Briefly is long enough — a
+  // click is instantaneous.
+  //
+  // The settled render is judged as one of the renders rather than
+  // separately, so there is one rule rather than two that can drift.
+  const renders = [
+    {
+      text: obs.text,
+      visibleText: obs.visibleText,
+      submitVisible: obs.submitVisible,
+      submitDisabled: obs.submitDisabled,
+    },
+    ...(Array.isArray(obs.seenRenders) ? obs.seenRenders : []),
+  ];
+  // ROUND 64 P2 — THE ROUTE GATES READ PAINTED TEXT TOO.
+  //
+  // This arm and the ready-copy one below accuse the card of showing
+  // withheld copy beside a live button. On raw `innerText` an erased
+  // withheld sentence in the DOM makes that accusation about a card that
+  // is, on screen, offering an action beside perfectly good ready copy.
+  // Same rule as `parts` above and for the same reason: what is not
+  // painted is not something the lender was shown.
+  const readable = (r) => r?.visibleText ?? r?.text ?? '';
+  if (Array.isArray(copy?.withheldCopy)) {
+    const unsafe = renders.find(
+      (r) =>
+        r &&
+        // Same `!== false` reading as `actionOffered` below: an older
+        // record that carries no visibility says nothing about it.
+        r.submitVisible !== false &&
+        !r.submitDisabled &&
+        copy.withheldCopy.some(
+          (sentence) =>
+            typeof sentence === 'string' && sentence && readable(r).includes(sentence),
+        ),
+    );
+    if (unsafe) {
+      return {
+        verdict: 'fail',
+        failKind: 'observed',
+        why: 'card renders a NON-ACTIONABLE state yet offers an enabled action — the user would pay a fee for a refusal',
+      };
+    }
+  }
+
+  // ROUND 59 P2 — A WRONG-ROUTE OR DUPLICATED RECEIPT IS STRUCTURAL TOO.
+  //
+  // Rounds 53 and 54 put these below the applicability exits, so a
+  // confirmation visibly describing a DIFFERENT settlement route — or
+  // one with a disclosure duplicated over the top of another — was
+  // discarded as `inapplicable` whenever the loan terminated,
+  // transferred or gained an accepted sale before the pinned re-read.
+  // The lender had already read terms for a transaction other than the
+  // one they were confirming.
+  //
+  // Both pass round 49's test: no state change duplicates a row or
+  // swaps one receipt for another. The UNRECOGNISED case is different
+  // and stays below — it is a gap in this drive's vocabulary, and an
+  // inapplicable position is a good reason not to have judged it.
+  const receiptCheck = receiptRowFault(obs, copy);
+  if (receiptCheck !== null && receiptCheck !== 'unrecognised') return receiptCheck;
+
+  // ROUND 59 P2 — AND THE OUTER CONTROL'S LABEL, for the same reason.
+  //
+  // Round 54 added these and put them below the applicability exits, so
+  // a blank fee-paying control captured in the atomic snapshot was
+  // discarded as `inapplicable` whenever the loan terminated,
+  // transferred or gained an accepted sale before the pinned re-read.
+  // The lender had already been shown it; what the chain said a moment
+  // later cannot unshow it.
+  //
+  // They pass round 49's test for what may be hoisted: no state change
+  // renders a control with no label. `actionOffered` is recomputed here
+  // rather than waited for, because it is three fields of the same
+  // atomic snapshot and nothing between here and its old declaration
+  // changes them.
+  //
+  // ROUND 75 P2 — ON EVERY CAPTURED RENDER, each on its own facts.
+  //
+  // These read the settled snapshot alone, so a render offering an
+  // enabled control with no readable label passed the moment a later
+  // render repaired it — the lender having already been shown, and able
+  // to press, a blank fee-paying control. That is the unsafe-control
+  // arm's own rule (round 50: a click is instantaneous), applied to the
+  // two facts about the control's LABEL rather than its state.
+  //
+  // The history is walked here rather than through `capturedRenders`
+  // because these arms sit ABOVE the applicability exits by round 49's
+  // hoist, and that list is built much further down. Each render is
+  // judged on its own three fields, which is what the projection now
+  // carries.
+  const labelRenders = [
+    obs,
+    ...(Array.isArray(obs.seenRenders) ? obs.seenRenders : []),
+  ];
+  const offeredWith = (r, fact) =>
+    r && r.submitVisible !== false && !r.submitDisabled && r[fact] === false;
+  if (labelRenders.some((r) => offeredWith(r, 'submitLabelled'))) {
+    return {
+      verdict: 'fail',
+      failKind: 'observed',
+      why: 'a render this drive read offers a visible, enabled action with no label at all — the lender is asked to open a forced close-out from a blank control',
+    };
+  }
+  if (labelRenders.some((r) => offeredWith(r, 'submitLabelPainted'))) {
+    return {
+      verdict: 'fail',
+      failKind: 'observed',
+      why: 'a render this drive read offers a visible, enabled action whose label is in the markup but painted in nothing — the lender is asked to open a forced close-out from a control that reads as blank',
+    };
+  }
+
+  // ROUND 49 P2 — THE CONFIRMATION'S STRUCTURAL FAULTS BELONG UP HERE.
+  //
+  // Round 9 settled the principle — "definite content failures are
+  // preserved above; what is refused here is BANKING a clean reading" —
+  // and applied it to the CONTENT checks only. The confirm-action arms
+  // were written later and landed below the applicability exits, so a
+  // panel observed with no action beside Back, or two of them, or one
+  // that is invisible or unreadable, was discarded as `inapplicable`
+  // whenever the pinned re-read happened to find the loan terminal, the
+  // token transferred, or a sale accepted. Direct lender-visible
+  // evidence, thrown away because of what the chain said afterwards.
+  //
+  // Only the faults NO STATE CHANGE CAN EXPLAIN are hoisted. That
+  // distinction is the whole content of this fix and it is deliberate:
+  // a disabled control and a control that cannot take a click are
+  // exactly what a loan terminalising mid-observation produces, and
+  // reporting either as a product defect would be a false FAIL invented
+  // out of a race — the error this file refuses everywhere else. Those
+  // two stay below, where an applicability change can still explain
+  // them away.
+  // ROUND 68 P2 — HOISTED, with the other render evidence.
+  //
+  // Round 59 established that faults NO STATE CHANGE CAN EXPLAIN belong
+  // above the applicability exits, and this one was written below them:
+  // a contradictory heading/body pair captured by the scrape was
+  // discarded as `inapplicable` whenever the pinned re-read happened to
+  // find the loan terminal, the token transferred or a sale accepted.
+  // A lifecycle change afterwards cannot unshow copy the lender was
+  // already shown.
+  //
+  // It passes round 59's own test for what may be hoisted: both halves
+  // come from ONE render of ONE `view`, so no state change explains them
+  // disagreeing.
+  // ROUND 67 P2 — THE HEADING MUST NOT CONTRADICT THE BODY.
+  //
+  // `ForcedCloseCard` picks its heading on `view.overdue` alone: "This
+  // loan is overdue", or "If this loan is not repaid" when it is not.
+  // Every state check in this module reads the BODY, so a card whose
+  // heading regressed showed the lender "This loan is overdue" above a
+  // body saying the borrower still has time — two statements about the
+  // same fact, both painted, and nothing looked at the pair.
+  //
+  // JUDGED ONLY WHERE THE BODY DETERMINES THE ANSWER, which is the whole
+  // care in this arm. `not-yet` means the deadline has NOT passed, so the
+  // overdue heading contradicts it. A ready state means it HAS, so the
+  // pending heading contradicts that. The blocked states do not settle
+  // it — a paused protocol or an unreachable sequencer is perfectly
+  // compatible with an overdue loan — and `unknown` settles nothing at
+  // all, so neither is judged here. Reading them as contradictions would
+  // accuse a card that is telling the truth.
+  //
+  // Both headings must be DISTINGUISHABLE and the card must paint
+  // exactly one of them; anything else is not a comparison this can make.
+  // `observed`, because both halves are read off the page.
+  //
+  // JUDGED ON EVERY RENDER THIS DRIVE READ, not only the settled one —
+  // checked proactively rather than waiting for the next round to point
+  // at the parallel site, which is this PR's most frequent finding.
+  //
+  // A transient mismatch here is a real one, and that is NOT the general
+  // rule in this file: round 10 forgives a transiently disabled control
+  // because it is a legitimate intermediate state. This pair is
+  // different. `ForcedCloseCard` derives the heading and the body from
+  // ONE `view` in ONE render, so they cannot legitimately disagree even
+  // for a frame; any render showing both is a contradiction the lender
+  // was shown.
+  if (
+    typeof copy?.overdueTitleCopy === 'string' &&
+    typeof copy?.pendingTitleCopy === 'string' &&
+    copy.overdueTitleCopy !== '' &&
+    copy.pendingTitleCopy !== '' &&
+    copy.overdueTitleCopy !== copy.pendingTitleCopy
+  ) {
+    const headingFault = (cardText, bodyText) => {
+      const head = cardText ?? '';
+      const saysOverdue = head.includes(copy.overdueTitleCopy);
+      const saysPending = head.includes(copy.pendingTitleCopy);
+      // Exactly one heading painted, or there is no comparison to make.
+      if (saysOverdue === saysPending) return null;
+      const body = bodyText ?? cardText ?? '';
+      const has = (sentence) =>
+        typeof sentence === 'string' && sentence !== '' && body.includes(sentence);
+      if (has(copy?.notYetCopy) && saysOverdue) {
+        return 'the card is headed "this loan is overdue" while its body says the borrower still has time — two statements about the same deadline, both on screen, disagreeing';
+      }
+      if (
+        saysPending &&
+        Array.isArray(copy?.readyCopy) &&
+        copy.readyCopy.some((sentence) => has(sentence))
+      ) {
+        return 'the card offers a close-out that is ready while its heading still says the loan is only approaching its deadline — two statements about the same deadline, both on screen, disagreeing';
+      }
+      return null;
+    };
+    const why =
+      headingFault(obs.visibleText ?? obs.text, obs.bodyVisibleText ?? obs.bodyText) ??
+      (Array.isArray(obs.seenRenders)
+        ? obs.seenRenders
+            .map((r) => headingFault(r?.visibleText ?? r?.text, r?.bodyVisibleText ?? r?.bodyText))
+            .find((hit) => hit)
+        : undefined);
+    if (why) return { verdict: 'fail', failKind: 'observed', why };
+  }
+
+  const structuralFault = definiteConfirmActionFault(obs.confirmAction);
+  if (structuralFault) {
+    return { verdict: 'fail', failKind: 'observed', why: structuralFault };
+  }
+
+  // ROUND 81 P2 — THE CANCEL CONTROL IS JUDGED HERE, ABOVE EVERY
+  // INFERRED ARM.
+  //
+  // These three read the page. They used to sit below the protocol arms,
+  // so a ready card the bracket refused returned the INFERRED mismatch
+  // first — and a visit carries exactly one verdict, which an
+  // infrastructure gate can then downgrade to BLOCKED. A lender trapped
+  // on a panel with no usable way out disappeared entirely, hidden by a
+  // provider disagreement that cannot explain a broken button.
+  //
+  // Same principle as the exit ordering at the end of the drive, applied
+  // one level in: what was READ outranks what was inferred, and the
+  // arms' ORDER is how a single-verdict function expresses that. They
+  // move beside the round-49 structural faults, which are here for
+  // exactly this reason and say so.
+  //
+  // They depend on nothing but `obs`, which is what makes the hoist safe
+  // — the same test round 49 applied, and the one an earlier attempt at
+  // hoisting in this file failed by sweeping two arms above their own
+  // declarations.
+  // ROUND 65 P2 — CAN THE LENDER BACK OUT?
+  //
+  // The confirmation is a pre-signature panel, and Back is the one
+  // control on it whose whole job is to let the lender NOT spend money.
+  // Its trial result was swallowed, so a Back button permanently covered
+  // or carrying `pointer-events: none` left the receipt and the confirm
+  // action scanning clean and the card passing — while the only way out
+  // of the panel was to leave the page.
+  //
+  // `observed`, unlike the two protocol arms: this is read off the page,
+  // not inferred from a disagreement with a chain read.
+  //
+  // `=== false` and `present === true`, so a record predating the field
+  // and a panel whose Back could not be located both say nothing rather
+  // than manufacturing a finding. `null` — trialled-not-established — is
+  // likewise not a defect.
+  if (obs.backAction?.present === true && obs.backAction.clickable === false) {
+    return {
+      verdict: 'fail',
+      failKind: 'observed',
+      why: 'the confirmation renders a Back control the lender cannot activate — the only way out of a pre-signature panel is to leave the page',
+    };
+  }
+  // ROUND 68 P2 — AND A BACK CONTROL THAT IS NOT PAINTED.
+  //
+  // Playwright's actionability suite ignores ancestor opacity, so a Back
+  // button under `opacity: 0`, or with transparent label text, passes
+  // the trial above while being invisible to the lender. Round 65
+  // recorded presence and clickability and stopped there — unlike the
+  // two fee-paying controls, which have carried painted evidence since
+  // rounds 46 and 54. The one control whose job is to stop a payment had
+  // the weakest check on the panel.
+  //
+  // A separate arm from `clickable`, because they are different defects:
+  // an unclickable Back is a trap the lender can see, an unpainted one
+  // is a way out they never know exists.
+  //
+  // `=== false`, so a record predating the field and a probe that could
+  // not answer (`null`) both say nothing.
+  // ROUND 70 P2 — AND A CONFIRMATION WITH NO BACK CONTROL AT ALL.
+  //
+  // Until now the panel was DETECTED by its Back button, so a
+  // confirmation whose receipt and fee-paying action render perfectly
+  // while Back is missing was never scanned — reported as
+  // `blocked/incomplete` from a null `confirmText` rather than as what
+  // it is: the lender given a fee-paying action and no way to decline
+  // without leaving the page.
+  //
+  // Requires POSITIVE evidence that the panel was up, so a visit that
+  // never opened a confirmation says nothing. Either the action or the
+  // rows will do — the same two independent markers the scrape now uses
+  // to detect the panel.
+  if (
+    obs.backAction?.present === false &&
+    (obs.confirmAction?.present === true ||
+      (Array.isArray(obs.confirmRowsText) && obs.confirmRowsText.length > 0))
+  ) {
+    return {
+      verdict: 'fail',
+      failKind: 'observed',
+      why: 'the confirmation renders its receipt and its fee-paying action with no Back control at all — the lender is asked to commit with no way to decline short of leaving the page',
+    };
+  }
+  if (obs.backAction?.present === true && obs.backAction.painted === false) {
+    return {
+      verdict: 'fail',
+      failKind: 'observed',
+      why: 'the confirmation renders a Back control that is not painted — the lender is asked to confirm a forced close-out with no visible way to decline',
+    };
+  }
+
+  // ---- 2. Was this position one the assertion could apply to? ------
+  if (!obs.lenderHoldsActive) {
+    return {
+      verdict: 'blocked',
+      blockedKind: 'inapplicable',
+      why: 'position is not a held Active lender position',
+    };
+  }
+  // ROUND 9 P2 — applicability gates a MOUNTED card too, not only an
+  // absent one.
+  //
+  // A sale accepted between the DOM scrape and the pinned snapshot
+  // leaves a card that WAS mounted on a position now outside the
+  // card's applicability. Consulting `saleLocked` only in the absence
+  // branch let that stale-but-clean card bank a `pass` and satisfy
+  // coverage — evidence drawn from a state the card is not supposed to
+  // be in. Definite content failures are preserved above; what is
+  // refused here is BANKING a clean reading, exactly as a later
+  // ownership or status change is refused.
+  // ROUND 12 P2 — the sale probe is TRI-STATE.
+  //
+  // `true` is an established accepted sale, which puts the position
+  // outside this card's applicability: nothing is wrong, nothing to
+  // report. `'unknown'` is a probe that could not classify — on a
+  // deployment carrying another guard, say — and reporting THAT as
+  // inapplicable would suppress a genuinely missing card while printing
+  // a confident reason for its absence. Different facts, different
+  // kinds of blocked.
+  if (obs.saleLocked === 'unknown') {
+    return {
+      verdict: 'blocked',
+      blockedKind: 'incomplete',
+      why: 'the sale-listing probe returned an unrecognised revert, so whether an accepted sale explains this card could not be established',
+    };
+  }
+  if (obs.saleLocked === true) {
+    return {
+      verdict: 'blocked',
+      blockedKind: 'inapplicable',
+      why: 'the position carries an accepted sale awaiting completion — outside this card\'s applicability',
+    };
+  }
+
+  // ---- 3. The ABSENCE claim, which eligibility legitimately gates. --
+  if (!obs.mounted) {
+    // ROUND 13 P2 — AN ABSENCE THE CONFIRMATION NEVER REACHED.
+    //
+    // The missing-card FAIL is the one verdict here whose cost is a
+    // wrongly accused product, which is why it is gated on a re-read at
+    // a LATER block: a page whose provider is a block ahead can be
+    // correctly showing nothing. When that later block never arrived,
+    // the gate did not run, and reporting the FAIL anyway would rest it
+    // on evidence the drive did not obtain.
+    //
+    // Above the hidden-card arm deliberately: `attached` is read from
+    // the same DOM pass, so it is equally unconfirmed.
+    if (obs.absenceUnconfirmed) {
+      return {
+        verdict: 'blocked',
+        blockedKind: 'incomplete',
+        why:
+          obs.absenceUnconfirmedWhy ??
+          "the card was absent, but this observer could not be shown to have caught up with the page, so a page reading ahead of it could not be ruled out",
+      };
+    }
+    // The accepted-sale case already returned above, for mounted and
+    // absent alike — one rule rather than two.
+    if (obs.attached) {
+      return {
+        verdict: 'fail',
+        // ROUND 39 P2 — INFERRED, not observed, and the distinction now
+        // decides whether this finding may overtake an infrastructure
+        // blocker at the run's exit.
+        //
+        // Round 38 ranked forced-close FAILs ahead of the route,
+        // WebSocket and wrong-chain gates so a funds defect the drive had
+        // READ could not be downgraded to "nothing was learned". I wrote
+        // in that commit that absence findings must stay behind those
+        // gates, because a transport failure legitimately explains a
+        // missing surface — and then filtered on `verdict === 'fail'`,
+        // which includes exactly the two arms it must not. The principle
+        // was stated correctly and implemented backwards.
+        //
+        // This arm is inferred rather than read for the same reason: the
+        // nodes are present and none is painted, which a stylesheet that
+        // failed to fetch produces just as readily as a CSS regression
+        // does. Conservative on purpose — the cost is a real finding
+        // reported one gate later, against a false accusation of the
+        // product.
+        failKind: 'inferred',
+        why: 'card is in the DOM but not visible — the lender sees neither the action nor its explanation',
+      };
+    }
+    return {
+      verdict: 'fail',
+      // INFERRED — see the note on the arm above. This is the clearest
+      // case of the two: nothing was rendered, so nothing was read, and
+      // the conclusion rests entirely on the chain reads agreeing that
+      // the position is still eligible. A page that could not fetch its
+      // RPC, or one served by an endpoint on another chain, produces
+      // precisely this observation while the product is blameless.
+      failKind: 'inferred',
+      why: 'card absent on a held Active lender position with no sale lock — absence claims the capability does not apply',
+    };
+  }
+
+  // ---- 4. Was the observation COMPLETE? ----------------------------
+  // ROUND 8 P2, MOVED UP IN ROUND 9 — THE OTHER DIRECTION OF THE SAME
+  // CONTRACT, AND IT HAS TO OUTRANK THE UNSETTLED RETURN.
+  //
+  // The ready-without-action arm below catches a route that should offer
+  // the action and does not. This catches its inverse: a WITHHELD state
+  // rendering an ENABLED control, offering a transaction the protocol
+  // has not established is permitted — or has established will be
+  // refused. That is the more expensive half, because there the user
+  // pays the fee.
+  //
+  // Round 8 put it below the `!settled` return, which made it
+  // UNREACHABLE for the state that matters most: a card showing
+  // `unknown` is BY DEFINITION unsettled, so an `unknown` card with a
+  // live button reported `blocked` — the check could not fire on its
+  // own headline case. My test hid that by modelling `unknown` with
+  // `settled: true`, a combination the driver cannot produce.
+  //
+  // Fourth application of one rule in this PR: a DEFINITE observation
+  // outranks an uncertain one. An enabled control on a withheld state
+  // was seen; the settlement question was not answered. The seen thing
+  // wins.
+  // ROUND 18 P2 — AN OFFER IS A CONTROL THE LENDER CAN ACTUALLY USE.
+  //
+  // `disabled === false` on an element that EXISTS is not the same
+  // claim. A CSS regression that hides an enabled button is wrong in
+  // both directions: on withheld copy it manufactures a FAIL saying the
+  // lender was offered a fee-paying transaction, and on ready copy it
+  // hides the missing usable action behind a merely incomplete
+  // confirmation. Same defect as round 3's on the card itself, one
+  // level down — existence mistaken for actionability.
+  //
+  // `!== false` rather than a truthy test, deliberately: an observation
+  // that predates this field says nothing about visibility, and treating
+  // silence as "hidden" would invent findings on every older record.
+  const actionOffered = obs.submitVisible !== false && !obs.submitDisabled;
+
+
+  // ROUND 62 P2 — from the PAINTED card text, for the same reason the
+  // body's recognition is. An erased "we are checking" sentence would
+  // otherwise excuse a card the lender sees no explanation on at all.
+  const checkRunning = saysCheckRunning(
+    obs.visibleText ?? obs.text ?? '',
+    copy?.unknownCopy ?? '',
+  );
+
+  // ROUND 7 P2 — A READY ROUTE MUST OFFER THE ACTION.
+  //
+  // `pass` labelled every present non-submittable card the valid
+  // "withheld-but-explained" state, which is correct for `unknown`,
+  // `notYet`, `blockedPaused` and the rest — and wrong for a card
+  // rendering ready copy, where the spec says the app offers the
+  // action directly. The explanation is what distinguishes a safe
+  // withheld state from an actionable one, so it has to be consulted
+  // rather than assumed.
+  if (!actionOffered && Array.isArray(copy?.readyCopy)) {
+    const ready = copy.readyCopy.find(
+      (sentence) => typeof sentence === 'string' && sentence && (obs.visibleText ?? obs.text ?? '').includes(sentence),
+    );
+    if (ready) {
+      return {
+        verdict: 'fail',
+        failKind: 'observed',
+        why: 'card renders a READY route yet offers no usable action — a ready route is offered directly, not withheld',
+      };
+    }
+  }
+
+  // ROUND 7 P2 — THE BACK BUTTON PROVES THE SHELL, NOT THE CONTENT.
+  //
+  // Round 4 waited for Back before accepting a confirmation scan. Back
+  // belongs to `ConfirmReceipt`, so it does prove the panel mounted —
+  // but the scrape is of the whole card, which still carries the
+  // heading, body and notes. A receipt whose rows failed to render
+  // therefore produced a non-null `confirmText` and `confirmScanned:
+  // true` over content nobody had observed.
+  //
+  // The receipt's own `youReceive` line is the positive evidence, taken
+  // from the shipped bundle so there is no second copy to drift.
+  // ROUND 43 P2 — EITHER LEGITIMATE RECEIPT LEAD, because there are two.
+  //
+  // `ForcedCloseCard` renders `rentalReceipt` rather than `receipt` on
+  // `ready-rental`, and the two `youReceive` strings are entirely
+  // different — one describes collateral or the lent asset, the other
+  // the prepaid rent and an NFT that stays put. Supplying only the
+  // ordinary lead meant a rental confirmation could render all six rows
+  // correctly and still be reported `blocked/incomplete`: a FALSE gap in
+  // coverage on the one route this drive already records as uncovered,
+  // which is the worst place for it — nobody would have questioned an
+  // `incomplete` there.
+  //
+  // Accepting EITHER rather than selecting by readiness, deliberately.
+  // The observation carries no readiness field, and adding one to pick
+  // the lead would make this arm depend on a value the DOM pass infers
+  // from prose. Both strings are legitimate receipt leads; what this arm
+  // establishes is that the panel rendered its receipt at all, and
+  // either one proves that.
+  //
+  // `receiptLeads` plural. The singular `receiptLead` is still accepted
+  // so an older constructed record keeps working.
+  const leads = Array.isArray(copy?.receiptLeads)
+    ? copy.receiptLeads.filter((lead) => typeof lead === 'string' && lead !== '')
+    : [copy?.receiptLead].filter((lead) => typeof lead === 'string' && lead !== '');
+  if (obs.confirmText !== null && obs.confirmText !== undefined && leads.length > 0) {
+    if (!leads.some((lead) => obs.confirmText.includes(lead))) {
+      return {
+        verdict: 'blocked',
+        blockedKind: 'incomplete',
+        why: 'the confirmation shell opened but its receipt content did not render — nothing was observed about what it claims',
+      };
+    }
+  }
+  // ROUND 53 P2 — SIX ROWS, BUT ARE THEY THE SIX?
+  //
+  // `rowsOk` counted six `.receipt-row` elements with non-blank leaves.
+  // Six copies of "You receive", with the fees and loss disclosures
+  // gone, satisfied every part of that — and the receipt-lead check
+  // above, since the lead was present six times over — so the run could
+  // claim the whole funds receipt was scanned while the two rows that
+  // most matter were absent.
+  //
+  // ROUND 53 P2, the same rule's other half — AND THE SIX FOR THIS
+  // ROUTE. Round 43 accepted either receipt because "the observation
+  // carries no readiness field", which was true of the record and not of
+  // the verdict: the readiness copy is already matched here, so the
+  // route IS known. Accepting either let a collateral card render the
+  // rental receipt, and a rental card the collateral one — each a
+  // confirmation describing a different transaction from the one it
+  // confirms.
+  //
+  // TWO OUTCOMES, and the split is the honest part:
+  //
+  //   - DUPLICATED rows FAIL. That is structural: it needs no
+  //     vocabulary, so a stale copy bundle cannot explain it.
+  //   - Rows that match the OTHER route's receipt exactly also FAIL —
+  //     the drive recognised the copy, it is simply the wrong receipt.
+  //   - Rows matching NEITHER set are BLOCKED, not failed. This drive's
+  //     copy comes from the repo and the page's from the deployed
+  //     bundle, so a divergence is a gap in the drive's vocabulary as
+  //     readily as a defect. Round 11 settled that direction for the
+  //     body copy; the same reasoning applies here.
+  // ROUND 59 P2 — the UNRECOGNISED receipt stays HERE, below the
+  // applicability exits, while its structural siblings were hoisted.
+  //
+  // Six rows this drive cannot identify as either receipt is a gap in
+  // ITS vocabulary as readily as a defect — its copy comes from the repo
+  // and the page's from the deployed bundle — so an inapplicable
+  // position is a perfectly good reason not to have judged it. The
+  // duplicated and wrong-route cases are not like that: no state change
+  // produces either, and the lender was already shown them.
+  //
+  // Decided once, above, and only REPORTED here, so the two positions
+  // cannot drift into two different rules.
+  if (receiptCheck === 'unrecognised') {
+    return {
+      verdict: 'blocked',
+      blockedKind: 'incomplete',
+      why: 'the confirmation rendered six rows this drive could not identify as either receipt — its copy may have moved ahead of this drive, so nothing is claimed about what they say',
+    };
+  }
+  if (!obs.settled) {
+    return {
+      verdict: 'blocked',
+      blockedKind: 'incomplete',
+      why: 'card still reported a check running at the deadline — visible and explained, but its settled copy was never scanned for an amount',
+      checkRunning,
+    };
+  }
+  // ROUND 45 P2 — THE CONFIRMATION MUST OFFER ITS OWN ACTION.
+  //
+  // The drive clicked the outer submit, waited for Back and scanned the
+  // six rows — and never looked at the button that would actually send
+  // the transaction. A confirm control missing, hidden, blank or
+  // permanently disabled strands the lender one click short while the
+  // run reports the ACTIONABLE route as covered, which is the strongest
+  // claim this drive makes.
+  //
+  // Judged only where the panel was established to have rendered, so a
+  // shell that never opened is still reported by the arms around it
+  // rather than as a missing button.
+  //
+  // On the path this drive takes the control cannot legitimately be
+  // unusable: `ConfirmReceipt`'s confirm is `disabled={busy || disabled}`,
+  // `ForcedCloseCard` passes `disabled={holdingAfterSubmit}`, and
+  // `submittable` is `canSubmitFromApp(readiness) && !holdingAfterSubmit`
+  // — so a card whose outer submit was clickable has both false, and
+  // `busy` cannot be true because this drive never submits.
+  //
+  // Absent `confirmAction` says nothing: an older record predates the
+  // field, and inventing a finding from silence is the failure mode this
+  // file guards against everywhere else.
+  // ROUND 46 P2 — GATED ON THE PANEL, not on the receipt reading.
+  //
+  // `confirmText` is null whenever any receipt row fails its scan, so a
+  // BROKEN CONFIRM BUTTON plus one bad row suppressed the action finding
+  // entirely and the visit was downgraded to BLOCKED. An incomplete
+  // receipt is a gap in what was read; an unusable transaction button is
+  // a defect that WAS read, and the second must not be hidden by the
+  // first — the same ordering rule this module applies to amounts and
+  // duplicate controls.
+  //
+  // The presence of `confirmAction` IS the panel evidence: the receipt
+  // pass runs only after the Back control was seen, so a record carrying
+  // this field is a record whose confirmation opened.
+  if (obs.confirmAction) {
+    const a = obs.confirmAction;
+    // ROUND 49 P2 — the STRUCTURAL faults have already been judged, above
+    // the applicability exits. What is left here is the pair a state
+    // change can legitimately explain, which is why they stay below.
+    //
+    // ROUND 46 P2 — A DISABLED CONTROL.
+    if (!a.enabled) {
+      return {
+        verdict: 'fail',
+        failKind: 'observed',
+        why: 'the confirmation opened but its confirmation action is disabled — the lender is left one click short of the action the card offered',
+      };
+    }
+    // ROUND 46 P2 — AND IT MUST BE ABLE TO RECEIVE THE CLICK.
+    //
+    // Visible, enabled and labelled are all true of a button covered by
+    // another element, or one under `pointer-events: none`. The lender
+    // cannot activate either, and every field above says the route is
+    // fine. The drive asks Playwright the actionability question
+    // directly with a TRIAL click, which runs the checks and dispatches
+    // nothing — the only form of this test a watch-only drive may make,
+    // since the real click sends a fee-paying transaction.
+    //
+    // `=== false`, so a record that never ran the trial says nothing.
+    if (a.clickable === false) {
+      return {
+        verdict: 'fail',
+        failKind: 'observed',
+        why: 'the confirmation action is visible and enabled but cannot receive a click — covered by another element, or not accepting pointer events',
+      };
+    }
+    // ROUND 47 P2 — AND AN UNTESTED ACTION IS NOT A PASS.
+    //
+    // The previous round's own fix created this. Leaving `clickable`
+    // unset when the re-read label did not match the snapshot's control
+    // was the honest thing to do about the reading, but the verdict then
+    // fell through to `pass` — so a lender run could exit 0 having never
+    // established that the fee-paying action is usable, which is the
+    // single claim the trial exists to make.
+    //
+    // BLOCKED, not FAIL: nothing was observed to be wrong. It is an
+    // incomplete observation, and `forcedCloseCoverage` already treats
+    // an incomplete observation as a gap that exits 2 — "re-run, this
+    // did not establish what it advertises" — rather than as a defect.
+    //
+    // `=== null` and not falsy: `undefined` still means a record from
+    // before the field existed, and accusing one of a gap it could not
+    // have filled would be inventing a finding from silence.
+    if (a.clickable === null) {
+      return {
+        verdict: 'blocked',
+        blockedKind: 'incomplete',
+        why: 'the confirmation opened but its action could not be identified for the click trial — the control the snapshot described was not the one found, so whether the lender can submit went untested',
+      };
+    }
+  }
+
+  // ROUND 84 P2 — AND AN UNESTABLISHED BACK TRIAL IS NOT A PASS EITHER.
+  //
+  // Round 75 taught the producer to write `null` when readiness withdrew
+  // the confirmation mid-pass: a trial that fails because the panel went
+  // away is not evidence that the control is unusable. That was right
+  // about the producer and left the verdict with no arm for it — the Back
+  // arms above test `=== false`, so `null` fell through to `pass` and a
+  // visit could report `confirmScanned=true` having never established
+  // that the lender can leave a pre-signature panel.
+  //
+  // The asymmetry is the tell: `confirmAction.clickable` has carried an
+  // explicit `null` → incomplete arm since round 47, on exactly this
+  // argument — an untested control is not a tested one, and BLOCKED says
+  // "re-run, this did not establish what it advertises" where `pass`
+  // claims it did. The Back control's result is identically meaningful
+  // and had no such arm.
+  //
+  // BOTH null-shaped outcomes, not only the one that was named. `present:
+  // null` is the same sentence one step earlier — the panel was gone
+  // before Back could be counted, so whether there is a way out went
+  // unread — and this PR's most repeated finding is a fix applied to one
+  // of several parallel sites. They differ only in what evidence each
+  // needs: `present === true` already proves the panel was up, while
+  // `present === null` proves nothing on its own and so requires the same
+  // positive panel evidence the round-70 missing-Back arm demands.
+  //
+  // `=== null` and never falsy, for the reason every arm in this file
+  // says: `undefined` means a record predating the field, and accusing
+  // one of a gap it could not have filled is inventing a finding from
+  // silence.
+  const panelWasUp =
+    obs.confirmAction?.present === true ||
+    (Array.isArray(obs.confirmRowsText) && obs.confirmRowsText.length > 0);
+  // ROUND 86 P2 — AND THE PAINT READ IS THE THIRD NULL, which round 84
+  // left behind while fixing its two siblings.
+  //
+  // `painted` is `null` when the evaluation could not run at all — the
+  // control detached between its trial click and the paint read, or the
+  // injected predicate threw. Playwright's actionability suite ignores
+  // ancestor opacity, which is the entire reason this second question is
+  // asked, so a clickable-but-unread Back leaves the run having
+  // established nothing about whether the lender can SEE the only control
+  // for declining a fee-paying action. That fell through to `pass`.
+  //
+  // Written as a third disjunct rather than a second arm: all three are
+  // one sentence — the panel moved while its Back control was being read —
+  // and three arms with three messages is the drift this file keeps
+  // closing. `undefined` stays reserved for a record predating each field.
+  if (
+    (obs.backAction?.present === true && obs.backAction.clickable === null) ||
+    (obs.backAction?.present === true && obs.backAction.painted === null) ||
+    (obs.backAction?.present === null && panelWasUp)
+  ) {
+    return {
+      verdict: 'blocked',
+      blockedKind: 'incomplete',
+      why: 'the confirmation withdrew while its Back control was being read, so whether the lender can leave a pre-signature panel went untested',
+    };
+  }
+
+  // ROUND 54 P2 — A READY ROUTE THE PROTOCOL WOULD REFUSE.
+  //
+  // The card's readiness copy was allowed to substantiate itself: the
+  // pinned snapshot established Active status and ownership and nothing
+  // about the grace deadline, so a regressed page rendering a READY
+  // route with an enabled submit passed — this drive certifying an
+  // action `triggerDefault` is guaranteed to refuse, after the lender
+  // has paid a network fee for it. The same class as the
+  // withheld-copy-plus-enabled-control arm, with the chain rather than
+  // the copy as the authority.
+  //
+  // `=== false` and not falsy, deliberately: `undefined` means the read
+  // could not answer, and a drive that cannot ask must not accuse. That
+  // case is an incomplete observation, reported below.
+  //
+  // Kept BELOW the applicability exits with the other chain-dependent
+  // arms: a loan that terminalises between the DOM pass and the pinned
+  // re-read is no longer defaultable, and reporting that as a product
+  // defect would be a false FAIL invented out of a race.
+  //
+  // ROUND 56 P2 — AND BOTH ENDS OF THE BRACKET MUST AGREE BEFORE THIS
+  // ACCUSES.
+  //
+  // Round 55 treated a `false`-to-`true` crossing as ambiguous and left
+  // the reverse to fall through to this FAIL. The reverse is just as
+  // unpairable: the protocol pausing, or the sequencer going unhealthy,
+  // between the DOM observation and the pinned re-read makes
+  // `defaultableBefore === true` and `defaultable === false` — and the
+  // ready action the card offered WAS valid when it was observed. That
+  // is a correct card reported as a product failure on the strength of
+  // something that happened afterwards, which is the error round 55 had
+  // just finished arguing against in the other direction.
+  //
+  // So the accusation requires the window to have been quiet AND
+  // refusing throughout. A disagreement of either kind is reported
+  // below as an incomplete observation.
+  // EVERY RENDER THIS DRIVE CAPTURED, settled one first, each carrying
+  // its own submit facts.
+  //
+  // NOT A SECOND COPY OF `renders` above, though it looks like one and
+  // this PR's commonest finding is exactly that shape. They walk the same
+  // renders and read DIFFERENT TEXT, deliberately: the unsafe-control arm
+  // matches withheld copy anywhere on the CARD, because a live button
+  // beside such a sentence is wrong wherever the sentence sits, while
+  // these arms read the BODY first — round 12's rule, so the `lastOutcome`
+  // note about a PREVIOUS attempt cannot substantiate a claim about the
+  // current state. Collapsing them would silently pick one rule for both.
+  //
+  // Declared here rather than beside the route arms that first needed it
+  // (round 70), because the REFUSAL arms below need the same list — and
+  // one notion of "what this drive saw" is the point. Hoisted by moving
+  // the whole declaration, not by slicing the file: an earlier attempt at
+  // that swept two unrelated arms above their own declarations and put
+  // 183 tests into a temporal dead zone.
+  //
+  // `offeredIn` is exactly the expression `actionOffered` uses, so one
+  // render is judged by one rule wherever it appears. It reads a render
+  // carrying NEITHER field as OFFERED — `!== false` passes and
+  // `!undefined` passes — which is the same default `actionOffered`
+  // takes: silence is not evidence against the offer. Confined to
+  // hand-written records either way, since the scrape sets both fields on
+  // every render and an absent control yields `submitVisible: false` with
+  // `submitDisabled: true` rather than silence.
+  const offeredIn = (r) => r?.submitVisible !== false && !r?.submitDisabled;
+  const capturedRenders = [
+    {
+      visibleText: obs.bodyVisibleText ?? obs.bodyText ?? obs.visibleText ?? obs.text,
+      // The WHOLE card's painted text beside the body-first reading. The
+      // ready-state arms have always matched against the card, the
+      // refusal and route arms against the body; carrying both keeps each
+      // arm on the text it was written for instead of silently switching
+      // one of them when this list was shared out (round 74).
+      cardText: obs.visibleText ?? obs.text,
+      offered: actionOffered,
+    },
+    ...(Array.isArray(obs.seenRenders)
+      ? obs.seenRenders.map((r) => ({
+          visibleText: r?.bodyVisibleText ?? r?.bodyText ?? r?.visibleText ?? r?.text,
+          cardText: r?.visibleText ?? r?.text,
+          offered: offeredIn(r),
+        }))
+      : []),
+  ];
+  const paintedIn = (renderText, sentence) =>
+    typeof sentence === 'string' &&
+    sentence !== '' &&
+    typeof renderText === 'string' &&
+    renderText.includes(sentence);
+
+  // ROUND 74 P2 — IN EVERY CAPTURED RENDER, each on its own submit facts.
+  //
+  // Derived from the settled snapshot alone, this skipped all three arms
+  // it gates whenever the card ENDED somewhere else: a render offering a
+  // ready route with a live button, settling into `ready-needs-route`,
+  // left a lender who was briefly offered a fee-paying transaction the
+  // protocol would reject — and the run passed. The unsafe-control arm
+  // does not cover it either, since its copy is a WITHHELD state and this
+  // one is ready.
+  //
+  // `cardText`, which is what this test has always read. The refusal and
+  // route arms read the body; keeping both on the list means sharing it
+  // out did not quietly switch either.
+  const readyOfferedIn = (r) =>
+    r.offered &&
+    Array.isArray(copy?.readyCopy) &&
+    copy.readyCopy.some((sentence) => paintedIn(r.cardText, sentence));
+  const readyOffered = capturedRenders.some(readyOfferedIn);
+  const bracketDisagrees =
+    'defaultableBefore' in obs &&
+    obs.defaultableBefore !== undefined &&
+    obs.defaultable !== undefined &&
+    obs.defaultableBefore !== obs.defaultable;
+  // ROUND 75 P2 — BOTH SAMPLES MUST SAY `false`, not merely "they did not
+  // disagree".
+  //
+  // `bracketDisagrees` requires both ends to be DEFINED, so an unreadable
+  // pre-render probe beside a `false` post-render one made it false and
+  // this arm accused the card on one side of a bracket it promises to
+  // take on two. A transient RPC failure was enough to report a
+  // correctly rendered card as a product defect — the direction this file
+  // refuses everywhere else, and the reason the bracket exists at all.
+  //
+  // A record that carries no `defaultableBefore` KEY is unaffected: that
+  // is an older shape rather than a probe that failed, and requiring a
+  // field it never had would silence the arm for every one of them. `in`
+  // is what tells those apart, the same distinction round 74 needed for
+  // JSON-RPC ids.
+  // ROUND 85 P2 — TWO MATCHING ENDS DO NOT SAY WHAT HAPPENED BETWEEN
+  // THEM, and three arms below were reading them as if they did.
+  //
+  // The bracket exists to establish that the window was QUIET, so that a
+  // card disagreeing with the protocol is a defect in the card rather than
+  // a state change this drive watched happen. Equality at the two ends is
+  // strong evidence of that for an answer that moves one way and no
+  // evidence at all for one that can round-trip: an internal-match
+  // candidate can appear and be consumed inside the observation, leaving
+  // both ends `false` while a render truthfully painted the match route.
+  //
+  // The drive now READS the interior — `stableAcross`, one probe per block
+  // of the span — and reports it here as a tri-state. `false` is a window
+  // that moved; `null` is one this drive could not cover, which is exactly
+  // the old two-point evidence and must not read as `true`. An older
+  // record carries neither field, so `undefined` leaves every arm below
+  // behaving as it did.
+  const unstable = (stable) => stable === false || stable === null;
+  const bracketUnstable = unstable(obs.defaultableStable);
+  const routeUnstable = unstable(obs.internalMatchStable);
+  // One sentence for all three sites: the finding is the same one wherever
+  // it lands, and three hand-written variants is how they drift.
+  const notQuiet = (what) => ({
+    verdict: 'blocked',
+    blockedKind: 'incomplete',
+    why: `${what}, and this drive could not establish that the protocol's answer held at every block of the window it watched — two matching reads at the ends of a bracket do not say what happened between them, so this is not attributed to the card`,
+  });
+  const bracketRefuses =
+    obs.defaultable === false &&
+    (!('defaultableBefore' in obs) || obs.defaultableBefore === false);
+  if (bracketRefuses && readyOffered) {
+    if (bracketUnstable) {
+      return notQuiet(
+        'a render this drive read offers a ready close-out the protocol would refuse',
+      );
+    }
+    return {
+      verdict: 'fail',
+      // ROUND 60 P2 — `inferred`, NOT `observed`, and the distinction is
+      // the whole point of the tag.
+      //
+      // Every other arm tagged `observed` is something read off the
+      // page: a figure, a control, a duplicated row. This one is a
+      // DISAGREEMENT BETWEEN TWO PROVIDERS — the page's endpoint and
+      // `OBSERVE_RPC` — and the most ordinary cause of that is the
+      // deployment being pointed at another chain, where the same loan
+      // id means something else or nothing at all.
+      //
+      // `observed` bypasses the infrastructure gates by design (round
+      // 38), so tagging it that way made an operational wrong-chain
+      // state exit 1 as a product regression before `pageChainWrong`
+      // could report it as BLOCKED. The card itself may be perfectly
+      // correct for the chain it is actually talking to.
+      //
+      // `inferred` keeps the finding and lets the chain gate go first,
+      // which is exactly what that ranking was built for.
+      failKind: 'inferred',
+      why: 'the card renders a READY route and offers the action, but simulating that exact transaction against the protocol shows it would be refused — the lender would pay a network fee for a call that cannot succeed',
+    };
+  }
+  // Does the card PAINT this sentence? Shared by the two arms below,
+  // and declared ahead of both so neither sits in its temporal dead
+  // zone — which is how the first version of the round-65 arm was
+  // written, and would have thrown on the first card that reached it.
+  const paints = (sentence) =>
+    typeof sentence === 'string' &&
+    sentence !== '' &&
+    (obs.bodyVisibleText ?? obs.bodyText ?? obs.visibleText ?? obs.text ?? '').includes(sentence);
+
+
+
+  // ROUND 65 P2 — AND THE REVERSE DIRECTION, which nothing checked.
+  //
+  // The arm above catches a card offering an action the protocol would
+  // refuse. Its mirror is a card that WITHHOLDS the action and states a
+  // refusal the protocol does not make: `not-yet`, `blocked-paused`,
+  // `blocked-sequencer` or `blocked-no-consent` rendered with no submit
+  // while both ends of the bracket say the close-out would succeed.
+  //
+  // Nothing reported that. `readyOffered` is false, so the arm above
+  // does nothing; the recognition arm then passes the card as correctly
+  // withheld. The lender is denied a close-out the protocol accepts and
+  // is told a reason that is not true — and if any other visited
+  // position supplied the confirmation scan, the whole run exits clean.
+  //
+  // ONLY THE FOUR REFUSAL COPIES. `unknown` asserts nothing, and
+  // `readyNeedsRoute` is a claim about the app's ability to route rather
+  // than about the protocol's answer — a close-out that simulates with
+  // empty calldata makes neither of those a false statement. Widening
+  // this to every withheld sentence would accuse a card that is telling
+  // the truth, which is the direction that gets a check switched off.
+  //
+  // `inferred` and BOTH ENDS OF THE BRACKET, exactly as its mirror: a
+  // page-versus-protocol disagreement whose commonest cause is a
+  // deployment on another chain, and a window that must have been quiet
+  // before the disagreement means anything.
+  // ROUND 72 P2 — ON EVERY CAPTURED RENDER, each on its OWN withheld-ness.
+  //
+  // The settled-snapshot gate skipped this entirely whenever the card
+  // ended up ready: an earlier render stating `blocked-paused` with no
+  // submit, on a loan the protocol accepted at both ends of the bracket,
+  // passed clean. My own reason for scoping it to the settled render was
+  // that a card which withholds and then becomes ready denies the lender
+  // nothing, because they get the action — and that answers the wrong
+  // question. The harm named here is not the denial, it is the FALSE
+  // STATEMENT ABOUT PROTOCOL STATE, and a false statement is not undone
+  // by a later true one.
+  //
+  // Nor is such a render a legitimate loading state. A readiness whose
+  // reads have not settled paints `unknown`; painting `blocked-paused`
+  // means the pause read RESOLVED as paused, which the bracket says it
+  // should not have.
+  //
+  // Withheld-ness stays per render and stays REQUIRED: this arm's claim
+  // is that a card refused AND blamed the protocol. A render offering the
+  // action is not refusing, whatever it paints, and the unsafe-control
+  // arm is what judges that pairing.
+  //
+  // The three INCOMPLETE arms below keep the settled gate, and that is
+  // not the same omission: each has a ready-side counterpart that already
+  // covers a card which settles ready — the missing-probe arm, the
+  // bracket-disagrees arm, and for `false`/`false` the round-7 arm, which
+  // fails a ready offered card the protocol refuses. Widening all four
+  // would report the same gap twice and block runs nothing is wrong with.
+  // ROUND 74 P2 — AND THE THREE INCOMPLETE ARMS TAKE THE SAME SWEEP.
+  //
+  // Round 73 made the FAIL arm above per-render and left these three on
+  // the settled snapshot, and I said in the review thread that each was
+  // covered by a ready-side counterpart. That is true only for a card
+  // that settles READY. A card settling into another non-actionable
+  // state — `ready-needs-route`, say — after an earlier render painted
+  // `blocked-paused` matched nothing at all: `readyOffered` is false so
+  // the ready-side arms are silent, and the settled body carries no
+  // refusal so these were too. The reason shown to the lender went
+  // unverified and the visit passed.
+  //
+  // One helper, so the four arms cannot drift apart again.
+  const refusalRenderClaim = () => {
+    if (!Array.isArray(copy?.refusalStateCopy)) return undefined;
+    for (const r of capturedRenders) {
+      if (r.offered) continue;
+      const claimed = copy.refusalStateCopy.find((sentence) => paintedIn(r.visibleText, sentence));
+      if (claimed) return claimed;
+    }
+    return undefined;
+  };
+
+  if (obs.defaultable === true && obs.defaultableBefore === true) {
+    const claimed = refusalRenderClaim();
+    if (claimed) {
+      // ROUND 85 P2 — the same interior question as the arm above. A grace
+      // deadline crossing inside the observation leaves both ends `true`
+      // while the render legitimately showed the state before it.
+      if (bracketUnstable) {
+        return notQuiet(
+          `a render this drive read withholds the action and states a refusal ("${claimed}") the protocol does not make`,
+        );
+      }
+      return {
+        verdict: 'fail',
+        failKind: 'inferred',
+        why: `a render this drive read withholds the action and states a refusal ("${claimed}"), but simulating that exact transaction against the protocol shows it would succeed — the lender is denied a close-out the protocol accepts, and given a reason that is not the protocol's`,
+      };
+    }
+  }
+
+  // ROUND 67 P2 — A REFUSAL ESTABLISHES THAT, NOT WHY.
+  //
+  // The arm above catches a card claiming a refusal the protocol does
+  // not make. Its blind spot is the case where the protocol DOES refuse
+  // and the card names the wrong reason: the grace period has not
+  // elapsed but the card says the protocol is paused. Both simulations
+  // return `false`, so the arm above is silent, and the recognition arm
+  // then passes the card — with the lender reading an explanation that
+  // is not the one the chain would give.
+  //
+  // A boolean simulation cannot settle this. `triggerDefault` reverting
+  // says the call is refused; it does not say which gate refused it, and
+  // this drive reads no gate. So the honest answer is that the state was
+  // NOT VERIFIED, and that is what it says.
+  //
+  // Reported as INCOMPLETE rather than as a defect, because the card may
+  // be entirely right — the difference between "we checked and it is
+  // wrong" and "we did not check" is the whole distinction this file is
+  // built on, and collapsing it here would manufacture findings out of
+  // a read this drive does not take.
+  //
+  // The stronger answer is to read the gate behind each painted state —
+  // the pause flag, the sequencer feed, the deadline view, the consent
+  // fields — and compare. That is four bracketed protocol reads rather
+  // than a rewiring, so it is deferred rather than half-done here; the
+  // tracked in #2133.
+  // ROUND 68 P2 — AND AN UNREAD SIMULATION IS NOT A PASS EITHER.
+  //
+  // The two arms around this one require the bracket to have ANSWERED —
+  // `true`/`true` for the mismatch, `false`/`false` for the unverified
+  // reason. When `probeCloseOut` could not classify either side, neither
+  // ran, and the missing-probe guard further down is scoped to
+  // `readyOffered`, so a card painting a specific refusal fell through
+  // to `pass`. The run then exits clean having established neither that
+  // the protocol refuses NOR that the reason shown is the real one.
+  //
+  // Above the `false`/`false` arm, because "we could not ask" is a
+  // different and weaker statement than "we asked and it refused".
+  if (obs.defaultable === undefined || obs.defaultableBefore === undefined) {
+    const claimed = refusalRenderClaim();
+    if (claimed) {
+      return {
+        verdict: 'blocked',
+        blockedKind: 'incomplete',
+        why: `the card withholds the action and states a specific reason ("${claimed}"), and this drive could not simulate the close-out — so neither the refusal nor the reason given for it was established`,
+      };
+    }
+  }
+  // SELF-REVIEW — AND A BRACKET THAT ANSWERED TWICE, DIFFERENTLY, IS NOT
+  // A PASS EITHER.
+  //
+  // Found by enumerating the withheld-card arms as a matrix rather than
+  // reading them one at a time. Between them the three arms around this
+  // one cover `true`/`true`, either end `undefined`, and `false`/`false`
+  // — and nothing covers the two DISAGREEING combinations. A card
+  // painting `blocked-paused` while the protocol crossed its grace
+  // deadline mid-observation fell all the way through to `pass`, with
+  // the run exiting clean on a bracket that never settled.
+  //
+  // The `bracketDisagrees` arm further down does not cover it: that one
+  // is scoped to `readyOffered`, which is false by construction here.
+  // This is the withheld mirror of it, and it says the same thing — the
+  // window was not quiet, so the render cannot be paired with a chain
+  // answer, in EITHER direction. Guessing which end was true would
+  // manufacture a verdict out of a race, the error rounds 55 and 56
+  // spent themselves arguing against on the ready side.
+  if (bracketDisagrees) {
+    const claimed = refusalRenderClaim();
+    if (claimed) {
+      return {
+        verdict: 'blocked',
+        blockedKind: 'incomplete',
+        why:
+          obs.defaultable === true
+            ? `the card withholds the action and states a specific reason ("${claimed}"), and the protocol went from refusing this close-out to permitting it while the card was being observed — the withheld render cannot be matched to a chain answer taken at the same moment`
+            : `the card withholds the action and states a specific reason ("${claimed}"), and the protocol went from permitting this close-out to refusing it while the card was being observed — the withheld render cannot be matched to a chain answer taken at the same moment`,
+      };
+    }
+  }
+  if (obs.defaultable === false && obs.defaultableBefore === false) {
+    const claimed = refusalRenderClaim();
+    if (claimed) {
+      return {
+        verdict: 'blocked',
+        blockedKind: 'incomplete',
+        why: `the card withholds the action and states a specific reason ("${claimed}"); the protocol does refuse the close-out, but a reverting simulation establishes THAT and not WHY, and this drive reads no gate — so the reason the lender is given was not verified`,
+      };
+    }
+  }
+
+  // ROUND 64 P2 — AND WHICH SETTLEMENT IT WOULD PERFORM, not only that
+  // it would succeed.
+  //
+  // `triggerDefault(loanId, [])` simulates cleanly on a defaultable loan
+  // whether the contract dispatches an internal match or takes the
+  // in-kind path, because the match is dispatched FIRST and succeeds. So
+  // a card that has regressed to promising the collateral, on a loan
+  // with a live match candidate, passed everything this module had: the
+  // simulation said yes, and the standard receipt deliberately covers
+  // both outcomes so its six rows were satisfied too. The lender reads
+  // "you receive the collateral" and is repaid the lent asset instead —
+  // a promise about funds that the protocol will not keep, which is the
+  // one class of defect this whole check exists for.
+  //
+  // `inferred`, for the same reason the refusal arm above is: it is a
+  // disagreement between the page and a protocol read, and the most
+  // ordinary cause of that is a deployment on another chain. The chain
+  // gate must go first.
+  //
+  // BOTH ENDS OF THE BRACKET must agree before this is a finding. A
+  // match candidate can appear or be consumed inside the observation
+  // window, and one read cannot distinguish a mis-promising card from an
+  // answer that changed while the drive watched.
+  const matchKnown =
+    obs.internalMatch !== undefined &&
+    obs.internalMatchBefore !== undefined &&
+    obs.internalMatch === obs.internalMatchBefore;
+  // ROUND 68 P2 — AN UNREAD ROUTE IS NOT A PASS.
+  //
+  // When either probe could not answer — an unrecognised view revert, a
+  // transient observer-RPC failure — `matchKnown` is false, the
+  // comparison below is skipped, and the disagreement arm after it also
+  // requires both values. The verdict then returned `pass` carrying only
+  // `routeKnown: false`, which `forcedCloseCoverage` does not treat as a
+  // gap: an exit-0 run certifying in-kind or internal-match copy it
+  // never substantiated.
+  //
+  // Only where the card COMMITS to one of the two routes AND offers the
+  // action — a card painting neither route, or offering nothing, is not
+  // making the promise this probe exists to check, and blocking those
+  // would turn an unread view into a gap in coverage that was never
+  // there.
+  //
+  // UNREAD, not merely "not known". `matchKnown` is also false when both
+  // probes answered and DISAGREED, which is the mid-observation change
+  // the arm below reports in its own words — and the first version of
+  // this condition used `!matchKnown`, shadowed that arm, and gave the
+  // wrong explanation for a race. Caught by its test, which is what that
+  // test is for.
+  //
+  // ROUND 70 P2 — EACH RENDER CARRIES ITS OWN SUBMIT FACTS.
+  //
+  // `actionOffered` describes the SETTLED snapshot only, so gating the
+  // whole traversal on it skipped the entire history whenever the card
+  // ended up withheld — and an earlier render that exposed an ENABLED
+  // submit beside the wrong settlement promise is exactly the case this
+  // arm exists for. The unsafe-control arm does not cover it either: its
+  // copy is a READY state, not a withheld one.
+  //
+  // ROUND 72 P2 — A PROMISE IS A PROMISE WHETHER OR NOT IT CAN BE ACTED
+  // ON.
+  //
+  // The three arms below used to require the render's own control to be
+  // enabled. That gate was mine, not a finding's, and it does not hold
+  // up: what this probe checks is whether the card COMMITTED to a funds
+  // outcome, and pressability is no part of that claim. A card painting
+  // "you receive the collateral" while the wallet client initialises has
+  // already told the lender the wrong thing — and it is not a loading
+  // placeholder, because a readiness the reads have not settled renders
+  // `unknown`, not a route. Painting a route means the app CONCLUDED one,
+  // and a conclusion drawn from incomplete reads is precisely the
+  // unsubstantiated outcome this file exists to catch.
+  //
+  // The release note said this without the qualifier, so the code was the
+  // divergence — which is the direction this project resolves.
+  const routeUnread =
+    obs.internalMatch === undefined || obs.internalMatchBefore === undefined;
+  // SELF-REVIEW OF ROUND 70 — and the same sweep, on the sibling arm.
+  //
+  // Round 70 paired each render with its own submit facts for the
+  // MISMATCH arm and left this one gated on `actionOffered` and reading
+  // only the settled body — so a card that promised a route on an
+  // earlier, pressable render and then withdrew the action reported a
+  // clean pass even though this drive could not read the route that
+  // promise depended on. I fixed one of two arms in the same file, one
+  // round after being told that is the recurring failure, so I checked
+  // for it this time instead of waiting to be told again.
+  if (routeUnread) {
+    const undecided = capturedRenders.some(
+      (r) =>
+        paintedIn(r.visibleText, copy?.internalMatchReadyCopy) !==
+        paintedIn(r.visibleText, copy?.inKindReadyCopy),
+    );
+    if (undecided) {
+      return {
+        verdict: 'blocked',
+        blockedKind: 'incomplete',
+        why: 'the card promises a specific settlement route and this drive could not read which route the protocol would take — the outcome copy the lender is shown was not substantiated',
+      };
+    }
+  }
+  //
+  // ROUND 69 P2 — ON EVERY CAPTURED RENDER, not only the settled one.
+  //
+  // The bracket proves the route did NOT change across the observation,
+  // so a render that painted the in-kind promise before the card settled
+  // on internal-match copy showed the lender the wrong funds outcome at
+  // a moment when the protocol's answer was already fixed. `seenRenders`
+  // preserved that render and this comparison read only the settled one.
+  //
+  // Thirteenth instance of the parallel-site shape, and one I should
+  // have closed myself: I made the HEADING arm per-render two cycles ago
+  // as a proactive sweep, and did not carry the same sweep to its
+  // sibling — applying the lesson to one arm and not the other is the
+  // lesson, restated.
+  //
+  // Same `renders` list the unsafe-control arm uses, so there is one
+  // notion of "what this drive saw" rather than two.
+  if (matchKnown) {
+    const wrongRender = capturedRenders.find((r) => {
+      const m = paintedIn(r.visibleText, copy?.internalMatchReadyCopy);
+      const k = paintedIn(r.visibleText, copy?.inKindReadyCopy);
+      if (m === k) return false;
+      return (obs.internalMatch === true && k) || (obs.internalMatch === false && m);
+    });
+    if (wrongRender) {
+      // ROUND 85 P2 — AND THIS IS THE ARM THE INTERIOR READ WAS ADDED FOR.
+      //
+      // The message below claims the protocol held its candidate, or held
+      // none, "throughout the observation". Two endpoint reads cannot say
+      // that about a value which can appear AND be consumed inside the
+      // window — so on a live round-trip this accused a card that had
+      // painted the truth, in the words of a claim the drive had not
+      // established.
+      if (routeUnstable) {
+        return notQuiet(
+          'a render this drive read promises a settlement route the protocol would not take',
+        );
+      }
+      return {
+        verdict: 'fail',
+        failKind: 'inferred',
+        why:
+          obs.internalMatch === true
+            ? 'a render this drive read promises the collateral in kind, while the protocol held a live internal-match candidate throughout the observation and would dispatch that instead — the lender was shown one outcome and would receive another'
+            : 'a render this drive read promises an internal match, while the protocol held no match candidate throughout the observation and would settle the close-out another way — the lender was shown one outcome and would receive another',
+      };
+    }
+  }
+  // The same window rule as the refusal arm below: a route that changed
+  // while the card was being observed cannot be matched to the render.
+  //
+  // SELF-REVIEW — THE THIRD ARM OF THIS FAMILY, on the same two counts
+  // its siblings were corrected on. Read as a matrix, the three arms
+  // judging a painted route are the bracket agreeing, the bracket going
+  // unread, and the bracket disagreeing; the first two traverse
+  // `capturedRenders` and require a render to have actually COMMITTED to a
+  // route, and this one did neither.
+  //
+  // It read `actionOffered` — the SETTLED snapshot — so a card promising
+  // a route on an earlier pressable render and then withdrawing the
+  // action fell through to a pass with the route unpaired, which is
+  // round 70's finding and its own sweep for the third time in one file.
+  //
+  // And it fired with no promise painted at all, where both siblings
+  // deliberately do not: a card painting neither route is not making the
+  // claim this probe exists to check, and blocking it reports a gap in
+  // coverage that was never there. That is the over-blocking direction,
+  // which is quieter than a false FAIL and still wrong.
+  if (
+    obs.internalMatch !== undefined &&
+    obs.internalMatchBefore !== undefined &&
+    obs.internalMatch !== obs.internalMatchBefore
+  ) {
+    const promised = capturedRenders.some(
+      (r) =>
+        paintedIn(r.visibleText, copy?.internalMatchReadyCopy) !==
+        paintedIn(r.visibleText, copy?.inKindReadyCopy),
+    );
+    if (promised) {
+      return {
+        verdict: 'blocked',
+        blockedKind: 'incomplete',
+        why: 'the settlement route the protocol would take changed while the card was being observed — the route it painted cannot be matched to a chain answer taken at the same moment',
+      };
+    }
+  }
+
+  // ROUND 55 P2 — AND THE WINDOW HAS TO HAVE BEEN QUIET.
+  //
+  // The pinned answer is taken AFTER the whole DOM observation, which
+  // can run for thirty seconds. A grace deadline crossing inside that
+  // window meant a card that offered a ready action while the protocol
+  // would still have refused it was validated by a `true` read taken
+  // afterwards — the transient unsafe state resolved away by the passage
+  // of time, which is precisely what this drive exists to catch.
+  //
+  // Reported as INCOMPLETE rather than guessed at in either direction.
+  // The card may legitimately have started withheld and become ready
+  // inside the window, and telling that from the defect would need a
+  // chain answer per render, which this drive does not take. Saying so
+  // is the honest outcome; either guess would be an invention.
+  //
+  // ROUND 56 P2 — EITHER DIRECTION. The reverse crossing is no more
+  // pairable than the forward one, and letting it fall through to the
+  // FAIL above accused a card that was correct when it was observed.
+  if (bracketDisagrees && readyOffered) {
+    return {
+      verdict: 'blocked',
+      blockedKind: 'incomplete',
+      why:
+        obs.defaultable === true
+          ? 'the protocol went from refusing this close-out to permitting it while the card was being observed — the ready render cannot be matched to a chain answer taken at the same moment'
+          : 'the protocol went from permitting this close-out to refusing it while the card was being observed — the ready render cannot be matched to a chain answer taken at the same moment',
+    };
+  }
+  // And where the drive could not ASK, it says so rather than passing.
+  //
+  // A ready route offering the action is the strongest claim this drive
+  // vouches for, and vouching for it without the protocol's own answer
+  // is exactly the "clean reading banked on no evidence" this module
+  // refuses elsewhere. `undefined` only — an older record that predates
+  // the field is unaffected, since it carries no `defaultable` key at
+  // all and `in` distinguishes the two.
+  if (
+    (('defaultable' in obs && obs.defaultable === undefined) ||
+      ('defaultableBefore' in obs && obs.defaultableBefore === undefined)) &&
+    readyOffered
+  ) {
+    return {
+      verdict: 'blocked',
+      blockedKind: 'incomplete',
+      why: 'the card offers a READY action but the transaction it offers could not be simulated — whether the protocol would accept it went unestablished',
+    };
+  }
+  // ROUND 54 P2 — AN UNREADABLE OUTER SUBMIT IS ONE TOO.
+  //
+  // Present, visible and enabled is what made `confirmExpected` true, so
+  // a blank control — or one whose label is painted in nothing — was
+  // clicked by its test id, opened a healthy confirmation, and passed
+  // the visit. The lender cannot tell what action they are opening. The
+  // confirmation's own button has carried `labelled` since round 45 and
+  // `labelPainted` since round 46; the control that opens it, which is
+  // the first thing the lender sees, had neither.
+  //
+  // Two arms rather than one, matching the confirmation's treatment and
+  // for the same reason: a blank control and one that is not there
+  // until hovered read differently to a lender, and the run should say
+  // which it saw.
+  //
+  // `=== false`, so a record predating either field says nothing. Kept
+  // with the other control faults, below the applicability exits.
+  //
+  // ROUND 56 P2 — GATED ON THERE BEING A CONTROL AT ALL, which round 54
+  // forgot and which made this the worst false FAIL on the PR.
+  //
+  // Both fields are computed with `some` over the VISIBLE submits, and
+  // `some` on an empty array is `false`. A correct withheld card —
+  // `not-yet`, paused, sequencer-blocked, `ready-needs-route` — renders
+  // no submit at all (`ForcedCloseCard` does not render one when
+  // `submittable` is false), so both arrived `false` and every one of
+  // those ordinary, correct positions would have exited as a product
+  // failure claiming a blank action the card never offered.
+  //
+  // The live run did not catch it because the fixture loan IS
+  // submittable: the one shape this drive exercises end to end is the
+  // one shape the bug could not reach.
+  //
+  // `actionOffered` is the same gate the withheld-copy arm uses, so the
+  // label rules now say what they were always meant to say: a control
+  // the lender is BEING OFFERED must be readable.
+  // ROUND 50 P2 — AN UNREACHABLE OUTER SUBMIT IS A DEFECT, not an
+  // unread confirmation.
+  //
+  // The drive's real click already failed when the control could not
+  // take one, and that result was discarded — so a visible, enabled
+  // submit under an overlay or `pointer-events: none` reached the arm
+  // below as `confirmText === null` and was filed as an incomplete
+  // READING. It is not: the lender cannot reach the confirmation at all,
+  // which is further upstream than any of the confirm-action faults and
+  // strands them earlier.
+  //
+  // Ranked ABOVE the incomplete arm for the reason this module has now
+  // applied five times: a defect that was observed outranks a gap in
+  // what was read. Kept BELOW the applicability exits, with the other
+  // pointer faults, because a transition overlay during a terminalising
+  // loan produces exactly this — reporting it after the position has
+  // gone would be a false FAIL invented out of a race.
+  //
+  // `=== false`, so a visit that never ran the trial says nothing.
+  if (obs.submitClickable === false) {
+    return {
+      verdict: 'fail',
+      failKind: 'observed',
+      why: 'the card offers a visible, enabled action that cannot receive a click — covered by another element, or not accepting pointer events, so the lender cannot reach the confirmation at all',
+    };
+  }
+  if (obs.confirmExpected && obs.confirmText === null) {
+    return {
+      verdict: 'blocked',
+      blockedKind: 'incomplete',
+      why: 'submit was offered but its confirmation could not be opened or read — half this surface went unscanned',
+    };
+  }
+
+  // ROUND 11 P2 — "EXPLAINED" MEANS A RECOGNISED EXPLANATION.
+  //
+  // The pass called every non-empty non-submittable card the
+  // "withheld-but-explained" state, which establishes only that SOME
+  // text exists. A failed locale lookup, a raw key, or a generic
+  // "Something went wrong" body all render non-empty, carry no
+  // unresolved sentence (so `settled` is true), match no readiness
+  // guard, and were reported as correct — while the lender had been
+  // told nothing about what is known, unknown, or blocking the action.
+  //
+  // BLOCKED rather than FAIL, deliberately. Unrecognised copy may be a
+  // genuine defect or may be a state this drive does not know about
+  // yet, and those are not distinguishable from outside. Reporting the
+  // gap in the drive's own vocabulary is honest; accusing the product
+  // from it is the false-FAIL direction this PR has already produced
+  // twice.
+  if (Array.isArray(copy?.recognisedCopy) && copy.recognisedCopy.length > 0) {
+    // The BODY, not the whole card. The card also carries the
+    // `lastOutcome` note about a PREVIOUS attempt, and the component's
+    // own comment says that note does not describe the current state —
+    // so matching against the card text let a broken readiness body be
+    // vouched for by a history line (round 12 P2).
+    // ROUND 62 P2 — RECOGNISED FROM WHAT IS PAINTED, not from the DOM.
+    //
+    // `bodyText` is raw `innerText`, which keeps yielding a sentence that
+    // is transparent, clipped or filter-erased. Recognising the card's
+    // state from it lets an unreadable explanation substantiate the very
+    // action it is supposed to justify. `bodyVisibleText` is the same
+    // body with the unpainted parts left out.
+    //
+    // `??`, so a record predating the field falls back rather than
+    // recognising nothing — which would turn every old fixture into a
+    // finding. BOTH call sites take it; they are the parallel pair this
+    // PR keeps being caught by.
+    const stateText =
+      obs.bodyVisibleText ?? obs.bodyText ?? obs.visibleText ?? obs.text ?? '';
+    const known = copy.recognisedCopy.filter(
+      (sentence) => typeof sentence === 'string' && sentence && stateText.includes(sentence),
+    );
+    if (known.length === 0) {
+      return {
+        verdict: 'blocked',
+        blockedKind: 'incomplete',
+        why: 'the card rendered text this drive does not recognise as any known state — it establishes that something was said, not that the lender was told what is known or blocking',
+      };
+    }
+    // ROUND 33 P2 — EXACTLY ONE, because these nine are ALTERNATIVES.
+    //
+    // `.some()` stopped at the first match, so a body carrying TWO of
+    // them satisfied recognition on the strength of either. The states
+    // are mutually exclusive by construction — `ForcedCloseCard`'s
+    // `PRESENTATION` table maps one readiness to one `body` string, and
+    // exactly one is rendered — so two at once is a composition or
+    // merge regression, and it is the worst-shaped one this card can
+    // have: the surface would tell the lender both that they recover the
+    // collateral and that they recover the asset they lent. With an
+    // enabled control, both action-consistency arms below agree and the
+    // generic receipt supplies the expected lead, so nothing else here
+    // would have caught it.
+    //
+    // FAIL rather than the BLOCKED used for unrecognised copy, and the
+    // distinction is the usual one: unrecognised text may be a state
+    // this drive has not learned, which is a gap in its vocabulary;
+    // two recognised states TOGETHER is the product contradicting
+    // itself about what a lender is owed, which is a defect.
+    //
+    // This cannot fire on correct copy by accident: it would take one
+    // shipped state's sentence to be a substring of another's, and
+    // `forcedCloseCard.test.mjs` pins that non-containment across every
+    // translated bundle rather than leaving it to English and to luck.
+    if (known.length > 1) {
+      return {
+        verdict: 'fail',
+        failKind: 'observed',
+        why: `the card's body states ${known.length} recognised readiness states at once — they are alternatives, so the lender is being told two different things about the same decision`,
+      };
+    }
+    // ROUND 38 P2 — AND IN EVERY CAPTURED RENDER, not only the settled
+    // one. The check above reads `bodyText`, which the poll overwrites,
+    // so a render showing two mutually exclusive states that then
+    // settled on one clean state was seen, recorded in `seenTexts`, and
+    // passed. The lender was shown two different recovery outcomes at
+    // once; the drive had the evidence and did not look at it.
+    //
+    // PER PART, never over a join — round 35's rule, and here it is not
+    // merely about context but about the claim itself: two states in ONE
+    // render is a contradiction, two states across two renders is a card
+    // resolving. Joining would report every ordinary transition as a
+    // defect.
+    //
+    // Only parts that match at all are judged. A part matching NOTHING
+    // is not a finding here: an early render can legitimately be empty
+    // or carry copy this drive has no vocabulary for, and the
+    // unrecognised-copy arm above deliberately applies to the SETTLED
+    // render alone for that reason.
+    const twoStateRender = parts
+      .map((part) =>
+        copy.recognisedCopy.filter(
+          (sentence) => typeof sentence === 'string' && sentence && part.includes(sentence),
+        ),
+      )
+      .find((hits) => hits.length > 1);
+    if (twoStateRender) {
+      return {
+        verdict: 'fail',
+        failKind: 'observed',
+        why: `a render this drive read stated ${twoStateRender.length} recognised readiness states at once, though the card settled on one — the lender was shown two different things about the same decision`,
+      };
+    }
+  }
+
+  return {
+    verdict: 'pass',
+    why: !actionOffered
+      ? obs.submitVisible === false && !obs.submitDisabled
+        ? 'card present and non-submittable — the control is enabled but not visible'
+        : 'card present and non-submittable — the withheld-but-explained state'
+      : 'card present and submittable',
+    checkRunning,
+    confirmScanned: Boolean(obs.confirmText),
+    // ROUND 27 P2 — reported on the PASS, where it is least expected
+    // and most needed. A duplicate control FAILS above, so on this path
+    // the count is always 0 or 1 and looks redundant; what it actually
+    // documents is that the count REACHED the verdict at all. The two
+    // times this field went missing it arrived here as `undefined`, and
+    // the duplicate arm then could not fire on any input — a check
+    // switched off with nothing to show for it. Now the run prints
+    // `submits=undefined` in that state instead of a confident pass.
+    visibleSubmits: obs.visibleSubmits,
+    // ROUND 36, SELF-REVIEW — the SAME treatment, for the same reason.
+    //
+    // `visibleCardsPeak` is added to the record OUTSIDE the snapshot
+    // spread, by hand, at three separate exits. That is exactly the
+    // shape that dropped a field twice before round 27 deleted the
+    // projection's field list — and the spread cannot protect a value
+    // the spread does not carry. Its arm FAILS above, so on this path
+    // the number is always 0 or 1 and looks redundant; what it documents
+    // is that the field ARRIVED. A silent regression to `undefined` at
+    // one of those three exits now prints `peak=undefined` instead of a
+    // confident pass.
+    visibleCardsPeak: obs.visibleCardsPeak,
+    visibleSubmitsPeak: obs.visibleSubmitsPeak,
+    // SELF-REVIEW AFTER ROUND 50 — HOW MANY RENDERS WERE ACTUALLY
+    // JUDGED. Round 27's remedy again, and needed for the same reason it
+    // was needed for `visibleSubmits`: the unsafe-render arm scans
+    // `seenRenders`, an empty array scans nothing, and a check that
+    // quietly observes NOTHING passes exactly like a check that observed
+    // something clean. The count is the difference, and it only shows if
+    // it is printed.
+    rendersJudged: 1 + (Array.isArray(obs.seenRenders) ? obs.seenRenders.length : 0),
+    // SELF-REVIEW AFTER ROUND 46 — round 27's remedy, applied to the
+    // trial click, and needed here for a reason the other three do not
+    // have: this field can legitimately be absent.
+    //
+    // `clickable === false` FAILS above, so on this path the value is
+    // `true` or `undefined`, and `undefined` means the trial was never
+    // run — which now happens on purpose, when the re-read label does
+    // not match the control the snapshot described. That is the honest
+    // outcome, but it is also indistinguishable from the check having
+    // silently stopped running, and a usability test that quietly
+    // switched itself off is the failure mode this file keeps finding.
+    //
+    // So the run SAYS which. Round 47 narrowed what can appear here:
+    // `null` — this run did not test it — is now BLOCKED above, so the
+    // only values reaching a pass are `true` (trialled, actionable) and
+    // `undefined` (a record predating the field). The print distinguishes
+    // them, because a pass carrying `unrecorded` on a current run would
+    // mean the assignment had gone missing.
+    confirmClickable: obs.confirmAction?.clickable,
+    // ROUND 64 P2 — WHETHER THE SETTLEMENT-ROUTE CHECK COULD FIRE.
+    //
+    // The route arm is silent when the view could not answer, and a
+    // silent arm passes exactly like a satisfied one. Carried out so the
+    // report can say which happened — the same reason `visibleSubmits`,
+    // `rendersJudged` and `confirmScanned` are carried, each added after
+    // a check turned out to have been vacuous on a green run.
+    routeKnown:
+      obs.internalMatch !== undefined &&
+      obs.internalMatchBefore !== undefined &&
+      obs.internalMatch === obs.internalMatchBefore,
+    // ROUND 85 P2 — AND WHETHER THE WINDOW ITSELF WAS ESTABLISHED.
+    //
+    // Carried for the same reason as everything around it: an arm that
+    // cannot fire passes exactly like a satisfied one, and the interior
+    // read is now what decides whether three of them may. Over a long
+    // span — a slower page, a faster chain — the interior goes over budget
+    // and every protocol accusation becomes incomplete, which is correct
+    // and would otherwise be invisible on a green run.
+    //
+    // Three values rather than a boolean, matching what is actually known:
+    // `yes` / `no` / `unknown`, where `unknown` covers both a record
+    // predating the fields and a span this drive could not cover.
+    spanStable:
+      obs.defaultableStable === undefined && obs.internalMatchStable === undefined
+        ? 'unknown'
+        : obs.defaultableStable === false || obs.internalMatchStable === false
+          ? 'no'
+          : obs.defaultableStable === null || obs.internalMatchStable === null
+            ? 'unknown'
+            : 'yes',
+  };
+}
+
+/**
+ * Did the run OBSERVE the thing it advertises?
+ *
+ * Round 1 P2 established the all-blocked case. ROUND 3 P2 corrects the
+ * aggregation: returning null as soon as ANY position passed let an
+ * INCOMPLETE observation elsewhere — a card that never settled, a
+ * confirmation that could not be read — ride out on its neighbour's
+ * success, with that position's distinct copy path unscanned.
+ *
+ * So the two kinds of `blocked` are counted separately. An
+ * `inapplicable` position is genuinely nothing to report. An
+ * `incomplete` one is a gap, and it is a gap whether or not something
+ * else went well.
+ *
+ * @param {Array<{path?: string, forcedCloseVerdict?: {verdict: string, blockedKind?: string}|null}>} visits
+ * @returns {string|null} the reason to exit 2, or null
+ */
+export function forcedCloseCoverage(visits, role) {
+  const judged = (Array.isArray(visits) ? visits : []).filter(
+    (v) => v && v.forcedCloseVerdict,
+  );
+  // ROUND 41 P2 — "NO VERDICTS" MEANS TWO DIFFERENT THINGS and this
+  // returned the same answer for both.
+  //
+  // On a BORROWER run the forced-close card is not observed at all, so
+  // an empty set is correct and there is nothing to report. On a LENDER
+  // run it means the assertion this drive ADVERTISES never reached a
+  // single position — the observation unwired, the field renamed, the
+  // scrape never called — and the run exited 0 announcing routes clean.
+  // That is the exact failure round 1 introduced this function to catch,
+  // reachable through the one input it treated as uninteresting.
+  //
+  // The role has to be PASSED rather than sniffed from the records,
+  // because the records are what went missing: inferring "this was a
+  // lender run" from the presence of lender fields makes the check
+  // vanish precisely when it is needed. The caller knows `ROLE`.
+  //
+  // Unknown role is treated as the permissive case deliberately — an
+  // older caller that passes nothing must not start failing — and the
+  // parity test pins that the live caller does pass it.
+  if (judged.length === 0) {
+    if (role !== 'lender') return null; // borrower run; nothing advertised
+    return (
+      'no forced-close verdict was recorded on any visit of a LENDER run — ' +
+      'the assertion this drive advertises did not run at all'
+    );
+  }
+
+  const incomplete = judged.filter(
+    (v) =>
+      v.forcedCloseVerdict.verdict === 'blocked' &&
+      v.forcedCloseVerdict.blockedKind === 'incomplete',
+  );
+  if (incomplete.length > 0) {
+    return (
+      `the forced-close observation was INCOMPLETE on ${incomplete.length} ` +
+      `applicable position(s): ` +
+      incomplete.map((v) => `${v.path ?? '?'} (${v.forcedCloseVerdict.why})`).join('; ')
+    );
+  }
+
+  const applicable = judged.filter((v) =>
+    ['pass', 'fail'].includes(v.forcedCloseVerdict.verdict),
+  );
+  // ROUND 52 P2 — AN APPLICABLE VISIT IS NOT THE SAME AS A SCANNED
+  // CONFIRMATION.
+  //
+  // A chain state where every eligible position renders a clean
+  // NON-SUBMITTABLE card — `not-yet`, paused, sequencer-blocked,
+  // `ready-needs-route` — produces `pass` on each one and let the run
+  // exit 0. But the whole pre-sign receipt, and the fee-paying control
+  // beside it, were never opened: the amounts, the fees, the loss line,
+  // and every arm this PR has spent twenty rounds adding to that panel.
+  // "Routes clean" over a funds-facing surface nobody looked at.
+  //
+  // A GAP rather than a failure, and exit 2 rather than exit 1, because
+  // nothing is wrong — the sampled chain simply offered no confirmation
+  // to observe. That is the honest report, and it is the same answer
+  // `judged.length === 0` already gives for the outer assertion.
+  //
+  // On a FAIL the coverage gate is not reached at all, so this cannot
+  // mask a defect: the drive exits on the finding first.
+  //
+  // LENDER runs only, matching the rule above it: a borrower run never
+  // advertises this surface.
+  if (applicable.length > 0 && role === 'lender') {
+    const scanned = applicable.filter((v) => v.forcedCloseVerdict.confirmScanned === true);
+    if (scanned.length === 0) {
+      return (
+        `the forced-close confirmation was never opened on any of ` +
+        `${applicable.length} applicable position(s) — the receipt and its ` +
+        `fee-paying action went unobserved, so this run establishes nothing ` +
+        `about them`
+      );
+    }
+  }
+  if (applicable.length > 0) return null;
+  return (
+    `forced-close card was never observed on an applicable position ` +
+    `(${judged.length} visit(s), all inapplicable) — the assertion did not run`
+  );
+}

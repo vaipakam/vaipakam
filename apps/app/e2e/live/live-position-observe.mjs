@@ -95,17 +95,33 @@ import {
   snapshotCardEligible,
   snapshotJumpable,
 } from './jumpability.mjs';
+import {
+  confirmationReady,
+  forcedCloseCoverage,
+  forcedCloseVerdict,
+  reconcileEligibility,
+  saysCheckRunning,
+} from './forcedCloseCard.mjs';
 import { requireSiteUrl } from './driver.mjs';
 import { redactUrl } from './redact.mjs';
-import { isDetailPath, visitVerdict } from './visitVerdict.mjs';
+import { isDetailPath, visitProblemKinds, visitVerdict } from './visitVerdict.mjs';
+import { walkOrderFor } from './walkOrder.mjs';
 import {
   EXECUTION_REVERTED,
   REVERT_BYTES,
+  blockNumberFromRpcPair,
+  blockNumberFromWsFrame,
   callsTargetContract,
+  chainIdFromRpcPair,
+  CHAIN_ID_CONFLICT,
   classifyRpcFailure,
   codedError,
+  believableResult,
+  hexQuantity,
+  isTransportFailure,
   recordRpcResponse,
   rpcCallsFromBody,
+  rpcMethodNamesIn,
   rpcRequestCalls,
   summariseRpcLedger,
 } from './rpc-verdict.mjs';
@@ -260,6 +276,16 @@ const ALLOWED_RPC = new Set([
  *  allowlist gap rather than a violation. */
 const WRITE_SHAPED = /^(eth_send|eth_sign|personal_sign|wallet_send)/;
 
+/**
+ * The `method` recorded for a request this drive could not parse as
+ * JSON-RPC at all (round 93 P2).
+ *
+ * A sentinel rather than `null`, because `null` already means "not RPC,
+ * therefore presumed mutating" in the report's partition — and a read
+ * with a malformed `id` was being printed as an attempted signature.
+ */
+const MALFORMED_RPC = '<malformed json-rpc>';
+
 const pub = createPublicClient({ transport: http(RPC) });
 
 /** Origin of the configured RPC, or null if `OBSERVE_RPC` is unparseable.
@@ -407,6 +433,231 @@ console.log(`fetched   ${ids.length} loan id(s) across ${Math.ceil(Number(active
 // is either would be a FALSE "chooser MISSING" rather than a finding
 // (#1529 review).
 const STATUS_ACTIVE = 0;
+
+/**
+ * The shipped "a check is running" sentence, READ FROM THE REPO's own
+ * locale bundle rather than restated here.
+ *
+ * A hand-copied string is a second copy to drift, and it would drift
+ * silently in the direction that matters: a reworded `copy.forcedClose.
+ * unknown` would stop matching, the drive would report `checkRunning:
+ * false` for every unresolved card, and nothing would look broken.
+ * Sourcing it means a rename fails loudly at startup instead.
+ */
+const FORCED_CLOSE_COPY = (() => {
+  try {
+    return readForcedCloseCopy();
+  } catch (err) {
+    // ROUND 111 P2 — A LOCAL SETUP FAILURE IS BLOCKED, NOT A PRODUCT FAIL.
+    //
+    // This ran at module scope and threw, so Node exited 1 — which in this
+    // batch means "the deployed surface regressed". The message it threw
+    // said the opposite in words: that the harness cannot judge the card
+    // without its own copy. A missing, malformed or renamed key in THIS
+    // repo is an observation that never ran, and reporting it as a product
+    // regression blames the deployment for the drive's own state.
+    //
+    // Exit 2, like every other "nothing could be observed" path here.
+    console.log(
+      `\nBLOCKED: the drive's own copy bundle could not be read.\n  ${err.message}`,
+    );
+    process.exit(2);
+  }
+})();
+
+/**
+ * Read and validate the forced-close copy this drive matches against.
+ *
+ * Separated from the binding above only so the failure can be CLASSIFIED:
+ * everything in here still throws, loudly and by name, and the caller
+ * turns that into the right exit code.
+ */
+function readForcedCloseCopy() {
+  const bundle = JSON.parse(
+    fs.readFileSync(
+      path.join(path.dirname(fileURLToPath(import.meta.url)), '../../src/i18n/locales/en.json'),
+      'utf8',
+    ),
+  );
+  const fc = bundle?.copy?.forcedClose ?? {};
+  // The SHARED receipt labels (round 54 P2). `ReviewReceipt` renders
+  // every write flow's six rows from `copy.receipt`, so the headings
+  // live there rather than under `forcedClose` — and taking them from
+  // the same place the component does is what keeps this from becoming
+  // a second copy to drift.
+  const enCopy = bundle?.copy ?? {};
+  const need = (value, key) => {
+    if (typeof value !== 'string' || value === '') {
+      throw new Error(
+        `copy.${key.includes('(label)') ? '' : 'forcedClose.'}${key} is missing from ` +
+          'src/i18n/locales/en.json — the forced-close observation cannot judge ' +
+          'the deployed card without it.',
+      );
+    }
+    return value;
+  };
+  return {
+    unknownCopy: need(fc.unknown, 'unknown'),
+    // ROUND 7 P2 — the READY routes, so a card rendering one of them
+    // while offering no usable action reads as the defect it is rather
+    // than as the valid withheld-but-explained state.
+    // `readyNeedsRoute` is DELIBERATELY ABSENT. It is a ready state that
+    // correctly offers no control: the spec has the app state that the
+    // position is closable and that the sale must be routed by whoever
+    // submits it, and "offers no button it cannot honour" — presenting
+    // an action certain to be refused is worse than presenting none.
+    // Including it fired on a live position within a minute of the
+    // check shipping, which is exactly the false FAIL that gets a check
+    // switched off.
+    readyCopy: [
+      need(fc.readyInKind, 'readyInKind'),
+      need(fc.readyInternalMatch, 'readyInternalMatch'),
+      need(fc.readyRental, 'readyRental'),
+    ],
+    // ROUND 8 P2 — the states that must NOT offer an enabled control.
+    // `readyNeedsRoute` belongs here rather than in `readyCopy`: it is
+    // ready AND correctly unactionable, so an enabled button on it is
+    // the defect the spec names — a fee paid for a certain refusal.
+    withheldCopy: [
+      need(fc.unknown, 'unknown'),
+      need(fc.notYet, 'notYet'),
+      need(fc.blockedPaused, 'blockedPaused'),
+      need(fc.blockedSequencer, 'blockedSequencer'),
+      need(fc.blockedNoConsent, 'blockedNoConsent'),
+      need(fc.readyNeedsRoute, 'readyNeedsRoute'),
+    ],
+    // ROUND 11 P2 — every state this card can legitimately be in. A
+    // card matching none of them has said SOMETHING without saying
+    // anything the drive can recognise, which is reported as a gap in
+    // the drive's vocabulary rather than as a product defect.
+    // ROUND 12 P2 — READINESS BODIES ONLY, no auxiliary history.
+    //
+    // I had included the `lastOutcome` notes (`outcomeReverted` and its
+    // siblings) and the submitted states. Those render BESIDE the
+    // current body, and `ForcedCloseCard`'s own comment says outright
+    // that such a note does not describe the CURRENT state — so a card
+    // whose readiness body was broken or unrecognised still satisfied
+    // recognition on the strength of a note about a previous attempt.
+    // The check would have passed while the lender was told nothing
+    // about where the position stands now.
+    //
+    // These nine are the states the body itself can be in. A watch-only
+    // drive never submits, so a submitted/outcome body is not a state
+    // this run can legitimately produce; if one appears, `blocked` is
+    // the honest answer rather than a pass.
+    recognisedCopy: [
+      need(fc.unknown, 'unknown'),
+      need(fc.notYet, 'notYet'),
+      need(fc.blockedPaused, 'blockedPaused'),
+      need(fc.blockedSequencer, 'blockedSequencer'),
+      need(fc.blockedNoConsent, 'blockedNoConsent'),
+      need(fc.readyInKind, 'readyInKind'),
+      need(fc.readyInternalMatch, 'readyInternalMatch'),
+      need(fc.readyRental, 'readyRental'),
+      need(fc.readyNeedsRoute, 'readyNeedsRoute'),
+    ],
+    // ROUND 7 P2 — positive evidence that the RECEIPT rendered, not
+    // merely that its shell opened.
+    // ROUND 43 P2 — BOTH receipts. `ready-rental` renders
+    // `rentalReceipt`, whose `youReceive` is an entirely different
+    // sentence, so supplying only the ordinary lead reported a correct
+    // rental confirmation as incomplete. `need` on both, so a missing
+    // one is a loud startup failure rather than a silently narrower
+    // check.
+    receiptLeads: [
+      need(fc.receipt?.youReceive, 'receipt.youReceive'),
+      need(fc.rentalReceipt?.youReceive, 'rentalReceipt.youReceive'),
+    ],
+    // ROUND 53 P2 — THE WHOLE RECEIPT, per route, not just its lead.
+    //
+    // Six `.receipt-row` elements with non-blank leaves used to be the
+    // entire completeness test, so six copies of one row — the fees and
+    // loss disclosures gone — satisfied it, and satisfied the lead check
+    // six times over. And accepting EITHER lead let a collateral card
+    // render the rental receipt, or the reverse: a confirmation
+    // describing a different transaction from the one it confirms.
+    //
+    // `need` on every value, so a copy key that moves is a loud startup
+    // failure rather than a silently narrower check — the same rule the
+    // leads above already follow.
+    // ROUND 54 P2 — THE LABELS TOO, PAIRED WITH THEIR VALUES.
+    //
+    // Round 53 checked the value SET, so the six right values under the
+    // six wrong headings — the loss disclosure filed under "Fees", the
+    // fee disclosure under "You receive" — satisfied it: every value
+    // present, all six distinct. A receipt whose every line is true and
+    // whose every line is attached to the wrong question, certified as
+    // scanned.
+    //
+    // Ordered, because the order is part of the contract:
+    // `ReviewReceipt` states it outright — "Six fixed rows, same order
+    // everywhere" — and renders from a fixed array. Pairing by index
+    // therefore enforces both the pairing and the order with one rule.
+    //
+    // Labels come from the SHARED `copy.receipt`, which is where
+    // `ReviewReceipt` takes them from, rather than being restated here.
+    receiptRowLabels: [
+      need(enCopy.receipt?.youReceive, 'receipt.youReceive (label)'),
+      need(enCopy.receipt?.youLock, 'receipt.youLock (label)'),
+      need(enCopy.receipt?.youMayOwe, 'receipt.youMayOwe (label)'),
+      need(enCopy.receipt?.youCanLose, 'receipt.youCanLose (label)'),
+      need(enCopy.receipt?.fees, 'receipt.fees (label)'),
+      need(enCopy.receipt?.whenThisEnds, 'receipt.whenThisEnds (label)'),
+    ],
+    receiptRowSets: {
+      standard: [
+        need(fc.receipt?.youReceive, 'receipt.youReceive'),
+        need(fc.receipt?.youLock, 'receipt.youLock'),
+        need(fc.receipt?.youMayOwe, 'receipt.youMayOwe'),
+        need(fc.receipt?.youCanLose, 'receipt.youCanLose'),
+        need(fc.receipt?.fees, 'receipt.fees'),
+        need(fc.receipt?.whenThisEnds, 'receipt.whenThisEnds'),
+      ],
+      rental: [
+        need(fc.rentalReceipt?.youReceive, 'rentalReceipt.youReceive'),
+        need(fc.rentalReceipt?.youLock, 'rentalReceipt.youLock'),
+        need(fc.rentalReceipt?.youMayOwe, 'rentalReceipt.youMayOwe'),
+        need(fc.rentalReceipt?.youCanLose, 'rentalReceipt.youCanLose'),
+        need(fc.rentalReceipt?.fees, 'rentalReceipt.fees'),
+        need(fc.rentalReceipt?.whenThisEnds, 'rentalReceipt.whenThisEnds'),
+      ],
+    },
+    // Which readiness copy means the RENTAL route, so the verdict can
+    // pick the receipt the card is supposed to be showing.
+    rentalReadyCopy: need(fc.readyRental, 'readyRental'),
+    // ROUND 64 P2 — which readiness copy names WHICH SETTLEMENT, so the
+    // verdict can compare the route the card is painting against the
+    // route the protocol would actually take. Named separately rather
+    // than positionally inside `readyCopy`, because an index into that
+    // array is exactly the kind of coupling that survives a reorder and
+    // starts lying.
+    internalMatchReadyCopy: need(fc.readyInternalMatch, 'readyInternalMatch'),
+    inKindReadyCopy: need(fc.readyInKind, 'readyInKind'),
+    // ROUND 65 P2 — the copies that assert the PROTOCOL REFUSES, as
+    // distinct from the ones that assert the app does not yet know or
+    // cannot drive a settlement.
+    //
+    // Deliberately NOT every withheld sentence. `unknown` asserts
+    // nothing, and `readyNeedsRoute` is a claim about the app's ability
+    // to route rather than about the protocol's answer — a close-out
+    // that simulates with empty calldata does not make either of those
+    // a false statement. Only these four say the close-out is refused,
+    // and only they can be contradicted by the protocol accepting it.
+    // ROUND 67 P2 — the two HEADINGS, so a heading contradicting the body
+    // can be seen. `ForcedCloseCard` picks between them on `view.overdue`
+    // alone.
+    // The one body state that settles the deadline NEGATIVELY.
+    notYetCopy: need(fc.notYet, 'notYet'),
+    overdueTitleCopy: need(fc.title, 'title'),
+    pendingTitleCopy: need(fc.titlePending, 'titlePending'),
+    refusalStateCopy: [
+      need(fc.notYet, 'notYet'),
+      need(fc.blockedPaused, 'blockedPaused'),
+      need(fc.blockedSequencer, 'blockedSequencer'),
+      need(fc.blockedNoConsent, 'blockedNoConsent'),
+    ],
+  };
+}
 /**
  * LoanStatus.FallbackPending. The lender card mounts on it DELIBERATELY
  * (`PositionDetails.tsx`: `row.status === 'active' || 'fallback_pending'`,
@@ -489,6 +740,9 @@ async function sanctionedAuthorityUncached(addr) {
 }
 /** LibERC721.LockReason.PrecloseOffset — mirrors data/offsetPending.ts. */
 const LOCK_PRECLOSE_OFFSET = 1;
+/** `LOCK_EARLY_WITHDRAWAL_SALE` — kept in step with
+ *  `src/data/loanSalePending.ts`, which is where the app's copy lives. */
+const LOCK_EARLY_WITHDRAWAL_SALE = 2;
 
 /**
  * The chooser's render gate has FOUR conditions, not two
@@ -633,6 +887,217 @@ function isRevert(err) {
   return codedError(err)?.code === EXECUTION_REVERTED;
 }
 
+/**
+ * The WEAKER question: did viem classify this as a contract revert at all?
+ *
+ * ROUND 84 P2 — and it exists because `isRevert` above is deliberately
+ * strict about an AMBIGUOUS shape, which is right for some callers and
+ * wrong for others.
+ *
+ * A bare `revert()` reported by a provider under an internal-error code
+ * gives `raw === '0x'` and `code === -32603`: empty bytes fail the byte
+ * test and the code is not 3, so `isRevert` says no. Its own comment
+ * argues that honestly — empty `0x` is evidence of nothing, since a bare
+ * revert produces it and so does a provider filling the field with
+ * nothing on an outage. The ambiguity is real and the strictness stays.
+ *
+ * What differs is THE COST OF ANSWERING "no" at each call site:
+ *
+ *   - Where the revert branch yields an UNKNOWN — `saleLockedOn`'s two
+ *     catches — a "no" throws, and since those run inside `discovery()`
+ *     the whole run aborts. One position in an ambiguous state then stops
+ *     every other position from being observed, over a reply the chain
+ *     may well have given us. Those sites ask THIS predicate.
+ *   - Where the revert branch ASSERTS something — `offsetLockedOn`
+ *     returns "locked, skip the loan", `tokenOwnerOf` returns "the token
+ *     does not exist" — a loosened test would let a dead backend make
+ *     positions quietly vanish from the pool. There, aborting is the
+ *     honest outcome for an ambiguous reply, and those sites keep
+ *     `isRevert`.
+ *
+ * Round 75's rule is untouched either way: a programming error in this
+ * drive, and a transport failure, carry no `ContractFunctionRevertedError`
+ * anywhere in the chain, so both still throw from every one of the four.
+ */
+function answeredWithRevert(err) {
+  return Boolean(err?.walk?.((e) => e instanceof ContractFunctionRevertedError));
+}
+
+/**
+ * Does the LENDER position token carry the early-withdrawal SALE lock?
+ *
+ * ROUND 1 P2. `PositionDetails` renders the forced-close card behind
+ * `!saleCompletionPending`, so a loan whose lender-position sale has
+ * been ACCEPTED but not yet completed correctly has NO card — closing
+ * out would terminalize the loan and strand the buyer's committed
+ * funds. Reporting that as a missing-card defect is the false-positive
+ * direction, which is the one that gets a check switched off.
+ *
+ * ONE READ, DELIBERATELY CONSERVATIVE. The app distinguishes a live
+ * listing from an accepted sale by simulating `teardownStaleSaleListing`
+ * — but this drive does not need that resolution, only the safe half of
+ * it. The lock is stamped for the WHOLE listing lifecycle, so an
+ * UNLOCKED token proves no accepted sale exists and an absent card is a
+ * genuine defect. A locked one cannot rule it out, and the verdict
+ * there is `blocked` with the reason stated. The cost is coverage on
+ * sale-locked positions, which is announced; the alternative cost is a
+ * false FAIL, which is silent trust damage.
+ *
+ * A revert is treated as LOCKED for the same reason `offsetLockedOn`
+ * treats one as locked: a read that could not answer must not be turned
+ * into a product finding.
+ */
+/**
+ * ROUND 30 P2 — the simulating ACCOUNT is a parameter, not a module
+ * global.
+ *
+ * This read used `observed`, the module-scoped authority, which is
+ * declared far below it. That was harmless while every caller ran after
+ * the declaration, and stopped being harmless the moment round 29 hoisted
+ * an applicability probe ABOVE it to rank authorities: `observed` was
+ * then in its temporal dead zone, the simulate threw a `ReferenceError`,
+ * and the probe's own `catch` — written for transport failures — swallowed
+ * it as "unreadable, still a candidate". So every locked position stayed
+ * unclassified and the ordering fix did nothing.
+ *
+ * Two lessons, and the second is the one worth keeping. A catch that
+ * cannot tell a dead endpoint from a programming error will report the
+ * programming error as a chain condition, and this file has now been
+ * caught doing exactly that. And a cross-authority probe had no business
+ * simulating as `observed` even once that variable existed — the question
+ * is whether THIS loan's lender has an accepted sale, so the account has
+ * to be that loan's authority. Passing it explicitly fixes a latent
+ * correctness bug as well as the crash.
+ */
+async function saleLockedOn(lenderTokenId, loanId, blockNumber, account) {
+  if (lenderTokenId === undefined || lenderTokenId === null) return 'unknown';
+  // A missing account is a WIRING error, not a chain condition, so it
+  // throws rather than returning `'unknown'` — the latter reads as "the
+  // chain could not answer" and is precisely the laundering this change
+  // is about.
+  if (!account) throw new TypeError('saleLockedOn: account is required');
+  let locked;
+  try {
+    const lock = await pub.readContract({
+      address: DIAMOND,
+      abi: DIAMOND_ABI_VIEM,
+      functionName: 'positionLock',
+      args: [lenderTokenId],
+      ...(blockNumber === undefined ? {} : { blockNumber }),
+    });
+    locked = Number(lock) === LOCK_EARLY_WITHDRAWAL_SALE;
+  } catch (err) {
+    // `answeredWithRevert`, not `isRevert` — see its note. The revert
+    // branch here yields an UNKNOWN, so the cost of refusing an ambiguous
+    // bare revert is aborting the whole run rather than reading one
+    // position as unestablished.
+    if (!answeredWithRevert(err)) throw err;
+    return 'unknown';
+  }
+  if (!locked) return false;
+
+  // ROUND 8 P2 — THE LOCK IS LISTING-WIDE; THE UNMOUNT IS ACCEPTANCE-
+  // SPECIFIC.
+  //
+  // `createLoanSaleOffer` stamps `positionLock` for the WHOLE listing
+  // lifecycle, but `PositionDetails` unmounts the card only on
+  // `saleHold.data === 'accepted'`. Treating the raw lock as the excuse
+  // therefore forgave a genuinely missing card on an ordinary LIVE
+  // listing — a regression labelled inapplicable. I had disclosed that
+  // as a deliberate trade; it is too coarse, because the states differ
+  // in exactly the way the verdict turns on.
+  //
+  // So classify, the way the app does: simulate `teardownStaleSaleListing`
+  // and read the revert. `NoStaleSaleListing` on a LOCKED position means
+  // an accepted sale awaiting completion — the one state that correctly
+  // unmounts the card. `SaleListingLoanStillLive` is an ordinary live
+  // listing, where the card must be present.
+  try {
+    await pub.simulateContract({
+      address: DIAMOND,
+      abi: DIAMOND_ABI_VIEM,
+      functionName: 'teardownStaleSaleListing',
+      args: [BigInt(loanId)],
+      account,
+      ...(blockNumber === undefined ? {} : { blockNumber }),
+    });
+    return false; // 'clearable' — a stale listing, not an accepted sale
+  } catch (err) {
+    const name = revertNameOf(err);
+    if (name === 'NoStaleSaleListing') return true; // locked + no stale → accepted
+    if (name === 'SaleListingLoanStillLive') return false; // live listing
+    // ROUND 83 P2 — "I CANNOT NAME THIS REVERT" IS NOT "THIS WAS NOT A
+    // REVERT", and this arm conflated them.
+    //
+    // `revertNameOf` reads `data.errorName`, which viem fills in only for
+    // a custom error it could decode against the ABI. A BARE `revert()`
+    // carries no data to name, and a custom error the deployment has but
+    // this ABI does not carries a selector viem cannot resolve — both are
+    // the EVM answering, and both returned `null` here and were rethrown.
+    // `discovery()` then aborts the WHOLE run, so one locked position in
+    // an undecodable state stops every other position from being observed
+    // — an unread run reported as a failure of the drive, over a reply the
+    // chain did give us.
+    //
+    // Decided by the same test the `positionLock` catch twenty lines above
+    // uses for exactly this split, so the two catches in one function
+    // answer the question the same way. Anything that is NOT a revert
+    // still throws: a dead endpoint or a programming error in this drive
+    // must stay loud, which is round 75's lesson and the reason this arm
+    // existed at all.
+    //
+    // ROUND 84 P2 — and asked with `answeredWithRevert`, because
+    // `isRevert` refuses the ambiguous shape this arm most needs to
+    // admit: a bare `revert()` under an internal-error code carries empty
+    // bytes and a code that is not 3, so the round-83 guard still
+    // rethrew on the very case it was written for. The predicate's own
+    // note carries the argument for why the two sites differ.
+    if (!answeredWithRevert(err)) throw err;
+    // ROUND 12 P2 — AN UNRECOGNISED REVERT IS `unknown`, NOT `true`.
+    //
+    // Returning `true` here read downstream as a SUBSTANTIATED accepted
+    // sale: the verdict reported `inapplicable` with an accepted-sale
+    // explanation that had never been established, and `inapplicable`
+    // does not trip `forcedCloseCoverage` — so on a deployment carrying
+    // another guard, a genuinely missing card could be suppressed while
+    // the run printed a confident reason for it. I wrote "fail toward
+    // blocked" and did, but toward the WRONG blocked: the one that says
+    // nothing is wrong rather than the one that says nothing was
+    // learned.
+    return 'unknown';
+  }
+}
+
+/**
+ * The custom-error NAME from a viem simulate failure, or null when no name
+ * could be decoded.
+ *
+ * `null` DOES NOT MEAN "not a revert", and the previous wording here said
+ * it did — which is how a caller came to rethrow on one (round 83). viem
+ * fills `data.errorName` only for a custom error it could resolve against
+ * the ABI, so a bare `revert()` with no data, and a custom error this ABI
+ * does not carry, both answer `null` while being the EVM answering. A
+ * caller that needs "did the chain reply at all" asks `isRevert`.
+ */
+function revertNameOf(err) {
+  const seen = new Set();
+  let cur = err;
+  while (cur && typeof cur === 'object' && !seen.has(cur)) {
+    seen.add(cur);
+    const name = cur?.data?.errorName;
+    if (typeof name === 'string') return name;
+    cur = cur.cause;
+  }
+  return null;
+}
+
+// `isTransportFailure` lives in `rpc-verdict.mjs` — a pure predicate with
+// its own tests, for the reason this file has now learned four times: a
+// branch that runs only inside a live drive is a branch nothing has
+// executed, and the two most recent inert fixes were both in exactly that
+// position. Round 31 wrote this classifier here and nothing could reach
+// it; round 33 found it wrong and moved it out.
+
 async function offsetLockedOn(borrowerTokenId) {
   try {
     const lock = await pub.readContract({
@@ -680,13 +1145,16 @@ async function lenderAuthorityOf(loan) {
 }
 
 /** Shared: a revert means burned/never-minted; anything else is BLOCKED. */
-async function tokenOwnerOf(tokenId) {
+async function tokenOwnerOf(tokenId, blockNumber) {
   try {
     return await pub.readContract({
       address: DIAMOND,
       abi: DIAMOND_ABI_VIEM,
       functionName: 'ownerOf',
       args: [tokenId],
+      // Optional: every existing caller reads `latest`, and only the
+      // forced-close snapshot pins a block (round 4 P2).
+      ...(blockNumber === undefined ? {} : { blockNumber }),
     });
   } catch (err) {
     if (!isRevert(err)) throw err; // no answer — BLOCKED, not "burned"
@@ -865,6 +1333,183 @@ if (dropped > 0) {
         .map((l) => `${l.id} (${why(l)})`)
         .join(', '),
   );
+  // ROUND 1 P2 — SAY WHAT THIS POOL CANNOT REACH.
+  //
+  // The candidate pool is the CHOOSER's, and it filters to ERC-20, so
+  // an overdue NFT rental is never visited. The forced-close card has a
+  // distinct `ready-rental` route the spec treats separately — ending a
+  // rental moves nothing of the borrower's and makes prepaid rent
+  // claimable — and none of it is exercised here. Widening the pool is
+  // a second discovery path and is tracked separately; until then the
+  // honest thing is for the run to state the gap rather than let a
+  // green tally imply the rental surface was covered.
+  if (ROLE === 'lender') {
+    if (loans.some((l) => l.assetType !== ASSET_ERC20)) {
+      console.log(
+        '          NOTE: rentals are outside this pool, so the forced-close ' +
+          "card's rental route is NOT covered by this run.",
+      );
+    }
+    // ROUND 5 P2 — the SAME pool also drops a sanctions-flagged holder,
+    // and that exclusion is right for the chooser (the card is
+    // correctly suppressed there) while being wrong for forced close:
+    // the spec deliberately keeps this card available to a flagged
+    // lender, because closing out an already-defaulted loan is a
+    // wind-down the protocol keeps open to every caller. A regression
+    // hiding it in exactly that supported state is undetectable here.
+    if (loans.some((l) => l.authoritySanctioned === true)) {
+      console.log(
+        '          NOTE: sanctions-flagged holders are outside this pool, so the ' +
+          'forced-close card is NOT verified for the flagged lender the spec ' +
+          'requires it to stay available to.',
+      );
+    }
+  }
+}
+
+// Which Active positions can actually exercise the forced-close card.
+// Resolved ONCE, over every eligible Active loan across all authorities,
+// and consumed by both the authority choice below and the walk order
+// further down — the two used to answer this question separately, or not
+// at all. See the round-29 note in the sort.
+const acceptedSale = new Set();
+if (ROLE === 'lender') {
+  // ROUND 52 P2 — THROUGH `discovery()`, so the one error this loop
+  // deliberately rethrows exits BLOCKED rather than FAIL.
+  //
+  // The rethrow below is right and stays: a failure this file cannot
+  // attribute to the chain must be loud rather than silently degrading
+  // the ranking. But it happened OUTSIDE `discovery()`, so it became an
+  // uncaught top-level rejection — which exits 1, which the batch reads
+  // as a product regression. At this point no browser observation has
+  // happened at all, so blaming the deployed page is the one thing the
+  // exit contract forbids.
+  //
+  // A provider answering JSON-RPC `-32700` is enough to reach it:
+  // `classifyRpcFailure` calls that a `client-fault`, `isTransportFailure`
+  // therefore returns false, and the loop rethrows into nothing.
+  //
+  // Loud AND correctly classified: `discovery()` prints what failed and
+  // exits 2.
+  // ROUND 78 P2 — AND ONLY THE REQUESTED LENDER'S LOANS WHEN ONE WAS
+  // NAMED, exactly as the close-out pre-pass below already does.
+  //
+  // Cross-authority accepted-sale data informs the AUTHORITY CHOICE. With
+  // `OBSERVE_ADDRESS` set that choice is already made, and the walk that
+  // follows only ever sees `mine` — so every probe against another
+  // authority's loans is spent on a ranking nobody reads, sequentially,
+  // before the browser launches. Unrelated latency, a rate limit, or one
+  // non-revert failure could stall or BLOCK a perfectly valid observation
+  // of the lender that was actually asked for.
+  //
+  // The parallel-site shape once more, and on my own round-76 fix: I
+  // narrowed the pre-pass one loop below this and left this one.
+  const requestedAuthority = process.env.OBSERVE_ADDRESS?.toLowerCase();
+  const saleCandidates = eligible.filter(
+    (x) =>
+      x.status === STATUS_ACTIVE &&
+      (!requestedAuthority || x.authority.toLowerCase() === requestedAuthority),
+  );
+  await discovery('ranking loans by accepted sale', async () => {
+    for (const l of saleCandidates) {
+      try {
+        if ((await saleLockedOn(l.lenderTokenId, l.id, undefined, l.authority)) === true) {
+          acceptedSale.add(l.id);
+        }
+      } catch (err) {
+        // ROUND 30 P2 — a chain that could not answer, NOT a bug in this
+        // file.
+        //
+        // This catch was written for transport failures and silently ate a
+        // `ReferenceError` for a whole round: every locked position came
+        // back "unreadable, still a candidate", so the ordering fix above
+        // did nothing while reading as though it worked. A catch that
+        // cannot tell a dead endpoint from a programming error will keep
+        // reporting the programming error as a chain condition.
+        //
+        // The two are now separated, and by an ALLOWLIST: a failure is
+        // swallowed only when the error chain positively names a transport
+        // fault. Everything else — this drive being wrong about itself, in
+        // any of the ways it can be — is rethrown so the run reports it
+        // instead of quietly degrading. Round 31 corrected an earlier
+        // denylist here that named two error classes and missed the rest.
+        if (!isTransportFailure(err)) throw err;
+        // Unreadable, so unknown, so still a candidate. Ranking a loan
+        // down on a read that failed would be a decision made on no
+        // evidence, in the direction that costs the run its coverage.
+      }
+    }
+  });
+}
+
+// ROUND 74 P2 — CONFIRMATION CAPABILITY IS RESOLVED BEFORE THE AUTHORITY
+// CHOICE, which is the fourth time this same lesson has been applied.
+//
+// The comment below already records it twice: ranking fixed inside the
+// SELECTED authority's walk cannot recover a better candidate one
+// authority away, because by then `mine` is fixed. My round-72 promotion
+// of close-out-capable positions went in at exactly that level, so a
+// lender with several non-defaultable Active loans still outranks a
+// lender holding one the protocol would accept — and the capped walk
+// cannot reach the latter, exiting 2 to claim the confirmation was never
+// observable.
+//
+// Resolved ONCE here, across every authority, and the same answer feeds
+// both the choice and the walk — the shape `acceptedSale` already uses.
+//
+// PAID FOR ONLY WHEN IT CAN CHANGE SOMETHING: more than one authority to
+// choose between, or a single authority holding more eligible loans than
+// the visit cap. Otherwise every candidate is visited whatever the order
+// and a simulate per loan is pure cost.
+//
+// PROMOTES ON A POSITIVE ANSWER ONLY. `probeCloseOut` answers `undefined`
+// when it could not ask, and ranking a candidate down on a failed read
+// hands the run to a worse one on no evidence — the rule the
+// accepted-sale resolution above states for itself.
+//
+// ORDERING ONLY. The protocol accepting a close-out is not the card
+// offering one, and this probe is unpinned; no verdict reads it.
+const acceptsCloseOut = new Set();
+{
+  const authorities = new Set(eligible.map((l) => l.authority.toLowerCase()));
+  const perAuthority = new Map();
+  for (const l of eligible) {
+    const k = l.authority.toLowerCase();
+    perAuthority.set(k, (perAuthority.get(k) ?? 0) + 1);
+  }
+  const capBinds = [...perAuthority.values()].some((n) => n > MAX_POSITIONS);
+  // ROUND 76 P2 — AND ONLY THE REQUESTED LENDER WHEN ONE WAS NAMED.
+  //
+  // With `OBSERVE_ADDRESS` set there is no authority choice to inform, so
+  // probing every authority's loans buys nothing and costs a sequential
+  // simulate per eligible Active position across the whole chain —
+  // unbounded by the visit cap, and enough to hit a rate limit or stall
+  // the run before the browser even launches. The walk-order promotion
+  // still needs answers for the loans that WILL be visited, so the
+  // pre-pass narrows rather than disappears.
+  const requested = process.env.OBSERVE_ADDRESS?.toLowerCase();
+  const candidates = requested
+    ? eligible.filter((l) => l.authority.toLowerCase() === requested)
+    : eligible;
+  // ROUND 76 P2 — INSIDE `discovery`, so a rethrow is BLOCKED and not a
+  // product FAIL.
+  //
+  // Round 75 made these probes rethrow what is not a transport fault,
+  // which was right — and left the rethrow escaping to the top level,
+  // where an unhandled rejection exits 1. That code is reserved for a
+  // regression in the deployed product, so the loud failure I added would
+  // have blamed the app for this drive being wrong about itself. `exit 2`
+  // is the honest outcome, and `discovery` is what produces it.
+  if (ROLE === 'lender' && (authorities.size > 1 || capBinds)) {
+    await discovery('probing which positions the protocol would close out', async () => {
+      for (const l of candidates) {
+        if (l.status !== STATUS_ACTIVE || acceptedSale.has(l.id)) continue;
+        if ((await probeCloseOut(l.id, undefined, l.authority)) === true) {
+          acceptsCloseOut.add(l.id);
+        }
+      }
+    });
+  }
 }
 
 // The observed address: whichever authority on the CHOSEN side holds the
@@ -877,7 +1522,64 @@ if (!observed) {
     const k = l.authority.toLowerCase();
     byAuthority.set(k, [...(byAuthority.get(k) ?? []), l]);
   }
-  const [best] = [...byAuthority.entries()].sort((a, b) => b[1].length - a[1].length);
+  // ROUND 12 P2 — ON A LENDER RUN, AN AUTHORITY WITH AN ACTIVE LOAN
+  // OUTRANKS ONE WITH MORE LOANS.
+  //
+  // Round 9 partitioned the SELECTED authority's loans so an Active
+  // candidate could not be hidden behind the visit cap. It could not
+  // help when the selection itself was wrong: this sort maximises the
+  // combined Active-or-FallbackPending pool, so a lender with many
+  // FallbackPending loans and no Active one is chosen over a lender who
+  // has one — and the run then exits 2 for unavailable forced-close
+  // coverage while an applicable target sat one authority away. Fixing
+  // the ordering below the choice, and not the choice, is the same
+  // half-measure twice.
+  //
+  // The forced-close assertion needs an Active position; the chooser
+  // assertions apply to both statuses and are indifferent to which
+  // authority is picked. So Active-bearing authorities come first, and
+  // the loan count breaks ties within each group.
+  // ROUND 29 P2 — AND "ACTIVE" IS STILL NOT "APPLICABLE", HERE TOO.
+  //
+  // Round 28 demoted accepted-sale positions inside the SELECTED
+  // authority's walk. That is the third time this fix has been applied
+  // one level below where the decision is actually made — the comment
+  // directly above says so about round 9, and round 28 did it again.
+  // This sort asks only whether an authority has ANY Active loan, so a
+  // lender whose Active positions all carry an accepted sale outranks a
+  // lender holding one applicable position, and the walk-level partition
+  // cannot recover it: by then `mine` is fixed and the other authority's
+  // loan is out of reach. The run visits three inapplicable positions
+  // and exits 2 saying the assertion never ran.
+  //
+  // So applicability is resolved BEFORE the choice, once, and the same
+  // answer feeds the walk below. Only a positively established accepted
+  // sale counts against a loan — `'unknown'` and a thrown transport
+  // error leave it applicable, because ranking an authority down on a
+  // read that failed would hand the run to a worse candidate on no
+  // evidence.
+  //
+  // The cost is one `positionLock` read per eligible Active loan across
+  // all authorities rather than for one authority. `saleLockedOn`
+  // returns false on that read alone for an unlocked position and only
+  // simulates for a locked one, so the common case stays a single cheap
+  // call.
+  const applicableCount = (loans) =>
+    loans.filter((l) => l.status === STATUS_ACTIVE && !acceptedSale.has(l.id)).length;
+  const capableCount = (loans) => loans.filter((l) => acceptsCloseOut.has(l.id)).length;
+  const [best] = [...byAuthority.entries()].sort((a, b) => {
+    if (ROLE === 'lender') {
+      // Ahead of mere applicability: a card that MOUNTS still need not
+      // OFFER anything, and the confirmation can only be read on one that
+      // does (round 74).
+      const byCapable = (capableCount(b[1]) > 0 ? 1 : 0) - (capableCount(a[1]) > 0 ? 1 : 0);
+      if (byCapable !== 0) return byCapable;
+      const byApplicable =
+        (applicableCount(b[1]) > 0 ? 1 : 0) - (applicableCount(a[1]) > 0 ? 1 : 0);
+      if (byApplicable !== 0) return byApplicable;
+    }
+    return b[1].length - a[1].length;
+  });
   if (!best) {
     console.log(
       `\nBLOCKED: no ${ROLE}-eligible loans on chain — nothing verified.`,
@@ -986,12 +1688,29 @@ const blockedHttp = [];
  * Fired in the background on first sighting so the probes overlap the
  * drive rather than serialising the route handler, and awaited once at
  * verdict time. `null` means "could not tell" — an endpoint may refuse a
- * synthetic probe — and only a DEFINITE mismatch is allowed to block,
- * keeping this loud-but-true rather than one more flaky exit.
+ * synthetic probe. A DEFINITE mismatch blocks as a deployment fault; a
+ * could-not-tell blocks as an unanswered question (round 95), and the two
+ * say different things at the exit. Neither is ranked above a defect this
+ * run actually OBSERVED.
  *
  * @type {Map<string, Promise<number|null>>}
  */
 const pageRpcChain = new Map();
+// ROUND 78 P2 — THE CHAIN THE PAGE'S OWN TRAFFIC ALREADY DISCLOSED.
+//
+// `watchPageHead` parses a real `eth_chainId` reply for every endpoint it
+// sees, and kept that evidence in its per-page closure. So an endpoint
+// whose chain was ESTABLISHED from the page's own request could still be
+// filed as unknown when the extra synthetic probe was refused or timed
+// out — and round 77's gate would then downgrade a real inferred failure
+// to BLOCKED on a chain it actually knew.
+//
+// Keyed by `res.url()`, the same string `pageRpcChain` uses, so the two
+// reconcile without a second notion of what an endpoint is. A
+// self-contradicting endpoint is deliberately NOT recorded: it has told
+// us it cannot say which chain it serves, which is unknown rather than
+// evidence.
+const observedPageChain = new Map();
 /**
  * A probe that never answers must not become a probe that never returns.
  * This promise is awaited unconditionally at verdict time, and
@@ -1003,8 +1722,30 @@ const pageRpcChain = new Map();
  * produces.
  */
 const CHAIN_PROBE_TIMEOUT_MS = 15_000;
-function notePageRpcEndpoint(url, calls) {
-  if (pageRpcChain.has(url) || !callsTargetContract(calls, DIAMOND)) return;
+function notePageRpcEndpoint(url, calls, rawBody) {
+  // ROUND 65 P2 — THE SAME TWO TESTS `markDiamond` USES, not one of them.
+  //
+  // `callsTargetContract` reads the `to` of the shapes it knows, and
+  // viem batches contract reads through multicall3 — so on the COMMON
+  // path the `to` is the aggregator and the Diamond appears only inside
+  // the encoded calldata. `markDiamond` has carried both tests since the
+  // day attribution-by-`to` marked nothing on a live run; this one kept
+  // only the weaker half.
+  //
+  // The consequence is the dangerous direction. Such an endpoint is
+  // admitted to the height set and its heads are trusted for absence
+  // confirmation, while it is never chain-probed — so if it serves
+  // another chain and does not volunteer `eth_chainId`, the wrong-chain
+  // gate cannot downgrade the resulting missing-card FAIL and the drive
+  // exits 1 against a product that did nothing wrong.
+  //
+  // Twelfth instance on this PR of one of several parallel sites being
+  // left behind, and the second where the two sites are a few hundred
+  // lines apart with the same job.
+  const hex = String(DIAMOND).replace(/^0x/, '').toLowerCase();
+  const mentionsDiamond =
+    typeof rawBody === 'string' && rawBody.toLowerCase().includes(hex);
+  if (pageRpcChain.has(url) || !(mentionsDiamond || callsTargetContract(calls, DIAMOND))) return;
   pageRpcChain.set(
     url,
     (async () => {
@@ -1016,8 +1757,27 @@ function notePageRpcEndpoint(url, calls) {
           signal: AbortSignal.timeout(CHAIN_PROBE_TIMEOUT_MS),
         });
         if (!r.ok) return null;
-        const hex = (await r.json())?.result;
-        return typeof hex === 'string' ? Number(BigInt(hex)) : null;
+        // ROUND 99 P2 — THROUGH THE SHARED PARSER, and the third site to
+        // need it. A member may carry a `result` beside a non-null `error`;
+        // viem takes the error, so the page never consumed that chain id.
+        // Believing it here lets this probe AGREE with the captured traffic
+        // on a value the page rejected — and the chain gate, whose whole job
+        // since round 95 is to refuse a clean verdict when the deployment's
+        // chain is unknown, then certifies instead of blocking.
+        // ROUND 100 P2 — AND A CHAIN ID IS A QUANTITY, validated the way the
+        // captured-response reader validates it.
+        //
+        // `BigInt('84532')` happily parses a DECIMAL string, so an endpoint
+        // answering `"84532"` — which is not a valid JSON-RPC quantity — was
+        // read here as the requested chain while `chainIdFromRpcPair`
+        // correctly rejected the same value. With no separate chain reply in
+        // the page's traffic, this probe is then the sole source, and the
+        // gate certifies a deployment it never identified. `hexQuantity` plus
+        // the safe-integer check is exactly what the other reader applies.
+        const id = hexQuantity(believableResult(await r.json()));
+        if (id === null) return null;
+        const n = Number(id);
+        return Number.isSafeInteger(n) ? n : null;
       } catch {
         // Unreachable, non-JSON, or timed out — none of them evidence of a
         // wrong chain.
@@ -1099,6 +1859,15 @@ const rpcLedger = [];
 // advertises itself as read-only and a page regression must not be able
 // to POST to a backend while we scrape.
 const routeHandler = async (route) => {
+  // ROUND 108 P2 — WHEN THIS REQUEST WAS BEGUN, on the ordering clock.
+  //
+  // The ledger's retry rule needs to tell a RETRY from an already-in-flight
+  // SIBLING, and the distinguishing fact is causal: a retry is sent after
+  // the failure came back, a sibling was sent before it. Stamped at the top
+  // of the handler, which is the earliest this drive sees the request, and
+  // on the same monotonic clock `recordRpcResponse` stamps arrival with —
+  // two origins would make the comparison meaningless.
+  const requestedAt = orderingNow();
   const req = route.request();
   const method = req.method().toUpperCase();
   if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) {
@@ -1121,7 +1890,35 @@ const routeHandler = async (route) => {
         // in our own allowlist (#1529 review round 24).
         const calls = rpcRequestCalls(parsed);
         if (!calls) {
-          why = `${method} (malformed json-rpc request)`;
+          // ROUND 93 P2 — A MALFORMED ENVELOPE IS ITS OWN CATEGORY, not an
+          // attempted write.
+          //
+          // `badMethod` stayed null here, and the report partitions a null
+          // method into the WRITE bucket — so a read with a bad `id` was
+          // printed as `READ-ONLY VIOLATION — the page asked to sign or
+          // send`, sending an operator after an attempted write that never
+          // happened. The severity is right (a page sending a malformed
+          // request is a defect in the page, which is round 21's rule);
+          // the accusation was not.
+          //
+          // The METHOD is preserved where the laxer body parser can still
+          // read one, so the report names what the page was trying to do
+          // rather than only that the envelope was wrong.
+          // ROUND 116 P3 — read from the ALREADY PARSED object, with a
+          // reader that does not re-ask whether the envelope is valid.
+          //
+          // The previous fallback called `rpcCallsFromBody(body)`, which
+          // parses the same body and hands it to the same strict validator
+          // that had just refused it — so `named` was empty by
+          // construction and every malformed-envelope report degraded to
+          // the generic wording. A fallback that cannot succeed is worse
+          // than none: it reads as though the method was looked for and
+          // not found.
+          const named = rpcMethodNamesIn(parsed);
+          badMethod = MALFORMED_RPC;
+          why = named.length
+            ? `${method} (malformed json-rpc envelope for ${[...new Set(named)].join(', ')})`
+            : `${method} (malformed json-rpc request)`;
         } else {
           const denied = calls
             .filter((c) => !ALLOWED_RPC.has(c.method))
@@ -1180,6 +1977,29 @@ const routeHandler = async (route) => {
       }
     });
     await route.fulfill({ status: resp.status, headers, body: buf });
+    // Stamped HERE — the instant delivery completed — and on the ordering
+    // clock. Rounds 112 and 113 are one question answered from both sides,
+    // and the answer is that this boundary is the only defensible one.
+    //
+    // Round 112: stamping at record time is too LATE. Several statements
+    // separate the fulfill from the record, and viem can issue its retry in
+    // that gap, so a genuine retry's request lands at or before the stamp
+    // and the causal test refuses it as an in-flight sibling — a recovered
+    // failure kept in the ledger, and a correctly rendered page BLOCKED.
+    //
+    // Round 113: stamping before the fulfill is too EARLY. Fulfillment is
+    // awaited, so a request begun WHILE it is pending is stamped after a
+    // pre-fulfill mark even though the page has not seen the failure and it
+    // cannot be a reaction to it. The causal test would then read an
+    // in-flight sibling as a retry and clear a failure whose original
+    // caller consumed an error — certifying a funds surface that was never
+    // fully served, which is the accusing direction and the worse one.
+    //
+    // There is no stamp for "Chromium handed this to the page", so the
+    // ambiguous interval is closed by taking the LATER edge of it: a
+    // request begun during fulfillment is treated as unable to prove
+    // recovery, because it is.
+    const deliveredAt = orderingNow();
     // A resolved fetch is not the same as an answered call. The provider
     // can hand back a JSON-RPC error, or a 429, over a perfectly healthy
     // HTTP response — and passing that on without a verdict is how a
@@ -1197,7 +2017,10 @@ const routeHandler = async (route) => {
     // serve the deployment it is being reviewed against? Only knowable
     // from its own traffic — see `pageRpcChain`.
     const pageCalls = rpcCallsFromBody(req.postData());
-    if (pageCalls) notePageRpcEndpoint(req.url(), pageCalls);
+    // The RAW body travels with the parsed calls: the Diamond can appear
+    // only inside multicall3 calldata, which no parse of the JSON-RPC
+    // envelope surfaces (round 65 P2).
+    if (pageCalls) notePageRpcEndpoint(req.url(), pageCalls, req.postData());
     recordRpcResponse(
       {
         status: resp.status,
@@ -1205,6 +2028,8 @@ const routeHandler = async (route) => {
         requestBody: req.postData(),
         // Redact BEFORE truncating, as the catch path does below.
         url: redact(req.url()).slice(0, 160),
+        requestedAt,
+        deliveredAt,
       },
       rpcLedger,
     );
@@ -1354,6 +2179,988 @@ await discovery('installing the provider init script', () =>
 );
 
 /**
+ * The highest block THE PAGE has been seen to know about, per page.
+ *
+ * ROUND 14 P2 — "my client advanced" is not "my client caught up".
+ *
+ * Round 13 made the absence confirmation wait for a strictly newer head
+ * than the snapshot pinned. That proves this observer moved; it proves
+ * nothing about the INDEPENDENT provider the deployed bundle reads,
+ * which can be two or more blocks ahead. A terminalization at N+2
+ * correctly removes the card while this observer, confirming at N+1,
+ * re-reads a still-eligible position and emits the same false
+ * missing-card FAIL the gate exists to prevent — one block further
+ * along, and just as wrong.
+ *
+ * The page is the only authority on its own head, and it discloses it:
+ * its RPC traffic carries `eth_blockNumber` (the steady-state audit
+ * counts them). This records the highest result seen, so the gate can
+ * require the observer to reach what the page had already seen.
+ *
+ * OBSERVATIONAL AND FAIL-QUIET. It never blocks a request, never
+ * rejects, and a body it cannot parse is skipped: a mis-sniffed
+ * response must not turn into a finding about the app. The COST of
+ * seeing nothing is handled where it matters — an absence with no
+ * observed page head is reported as unconfirmed rather than as a
+ * defect, so silence here is conservative rather than permissive.
+ */
+/**
+ * ROUND 18 P2 — HEADS ARE SCOPED TO THE DEPLOYMENT ENDPOINT.
+ *
+ * The page deliberately talks to more than one network: `wagmi.ts`
+ * registers an explicit chain-1 transport so ENS reverse lookups
+ * resolve, and this file already reasons about that where it decides
+ * which endpoint serves the deployment. Pooling every observed height
+ * into one maximum mixes those chains, and heights are not comparable
+ * across them.
+ *
+ * The failure is not symmetric, which is why neither direction can be
+ * waved through:
+ *
+ *   TOO HIGH (a foreign chain further along) — the observer can never
+ *     pass `pageHead`, so every absence downgrades to incomplete and the
+ *     assertion this drive advertises can never fire. Silent, and it
+ *     looks exactly like a healthy run.
+ *   TOO LOW (a Diamond head skipped) — the gate is passed too easily
+ *     and a false missing-card FAIL becomes reachable again.
+ *
+ * So heights are recorded PER ENDPOINT and resolved only against
+ * endpoints positively known to carry Diamond calls. Attribution is by
+ * positive evidence rather than by excluding known ENS URLs, for the
+ * reason this file already gives about `callsTargetContract`: the ENS
+ * endpoint comes from the deployed bundle's own env, this driver cannot
+ * enumerate it, and an exclusion list would silently stop matching.
+ *
+ * Resolution is DEFERRED rather than decided at record time, which is
+ * what makes it order-independent: a page can announce a head on an
+ * endpoint before it issues its first Diamond call there, and dropping
+ * that height would be the too-low failure above.
+ */
+const pageRpcHeads = new WeakMap(); // page -> Map<key, bigint>
+// ROUND 84 P2 — the LOWEST head each endpoint announced, beside the
+// highest. See `pageHeadFloorOf`: the bracket needs a block the card's own
+// queries cannot predate, and the maximum is the one thing it certainly
+// can.
+const pageRpcHeadFloors = new WeakMap(); // page -> Map<key, bigint>
+const pageDiamondKeys = new WeakMap(); // page -> Set<key>
+/**
+ * Response handlers that have STARTED but not finished parsing.
+ *
+ * ROUND 48 P2. `page.on('response', …)` takes an async listener and
+ * Playwright does not await it, so a `latest`-block reply arriving just
+ * before the scrape can still be inside `res.json()` when `pageHeadOf`
+ * samples the map. The DOM already reflects block N; the map holds an
+ * older height, or none.
+ *
+ * Both directions are wrong and neither is loud. Zero disables the
+ * absence assertion, which reports an INCOMPLETE observation for a
+ * reading that was simply taken too early. A stale non-zero bound is
+ * worse: the confirming observer can settle below N and report a
+ * missing card as a regression — a false FAIL invented out of a race.
+ *
+ * The fix is to wait for the parses already in flight, which is bounded
+ * work: the set only ever holds responses that arrived before the
+ * sample. `page -> Set<Promise>`, each entry removing itself on settle.
+ */
+const pageHeadPending = new WeakMap(); // page -> Set<Promise<void>>
+
+/**
+ * WHEN each endpoint first announced a head, and when it first served a
+ * contract read. `page -> Map<key, epoch ms>`, one map each.
+ *
+ * ROUND 86 P2 — the evidence that decides whether the bracket's floor
+ * bounds anything. See `floorEstablishedFor`.
+ */
+const pageFirstHeadAt = new WeakMap(); // page -> Map<key, number>
+const pageFirstReadAt = new WeakMap(); // page -> Map<key, number>
+
+/**
+ * Every endpoint proven to serve the deployment, across ALL pages.
+ *
+ * ROUND 87 — the per-page `pageDiamondKeys` cannot answer "which endpoint
+ * will this NEXT page read from", and that is the question the sound floor
+ * needs: an endpoint learned on the list visit is the one the detail
+ * visits will use, so its head can be sampled BEFORE the detail page
+ * loads. Module-scoped for exactly that reason, and additive — an endpoint
+ * proven once stays proven.
+ */
+const knownPageRpcEndpoints = new Set();
+
+/**
+ * Endpoints PROVEN to serve another chain, across all pages.
+ *
+ * ROUND 89 P2 — the per-page `foreign` set cannot keep one out of the
+ * module-wide set above, and the set above is what the pre-navigation
+ * head probe reads.
+ *
+ * An endpoint admitted by the raw-address heuristic and later caught
+ * answering `eth_chainId` with a different chain was removed from that
+ * page's `diamond` set and left in `knownPageRpcEndpoints`. Every later
+ * visit then asked it for a head — and if the real provider's probe
+ * failed while the foreign one answered, a height from an unrelated chain
+ * became the floor a product accusation is measured against. Bounding a
+ * claim about this deployment with another chain's block number is the
+ * worst shape this floor can take.
+ *
+ * Permanent and module-wide, matching round 51's rule for the per-page
+ * set: an endpoint that has identified itself as another chain is settled
+ * for the rest of the run, and a later page's heuristic must not re-admit
+ * it.
+ */
+const foreignPageRpcEndpoints = new Set();
+
+/**
+ * The head THE PAGE'S OWN PROVIDER is at, asked directly.
+ *
+ * ROUND 87 — and this is what finally makes the bracket's lower end sound
+ * rather than better-estimated.
+ *
+ * Rounds 84 to 86 tried three ways to bound the block a render came from:
+ * the first head the page announced, this drive's own pre-navigation
+ * sample, and an ordering test over the two. Round 87 broke the last of
+ * them correctly — a JSON-RPC batch holding both an `eth_call` and a head
+ * request is a set of independent calls, not a sequence, so the read can
+ * be served a block BEFORE the head that appears to precede it. Tightening
+ * the ordering test to refuse that turned the live deployment's answer to
+ * `spanStable=unknown`, which is honest and also switches three arms off.
+ *
+ * The sound construction was available all along and needs no ordering at
+ * all: ask the PAGE'S provider for its height BEFORE the page loads.
+ * Blocks only advance, so any `latest` read that provider serves
+ * afterwards is at or above that height — whatever it batches, in whatever
+ * order. This drive knows the endpoint because an earlier visit's traffic
+ * proved it serves the deployment.
+ *
+ * The residual is unchanged and is the one already stated: a pool serving
+ * one request from a machine that has fallen behind can answer below its
+ * own reported height. Nothing observable from outside distinguishes it.
+ */
+/**
+ * The HIGHEST head the page's own Diamond-serving endpoints are at, asked
+ * directly AFTER the scrape — the bracket's upper end.
+ *
+ * ROUND 101 P2 — BECAUSE THE RECORDED HEAD IS NOT A CEILING.
+ *
+ * `pageHead` is the highest head this drive OBSERVED the page announce, and
+ * `headSettled` only says the announcements it saw finished parsing. Neither
+ * bounds an unpinned `eth_call` the page issues afterwards: the provider can
+ * advance between its last head reply and that read, serve it at a higher
+ * block, and the card then renders from state the interior scan never
+ * reaches while `pinnedBlock >= pageHead` is satisfied. That is the accusing
+ * direction — a correct card judged against a range that excludes it.
+ *
+ * Asking AFTER the scrape is what makes this sound: heads do not go
+ * backwards, so a height reported now is at or above anything served during
+ * the scrape. The HIGHEST across endpoints, which is the opposite of
+ * `pageProviderHead`'s lowest and for the mirrored reason — the floor takes
+ * the furthest back because any endpoint might have served the card, and the
+ * ceiling takes the furthest forward for exactly the same reason.
+ *
+ * `sampled` is returned for the same reason it is there: an endpoint that
+ * would not answer is not bounded, and a caller that cannot bound every
+ * endpoint the page used has no ceiling rather than a slightly worse one.
+ *
+ * @returns {Promise<{head: bigint, sampled: Set<string>}>}
+ */
+async function pageProviderCeiling(page) {
+  let high = 0n;
+  const sampled = new Set();
+  const diamond = pageDiamondKeys.get(page);
+  for (const url of diamond ?? []) {
+    if (foreignPageRpcEndpoints.has(url)) continue;
+    try {
+      const resp = await ufetch(url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_blockNumber', params: [] }),
+        signal: AbortSignal.timeout(CHAIN_PROBE_TIMEOUT_MS),
+      });
+      if (!resp.ok) continue;
+      const parsed = await resp.json();
+      if (Array.isArray(parsed)) continue;
+      const seen = hexQuantity(believableResult(parsed));
+      if (seen === null || seen <= 0n) continue;
+      if (seen > high) high = seen;
+      sampled.add(url);
+    } catch {
+      // Unanswerable: this endpoint contributes no bound, and the caller
+      // refuses the ceiling rather than proceeding with a partial one.
+    }
+  }
+  return { head: high, sampled };
+}
+
+async function pageProviderHead() {
+  let low = 0n;
+  // WHICH endpoints this bound, not only the height (round 90). A sample
+  // says nothing about an endpoint it did not ask, and the caller has to
+  // be able to tell those apart.
+  const sampled = new Set();
+  for (const url of knownPageRpcEndpoints) {
+    try {
+      const resp = await ufetch(url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_blockNumber', params: [] }),
+        // ROUND 88 P2 — BOUNDED, like the chain probe beside it. `fetch`
+        // has no default timeout, so an endpoint that accepts the request
+        // and never answers hangs this call forever — and it runs BEFORE
+        // the navigation, so the whole run stalls rather than falling back
+        // to the ordering test the way the comment above promises. The
+        // fallback only exists if this can actually fail.
+        signal: AbortSignal.timeout(CHAIN_PROBE_TIMEOUT_MS),
+      });
+      if (!resp.ok) continue;
+      const parsed = await resp.json();
+      // ROUND 93 P2 — A SUCCESSFUL REPLY, not merely a parseable one.
+      //
+      // A member carrying BOTH `result` and `error` is malformed, and the
+      // page's own client treats the error as authoritative — so reading
+      // the result here takes a number the page never acted on and makes
+      // it the floor a product accusation is measured against. A bogus
+      // high one puts that floor above the block the card rendered.
+      //
+      // An array is a batch answering a request this never sent, which is
+      // the same kind of "not the reply I asked for" and gets the same
+      // refusal rather than a best-effort read of its first member.
+      if (Array.isArray(parsed)) continue;
+      // ROUND 100 P2 — THROUGH THE SHARED PARSER, as the fourth reader of a
+      // JSON-RPC `result`. The array guard above is head-specific and stays;
+      // the non-null-error rule is not, and `believableResult` exists
+      // precisely because each reader keeping its own copy is how rounds 98,
+      // 99 and 100 each found one that had been left behind.
+      const believed = believableResult(parsed);
+      if (believed === undefined) continue;
+      // ROUND 88 P2 — A JSON-RPC QUANTITY, not whatever `BigInt` will take.
+      //
+      // `BigInt` accepts `"101"` and a bare number; an Ethereum height is
+      // hex with an `0x` prefix. `hexQuantity` is the rule the page-head
+      // parsers have used since round 50 for exactly this reason, and this
+      // probe was the fourth reader of the same kind of field written to
+      // its own laxer standard — the parallel-site shape again, this time
+      // with me adding the new site.
+      //
+      // It matters here in the direction that accuses: a misread height
+      // that comes out too HIGH puts the floor above the block the card
+      // rendered, and the interior scan then never looks at the state the
+      // lender was actually shown.
+      const seen = hexQuantity(believed);
+      if (seen === null) continue;
+      // The LOWEST across endpoints, for the reason the floor takes the
+      // lower of its sources everywhere else: this drive cannot tell which
+      // of them will serve the card's query, so the further back one is
+      // the only safe answer.
+      if (seen > 0n && (low === 0n || seen < low)) low = seen;
+      if (seen > 0n) sampled.add(url);
+    } catch {
+      // An endpoint that will not answer contributes nothing. It is not a
+      // failure: the floor simply falls back to its other sources, and the
+      // ordering test still decides whether those bound anything.
+    }
+  }
+  return { head: low === 0n ? null : low, sampled };
+}
+
+/**
+ * Can the bracket's lower end be trusted to sit at or below the block the
+ * card's data came from?
+ *
+ * ROUND 86 P2, and it is the question rounds 84 and 85 kept answering with
+ * a better guess instead of evidence.
+ *
+ * The floor is built from the page's first head announcement and from this
+ * drive's own pre-navigation sample. Neither bounds a read the page's
+ * provider served BEFORE it announced anything: a lagging provider can
+ * answer a contract read at block M while this observer was already at N,
+ * and both floor sources then sit above the state the card actually
+ * rendered. Around a grace transition between M and N the interior scan
+ * starts at N, finds the answer constant, and a legitimate block-M refusal
+ * render is blamed on the product.
+ *
+ * That ordering is OBSERVABLE, which is what makes this an answer rather
+ * than another estimate. Every page RPC goes through this drive's route
+ * interception, so it can see whether the endpoint announced a head BEFORE
+ * it served its first `eth_call`. If it did, the provider had reached that
+ * head before any contract read, and a read at `latest` afterwards cannot
+ * have been served from below it. If a read came first, nothing bounds it
+ * and the comparison is not established — the drive says so rather than
+ * accusing.
+ *
+ * `eth_call` specifically, not any POST: `eth_chainId` and the head
+ * announcements themselves are not state reads, and treating them as such
+ * would make this permanently false and silently retire the protocol arms.
+ *
+ * EVERY Diamond-serving endpoint has to satisfy it, not merely one. A
+ * deployment reading through two endpoints, where the second served a
+ * contract read without ever announcing a head, answers `false` and the
+ * comparison stays incomplete. Deliberately conservative: this drive
+ * cannot tell which endpoint served the card's own query, so a single
+ * unordered one is enough to make the floor unproven. The cost is
+ * `spanStable=unknown` on such a deployment, which the run prints rather than
+ * leaving a reader to infer from a clean line.
+ *
+ * THE RESIDUAL, stated: this assumes an endpoint's head does not go
+ * BACKWARDS. A load-balanced pool serving one request from a lagging node
+ * can break that, and no amount of observation from outside will show it.
+ * It is a much narrower assumption than the one it replaces — the same
+ * URL regressing, rather than two independent providers being in step —
+ * and it is the same irreducible class as the observer/confirmer race this
+ * PR already states as a limit.
+ */
+/**
+ * The clock the floor's ordering proof is measured on.
+ *
+ * ROUND 102 P2 — `Date.now()` IS NOT MONOTONIC, and this is a proof.
+ *
+ * The floor accepts an endpoint when its head ANSWER was stamped before its
+ * read was ASKED. Both stamps came from the wall clock, which an NTP step or
+ * a VM clock correction can move BACKWARDS between the two — manufacturing
+ * `head < read` for a head that actually arrived afterwards. The floor is
+ * then accepted on evidence that never happened, and if the read was served
+ * at M while the later head reports M+1 the interior scan excludes the
+ * card's real block. Rare, and in the accusing direction, which is the
+ * combination this file treats as worth closing rather than noting.
+ *
+ * `performance.now()` is monotonic in Node: it counts from an arbitrary
+ * origin and is unaffected by clock adjustment. Every ORDERING stamp uses
+ * it — everything else here measures durations against deadlines, where a
+ * wall clock is fine and a different origin would be confusing.
+ *
+ * ROUND 115 P2 — AND THE LEDGER IS ON THIS CLOCK TOO NOW.
+ *
+ * This note used to say the retry-recovery window in `rpc-verdict.mjs` was
+ * deliberately left on the wall clock, because a backward step there
+ * under-reports rather than accuses and moving it would mean changing what
+ * `at` means for every caller. That reasoning was sound on its own and was
+ * overtaken: round 108 established that `requestedAt` is COMPARED against
+ * `at`, so two clock origins there make the comparison meaningless, and the
+ * caller-wide work the note called a reason not to has since been done —
+ * `requestedAt` and `deliveredAt` are both stamped here with `orderingNow`,
+ * and the ledger falls back to its own `performance.now()`.
+ *
+ * Left as a correction rather than deleted: a note calling the opposite
+ * design deliberate is exactly what steers a maintenance change back into
+ * the mixed-origin comparison this replaced.
+ */
+const orderingNow = () => performance.now();
+
+function floorEstablishedFor(page, sampledBeforeNav) {
+  const diamond = pageDiamondKeys.get(page);
+  const heads = pageFirstHeadAt.get(page);
+  const reads = pageFirstReadAt.get(page);
+  if (!diamond || !heads || !reads) return false;
+  let sawHead = false;
+  for (const key of diamond) {
+    // ROUND 90 P2 — EVERY endpoint this page used has to be bounded, and
+    // there are two ways to bound one.
+    //
+    // The direct sample is taken before the navigation from the endpoints
+    // EARLIER visits proved, so it says nothing about an endpoint this
+    // page reached for the first time — a fallback transport, a second
+    // provider in the deployed config. Treating one sampled endpoint as
+    // sufficient let a NEW endpoint's reads go unbounded while the bracket
+    // started from the old one's height: a card truthfully rendered from
+    // the new endpoint's block could then be reported as disagreeing with
+    // the protocol.
+    //
+    // So a key counts as bounded when it was sampled before navigation OR
+    // when its own announcement ordering holds. One predicate, applied per
+    // endpoint, instead of a global shortcut standing in for all of them.
+    if (sampledBeforeNav?.has(key)) {
+      sawHead = true;
+      continue;
+    }
+    const head = heads.get(key);
+    const read = reads.get(key);
+    if (head !== undefined) sawHead = true;
+    // A read issued before this endpoint announced anything, or before it
+    // announced its first head: nothing this drive saw bounds that read.
+    //
+    // ROUND 101 P2 — AND THE TWO TIMES ARE NO LONGER BOTH ARRIVALS.
+    //
+    // `head` is when a head ANSWER was parsed; `read` is when an `eth_call`
+    // was SENT. So the test asks the sound question: had this endpoint
+    // already told us where it was, before we asked it to read? If so the
+    // read cannot have been served below that height, because heads do not
+    // go backwards, and no assumption about response ordering is involved.
+    //
+    // Round 87 established that a BATCH cannot be read as a sequence — its
+    // members are independent calls, so a block landing between two of them
+    // serves the `eth_call` at M and answers `eth_blockNumber` with M+1.
+    // That argument was applied to one response and not to two, and it is
+    // the same argument: two concurrent requests can be served at M and M+1
+    // and arrive in either order. Comparing two arrival times established
+    // nothing, and set the floor at M+1 for a card rendered from M.
+    //
+    // STILL STRICTLY earlier. Equal timestamps carry no order, and the
+    // request-time stamp can only be earlier than the old arrival-time one,
+    // so this test is harder to satisfy than before — the safe direction.
+    if (read !== undefined && (head === undefined || head >= read)) return false;
+  }
+  return sawHead;
+}
+
+function watchPageHead(page) {
+  const heads = new Map();
+  const diamond = new Set();
+  // ROUND 19 P2 — AN EXCLUSION HAS TO OUTLIVE THE RESPONSE THAT PROVED
+  // IT. Round 18's version returned early on a foreign chain id, which
+  // skipped only THAT response: a later body from the same endpoint
+  // carrying the Diamond address — an ENS reverse lookup does exactly
+  // that — re-admitted it through the substring heuristic, and if the
+  // ordering ran the other way the existing entry was never removed at
+  // all. Once an endpoint has identified itself as a different chain,
+  // that is settled for the rest of the run.
+  const foreign = new Set();
+  const pending = new Set();
+  const floors = new Map();
+  const firstHeadAt = new Map();
+  const firstReadAt = new Map();
+  pageFirstHeadAt.set(page, firstHeadAt);
+  pageFirstReadAt.set(page, firstReadAt);
+  pageRpcHeads.set(page, heads);
+  pageRpcHeadFloors.set(page, floors);
+  pageDiamondKeys.set(page, diamond);
+  pageHeadPending.set(page, pending);
+
+  const recordHead = (key, seen) => {
+    if (seen === null || seen === undefined) return;
+    if (seen > (heads.get(key) ?? 0n)) heads.set(key, seen);
+    // The floor is recorded in the same call as the ceiling, deliberately:
+    // two passes over the same events is how one of them ends up missing
+    // the WebSocket path, which is a live source of head announcements and
+    // easy to forget because the HTTP one is what a reader looks at.
+    const low = floors.get(key);
+    if (low === undefined || seen < low) floors.set(key, seen);
+  };
+  // An endpoint counts as serving the deployment when the page ASKS IT
+  // ABOUT THE DIAMOND. Two tests, because one is not enough:
+  //
+  //   - `callsTargetContract` reads the `to` of the shapes it knows.
+  //   - the raw body carrying the Diamond address catches the case that
+  //     one misses, and it is the COMMON one: viem batches contract
+  //     reads through multicall3, so the `to` is the aggregator and the
+  //     Diamond appears only inside the encoded calldata. Attribution by
+  //     `to` alone marked nothing, which showed up immediately as
+  //     `pageHead=unobserved` on the live run — the print earning its
+  //     place on the first run after it was added.
+  //
+  // Still positive evidence rather than an exclusion list, for the
+  // reason this file already gives: the ENS endpoint comes from the
+  // deployed bundle's own env and cannot be enumerated here.
+  const DIAMOND_HEX = String(DIAMOND).replace(/^0x/, '').toLowerCase();
+  const markDiamond = (key, body, responseBody) => {
+    // ROUND 109 P2 — ONE admission test for BOTH arms.
+    //
+    // An endpoint enters `diamond` two ways: on an expected-chain reply, and
+    // on the raw-address heuristic further down. Round 108 guarded the second
+    // and left the first — this change's own parallel-site defect, inside the
+    // fix FOR a parallel-site defect. Naming the test once is the only
+    // version of this that stays fixed.
+    //
+    // `foreign` is per-page; `foreignPageRpcEndpoints` is module-wide and
+    // permanent (round 89), and the per-page set is empty on a later visit,
+    // which is the whole reason the module-wide one exists.
+    const admitIfNotForeign = () => {
+      if (foreign.has(key) || foreignPageRpcEndpoints.has(key)) return;
+      diamond.add(key);
+      knownPageRpcEndpoints.add(key);
+    };
+    try {
+      // WHEN THE ENDPOINT SAYS WHICH CHAIN IT SPEAKS FOR, that settles
+      // it in both directions — heights are chain-scoped, so this is the
+      // fact actually needed rather than a proxy for it.
+      //
+      // MEASURED, not assumed: with the address evidence below switched
+      // off, a live run reports `pageHead=unobserved`, so the deployed
+      // page does not disclose `eth_chainId` on its deployment endpoint
+      // within the observed window. Chain id therefore cannot be the
+      // sole test, and the address evidence below is load-bearing rather
+      // than a belt-and-braces extra.
+      //
+      // Its value is as the NEGATIVE discriminator, which is what the
+      // address heuristic cannot do for itself: the app resolves ENS
+      // names on a mainnet endpoint, and a reverse lookup carries an
+      // address in its calldata exactly the way a batched Diamond read
+      // does — so an endpoint that has identified itself as a different
+      // chain is excluded before the heuristic can mistake it.
+      if (responseBody !== undefined) {
+        const id = chainIdFromRpcPair(body, responseBody);
+        // ROUND 52 P2 — A CONTRADICTION IS EVIDENCE, and it excludes.
+        //
+        // One batch answering `eth_chainId` twice with different chains
+        // used to be resolved by whichever reply came first, so the
+        // endpoint could be admitted as deployment-serving on half of
+        // its own answer and have its later heights trusted. An endpoint
+        // that gives two answers has told us it can be relied on for
+        // neither — which is precisely what round 51's permanent
+        // exclusion is for, arriving by an earlier door.
+        if (id === CHAIN_ID_CONFLICT) {
+          foreign.add(key);
+          diamond.delete(key);
+          // ROUND 89 P2 — and out of the module-wide set the pre-navigation
+          // head probe reads, or a later visit asks a self-contradicting
+          // endpoint for the floor a product accusation rests on.
+          foreignPageRpcEndpoints.add(key);
+          knownPageRpcEndpoints.delete(key);
+          // ROUND 80 P2 — AND THE EXIT GATE HAS TO HEAR ABOUT IT.
+          //
+          // There are TWO ways this endpoint can contradict itself: one
+          // batch answering `eth_chainId` twice with different chains,
+          // which lands here, and two separate responses disagreeing,
+          // which lands below. Round 79 recorded only the second, so a
+          // same-response conflict marked the endpoint foreign in this
+          // page-local set and told the shared map nothing — and if the
+          // synthetic probe then answered the expected chain, the
+          // reconciliation trusted it and an inferred missing surface
+          // could be reported as a product regression on a provider that
+          // had contradicted itself in a single reply.
+          //
+          // The parallel-site shape once more, and inside the fix for the
+          // very question it belongs to: I split the conflict into two
+          // paths and handled one.
+          observedPageChain.set(key, CHAIN_ID_CONFLICT);
+          return;
+        }
+        if (id !== null) {
+          // Recorded for the unknown-chain gate, whichever chain it is.
+          //
+          // ROUND 79 P2 — AND A SECOND, DIFFERENT ANSWER IS A CONTRADICTION.
+          //
+          // `set` let a later reply overwrite an earlier one, so an
+          // endpoint that answered two different chains across two
+          // responses looked consistent to the gate — the same laundering
+          // round 52 closed for a single batch, arriving by a slower
+          // door. `CHAIN_ID_CONFLICT` is the value the gate already reads
+          // as "this endpoint cannot say", so recording it here needs no
+          // new vocabulary.
+          const prior = observedPageChain.get(key);
+          observedPageChain.set(
+            key,
+            prior !== undefined && prior !== id ? CHAIN_ID_CONFLICT : id,
+          );
+          if (id === CHAIN_ID) {
+            // ROUND 51 P2 — AND THE EXCLUSION IS PERMANENT, so this
+            // cannot re-admit.
+            //
+            // The `foreign.has(key)` return sits BELOW this line, so an
+            // endpoint that had already identified itself as another
+            // chain and then answered with the expected id was added
+            // back to `diamond` on the way past. Round 19 wrote "once an
+            // endpoint has identified itself as a different chain, that
+            // is settled for the rest of the run" and then left one door
+            // open — the door where the endpoint is inconsistent, which
+            // is precisely the endpoint the rule exists for.
+            //
+            // An endpoint reporting two different chain ids has told us
+            // it cannot be trusted to say which chain a height belongs
+            // to. Trusting its heights again lets a wrong-chain bound
+            // reach the absence gate, where a degraded page can be
+            // blamed for omitting a card it was right to omit.
+            // ROUND 109 P2 — THE MODULE-WIDE EXCLUSION APPLIES HERE TOO.
+            //
+            // Round 108 guarded the `admit` closure and left this arm, which
+            // admits on an EXPECTED-chain reply and is the second of the two
+            // ways an endpoint enters `diamond`. The per-page `foreign` set
+            // is empty on a later visit, so an endpoint already proven
+            // foreign — one that answered for another chain earlier and is
+            // now answering with the expected id, which is exactly the
+            // inconsistent endpoint this rule exists for — walked straight
+            // back in. `admitIfNotForeign` is the single test both arms use
+            // now, so there is no second place to remember.
+            admitIfNotForeign();
+          } else {
+            // A DIFFERENT chain is positive evidence the other way, and
+            // it outranks the address heuristics below — an ENS endpoint
+            // asked to reverse-resolve an address carries that address
+            // in its calldata exactly as a batched Diamond read does.
+            // Recorded permanently, and it also REVOKES any earlier
+            // admission, since the heuristic may have run first.
+            foreign.add(key);
+            diamond.delete(key);
+            // ROUND 89 P2 — the same revocation, module-wide. This is the
+            // path the finding named: admitted by the address heuristic,
+            // then caught answering for another chain.
+            foreignPageRpcEndpoints.add(key);
+            knownPageRpcEndpoints.delete(key);
+            return;
+          }
+        }
+      }
+      if (foreign.has(key)) return;
+      // A key proven foreign on ANY page stays out, whichever page is
+      // asking (round 89). `foreign` is per-page and cannot answer this.
+      //
+      // ROUND 108 P2 — AND THAT NOW GUARDS BOTH SETS, which is what this
+      // note already claimed. The module-wide check sat on
+      // `knownPageRpcEndpoints` alone, so on a LATER page — where `foreign`
+      // starts empty again — the raw-address heuristic re-admitted a proven
+      // foreign endpoint to `diamond`. Everything downstream reads that set:
+      // `pageHeadOf`, `pageHeadFloorOf` and `floorEstablishedFor` would then
+      // take heights from an unrelated chain, and bounding a claim about
+      // this deployment with another chain's block number is the worst shape
+      // the floor can take — round 89's own words, applied to one of the two
+      // sets it was written for.
+      const admit = admitIfNotForeign;
+      if (typeof body === 'string' && body.toLowerCase().includes(DIAMOND_HEX)) {
+        admit();
+        return;
+      }
+      if (callsTargetContract(rpcCallsFromBody(body), DIAMOND)) admit();
+    } catch {
+      // Observational only.
+    }
+  };
+
+  // ROUND 16 P2 — SOCKETS TOO, not only HTTP. `wagmi.ts` wraps the chain
+  // reads in `fallback([webSocket, http])`, so on a healthy network the
+  // page can learn a new block over a socket and never issue the
+  // `eth_blockNumber` an HTTP-only listener depends on — its announced
+  // head then lags its real one, and the gate compares against a bound
+  // that stopped moving.
+  //
+  // A socket is its own endpoint: keyed by the socket object, and marked
+  // as deployment-serving by what the PAGE sends over it.
+  //
+  // ⚠ INERT TODAY, AND THE COMMENT SAYING OTHERWISE WAS WRONG (round 19
+  // P2). If the page makes ANY JSON-RPC call over a socket, this drive
+  // exits 2 near the end — a blanket refusal to vouch for reads that
+  // bypassed the allowlist, the response ledger and the chain probe,
+  // all of which ride on an HTTP-only route. That exit happens BEFORE
+  // any verdict or coverage is computed, so on precisely the runs where
+  // socket heads would matter, nothing downstream ever reads them.
+  //
+  // The capture is kept rather than deleted because it is correct and
+  // tested, and because the blocker is the thing expected to move: when
+  // socket frames are classified well enough to lift it, this needs no
+  // change. But it must not be described as shrinking the head race
+  // today, which is what the previous comment and the coverage row both
+  // claimed. Extending socket classification is out of scope here.
+  //
+  // The related worry — a socket carrying ONLY subscriptions would never
+  // be marked — was checked rather than assumed: `wagmi.ts` builds
+  // `fallback([webSocket(...), http(...)])`, and viem's fallback sends
+  // EVERY request to the first working transport, so while the socket is
+  // healthy the Diamond reads travel over it and it marks itself.
+  //
+  // Linking a socket to an HTTP endpoint by HOST was considered and
+  // rejected: providers routinely serve several chains from one host on
+  // different paths or keys, so host-matching would re-introduce exactly
+  // the cross-chain pooling this scoping exists to remove.
+  page.on('websocket', (ws) => {
+    const key = ws;
+    ws.on('framesent', ({ payload }) => markDiamond(key, payload));
+    ws.on('framereceived', ({ payload }) => {
+      try {
+        recordHead(key, blockNumberFromWsFrame(payload));
+      } catch {
+        // Observational only, exactly as below.
+      }
+    });
+  });
+  // ROUND 48 P2 — REGISTERED BEFORE IT AWAITS ANYTHING.
+  //
+  // The listener is wrapped rather than having the tracking added inside
+  // it, because the registration has to happen SYNCHRONOUSLY with the
+  // event: anything after the first `await` is already too late to be
+  // seen by a sample taken in between, which is the race itself.
+  page.on('response', (res) => {
+    const done = handleResponse(res).catch(() => {});
+    pending.add(done);
+    done.finally(() => pending.delete(done));
+  });
+  // ROUND 101 P2 — THE READ IS STAMPED WHEN IT IS ASKED, NOT WHEN IT LANDS.
+  //
+  // Round 87 established that a BATCH cannot be read as a sequence: its
+  // members are independent calls, so a block landing between two of them
+  // serves the `eth_call` at M and answers `eth_blockNumber` with M+1, and
+  // the read is older than the announcement that appears to precede it.
+  // That argument was applied to one response and not to two — and it is the
+  // same argument. Two CONCURRENT requests can be executed at M and M+1 and
+  // have their responses arrive in the opposite order, so comparing two
+  // ARRIVAL times establishes nothing about the order the server served
+  // them in. The floor could then be set at M+1 for a card rendered from M,
+  // which is the accusing direction.
+  //
+  // Stamping the read at REQUEST time makes the comparison sound rather than
+  // deleting the evidence: if this endpoint's head response was parsed
+  // before the read was even SENT, then the endpoint had already reached
+  // that height when it was asked, and heads do not go backwards. Nothing
+  // about arrival order is needed.
+  //
+  // The asymmetry with `firstHeadAt` is deliberate and is round 92's rule
+  // intact: a head must be stamped on the ANSWER, because an unanswered ask
+  // proves nothing about where the endpoint is. A read stamped on the ask is
+  // the conservative end of its own uncertainty — the earliest moment it
+  // could have been served — and moving it earlier can only make this test
+  // harder to satisfy.
+  page.on('request', (req) => {
+    try {
+      if (req.method() !== 'POST') return;
+      const body = req.postData();
+      if (!body || !body.includes('eth_call')) return;
+      const key = req.url();
+      if (!firstReadAt.has(key)) firstReadAt.set(key, orderingNow());
+    } catch {
+      // Observational only: a request whose body cannot be read simply
+      // leaves this endpoint unstamped, which the predicate treats as
+      // unbounded rather than as evidence.
+    }
+  });
+
+  async function handleResponse(res) {
+    try {
+      const req = res.request();
+      if (req.method().toUpperCase() !== 'POST') return;
+      const body = req.postData();
+      if (!body) return;
+      const key = res.url();
+
+      // One `res.json()` for both questions: a response body can only be
+      // consumed once cheaply, and the chain-id evidence needs it.
+      // ROUND 33 P2 — `eth_getBlockByNumber` IS A HEAD ANNOUNCEMENT too,
+      // so both gates below have to admit it or the parser never sees the
+      // body it was just taught to read. The cheap string test stays a
+      // string test: `blockNumberFromRpcPair` is the one that decides
+      // whether the block tag was actually `'latest'`, and duplicating
+      // that judgement here would be a second rule to drift.
+      const announcesHead =
+        body.includes('eth_blockNumber') || body.includes('eth_getBlockByNumber');
+      const parsed = body.includes('eth_chainId') || announcesHead
+        ? await res.json().catch(() => undefined)
+        : undefined;
+      markDiamond(key, body, parsed);
+      // ROUND 86 P2 — WHEN, not only what. `floorEstablishedFor` needs the
+      // ORDER of this endpoint's first head announcement and its first
+      // contract read; without it the bracket's floor bounds nothing on a
+      // lagging provider. Stamped on the RESPONSE, which is the moment the
+      // page actually held the answer.
+      //
+      // `eth_call` only for the read side: `eth_chainId` and the head
+      // announcements are not state reads, and counting them would make
+      // the test permanently false and quietly retire three arms.
+      //
+      // A BATCH CARRYING BOTH IS UNORDERED, and my own self-review note
+      // here said the opposite — that the head "was known no later than
+      // the read was served" — which round 87 refuted correctly.
+      //
+      // A JSON-RPC batch is one HTTP request holding independent calls.
+      // Nothing requires a server to serve them from one block, and
+      // ordinary implementations handle members in sequence: a block
+      // landing between two of them serves the `eth_call` at M and answers
+      // `eth_blockNumber` with N = M+1. The read is then OLDER than the
+      // announcement it supposedly followed, which is exactly the case
+      // this ordering test exists to exclude.
+      //
+      // So both are stamped, and the comparison below requires the head to
+      // be STRICTLY earlier. A mixed batch lands both at one timestamp and
+      // fails that, which is the honest answer: the batch says the two
+      // happened together, not in an order.
+      const stamp = (map) => {
+        if (!map.has(key)) map.set(key, orderingNow());
+      };
+      // The read stamp moved to the REQUEST listener above (round 101). It
+      // is deliberately not re-stamped here: `stamp` keeps the first value,
+      // so a response landing for an endpoint already stamped would be a
+      // no-op, but an endpoint whose request listener missed the body would
+      // otherwise pick up an ARRIVAL time and re-introduce exactly the
+      // unsound comparison this moved away from.
+      // Cheap reject before parsing — most POSTs are not this.
+      if (!announcesHead) return;
+      // The PARSE is a pure function in `rpc-verdict.mjs`, tested
+      // there. Batches answered out of order, batches mixing methods
+      // and error members where a result was expected are the cases
+      // that matter, and a live chain will not reliably produce any of
+      // them — inline here, none of them could be exercised.
+      // ROUND 92 P2 — THE ORDERING EVIDENCE IS STAMPED ON AN ANSWER, not
+      // on a question.
+      //
+      // `announcesHead` is a string test over the REQUEST body, so it was
+      // stamping `firstHeadAt` for an endpoint that was merely ASKED for a
+      // head — including one that answered HTTP 200 with a malformed
+      // result, where `recordHead` records nothing at all. The ordering
+      // test then read a real announcement where there had been none, and
+      // the floor could be declared sound on an endpoint that never told
+      // this drive where it was.
+      //
+      // Stamped from the PARSED height instead, beside the recording it
+      // belongs with, so the two cannot disagree about whether a head
+      // arrived.
+      const announced = blockNumberFromRpcPair(body, parsed);
+      if (announced !== null && announced !== undefined) stamp(firstHeadAt);
+      recordHead(key, announced);
+    } catch {
+      // Observational only. See the note above.
+    }
+  }
+}
+
+/**
+ * The highest head the page announced ON AN ENDPOINT SERVING THE
+ * DIAMOND, or 0n if none was observed.
+ *
+ * 0n also covers "heights were seen, but only on endpoints never proven
+ * to serve the deployment" — which is the honest answer rather than a
+ * conservative guess, and the gate treats it as not-ready.
+ */
+/**
+ * Let the head readings already in flight finish before they are read, and
+ * say whether they all did.
+ *
+ * ROUND 48 P2, and see `pageHeadPending`: iterating the live set would be
+ * unbounded on a page that polls, so each pass awaits a SNAPSHOT of it.
+ *
+ * ROUND 100 P2 — THIS SUMMARY IS NOW THE THIRD CONTRACT ON THIS FUNCTION TO
+ * BE CORRECTED, and it was left saying two things that have both been
+ * overturned inside it.
+ *
+ * "A single snapshot": round 92 made it drain repeatedly, up to a bounded
+ * budget, because a reply landing while the first await settles is one the
+ * page HAS consumed. "Anything arriving after it is, by definition, not part
+ * of what the DOM was showing": true of the FLOOR, which is what round 48
+ * was about, and false of the CEILING this same call now also feeds — round
+ * 97 established that both callers must withhold when the drain runs out of
+ * passes.
+ *
+ * So: a BOUNDED drain to quiescence, returning `true` only when the pending
+ * set actually emptied. Neither end of the bracket is established on `false`.
+ * See the notes inside for the full history; the point of repeating it here
+ * is that a reader who stops at the summary should not be told the opposite.
+ */
+async function settleHeadReads(page) {
+  const pending = pageHeadPending.get(page);
+  if (!pending || pending.size === 0) return true;
+  // ROUND 92 P2 — DRAINED TO A BOUNDED QUIET POINT, not one snapshot.
+  //
+  // Round 48 awaited a single snapshot of the set and argued that anything
+  // arriving afterwards is "by definition not part of what the DOM was
+  // showing". That is true of the FLOOR and false of the CEILING, which is
+  // the use this same call now has: a response landing while the await
+  // settles is one the page has consumed, so the head it carries belongs
+  // to what the page was showing — and leaving it unrecorded makes the
+  // ceiling too LOW, which is exactly what lets the catch-up test declare
+  // itself satisfied against a state the page had already moved past.
+  //
+  // Round 48's reason for not looping remains sound and is why this is
+  // BOUNDED rather than "until empty": a page that polls would never
+  // reach empty, and an unbounded drain would hang the run. Six passes is
+  // an operational budget, stated as one — on a page whose reads settle it
+  // ends after two, and on one that never stops it ends anyway.
+  //
+  // ROUND 96 P2 — AND IT SAYS WHICH OF THOSE TWO HAPPENED.
+  //
+  // Round 92 wrote "the sample is simply the best available" and called the
+  // residual unchanged from round 48. It was not unchanged: round 48's
+  // sample was a FLOOR, where a response arriving late is genuinely not part
+  // of what the DOM was showing, and this same call now also produces a
+  // CEILING, where it is. Returning quietly after six busy passes hands the
+  // caller a ceiling that is too low while looking exactly like a drained
+  // one — and the catch-up test then reads as satisfied against a state the
+  // page had already moved past, which is how an older protocol range comes
+  // to substantiate a product failure.
+  //
+  // `false` means the budget expired with work still in flight: not a
+  // ceiling, not a lower ceiling, simply not established.
+  //
+  // ROUND 98 P2 — AND BOTH CALLERS WITHHOLD ON IT. The sentence that used to
+  // end this paragraph said the floor caller ignores `false`, on round 48's
+  // argument. Round 97 overturned that — round 48 is about a reply that
+  // ARRIVES after the sample, while the budget expiring is a reply that
+  // arrived BEFORE it and had not finished parsing, which is already the
+  // page's, and dropping it makes the floor too HIGH. The code was fixed and
+  // this contract was not, which left the overturned behaviour documented as
+  // the current one, three lines above the loop, for a future refactor to
+  // restore. Neither end of the bracket is established while this returns
+  // `false`.
+  for (let pass = 0; pass < 6; pass += 1) {
+    const inFlight = [...pending];
+    if (inFlight.length === 0) return true;
+    await Promise.allSettled(inFlight);
+  }
+  return pending.size === 0;
+}
+
+function pageHeadOf(page) {
+  const heads = pageRpcHeads.get(page);
+  const diamond = pageDiamondKeys.get(page);
+  if (!heads || !diamond) return 0n;
+  let best = 0n;
+  for (const [key, seen] of heads) {
+    if (!diamond.has(key)) continue;
+    if (seen > best) best = seen;
+  }
+  return best;
+}
+
+/**
+ * The LOWEST head an endpoint serving the Diamond announced on this page,
+ * or 0n if none was observed.
+ *
+ * ROUND 84 P2 — because "the page reached block N" is not "the card read
+ * block N", and the bracket was treating it as though it were.
+ *
+ * `pageHeadOf` returns the highest head seen ANYWHERE on the page, and the
+ * app announces heads far more often than the card refetches: a block
+ * watcher ticks every few seconds while the card's own queries poll on a
+ * much slower cadence. So the pre-render end of the bracket was routinely
+ * pinned to a block NEWER than the data the card was rendering. Around a
+ * grace transition that is exactly wrong — the card can legitimately still
+ * be showing the block-N `not yet` state while both simulations at N+1
+ * answer `true`, and the verdict then reports the product for withholding
+ * a close-out the protocol had only just started accepting. A false FAIL
+ * on the one card this drive exists to judge, manufactured out of the
+ * page's own polling cadence.
+ *
+ * This drive cannot tie a render to a block — nothing in the DOM says
+ * which one a query consumed, and re-deriving the app's refetch interval
+ * would be exactly the second copy of app config this file refuses to keep
+ * elsewhere. What it CAN establish is a block the card's data cannot
+ * predate: the first head the page was seen to reach. Bracketing from
+ * there to the post-scrape head spans every block the card could possibly
+ * have read, so when both ends agree the answer did not change anywhere in
+ * that span and the disagreement with the card is real whichever block it
+ * used. When they differ the observation is INCOMPLETE — which is the
+ * outcome Codex asked for, reached by widening the window rather than by
+ * abandoning the check.
+ *
+ * The cost is stated: a grace crossing inside the page's lifetime now
+ * yields `incomplete` where the old bracket would have accused. That is
+ * the honest answer, since in that window this drive genuinely cannot tell
+ * a stale render from a wrong one.
+ *
+ * TWO BOUNDS WORTH KNOWING, found by reviewing this rather than by
+ * running it:
+ *
+ *   - HOW FAR BACK THIS PINS is the page's own lifetime before the card is
+ *     read — a navigation, a settle and at most the chooser wait, so tens
+ *     of seconds and a few tens of blocks. That matters because a pin
+ *     outside a node's state window answers with a `-32000` this drive
+ *     rethrows, and the whole run would abort. Well inside any node's
+ *     window at this depth; recorded because the depth is what makes it
+ *     safe, and a future change that widened the floor further would not
+ *     obviously be changing that.
+ *   - THE FLOOR IS A LOWER BOUND ON WHAT THE PAGE ANNOUNCED, not on what
+ *     it read. A contract read that resolved before the first head
+ *     announcement could have used an earlier block, so the bracket can
+ *     miss by the blocks between page load and that first announcement —
+ *     normally none, since the app's block watcher mounts with everything
+ *     else. The alternative is subtracting a safety margin, which would be
+ *     a magic number standing in for a fact, and this file does not keep
+ *     those.
+ */
+function pageHeadFloorOf(page) {
+  const floors = pageRpcHeadFloors.get(page);
+  const diamond = pageDiamondKeys.get(page);
+  if (!floors || !diamond) return 0n;
+  let low = 0n;
+  for (const [key, seen] of floors) {
+    if (!diamond.has(key)) continue;
+    if (low === 0n || seen < low) low = seen;
+  }
+  return low;
+}
+
+/**
  * Load a route and report everything that went wrong on it.
  *
  * `expectChooser` makes the settle CONDITIONAL rather than a fixed sleep.
@@ -1370,6 +3177,68 @@ async function visit(path, { expectChooser = false, loan = null } = {}) {
   // Before anything navigates: a socket opened during the first paint must
   // not be missed — see `wsRpcMethods`.
   watchWebSockets(page);
+  // ROUND 14 P2 — AND NEITHER MUST THE PAGE'S OWN VIEW OF THE CHAIN.
+  //
+  // The absence gate has to know whether THIS observer has caught up
+  // with the provider whose DOM it is judging, and only the page can
+  // answer that. Attached here, before the first navigation, for the
+  // same reason the socket watcher is.
+  watchPageHead(page);
+  // ROUND 85 P2 — A BLOCK THE PAGE HAD NOT BEEN BORN AT.
+  //
+  // The bracket's lower end is the first head the PAGE announced, and a
+  // contract read that resolved before that announcement could have used
+  // an earlier block — the residual round 84's self-review stated and this
+  // round was asked to close. There is no way to learn which block a
+  // render consumed, but there IS a block it can hardly precede: the
+  // chain's height before this page started loading at all.
+  //
+  // Sampled uncached, for round 13's reason — a cached height from an
+  // earlier visit would be a number this drive already had rather than
+  // one the chain just gave it.
+  //
+  // NOT A PROOF, and the code should not imply one: the page has its own
+  // provider, and a lagging node can serve `latest` from below a height
+  // this observer has already seen. It is a strictly better bound than the
+  // first announcement, bought for one call, and the span it adds is the
+  // page's boot time — a block or two.
+  //
+  // NOT `discovery`, and the first version of this line used it with a
+  // `.catch` that could never fire — `discovery` exits the process rather
+  // than rejecting, so the fallback was decoration implying a degradation
+  // path that did not exist (caught by self-review).
+  //
+  // A plain catch is also the RIGHT policy here, which is why this is not
+  // simply the guard removed. This sample only WIDENS a lower bound: its
+  // absence costs a block or two of bracket, and the page's own first
+  // announcement still floors it. Aborting an entire observation over an
+  // optimisation would be the harsher answer, and it is not needed to keep
+  // a real fault loud — the pinned snapshot below makes the same call
+  // under `discovery`, so an endpoint that cannot answer `getBlockNumber`
+  // stops the run there, by name, a few seconds later.
+  //
+  // ROUND 86 P2 — AND ONLY ON A VISIT THAT WILL USE IT. `observeForcedClose`
+  // runs for a lender detail visit with a `loan`, so on the list route and
+  // on every borrower visit this was a chain read taken for nobody. Gated
+  // on the consumer's own condition rather than a copy of its intent, so
+  // the two cannot drift into disagreeing about which visits bracket.
+  let headBeforeNav = null;
+  let pageHeadBeforeNav = null;
+  let pageSampledBeforeNav = new Set();
+  if (ROLE === 'lender' && loan) {
+    try {
+      headBeforeNav = await pub.getBlockNumber({ cacheTime: 0 });
+    } catch {
+      headBeforeNav = null;
+    }
+    // ROUND 87 — and the same question asked of the PAGE'S provider, which
+    // is the only source that bounds what the page's own reads can return.
+    // See `pageProviderHead`. Null on the first visit, which needs no
+    // floor: the list route carries no forced-close observation.
+    const sample = await pageProviderHead();
+    pageHeadBeforeNav = sample.head;
+    pageSampledBeforeNav = sample.sampled;
+  }
   const pageErrors = [];
   const consoleErrors = [];
   page.on('pageerror', (e) => pageErrors.push(String(e).replace(/\s+/g, ' ').slice(0, 300)));
@@ -1405,6 +3274,18 @@ async function visit(path, { expectChooser = false, loan = null } = {}) {
   );
   const lenderCardText =
     ROLE === 'lender' && loan ? await readLenderCardText(page) : null;
+  // FORCED-CLOSE CARD (#2069), judged on its own evidence.
+  //
+  // `lenderHoldsActive` is deliberately STRICTER than lender-card
+  // eligibility, which admits FallbackPending: this card is gated on
+  // `resolvedLoanStatus === Active`, so a FallbackPending position is
+  // one where its absence is CORRECT. Feeding the looser predicate in
+  // would manufacture a missing-card FAIL on exactly the positions the
+  // product is right about — the same class of error `stillEligible`
+  // exists to avoid for the lender card.
+  const forcedClose =
+    ROLE === 'lender' && loan ? await observeForcedClose(page, loan, headBeforeNav, pageHeadBeforeNav, pageSampledBeforeNav)
+      : null;
   const holdCard = await page.getByTestId('sale-listing-hold-card').count();
   const freeHeld = await page.getByTestId('free-held-options').count();
   const out = {
@@ -1438,6 +3319,24 @@ async function visit(path, { expectChooser = false, loan = null } = {}) {
     // that then went terminal before the snapshot, had its genuine
     // regression suppressed as a pre-render race.
     cardAbsentAtScrape: ROLE === 'lender' && loan ? lenderCardText === null : false,
+    // The forced-close observation and its verdict, kept whole so the
+    // reporter can print the reason rather than re-deriving it.
+    forcedClose,
+    forcedCloseVerdict: forcedClose
+      ? forcedCloseVerdict(forcedClose, FORCED_CLOSE_COPY)
+      : null,
+    // Reported, not judged: evidence about whether the absence gate is
+    // armed on this deployment (round 14).
+    // The bracket's lower end, reported beside its upper one so the span
+    // the protocol comparison was made over is visible (round 84).
+    forcedCloseHeadFloor: forcedClose ? (forcedClose.headFloor ?? null) : null,
+    forcedCloseHeadScanned: forcedClose ? (forcedClose.headScanned ?? null) : null,
+    forcedCloseScanComplete: forcedClose ? (forcedClose.headScanComplete ?? null) : null,
+    forcedCloseConfirmedAt: forcedClose ? (forcedClose.headConfirmedAt ?? null) : null,
+    forcedCloseHeadPinned: forcedClose ? (forcedClose.headPinned ?? null) : null,
+    forcedCloseHeadPageSighting: forcedClose ? (forcedClose.headPageSighting ?? null) : null,
+    forcedCloseHeadCeiling: forcedClose ? (forcedClose.headCeiling ?? null) : null,
+    forcedCloseCeilingSound: forcedClose ? (forcedClose.headCeilingSound ?? null) : null,
     // DETAIL PAGES ONLY, gated on `loan` (self-inflicted, caught by
     // running it). The lender card exists only on `/positions/<id>`, and
     // on the LIST route the card locator matches nothing — but a
@@ -1519,6 +3418,46 @@ async function stillEligible(loan) {
   ) {
     return 'no longer active';
   }
+  // ROUND 108 P2 — AND THE ACCEPTED SALE, which is as volatile as the
+  // status and was ranked once, up front, minutes earlier.
+  //
+  // `acceptedSale` orders the walk: a lender position whose sale has been
+  // accepted carries no forced-close card, so it is demoted. A sale
+  // accepted AFTER that ranking leaves the loan in its old band, the visit
+  // observes a correctly absent card, records it as inapplicable — and
+  // still spends one of `OBSERVE_MAX_POSITIONS`. Where the cap binds, an
+  // applicable loan further down goes unvisited and the run reports
+  // BLOCKED for want of a candidate it had.
+  //
+  // Re-read here rather than rationed at the cap, because this function is
+  // exactly the "nothing decided minutes ago" gate and the other volatile
+  // inputs already come through it. Lender-only: the borrower card is not
+  // gated on the lender's sale.
+  if (ROLE === 'lender') {
+    const soldNow = await discovery(
+      `re-reading the accepted sale on loan ${loan.id} before visiting it`,
+      () => saleLockedOn(loan.lenderTokenId, loan.id, undefined, authorityNow ?? loan.authority),
+    );
+    // TRI-STATE, like every other read in this file: `true` demotes, and
+    // an unreadable answer leaves the loan where it was rather than
+    // inventing a demotion out of a transport failure.
+    if (soldNow === true) {
+      acceptedSale.add(loan.id);
+      return 'its sale was accepted since discovery';
+    }
+  }
+  // ROUND 1 P2 — CARRY THE FRESH READS BACK ONTO THE LOAN.
+  //
+  // This function re-reads status and authority and then threw both
+  // away, returning only a reason string. Downstream predicates — the
+  // forced-close one above all, which gates on `status === Active` —
+  // then judged against values minutes old. An Active→FallbackPending
+  // transition makes the page correctly drop the forced-close card
+  // while the drive calls it a defect; the reverse hides a genuine
+  // missing card. Writing them back costs nothing: the reads already
+  // happened here.
+  loan.status = Number(live.status);
+  loan.authority = authorityNow;
   if (lockedNow) return 'offset started since discovery';
   if (authorityNow === null) return `${ROLE} token burned since discovery`;
   if (authorityNow.toLowerCase() !== observed.toLowerCase()) {
@@ -2166,6 +4105,5090 @@ async function readLenderCardText(page, card) {
   const target = card ?? lenderCardOf(page);
   if ((await target.count()) === 0) return null;
   return await target.innerText({ timeout: 2_000 }).catch(() => null);
+}
+
+/**
+ * The FORCED-CLOSE card, observed on the same visit as the lender exit
+ * chooser and judged separately from it.
+ *
+ * Separately on purpose. The two cards render on the same page for the
+ * same role, and folding their verdicts together is the mistake this
+ * file has already recorded twice: aggregating lets one card's missing
+ * row hide a positively observed defect on the other. Each keeps its
+ * own presence, its own reason and its own contribution to the exit
+ * code.
+ *
+ * WAITS rather than reading once. Its readiness reads are chain reads
+ * that can outrun a single instantaneous scrape, and a false "absent"
+ * here would be reported as a FAIL — the one outcome that gets a check
+ * switched off rather than fixed. `state: 'attached'` because the
+ * question is whether the card mounted at all, which is what the
+ * absence verdict is about; a mounted card scrolled out of view is
+ * still an answer.
+ */
+/**
+ * Would the protocol ACCEPT the close-out this card is offering?
+ *
+ * ROUND 57 P2 — SIMULATED, not enumerated, and the product's own code
+ * makes the argument better than a comment here can. `ForcedCloseCard`
+ * simulates `triggerDefault(loanId, [])` before submitting, and says why:
+ * it asks the contract "would this work right now?" instead of
+ * re-deriving the answer from a second copy of the branch rules, and it
+ * "covers the gates this decision does not model".
+ *
+ * Round 55 read three views instead — `isLoanDefaultable`, `paused`,
+ * `sequencerHealthy` — and I defended the enumeration on the grounds
+ * that those are the views the app consults. They are not the whole
+ * predicate: a liquid, non-collapsed ERC-20 loan with no internal match
+ * needs a non-empty enabled adapter list, and all three of those reads
+ * return the accepting combination while `triggerDefault(loanId, [])`
+ * is guaranteed to revert. The enumeration was already incomplete when
+ * I wrote that it might become so.
+ *
+ * THE EXACT CALL THE CARD OFFERS, from the observed lender's account,
+ * so this answers the question the lender's click would ask and not a
+ * proxy for it.
+ *
+ * Three outcomes, decided by the classifier this repo already has:
+ *
+ *   - resolves           the protocol would accept it
+ *   - reverts            it would be refused — `classifyRpcFailure`
+ *                        calls a revert `'answered'`, which is positive
+ *                        evidence about the CONTRACT rather than the
+ *                        endpoint
+ *   - anything else      `undefined`: this drive could not ask, and a
+ *                        drive that could not ask must neither accuse
+ *                        nor vouch
+ *
+ * @param {bigint} loanId
+ * @param {bigint} [blockNumber] simulate against this block when given
+ * @returns {Promise<boolean|undefined>}
+ */
+async function probeCloseOut(loanId, blockNumber, account) {
+  try {
+    await pub.simulateContract({
+      address: DIAMOND,
+      abi: DIAMOND_ABI_VIEM,
+      functionName: 'triggerDefault',
+      args: [loanId, []],
+      // ROUND 75 P2 — THE ACCOUNT IS A PARAMETER, not the module-scoped
+      // `observed`.
+      //
+      // The round-74 pre-selection runs BEFORE `let observed` is
+      // initialised, so reading it here threw a `ReferenceError` from
+      // the temporal dead zone — which the catch below then classified
+      // as a transport failure and returned as `undefined`. Every
+      // candidate came back unknown, `acceptsCloseOut` stayed empty, and
+      // the whole authority-and-walk prioritisation was INERT while
+      // reading as though it worked.
+      //
+      // Passing the candidate's own authority is also the more correct
+      // question: it simulates the close-out as the lender whose card it
+      // is, which is what `saleLockedOn` already does with its
+      // `authority` argument.
+      account: account ?? observed,
+      ...(blockNumber === undefined ? {} : { blockNumber }),
+    });
+    return true;
+  } catch (err) {
+    // A REVERT is the protocol answering. Anything else — a dead
+    // endpoint, a rate limit — is a failure to determine, and
+    // `classifyRpcFailure` is the one place that judgement lives.
+    //
+    // ROUND 75 P2 — AND THIS DRIVE BEING WRONG ABOUT ITSELF IS RETHROWN.
+    //
+    // The swallow above is what made the TDZ silent: a `ReferenceError`
+    // is not a chain condition, and classifying it as one turned a
+    // programming error into a permanent "could not ask". That is the
+    // exact lesson `isTransportFailure` was written for in round 31 —
+    // "a catch that cannot tell a dead endpoint from a programming error
+    // will keep reporting the programming error as a chain condition" —
+    // and this probe was not using it.
+    if (classifyRpcFailure(err) === 'answered') return false;
+    if (!isTransportFailure(err)) throw err;
+    return undefined;
+  }
+}
+
+/**
+ * Would the protocol settle this close-out by INTERNAL MATCH?
+ *
+ * ROUND 64 P2 — because "the transaction would succeed" does not say
+ * WHICH settlement the lender is about to get.
+ *
+ * `triggerDefault(loanId, [])` simulates cleanly on a defaultable loan
+ * whether the contract dispatches an internal match or takes the in-kind
+ * path, because the match is dispatched FIRST and succeeds. So a card
+ * that has regressed to promising collateral in kind, on a loan with a
+ * live match candidate, passes every check this drive had: the
+ * simulation says yes, and the standard receipt deliberately covers both
+ * outcomes so its six rows are satisfied too. The lender reads "you
+ * receive the collateral" and is repaid the lent asset instead.
+ *
+ * THE CONTRACT'S OWN QUESTION, not a re-derivation. This is the same
+ * view `decideForcedClose` consumes and the same one
+ * `attemptInternalMatchAutoDispatch` consults, so it already folds in
+ * the `internalMatchEnabled` config flag, the subject's status and the
+ * matchable-collateral filter. Re-deriving any of that here would go
+ * stale the moment one of them moved — the argument round 57 made for
+ * simulating rather than re-deriving the grace ladder, at the next
+ * branch down.
+ *
+ * Tri-state, exactly like `probeCloseOut`: `true` / `false` are the
+ * chain answering, `undefined` is a failure to determine and asserts
+ * nothing.
+ */
+/**
+ * How many blocks of a bracket this drive will probe exhaustively.
+ *
+ * An operational budget, not a rule about the chain, and stated as one.
+ * The span it bounds is the page's own lifetime before the scrape — three
+ * or four blocks on the live deployment — so this is generous by an order
+ * of magnitude. A span past it reports `null` (not established) rather
+ * than being sampled and declared, because sampling is exactly the
+ * inference this replaces.
+ */
+const SPAN_PROBE_BUDGET = 32n;
+
+/**
+ * Was the protocol's answer the SAME at every block of this bracket?
+ *
+ * ROUND 85 P2 — because two matching endpoint samples do not establish
+ * what happened between them, and this drive was treating them as if they
+ * did.
+ *
+ * The bracket's job is to say the window was quiet, so that a card
+ * disagreeing with the protocol is a defect in the card rather than a
+ * state change the drive watched happen. Equality at the two ends is
+ * strong evidence of that for a MONOTONE answer and no evidence at all for
+ * one that can round-trip: an internal-match candidate can appear and be
+ * consumed inside the observation, leaving both ends `false` while a
+ * render truthfully painted the match route — and the verdict then accused
+ * the product of promising a settlement "no candidate existed for", which
+ * two endpoint reads cannot say.
+ *
+ * So the interior is READ rather than assumed. State is per block, so an
+ * answer equal at every block of the span did not change during it — a
+ * fact, where the endpoint comparison was an inference.
+ *
+ * THREE OUTCOMES, the discipline every probe in this file carries:
+ * `true` — every block agreed; `false` — one did not, so the window was
+ * not quiet; `null` — this could not be established, because the span is
+ * unknown, inverted, over budget, or a probe declined to answer. `null`
+ * must never read as `true`: it is the old two-point evidence, which is
+ * what the finding is about.
+ *
+ * The ENDPOINTS are the caller's — they are already read and already
+ * compared — so only the interior is probed here.
+ */
+async function stableAcross(from, to, expected, probe, onProbed) {
+  if (expected === undefined || expected === null) return null;
+  if (typeof from !== 'bigint' || typeof to !== 'bigint') return null;
+  if (from === 0n || to === 0n) return null;
+  // `to < from` means the page announced a head ahead of the block this
+  // drive's own provider pinned. That is two providers disagreeing about
+  // the chain's height, not a span, and answering `true` for it would
+  // vouch for a window never examined.
+  if (to < from) return null;
+  if (to - from > SPAN_PROBE_BUDGET) return null;
+  for (let b = from + 1n; b < to; b += 1n) {
+    // A THROW HERE IS "NOT ESTABLISHED", not a reason to end the run, and
+    // that is safe for the one reason it would not be in general: both
+    // ENDPOINTS have already been probed with this same call, and the
+    // caller only asks when both answered. A programming error in the
+    // probe therefore surfaced before this loop ran. What is left to catch
+    // is the chain declining a historical read — an older block outside a
+    // node's state window is the realistic one — and aborting a whole
+    // observation because one interior block could not be re-read would be
+    // the harshest possible answer to the mildest possible cause.
+    //
+    // Caught rather than pattern-matched on the error, deliberately:
+    // enumerating provider error shapes is the mistake this file keeps
+    // being caught making, and every outcome here is the same anyway.
+    let seen;
+    try {
+      seen = await probe(b);
+    } catch {
+      return null;
+    }
+    if (seen === undefined || seen === null) return null;
+    // ROUND 105 P2 — HOW FAR THIS ACTUALLY GOT, recorded as it goes.
+    //
+    // The result alone cannot say: `false` means it stopped at the FIRST
+    // mismatch, so a 10..20 span that disagreed at 11 read one interior
+    // block, and `null` may mean none were read or several. The report was
+    // projecting the whole interval from a non-null result and `not-scanned`
+    // from a null one, so a scan that stopped at 11 was printed as either
+    // all of 10..20 or none of it — an extent the run never established,
+    // which is the same class as every other unstated figure here.
+    //
+    // A callback rather than a richer return type: the tri-state is consumed
+    // as a tri-state in several places, and widening it to carry extent
+    // would ripple through all of them for a reporting concern.
+    onProbed?.(b);
+    if (seen !== expected) return false;
+  }
+  return true;
+}
+
+async function probeInternalMatch(loanId, blockNumber) {
+  try {
+    const out = await pub.readContract({
+      address: DIAMOND,
+      abi: DIAMOND_ABI_VIEM,
+      functionName: 'hasInternalMatchCandidate',
+      args: [loanId],
+      ...(blockNumber === undefined ? {} : { blockNumber }),
+    });
+    // `(bool found, uint256 candidateId)`. Only the first is read: a
+    // candidate id without `found` is not a candidate, and reading the
+    // id for anything would be this drive re-deciding a question the
+    // view already answered.
+    const found = Array.isArray(out) ? out[0] : out?.found;
+    return typeof found === 'boolean' ? found : undefined;
+  } catch (err) {
+    // UNDEFINED FOR EVERY WAY THE CHAIN CAN DECLINE, and deliberately not
+    // a `classifyRpcFailure` branch that returns `false`. That helper
+    // distinguishes "the contract answered with a revert" from "nothing
+    // answered", which matters for a SIMULATION — a revert there is the
+    // protocol saying no. This is a `view`: a revert from it is the view
+    // declining to answer, not an answer of `false`.
+    //
+    // ROUND 76 P2 — AND THE ROUND-75 GUARD WAS PUT ABOVE THIS, WHICH
+    // BROKE IT.
+    //
+    // I added `if (!isTransportFailure(err)) throw err` here to stop a
+    // programming error being swallowed, and a view REVERT is not a
+    // transport failure — so the guard threw on exactly the case the
+    // paragraph beneath it says must return `undefined`. An older
+    // deployment without `hasInternalMatchCandidate`, or a custom revert,
+    // would have aborted the whole run instead of reporting the route as
+    // unread. A guard that contradicts the comment directly below it.
+    //
+    // The order is now: every shape that is the CHAIN declining comes
+    // first and answers `undefined`; only what is left — this drive being
+    // wrong about itself — is rethrown. The decode names are enumerated
+    // on the SAFE side, so a shape not listed is rethrown and loud rather
+    // than quietly absorbed.
+    if (classifyRpcFailure(err) === 'answered') return undefined;
+    if (isTransportFailure(err)) return undefined;
+    const decodeShaped = (e) => {
+      for (let cur = e, hops = 0; cur && hops < 12; cur = cur.cause, hops += 1) {
+        if (/ZeroData|DecodingData|AbiDecoding|ContractFunctionZeroData/.test(cur?.name ?? '')) {
+          return true;
+        }
+      }
+      return false;
+    };
+    if (decodeShaped(err)) return undefined;
+    throw err;
+  }
+}
+
+/**
+ * The forced-close observation, with its chain facts read AT THE SCRAPE.
+ *
+ * ROUND 2 P2, and the second half of round 1's staleness fix. Writing
+ * the fresh status back in `stillEligible` closed the
+ * discovery→revalidation gap and left the one that follows it:
+ * navigation, the settle wait, the readiness poll and the confirmation
+ * scrape can together run for a minute or more, and a loan that leaves
+ * Active inside that window makes the page CORRECTLY drop the card
+ * while a pre-navigation `loan.status` still calls it a defect.
+ *
+ * So the status and the authority are re-read here, beside the DOM
+ * observation they are judged against, rather than inherited from
+ * whenever the loan was last revalidated.
+ *
+ * ROUND 2 P2 — AND THE READS GO THROUGH `discovery()`. `saleLockedOn`
+ * rethrows anything that is not a revert, and this call sits outside
+ * the navigation try-block: an RPC timeout or a rate-limit would have
+ * escaped `visit()` and exited Node with 1, the code this drive
+ * reserves for a PRODUCT REGRESSION. A prerequisite read that could not
+ * answer is BLOCKED, never a finding about the app.
+ */
+async function observeForcedClose(page, loan, headBeforeNav, pageHeadBeforeNav, pageSampledBeforeNav) {
+  // ROUND 55 P2 — BRACKET THE OBSERVATION, because the answer that
+  // validates a render must not come from after it.
+  //
+  // Round 54 read defaultability only in the pinned snapshot, which is
+  // taken AFTER the whole DOM observation — and that observation can
+  // run for thirty seconds before its interaction timeouts. A grace
+  // deadline crossing inside that window meant a card that exposed a
+  // ready action while the protocol would still have refused it was
+  // validated by a `true` read taken afterwards. The transient unsafe
+  // state, which is exactly what this drive exists to catch, was
+  // resolved away by the passage of time.
+  //
+  // So it is read BEFORE as well. The two together say whether the
+  // window was quiet: both `true` is a clean pairing, and a
+  // `false`-then-`true` crossing is reported as an INCOMPLETE
+  // observation rather than guessed at in either direction — the card
+  // may legitimately have started withheld and become ready, and this
+  // drive cannot tell that from the defect without sampling every
+  // render, which it does not.
+  // ROUND 58 P2 — THE HEAD THE RENDER CAME FROM IS SAMPLED BEFORE THE
+  // RENDER, not after it.
+  //
+  // Round 57 pinned the pre-render simulation to `pageHead` and left
+  // `pageHead` where it was: sampled AFTER `readForcedCloseCard`
+  // returns. That is the head the page had reached by the END of the
+  // observation, and the observation opens the confirmation and waits
+  // out interaction timeouts. Across a grace boundary a regressed card
+  // can expose a ready action at block N, the page can announce N+1
+  // while the drive is still inspecting, and both simulations then run
+  // against accepting blocks — the unsafe render validated by a head it
+  // never rendered at. The fix pinned the right axis and kept the wrong
+  // sample.
+  //
+  // Sampled here, before anything is read from the DOM, so it is a head
+  // the page had actually reached when the card under judgement was on
+  // screen. `settleHeadReads` first, for round 48's reason: an in-flight
+  // parse would otherwise make this zero or stale.
+  //
+  // The LATER sample below is kept and still feeds the absence gate,
+  // where "has the page caught up" is the question and the newest head
+  // is the right answer. Two samples, two different questions.
+  // ROUND 97 P2 — AND THIS ONE'S VERDICT IS KEPT TOO. I said in round 96
+  // that the floor could ignore it, and named round 48 as the reason. That
+  // was wrong, and the distinction I missed is which reply is in question.
+  //
+  // Round 48 is about a reply that ARRIVES after the sample: genuinely not
+  // part of what the DOM was showing, and rightly ignored. This is about a
+  // reply that arrived BEFORE it and had not finished parsing — already the
+  // page's, and dropped only because the drain ran out of passes.
+  //
+  // The damage is in the accusing direction, which is why it is not merely
+  // untidy. A lagging endpoint discovered late leaves its head unrecorded,
+  // the floor is then built from an ahead OBSERVE_RPC height N, and the
+  // pending parse lands recording page head M below it. Both later checks —
+  // the announcement ordering and the post-scrape drain — pass. So a card
+  // that rendered at M is judged against a scan covering only N and later,
+  // and across a grace transition between the two that is a correct card
+  // accused.
+  const floorDrained = await settleHeadReads(page);
+  const headAtRender = pageHeadOf(page);
+  // ROUND 84 P2 — AND THE PRE-RENDER END GOES TO THE FLOOR, not to the
+  // newest head the page happened to have reached.
+  //
+  // Round 58 moved this sample ahead of the DOM read, which was right and
+  // did not go far enough: `pageHeadOf` is the highest head seen ANYWHERE
+  // on the page, and the app announces heads far more often than the card
+  // refetches. The sample was therefore still routinely NEWER than the
+  // data being judged — the same defect round 58 fixed, one cadence
+  // further in.
+  //
+  // `pageHeadFloorOf` carries the full argument. In short: this drive
+  // cannot tie a render to a block, so it brackets from a block the
+  // card's data cannot predate to one it cannot postdate, and a
+  // disagreement anywhere in that span makes the observation incomplete
+  // rather than an accusation.
+  // ROUND 85 P2 — AND BELOW THE FIRST ANNOUNCEMENT, to the height the
+  // chain had before this page existed.
+  //
+  // Round 84's floor is the first head the PAGE announced, and its own
+  // note stated the residual this closes: a contract read that resolved
+  // before that announcement could have used an earlier block, so the
+  // bracket could sit entirely above the state being judged. `headBeforeNav`
+  // is sampled from this drive's provider before `page.goto`, so it is a
+  // height the page's reads can hardly precede — bought for one call, and
+  // widening the span only by the page's boot time.
+  //
+  // The lower of the two, never one or the other: the page's own first
+  // announcement is the better evidence where it is lower (the two
+  // providers can disagree, and a lagging page provider is exactly the
+  // case `headBeforeNav` cannot cover), so taking the minimum keeps
+  // whichever is further back rather than trusting either source.
+  const headFloor = pageHeadFloorOf(page);
+  const announced = headFloor === 0n ? headAtRender : headFloor;
+  const preNav = typeof headBeforeNav === 'bigint' ? headBeforeNav : 0n;
+  // ROUND 87 — the SOUND source, and the only one of the three that bounds
+  // what the page's own reads can return. See `pageProviderHead`.
+  const pageNav = typeof pageHeadBeforeNav === 'bigint' ? pageHeadBeforeNav : 0n;
+  const headBefore = [announced, preNav, pageNav]
+    .filter((h) => h > 0n)
+    .reduce((low, h) => (low === 0n || h < low ? h : low), 0n);
+  // ROUND 57 P2 — THE OTHER END OF THE BRACKET, AT THE PAGE'S OWN HEAD.
+  //
+  // Round 55 took a pre-read on `OBSERVE_RPC` at wall-clock `latest`,
+  // which is not the chain view the render came from. This file treats
+  // the page's provider and `OBSERVE_RPC` as independent everywhere
+  // else — the round-8 confirming re-read exists for exactly that — so
+  // across a grace boundary the observer can be at N+1 while the page
+  // and its DOM are still at N: both ends of the bracket answer `true`,
+  // the window looks quiet, and a ready action rendered at a head where
+  // the protocol still refused it is validated.
+  //
+  // `pageHead` is the head the PAGE was seen to reach, and it is
+  // already recorded for the absence gate. Simulating against it asks
+  // the question the render was answering.
+  //
+  // Where the page never disclosed a head, this falls back to an
+  // unpinned probe — the round-55 bracket, which is weaker (wall-clock
+  // ordering rather than a head) but no weaker than what it replaces.
+  // Saying which one was used is left to the verdict, which reports an
+  // unanswerable probe as an incomplete observation either way.
+  // ROUND 76 P2 — the pre-render bracket reads take the same cover. They
+  // run outside `visit()`'s navigation catch, so a rethrown programming
+  // error here escaped as an unhandled rejection and exited 1 against the
+  // product, and could skip the browser cleanup `discovery` performs.
+  const defaultableBefore = await discovery(
+    `simulating the close-out for loan ${loan.id} before the scrape`,
+    () =>
+      headBefore === 0n ? probeCloseOut(loan.id) : probeCloseOut(loan.id, headBefore),
+  );
+  // ROUND 64 P2 — AND WHICH SETTLEMENT, bracketed the same way and for
+  // the same reason. A match candidate can appear or be consumed inside
+  // the observation window, so one read cannot distinguish "the card is
+  // promising the wrong settlement" from "the answer changed while we
+  // watched". Both ends agreeing is what makes the comparison a finding;
+  // a disagreement is reported as incomplete.
+  const matchBefore = await discovery(
+    `reading the settlement route for loan ${loan.id} before the scrape`,
+    () =>
+      headBefore === 0n
+        ? probeInternalMatch(loan.id)
+        : probeInternalMatch(loan.id, headBefore),
+  );
+  //
+  // ROUND 59 P2 — AND THE PROBE ITSELF RUNS BEFORE THE OBSERVATION, not
+  // only its PIN.
+  //
+  // Round 58 moved the head SAMPLE ahead of the DOM read and left the
+  // probe where it was. For a pinned probe that is harmless — a
+  // simulation at block N answers the same whenever it is run — but the
+  // zero-head fallback is UNPINNED, so it was still executing after an
+  // observation that can spend thirty seconds polling and more
+  // inspecting the confirmation. A grace boundary crossed inside that
+  // window and both ends answered `true`: the bracket read as quiet and
+  // an unsafe render passed, which is the defect the bracket exists to
+  // catch, surviving in the one branch the fix did not move.
+  const card = await readForcedCloseCard(page);
+  // BESIDE THE SCRAPE, not at confirmation time (round 14 P2). What
+  // matters is the head the page had reached when it rendered — or
+  // declined to render — the card being judged. Sampling it later would
+  // let the page move on and set a bar this observer must clear for a
+  // render it never looked at.
+  //
+  // ROUND 48 P2 — AND THE READINGS IN FLIGHT ARE LET FINISH FIRST.
+  // Playwright does not await a response listener, so a `latest` reply
+  // that arrived just before the scrape can still be inside `res.json()`
+  // here. Sampling through that race reads a head the page has already
+  // passed — zero, which reports an incomplete observation for a reading
+  // taken too early, or a stale height, which lets the confirming
+  // observer settle below the head the DOM was showing and call a
+  // correctly absent card a regression.
+  // ROUND 96 P2 — whether the drain actually reached quiet. A ceiling read
+  // out of a still-busy set is not a lower ceiling, it is no ceiling;
+  // `observerCaughtUp` below refuses to be satisfied by one.
+  const headSettled = await settleHeadReads(page);
+  const pageHead = pageHeadOf(page);
+  // ROUND 101 P2 — AND A REAL CEILING, ASKED RATHER THAN OBSERVED.
+  //
+  // `pageHead` is the highest head this drive SAW announced, which does not
+  // bound an unpinned `eth_call` the page issued after that announcement:
+  // the provider can advance in between and serve the read higher. See
+  // `pageProviderCeiling` — asked after the scrape, highest across the
+  // endpoints this page actually used, and refused outright unless every one
+  // of them answered.
+  const ceiling = await pageProviderCeiling(page);
+  const diamondKeys = pageDiamondKeys.get(page) ?? new Set();
+  const ceilingSound =
+    ceiling.head > 0n &&
+    [...diamondKeys].every(
+      (k) => ceiling.sampled.has(k) || foreignPageRpcEndpoints.has(k),
+    );
+  // ROUND 98 P2 — THE FLOOR IS RE-READ AFTER THE SCRAPE, AND ONLY LOWERED.
+  //
+  // The third finding in a row on this bracket, and each one has been the
+  // same shape: a head that belonged to the render did not reach `headBefore`
+  // in time. Round 97 closed the case where a reply was in flight when the
+  // drain gave up; this is the case where it had not been SENT yet. The
+  // sample sits ahead of several awaited protocol probes and the DOM scrape,
+  // so an endpoint first seen during that window announces a head M below the
+  // sampled floor N, passes the ordering check (its head did precede its
+  // first `eth_call`), and serves the render being judged — while the bracket
+  // still starts at N. Across a transition between M and N that is a correct
+  // card accused.
+  //
+  // Patched three times, so this takes the definition instead: the floor is
+  // the LOWEST head seen on a Diamond-serving endpoint across the whole
+  // observation window, not at one instant in it. Re-reading after the scrape
+  // and keeping the minimum is sound in one direction only, which is why it
+  // REPORTED AS INCOMPLETE RATHER THAN SILENTLY LOWERED, which is the part
+  // worth being careful about. `headBefore` is not just the scan's lower
+  // bound: the "before" answers were already PROBED at it, above, before the
+  // scrape. Substituting a lower block here would leave the bracket's two
+  // endpoints measured at different heights from the interior it claims to
+  // have scanned — a bracket that looks sound and is not.
+  //
+  // Re-probing at the new floor would be the richer answer and is two more
+  // RPC round trips on a path that almost never runs; a rarely exercised
+  // branch on the accusing side is the thing that keeps biting this file. So
+  // the cheap honest answer: if the floor moved down after the scrape, this
+  // run did not establish the bracket, and the arms below return `null`
+  // rather than a verdict.
+  const floorAfter = pageHeadFloorOf(page);
+  const floorStillLowest = !(floorAfter > 0n && (headBefore === 0n || floorAfter < headBefore));
+  // ROUND 4 P2 — ONE BLOCK FOR ALL THREE FACTS.
+  //
+  // `Promise.all` makes these concurrent; it does not pin them to a
+  // common block, and each RPC resolves `latest` independently. A
+  // `completeLoanSale` landing mid-flight can therefore produce a TORN
+  // snapshot — `ownerOf` answering from before the sale while
+  // `positionLock` answers from after it — yielding a held / Active /
+  // unlocked combination that never existed on any single block. The
+  // page, which was correct to omit the card while the accepted sale
+  // was pending, would then be reported as missing it.
+  //
+  // Pinning to one block number makes the three facts a snapshot rather
+  // than three samples. It also makes them consistent with each other
+  // by construction, which no amount of re-reading can achieve.
+  //
+  // ROUND 54 P2 — AND A FOURTH FACT: whether the PROTOCOL agrees the
+  // close-out can run at all.
+  //
+  // The pinned snapshot established Active status and ownership and
+  // nothing about the grace deadline, so a regressed page rendering a
+  // READY route with an enabled submit was certified by this drive —
+  // certifying an action `triggerDefault` is guaranteed to refuse, after
+  // charging the lender a network fee. The copy was being allowed to
+  // substantiate itself.
+  //
+  // READ, never derived. `src/data/forcedClose.ts` states the rule for
+  // the app and it binds this drive identically: `LibVaipakam.gracePeriod`
+  // walks governance-configurable `graceBuckets`, and the ladder in the
+  // code is only the fallback used when that array is empty — so a client
+  // reproducing it is correct until the first deployment tunes the
+  // buckets and silently wrong afterwards. `isLoanDefaultable(loanId)` is
+  // the chain's own answer and the same view the app consults.
+  //
+  // In the pinned block with the others, so it cannot disagree with the
+  // status it is judged beside.
+  const [pinnedBlock, live, authorityNow, pinnedSale, pinnedDefaultable, pinnedMatch] =
+    await discovery(
+    `re-reading loan ${loan.id} beside the forced-close scrape`,
+    async () => {
+      // `cacheTime: 0` — the block this snapshot pins itself to must be
+      // the chain's, not one viem answered from a 4-second cache filled
+      // by an earlier visit (round 13 P2). The confirming read below
+      // compares against it, and a comparison between two cached copies
+      // of the same number establishes nothing.
+      const blockNumber = await pub.getBlockNumber({ cacheTime: 0 });
+      return Promise.all([
+        blockNumber,
+        pub.readContract({
+          address: DIAMOND,
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'getLoanDetails',
+          args: [loan.id],
+          blockNumber,
+        }),
+        tokenOwnerOf(loan.lenderTokenId, blockNumber),
+        saleLockedOn(loan.lenderTokenId, loan.id, blockNumber, loan.authority),
+        // ROUND 57 P2 — THE EXACT CALL, simulated. Round 55's three
+        // reads were not the whole predicate; see `probeCloseOut`.
+        //
+        // `undefined` when the simulation could not be run, so the
+        // verdict can tell "the protocol says no" from "this drive
+        // could not ask" — the distinction every other probe here
+        // carries.
+        probeCloseOut(loan.id, blockNumber),
+        // ROUND 64 P2 — the settlement ROUTE, in the same pinned
+        // snapshot as everything else it will be compared against.
+        probeInternalMatch(loan.id, blockNumber),
+      ]);
+    },
+  );
+  const pinnedHoldsActive =
+    Number(live.status) === STATUS_ACTIVE &&
+    typeof authorityNow === 'string' &&
+    authorityNow.toLowerCase() === String(observed).toLowerCase();
+
+  // ROUND 7 P2 — CONFIRM A MISSING-CARD FAIL BEFORE REPORTING IT.
+  //
+  // Pinning the three reads to one block made them a consistent
+  // snapshot; it did not make them CONTEMPORANEOUS WITH THE DOM. The
+  // deployed bundle uses its own RPC, which can be a block ahead of
+  // `OBSERVE_RPC`, so the page can already have seen a terminalizing
+  // transaction that this observer has not — the card correctly absent
+  // while the snapshot still reads held / Active / unlocked. That is a
+  // false missing-card regression, and it is the one verdict here whose
+  // cost is a wrongly accused product.
+  //
+  // Only the FAIL path pays for the re-read, and only when the card was
+  // absent: if the position has left the eligible set by a later block,
+  // the page was ahead of us and the observation is `blocked` instead.
+  // A confirmation step on the accusing path, rather than a wider net.
+  let later = null;
+  if (pinnedHoldsActive && !card.mounted) {
+    // ROUND 8 P2 — RECONFIRM EVERY FACT THE DOM COULD BE REFLECTING,
+    // not only the status.
+    //
+    // The first version re-read `getLoanDetails` alone, so a lender
+    // token TRANSFERRED at a block the page had seen and this observer
+    // had not still produced a false missing-card FAIL: the loan is
+    // still Active, and the stale ownership carried straight through
+    // the confirmation. Ownership and the sale state can each explain
+    // an absent card exactly as well as status can, so all three are
+    // re-read at the confirming head.
+    const confirmed = await discovery(
+      `confirming loan ${loan.id} is still eligible before reporting a missing card`,
+      async () => {
+        // ROUND 13 P2 — A GENUINELY NEWER HEAD, OR NO CONFIRMATION.
+        //
+        // Two defects in one line. `getBlockNumber()` is served from
+        // viem's cache (`cacheTime` defaults to `pollingInterval`, 4s,
+        // and this client sets neither), so a call milliseconds after
+        // the pinned one returned THE SAME BLOCK — the confirmation
+        // re-read the identical state and could only ever agree with
+        // itself, which let the false missing-card FAIL through
+        // untouched. And even uncached, the chain need not have moved
+        // yet, so the same reads at the same height prove nothing.
+        //
+        // So: poll uncached for a strictly greater head, briefly. If it
+        // never arrives, the confirmation DID NOT HAPPEN, and the honest
+        // report is that the absence could not be judged — not an
+        // accusation resting on a re-read that never re-read anything.
+        //
+        // ROUND 14 P2 — AND A HEAD THIS OBSERVER HAS CAUGHT UP TO.
+        //
+        // "Strictly newer than the block I pinned" proves only that I
+        // moved. The page reads an INDEPENDENT provider that can be two
+        // or more blocks ahead, so a transition at N+2 correctly removes
+        // the card while a confirmation at N+1 re-reads a still-eligible
+        // position — the same false FAIL, one block further along.
+        // `confirmationReady` requires both, and treats an unobserved
+        // page head as not-ready rather than as satisfied.
+        let head = await pub.getBlockNumber({ cacheTime: 0 });
+        const until = Date.now() + 20_000;
+        // ROUND 102 P2 — the bar includes the ASKED ceiling, not only the
+        // head this drive overheard. See `confirmationReady`: an unpinned
+        // read served above that head is exactly what round 101's ceiling
+        // was added to bound, and this loop was not consuming it.
+        const confirmBar = { sound: ceilingSound, head: ceiling.head };
+        while (!confirmationReady(head, pinnedBlock, pageHead, confirmBar) && Date.now() < until) {
+          await new Promise((r) => setTimeout(r, 1_000));
+          head = await pub.getBlockNumber({ cacheTime: 0 });
+        }
+        if (!confirmationReady(head, pinnedBlock, pageHead, confirmBar)) {
+          // NAME WHICH CONDITION FAILED (round 23 P2). The causes send an
+          // operator to different places: a stale OBSERVE_RPC, or page-head
+          // instrumentation that saw nothing. Collapsing them into one
+          // sentence about "never advanced" was false in the second case and
+          // pointed at the wrong thing.
+          //
+          // ROUND 115 P2 — AND A MISSING SIGHTING IS ONLY A CAUSE WHEN
+          // NOTHING STANDS IN FOR IT.
+          //
+          // Round 114 made the overheard sighting optional wherever a sound
+          // ceiling exists, and this ladder still tested `pageHead === 0n`
+          // first — so a run with a sound ceiling at N and an observer at
+          // N-1 was told its head instrumentation was the problem. The
+          // instrumentation was working as designed; the observer was simply
+          // behind. That sends an operator to investigate something that is
+          // not broken while omitting the threshold actually unmet, which is
+          // the one number they need.
+          //
+          // The unestablished-ceiling arm leads now, and says which kind of
+          // nothing was established: no ceiling, or no ceiling AND no
+          // sighting either.
+          return {
+            unconfirmed: true,
+            why: !ceilingSound
+              ? pageHead === 0n
+                ? 'the card was absent, but this drive neither overheard the page announce a head nor could get its endpoint(s) to say what block they had reached after the scrape, so there is no upper bound to have caught up to'
+                : 'the card was absent, but the page\u2019s own RPC endpoint(s) would not say what block they had reached after the scrape, so there is no upper bound to have caught up to'
+              : head <= pinnedBlock
+                ? "the card was absent, but this observer's chain view never advanced past the block it scraped at, so a page reading ahead of it could not be ruled out"
+                : `the card was absent, and this observer reached ${head} but the page had reached at least ${ceiling.head > pageHead ? ceiling.head : pageHead}, so it was still behind the view that rendered the page`,
+          };
+        }
+        const [status, holder, sale] = await Promise.all([
+          pub.readContract({
+            address: DIAMOND,
+            abi: DIAMOND_ABI_VIEM,
+            functionName: 'getLoanDetails',
+            args: [loan.id],
+            blockNumber: head,
+          }),
+          tokenOwnerOf(loan.lenderTokenId, head),
+          saleLockedOn(loan.lenderTokenId, loan.id, head, loan.authority),
+        ]);
+        // ROUND 105 P2 — AND THE BLOCK THEY WERE READ AT.
+        //
+        // `head` is the exact block the confirming status, holder and sale
+        // reads used, and it is the evidence that this observer cleared the
+        // thresholds the report prints. Discarding it meant an absence FAIL
+        // could be emitted alongside the thresholds with no statement of the
+        // head that supposedly satisfied them — an outcome the report cannot
+        // substantiate, which is the one thing this surface must not do.
+        return { status, holder, sale, confirmedAt: head };
+      },
+    );
+    // THE THREE FACTS, NOT A VERDICT. What they mean for eligibility is
+    // decided by `reconcileEligibility`, which lives in the verdict
+    // module because it is a pure function with three ordered cases and
+    // no way to exercise it from a live chain — the same argument that
+    // moved `visitVerdict` out of this file.
+    //
+    // It was a truthiness test here, and round 12's tri-state probe
+    // walked straight into it: an unclassifiable `'unknown'` marked the
+    // position ineligible, which reports "nothing is wrong" for a
+    // missing card on the strength of a sale never established.
+    later = confirmed.unconfirmed
+      ? { unconfirmed: true, why: confirmed.why, confirmedAt: null }
+      : {
+          active: Number(confirmed.status.status) === STATUS_ACTIVE,
+          stillHeld:
+            typeof confirmed.holder === 'string' &&
+            confirmed.holder.toLowerCase() === String(observed).toLowerCase(),
+          sale: confirmed.sale,
+          confirmedAt: confirmed.confirmedAt,
+        };
+  }
+
+  // ROUND 85 P2 — THE INTERIOR OF THE BRACKET IS READ, not inferred from
+  // its ends.
+  //
+  // `stableAcross` carries the argument. Only asked where the ends already
+  // AGREE, because a disagreement is reported in its own words by the
+  // verdict and probing the interior would change nothing about it — and
+  // because these are extra RPC calls that should be spent only where they
+  // can change an answer.
+  //
+  // Both questions, deliberately: the settlement route is the one that can
+  // round-trip inside an observation, and the close-out answer is the one
+  // an accusation about a withheld card rests on. A fix applied to one of
+  // several parallel sites is this PR's most repeated finding.
+  // ROUND 86 P2 — AND ONLY WHERE THE FLOOR BOUNDS ANYTHING.
+  //
+  // A scan of a span the card's data might sit BELOW proves nothing about
+  // that data, however exhaustively it is read. `floorEstablishedFor` is
+  // the evidence — did this endpoint announce a head before it served its
+  // first contract read — and where it is absent both answers stay `null`,
+  // which the verdict already reports as an incomplete observation.
+  // ROUND 87 — a head sampled from the PAGE'S OWN PROVIDER before the page
+  // loaded establishes the floor by construction: blocks only advance, so
+  // any `latest` read that provider serves afterwards is at or above it,
+  // whatever it batches and in whatever order. Where that sample exists
+  // the announcement-ordering test is not needed; where it does not — the
+  // endpoint was not yet known, or would not answer — the ordering test is
+  // still the best available evidence and decides.
+  // ROUND 89 P2 — AND THE UPPER END HAS TO REACH THE RENDER TOO.
+  //
+  // Every round from 84 on has worked on the bracket's FLOOR, and the
+  // ceiling had the mirror-image hole. This drive's provider and the
+  // page's are independent: when the page is at N and `OBSERVE_RPC` is
+  // still at M < N, the floor takes the lower of its sources (M) and the
+  // pinned snapshot is also at M — so `stableAcross(M, M, …)` finds no
+  // interior, answers `true`, and a card correctly rendered from N is
+  // compared against protocol state from M. Just after a grace
+  // transition that accuses a ready card of offering what the protocol
+  // "would refuse", on evidence taken entirely before the state it is
+  // judging.
+  //
+  // The catch-up rule already exists for the ABSENT-card path (round 8's
+  // confirming re-read) and was never applied here. The wrong-chain gate
+  // does not cover it either: both endpoints are on the same chain and
+  // simply disagree about how far along it is.
+  //
+  // So the comparison needs the snapshot to have reached the head the
+  // PAGE was seen to reach. `pageHead` is exactly that, and it is
+  // sampled after the scrape, so it is the newest thing the page can have
+  // been showing. Where the snapshot is behind it, both answers stay
+  // `null` and the verdict reports an incomplete observation.
+  // ROUND 91 P2 — AN UNKNOWN CEILING IS NOT A SATISFIED ONE.
+  //
+  // `pageHead === 0n ||` read "this drive saw no head from the page" as
+  // "the observer has caught up", which is the absence-is-evidence mistake
+  // this file spends most of its comments on. It became reachable in round
+  // 90: the floor can now be established from the pre-navigation sample
+  // alone, so a page whose endpoint never announces a head passes the
+  // floor test and used to pass this one too — and if that provider runs
+  // ahead of this drive's, the card renders from a block the interior scan
+  // never covers.
+  //
+  // A head the page was SEEN to reach is required now. Without one the
+  // comparison is incomplete, which is what the absence gate already
+  // demands of the same number.
+  //
+  // ROUND 96 P2 — AND THE CEILING MUST HAVE BEEN DRAINED TO GET IT.
+  //
+  // `pageHead` is the highest head seen so far, which on a page whose head
+  // responses were still being parsed when the budget expired is not the
+  // highest head the page REACHED. Reading it as one lets this test pass
+  // against a state the page had already moved past, on a comparison whose
+  // whole purpose is to establish that it had not. `headSettled` is the
+  // difference between a ceiling and a number that resembles one.
+  //
+  // ROUND 101 P2 — AND THE BAR IS THE ASKED CEILING, NOT THE OBSERVED HEAD.
+  //
+  // `pageHead` stays in the test: it is the head the page was SEEN to reach,
+  // and a run that saw none has established nothing. What it cannot do is
+  // bound a read issued after the last announcement, so the observer must
+  // also clear a height sampled from the page's own providers AFTER the
+  // scrape. Heads do not go backwards, so that height is at or above
+  // anything served during it.
+  //
+  // Unanswered endpoints make it `false` rather than lowering it — a
+  // ceiling that covers some of the endpoints the page used is not a
+  // ceiling, and this refuses rather than approximating.
+  // ROUND 114 P2 — and `pageHead > 0n` is no longer among them. A sound
+  // ceiling is REQUIRED below, and it is asked of every endpoint the page
+  // was seen to use — identified from Diamond call traffic, which a page
+  // produces whether or not it ever announces a head. So on a deployment
+  // that emits no block-number reply the ceiling is obtained and the
+  // sighting is `0n`, and demanding the sighting as well refused a run that
+  // had the bound. `pinnedBlock >= pageHead` is trivially true at `0n` and
+  // stays as the sighting's own test where there is one.
+  const observerCaughtUp =
+    headSettled && pinnedBlock >= pageHead && ceilingSound && pinnedBlock >= ceiling.head;
+  // ROUND 90 P2 — no global shortcut. `floorEstablishedFor` now decides
+  // PER ENDPOINT, accepting either the pre-navigation sample or that
+  // endpoint's own announcement ordering, so an endpoint this page reached
+  // for the first time cannot ride on a height taken from another one.
+  // `floorDrained` (round 97 P2): the pre-render sample the floor is built
+  // from has to have been complete, for the same reason the ceiling's does.
+  // ROUND 105 P2 — the furthest interior block either stability arm
+  // actually read, so the report can state the extent it established rather
+  // than projecting the whole interval from a non-null verdict.
+  let probedThrough = null;
+  const noteProbed = (b) => {
+    if (probedThrough === null || b > probedThrough) probedThrough = b;
+  };
+  const floorSound =
+    floorDrained &&
+    // ROUND 98 P2 — and no endpoint seen during the scrape sits below it.
+    floorStillLowest &&
+    floorEstablishedFor(page, pageSampledBeforeNav) &&
+    observerCaughtUp;
+  // ROUND 107 P2 — which arms were ATTEMPTED, so completion can be judged
+  // per arm rather than by whichever one finished. Same conditions as the
+  // two arms below, named once so the two cannot drift apart.
+  const defaultableAttempted =
+    floorSound && defaultableBefore !== undefined && defaultableBefore === pinnedDefaultable;
+  const matchAttempted = floorSound && matchBefore !== undefined && matchBefore === pinnedMatch;
+  const defaultableStable =
+    floorSound &&
+    defaultableBefore !== undefined &&
+    defaultableBefore === pinnedDefaultable
+      ? await discovery(
+          `checking the close-out answer held across the bracket for loan ${loan.id}`,
+          () =>
+            stableAcross(
+              headBefore,
+              pinnedBlock,
+              pinnedDefaultable,
+              (b) => probeCloseOut(loan.id, b),
+              noteProbed,
+            ),
+        )
+      : null;
+  const internalMatchStable =
+    floorSound && matchBefore !== undefined && matchBefore === pinnedMatch
+      ? await discovery(
+          `checking the settlement route held across the bracket for loan ${loan.id}`,
+          () =>
+            stableAcross(
+              headBefore,
+              pinnedBlock,
+              pinnedMatch,
+              (b) => probeInternalMatch(loan.id, b),
+              noteProbed,
+            ),
+        )
+      : null;
+  const { lenderHoldsActive, saleLocked, absenceUnconfirmed, absenceUnconfirmedWhy } =
+    reconcileEligibility(
+    { lenderHoldsActive: pinnedHoldsActive, saleLocked: pinnedSale },
+    later,
+  );
+  // ROUND 107 P2 — complete only when every ATTEMPTED arm finished, and at
+  // least one was attempted. An arm that never ran says nothing either way.
+  const attemptedResults = [
+    defaultableAttempted ? defaultableStable : undefined,
+    matchAttempted ? internalMatchStable : undefined,
+  ].filter((r) => r !== undefined);
+  const scanComplete =
+    attemptedResults.length > 0 && attemptedResults.every((r) => r === true);
+  return {
+    ...card,
+    lenderHoldsActive,
+    saleLocked,
+    // ROUND 54 P2 — the PROTOCOL's own answer about whether this
+    // close-out can run, read at the pinned block beside the status it
+    // is judged with. `undefined` where the read could not answer.
+    defaultable: pinnedDefaultable,
+    // ROUND 55 P2 — and the SAME QUESTION asked BEFORE the DOM
+    // observation, so an answer taken afterwards cannot validate a
+    // render that preceded it. The verdict compares the two.
+    defaultableBefore,
+    // ROUND 85 P2 — and whether that answer HELD AT EVERY BLOCK between
+    // them, which is what the two ends agreeing was being read as and
+    // never established. `true` / `false` / `null` for "not established";
+    // an older record carries neither field and the verdict leaves its
+    // behaviour unchanged.
+    defaultableStable,
+    internalMatchStable,
+    // ROUND 64 P2 — WHICH SETTLEMENT the protocol would perform, both
+    // ends of the same bracket. `triggerDefault` succeeding says the
+    // close-out would run; it does not say whether the lender receives
+    // the collateral or is repaid the lent asset, because the contract
+    // dispatches an internal match FIRST and that path succeeds too.
+    // The verdict compares these against the route the card is painting.
+    internalMatch: pinnedMatch,
+    internalMatchBefore: matchBefore,
+    absenceUnconfirmed,
+    // ROUND 24 P2 — and the REASON with it. Round 23 produced this
+    // string and then dropped it here, so every diagnosis fell back to
+    // the generic sentence and none of the specific ones ever reached an
+    // operator. The pure reconciliation test could not see it: the
+    // defect is in the projection BETWEEN the two, which is exactly the
+    // seam a unit test on either side does not cover.
+    absenceUnconfirmedWhy,
+    // Carried out for the REPORT only — `forcedCloseVerdict` ignores it.
+    pageHead: pageHead === 0n ? null : String(pageHead),
+    // ROUND 84 P2 — the OTHER end of the bracket, reported for the same
+    // reason: the run should say which span of blocks its protocol
+    // comparison was made over, rather than leaving a reader to assume it
+    // was a point read at the head. Also report-only.
+    headFloor: headBefore === 0n ? null : String(headBefore),
+    // ROUND 102 P2 — THE UPPER EDGE THE RUN ACTUALLY USED, not the one it
+    // overheard.
+    //
+    // The report printed `heads=<floor>..<pageHead>`, and since round 101
+    // the bar is the higher of `pageHead` and the ceiling ASKED after the
+    // scrape. So an operator was shown a narrower window than the one the
+    // verdict required, on a surface whose release note promises it states
+    // the span it used. Reporting a bound the run did not use is the same
+    // defect class as any other unstated figure here.
+    //
+    // ROUND 104 P2 — THE FACTS, NOT A SUMMARY OF THEM.
+    //
+    // Three rounds were spent on this one line, each replacing one derived
+    // number with a differently-derived number: the overheard head, then the
+    // bar the confirmation must clear, then the scan endpoint. The last
+    // finding is what settles it — the thresholds carry DIFFERENT comparison
+    // semantics (strictly past the pinned block, strictly past a sighting,
+    // AT OR PAST an asked bound), so no single figure can state what had to
+    // be cleared. Combining them was the defect, not which combination.
+    //
+    // So each is reported as itself, and the reader does the combining with
+    // the semantics stated beside them.
+    //
+    // `headScanned` is null unless the interior was actually READ.
+    // `stableAcross` returns null without probing anything when the floor is
+    // unsound, when an endpoint disagrees, or when the span exceeds
+    // `SPAN_PROBE_BUDGET` — and reporting `floor..pinned` in those cases
+    // claims a span the run explicitly could not establish, which is the
+    // same unstated-figure defect one level up.
+    // ROUND 105 P2 — the extent actually READ, not projected from a verdict.
+    // `false` means the arm stopped at the first mismatch and `null` may
+    // mean none were read, so neither justifies printing the whole interval.
+    //
+    // ROUND 106 P2 — AND A COMPLETED SCAN REACHES THE ENDPOINT, which
+    // `probedThrough` cannot say. The interior loop is `b < to`, so the
+    // callback never sees `to` itself: a completed 10..20 bracket recorded
+    // 19, and an adjacent bracket with no interior at all recorded nothing
+    // and printed `10..none` despite having completed. The endpoints are the
+    // caller's — already read, already compared — so a complete scan has
+    // established the whole interval including them.
+    //
+    // `probedThrough` is therefore for PARTIAL scans only, where it is the
+    // one honest figure available.
+    // ROUND 107 P2 — EVERY ARM THAT WAS ATTEMPTED, not whichever one
+    // happened to finish.
+    //
+    // `||` promoted the shared extent to the endpoint and dropped the
+    // `(partial)` marker as soon as ONE arm completed, even where its
+    // sibling stopped at an early mismatch and `spanStable` therefore says
+    // `no` or `unknown`. Two independently probed facts collapsed into one
+    // completion bit, and the bit reported the more flattering of them.
+    //
+    // An arm that was never ATTEMPTED — its precondition did not hold — says
+    // nothing either way and must not make the scan incomplete; an arm that
+    // was attempted and did not finish must.
+    headScanned: scanComplete ? String(pinnedBlock) : probedThrough === null ? null : String(probedThrough),
+    headScanComplete: scanComplete,
+    headPinned: String(pinnedBlock),
+    headPageSighting: pageHead === 0n ? null : String(pageHead),
+    headCeiling: ceilingSound ? String(ceiling.head) : null,
+    headCeilingSound: ceilingSound,
+    // The block the confirming absence reads were taken at, where one ran.
+    headConfirmedAt: later?.confirmedAt ? String(later.confirmedAt) : null,
+  };
+}
+
+/**
+ * The visibility predicate's SOURCE, so the mount wait can run the same
+ * one the scrape runs (round 60 P2).
+ *
+ * Read out of this file rather than written a third time. `notClipped`,
+ * `paintsText` and `visible` already exist twice — once for the card
+ * scrape and once for the confirmation receipt, a duplication #2102
+ * tracks — and adding a hand-written third copy for the wait would mean
+ * three definitions that agree until they do not. That is precisely the
+ * failure this fix is for: the wait was using Playwright's `:visible`,
+ * which disagrees with these on opacity, clipping and filters.
+ *
+ * The same brace-matching `31-observer-visibility.spec.ts` uses to
+ * extract them for its fixtures, for the same reason, and the CARD
+ * copy (index 0) because that is the predicate the card scrape applies.
+ */
+const VISIBILITY_HELPER_SOURCES = (() => {
+  const self = fs.readFileSync(fileURLToPath(import.meta.url), 'utf8');
+  const block = (name) => {
+    // `visible` is now a CONCISE arrow over the other three, so the
+    // brace-matching below cannot find it by a `=> {` needle. Taken to
+    // the end of its statement instead.
+    if (name === 'visible') {
+      const start = self.indexOf('const visible = (node) => shownBox(node) && paintsText(node);');
+      if (start === -1) {
+        throw new Error(
+          'the visibility predicate `visible` could not be found in this file — ' +
+            'the mount wait cannot use the same predicate as the scrape without it.',
+        );
+      }
+      return self.slice(start, self.indexOf(';', start) + 1);
+    }
+    const needle = `const ${name} = (node) => {`;
+    const start = self.indexOf(needle);
+    if (start === -1) {
+      throw new Error(
+        `the visibility helper \`${name}\` could not be found in this file — ` +
+          'the mount wait cannot use the same predicate as the scrape without it.',
+      );
+    }
+    let depth = 0;
+    let i = self.indexOf('{', start);
+    for (; i < self.length; i += 1) {
+      if (self[i] === '{') depth += 1;
+      else if (self[i] === '}') {
+        depth -= 1;
+        if (depth === 0) break;
+      }
+    }
+    // The loop can also end by running out of file, and then `i` is
+    // `self.length` and the slice is everything from the helper to EOF —
+    // syntactically broken source that `new Function` rejects at the
+    // first poll, inside a `catch` that reads the rejection as "the card
+    // never mounted". Balance is therefore checked rather than assumed,
+    // so an unparseable extraction fails HERE, by name, at import.
+    if (depth !== 0) {
+      throw new Error(
+        `the visibility helper \`${name}\` could not be extracted from this file — ` +
+          'its braces do not balance, so the mount wait has no predicate to run.',
+      );
+    }
+    return self.slice(start, i + 2);
+  };
+  // ROUND 66 P2 — `shownBox` TOO, because `visible` now calls it.
+  //
+  // The split made `visible` a one-liner over the other two, so an
+  // extraction that omitted `shownBox` would compile to a function
+  // referencing an undefined name — and `new Function` throwing inside
+  // the mount wait's `catch` is exactly the silent false-absence the
+  // round-60 self-review added the balance check for. Ordered so each
+  // name is defined before the one that uses it.
+  return [block('notClipped'), block('paintsText'), block('shownBox'), block('visible')];
+})();
+
+/**
+ * Returned when the DOM pass could not be RUN, as distinct from running
+ * and finding no card (round 41 P2). A unique object so it can never be
+ * confused with a value the page produced.
+ */
+const SCRAPE_FAILED = Symbol('forced-close scrape failed');
+
+/**
+ * The reading that establishes NOTHING — as distinct from one that
+ * establishes an absence.
+ *
+ * `bodyPresent: undefined` is what the verdict reads as "nothing was
+ * observed", and `mounted: true` keeps the absence rules from being
+ * consulted at all, so a read that did not happen can never become a
+ * missing-card FAIL. Extracted because three call sites were building
+ * this same fourteen-field literal by hand and a field added to one of
+ * them would silently not reach the others — the shape that has already
+ * cost `visibleSubmits` twice on this PR.
+ *
+ * `overrides` is for the fields that genuinely differ: the accumulated
+ * `seen*` / `*Peak` evidence at the mid-poll site, and `mounted: false`
+ * for the attached-but-no-longer-visible case, which is a real
+ * observation rather than a failed one.
+ */
+function nothingEstablished(overrides = {}) {
+  return {
+    mounted: true,
+    attached: true,
+    visibleCards: 0,
+    text: null,
+    bodyText: null,
+    bodyPresent: undefined,
+    bodyVisible: false,
+    confirmText: null,
+    confirmExpected: false,
+    submitPresent: false,
+    submitVisible: false,
+    submitDisabled: true,
+    visibleSubmits: 0,
+    settled: false,
+    ...overrides,
+  };
+}
+
+async function readForcedCloseCard(page, timeoutMs = 30_000) {
+  const cards = page.getByTestId('forced-close-card');
+  // ROUND 3 P2 — VISIBLE, not merely ATTACHED.
+  //
+  // A CSS regression that leaves the card in the DOM under
+  // `display: none` satisfies `attached`, and every text read still
+  // succeeds against the DOM — so a ready, well-formed card would pass
+  // while the lender sees neither the action nor its explanation, which
+  // is the exact outcome the absence rule exists to catch. Playwright's
+  // `visible` does not require the viewport, so an off-screen card is
+  // still visible and nothing is weakened by asking for it.
+  //
+  // `attached` is still recorded, separately, so the failure can say
+  // WHICH happened: a hidden card and an absent one are different
+  // defects and a reader should not have to guess.
+  // ROUND 23 P2 — WAIT FOR ANY VISIBLE MATCH, not for the first node.
+  //
+  // `.first()` waits on whichever element is first in the DOM. A hidden
+  // forced-close node sitting before the real one therefore times the
+  // wait out and produced `mounted: false, attached: true` — a reported
+  // product failure while the lender is looking at a perfectly good
+  // card. It also contradicted this file's own rule that a hidden
+  // duplicate is not something the lender is being shown.
+  //
+  // Waiting on the locator's `visible` state without `.first()` is
+  // satisfied by ANY match becoming visible, which is the question
+  // actually being asked.
+  // ROUND 51 P2 — ONE WAIT, ON THE QUESTION ACTUALLY BEING ASKED.
+  //
+  // Round 23 said "wait for ANY visible match, not for the first node"
+  // and then implemented it as a SEQUENCE: the full 30 seconds on
+  // `.first()`, and only once that timed out, five seconds on the
+  // `:visible` locator. So the stated fix only began after half a minute
+  // of watching the wrong element — and this page is live and mutable.
+  // A visible card can state an amount it cannot know, or offer an
+  // enabled action beside withheld copy, and then settle or disappear
+  // inside that blind interval; none of its renders reach `seenTexts` or
+  // `seenRenders`, and a lifecycle change then explains the whole visit
+  // away as `inapplicable`.
+  //
+  // `[data-testid="forced-close-card"]:visible` is satisfied by ANY
+  // match becoming visible, including the first one — so the two-stage
+  // version had no case the single wait does not cover, and the fallback
+  // was pure delay. Round 24's note survives because its lesson does:
+  // `:visible` is the CSS pseudo-class Playwright supports; the earlier
+  // `visible=true` was not a selector at all, the engine threw, `.catch`
+  // swallowed it, and `mounted` stayed false while reading as if the fix
+  // had worked.
+  //
+  // ROUND 60 P2 — AND THE WAIT ASKS THE DRIVE'S OWN QUESTION, not
+  // Playwright's weaker one.
+  //
+  // `:visible` is a non-empty box plus a computed `visibility`. It does
+  // not consider opacity, and since rounds 51 and 57 this drive also
+  // rejects a clipped box and a filter-erased one. So a ghost card —
+  // `opacity: 0`, or under `filter: opacity(0)` — attached before the
+  // real card mounts satisfies `:visible`, the wait resolves
+  // immediately, the in-page pass then finds nothing IT calls visible,
+  // and the drive records an absence without ever waiting for the real
+  // card that was going to appear well inside the timeout. On an
+  // otherwise healthy loan that is a false missing-card FAIL.
+  //
+  // `31-observer-visibility.spec.ts` has asserted that these two
+  // predicates disagree since round 33 — that disagreement is the whole
+  // subject of one of its cases — and the mount gate was still using the
+  // weaker one. Third time on this PR that Playwright's `:visible` and
+  // this drive's `visible` have been mixed up (rounds 33 and 38 were the
+  // others), and the first where the wait itself was the site.
+  //
+  // `waitForFunction` runs the SAME predicate the scrape uses, built
+  // from the same helper sources, so there is one definition of visible
+  // rather than two that agree until they do not.
+  /** Set only when the wait failed for a reason that is not a timeout. */
+  let mountFault = null;
+  const mounted = await page
+    .waitForFunction(
+      // SPREAD, not a fixed arity. The first version of this destructured
+      // exactly three names, so when round 66 split the predicate into
+      // four the fourth was silently dropped and `return visible` threw
+      // `ReferenceError` inside the wait's own catch — a false absence,
+      // which is the precise failure the round-60 self-review added the
+      // balance check to prevent, re-entered by the door it does not
+      // cover. Joining whatever the array holds cannot go out of step
+      // with it.
+      (sources) => {
+        const visible = new Function(`${sources.join('\n')}\nreturn visible;`)();
+        return [...document.querySelectorAll('[data-testid="forced-close-card"]')].some(visible);
+      },
+      VISIBILITY_HELPER_SOURCES,
+      { timeout: timeoutMs, polling: 250 },
+    )
+    .then(() => true)
+    .catch((err) => {
+      // SELF-REVIEW OF THE FIX ABOVE — a timeout and a failure to ASK
+      // are not the same answer, and the previous line collapsed them.
+      //
+      // `waitForFunction` rejects for two unrelated reasons. A timeout
+      // means the predicate ran, repeatedly, and kept saying no — that
+      // is a real absence and `false` is the right answer. Anything else
+      // means the question was never put: `new Function` rejecting a
+      // malformed extraction, the execution context destroyed by a
+      // navigation mid-poll, the page closing. Reading those as `false`
+      // reports a card that was never looked for as a card that was not
+      // there.
+      //
+      // That is round 41's defect exactly, and the comment warning about
+      // it sits directly above this call — `.catch` swallowing an engine
+      // throw and letting `mounted: false` stand for it. Round 60's fix
+      // re-introduced it at the same site by giving the wait a new way
+      // to throw, which is the shape this PR has now caught six times: a
+      // fix leaving its own new state unhandled.
+      if (err?.name !== 'TimeoutError') mountFault = err;
+      return false;
+    });
+  // Nothing was established, so nothing is claimed. Reported as
+  // INCOMPLETE through the same sentinel shape a failed scrape uses; the
+  // cause is named separately so a reader need not guess which of the
+  // two happened.
+  if (mountFault) {
+    return nothingEstablished({
+      scrapeFailed: true,
+      mountFault: String(mountFault?.message ?? mountFault),
+    });
+  }
+  const attached = mounted ? true : (await cards.count()) > 0;
+  // ROUND 19 P2 — HOW MANY CARDS, not just whether one is there.
+  //
+  // Every scrape and every click below is scoped to `.first()`, so a
+  // second VISIBLE card was silently discarded — and the contracts this
+  // drive asserts are about the whole surface, not about whichever
+  // element happened to match first. A clean first card would let a
+  // second one state an amount it cannot know, withhold its explanation,
+  // or offer a control the first correctly withholds, while the run
+  // still reported a pass.
+  //
+  // Counted VISIBLE rather than attached, for the same reason the wait
+  // is: a duplicate hidden in the DOM is not something the lender is
+  // being shown, and failing on it would be the false-positive
+  // direction that gets checks switched off.
+  //
+  // ROUND 20 P2 — COUNTED IN EVERY SNAPSHOT, not once before the poll.
+  //
+  // The first version counted here and never again, while the readiness
+  // loop below refreshed only the first card's contents. A duplicate
+  // introduced by the SETTLED render — which is the render that matters,
+  // since it is the one carrying ready copy and therefore the only one
+  // that could state an amount — appeared after the only count was
+  // taken. The count now comes from the same DOM pass as the text, so it
+  // describes the render being judged rather than an earlier one.
+  if (!mounted) {
+    return {
+      mounted: false,
+      attached,
+      visibleCards: 0,
+      text: null,
+      bodyText: null,
+      bodyPresent: undefined,
+      bodyVisible: false,
+      confirmText: null,
+      confirmExpected: false,
+      submitPresent: false,
+      submitVisible: false,
+      submitDisabled: false,
+      settled: false,
+    };
+  }
+  // ROUND 1 P2 — ATTACHMENT IS NOT SETTLEMENT.
+  //
+  // The card mounts IMMEDIATELY in its `unknown` state and only later
+  // renders ready/blocked copy, once its readiness RPCs answer. A
+  // scrape taken on attachment therefore reads the transient text, and
+  // an amount introduced into ready copy — the only copy that could
+  // carry one — would never be scanned. Unlike the #1839 chooser this
+  // card publishes no readiness attribute, so settlement is inferred
+  // from the copy leaving the unresolved sentence.
+  //
+  // Inferring from prose is unsound as a general rule (this file says
+  // so at length about the chooser), and it is used here only to RAISE
+  // the bar: a card that never leaves `unknown` reports `settled:
+  // false`, which the verdict turns into BLOCKED, not into a pass. So a
+  // reworded sentence degrades to "we could not confirm it settled",
+  // never to a false clean.
+  //
+  // ROUND 4/5 P2 — the BODY is captured with three states in mind: no
+  // element (the heading-only shell, a defect), an element whose text
+  // did not read (nothing observed), and an element read and blank (a
+  // defect). Existence is not a successful read, and the two must not
+  // collapse into one flag.
+  //
+  // ROUND 9 P2 — COPY AND CONTROL ARE READ IN ONE DOM EVALUATION.
+  //
+  // Two arms of the verdict now compare the rendered READINESS COPY
+  // against the SUBMIT CONTROL — ready-without-action, and its inverse.
+  // Reading them in separate round-trips lets a tip that changes
+  // readiness mid-scrape pair copy from the old render with a control
+  // from the new one, and that impossible pair produces a FALSE FAIL on
+  // a page that was transitioning correctly. The two checks I added in
+  // rounds 7 and 8 are precisely what made this matter.
+  //
+  // One `evaluate` takes the card text, the body text and the submit
+  // control's presence and disabled state from a single synchronous
+  // pass over the DOM, so they cannot disagree about which render they
+  // came from.
+  // PAGE-LEVEL, not element-level (round 20 P2). The subject is still
+  // the first VISIBLE card, but the pass has to see all of them to count
+  // them — and doing that in a second round-trip would reintroduce
+  // exactly the split-render hazard round 9 closed, with the count
+  // describing one render and the copy another.
+  const readCard = () =>
+    page
+      .evaluate(() => {
+        // ROUND 22 P2 — OPACITY IS NOT INHERITED, so asking the node
+        // alone is not asking whether the lender can see it.
+        //
+        // An ancestor with `opacity: 0` makes everything under it
+        // invisible while each descendant still computes `opacity: 1`
+        // and keeps a non-zero rect — so a card, a body or a submit
+        // control inside one read as visible. `display: none` and
+        // `visibility: hidden` do not have this problem: the first
+        // zeroes the rect and the second inherits.
+        //
+        // `checkVisibility` asks the browser the whole question, walking
+        // the chain for exactly these properties. The manual walk is the
+        // fallback for an engine without it, and it is a walk rather
+        // than a single read for the reason above.
+        // ROUND 28 P2 — A COLLAPSED CLIPPING ANCESTOR HIDES ITS
+        // DESCENDANTS while each of them keeps its own layout box.
+        //
+        // `checkVisibility` answers about display, visibility, opacity
+        // and content-visibility. It says nothing about OVERFLOW, so a
+        // `height: 0; overflow: hidden` wrapper paints none of its
+        // subtree while every element inside is laid out normally and
+        // reports a full-size rect. Both halves of the test above
+        // therefore pass for content clipped entirely out of view, and
+        // `innerText` still yields all of its text.
+        //
+        // Only a COLLAPSED clipper counts, deliberately. Requiring an
+        // element to lie inside every clipping ancestor's box would also
+        // condemn content scrolled out of a scroll container, which the
+        // lender can simply scroll back to — and a false FAIL is the
+        // direction that gets a check switched off. A zero-area box on
+        // something that clips is not scrolled-away content; it is
+        // content that cannot be reached at all.
+        //
+        // Measured on the RECT rather than `clientHeight`, which is 0
+        // for inline elements: `overflow` has no effect on a non-replaced
+        // inline box, so keying on `clientHeight` would condemn anything
+        // inside an ordinary `<span>`.
+        const notClipped = (node) => {
+          // ROUND 36 P2 — A CLIPPER DOES NOT HAVE TO BE EXACTLY ZERO to hide
+          // everything inside it. `height: 0` was the only case rounds 28/29
+          // rejected, so `height: 1px; overflow: hidden` walked straight
+          // through: the ancestor is non-zero, every descendant keeps a
+          // full-size rect and passes `checkVisibility`, and `innerText` yields
+          // all of it — so the fee and loss rows of the receipt were recorded
+          // as read while the lender could see a single pixel of them.
+          //
+          // A non-scrollable clipper now has to actually SHOW the element: at
+          // least half of the element's extent must fall inside the clipper's
+          // box on the clipped axis. Half rather than any overlap, because a
+          // 1px clipper DOES overlap — that is exactly how it escaped — and
+          // rather than full containment, which would condemn a row whose
+          // descender is clipped by a pixel. Half a line is the point below
+          // which a figure cannot be read at all.
+          //
+          // SCROLLABLE clippers stay exempt, which is rounds 28/29's deliberate
+          // limit restated: content the lender can scroll to is reachable, and
+          // condemning it is the false-FAIL direction that gets a check
+          // switched off. `auto`/`scroll` WITH something to scroll is the test;
+          // `hidden` and `clip` are not user-scrollable however much they hold.
+          //
+          // OUT-OF-FLOW ELEMENTS GET THE BENEFIT OF THE DOUBT, and only for the
+          // intersection rule. Which clipper applies to an absolutely or fixed
+          // positioned box is a containing-block question — a `position:
+          // absolute` child of a `position: static` `overflow: hidden` ancestor
+          // is NOT clipped by it — and answering it wrongly condemns content
+          // the lender can see. The collapsed-clipper rule still applies to
+          // them. Nothing on this card is out of flow; this is here so the
+          // predicate stays honest if something ever is.
+          const flow = getComputedStyle(node).position;
+          const inFlow = flow === 'static' || flow === 'relative';
+          // ROUND 65 P2 — WHICH ancestors clip an out-of-flow box, rather than
+          // none of them.
+          //
+          // The exemption below was written to avoid a containing-block
+          // question, and avoiding it cost the whole rule: `inFlow` is computed
+          // once, so for any absolute or fixed node the walk skipped EVERY
+          // ancestor intersection test. An absolutely positioned body, receipt
+          // leaf or action inside a positioned `overflow: hidden` box — which IS
+          // its containing block and definitively clips it — carried fully
+          // clipped readiness copy or funds disclosures into a passing verdict.
+          //
+          // The question is answerable, and narrowly. An absolutely positioned
+          // box is clipped by an `overflow` ancestor only from its CONTAINING
+          // BLOCK upwards; ancestors between it and that block do not clip it.
+          // So the walk skips until it reaches the containing block and applies
+          // the rule from there — including to the containing block itself,
+          // which clips its own padding box.
+          //
+          // Read from the properties that define it rather than guessed: for
+          // `absolute`, the nearest ancestor that is positioned or that
+          // establishes a containing block by `transform`, `filter`,
+          // `perspective` or paint/layout `contain`; for `fixed`, only the
+          // latter group, since a merely positioned ancestor does not capture a
+          // fixed box. Anything this cannot decide leaves the ancestor skipped,
+          // so the residual stays a missed defect rather than an invented one.
+          const establishesCB = (cs) =>
+            cs.transform !== 'none' ||
+            cs.perspective !== 'none' ||
+            cs.filter !== 'none' ||
+            /\b(paint|layout|strict|content)\b/.test(cs.contain || '') ||
+            /\btransform\b/.test(cs.willChange || '');
+          let reachedCB = inFlow;
+          const r = node.getBoundingClientRect();
+          // TRUNCATED TEXT IS CONDEMNED, DELIBERATELY, and this note exists so
+          // it is not "fixed" later as a false positive. `text-overflow:
+          // ellipsis` with `white-space: nowrap` gives a line box wider than its
+          // clipping box, so a heavily truncated line fails the ratio below.
+          // That is the right answer HERE even though it would be wrong on a
+          // chrome label: a fee value cut off mid-number, or an explanation cut
+          // off mid-sentence, is exactly what this drive exists to catch, and a
+          // reader seeing an ellipsis does not make the missing half readable.
+          //
+          // Checked rather than assumed — the only ellipsis rules in
+          // `global.css` are `.connect-addr`/`.connect-label` and the two
+          // `.select-menu-*` classes, which are the header wallet button and the
+          // select menus. Nothing observed by this drive is truncated today.
+          //
+          // One Range per NODE, not per clipping ancestor: this predicate runs
+          // for the card, the body, the control and every receipt leaf on every
+          // poll tick, and rebuilding the range inside the walk was pure waste.
+          const ownText = [...node.childNodes].some(
+            (c) => c.nodeType === 3 && c.textContent.trim() !== '',
+          );
+          const boxes = (() => {
+            if (!ownText) return [r];
+            try {
+              const range = document.createRange();
+              range.selectNodeContents(node);
+              const rects = [...range.getClientRects()].filter(
+                (q) => q.width > 0 && q.height > 0,
+              );
+              // "No rects" must not read as "nothing is visible".
+              return rects.length > 0 ? rects : [r];
+            } catch {
+              return [r];
+            }
+          })();
+          // ROUND 44 P2 — STARTS AT THE NODE, not at its parent.
+          //
+          // A leaf that clips its OWN text was never examined: `height: 1px;
+          // overflow: hidden` on the `dd` itself leaves a positive rect (so the
+          // geometry test passes), `checkVisibility` positive, `paintsText`
+          // satisfied — and the only box that would have caught it was the one
+          // box this walk skipped. `innerText` then supplied the hidden
+          // disclosure and the confirmation scan recorded it as read.
+          //
+          // Including the node costs nothing on a normal leaf: `overflow:
+          // visible` skips the body of the loop, and a leaf sized to its own
+          // content contains its own line boxes by definition.
+          // ROUND 48 P2 — A CLIP PATH HIDES TEXT THAT EVERY OTHER TEST VOUCHES FOR.
+          //
+          // `clip-path: inset(50%)` — the modern visually-hidden idiom — leaves the
+          // box laid out at full size, `checkVisibility` positive, the overflow walk
+          // satisfied (there is no overflow) and `paintsText` satisfied (the colour
+          // is opaque), while nothing is painted. `innerText` keeps yielding every
+          // word, so the receipt's fee and loss rows could be recorded as read with
+          // the lender seeing none of them. Same class as rounds 37, 43, 44 and 45:
+          // a property that hides the CONTENT rather than the box.
+          //
+          // ONLY `inset()`, and only where the region is PROVABLY EMPTY. A circle,
+          // an ellipse, a polygon, a `path()` or a `url()` reference can each be
+          // empty too, and deciding that in general is a geometry problem this
+          // predicate has no business attempting — getting it wrong condemns content
+          // the lender can see, which is the error that gets a whole check switched
+          // off. Anything it cannot read counts as painted, so the residual is a
+          // missed defect and never an invented one.
+          //
+          // The legacy `clip: rect(...)` idiom needs nothing here: this codebase's
+          // `.visually-hidden` pairs it with `width: 1px; height: 1px;
+          // overflow: hidden`, which the half-extent rule below already rejects.
+          const emptyClipRegion = (cs, box) => {
+            const raw = (cs.clipPath || 'none').trim();
+            const m = /^inset\(([^)]*)\)$/i.exec(raw);
+            if (!m) return false;
+            // `round <radii>` describes the corners, not the extent.
+            const parts = m[1].split(/\s+round\s+/i)[0].trim().split(/\s+/).filter(Boolean);
+            if (parts.length === 0 || parts.length > 4) return false;
+            const px = (t, extent) => {
+              const v = String(t);
+              if (v.endsWith('%')) {
+                const n = Number(v.slice(0, -1));
+                return Number.isFinite(n) ? (n / 100) * extent : null;
+              }
+              const n = Number(v.endsWith('px') ? v.slice(0, -2) : v);
+              return Number.isFinite(n) ? n : null;
+            };
+            // CSS shorthand order, top/right/bottom/left with the usual fill-ins.
+            const top = px(parts[0], box.height);
+            const right = px(parts[1] ?? parts[0], box.width);
+            const bottom = px(parts[2] ?? parts[0], box.height);
+            const left = px(parts[3] ?? parts[1] ?? parts[0], box.width);
+            if ([top, right, bottom, left].some((v) => v === null)) return false;
+            // Judged only on an axis with extent to lose. A degenerate box is
+            // someone else's finding, and calling it an empty clip would be
+            // asserting something this has not established.
+            return (
+              (box.height > 0 && top + bottom >= box.height) ||
+              (box.width > 0 && left + right >= box.width)
+            );
+          };
+          for (let n = node; n; n = n.parentElement) {
+            const cs = getComputedStyle(n);
+            // An empty clip region on the node or on any ancestor hides
+            // everything inside it, whatever the overflow rules say.
+            //
+            // The string test comes FIRST so the rect is not measured on
+            // every ancestor of every node on every poll tick. `clip-path`
+            // is `none` almost everywhere, and forcing a layout read to
+            // discover that was a cost my own first version added silently.
+            const clipPath = cs.clipPath;
+            if (
+              clipPath &&
+              clipPath !== 'none' &&
+              emptyClipRegion(cs, n.getBoundingClientRect())
+            ) {
+              return false;
+            }
+            // ROUND 115 P2 — BEFORE THE VISIBLE-OVERFLOW FAST PATH, NOT AFTER.
+            //
+            // `if (!clipsY && !clipsX) continue` used to run first, so a POSITIONED
+            // containing block whose own overflow is visible was skipped without ever
+            // setting `reachedCB`. A higher STATIC ancestor with `overflow: hidden` —
+            // which genuinely does clip the leaf, being above the containing block —
+            // then failed the `!reachedCB` test, was treated as lying below it, and
+            // was skipped too. Fully hidden funds copy satisfied `shownBox`.
+            //
+            // Where an element sits relative to the containing block has nothing to
+            // do with whether it clips, so that question is answered first for every
+            // ancestor. The box tests below therefore run only at or above the
+            // containing block, which is the same correction in the other direction:
+            // an ancestor BELOW it does not clip an out-of-flow descendant, so a
+            // zero-height one there was never evidence of hidden text.
+            // ROUND 45 P2 — the out-of-flow exemption is about ANCESTORS, never
+            // about the node's own clipping box.
+            //
+            // I wrote it to avoid a containing-block question: whether a given
+            // ancestor clips an absolutely positioned descendant depends on which
+            // element is that descendant's containing block, and answering it
+            // wrongly condemns content the lender can see. None of that
+            // uncertainty applies to an element clipping ITS OWN text — every
+            // element clips its own content, whatever its `position` is.
+            //
+            // Round 44 put `node` into this walk and this `continue` skipped it
+            // right back out again for a positioned leaf, so `position: absolute;
+            // height: 1px; overflow: hidden` still passed. The fix for the skipped
+            // box, skipping the same box.
+            // ROUND 65 P2 — skip only UP TO the containing block, then apply the
+            // rule. `n !== node` keeps round 45's correction: an element always
+            // clips its OWN text, whatever its `position`.
+            if (!reachedCB && n !== node) {{
+              if (flow === 'fixed' ? establishesCB(cs) : cs.position !== 'static' || establishesCB(cs)) {{
+                reachedCB = true;
+              }} else {{
+                continue;
+              }}
+            }}
+            const clipsY = cs.overflowY !== 'visible';
+            const clipsX = cs.overflowX !== 'visible';
+            if (!clipsY && !clipsX) continue;
+            const box = n.getBoundingClientRect();
+            if (clipsY && box.height === 0) return false;
+            if (clipsX && box.width === 0) return false;
+            const scrollsY =
+              (cs.overflowY === 'auto' || cs.overflowY === 'scroll') &&
+              n.scrollHeight > n.clientHeight;
+            const scrollsX =
+              (cs.overflowX === 'auto' || cs.overflowX === 'scroll') &&
+              n.scrollWidth > n.clientWidth;
+            // ROUND 43 P2 — PER LINE, not per element.
+            //
+            // The half-of-the-element rule reads a MULTI-LINE leaf as visible
+            // whenever half of it survives — so a two-line value with its second
+            // line entirely clipped passes at exactly 50%, `innerText` yields
+            // both lines, and the run records a lender as having read a
+            // disclosure whose second half is not on screen. On this surface the
+            // clipped half is as likely as not to be the one carrying the
+            // consequence.
+            //
+            // A Range over the node's own text yields one client rect per LINE
+            // BOX, which is the unit a reader actually consumes. Every line must
+            // clear the same half-visible bar the element used to clear as a
+            // whole — so a descender trimmed by a pixel still passes (that line
+            // is ~95% shown) while a line that is wholly outside does not.
+            //
+            // SCOPED TO NODES CARRYING THEIR OWN TEXT, and computed ONCE above
+            // the ancestor walk rather than per ancestor.
+            //
+            // Both corrected after writing this. `selectNodeContents` on a
+            // CONTAINER yields a rect per line of its whole subtree, so applying
+            // the per-line rule to the card or the body would condemn the entire
+            // surface whenever any single descendant line was mostly clipped —
+            // and the resulting verdict says "card is in the DOM but not
+            // visible", which is the wrong sentence about a card that is largely
+            // on screen. The finding was about a multi-line `dt`/`dd`, and a
+            // leaf's own text is exactly where "can this be read" is the
+            // question being asked. Same scope `paintsText` uses, for the same
+            // reason.
+            //
+            // Containers keep the element-rect rule they already had, and their
+            // leaves are checked individually anyway — the receipt probe
+            // requires every row AND both of its leaves to pass.
+            for (const q of boxes) {
+              if (clipsY && !scrollsY && q.height > 0) {
+                const shown = Math.min(q.bottom, box.bottom) - Math.max(q.top, box.top);
+                if (shown / q.height < 0.5) return false;
+              }
+              if (clipsX && !scrollsX && q.width > 0) {
+                const shown = Math.min(q.right, box.right) - Math.max(q.left, box.left);
+                if (shown / q.width < 0.5) return false;
+              }
+            }
+          }
+          return true;
+        };
+        const paintsText = (node) => {
+          // ROUND 37 P2 — TEXT CAN BE HIDDEN BY ITS OWN COLOUR, and nothing else
+          // in this predicate looks at colour. `color: transparent` leaves the
+          // element laid out, `checkVisibility` positive, the rect non-zero and
+          // the clipping walk satisfied, while `innerText` keeps yielding every
+          // word — so the receipt's fee and loss values could be recorded as
+          // read with nothing painted on screen. Same class as the opacity and
+          // clipping holes before it: a property that hides the CONTENT rather
+          // than the box.
+          //
+          // Only elements carrying their OWN text are judged. `color` inherits,
+          // so testing a wrapper would condemn a whole card whose children set
+          // their own colour — a false FAIL, on the very element the run exists
+          // to vouch for. The leaves are where this matters anyway: the
+          // receipt's `dt`/`dd` are exactly the nodes whose values get blanked.
+          //
+          // `-webkit-text-fill-color` is read first because it OVERRIDES `color`
+          // for painting wherever it is set, which is how this is usually done
+          // in a real stylesheet.
+          //
+          // Alpha ZERO only, never a contrast judgement. Deciding text is too
+          // faint against its background needs the background, the stacking and
+          // whatever image sits behind it, and getting that wrong condemns
+          // legible copy — the direction this file keeps saying gets a check
+          // switched off.
+          const own = [...node.childNodes].some(
+            (c) => c.nodeType === 3 && c.textContent.trim() !== '',
+          );
+          if (!own) return true;
+          const cs = getComputedStyle(node);
+          // ROUND 82 P2 — ASKED OF THE GLYPHS, not of the element's box.
+          //
+          // Round 81 closed `position: absolute; left: -9999px` with a
+          // document-origin test on the element RECT, and the self-review
+          // after it found `text-indent: -9999px` walking straight through:
+          // the indent moves the LINE and leaves the box exactly where it
+          // was, so every box-shaped test — geometry, clipping, the origin
+          // test — says yes while the text sits far outside. That was
+          // patched with a heuristic (a negative indent at least as wide as
+          // the element), and the heuristic was wrong in BOTH directions:
+          // too narrow for a short label in a wide container, too broad for
+          // wrapped text whose later lines stay on screen, which the patch
+          // recorded as a stated limit rather than fixing.
+          //
+          // The text nodes' own `Range` rectangles are where the glyphs
+          // actually are, and `notClipped` has been reading them for its
+          // clipping ratio since round 44. Asking the document-origin
+          // question of THOSE answers `text-indent`, a negative
+          // `margin-left` on an inline run, and anything else that parks
+          // the line without moving the box — one rule where the previous
+          // two rounds each added an arm per trick.
+          //
+          // ANY reachable rectangle counts as painted, so wrapped text
+          // whose first line is indented out keeps the lines the lender can
+          // still read. Text this cannot measure — no rects, or a `Range`
+          // that throws — counts as painted too. Both are the direction
+          // this file takes everywhere: the residual is a missed defect,
+          // never an invented one.
+          //
+          // STATED LIMIT, and it is the price of that choice: the verdict
+          // is per ELEMENT, not per line, so the words on an indented-out
+          // FIRST line are still collected when a later line of the same
+          // run is readable. Slicing a text node by line rectangle would
+          // close it and would also start discarding copy on any line this
+          // drive mismeasures, which is the false-FAIL direction. The
+          // single-line label is what the pattern is actually used for and
+          // is fully covered.
+          //
+          // OWN TEXT NODES ONLY, matching what the rest of this predicate
+          // judges: `selectNodeContents(node)` would pull in a descendant's
+          // glyphs and let a visible child vouch for an indented-out
+          // parent.
+          //
+          // THIS ADDS NO NEW SCROLL EXPOSURE, which is why no scroll
+          // exemption sits beside it: scrolling moves the box and its
+          // glyphs together, and both drive call sites (`visible` and
+          // `visibleTextOf`) run `shownBox` first, so a box carried before
+          // the origin is condemned there first. What reaches here is text
+          // that left its own box behind.
+          //
+          // That is NOT the same as saying a scrolled ancestor cannot
+          // produce a false condemnation, and the stronger sentence stood
+          // here until it was measured. It can: a row inside an INNER
+          // scroll container near the top of the document, scrolled above
+          // that container's own slit, has a negative rect while
+          // `window.scrollY` is 0, so the document-origin test condemns
+          // content the lender can scroll back to. Measured in a browser
+          // rather than argued — `shownBox` returns false for it, and has
+          // since round 81 added the box test; the glyph rule inherits the
+          // question rather than introducing it. Nothing this drive reads
+          // is inside such a container today (the page itself scrolls,
+          // which `window.scrollY` accounts for), so it is a latent gap in
+          // both copies rather than a live one, tracked separately instead
+          // of being patched mid-review.
+          const glyphs = [];
+          for (const c of node.childNodes) {
+            if (c.nodeType !== 3 || c.textContent.trim() === '') continue;
+            try {
+              const range = document.createRange();
+              range.selectNodeContents(c);
+              for (const q of range.getClientRects()) {
+                if (q.width > 0 && q.height > 0) glyphs.push(q);
+              }
+            } catch {
+              // Unmeasurable: leaves `glyphs` short, which reads as painted.
+            }
+          }
+          if (
+            glyphs.length > 0 &&
+            glyphs.every(
+              (q) => q.right + window.scrollX <= 0 || q.bottom + window.scrollY <= 0,
+            )
+          ) {
+            return false;
+          }
+          // HOISTED ABOVE THE OCCLUSION RULE (round 90): that rule now reads a
+          // cover's background through this same parser, and a `const` arrow
+          // used before its declaration is a temporal-dead-zone throw — the
+          // shape that made a round-75 fix inert inside its own catch. One
+          // definition, declared before either reader.
+          const alphaOf = (value) => {
+            const v = String(value).trim();
+            if (v === 'transparent') return 0;
+            const fn = /^[a-zA-Z-]+\(([^]*)\)$/.exec(v);
+            if (!fn) return 1;
+            const body = fn[1];
+            const cut = body.lastIndexOf('/');
+            let raw = null;
+            if (cut >= 0) {
+              raw = body.slice(cut + 1);
+            } else {
+              const parts = body.split(',');
+              if (parts.length === 4) raw = parts[3];
+            }
+            if (raw === null) return 1;
+            const t = raw.trim();
+            const n = t.endsWith('%') ? Number(t.slice(0, -1)) / 100 : Number(t);
+            return Number.isFinite(n) ? n : 1;
+          };
+          // ROUND 89 P2 — AND TEXT COVERED BY SOMETHING OPAQUE IS NOT
+          // PAINTED EITHER.
+          //
+          // An opaque positioned sibling laid over the explanation or a receipt
+          // row defeats every test above it: the covered node still reports
+          // `checkVisibility`, a real rect at real document coordinates, full
+          // opacity, no clipping and measurable glyphs. So the whole class this
+          // predicate exists for — copy present in the markup and absent from
+          // the lender's screen — had one door left open, and it is the door a
+          // CSS regression is most likely to walk through: an overlay that grew,
+          // a z-index that flipped.
+          //
+          // HIT-TESTED, which is the only way to ask "is something in front of
+          // this". Each glyph rectangle is probed at its centre first, and at
+          // two corners only when the centre comes back covered — so the common
+          // case costs one `elementsFromPoint` per rectangle and reachable text
+          // returns on the first probe.
+          //
+          // THREE GUARDS AGAINST CONDEMNING LEGIBLE COPY, because this is the
+          // one rule in this file that can invent a finding out of ordinary
+          // layout:
+          //
+          //   - The covering element must actually PAINT. An invisible
+          //     click-catcher — a full-page div with no background, which is
+          //     ordinary in a modal implementation — is hit first by
+          //     `elementsFromPoint` and covers nothing a lender can see. So the
+          //     walk up from each hit looks for a fully opaque background
+          //     colour — and ONLY that, since round 98. Anything it cannot
+          //     decide counts as NOT covering, which is what "unknown means
+          //     painted" amounts to for this rule: the text stays in the
+          //     reading. (The layers BELOW that catcher are examined too —
+          //     round 95.) It used to accept a replaced element as paint on
+          //     the strength of its tag, which condemned readable copy under
+          //     a transparent image; that is gone, and this sentence named it
+          //     for one round after it went, which is how a description sends
+          //     a later change back to the behaviour just removed.
+          //   - Points outside the VIEWPORT cannot be hit-tested at all, and
+          //     `elementsFromPoint` answers an empty stack for them. They are
+          //     skipped, not counted as covered — otherwise every below-the-fold
+          //     row, which the lender reaches by scrolling, would be condemned.
+          //   - Occlusion must be TOTAL. One reachable probe anywhere in the
+          //     text is enough to keep it painted, because partial overlap is
+          //     ordinary (a sticky header crossing a row as the page scrolls)
+          //     and reading half a sentence is not the defect this catches.
+          //
+          // STATED RESIDUAL, and it is the mirror of the first guard rather
+          // than a second win: `elementsFromPoint` looks straight through an
+          // element with `pointer-events: none`, so an OPAQUE overlay carrying
+          // that property hides the text visually and is invisible to this
+          // test. That is a missed defect, which is the direction this file
+          // takes every time — the alternative is a geometric overlap test
+          // that would condemn the transparent click-catcher above it.
+          // THE CONTAINMENT TEST COMES FIRST INSIDE THE WALK, and swapping it
+          // below the paint tests would condemn the whole page (self-review).
+          // The walk climbs from whatever was hit until it reaches something
+          // that contains this node — the common ancestor — and stops there. Any
+          // element from the common ancestor upward is an ANCESTOR of the text,
+          // not a cover, and `body` almost always carries an opaque background:
+          // reach it and every foreign hit reads as covered, so the transparent
+          // click-catcher guard above would silently invert.
+          // Is this element's `filter` less than fully opaque?
+          //
+          // The same parse `filterErases` performs, asking the weaker question:
+          // that one wants erased-entirely, this one wants anything short of
+          // solid, because a cover you can read through is not a cover. A
+          // chain multiplies, so one component below 1 settles it.
+          const filterBelowOpaque = (f) => {
+            if (!f || f === 'none') return false;
+            for (const m of String(f).matchAll(/opacity\(([^)]*)\)/gi)) {
+              const t = m[1].trim();
+              const v = t.endsWith('%') ? Number(t.slice(0, -1)) / 100 : Number(t);
+              if (Number.isFinite(v) && v < 1) return true;
+            }
+            return false;
+          };
+          // Does THIS ONE LAYER of the hit-test stack paint over the text?
+          // Split out of `coveredAt` in round 95 so the answer can be asked of
+          // each layer in turn; the walk itself is unchanged.
+          const layerPaints = (hit) => {
+            // Whether anything in the cover's chain actually paints, carried so
+            // the walk can keep going and still answer (round 92).
+            let paints = false;
+            for (let n = hit; n && n !== document.documentElement; n = n.parentElement) {
+              // The common ancestor: everything below it has been examined, so
+              // whatever was found is the answer.
+              if (n.contains(node)) return paints;
+              // ROUND 91 P2 — AND THE COVER HAS TO BE VISIBLE ITSELF.
+              //
+              // An opaque BACKGROUND on an element that is itself transparent —
+              // `background:#123456; opacity:0`, an ordinary transition layer —
+              // is still what hit-testing returns, and the first version read its
+              // background alpha and declared the text covered. That is a false
+              // FAIL on plainly visible copy, which is the one direction this
+              // predicate must never take.
+              //
+              // Anything less than fully opaque disqualifies the whole chain
+              // rather than being weighed: a half-transparent cover leaves the
+              // text partly legible, and judging how much is the contrast
+              // question this file refuses. A filter carrying an `opacity()` below
+              // 1 says the same thing by another property (round 100 — it used to
+              // read only an exact zero); other filters still cover, so they are
+              // left alone.
+              //
+              // NO `visibility` TEST HERE, and its removal is the correction
+              // rather than an omission (self-review). Hit-testing already skips
+              // a hidden element, so the check could never fire for the hit
+              // itself — and for an ANCESTOR of the hit it is actively wrong,
+              // since `visibility` is inherited and a child may set `visible`
+              // again, leaving a cover that genuinely paints. Opacity and the
+              // filter do not have that shape: both composite over the whole
+              // subtree, so an ancestor carrying either really does erase the
+              // cover.
+              const coverStyle = getComputedStyle(n);
+              const op = Number(coverStyle.opacity);
+              if (Number.isFinite(op) && op < 1) return false;
+              // ROUND 100 P2 — ANY filter opacity BELOW 1, not only exactly zero.
+              //
+              // The regex here matched `opacity(0)` and nothing else, so a cover
+              // at `filter: opacity(0.5)` — computed `opacity` still 1 — counted
+              // as fully opaque and the text under it was discarded, while the
+              // lender can read it straight through. The rule two paragraphs up
+              // says anything less than fully opaque disqualifies the chain; the
+              // element `opacity` test honours that and this one did not.
+              //
+              // Parsed rather than matched, the same way `filterErases` parses
+              // it, percentage form included. A value this cannot read is left
+              // alone — unreadable is not evidence of transparency, and the
+              // surrounding rule already treats undecidable as not-covering.
+              if (filterBelowOpaque(coverStyle.filter)) return false;
+              // ROUND 92 P2 — FOUND IS NOT FINISHED. The walk continues to the
+              // common ancestor even after something opaque is seen, because
+              // opacity does not INHERIT: an overlay written as an opaque child
+              // inside a wrapper at `opacity: 0` reports 1 on the child, and
+              // returning there accepted a paint the wrapper erases. Readable
+              // copy was then discarded — the false-FAIL direction again, from
+              // the fix that was supposed to close it.
+              //
+              // ROUND 97 P2 — AND THE TAG TEST THAT USED TO LIVE HERE IS GONE.
+              //
+              // It read `/^(img|video|canvas|svg)$/.test(n.tagName)` and counted
+              // any replaced element as painting. A fully transparent PNG, an
+              // untouched canvas or a mostly-empty SVG all report `opacity: 1`
+              // and are all what hit-testing returns, so any of them spanning the
+              // glyph discarded plainly readable copy — the false-FAIL direction,
+              // on a funds surface, from a rule that never looked at a pixel.
+              //
+              // DELETED RATHER THAN NARROWED, because there is no cheap honest
+              // version. `naturalWidth` says an image loaded, not that it is
+              // opaque; reading pixels back means a canvas draw, and a
+              // cross-origin image taints the canvas and throws. Undecidable
+              // counts as NOT covering here, as everywhere else in this
+              // predicate.
+              //
+              // STATED RESIDUAL: an opaque image laid over the text with no
+              // background colour of its own is no longer detected. That is a
+              // missed defect, which is the trade this file makes every time —
+              // the alternative invents failures out of decorative artwork.
+              // ROUND 90 P2 — READ BY SHAPE, via the same `alphaOf` the fill test
+              // uses. The first version matched `rgba?(…)` only, so an overlay
+              // painted in `oklab(…)` or `color(display-p3 …)` — forms Chromium
+              // preserves, as the note above `alphaOf` records — read as
+              // transparent and the hidden text stayed in the reading. Round 38
+              // learned this exact lesson for the text colour and I wrote the new
+              // site against the old standard anyway.
+              const bg = coverStyle.backgroundColor || '';
+              if (!paints && bg && bg !== 'transparent' && alphaOf(bg) === 1) paints = true;
+            }
+            return paints;
+          };
+          // ROUND 95 P2 — THE WHOLE STACK AT THE POINT, NOT THE TOP OF IT.
+          //
+          // `elementFromPoint` returns ONE element: the topmost. The modal
+          // implementation the first guard was written for — a full-size
+          // transparent click-catcher — is exactly what lands there, and its
+          // own chain paints nothing, so the walk correctly answered "this
+          // layer is not a cover" and `coveredAt` then stopped. The OPAQUE
+          // backdrop immediately beneath it, which is the thing the lender
+          // cannot see through, was never examined. Hidden receipt copy could
+          // therefore enter `visibleTextOf` and a fee-facing surface be
+          // certified on text nobody could read.
+          //
+          // `elementsFromPoint` returns the stack topmost-first. Everything
+          // before the entry that contains this node paints ABOVE the glyph at
+          // this point, so each is asked in turn and the first that paints
+          // settles it. Reaching the node's own layer ends the search: nothing
+          // below it can hide it.
+          //
+          // The containment test stays FIRST, for the reason recorded above —
+          // `body` carries an opaque background and sits at the bottom of every
+          // stack, so examining it would read as covered everywhere.
+          //
+          // A layer disqualified by its opacity, or by a filter that is not fully
+          // opaque, does not end the search either: it is see-through, and the
+          // layers below it are still in front of the text.
+          const coveredAt = (x, y) => {
+            const stack = document.elementsFromPoint(x, y);
+            if (!stack || !stack.length) return false;
+            for (const hit of stack) {
+              // ROUND 90 P2 — ONLY THIS NODE AND ITS ANCESTORS ARE EXEMPT. A
+              // DESCENDANT CAN COVER ITS PARENT'S OWN TEXT.
+              //
+              // The first version exempted `node.contains(hit)` as well, which
+              // trusted every descendant — so an absolutely positioned opaque
+              // child laid over its parent's glyphs was declared "not a cover"
+              // by the very fact that it belongs to the element it is hiding.
+              //
+              // `contains` is true of a node itself, so `hit.contains(node)`
+              // covers both the element's own hit and any ancestor's, and
+              // nothing else is waved through. Note the rects probed are the
+              // element's OWN text nodes, so an ordinary inline child is not at
+              // these points at all — a descendant hit here is one that
+              // genuinely overlaps the text.
+              if (hit.contains(node)) return false;
+              if (layerPaints(hit)) return true;
+            }
+            return false;
+          };
+          const vw = window.innerWidth || document.documentElement.clientWidth || 0;
+          const vh = window.innerHeight || document.documentElement.clientHeight || 0;
+          const inView = (x, y) => x >= 0 && y >= 0 && x < vw && y < vh;
+          let probed = 0;
+          let allCovered = true;
+          // ROUND 96 P2 — A DIAGONAL IS NOT A RECTANGLE.
+          //
+          // The three probes were the centre and the two opposite corners:
+          // three COLLINEAR points. An opaque diagonal stripe, or three small
+          // badges that happen to sit on that line, cover all of them while
+          // leaving most of the sentence readable — and the text node was then
+          // discarded whole. The rule directly above says occlusion must be
+          // TOTAL, and the sampling did not implement the rule it states.
+          //
+          // The direction is what makes this urgent rather than merely
+          // imprecise: it is a FALSE FAIL on legible funds copy, the one error
+          // this file says gets a whole check switched off.
+          //
+          // Sampled on a GRID now — five positions across the width at three
+          // heights — so a cover has to defeat fifteen points spread over the
+          // whole rectangle rather than three on one line. Still sampling, and
+          // still not a proof of total coverage; what changes is that every
+          // added point can only make a cover HARDER to claim, so the residual
+          // moves further into the missed-defect direction and never into the
+          // invented one.
+          //
+          // The common path costs no more than before: the loop stops at the
+          // first uncovered point, and readable text is uncovered at the first
+          // one tried. Only text that really is covered everywhere pays for
+          // the whole grid.
+          const COL_FRACTIONS = [0.02, 0.25, 0.5, 0.75, 0.98];
+          const ROW_FRACTIONS = [0.25, 0.5, 0.75];
+          // KEPT AT LEAST A PIXEL INSIDE (self-review of the grid above).
+          // The rules it replaced were absolute 1px insets from the corners,
+          // and a fraction is not: on a narrow rectangle 0.02 lands on the
+          // boundary, where hit-testing can resolve to the NEIGHBOUR rather
+          // than to the glyph. An opaque badge beside a short figure would
+          // then answer for a point that is not on the text. It cannot
+          // condemn on its own — total occlusion needs every point, and the
+          // interior ones sit over the glyph — but a sample that is not on
+          // the thing being measured should not be taken at all. Rectangles
+          // too narrow to have an inside are probed at their centre.
+          const inset = (extent, f) =>
+            extent <= 2 ? extent / 2 : Math.min(Math.max(extent * f, 1), extent - 1);
+          for (const q of glyphs) {
+            const points = [];
+            for (const fy of ROW_FRACTIONS) {
+              for (const fx of COL_FRACTIONS) {
+                points.push([q.left + inset(q.width, fx), q.top + inset(q.height, fy)]);
+              }
+            }
+            for (const [x, y] of points) {
+              if (!inView(x, y)) continue;
+              probed += 1;
+              if (!coveredAt(x, y)) {
+                allCovered = false;
+                break;
+              }
+            }
+            if (!allCovered) break;
+          }
+          if (probed > 0 && allCovered) return false;
+          const fill = cs.webkitTextFillColor || cs.color || '';
+          // ROUND 38 P2 — EVERY COMPUTED COLOUR FORM, not just `rgb()`/`rgba()`.
+          //
+          // Chromium PRESERVES the functional notation for the modern colour
+          // syntaxes, so `color(display-p3 0 0 0 / 0)` and `oklab(0 0 0 / 0)`
+          // never matched the old `rgba?` probe — and the no-match branch
+          // returns "painted", which fails OPEN on the one check that exists
+          // to catch invisible funds copy. All six receipt leaves could pass
+          // while `innerText` supplied their values.
+          //
+          // Parsed by SHAPE rather than by enumerating colour functions:
+          // every CSS colour syntax carrying alpha spells it either after a
+          // `/` (the modern forms, and space-separated `rgb()`) or as a fourth
+          // comma-separated component (legacy `rgba()` / `hsla()`). Reading
+          // the shape means a colour function added to CSS later needs no
+          // change here — the enumeration mistake this file has now made
+          // twice, with the transport allowlist and the currency signs.
+          //
+          // ANYTHING UNPARSEABLE COUNTS AS PAINTED. A form this cannot read
+          // must not be condemned: a false FAIL on legible copy is the error
+          // that gets the whole check switched off, so the residual is a
+          // missed defect and never an invented one.
+          // ROUND 75 P2 — A ZERO-ALPHA FILL IS NOT THE ONLY WAY GLYPHS GET
+          // PAINTED.
+          //
+          // `color: transparent` with a `text-shadow` is a real technique, and
+          // the glyphs are plainly on screen: the shadow draws them.
+          // Condemning that text erased the body, a receipt value or a control
+          // label and accused a surface the lender can read — the false-FAIL
+          // direction this helper already argues for two paragraphs up, where
+          // an unparseable colour is deliberately counted as painted. The same
+          // goes for a paint-order stroke, which outlines glyphs a transparent
+          // fill would otherwise hide.
+          //
+          // DECLINED rather than adjudicated: no attempt is made to decide
+          // whether the shadow is itself visible, offset clear of the glyphs,
+          // or the colour of the background. Each of those is the contrast
+          // judgement this file has already refused to make, and getting it
+          // wrong puts the accusation back. The residual is a missed defect,
+          // never an invented one.
+          if (alphaOf(fill) !== 0) return true;
+          const shadow = String(cs.textShadow ?? 'none').trim();
+          if (shadow !== '' && shadow !== 'none') return true;
+          const strokeWidth = String(cs.webkitTextStrokeWidth ?? '0px').trim();
+          const strokeColor = String(cs.webkitTextStrokeColor ?? 'transparent').trim();
+          if (parseFloat(strokeWidth) > 0 && alphaOf(strokeColor) !== 0) return true;
+          return false;
+        };
+        const shownBox = (node) => {
+          // `!node`, not `node === null`: the twin has always written it this
+          // way, and it is the safer of the two — a caller handing this
+          // `undefined` would throw on the property read below.
+          if (!node) return false;
+          // ROUND 23 P2 — SUPPLEMENTS the geometry test, never replaces
+          // it. `checkVisibility` answers about display, visibility,
+          // opacity and content-visibility; it does not establish that
+          // the element occupies space, so `transform: scale(0)` or a
+          // collapsed box still reads as visible through it alone.
+          if (typeof node.checkVisibility === 'function') {
+            if (
+              !node.checkVisibility({
+                opacityProperty: true,
+                visibilityProperty: true,
+                contentVisibilityAuto: true,
+              })
+            ) {
+              return false;
+            }
+            // ROUND 29 P2 — AND THE CLIPPING TEST, on THIS path too.
+            //
+            // Round 28 added `notClipped` to the fallback's return and
+            // not to this one, so on every engine that HAS
+            // `checkVisibility` — which is to say the browser this drive
+            // actually runs — the clipping fix did nothing at all for
+            // the card, the body and the submit control. The receipt
+            // helper was rewritten wholesale and did get it, which is
+            // why the live run looked like it confirmed the change: the
+            // canary I checked exercised the copy that worked.
+            //
+            // ROUND 51 P2 — AND THE SAME SPLIT BIT AGAIN, so the branch
+            // no longer RETURNS. Round 29 fixed the symptom by copying
+            // `notClipped` into this arm and left the shape that caused
+            // it: an early return here meant everything below — the
+            // ancestor walk included — ran only on an engine without
+            // `checkVisibility`, which is to say never.
+            //
+            // That was free while the walk only tested `opacity`, since
+            // `checkVisibility({opacityProperty: true})` already covers
+            // it, and that is precisely why nobody noticed. It stops
+            // being free the moment the walk carries something
+            // `checkVisibility` does not know about — `filter` is that
+            // thing, and the fix for it would have landed in dead code
+            // in one of the two copies.
+            //
+            // Restructured to match the twin rather than patched inside
+            // the branch, so the copies converge instead of diverging
+            // further (#2102).
+          } else {
+            const cs = getComputedStyle(node);
+            if (
+              cs.display === 'none' ||
+              cs.visibility === 'hidden' ||
+              cs.visibility === 'collapse'
+            ) {
+              return false;
+            }
+          }
+          // ROUND 51 P2 — A FILTER ERASES CONTENT THE SAME WAY OPACITY DOES,
+          // and nothing above looks at it.
+          //
+          // `filter: opacity(0)` leaves the geometry, the computed `opacity`,
+          // the text colour and `checkVisibility` all untouched while Chromium
+          // paints nothing — so the explanation, or a fee and loss row, could be
+          // vouched for from `innerText` with none of it on screen. Same class
+          // as rounds 37, 43, 44, 45 and 48: a property that hides the CONTENT
+          // rather than the box.
+          //
+          // Checked on the same ANCESTOR WALK as `opacity`, because a filter
+          // applies to the element and everything inside it exactly as opacity
+          // does — one walk, one rule, rather than a second traversal to drift.
+          //
+          // ONLY a zero `opacity()` component, and only where it is stated as a
+          // number. `brightness(0)` paints black rather than nothing, a `url()`
+          // reference is an arbitrary SVG filter, and deciding in general what a
+          // filter chain renders is not something this predicate can do — so
+          // anything else counts as painted. The residual is a missed defect,
+          // never an invented one.
+          const filterErases = (cs) => {
+            const f = cs.filter;
+            if (!f || f === 'none') return false;
+            for (const m of String(f).matchAll(/opacity\(([^)]*)\)/gi)) {
+              const t = m[1].trim();
+              const v = t.endsWith('%') ? Number(t.slice(0, -1)) / 100 : Number(t);
+              if (Number.isFinite(v) && v === 0) return true;
+            }
+            return false;
+          };
+          for (let n = node; n; n = n.parentElement) {
+            const cs = getComputedStyle(n);
+            if (Number(cs.opacity) === 0) return false;
+            if (filterErases(cs)) return false;
+          }
+          // ROUND 81 P2 — AND TEXT PARKED OUTSIDE THE DOCUMENT IS NOT
+          // PAINTED EITHER.
+          //
+          // `position: absolute; left: -9999px` is the older screen-reader
+          // pattern, and it defeats every test above it: `checkVisibility`
+          // is true, the rect has real width and height, opacity is 1 and
+          // nothing clips it. So an off-screen readiness sentence or a fee
+          // value could substantiate a card showing a sighted lender
+          // nothing but filler — the exact substitution the painted-text
+          // rule exists to stop, arriving by geometry instead of colour.
+          //
+          // BELOW THE FOLD IS NOT THIS. Content the lender can scroll to is
+          // painted and must stay admitted, so the test is in DOCUMENT
+          // coordinates and asks whether the box lies wholly before the
+          // document's origin — left of it or above it — which no amount of
+          // scrolling can reach. A box at y=4000 has positive document
+          // coordinates and is unaffected.
+          //
+          // Deliberately narrow. Anything further — a box parked far to the
+          // RIGHT, inside a horizontally scrollable ancestor, or an RTL
+          // document's mirrored origin — is a reachability question this
+          // cannot answer from one rect, and guessing would condemn copy
+          // the lender can read. The residual is a missed defect, which is
+          // the direction this file takes every time.
+          const r = node.getBoundingClientRect();
+          if (!(r.width > 0 && r.height > 0)) return false;
+          const docRight = r.right + window.scrollX;
+          const docBottom = r.bottom + window.scrollY;
+          if (docRight <= 0 || docBottom <= 0) return false;
+          return notClipped(node);
+        };
+        // ROUND 66 P2 — TWO QUESTIONS, SEPARATED. `shownBox` above answers
+        // whether the BOX is on screen: display, visibility, opacity, an
+        // erasing filter, geometry and clipping, each of which hides
+        // everything inside it. `paintsText` answers whether an element's
+        // OWN text is painted, which affects only that element's own text
+        // nodes — `color` inherits, and a descendant may repaint itself.
+        //
+        // `visible` is unchanged: it is both, and every existing caller
+        // asking "can the lender read THIS element" still gets the same
+        // answer. The split exists so `visibleTextOf` can stop discarding a
+        // painted descendant because its container's own text is not.
+        const visible = (node) => shownBox(node) && paintsText(node);
+        const all = [...document.querySelectorAll('[data-testid="forced-close-card"]')];
+        const shown = all.filter(visible);
+        if (all.length === 0) return null;
+        // ROUND 21 P2 — NO VISIBLE CARD IS AN ANSWER, not a reason to
+        // read a hidden one.
+        //
+        // The fallback to the first ATTACHED card meant that a card
+        // hidden during the readiness poll was still scraped, while
+        // `mounted` stayed true from the earlier wait — so a settled,
+        // well-formed, entirely invisible card reported a pass. The
+        // lender sees no surface at all in that state, which is the
+        // exact regression the absence rule exists to catch, arriving
+        // through the one path that had a fallback in it.
+        if (shown.length === 0) return { hiddenNow: true };
+        const el = shown[0];
+        const body = el.querySelector('[data-testid="forced-close-body"]');
+        // ROUND 61 P2 — THE BODY'S TEXT, not the wrapper's presence.
+        //
+        // `visible(body)` alone cannot answer "can the lender read the
+        // explanation", and `paintsText` says why in its own comment:
+        // only elements carrying their OWN text are judged, because
+        // `color` inherits and condemning a wrapper whose children set
+        // their own colour would be a false FAIL. So a body that wraps
+        // its sentence in a child — ordinary markup — is EXEMPT from the
+        // colour test, the opacity/filter walk only climbs to ancestors,
+        // and `notClipped` looks at the body and above. Erase the CHILD
+        // and every one of them still passes, while `innerText` keeps
+        // yielding the sentence: the heading-only surface round 21 added
+        // `bodyVisible` to catch, reached one level down.
+        //
+        // ROUND 62 P2 — AND THE RECOGNISED SENTENCE ITSELF, not merely
+        // some painted text somewhere in the body.
+        //
+        // Round 61 answered this with "at least one visible text leaf",
+        // and stated its own residual: a body with two text leaves where
+        // only one is erased still passed. That residual is the whole
+        // defect, because the leaf the verdict MATCHES is the one that
+        // governs the action — an erased explanation beside a visible
+        // secondary note satisfied `some` while the lender read nothing
+        // that justified the button.
+        //
+        // Binding the check to the recognised copy is strictly better
+        // than both of round 61's candidates. `every` would have failed a
+        // card for carrying a screen-reader-only span, which is correct,
+        // accessible markup clipped by design — the false-FAIL direction.
+        // `some` accepted an unrelated leaf. Reporting the VISIBLE TEXT
+        // and recognising state from that is neither: an sr-only span
+        // simply is not in the string, and an erased sentence is not in
+        // it either.
+        //
+        // Collected by walking TEXT NODES and keeping those whose element
+        // chain is visible, rather than by collecting "leaf elements": a
+        // parent with its own text beside a child with more would be
+        // counted twice by the latter, and the text is what the verdict
+        // needs anyway.
+        //
+        // Joined with NOTHING and then whitespace-collapsed. A space
+        // between every text node would split `<b>Loan</b>s` into
+        // "Loan s", and this string is compared against shipped copy with
+        // `includes`.
+        //
+        // Elements whose text is NEVER PAINTED (`script`, `style`,
+        // `template`, `title`, `noscript`) are skipped, so this agrees
+        // with the `innerText` that `bodyText` reports. Defence in depth
+        // rather than a live defect — a body holding only a `<style>` has
+        // no height and `visible` already rejects it on geometry, which
+        // the fixture asserts.
+        //
+        // NAMED, so the fixture suite can extract and exercise it the way
+        // it does `rowShown` — the rule is the thing under test and a copy
+        // of it written into the test would prove nothing.
+        const visibleTextOf = (root) => {
+          if (root === null) return '';
+          // THE ROOT'S OWN VISIBILITY FIRST — see the twin in the receipt
+          // pass. The walk only judges elements it DESCENDS INTO, so a
+          // text node directly under a hidden root would be collected as
+          // painted. The two copies are asserted identical by
+          // `31-observer-visibility.spec.ts`.
+          if (!shownBox(root)) return '';
+          const unpainted = /^(script|style|template|title|noscript)$/i;
+          const parts = [];
+          // One shape for every early exit, so a pseudo that paints nothing and
+          // a pseudo whose content could not be resolved stay distinguishable.
+          const NOTHING_PAINTED = { text: '', unresolved: false };
+          let sawUnresolved = false;
+          // ROUND 111 P2 — CSS-GENERATED TEXT IS TEXT THE LENDER READS.
+          //
+          // `::before` / `::after` content is painted on screen and appears in no
+          // `childNodes`, so this walk could not see it and the amount scan
+          // returned a clean verdict on a card displaying `100 USDC`. That is the
+          // false-PASS direction on the one absolute claim this drive makes — the
+          // card states no amount it cannot substantiate — so the text is
+          // collected rather than the assertion declined: declining on any
+          // generated content would switch the check off for every decorative
+          // bullet or icon, which is the same check lost by a different door.
+          //
+          // Only a QUOTED string counts. `counter()`, `attr()`, `url()` and the
+          // `none` / `normal` defaults are not copy this can read, and guessing at
+          // them would invent text. And only when the pseudo actually paints: its
+          // own display, visibility, opacity and colour alpha are checked the way
+          // `paintsText` checks an element's, since a pseudo can be styled away
+          // independently of its owner.
+          const pseudoText = (el, which) => {
+            let cs;
+            try {
+              cs = getComputedStyle(el, which);
+            } catch {
+              return NOTHING_PAINTED;
+            }
+            if (!cs) return NOTHING_PAINTED;
+            const content = cs.content;
+            if (!content || content === 'none' || content === 'normal') return NOTHING_PAINTED;
+            if (cs.display === 'none' || cs.visibility !== 'visible') return NOTHING_PAINTED;
+            if (Number.parseFloat(cs.opacity) === 0) return NOTHING_PAINTED;
+            // THE SAME ALPHA RULE AS `alphaOf`, and written out because that one
+            // lives in the occlusion scope and is not reachable from here. My
+            // first version was a one-line regex taking the LAST number before
+            // the paren, which reads `rgb(0, 0, 0)` as alpha 0 and dropped every
+            // pseudo painted in plain black — a fix that silently did nothing,
+            // caught only because the fixture failed. A colour parser written a
+            // third time is the #2102 duplication one level down, and is recorded
+            // there rather than left implicit.
+            const colour = String(cs.color).trim();
+            if (colour === 'transparent') return NOTHING_PAINTED;
+            const fn = /^[a-zA-Z-]+\(([^]*)\)$/.exec(colour);
+            if (fn) {
+              const body = fn[1];
+              const cut = body.lastIndexOf('/');
+              const parts = body.split(',');
+              const raw = cut >= 0 ? body.slice(cut + 1) : parts.length === 4 ? parts[3] : null;
+              if (raw !== null && Number.parseFloat(raw) === 0) return NOTHING_PAINTED;
+            }
+            // ROUND 116 P2 — RESOLVE `attr()`, AND SAY SO WHEN NOTHING CAN.
+            //
+            // Reading only the quoted parts drops the dynamic half: `attr(data-amount)
+            // " USDC"` yielded `USDC` with the number gone, so the scan saw no digits
+            // and certified a card that visibly states an amount — the very false PASS
+            // this collection was added to close.
+            //
+            // `attr()` is read off the element. A counter is not: its value comes from
+            // the document's counter state at paint time. What cannot be resolved is
+            // REPORTED rather than guessed at, and the verdict declines to certify the
+            // no-amount claim on that card.
+            let rest = content;
+            let out = '';
+            let unresolved = false;
+            while (rest.length > 0) {
+              const lit = /^\s*(?:"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)')/.exec(rest);
+              if (lit) {
+                out += (lit[1] ?? lit[2] ?? '').replace(/\\(.)/g, '$1');
+                rest = rest.slice(lit[0].length);
+                continue;
+              }
+              const attr = /^\s*attr\(\s*([A-Za-z_][-\w]*)[^)]*\)/.exec(rest);
+              if (attr) {
+                out += el.getAttribute(attr[1]) ?? '';
+                rest = rest.slice(attr[0].length);
+                continue;
+              }
+              const other = /^\s*[^\s]+/.exec(rest);
+              if (!other) break;
+              // `normal` and `none` are handled above; anything else left here is a
+              // component whose painted text this cannot know.
+              unresolved = true;
+              rest = rest.slice(other[0].length);
+            }
+            return { text: out, unresolved };
+          };
+          // ROUND 66 P2 — AN ELEMENT'S OWN TEXT AND ITS SUBTREE ARE JUDGED
+          // SEPARATELY.
+          //
+          // `paintsText` gates only the element's OWN text nodes, because
+          // `color` inherits and a descendant may repaint itself. Descent
+          // is gated on `shownBox` alone: a container whose own text is
+          // transparent still SHOWS a child that sets its own colour, and
+          // gating descent on the full `visible` discarded that child — a
+          // product FAIL on a card whose explanation is painted, which is
+          // the direction this file refuses everywhere else.
+          // ROUND 74 P2 — RENDERED LINE BOUNDARIES SURVIVE THE WALK.
+          //
+          // `innerText` inserts a newline between rendered blocks, and round 24
+          // made that newline a CLAUSE BOUNDARY: `Wait 3 days` above `USDC is
+          // returned later` is two rows, so the ticker is not near the duration.
+          // Round 66 moved the scans onto this painted walk and joined every
+          // text node with nothing, which silently deleted that boundary — so
+          // correct copy on two lines read as one clause and the amount scanner
+          // emitted an observed funds FAIL on an allowed grace duration. A false
+          // FAIL on funds copy, introduced by the fix that made the reading
+          // honest.
+          //
+          // A newline is emitted around a child that BREAKS THE LINE and never
+          // around an inline one, which is what keeps round 66's other rule
+          // intact: `<b>Loan</b>s` must not become `Loan s`. `inline-block` and
+          // `contents` do not break, matching what `innerText` does; `<br>` does,
+          // unless it is display:none.
+          // ROUND 79 P2 — GEOMETRY DECIDES, not the child's `display` alone.
+          //
+          // A flex or grid ITEM is blockified, so `display` reads `block`
+          // while the items sit side by side on one rendered row. Breaking
+          // on that inserted a newline between, say, `Loan 100` and
+          // `USDC principal` — and `monetaryAmountsIn` reads a newline as a
+          // CLAUSE BOUNDARY, so the ticker stopped cancelling the identifier
+          // exemption and a visible unsubstantiated amount got a clean
+          // verdict. A false PASS on funds copy, from the fix that stopped a
+          // false FAIL on it one round earlier.
+          //
+          // Rects answer the question the rule is actually asking — did the
+          // lender see these on the same line? Two boxes whose vertical
+          // ranges OVERLAP are on one line whatever their display says, and
+          // a box below the previous one starts a new line whatever the
+          // parent's formatting context is. That also covers a column flex,
+          // a wrapped row and a multi-row grid, which a parent-display test
+          // would each get wrong.
+          //
+          // `display` is still consulted FIRST, as the cheap negative: an
+          // inline element never breaks, which is what keeps a bolded word
+          // from becoming two. Zero-area boxes fall back to the display
+          // rule, since a rect of nothing cannot place anything.
+          const breaksLine = (el, prev) => {
+            const d = getComputedStyle(el).display;
+            if (d === 'contents' || d.startsWith('inline') || d.startsWith('ruby')) return false;
+            if (!prev) return true;
+            const a = el.getBoundingClientRect();
+            const b = prev.getBoundingClientRect();
+            if (a.height === 0 || b.height === 0) return true;
+            return !(a.top < b.bottom && b.top < a.bottom);
+          };
+          // `prevBox` is the last element that actually laid a box down, so
+          // adjacency is judged against what was rendered before this
+          // child rather than against its parent.
+          let prevBox = null;
+          const walk = (node) => {
+            const ownPainted = paintsText(node);
+            for (const child of node.childNodes) {
+              if (child.nodeType === 3) {
+                // ROUND 79 P2 — SOURCE WHITESPACE IS NOT A RENDERED BREAK.
+                //
+                // A text node between two elements carries the markup's own
+                // indentation, newlines included, and the normalisation
+                // below deliberately preserves newlines — so the way the
+                // HTML happened to be formatted leaked in as a clause
+                // boundary. Collapsed here instead: a break comes from
+                // layout, which is `breaksLine` and `<br>`, and never from
+                // how the source was typed.
+                if (ownPainted) parts.push(child.textContent.replace(/\s+/g, ' '));
+              } else if (child.nodeType === 1) {
+                if (unpainted.test(child.tagName)) continue;
+                if (child.tagName === 'BR') {
+                  if (getComputedStyle(child).display !== 'none') parts.push('\n');
+                  continue;
+                }
+                if (!shownBox(child)) continue;
+                const boundary = breaksLine(child, prevBox);
+                if (boundary) parts.push('\n');
+                prevBox = child;
+                // Generated text sits around the element's own children, so
+                // it is collected in the order it is painted.
+                const before = pseudoText(child, '::before');
+                if (before.unresolved) sawUnresolved = true;
+                if (before.text) parts.push(before.text);
+                walk(child);
+                const after = pseudoText(child, '::after');
+                if (after.unresolved) sawUnresolved = true;
+                if (after.text) parts.push(after.text);
+              }
+            }
+          };
+          // The ROOT's own generated text too — the walk only sees children,
+          // and a card whose amount is painted through its own ::after is
+          // exactly the shape this was written for.
+          const rootBefore = pseudoText(root, '::before');
+          if (rootBefore.unresolved) sawUnresolved = true;
+          if (rootBefore.text) parts.push(rootBefore.text);
+          walk(root);
+          const rootAfter = pseudoText(root, '::after');
+          if (rootAfter.unresolved) sawUnresolved = true;
+          if (rootAfter.text) parts.push(rootAfter.text);
+          // Horizontal whitespace collapses; the deliberate breaks do not.
+          // Published on the function rather than returned, so the signature
+          // stays a string for its twenty call sites and there is still only ONE
+          // parser of `content`. Read immediately after the call; the walk is
+          // synchronous, so there is no interleaving to get wrong.
+          visibleTextOf.sawUnresolvedGenerated = sawUnresolved;
+          return parts
+            .join('')
+            .replace(/[^\S\n]+/g, ' ')
+            .replace(/[^\S\n]*\n[\s]*/g, '\n')
+            .trim();
+        };
+        const bodyVisibleText = visibleTextOf(body);
+        // ROUND 116 P2 — read IMMEDIATELY after the call it belongs to.
+        // Generated content the walk could not resolve means the no-amount
+        // claim was not established, and the verdict declines to certify it
+        // rather than reading the literal half as the whole.
+        const generatedUnresolved = visibleTextOf.sawUnresolvedGenerated === true;
+        // ROUND 26 P2 — EVERY SUBMIT CONTROL, not whichever is first.
+        //
+        // `querySelector` described control number one and nothing else.
+        // A render that leaves two in one card — the same duplication
+        // round 19 caught at CARD level, one level down — could put a
+        // DISABLED control first and an ENABLED, clickable one after it:
+        // the drive records "no action offered", classifies withheld
+        // copy as correctly withheld, skips the confirmation entirely,
+        // and passes a card that is inviting the lender to pay gas for a
+        // transaction the protocol will refuse.
+        //
+        // Actionability is therefore derived from the VISIBLE controls
+        // as a set: offered if any visible one is enabled, since that is
+        // the one the lender can actually press. The count travels with
+        // it so the verdict can report the duplication itself — a second
+        // control is a finding, not a detail to resolve silently.
+        const submits = [...el.querySelectorAll('[data-testid="forced-close-submit"]')];
+        const shownSubmits = submits.filter(visible);
+        // ROUND 18 P2 — VISIBILITY OF THE CONTROL, in the same pass.
+        //
+        // `disabled === false` on an element that exists says an action
+        // is OFFERED, and a CSS regression that hides an enabled button
+        // makes that false in both directions: on withheld copy it
+        // manufactures a FAIL claiming the lender was offered a
+        // fee-paying transaction, and on ready copy it lets the poll
+        // settle on an action nobody can click, reported later as a
+        // merely incomplete confirmation rather than as the missing
+        // usable action it is.
+        //
+        // Same defect as round 3's on the card itself, one level down —
+        // there `attached` was mistaken for `visible`, here existence
+        // for actionability. Captured in this evaluate rather than by a
+        // second round-trip so it cannot describe a different render
+        // from the copy it is judged against (round 9 P2).
+        //
+        // Rect AND computed style: `offsetParent` is null for a
+        // `position: fixed` element, which is visible. The same helper
+        // decides which cards count as shown, above.
+        return {
+          visibleCards: shown.length,
+          // ROUND 33 P2 — WHICH card this snapshot describes, so the
+          // interaction can address the same one. See the note on
+          // `card` below for why a `:visible` locator is not the same
+          // element as `shown[0]`.
+          chosenIndex: all.indexOf(el),
+          text: el.innerText,
+          bodyPresent: body !== null,
+          // ROUND 21 P2 — the BODY's own visibility, separately. A CSS
+          // regression that hides only the explanation leaves the
+          // element present and `innerText` can still yield its DOM
+          // text, so the verdict took a heading-only surface for an
+          // explained one. Presence, text and visibility are three
+          // different facts about the body and the verdict needs all
+          // three.
+          //
+          // ROUNDS 61 + 62 P2 — and its PAINTED TEXT, see `visibleTextOf`.
+          //
+          // The `innerText`-non-empty guard is what keeps an EMPTY body
+          // out of this arm: it has no text either way, and the verdict
+          // has its own, more accurate arm for a body that rendered
+          // nothing. Reporting it as invisible would name the wrong
+          // defect. (It is already rejected on geometry today — a
+          // zero-height box — so this is defence in depth, and the
+          // fixture says which of the two is doing the work.)
+          bodyVisible:
+            shownBox(body) &&
+            ((body?.innerText ?? '').trim() === '' || bodyVisibleText !== ''),
+          // The text the lender can actually READ, which is what the
+          // verdict recognises the card's state from. `bodyText` stays
+          // the raw `innerText` beside it: the two differing IS the
+          // finding, and collapsing them would hide it.
+          bodyVisibleText,
+          bodyGeneratedUnresolved: generatedUnresolved,
+          // The same for the WHOLE card, because state is also
+          // recognised from the card's text where the body is absent or
+          // says nothing — `saysCheckRunning` reads it. Leaving that one
+          // site on raw `innerText` would have closed one instance of
+          // this defect and left its sibling open, which is the shape
+          // this PR has now been caught by eight times.
+          visibleText: visibleTextOf(el),
+          // The whole card's own generated content too, not only the body's:
+          // the amount scan reads both parts, so either one carrying text
+          // this could not resolve leaves the claim unestablished.
+          cardGeneratedUnresolved: visibleTextOf.sawUnresolvedGenerated === true,
+          bodyText: body === null ? null : body.innerText,
+          submitPresent: submits.length > 0,
+          submitVisible: shownSubmits.length > 0,
+          // Disabled only when EVERY visible control is — one enabled
+          // control among several is an offered action, however many
+          // disabled ones sit beside it. With none visible the old
+          // meaning is kept: nothing pressable, so nothing offered.
+          submitDisabled:
+            shownSubmits.length > 0
+              ? shownSubmits.every((b) => b.disabled === true)
+              : true,
+          visibleSubmits: shownSubmits.length,
+          // ROUND 54 P2 — AND WHETHER THE LENDER CAN READ IT.
+          //
+          // Present, visible and enabled made `confirmExpected` true, so
+          // a blank outer submit — or one whose label is painted in
+          // nothing — was clicked by its test id, opened a healthy
+          // confirmation, and passed. The confirmation's OWN action has
+          // carried `labelled` since round 45 and `labelPainted` since
+          // round 46; the control that opens it, which is the first
+          // thing the lender sees, had neither.
+          //
+          // Judged over the VISIBLE set, matching every other submit
+          // fact here: a hidden control is not something the lender is
+          // being shown, and `some` rather than `every` because one
+          // readable control among several is a readable offer.
+          //
+          // `labelPainted` reuses the button-label rule from the
+          // confirmation: `visible` on the leaves that carry their own
+          // text, `some` rather than `every`, so a visually-hidden long
+          // form beside a short visible one stays correct.
+          submitLabelled: shownSubmits.some((b) => (b.innerText ?? '').trim() !== ''),
+          submitLabelPainted: shownSubmits.some((b) => {
+            const leaves = [b, ...b.querySelectorAll('*')].filter((n) =>
+              [...n.childNodes].some((c) => c.nodeType === 3 && c.textContent.trim() !== ''),
+            );
+            return leaves.length === 0 || leaves.some((n) => visible(n));
+          }),
+          // ROUND 38 P2 — WHICH control the snapshot judged, so the
+          // CLICK addresses it. Round 33 fixed this for the card and
+          // left the control on `:visible`, one level down: Playwright's
+          // `:visible` ignores opacity while this pass rejects it, so an
+          // opacity-zero DISABLED submit ahead of a real enabled one is
+          // excluded here and selected there. The snapshot then records
+          // one usable action, the click lands on the transparent
+          // control and times out, `confirmText` stays null, and a
+          // healthy card is reported incomplete — the exact shape round
+          // 33 fixed, in the sibling it did not touch.
+          //
+          // Indexed within THIS card's submit list, which is what the
+          // interaction locator is scoped to.
+          chosenSubmitIndex: shownSubmits.length > 0 ? submits.indexOf(shownSubmits[0]) : -1,
+        };
+      })
+      // ROUND 41 P2 — AN EVALUATOR THAT THREW IS NOT A CARD THAT IS GONE.
+      //
+      // This returned the SAME `null` the DOM pass returns when it finds
+      // no card, so a helper throwing, a destroyed execution context, or
+      // any browser-side failure was recorded as a vanished card. From
+      // there it either accuses an eligible product of omitting the
+      // surface, or — with an accepted sale on the pinned snapshot —
+      // reports `inapplicable`. Both describe the page; neither is true.
+      // Nothing was observed at all.
+      //
+      // The two are distinguished by a SENTINEL rather than by a second
+      // `null`, so the caller has to handle it: `null` keeps its single
+      // meaning — the callback ran and found nothing — and `scrapeFailed`
+      // means the callback did not run to completion.
+      .catch(() => SCRAPE_FAILED);
+
+  let snap = await readCard();
+  // The scrape itself failed. Reported as INCOMPLETE, never as a product
+  // finding: `bodyPresent: undefined` is what the verdict reads as
+  // "nothing was established", and `mounted` stays true so the absence
+  // rules — which would otherwise turn this into a missing-card FAIL —
+  // are not consulted at all.
+  if (snap === SCRAPE_FAILED) {
+    return nothingEstablished({ scrapeFailed: true });
+  }
+  // A card that is attached but no longer VISIBLE is reported the way an
+  // invisible-but-attached card is at the top of this function: not a
+  // pass, and named as what it is (round 21 P2).
+  if (snap?.hiddenNow) {
+    return nothingEstablished({ mounted: false });
+  }
+  // The evaluate is atomic, so a null means the card went between the
+  // visibility wait and this pass — round 7's vanished case, detected by
+  // the capture itself.
+  //
+  // ROUND 33 P2 — A VANISHED CARD IS UNMOUNTED AND UNATTACHED, and
+  // saying otherwise sent an ordinary lifecycle race out as a product
+  // accusation. This record claimed `mounted: true, attached: true` for a
+  // pass in which `querySelectorAll` found NOTHING, so `forcedCloseVerdict`
+  // took the mounted branch, hit `text: null`, and returned
+  // blocked/incomplete before ever consulting eligibility — a run exiting
+  // 2 because a loan went terminal, a token transferred, or a sale was
+  // accepted while the drive was looking. All three of those are states
+  // the eligibility reconciliation exists to classify, and it was never
+  // reached; `observeForcedClose` only confirms at a later head when
+  // `!card.mounted`, so this flag was also what suppressed the confirming
+  // re-read itself.
+  //
+  // `attached` matters as much as `mounted` here and is the reason this
+  // is two changes rather than one: with `mounted: false` alone, section
+  // 3 reads `attached: true` and FAILS with "card is in the DOM but not
+  // visible" — a confidently wrong sentence about a card that is not in
+  // the DOM at all. The hidden-card case keeps `attached: true` because
+  // there the nodes really are present; this one does not.
+  //
+  // What is NOT weakened: an absence on a still-eligible position still
+  // FAILS at section 3, and still only after the later-block confirmation
+  // this unlocks. The vanish is explained or it is a finding.
+  if (snap === null) {
+    return {
+      mounted: false,
+      attached: false,
+      visibleCards: 0,
+      bodyVisible: false,
+      text: null,
+      bodyText: null,
+      bodyPresent: undefined,
+      confirmText: null,
+      confirmExpected: false,
+      submitPresent: false,
+      submitVisible: false,
+      submitDisabled: true,
+      visibleSubmits: 0,
+      settled: false,
+    };
+  }
+
+  // ROUND 10 P2 — THE POLL RE-READS EVERYTHING, AND A READY-BUT-DISABLED
+  // RENDER IS NOT YET AN ANSWER.
+  //
+  // Two corrections to round 9's loop, which re-read only the text and
+  // the control:
+  //
+  //   (a) `bodyPresent`/`bodyText` stayed from the UNRESOLVED render, so
+  //       a regression that blanks the explanatory body only in a
+  //       ready/blocked state passed — the heading kept the card text
+  //       non-empty and the stale body looked fine. Every poll now
+  //       re-snapshots the whole card, and the values returned come from
+  //       the render that established settlement.
+  //
+  //   (b) `ready` in `useDiamondWrite` is `onSupportedChain &&
+  //       Boolean(walletClient)`, and wagmi's `useWalletClient()`
+  //       resolves ASYNCHRONOUSLY. So a card can legitimately render
+  //       ready copy for a moment while its button is still disabled,
+  //       waiting on the wallet client. Ending the poll on the copy
+  //       alone captured that intermediate pair and handed it to the
+  //       round-7 ready-without-action arm, which exits 1 — a false
+  //       product accusation from a page that was about to be correct.
+  //
+  // So the wait ends when the card is settled AND not in that transient
+  // pair. The FAIL now requires the combination to PERSIST to the
+  // deadline rather than to have existed for an instant, which is the
+  // same standard the rest of this drive applies: a defect is something
+  // that stayed true while being looked at.
+  const readyPending = (v) =>
+    (v.submitDisabled || v.submitVisible === false) &&
+    FORCED_CLOSE_COPY.readyCopy.some((sentence) => (v.text ?? '').includes(sentence));
+
+  // ROUND 68 P2 — SETTLEMENT IS DECIDED ON THE PAINTED TEXT.
+  //
+  // A card that visibly paints legitimate ready or blocked copy while
+  // retaining the `unknown` sentence in a transparent, clipped or
+  // filter-erased descendant kept this poll unsettled to the deadline —
+  // and the verdict then reported `blocked/incomplete` for a card the
+  // lender could read perfectly well. The verdict has recognised state
+  // from painted text since round 62; the poll that decides WHEN to stop
+  // reading was still classifying the raw DOM, which is the same
+  // parallel-site shape once more.
+  //
+  // `??` so a record predating the field falls back rather than treating
+  // an absent value as empty text, which would settle every poll at once.
+  let settled = !saysCheckRunning(
+    snap.visibleText ?? snap.text ?? '',
+    FORCED_CLOSE_COPY.unknownCopy,
+  );
+  // ROUND 31 P2 — EVERY RENDER THIS DRIVE READ, not just the last one.
+  //
+  // The poll below overwrites `snap` each tick, so only the FINAL text
+  // ever reached the verdict. A card that briefly states an amount while
+  // its readiness reads are outstanding — and then settles into ordinary
+  // ready copy — was positively OBSERVED stating it, and the observation
+  // was thrown away one second later.
+  //
+  // That matters more here than anywhere else in this file because the
+  // amount rule is the one ABSOLUTE claim it makes: nothing on this
+  // surface states a figure it cannot substantiate. "Not at the moment we
+  // stopped looking" is a different and much weaker claim, and it is the
+  // one the code was actually checking. A lender who happens to load the
+  // page during that window sees the figure; the drive is supposed to be
+  // the reason nobody has to find out that way.
+  //
+  // Accumulated rather than scanned in place so the poll keeps its
+  // existing job — deciding when the card has settled — while the
+  // verdict keeps its own, which is judging what was seen. Only the
+  // texts are kept; the flags are deliberately still read from the
+  // settled render, since a transiently disabled control is a legitimate
+  // intermediate state (round 10) and must not be reported as a defect.
+  const seenTexts = [];
+  /** The same renders, painted text only (round 64 P2). */
+  const seenVisibleTexts = [];
+  // ROUND 50 P2 — THE COPY AND THE CONTROL, KEPT TOGETHER.
+  //
+  // The note above is about round 10's exemption, and that exemption is
+  // narrower than the shape it was protecting. A transiently DISABLED
+  // control is a legitimate intermediate state; a transiently ENABLED
+  // one beside copy that says the safety check is still running is not —
+  // the lender can press a fee-paying action the protocol has not
+  // established is permitted, which is the more expensive direction and
+  // the one the withheld-copy arm exists for.
+  //
+  // `seenTexts` kept the copy and the peaks kept the counts, and nothing
+  // kept the PAIR, so an unsafe intermediate render settling into a
+  // clean ready state passed: the verdict matched the final copy against
+  // the final control and saw nothing wrong.
+  //
+  // Rendered facts, not a verdict: the drive observes and the module
+  // judges. That keeps the copy list in one place and makes the rule
+  // unit-testable, which a latch computed here would not be.
+  const seenRenders = [];
+  // ROUND 35 P2 — THE DUPLICATE COUNT IS EVIDENCE TOO, and it was being
+  // overwritten by the same `snap = again` that superseded the text.
+  //
+  // Round 20 moved this count INTO each snapshot, because counting once
+  // before the poll missed a duplicate introduced by the settled render.
+  // That was right and is kept — but it left the mirror-image hole: a
+  // duplicate present on an intermediate tick and gone by the time the
+  // card settles was seen, counted, and then discarded, and the final
+  // record passed with `visibleCards: 1`. `remember` only ever captured
+  // `shown[0]`'s text, so the second card's content was never read at
+  // all — the run had positively observed a surface it could not vouch
+  // for and reported it clean.
+  //
+  // The peak travels BESIDE the settled count rather than replacing it,
+  // deliberately. They are different facts — "what the lender is looking
+  // at now" and "what this drive saw at any point" — and collapsing them
+  // would make the failure unable to say which it was describing.
+  //
+  // There is no legitimate transient here to forgive: `PositionDetails`
+  // renders exactly one `ForcedCloseCard` from one call site, with no
+  // keyed list and no transition wrapper, so React reconciles the same
+  // node in place. Two visible cards is a defect on any tick.
+  let visibleCardsPeak = 0;
+  let visibleSubmitsPeak = 0;
+  let bodyHiddenSeen = false;
+  // ROUND 116 P2 — SEEN AT ANY POINT, like `bodyHiddenSeen` beside it. A
+  // render that painted generated text this drive could not resolve leaves
+  // the no-amount claim unestablished for the visit, whether or not the
+  // settled render still shows it.
+  let generatedUnresolvedSeen = false;
+  const remember = (v) => {
+    for (const part of [v?.text, v?.bodyText]) {
+      if (typeof part === 'string' && part !== '') seenTexts.push(part);
+    }
+    // ROUND 64 P2 — AND THE PAINTED TEXT OF EVERY RENDER.
+    //
+    // The scans that classify readiness and accuse the card of stating
+    // two states at once run over `parts`, which is built from these.
+    // On raw text a recognised sentence erased in the DOM counts as a
+    // state the lender was shown, so a card displaying exactly one
+    // legitimate state is reported as having shown two — an accusation
+    // assembled entirely from copy nobody can read, which is the
+    // false-FAIL direction this file everywhere else refuses.
+    //
+    // Carried BESIDE the raw text rather than replacing it: `seenTexts`
+    // answers "what was in this render" and these answer "what could be
+    // read in it", and the pair is what lets a verdict say which it
+    // means.
+    for (const part of [v?.visibleText, v?.bodyVisibleText]) {
+      if (typeof part === 'string' && part !== '') seenVisibleTexts.push(part);
+    }
+    if (v && (typeof v.text === 'string' || typeof v.bodyText === 'string')) {
+      seenRenders.push({
+        text: v.text,
+        bodyText: v.bodyText,
+        visibleText: v.visibleText,
+        bodyVisibleText: v.bodyVisibleText,
+        submitVisible: v.submitVisible,
+        submitDisabled: v.submitDisabled,
+        // ROUND 75 P2 — AND THE LABEL FACTS, which this projection
+        // dropped. The snapshot had already computed them; keeping the
+        // control's visibility and disabled state while discarding
+        // whether it could be READ meant only the settled render reached
+        // the label arms, so a render offering an enabled but blank or
+        // unpainted control passed once a later render repaired it. The
+        // same transient-control reasoning the unsafe-control arm has
+        // carried since round 50 — a click is instantaneous.
+        submitLabelled: v.submitLabelled,
+        submitLabelPainted: v.submitLabelPainted,
+      });
+    }
+    if (typeof v?.visibleCards === 'number' && v.visibleCards > visibleCardsPeak) {
+      visibleCardsPeak = v.visibleCards;
+    }
+    // ROUND 39 P2 — AND THE CONTROL COUNT, for the same reason one line
+    // up. Round 35 fixed the card peak and left its sibling on the
+    // settled snapshot, so two visible submit controls on an
+    // intermediate tick were counted and then overwritten by `snap =
+    // again`. That is the more dangerous of the two duplicates — the
+    // copy explains a single decision while the lender is briefly
+    // offered it twice, and whichever is pressed, at most one can be the
+    // action the copy describes. The drive read only the first, so the
+    // second was never inspected at all.
+    if (typeof v?.visibleSubmits === 'number' && v.visibleSubmits > visibleSubmitsPeak) {
+      visibleSubmitsPeak = v.visibleSubmits;
+    }
+    // ROUND 41 P2 — AND A BODY THAT WAS PRESENT AND HIDDEN.
+    //
+    // `remember` kept the TEXTS and the two counts and dropped this, so
+    // a card rendering its explanation invisibly — the
+    // heading-without-a-reason state the absence rule exists for — was
+    // positively observed and then discarded when the card vanished. If
+    // an accepted sale explained the disappearance, the run reported
+    // `inapplicable`: nothing to see about a lender shown an action with
+    // no reason for it.
+    //
+    // A LATCH rather than a count, because unlike the peaks there is no
+    // magnitude to carry — it either happened or it did not — and
+    // because the settled render's own `bodyVisible` is judged
+    // separately, on its own terms.
+    if (v?.bodyPresent === true && v?.bodyVisible === false) bodyHiddenSeen = true;
+    if (v?.bodyGeneratedUnresolved === true || v?.cardGeneratedUnresolved === true) {
+      generatedUnresolvedSeen = true;
+    }
+  };
+  remember(snap);
+  const deadline = Date.now() + timeoutMs;
+  while ((!settled || readyPending(snap)) && Date.now() < deadline) {
+    await page.waitForTimeout(1_000);
+    const again = await readCard();
+    // Same sentinel, same treatment (round 41 P2): a scrape that threw
+    // mid-poll says nothing about the page, so the loop stops on an
+    // INCOMPLETE record rather than letting the last good snapshot stand
+    // in for a read that did not happen.
+    if (again === SCRAPE_FAILED) {
+      return nothingEstablished({
+        scrapeFailed: true,
+        seenTexts,
+        seenVisibleTexts,
+        seenRenders,
+        visibleCardsPeak,
+        visibleSubmitsPeak,
+        bodyHiddenSeen,
+    generatedUnresolved: generatedUnresolvedSeen,
+        generatedUnresolved: generatedUnresolvedSeen,
+      });
+    }
+    remember(again);
+    if (again?.hiddenNow) {
+      // This literal was the drift the helper exists to stop: it alone
+      // omitted `visibleSubmits`, while its three siblings set it to 0.
+      // Folding it onto the shared shape supplies it.
+      return nothingEstablished({
+        mounted: false,
+        // ROUND 33 P2 — see the note on the vanished return below. Every
+        // exit from this loop carries what the loop saw.
+        seenTexts,
+        seenVisibleTexts,
+        seenRenders,
+        visibleCardsPeak,
+        visibleSubmitsPeak,
+        bodyHiddenSeen,
+    generatedUnresolved: generatedUnresolvedSeen,
+        generatedUnresolved: generatedUnresolvedSeen,
+      });
+    }
+    // ROUND 13 P2 — A CARD THAT VANISHES MID-POLL IS THE VANISHED CASE,
+    // not a reason to keep the last snapshot.
+    //
+    // `break` retained a `mounted: true` reading from a render the page
+    // has since discarded — and the one it most likely retained is the
+    // transient ready-but-disabled pair this loop exists to wait out,
+    // because that pair is why the loop was still running. Downstream,
+    // `mounted` stays true, so the absent-card confirmation is skipped,
+    // and the drive accuses a page that had correctly removed a card it
+    // no longer had grounds to show.
+    //
+    // The SAME shape the initial null returns, deliberately: one event,
+    // one classification. Two spellings of the vanished card were how it
+    // came to be handled two different ways.
+    // ROUND 33 P2 — TWO CHANGES, AND THEY ONLY WORK TOGETHER.
+    //
+    // (1) `mounted`/`attached` now describe what the DOM pass actually
+    //     found — nothing. See the matching note on the first-pass null
+    //     above for why the old `true/true` turned an ordinary lifecycle
+    //     race into a blocked/incomplete exit, and why `attached` has to
+    //     move with `mounted` rather than after it.
+    //
+    // (2) `seenTexts` travels out with it. Both of this loop's early
+    //     exits used to drop the accumulated renders on the floor, which
+    //     is where the two findings meet: a card that stated a figure
+    //     mid-poll and then vanished had the evidence discarded HERE, and
+    //     if an accepted sale then explained the disappearance the
+    //     verdict returned `inapplicable` — a run reporting nothing to
+    //     see about an amount a lender was shown. Carrying the texts is
+    //     also what makes (1) safe, since the verdict's amount scan now
+    //     runs ahead of the mounted gate and has something to read.
+    //
+    // The flags are still deliberately NOT carried: a transiently
+    // disabled control is a legitimate intermediate state (round 10) and
+    // must not be reported from a render the page has discarded. Only
+    // the texts are evidence of what was said.
+    if (again === null) {
+      return {
+        mounted: false,
+        attached: false,
+        visibleCards: 0,
+        text: null,
+        bodyText: null,
+        bodyPresent: undefined,
+        bodyVisible: false,
+        confirmText: null,
+        confirmExpected: false,
+        submitPresent: false,
+        submitVisible: false,
+        submitDisabled: true,
+        settled: false,
+        seenTexts,
+        seenVisibleTexts,
+        seenRenders,
+        visibleCardsPeak,
+        visibleSubmitsPeak,
+        bodyHiddenSeen,
+    generatedUnresolved: generatedUnresolvedSeen,
+        generatedUnresolved: generatedUnresolvedSeen,
+      };
+    }
+    snap = again;
+    // Same rule per tick as at the top — both sites, because fixing one
+    // of a pair is what this PR keeps being caught by.
+    settled = !saysCheckRunning(
+      snap.visibleText ?? snap.text ?? '',
+      FORCED_CLOSE_COPY.unknownCopy,
+    );
+  }
+
+  // ROUND 27 P2 — the field list is GONE, not lengthened.
+  //
+  // This hand-written destructure, and the matching object literal at the
+  // end of this function, were a second copy of the DOM pass's field set
+  // that had to be edited in lockstep with it. It has now silently
+  // dropped a field TWICE: round 23 produced `absenceUnconfirmedWhy` and
+  // this shape lost it, and last round I added `visibleSubmits`, wrote a
+  // reply about that exact seam being uncovered, and dropped the new
+  // field through it in the same commit.
+  //
+  // Fixing the instance a second time would have left the mechanism
+  // intact for the third. A unit test cannot cover it either — the
+  // verdict's tests pass constructed records straight to
+  // `forcedCloseVerdict`, so they are satisfied by a field this
+  // projection never forwards, which is exactly why both drops were
+  // invisible to a green suite.
+  //
+  // So the projection no longer enumerates anything: the snapshot is
+  // spread whole and only the values computed OUTSIDE the DOM pass are
+  // layered on top. A field added to the evaluate now reaches the
+  // verdict because there is no longer a list that can fail to mention
+  // it. `snap.hiddenNow` cannot leak in — that case returns above.
+  const text = snap.text;
+
+  // ROUND 25 P2 — THE INTERACTION TARGETS THE CARD THE SCRAPE JUDGED.
+  //
+  // Round 23 taught the WAIT to accept any visible match, and round 24
+  // made that fallback actually run — but both only produced a boolean.
+  // `card` stayed `cards.first()`, so with a hidden node ahead of the
+  // real one the drive read the visible card's copy and then clicked,
+  // waited and scanned the HIDDEN one: the submit click times out,
+  // `confirmText` stays null, and a perfectly healthy card is reported
+  // BLOCKED. Two rounds of fixing which element we wait on, while every
+  // later interaction went on addressing the wrong one.
+  //
+  // ROUND 33 P2 — AND `:visible` IS NOT THE SAME PREDICATE AS `visible`,
+  // so round 25's fix left the two halves pointing at different cards
+  // again, one refinement further in.
+  //
+  // Playwright's `:visible` means a non-empty bounding box and a computed
+  // `visibility` that is not hidden. It says NOTHING about opacity —
+  // deliberately, and it is documented that way. The in-page `visible`
+  // predicate this drive judges with rejects ancestor opacity, because
+  // round 22 established that a card under `opacity: 0` is a card the
+  // lender cannot see. So an invisible-but-transparent card sitting ahead
+  // of the real one is `shown`-rejected by the snapshot and `:visible`-
+  // accepted by the locator: the copy, the submit state and the duplicate
+  // count all describe the genuine card, while the click, the Back wait
+  // and the receipt scan all land on the transparent one. The click times
+  // out, `confirmText` stays null, and a healthy card is reported
+  // incomplete — the exact failure round 25 fixed, reintroduced by the
+  // narrower definition round 22 adopted for the scrape alone.
+  //
+  // Addressed by INDEX from the snapshot instead, so there is one
+  // predicate deciding which card this is: `nth()` re-resolves at each
+  // action the way `:visible` did, and the index comes from the pass that
+  // chose `shown[0]`. The residual race is that the DOM order changes
+  // between the final snapshot and the click, which is the same window
+  // every other fact in that snapshot already lives in — and far narrower
+  // than judging one card and clicking another by construction.
+  //
+  // Falls back to the first card only for a record that carries no index
+  // at all — `indexOf` cannot miss, since `el` is drawn from `all`, so
+  // this is defending against a stale shape rather than a real case.
+  const card = cards.nth(
+    Number.isInteger(snap.chosenIndex) && snap.chosenIndex >= 0 ? snap.chosenIndex : 0,
+  );
+
+  // ROUND 2 P2 — a submittable card whose confirmation could NOT be read
+  // is `confirmExpected` with `confirmText === null`, which the verdict
+  // turns into BLOCKED. Catching the interaction error and quietly
+  // accepting its null result would let the run exit 0 having skipped
+  // half the surface it advertises — the same silent-null shape as the
+  // findings above it.
+  // The submit facts come from the atomic capture (round 9 P2), so the
+  // control this clicks is the one the verdict judged.
+  // A hidden control cannot be clicked, so no confirmation is expected
+  // from one — the verdict reports the missing usable action instead
+  // (round 18 P2).
+  const confirmExpected =
+    snap.submitPresent && snap.submitVisible && !snap.submitDisabled;
+  let confirmText = null;
+  /** The same panel, with the unpainted parts left out (round 64 P2). */
+  let confirmVisibleText = null;
+  /** The confirmation's Back control: can the lender cancel? (round 65 P2) */
+  let backAction;
+  // ROUND 45 P2 — the confirmation's OWN action, observed and never
+  // clicked. Declared here rather than inside the branch so the final
+  // projection can carry it whether or not the panel opened.
+  let confirmAction;
+  // ROUND 50 P2 — the text of the receipt rows that WERE readable,
+  // carried separately from `confirmText` so an amount on a visible row
+  // is scanned even when another row is not.
+  let confirmRowsText = null;
+  // ROUND 53 P2 — visible text on the confirmation OUTSIDE the receipt
+  // rows: a warning banner, a gas note, the confirm control's own label.
+  let confirmOtherText = null;
+  // ROUND 50 P2 — CAN THE OUTER SUBMIT ACTUALLY BE CLICKED?
+  //
+  // The real click below already fails when it cannot, and that `false`
+  // was thrown away: the verdict saw only `confirmText === null` and
+  // filed an otherwise eligible visit as `blocked/incomplete`. So a
+  // deployed card that strands the lender BEFORE the confirmation — a
+  // visible, enabled submit under an overlay or `pointer-events: none` —
+  // was reported as a gap in this drive's reading rather than as the
+  // product defect it is.
+  //
+  // Trialled first, exactly as the confirmation's own action is (round
+  // 46), so the two controls are judged the same way and the signal is
+  // separated from whatever else a real click can fail on — a detach
+  // mid-click, a navigation. The trial dispatches nothing; the real
+  // click still follows, because opening the panel is how the receipt
+  // gets read.
+  //
+  // `undefined` where no trial was run, so a record that never reached
+  // this path says nothing.
+  let submitClickable;
+  if (confirmExpected) {
+    // ONE LOCATOR for the trial and the real click, so the two cannot
+    // describe different controls — the mismatch round 38 found between
+    // the judged card and the clicked one, and round 46 found again
+    // inside the confirmation.
+    const submit = card
+      // ROUND 26 P2 — click the control the verdict judged actionable.
+      // `getByTestId(...).first()` addresses the first in the DOM, which
+      // on a duplicated render is the one that may be disabled; the
+      // actionability above is derived from the VISIBLE set, so the
+      // click has to be too or the two describe different buttons.
+      // ROUND 38 P2 — BY INDEX, from the same pass that judged it.
+      // `:visible` is a different predicate from the drive's own
+      // `visible` (it does not consider opacity), so this used to be
+      // free to address a control the snapshot had excluded.
+      .locator('[data-testid="forced-close-submit"]')
+      .nth(
+        Number.isInteger(snap.chosenSubmitIndex) && snap.chosenSubmitIndex >= 0
+          ? snap.chosenSubmitIndex
+          : 0,
+      );
+    submitClickable = await submit
+      .click({ trial: true, timeout: 3_000 })
+      .then(() => true)
+      .catch(() => false);
+    const opened = await submit
+      .click({ timeout: 5_000 })
+      .then(() => true)
+      .catch(() => false);
+    // ROUND 53 P2 — A SUCCESSFUL REAL CLICK SETTLES IT.
+    //
+    // The trial is a three-second probe and the real click gets five
+    // more immediately after, so a control that was covered or still
+    // animating during the trial can be perfectly actionable by the
+    // time the real click lands. `submitClickable` stayed latched at
+    // `false`, and the verdict then reported that the lender cannot
+    // reach the confirmation — while the very same observation had
+    // opened it and scanned the whole receipt.
+    //
+    // The trial exists to catch a control that is UNREACHABLE. A click
+    // that actually worked is stronger evidence than a probe that did
+    // not, and refusing it would be reporting a defect the run itself
+    // disproved. The trial's `false` is kept only when the real click
+    // also failed — which is the case the finding is for.
+    if (opened) submitClickable = true;
+    if (opened) {
+      // ROUND 4 P2 — CONFIRM THE CONFIRMATION RENDERED.
+      //
+      // The click can succeed while its handler fails to open the
+      // panel, and the old read was scoped to the card — which is still
+      // mounted and still has text. `confirmText` came back non-null,
+      // the verdict recorded `confirmScanned=true`, and a regression
+      // confined to the confirmation went completely unexercised while
+      // reporting as covered.
+      //
+      // The Back control belongs to `ConfirmReceipt` and does not exist
+      // on the card otherwise, so its appearance is the evidence that
+      // the panel is up. No Back, no scan: `confirmText` stays null and
+      // the verdict blocks.
+      //
+      // ROUND 70 P2 — THE PANEL IS DETECTED INDEPENDENTLY OF ITS BACK
+      // CONTROL.
+      //
+      // Gating the whole scrape on Back meant a confirmation whose
+      // receipt and fee-paying action render perfectly, but whose Back
+      // button is missing, was never scanned at all: `confirmText`
+      // stayed null and the verdict reported `blocked/incomplete`. The
+      // directly observable defect — the lender has no way to decline
+      // without leaving the page — was reported as a gap in the reading.
+      //
+      // Either marker proves the panel is up, and they fail
+      // independently: Back is the control, the rows are the content.
+      // Awaited together rather than raced, because a race is won by
+      // whichever rejects first and would make a missing Back look like
+      // a missing panel again.
+      //
+      // ROUND 73 P2 — AND THE FEE-PAYING ACTION IS A THIRD MARKER.
+      //
+      // Round 70 took the gate from one marker to two and stopped there,
+      // which is this PR's recurring shape once more. A regressed panel
+      // keeping its visible confirm button while losing BOTH the receipt
+      // rows and Back answered false to both waits, so the whole scrape
+      // was skipped and the run reported an unread observation — when
+      // what was on screen is far worse than a gap: a lender looking at
+      // a fee-paying action with no receipt explaining it and no way to
+      // decline.
+      //
+      // `.cluster` is the confirm pair's own container, and inside this
+      // card it comes only from `ConfirmReceipt` — the outer submit is
+      // not rendered at all while the panel is open, so a cluster button
+      // appearing after the click is the panel and nothing else.
+      // SELF-REVIEW AFTER ROUND 76 — AND THIS LOCATOR IS ENGLISH-ONLY.
+      //
+      // Found by checking the shipped copy rather than reasoning about
+      // it. Round 76's finding was that a CONFIRM label containing "back"
+      // would be misread as the Back control; no shipped label does. What
+      // the same check turned up is worse and the other way round: of the
+      // ten locales that carry this panel, only English spells Back with
+      // the ASCII letters `back`. `Zurück`, `Atrás`, `Retour`, `رجوع`,
+      // `वापस`, `戻る`, `뒤로`, `பின் செல்லவும்` and `返回` all fail
+      // `/back/i`.
+      //
+      // On a non-English render this locator would find nothing:
+      // `backAction.present` reads false and the missing-Back arm reports
+      // a lender with no way to decline, while the in-page filter keeps
+      // BOTH buttons and the duplicate-action arm reports more than one
+      // way to pay. Two false product FAILs from one unmatched regex.
+      //
+      // THAT CANNOT HAPPEN TODAY, and saying so is the point of this
+      // note. The browser context pins `locale: 'en-US'`, so the whole
+      // drive is English BY CONSTRUCTION — `FORCED_CLOSE_COPY` reads
+      // `en.json` by name for the same reason, and the chooser, jump and
+      // switch locators are hard-coded English regexes on the same
+      // assumption. The exposure is latent behind that pin, not live.
+      //
+      // The marker is still the better identity: it removes a coupling to
+      // COPY, which can change within English — round 76's actual point,
+      // a confirm label containing the word "back". The label stays as
+      // the fallback for builds deployed before the marker ships.
+      const backMarked = await card
+        .locator('[data-testid="confirm-receipt-back"]')
+        .count()
+        .then((n) => n > 0)
+        .catch(() => false);
+      const back = backMarked
+        ? card.locator('[data-testid="confirm-receipt-back"]').first()
+        : card.getByRole('button', { name: /back/i }).first();
+      const receiptRow = card
+        .locator('[data-testid^="forced-close-receipt"], dl.receipt .receipt-row')
+        .first();
+      // ROUND 85 P2 — THE THIRD MARKER HAS TO BE A DIFFERENT CONTROL.
+      //
+      // `.cluster button` first-match IS the Back button: it comes first in
+      // the cluster's DOM order, so this "independent" panel signal was the
+      // same element the `back` wait above already looks at. The failure it
+      // was added to catch therefore still slipped through — a CSS
+      // regression that takes Back and every receipt row out of layout
+      // while the fee-paying Confirm stays visible made all three waits
+      // false, the receipt evaluation was skipped, and the run reported an
+      // incomplete scan instead of the panel it was looking straight at:
+      // a lender shown a payment button with no visible receipt and no
+      // visible way out.
+      //
+      // The confirm marker names the OTHER control, so the three waits are
+      // three facts again. `.last()` as the fallback for builds deployed
+      // before the marker: within the cluster the confirm action is the
+      // trailing button, which is the same ordering assumption the old
+      // `.first()` relied on — used deliberately at the other end rather
+      // than left pointing at Back.
+      const confirmMarked = await card
+        .locator('[data-testid="confirm-receipt-confirm"]')
+        .count()
+        .then((n) => n > 0)
+        .catch(() => false);
+      const clusterAction = confirmMarked
+        ? card.locator('[data-testid="confirm-receipt-confirm"]').first()
+        : card.locator('.cluster button').last();
+      const [backUp, rowsUp, actionUp] = await Promise.all([
+        back
+          .waitFor({ state: 'visible', timeout: 5_000 })
+          .then(() => true)
+          .catch(() => false),
+        receiptRow
+          .waitFor({ state: 'visible', timeout: 5_000 })
+          .then(() => true)
+          .catch(() => false),
+        clusterAction
+          .waitFor({ state: 'visible', timeout: 5_000 })
+          .then(() => true)
+          .catch(() => false),
+      ]);
+      const rendered = backUp || rowsUp || actionUp;
+      if (rendered) {
+        // ROUND 23 P2 — THE RECEIPT'S OWN ROWS, not the shell plus DOM
+        // text.
+        //
+        // A visible Back button proves the panel opened; it says nothing
+        // about the six-row funds receipt beside it. Hide only those
+        // rows — `opacity: 0` on their container — and the Back control
+        // still renders while `innerText` still yields their text, so
+        // the drive recorded `confirmScanned=true` for a lender who was
+        // shown a shell and two controls. That is the same node-property
+        // mistake as the card and the body, on the surface where it
+        // matters most, since this panel is where the no-amount promise
+        // is most likely to be broken.
+        //
+        // The scan is scoped to what is actually rendered: if nothing of
+        // the receipt is visible, `confirmText` stays null and the
+        // verdict blocks rather than banking a clean reading.
+        const receiptShown = await card
+          .evaluate((el) => {
+            // ROUND 28 P2 — the clipping rule, and a note about this
+            // being the SECOND copy of this predicate.
+            //
+            // These two `visible` helpers live in separate `evaluate`
+            // bodies, so neither can call the other, and they had
+            // ALREADY drifted: the page-level copy carries an
+            // ancestor-opacity walk for engines without
+            // `checkVisibility` and this one never did. That is the same
+            // hand-maintained-duplicate shape as the field list deleted
+            // last round, and it is not fixed here — sharing a function
+            // across evaluates means injecting source and running it
+            // through `eval`/`new Function`, which a page CSP can refuse
+            // outright, and a drive that dies on a CSP header is worse
+            // than one with a duplicated predicate. Filed as a follow-up
+            // rather than attempted mid-review.
+            const notClipped = (node) => {
+              // ROUND 36 P2 — A CLIPPER DOES NOT HAVE TO BE EXACTLY ZERO to hide
+              // everything inside it. `height: 0` was the only case rounds 28/29
+              // rejected, so `height: 1px; overflow: hidden` walked straight
+              // through: the ancestor is non-zero, every descendant keeps a
+              // full-size rect and passes `checkVisibility`, and `innerText` yields
+              // all of it — so the fee and loss rows of the receipt were recorded
+              // as read while the lender could see a single pixel of them.
+              //
+              // A non-scrollable clipper now has to actually SHOW the element: at
+              // least half of the element's extent must fall inside the clipper's
+              // box on the clipped axis. Half rather than any overlap, because a
+              // 1px clipper DOES overlap — that is exactly how it escaped — and
+              // rather than full containment, which would condemn a row whose
+              // descender is clipped by a pixel. Half a line is the point below
+              // which a figure cannot be read at all.
+              //
+              // SCROLLABLE clippers stay exempt, which is rounds 28/29's deliberate
+              // limit restated: content the lender can scroll to is reachable, and
+              // condemning it is the false-FAIL direction that gets a check
+              // switched off. `auto`/`scroll` WITH something to scroll is the test;
+              // `hidden` and `clip` are not user-scrollable however much they hold.
+              //
+              // OUT-OF-FLOW ELEMENTS GET THE BENEFIT OF THE DOUBT, and only for the
+              // intersection rule. Which clipper applies to an absolutely or fixed
+              // positioned box is a containing-block question — a `position:
+              // absolute` child of a `position: static` `overflow: hidden` ancestor
+              // is NOT clipped by it — and answering it wrongly condemns content
+              // the lender can see. The collapsed-clipper rule still applies to
+              // them. Nothing on this card is out of flow; this is here so the
+              // predicate stays honest if something ever is.
+              const flow = getComputedStyle(node).position;
+              const inFlow = flow === 'static' || flow === 'relative';
+              // ROUND 65 P2 — WHICH ancestors clip an out-of-flow box, rather than
+              // none of them.
+              //
+              // The exemption below was written to avoid a containing-block
+              // question, and avoiding it cost the whole rule: `inFlow` is computed
+              // once, so for any absolute or fixed node the walk skipped EVERY
+              // ancestor intersection test. An absolutely positioned body, receipt
+              // leaf or action inside a positioned `overflow: hidden` box — which IS
+              // its containing block and definitively clips it — carried fully
+              // clipped readiness copy or funds disclosures into a passing verdict.
+              //
+              // The question is answerable, and narrowly. An absolutely positioned
+              // box is clipped by an `overflow` ancestor only from its CONTAINING
+              // BLOCK upwards; ancestors between it and that block do not clip it.
+              // So the walk skips until it reaches the containing block and applies
+              // the rule from there — including to the containing block itself,
+              // which clips its own padding box.
+              //
+              // Read from the properties that define it rather than guessed: for
+              // `absolute`, the nearest ancestor that is positioned or that
+              // establishes a containing block by `transform`, `filter`,
+              // `perspective` or paint/layout `contain`; for `fixed`, only the
+              // latter group, since a merely positioned ancestor does not capture a
+              // fixed box. Anything this cannot decide leaves the ancestor skipped,
+              // so the residual stays a missed defect rather than an invented one.
+              const establishesCB = (cs) =>
+                cs.transform !== 'none' ||
+                cs.perspective !== 'none' ||
+                cs.filter !== 'none' ||
+                /\b(paint|layout|strict|content)\b/.test(cs.contain || '') ||
+                /\btransform\b/.test(cs.willChange || '');
+              let reachedCB = inFlow;
+              const r = node.getBoundingClientRect();
+              // TRUNCATED TEXT IS CONDEMNED, DELIBERATELY, and this note exists so
+              // it is not "fixed" later as a false positive. `text-overflow:
+              // ellipsis` with `white-space: nowrap` gives a line box wider than its
+              // clipping box, so a heavily truncated line fails the ratio below.
+              // That is the right answer HERE even though it would be wrong on a
+              // chrome label: a fee value cut off mid-number, or an explanation cut
+              // off mid-sentence, is exactly what this drive exists to catch, and a
+              // reader seeing an ellipsis does not make the missing half readable.
+              //
+              // Checked rather than assumed — the only ellipsis rules in
+              // `global.css` are `.connect-addr`/`.connect-label` and the two
+              // `.select-menu-*` classes, which are the header wallet button and the
+              // select menus. Nothing observed by this drive is truncated today.
+              //
+              // One Range per NODE, not per clipping ancestor: this predicate runs
+              // for the card, the body, the control and every receipt leaf on every
+              // poll tick, and rebuilding the range inside the walk was pure waste.
+              const ownText = [...node.childNodes].some(
+                (c) => c.nodeType === 3 && c.textContent.trim() !== '',
+              );
+              const boxes = (() => {
+                if (!ownText) return [r];
+                try {
+                  const range = document.createRange();
+                  range.selectNodeContents(node);
+                  const rects = [...range.getClientRects()].filter(
+                    (q) => q.width > 0 && q.height > 0,
+                  );
+                  // "No rects" must not read as "nothing is visible".
+                  return rects.length > 0 ? rects : [r];
+                } catch {
+                  return [r];
+                }
+              })();
+              // ROUND 44 P2 — STARTS AT THE NODE, not at its parent.
+              //
+              // A leaf that clips its OWN text was never examined: `height: 1px;
+              // overflow: hidden` on the `dd` itself leaves a positive rect (so the
+              // geometry test passes), `checkVisibility` positive, `paintsText`
+              // satisfied — and the only box that would have caught it was the one
+              // box this walk skipped. `innerText` then supplied the hidden
+              // disclosure and the confirmation scan recorded it as read.
+              //
+              // Including the node costs nothing on a normal leaf: `overflow:
+              // visible` skips the body of the loop, and a leaf sized to its own
+              // content contains its own line boxes by definition.
+              // ROUND 48 P2 — A CLIP PATH HIDES TEXT THAT EVERY OTHER TEST VOUCHES FOR.
+              //
+              // `clip-path: inset(50%)` — the modern visually-hidden idiom — leaves the
+              // box laid out at full size, `checkVisibility` positive, the overflow walk
+              // satisfied (there is no overflow) and `paintsText` satisfied (the colour
+              // is opaque), while nothing is painted. `innerText` keeps yielding every
+              // word, so the receipt's fee and loss rows could be recorded as read with
+              // the lender seeing none of them. Same class as rounds 37, 43, 44 and 45:
+              // a property that hides the CONTENT rather than the box.
+              //
+              // ONLY `inset()`, and only where the region is PROVABLY EMPTY. A circle,
+              // an ellipse, a polygon, a `path()` or a `url()` reference can each be
+              // empty too, and deciding that in general is a geometry problem this
+              // predicate has no business attempting — getting it wrong condemns content
+              // the lender can see, which is the error that gets a whole check switched
+              // off. Anything it cannot read counts as painted, so the residual is a
+              // missed defect and never an invented one.
+              //
+              // The legacy `clip: rect(...)` idiom needs nothing here: this codebase's
+              // `.visually-hidden` pairs it with `width: 1px; height: 1px;
+              // overflow: hidden`, which the half-extent rule below already rejects.
+              const emptyClipRegion = (cs, box) => {
+                const raw = (cs.clipPath || 'none').trim();
+                const m = /^inset\(([^)]*)\)$/i.exec(raw);
+                if (!m) return false;
+                // `round <radii>` describes the corners, not the extent.
+                const parts = m[1].split(/\s+round\s+/i)[0].trim().split(/\s+/).filter(Boolean);
+                if (parts.length === 0 || parts.length > 4) return false;
+                const px = (t, extent) => {
+                  const v = String(t);
+                  if (v.endsWith('%')) {
+                    const n = Number(v.slice(0, -1));
+                    return Number.isFinite(n) ? (n / 100) * extent : null;
+                  }
+                  const n = Number(v.endsWith('px') ? v.slice(0, -2) : v);
+                  return Number.isFinite(n) ? n : null;
+                };
+                // CSS shorthand order, top/right/bottom/left with the usual fill-ins.
+                const top = px(parts[0], box.height);
+                const right = px(parts[1] ?? parts[0], box.width);
+                const bottom = px(parts[2] ?? parts[0], box.height);
+                const left = px(parts[3] ?? parts[1] ?? parts[0], box.width);
+                if ([top, right, bottom, left].some((v) => v === null)) return false;
+                // Judged only on an axis with extent to lose. A degenerate box is
+                // someone else's finding, and calling it an empty clip would be
+                // asserting something this has not established.
+                return (
+                  (box.height > 0 && top + bottom >= box.height) ||
+                  (box.width > 0 && left + right >= box.width)
+                );
+              };
+              for (let n = node; n; n = n.parentElement) {
+                const cs = getComputedStyle(n);
+                // An empty clip region on the node or on any ancestor hides
+                // everything inside it, whatever the overflow rules say.
+                //
+                // The string test comes FIRST so the rect is not measured on
+                // every ancestor of every node on every poll tick. `clip-path`
+                // is `none` almost everywhere, and forcing a layout read to
+                // discover that was a cost my own first version added silently.
+                const clipPath = cs.clipPath;
+                if (
+                  clipPath &&
+                  clipPath !== 'none' &&
+                  emptyClipRegion(cs, n.getBoundingClientRect())
+                ) {
+                  return false;
+                }
+                // ROUND 115 P2 — BEFORE THE VISIBLE-OVERFLOW FAST PATH, NOT AFTER.
+                //
+                // `if (!clipsY && !clipsX) continue` used to run first, so a POSITIONED
+                // containing block whose own overflow is visible was skipped without ever
+                // setting `reachedCB`. A higher STATIC ancestor with `overflow: hidden` —
+                // which genuinely does clip the leaf, being above the containing block —
+                // then failed the `!reachedCB` test, was treated as lying below it, and
+                // was skipped too. Fully hidden funds copy satisfied `shownBox`.
+                //
+                // Where an element sits relative to the containing block has nothing to
+                // do with whether it clips, so that question is answered first for every
+                // ancestor. The box tests below therefore run only at or above the
+                // containing block, which is the same correction in the other direction:
+                // an ancestor BELOW it does not clip an out-of-flow descendant, so a
+                // zero-height one there was never evidence of hidden text.
+                // ROUND 45 P2 — the out-of-flow exemption is about ANCESTORS, never
+                // about the node's own clipping box.
+                //
+                // I wrote it to avoid a containing-block question: whether a given
+                // ancestor clips an absolutely positioned descendant depends on which
+                // element is that descendant's containing block, and answering it
+                // wrongly condemns content the lender can see. None of that
+                // uncertainty applies to an element clipping ITS OWN text — every
+                // element clips its own content, whatever its `position` is.
+                //
+                // Round 44 put `node` into this walk and this `continue` skipped it
+                // right back out again for a positioned leaf, so `position: absolute;
+                // height: 1px; overflow: hidden` still passed. The fix for the skipped
+                // box, skipping the same box.
+                // ROUND 65 P2 — skip only UP TO the containing block, then apply the
+                // rule. `n !== node` keeps round 45's correction: an element always
+                // clips its OWN text, whatever its `position`.
+                if (!reachedCB && n !== node) {{
+                  if (flow === 'fixed' ? establishesCB(cs) : cs.position !== 'static' || establishesCB(cs)) {{
+                    reachedCB = true;
+                  }} else {{
+                    continue;
+                  }}
+                }}
+                const clipsY = cs.overflowY !== 'visible';
+                const clipsX = cs.overflowX !== 'visible';
+                if (!clipsY && !clipsX) continue;
+                const box = n.getBoundingClientRect();
+                if (clipsY && box.height === 0) return false;
+                if (clipsX && box.width === 0) return false;
+                const scrollsY =
+                  (cs.overflowY === 'auto' || cs.overflowY === 'scroll') &&
+                  n.scrollHeight > n.clientHeight;
+                const scrollsX =
+                  (cs.overflowX === 'auto' || cs.overflowX === 'scroll') &&
+                  n.scrollWidth > n.clientWidth;
+                // ROUND 43 P2 — PER LINE, not per element.
+                //
+                // The half-of-the-element rule reads a MULTI-LINE leaf as visible
+                // whenever half of it survives — so a two-line value with its second
+                // line entirely clipped passes at exactly 50%, `innerText` yields
+                // both lines, and the run records a lender as having read a
+                // disclosure whose second half is not on screen. On this surface the
+                // clipped half is as likely as not to be the one carrying the
+                // consequence.
+                //
+                // A Range over the node's own text yields one client rect per LINE
+                // BOX, which is the unit a reader actually consumes. Every line must
+                // clear the same half-visible bar the element used to clear as a
+                // whole — so a descender trimmed by a pixel still passes (that line
+                // is ~95% shown) while a line that is wholly outside does not.
+                //
+                // SCOPED TO NODES CARRYING THEIR OWN TEXT, and computed ONCE above
+                // the ancestor walk rather than per ancestor.
+                //
+                // Both corrected after writing this. `selectNodeContents` on a
+                // CONTAINER yields a rect per line of its whole subtree, so applying
+                // the per-line rule to the card or the body would condemn the entire
+                // surface whenever any single descendant line was mostly clipped —
+                // and the resulting verdict says "card is in the DOM but not
+                // visible", which is the wrong sentence about a card that is largely
+                // on screen. The finding was about a multi-line `dt`/`dd`, and a
+                // leaf's own text is exactly where "can this be read" is the
+                // question being asked. Same scope `paintsText` uses, for the same
+                // reason.
+                //
+                // Containers keep the element-rect rule they already had, and their
+                // leaves are checked individually anyway — the receipt probe
+                // requires every row AND both of its leaves to pass.
+                for (const q of boxes) {
+                  if (clipsY && !scrollsY && q.height > 0) {
+                    const shown = Math.min(q.bottom, box.bottom) - Math.max(q.top, box.top);
+                    if (shown / q.height < 0.5) return false;
+                  }
+                  if (clipsX && !scrollsX && q.width > 0) {
+                    const shown = Math.min(q.right, box.right) - Math.max(q.left, box.left);
+                    if (shown / q.width < 0.5) return false;
+                  }
+                }
+              }
+              return true;
+            };
+            const paintsText = (node) => {
+              // ROUND 37 P2 — TEXT CAN BE HIDDEN BY ITS OWN COLOUR, and nothing else
+              // in this predicate looks at colour. `color: transparent` leaves the
+              // element laid out, `checkVisibility` positive, the rect non-zero and
+              // the clipping walk satisfied, while `innerText` keeps yielding every
+              // word — so the receipt's fee and loss values could be recorded as
+              // read with nothing painted on screen. Same class as the opacity and
+              // clipping holes before it: a property that hides the CONTENT rather
+              // than the box.
+              //
+              // Only elements carrying their OWN text are judged. `color` inherits,
+              // so testing a wrapper would condemn a whole card whose children set
+              // their own colour — a false FAIL, on the very element the run exists
+              // to vouch for. The leaves are where this matters anyway: the
+              // receipt's `dt`/`dd` are exactly the nodes whose values get blanked.
+              //
+              // `-webkit-text-fill-color` is read first because it OVERRIDES `color`
+              // for painting wherever it is set, which is how this is usually done
+              // in a real stylesheet.
+              //
+              // Alpha ZERO only, never a contrast judgement. Deciding text is too
+              // faint against its background needs the background, the stacking and
+              // whatever image sits behind it, and getting that wrong condemns
+              // legible copy — the direction this file keeps saying gets a check
+              // switched off.
+              const own = [...node.childNodes].some(
+                (c) => c.nodeType === 3 && c.textContent.trim() !== '',
+              );
+              if (!own) return true;
+              const cs = getComputedStyle(node);
+              // Glyph rectangles rather than the element box — see the card
+              // copy's round-82 note. `text-indent` and friends move the LINE
+              // and leave the box in place, so the box-shaped tests all pass
+              // while the text sits before the document origin. Own text
+              // nodes only; any reachable rectangle, or none measurable at
+              // all, counts as painted.
+              const glyphs = [];
+              for (const c of node.childNodes) {
+                if (c.nodeType !== 3 || c.textContent.trim() === '') continue;
+                try {
+                  const range = document.createRange();
+                  range.selectNodeContents(c);
+                  for (const q of range.getClientRects()) {
+                    if (q.width > 0 && q.height > 0) glyphs.push(q);
+                  }
+                } catch {
+                  // Unmeasurable: leaves `glyphs` short, which reads as painted.
+                }
+              }
+              if (
+                glyphs.length > 0 &&
+                glyphs.every(
+                  (q) => q.right + window.scrollX <= 0 || q.bottom + window.scrollY <= 0,
+                )
+              ) {
+                return false;
+              }
+              // HOISTED ABOVE THE OCCLUSION RULE (round 90): that rule now reads a
+              // cover's background through this same parser, and a `const` arrow
+              // used before its declaration is a temporal-dead-zone throw — the
+              // shape that made a round-75 fix inert inside its own catch. One
+              // definition, declared before either reader.
+              const alphaOf = (value) => {
+                const v = String(value).trim();
+                if (v === 'transparent') return 0;
+                const fn = /^[a-zA-Z-]+\(([^]*)\)$/.exec(v);
+                if (!fn) return 1;
+                const body = fn[1];
+                const cut = body.lastIndexOf('/');
+                let raw = null;
+                if (cut >= 0) {
+                  raw = body.slice(cut + 1);
+                } else {
+                  const parts = body.split(',');
+                  if (parts.length === 4) raw = parts[3];
+                }
+                if (raw === null) return 1;
+                const t = raw.trim();
+                const n = t.endsWith('%') ? Number(t.slice(0, -1)) / 100 : Number(t);
+                return Number.isFinite(n) ? n : 1;
+              };
+              // ROUND 89 P2 — AND TEXT COVERED BY SOMETHING OPAQUE IS NOT
+              // PAINTED EITHER.
+              //
+              // An opaque positioned sibling laid over the explanation or a receipt
+              // row defeats every test above it: the covered node still reports
+              // `checkVisibility`, a real rect at real document coordinates, full
+              // opacity, no clipping and measurable glyphs. So the whole class this
+              // predicate exists for — copy present in the markup and absent from
+              // the lender's screen — had one door left open, and it is the door a
+              // CSS regression is most likely to walk through: an overlay that grew,
+              // a z-index that flipped.
+              //
+              // HIT-TESTED, which is the only way to ask "is something in front of
+              // this". Each glyph rectangle is probed at its centre first, and at
+              // two corners only when the centre comes back covered — so the common
+              // case costs one `elementsFromPoint` per rectangle and reachable text
+              // returns on the first probe.
+              //
+              // THREE GUARDS AGAINST CONDEMNING LEGIBLE COPY, because this is the
+              // one rule in this file that can invent a finding out of ordinary
+              // layout:
+              //
+              //   - The covering element must actually PAINT. An invisible
+              //     click-catcher — a full-page div with no background, which is
+              //     ordinary in a modal implementation — is hit first by
+              //     `elementsFromPoint` and covers nothing a lender can see. So the
+              //     walk up from each hit looks for a fully opaque background
+              //     colour — and ONLY that, since round 98. Anything it cannot
+              //     decide counts as NOT covering, which is what "unknown means
+              //     painted" amounts to for this rule: the text stays in the
+              //     reading. (The layers BELOW that catcher are examined too —
+              //     round 95.) It used to accept a replaced element as paint on
+              //     the strength of its tag, which condemned readable copy under
+              //     a transparent image; that is gone, and this sentence named it
+              //     for one round after it went, which is how a description sends
+              //     a later change back to the behaviour just removed.
+              //   - Points outside the VIEWPORT cannot be hit-tested at all, and
+              //     `elementsFromPoint` answers an empty stack for them. They are
+              //     skipped, not counted as covered — otherwise every
+              //     below-the-fold row, which the lender reaches by scrolling,
+              //     would be condemned.
+              //   - Occlusion must be TOTAL. One reachable probe anywhere in the
+              //     text is enough to keep it painted, because partial overlap is
+              //     ordinary (a sticky header crossing a row as the page scrolls)
+              //     and reading half a sentence is not the defect this catches.
+              //
+              // STATED RESIDUAL, and it is the mirror of the first guard rather
+              // than a second win: `elementsFromPoint` looks straight through an
+              // element with `pointer-events: none`, so an OPAQUE overlay carrying
+              // that property hides the text visually and is invisible to this
+              // test. That is a missed defect, which is the direction this file
+              // takes every time — the alternative is a geometric overlap test
+              // that would condemn the transparent click-catcher above it.
+              // THE CONTAINMENT TEST COMES FIRST INSIDE THE WALK, and swapping it
+              // below the paint tests would condemn the whole page (self-review).
+              // The walk climbs from whatever was hit until it reaches something
+              // that contains this node — the common ancestor — and stops there. Any
+              // element from the common ancestor upward is an ANCESTOR of the text,
+              // not a cover, and `body` almost always carries an opaque background:
+              // reach it and every foreign hit reads as covered, so the transparent
+              // click-catcher guard above would silently invert.
+              // Is this element's `filter` less than fully opaque?
+              //
+              // The same parse `filterErases` performs, asking the weaker question:
+              // that one wants erased-entirely, this one wants anything short of
+              // solid, because a cover you can read through is not a cover. A
+              // chain multiplies, so one component below 1 settles it.
+              const filterBelowOpaque = (f) => {
+                if (!f || f === 'none') return false;
+                for (const m of String(f).matchAll(/opacity\(([^)]*)\)/gi)) {
+                  const t = m[1].trim();
+                  const v = t.endsWith('%') ? Number(t.slice(0, -1)) / 100 : Number(t);
+                  if (Number.isFinite(v) && v < 1) return true;
+                }
+                return false;
+              };
+              // Does THIS ONE LAYER of the hit-test stack paint over the text?
+              // Split out of `coveredAt` in round 95 so the answer can be asked
+              // of each layer in turn; the walk itself is unchanged.
+              const layerPaints = (hit) => {
+                // Whether anything in the cover's chain actually paints, carried so
+                // the walk can keep going and still answer (round 92).
+                let paints = false;
+                for (let n = hit; n && n !== document.documentElement; n = n.parentElement) {
+                  // The common ancestor: everything below it has been examined, so
+                  // whatever was found is the answer.
+                  if (n.contains(node)) return paints;
+                  // ROUND 91 P2 — AND THE COVER HAS TO BE VISIBLE ITSELF.
+                  //
+                  // An opaque BACKGROUND on an element that is itself transparent —
+                  // `background:#123456; opacity:0`, an ordinary transition layer —
+                  // is still what hit-testing returns, and the first version read its
+                  // background alpha and declared the text covered. That is a false
+                  // FAIL on plainly visible copy, which is the one direction this
+                  // predicate must never take.
+                  //
+                  // Anything less than fully opaque disqualifies the whole chain
+                  // rather than being weighed: a half-transparent cover leaves the
+                  // text partly legible, and judging how much is the contrast
+                  // question this file refuses. A filter carrying an `opacity()` below
+                  // 1 says the same thing by another property (round 100 — it used to
+                  // read only an exact zero); other filters still cover, so they are
+                  // left alone.
+                  //
+                  // NO `visibility` TEST HERE, and its removal is the correction
+                  // rather than an omission (self-review). Hit-testing already skips
+                  // a hidden element, so the check could never fire for the hit
+                  // itself — and for an ANCESTOR of the hit it is actively wrong,
+                  // since `visibility` is inherited and a child may set `visible`
+                  // again, leaving a cover that genuinely paints. Opacity and the
+                  // filter do not have that shape: both composite over the whole
+                  // subtree, so an ancestor carrying either really does erase the
+                  // cover.
+                  const coverStyle = getComputedStyle(n);
+                  const op = Number(coverStyle.opacity);
+                  if (Number.isFinite(op) && op < 1) return false;
+                  // ROUND 100 P2 — ANY filter opacity BELOW 1, not only exactly zero.
+                  //
+                  // The regex here matched `opacity(0)` and nothing else, so a cover
+                  // at `filter: opacity(0.5)` — computed `opacity` still 1 — counted
+                  // as fully opaque and the text under it was discarded, while the
+                  // lender can read it straight through. The rule two paragraphs up
+                  // says anything less than fully opaque disqualifies the chain; the
+                  // element `opacity` test honours that and this one did not.
+                  //
+                  // Parsed rather than matched, the same way `filterErases` parses
+                  // it, percentage form included. A value this cannot read is left
+                  // alone — unreadable is not evidence of transparency, and the
+                  // surrounding rule already treats undecidable as not-covering.
+                  if (filterBelowOpaque(coverStyle.filter)) return false;
+                  // ROUND 92 P2 — FOUND IS NOT FINISHED. The walk continues to the
+                  // common ancestor even after something opaque is seen, because
+                  // opacity does not INHERIT: an overlay written as an opaque child
+                  // inside a wrapper at `opacity: 0` reports 1 on the child, and
+                  // returning there accepted a paint the wrapper erases. Readable
+                  // copy was then discarded — the false-FAIL direction again, from
+                  // the fix that was supposed to close it.
+                  //
+                  // ROUND 97 P2 — AND THE TAG TEST THAT USED TO LIVE HERE IS GONE.
+                  //
+                  // It read `/^(img|video|canvas|svg)$/.test(n.tagName)` and counted
+                  // any replaced element as painting. A fully transparent PNG, an
+                  // untouched canvas or a mostly-empty SVG all report `opacity: 1`
+                  // and are all what hit-testing returns, so any of them spanning the
+                  // glyph discarded plainly readable copy — the false-FAIL direction,
+                  // on a funds surface, from a rule that never looked at a pixel.
+                  //
+                  // DELETED RATHER THAN NARROWED, because there is no cheap honest
+                  // version. `naturalWidth` says an image loaded, not that it is
+                  // opaque; reading pixels back means a canvas draw, and a
+                  // cross-origin image taints the canvas and throws. Undecidable
+                  // counts as NOT covering here, as everywhere else in this
+                  // predicate.
+                  //
+                  // STATED RESIDUAL: an opaque image laid over the text with no
+                  // background colour of its own is no longer detected. That is a
+                  // missed defect, which is the trade this file makes every time —
+                  // the alternative invents failures out of decorative artwork.
+                  // ROUND 90 P2 — READ BY SHAPE, via the same `alphaOf` the fill test
+                  // uses. The first version matched `rgba?(…)` only, so an overlay
+                  // painted in `oklab(…)` or `color(display-p3 …)` — forms Chromium
+                  // preserves, as the note above `alphaOf` records — read as
+                  // transparent and the hidden text stayed in the reading. Round 38
+                  // learned this exact lesson for the text colour and I wrote the new
+                  // site against the old standard anyway.
+                  const bg = coverStyle.backgroundColor || '';
+                  if (!paints && bg && bg !== 'transparent' && alphaOf(bg) === 1) paints = true;
+                }
+                return paints;
+              };
+              // ROUND 95 P2 — THE WHOLE STACK AT THE POINT, NOT THE TOP OF IT.
+              //
+              // `elementFromPoint` returns ONE element: the topmost. The modal
+              // implementation the first guard was written for — a full-size
+              // transparent click-catcher — is exactly what lands there, and its
+              // own chain paints nothing, so the walk correctly answered "this
+              // layer is not a cover" and `coveredAt` then stopped. The OPAQUE
+              // backdrop immediately beneath it, which is the thing the lender
+              // cannot see through, was never examined. Hidden receipt copy could
+              // therefore enter `visibleTextOf` and a fee-facing surface be
+              // certified on text nobody could read.
+              //
+              // `elementsFromPoint` returns the stack topmost-first. Everything
+              // before the entry that contains this node paints ABOVE the glyph at
+              // this point, so each is asked in turn and the first that paints
+              // settles it. Reaching the node's own layer ends the search: nothing
+              // below it can hide it.
+              //
+              // The containment test stays FIRST, for the reason recorded above —
+              // `body` carries an opaque background and sits at the bottom of every
+              // stack, so examining it would read as covered everywhere.
+              //
+              // A layer disqualified by its opacity, or by a filter that is not fully
+              // opaque, does not end the search either: it is see-through, and the
+              // layers below it are still in front of the text.
+              const coveredAt = (x, y) => {
+                const stack = document.elementsFromPoint(x, y);
+                if (!stack || !stack.length) return false;
+                for (const hit of stack) {
+                  // ROUND 90 P2 — ONLY THIS NODE AND ITS ANCESTORS ARE EXEMPT. A
+                  // DESCENDANT CAN COVER ITS PARENT'S OWN TEXT.
+                  //
+                  // The first version exempted `node.contains(hit)` as well, which
+                  // trusted every descendant — so an absolutely positioned opaque
+                  // child laid over its parent's glyphs was declared "not a cover" by
+                  // the very fact that it belongs to the element it is hiding.
+                  //
+                  // `contains` is true of a node itself, so `hit.contains(node)` covers
+                  // both the element's own hit and any ancestor's, and nothing else is
+                  // waved through. Note the rects probed are the element's OWN text
+                  // nodes, so an ordinary inline child is not at these points at all —
+                  // a descendant hit here is one that genuinely overlaps the text.
+                  if (hit.contains(node)) return false;
+                  if (layerPaints(hit)) return true;
+                }
+                return false;
+              };
+              const vw = window.innerWidth || document.documentElement.clientWidth || 0;
+              const vh = window.innerHeight || document.documentElement.clientHeight || 0;
+              const inView = (x, y) => x >= 0 && y >= 0 && x < vw && y < vh;
+              let probed = 0;
+              let allCovered = true;
+              // ROUND 96 P2 — A DIAGONAL IS NOT A RECTANGLE.
+              //
+              // The three probes were the centre and the two opposite corners:
+              // three COLLINEAR points. An opaque diagonal stripe, or three small
+              // badges that happen to sit on that line, cover all of them while
+              // leaving most of the sentence readable — and the text node was then
+              // discarded whole. The rule directly above says occlusion must be
+              // TOTAL, and the sampling did not implement the rule it states.
+              //
+              // The direction is what makes this urgent rather than merely
+              // imprecise: it is a FALSE FAIL on legible funds copy, the one error
+              // this file says gets a whole check switched off.
+              //
+              // Sampled on a GRID now — five positions across the width at three
+              // heights — so a cover has to defeat fifteen points spread over the
+              // whole rectangle rather than three on one line. Still sampling, and
+              // still not a proof of total coverage; what changes is that every
+              // added point can only make a cover HARDER to claim, so the residual
+              // moves further into the missed-defect direction and never into the
+              // invented one.
+              //
+              // The common path costs no more than before: the loop stops at the
+              // first uncovered point, and readable text is uncovered at the first
+              // one tried. Only text that really is covered everywhere pays for
+              // the whole grid.
+              const COL_FRACTIONS = [0.02, 0.25, 0.5, 0.75, 0.98];
+              const ROW_FRACTIONS = [0.25, 0.5, 0.75];
+              // KEPT AT LEAST A PIXEL INSIDE (self-review of the grid above).
+              // The rules it replaced were absolute 1px insets from the corners,
+              // and a fraction is not: on a narrow rectangle 0.02 lands on the
+              // boundary, where hit-testing can resolve to the NEIGHBOUR rather
+              // than to the glyph. An opaque badge beside a short figure would
+              // then answer for a point that is not on the text. It cannot
+              // condemn on its own — total occlusion needs every point, and the
+              // interior ones sit over the glyph — but a sample that is not on
+              // the thing being measured should not be taken at all. Rectangles
+              // too narrow to have an inside are probed at their centre.
+              const inset = (extent, f) =>
+                extent <= 2 ? extent / 2 : Math.min(Math.max(extent * f, 1), extent - 1);
+              for (const q of glyphs) {
+                const points = [];
+                for (const fy of ROW_FRACTIONS) {
+                  for (const fx of COL_FRACTIONS) {
+                    points.push([q.left + inset(q.width, fx), q.top + inset(q.height, fy)]);
+                  }
+                }
+                for (const [x, y] of points) {
+                  if (!inView(x, y)) continue;
+                  probed += 1;
+                  if (!coveredAt(x, y)) {
+                    allCovered = false;
+                    break;
+                  }
+                }
+                if (!allCovered) break;
+              }
+              if (probed > 0 && allCovered) return false;
+              const fill = cs.webkitTextFillColor || cs.color || '';
+              // ROUND 38 P2 — EVERY COMPUTED COLOUR FORM, not just `rgb()`/`rgba()`.
+              //
+              // Chromium PRESERVES the functional notation for the modern colour
+              // syntaxes, so `color(display-p3 0 0 0 / 0)` and `oklab(0 0 0 / 0)`
+              // never matched the old `rgba?` probe — and the no-match branch
+              // returns "painted", which fails OPEN on the one check that exists
+              // to catch invisible funds copy. All six receipt leaves could pass
+              // while `innerText` supplied their values.
+              //
+              // Parsed by SHAPE rather than by enumerating colour functions:
+              // every CSS colour syntax carrying alpha spells it either after a
+              // `/` (the modern forms, and space-separated `rgb()`) or as a fourth
+              // comma-separated component (legacy `rgba()` / `hsla()`). Reading
+              // the shape means a colour function added to CSS later needs no
+              // change here — the enumeration mistake this file has now made
+              // twice, with the transport allowlist and the currency signs.
+              //
+              // ANYTHING UNPARSEABLE COUNTS AS PAINTED. A form this cannot read
+              // must not be condemned: a false FAIL on legible copy is the error
+              // that gets the whole check switched off, so the residual is a
+              // missed defect and never an invented one.
+              if (alphaOf(fill) !== 0) return true;
+              const shadow = String(cs.textShadow ?? 'none').trim();
+              if (shadow !== '' && shadow !== 'none') return true;
+              const strokeWidth = String(cs.webkitTextStrokeWidth ?? '0px').trim();
+              const strokeColor = String(cs.webkitTextStrokeColor ?? 'transparent').trim();
+              if (parseFloat(strokeWidth) > 0 && alphaOf(strokeColor) !== 0) return true;
+              return false;
+            };
+            const shownBox = (node) => {
+              if (!node) return false;
+              if (typeof node.checkVisibility === 'function') {
+                if (
+                  !node.checkVisibility({
+                    opacityProperty: true,
+                    visibilityProperty: true,
+                    contentVisibilityAuto: true,
+                  })
+                ) {
+                  return false;
+                }
+              } else {
+                // THE TWIN'S FALLBACK, which this copy did not have (found by
+                // adding the drift assertion below). Without `checkVisibility`
+                // nothing here looked at `display` or `visibility` at all: a
+                // `display: none` box is still caught by the zero-rect test
+                // further down, but `visibility: hidden` leaves a full-size
+                // rect and an opacity of 1, so this copy would have reported
+                // hidden fee copy as SHOWN.
+                //
+                // NOT a live defect — the drive runs in Chromium, which has
+                // `checkVisibility`, so this arm is unreachable there and both
+                // copies behave identically today. It is recorded and fixed
+                // rather than waved through because "the dead arm differs" is
+                // exactly what rounds 29 and 51 were, and both times the dead
+                // arm was the one that later became live. See the twin for the
+                // full history.
+                const cs = getComputedStyle(node);
+                if (
+                  cs.display === 'none' ||
+                  cs.visibility === 'hidden' ||
+                  cs.visibility === 'collapse'
+                ) {
+                  return false;
+                }
+              }
+              // ROUND 51 P2 — A FILTER ERASES CONTENT THE SAME WAY OPACITY DOES,
+              // and nothing above looks at it.
+              //
+              // `filter: opacity(0)` leaves the geometry, the computed `opacity`,
+              // the text colour and `checkVisibility` all untouched while Chromium
+              // paints nothing — so the explanation, or a fee and loss row, could be
+              // vouched for from `innerText` with none of it on screen. Same class
+              // as rounds 37, 43, 44, 45 and 48: a property that hides the CONTENT
+              // rather than the box.
+              //
+              // Checked on the same ANCESTOR WALK as `opacity`, because a filter
+              // applies to the element and everything inside it exactly as opacity
+              // does — one walk, one rule, rather than a second traversal to drift.
+              //
+              // ONLY a zero `opacity()` component, and only where it is stated as a
+              // number. `brightness(0)` paints black rather than nothing, a `url()`
+              // reference is an arbitrary SVG filter, and deciding in general what a
+              // filter chain renders is not something this predicate can do — so
+              // anything else counts as painted. The residual is a missed defect,
+              // never an invented one.
+              const filterErases = (cs) => {
+                const f = cs.filter;
+                if (!f || f === 'none') return false;
+                for (const m of String(f).matchAll(/opacity\(([^)]*)\)/gi)) {
+                  const t = m[1].trim();
+                  const v = t.endsWith('%') ? Number(t.slice(0, -1)) / 100 : Number(t);
+                  if (Number.isFinite(v) && v === 0) return true;
+                }
+                return false;
+              };
+              for (let n = node; n; n = n.parentElement) {
+                const cs = getComputedStyle(n);
+                if (Number(cs.opacity) === 0) return false;
+                if (filterErases(cs)) return false;
+              }
+              const r = node.getBoundingClientRect();
+              if (!(r.width > 0 && r.height > 0)) return false;
+              const docRight = r.right + window.scrollX;
+              const docBottom = r.bottom + window.scrollY;
+              if (docRight <= 0 || docBottom <= 0) return false;
+              return notClipped(node);
+            };
+            // ROUND 66 P2 — TWO QUESTIONS, SEPARATED. `shownBox` above answers
+            // whether the BOX is on screen: display, visibility, opacity, an
+            // erasing filter, geometry and clipping, each of which hides
+            // everything inside it. `paintsText` answers whether an element's
+            // OWN text is painted, which affects only that element's own text
+            // nodes — `color` inherits, and a descendant may repaint itself.
+            //
+            // `visible` is unchanged: it is both, and every existing caller
+            // asking "can the lender read THIS element" still gets the same
+            // answer. The split exists so `visibleTextOf` can stop discarding a
+            // painted descendant because its container's own text is not.
+            const visible = (node) => shownBox(node) && paintsText(node);
+            // ROUND 24 P2 — THE RECEIPT, not anything with text in it.
+            //
+            // My first version fell back to any `p`/`dd`/`dt`/`span` in
+            // the card when no `forced-close-receipt*` id was found —
+            // and `ReviewReceipt` renders none, so the fallback ran every
+            // time and matched `forced-close-body`, a paragraph that is
+            // not part of the receipt at all. The check was therefore
+            // satisfied by the card's own explanation while the receipt
+            // was hidden, which is precisely the state it was written to
+            // catch.
+            //
+            // `ReviewReceipt` renders `<dl class="receipt">` with
+            // `.receipt-row` children, so there is a real anchor and no
+            // fallback is needed. If that markup ever changes this
+            // returns false and the verdict blocks — the honest failure
+            // rather than a silent pass.
+            //
+            // ROUND 25 P2 — THE ROWS, NOT THE WRAPPER THEY SIT IN.
+            //
+            // Last round I added `dl.receipt` itself to this list as a
+            // second anchor, which quietly reintroduced the hole the
+            // round before had closed. `opacity: 0` on the rows leaves
+            // the `<dl>` laid out at full height with a non-zero rect,
+            // so the wrapper answers "visible" for a receipt whose every
+            // row is invisible — and `innerText` still yields the hidden
+            // labels and figures, so the lead check passes too and the
+            // run records `confirmScanned=true` against a receipt the
+            // lender cannot see. This is the exact state the probe
+            // exists to catch, and the wrapper is structurally incapable
+            // of reporting it: it is not the thing being hidden.
+            //
+            // One anchor fewer is the point. A wrapper is not evidence
+            // about its contents, and adding it as a fallback was the
+            // same mistake as the `p`/`dd`/`span` fallback before it —
+            // a claim about a case I had not looked at.
+            // ROUND 45 P2 — THE CONFIRMATION'S OWN ACTION, located but
+            // never clicked.
+            //
+            // The drive opened the panel, waited for Back, scanned the
+            // six rows — and never looked at the button that would
+            // actually send the transaction. A confirm control missing,
+            // hidden, blank or permanently disabled strands the lender
+            // one click short of the action while this run reports the
+            // ACTIONABLE route as covered, which is the strongest claim
+            // it makes.
+            //
+            // Located by STRUCTURE because `ConfirmReceipt` gives it no
+            // testid: the panel renders exactly two buttons in one
+            // cluster — Back and confirm — and the outer submit is not
+            // rendered at all while the panel is open, so the confirm
+            // action is the button beside Back.
+            //
+            // NOT CLICKED, which is the point of doing it this way: this
+            // drive is watch-only and that button sends a fee-paying
+            // transaction. Presence, visibility, a non-blank label and
+            // `disabled === false` are all observable without touching
+            // it.
+            const panelButtons = [...el.querySelectorAll('button')];
+            // ROUND 76 P2 — THE MARKER FIRST, THE LABEL ONLY AS A FALLBACK.
+            //
+            // Round 75 excluded every control whose label reads as Back,
+            // which closed the two-Back hole and left identity coupled to
+            // COPY: a confirm label containing the word — "Pay back and
+            // close" — would be excluded as a Back control and the panel
+            // reported as having no fee-paying action at all. That is a
+            // false FAIL waiting on a copy change, and it is worse in the
+            // nine translated bundles, where the heuristic does not even
+            // apply.
+            //
+            // `ConfirmReceipt` now marks both controls, so identity comes
+            // from the markup. The label heuristic stays as a FALLBACK
+            // rather than being deleted: this drive runs against the
+            // DEPLOYED build, which will not carry the markers until this
+            // change ships, and a check that goes blind between merge and
+            // deploy is worse than one with a known-imperfect fallback.
+            // On a build carrying the markers the labels are never
+            // consulted.
+            // ROUND 96 P2 — BOTH MARKERS, OR NEITHER IS TRUSTED.
+            //
+            // `marked` was decided from the CONFIRM marker alone and then used
+            // to gate identification of BACK. So a build carrying the confirm
+            // marker and missing the Back one — an accidental removal, a
+            // rename, a refactor that touched one of the two — switched off the
+            // label fallback and then found no Back control at all. The visibly
+            // labelled Back button fell into `allActions`, and the panel was
+            // reported as offering the lender two fee-paying actions when it
+            // offers one and a way out.
+            //
+            // That is the false-FAIL direction, produced by half of an
+            // instrumentation change rather than by anything the lender could
+            // see. The marker path is only better than the labels when BOTH
+            // markers are there; with one, the labels are the more reliable of
+            // the two and are what round 76 deliberately kept for exactly this
+            // kind of gap.
+            //
+            // RESIDUAL, stated: a half-marked panel is a real instrumentation
+            // regression and this quietly tolerates it rather than reporting
+            // it. Tolerating it costs a known-imperfect heuristic; reporting it
+            // would invent a product FAIL out of a testid, which is the trade
+            // this file makes the same way every time.
+            const marked =
+              el.querySelector('[data-testid="confirm-receipt-confirm"]') !== null &&
+              el.querySelector('[data-testid="confirm-receipt-back"]') !== null;
+            const isBack = (b) =>
+              marked
+                ? b?.dataset?.testid === 'confirm-receipt-back'
+                : /back/i.test((b?.innerText ?? '').trim());
+            const backButton = panelButtons.find(isBack);
+            // ROUND 46 P2 — COUNTED, not just found. `find` took the
+            // first non-Back button and a second fee-paying action
+            // beside it went unexamined — the same rule the outer card
+            // already applies to duplicate submit controls, one level
+            // in, and the more dangerous level: these buttons send the
+            // transaction rather than opening a panel.
+            // ROUND 51 P2 — COUNTED VISIBLE, which is what the outer
+            // card's duplicate rule has always done and this did not.
+            //
+            // A cluster holding one usable action beside a button hidden
+            // by CSS — responsive variants rendered together is the
+            // ordinary way that happens — counted 2 and produced "the
+            // lender is given more than one way to pay for it". That is a
+            // FALSE FAIL on a correct card, manufactured by the check
+            // added to catch a real one, and the false direction is the
+            // error this file says gets a whole check switched off.
+            //
+            // The same reasoning the card count already carries: a
+            // duplicate hidden in the DOM is not something the lender is
+            // being shown. Selecting from the filtered set too, so the
+            // control judged and trialled is one the lender can reach.
+            // ROUND 73 P2 — LOCATED WITHOUT BACK WHERE BACK IS GONE.
+            //
+            // Anchoring the cluster on Back's parent meant a panel that
+            // had LOST its Back button reported no action present — so
+            // the arm saying "no confirmation action was rendered beside
+            // Back" fired on a panel whose fee-paying action was plainly
+            // on screen. A true verdict reached through a false sentence,
+            // which is the error the `present`/`visible` split above was
+            // written to avoid, one level out.
+            //
+            // The fallback is the confirm pair's own container. Inside
+            // this card `.cluster` comes only from `ConfirmReceipt`, and
+            // the outer submit is not rendered while the panel is open,
+            // so there is nothing else for it to pick up. Back's parent
+            // stays the first choice, so a panel with Back behaves
+            // exactly as before.
+            const cluster = backButton?.parentElement ?? el.querySelector('.cluster');
+            // ROUND 75 P2 — EVERY Back, not the one object identity.
+            //
+            // Excluding `backButton` alone meant a panel rendering TWO
+            // visible Back controls and no confirm button recorded the
+            // SECOND Back as its fee-paying action: visible, enabled,
+            // labelled, and it passes a trial click, so the run reported
+            // `confirmScanned` and could pass with no confirmation action
+            // on the panel at all. The label is what identifies a Back
+            // control, so the label is what has to exclude it — `find`
+            // picking one of several is not a licence to treat the rest
+            // as something else.
+            const allActions = cluster
+              ? [...cluster.querySelectorAll('button')].filter((b) => !isBack(b))
+              : [];
+            const clusterActions = allActions.filter(visible);
+            const confirmButton = clusterActions[0];
+            const confirmAction = {
+              // SELF-REVIEW AFTER ROUND 56 — `present` READS THE
+              // UNFILTERED SET, so the two messages stay distinct.
+              //
+              // Round 51 filtered the cluster by `visible` — correctly,
+              // to stop a hidden responsive variant being counted as a
+              // second fee-paying action — and computing `present` from
+              // the filtered set made `visible` dead: it could only ever
+              // be true when `present` was. A confirm button rendered
+              // but HIDDEN then reported "no confirmation action was
+              // rendered beside Back", which is a true verdict reached
+              // through a false sentence, and round 45 gave those two
+              // states separate messages deliberately.
+              //
+              // The count and the selection keep the filtered set, which
+              // is what round 51's fix was actually about.
+              present: allActions.length > 0,
+              visible: confirmButton !== undefined && visible(confirmButton),
+              enabled: confirmButton !== undefined && confirmButton.disabled === false,
+              labelled:
+                confirmButton !== undefined && (confirmButton.innerText ?? '').trim() !== '',
+              count: clusterActions.length,
+              // ROUND 46 P2 — the index among the CARD's buttons, so the
+              // Playwright side can address this exact control for a
+              // trial click without a testid and without mutating the
+              // page. Same technique as `chosenIndex` and
+              // `chosenSubmitIndex`.
+              index:
+                confirmButton === undefined
+                  ? -1
+                  : [...el.querySelectorAll('button')].indexOf(confirmButton),
+              // AND ITS LABEL, so the Playwright side can CHECK that the
+              // index still addresses this control before trialling it.
+              //
+              // An index is a snapshot of a DOM that the trial then
+              // re-queries. If the panel re-rendered in between, `nth(i)`
+              // can land on BACK — which is always clickable — and the
+              // run would report a broken confirm control as usable. A
+              // false pass on the fee-paying button is the exact failure
+              // this probe exists to prevent, so the cheap identity check
+              // is worth its line.
+              label:
+                confirmButton === undefined
+                  ? null
+                  : (confirmButton.innerText ?? '').trim(),
+              // SELF-REVIEW AFTER ROUND 46 — IS THE LABEL ACTUALLY
+              // PAINTED? `labelled` reads `innerText`, which yields every
+              // word regardless of colour, and `visible(confirmButton)`
+              // cannot help: `paintsText` deliberately EXEMPTS a node with
+              // no own text, because `color` inherits and judging wrappers
+              // would condemn whole cards. A button that wraps its label
+              // in a span — which is how a button is usually written —
+              // is exactly that node, so `color: transparent` on the span
+              // left every signal green on a control reading as blank.
+              //
+              // That is round 37's finding, unfixed for this control. The
+              // receipt was given `rowShown`, which descends to the `dt`
+              // and `dd` for precisely this reason; the button beside it
+              // never got the same treatment. One fix, two sites.
+              //
+              // `some`, NOT `every`. A visually-hidden span carrying the
+              // long form of the label beside a short visible one is
+              // ordinary accessible markup, and `every` would condemn it
+              // — a false FAIL on a correct button, which is the error
+              // this file says gets a check switched off. One painted,
+              // readable text leaf is the claim `labelled` should be
+              // making, and it is enough to make it.
+              //
+              // No text-bearing leaf at all yields `true`: an icon-only
+              // button is a different defect, and `labelled` reports it.
+              labelPainted:
+                confirmButton === undefined
+                  ? false
+                  : (() => {
+                      const leaves = [
+                        confirmButton,
+                        ...confirmButton.querySelectorAll('*'),
+                      ].filter((n) =>
+                        [...n.childNodes].some(
+                          (c) => c.nodeType === 3 && c.textContent.trim() !== '',
+                        ),
+                      );
+                      return leaves.length === 0 || leaves.some((n) => visible(n));
+                    })(),
+            };
+            const rows = [
+              ...el.querySelectorAll(
+                '[data-testid^="forced-close-receipt"], dl.receipt .receipt-row',
+              ),
+            ];
+            // ROUND 26 P2 — ALL SIX ROWS, not one of them.
+            //
+            // `some` banked the scan on a single visible row while the
+            // other five were hidden, and the whole-card `innerText`
+            // still yielded their text — so the amount scan and the
+            // receipt-lead check both ran happily over disclosures the
+            // lender could not see. The rows that go missing under a
+            // partial-hide regression are exactly the ones that matter:
+            // "You can lose" and "Fees". Passing a confirmation scan
+            // over a hidden fee row is the fund-transparency failure
+            // this probe exists to prevent, not a lesser version of it.
+            //
+            // Six is asserted rather than assumed: `ReviewReceipt`
+            // hard-codes six rows in fixed order with no conditionals,
+            // and `ReceiptData` makes all six fields required, so a
+            // receipt showing fewer is either a product regression or a
+            // markup change — and this drive cannot tell those apart
+            // from outside. It reports neither: `false` here leaves
+            // `confirmText` null and the verdict BLOCKS, which says
+            // "the confirmation was not read" rather than inventing a
+            // diagnosis. The generic block reason is a known limitation
+            // and is not fixed here.
+            // ROUND 27 P2 — THE LABEL AND THE VALUE, which is where this
+            // stops.
+            //
+            // A `.receipt-row` is itself a wrapper: it holds a `dt` and a
+            // `dd`, and hiding only the `dd`s leaves every row laid out
+            // at full height on the strength of its labels. So the
+            // lender would read six row headings — "Fees", "You can
+            // lose" — with no figure beside any of them, while
+            // `innerText` handed the hidden values to the amount scan
+            // and this predicate reported six visible rows.
+            //
+            // That is the same wrapper-is-not-its-contents argument that
+            // took the `<dl>`, then the rows, and it terminates here on
+            // purpose rather than by exhaustion: `ReviewReceipt` renders
+            // `<dt>{label}</dt><dd>{value}</dd>` with plain strings, so
+            // `dt` and `dd` are the text-bearing LEAVES — there is no
+            // further container beneath them to be fooled by. Checking
+            // the leaves is the level at which the content actually
+            // lives, and the recursion has a bottom.
+            //
+            // Emptiness needs no separate test: `visible` requires a
+            // non-zero rect, and a `dd` with no content collapses to
+            // zero height, so a blank value fails on geometry.
+            // ROUND 40 P2 — A LEAF MUST CARRY TEXT, not merely occupy
+            // space. `paintsText` deliberately passes a node with no own
+            // text (colour inherits, so judging wrappers would condemn a
+            // whole card) — and that exemption reaches the receipt's
+            // LEAVES, which are the one place a node without text is
+            // itself the defect.
+            //
+            // `.receipt-row dt` is `width: 118px; flex-shrink: 0` and a
+            // flex item, so an EMPTY label keeps its full width and
+            // stretches to the value's height: non-zero rect,
+            // `checkVisibility` positive, clipping walk clean, paint
+            // check exempt. Six rows of unlabelled figures would have
+            // recorded `confirmScanned=true` — a lender shown amounts
+            // with nothing saying which is the fee and which is the loss.
+            //
+            // Asserted HERE rather than inside `visible`, deliberately.
+            // "Must contain text" is true of a receipt leaf and false of
+            // the card, the body wrapper and the submit control, so
+            // pushing it into the shared predicate would condemn nodes
+            // that are correct.
+            // A block body rather than a concise one, deliberately:
+            // `31-observer-visibility.spec.ts` extracts these helpers
+            // from this source by brace-matching, and a concise arrow is
+            // invisible to it. Writing it the short way silently left the
+            // spec unable to inject it — which the spec caught, because
+            // it asserts it found exactly one.
+            // ROUND 62 P2 — THE TEXT THE LENDER CAN ACTUALLY READ, which
+            // is not what `innerText` reports.
+            //
+            // `hasText` asked `innerText` of the `dt`/`dd` WRAPPER, and
+            // `visible` on a wrapper is deliberately lenient: `paintsText`
+            // exempts an element with no own text, and the opacity, filter
+            // and clip rules look at the element and its ANCESTORS. So
+            // `<dt><span style="color: transparent">Fees</span></dt>` keeps
+            // its geometry, passes `visible`, and `innerText` still yields
+            // "Fees". All six rows could satisfy `rowsOk` with not one of
+            // them painted — a funds receipt substantiated by text nobody
+            // can see, on the panel that spends the lender's money.
+            //
+            // Same defect as round 61's body, at the site round 61 cited as
+            // already doing it right. It was right about DESCENDING to the
+            // `dt`/`dd`; it stopped one level short of their content.
+            // Eighth instance on this PR of a fix applied to one of several
+            // parallel sites, and the first where the earlier fix's own
+            // comment named this site as the example to follow.
+            //
+            // Collected by walking TEXT NODES and keeping those whose
+            // element chain is visible, rather than by collecting "leaf
+            // elements": a parent with its own text beside a child with
+            // more would be counted twice by the latter, and the text is
+            // what the caller needs anyway.
+            //
+            // Joined with NOTHING and then whitespace-collapsed. A space
+            // between every text node would split `<b>Loan</b>s` into
+            // "Loan s", and this string is compared against shipped copy
+            // with `includes`.
+            const visibleTextOf = (root) => {
+              if (root === null) return '';
+              // THE ROOT'S OWN VISIBILITY FIRST. A text node directly
+              // under a hidden root would otherwise be collected — the
+              // walk only judges elements it DESCENDS INTO — so a body
+              // erased at its own level still reported its sentence as
+              // painted. Every caller happens to check the root already,
+              // which is exactly why this would have gone unnoticed: the
+              // helper's own answer was wrong while every use of it was
+              // right. Found by self-review.
+              if (!shownBox(root)) return '';
+              const unpainted = /^(script|style|template|title|noscript)$/i;
+              const parts = [];
+              // One shape for every early exit, so a pseudo that paints nothing and
+              // a pseudo whose content could not be resolved stay distinguishable.
+              const NOTHING_PAINTED = { text: '', unresolved: false };
+              let sawUnresolved = false;
+              // ROUND 111 P2 — CSS-GENERATED TEXT IS TEXT THE LENDER READS.
+              //
+              // `::before` / `::after` content is painted on screen and appears in no
+              // `childNodes`, so this walk could not see it and the amount scan
+              // returned a clean verdict on a card displaying `100 USDC`. That is the
+              // false-PASS direction on the one absolute claim this drive makes — the
+              // card states no amount it cannot substantiate — so the text is
+              // collected rather than the assertion declined: declining on any
+              // generated content would switch the check off for every decorative
+              // bullet or icon, which is the same check lost by a different door.
+              //
+              // Only a QUOTED string counts. `counter()`, `attr()`, `url()` and the
+              // `none` / `normal` defaults are not copy this can read, and guessing at
+              // them would invent text. And only when the pseudo actually paints: its
+              // own display, visibility, opacity and colour alpha are checked the way
+              // `paintsText` checks an element's, since a pseudo can be styled away
+              // independently of its owner.
+              const pseudoText = (el, which) => {
+                let cs;
+                try {
+                  cs = getComputedStyle(el, which);
+                } catch {
+                  return NOTHING_PAINTED;
+                }
+                if (!cs) return NOTHING_PAINTED;
+                const content = cs.content;
+                if (!content || content === 'none' || content === 'normal') return NOTHING_PAINTED;
+                if (cs.display === 'none' || cs.visibility !== 'visible') return NOTHING_PAINTED;
+                if (Number.parseFloat(cs.opacity) === 0) return NOTHING_PAINTED;
+                // THE SAME ALPHA RULE AS `alphaOf`, and written out because that one
+                // lives in the occlusion scope and is not reachable from here. My
+                // first version was a one-line regex taking the LAST number before
+                // the paren, which reads `rgb(0, 0, 0)` as alpha 0 and dropped every
+                // pseudo painted in plain black — a fix that silently did nothing,
+                // caught only because the fixture failed. A colour parser written a
+                // third time is the #2102 duplication one level down, and is recorded
+                // there rather than left implicit.
+                const colour = String(cs.color).trim();
+                if (colour === 'transparent') return NOTHING_PAINTED;
+                const fn = /^[a-zA-Z-]+\(([^]*)\)$/.exec(colour);
+                if (fn) {
+                  const body = fn[1];
+                  const cut = body.lastIndexOf('/');
+                  const parts = body.split(',');
+                  const raw = cut >= 0 ? body.slice(cut + 1) : parts.length === 4 ? parts[3] : null;
+                  if (raw !== null && Number.parseFloat(raw) === 0) return NOTHING_PAINTED;
+                }
+                // ROUND 116 P2 — RESOLVE `attr()`, AND SAY SO WHEN NOTHING CAN.
+                //
+                // Reading only the quoted parts drops the dynamic half: `attr(data-amount)
+                // " USDC"` yielded `USDC` with the number gone, so the scan saw no digits
+                // and certified a card that visibly states an amount — the very false PASS
+                // this collection was added to close.
+                //
+                // `attr()` is read off the element. A counter is not: its value comes from
+                // the document's counter state at paint time. What cannot be resolved is
+                // REPORTED rather than guessed at, and the verdict declines to certify the
+                // no-amount claim on that card.
+                let rest = content;
+                let out = '';
+                let unresolved = false;
+                while (rest.length > 0) {
+                  const lit = /^\s*(?:"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)')/.exec(rest);
+                  if (lit) {
+                    out += (lit[1] ?? lit[2] ?? '').replace(/\\(.)/g, '$1');
+                    rest = rest.slice(lit[0].length);
+                    continue;
+                  }
+                  const attr = /^\s*attr\(\s*([A-Za-z_][-\w]*)[^)]*\)/.exec(rest);
+                  if (attr) {
+                    out += el.getAttribute(attr[1]) ?? '';
+                    rest = rest.slice(attr[0].length);
+                    continue;
+                  }
+                  const other = /^\s*[^\s]+/.exec(rest);
+                  if (!other) break;
+                  // `normal` and `none` are handled above; anything else left here is a
+                  // component whose painted text this cannot know.
+                  unresolved = true;
+                  rest = rest.slice(other[0].length);
+                }
+                return { text: out, unresolved };
+              };
+              // ROUND 66 P2 — AN ELEMENT'S OWN TEXT AND ITS SUBTREE ARE JUDGED
+              // SEPARATELY.
+              //
+              // `paintsText` gates only the element's OWN text nodes, because
+              // `color` inherits and a descendant may repaint itself. Descent
+              // is gated on `shownBox` alone: a container whose own text is
+              // transparent still SHOWS a child that sets its own colour, and
+              // gating descent on the full `visible` discarded that child — a
+              // product FAIL on a card whose explanation is painted, which is
+              // the direction this file refuses everywhere else.
+              // ROUND 74 P2 — RENDERED LINE BOUNDARIES SURVIVE THE WALK.
+              //
+              // `innerText` inserts a newline between rendered blocks, and round 24
+              // made that newline a CLAUSE BOUNDARY: `Wait 3 days` above `USDC is
+              // returned later` is two rows, so the ticker is not near the duration.
+              // Round 66 moved the scans onto this painted walk and joined every
+              // text node with nothing, which silently deleted that boundary — so
+              // correct copy on two lines read as one clause and the amount scanner
+              // emitted an observed funds FAIL on an allowed grace duration. A false
+              // FAIL on funds copy, introduced by the fix that made the reading
+              // honest.
+              //
+              // A newline is emitted around a child that BREAKS THE LINE and never
+              // around an inline one, which is what keeps round 66's other rule
+              // intact: `<b>Loan</b>s` must not become `Loan s`. `inline-block` and
+              // `contents` do not break, matching what `innerText` does; `<br>` does,
+              // unless it is display:none.
+              const breaksLine = (el, prev) => {
+                const d = getComputedStyle(el).display;
+                if (d === 'contents' || d.startsWith('inline') || d.startsWith('ruby')) return false;
+                if (!prev) return true;
+                const a = el.getBoundingClientRect();
+                const b = prev.getBoundingClientRect();
+                if (a.height === 0 || b.height === 0) return true;
+                return !(a.top < b.bottom && b.top < a.bottom);
+              };
+              let prevBox = null;
+              const walk = (node) => {
+                const ownPainted = paintsText(node);
+                for (const child of node.childNodes) {
+                  if (child.nodeType === 3) {
+                    if (ownPainted) parts.push(child.textContent.replace(/\s+/g, ' '));
+                  } else if (child.nodeType === 1) {
+                    if (unpainted.test(child.tagName)) continue;
+                    if (child.tagName === 'BR') {
+                      if (getComputedStyle(child).display !== 'none') parts.push('\n');
+                      continue;
+                    }
+                    if (!shownBox(child)) continue;
+                    const boundary = breaksLine(child, prevBox);
+                    if (boundary) parts.push('\n');
+                    prevBox = child;
+                    // Generated text sits around the element's own children, so it is
+                    // collected in the order it is painted.
+                    const before = pseudoText(child, '::before');
+                    if (before.unresolved) sawUnresolved = true;
+                    if (before.text) parts.push(before.text);
+                    walk(child);
+                    const after = pseudoText(child, '::after');
+                    if (after.unresolved) sawUnresolved = true;
+                    if (after.text) parts.push(after.text);
+                  }
+                }
+              };
+              // The ROOT's own generated text too — the walk only sees children,
+              // and a card whose amount is painted through its own ::after is
+              // exactly the shape this was written for.
+              const rootBefore = pseudoText(root, '::before');
+              if (rootBefore.unresolved) sawUnresolved = true;
+              if (rootBefore.text) parts.push(rootBefore.text);
+              walk(root);
+              const rootAfter = pseudoText(root, '::after');
+              if (rootAfter.unresolved) sawUnresolved = true;
+              if (rootAfter.text) parts.push(rootAfter.text);
+              // Horizontal whitespace collapses; the deliberate breaks do not.
+              // Published on the function rather than returned, so the signature
+              // stays a string for its twenty call sites and there is still only ONE
+              // parser of `content`. Read immediately after the call; the walk is
+              // synchronous, so there is no interleaving to get wrong.
+              visibleTextOf.sawUnresolvedGenerated = sawUnresolved;
+              return parts
+                .join('')
+                .replace(/[^\S\n]+/g, ' ')
+                .replace(/[^\S\n]*\n[\s]*/g, '\n')
+                .trim();
+            };
+            const rowShown = (row) => {
+              if (!visible(row)) return false;
+              const dt = row.querySelector('dt');
+              const dd = row.querySelector('dd');
+              if (dt === null || dd === null) return false;
+              if (!visible(dt) || !visible(dd)) return false;
+              return visibleTextOf(dt) !== '' && visibleTextOf(dd) !== '';
+            };
+            // An OBJECT now, not a boolean: the caller needs the
+            // confirm-action facts as well as whether the rows read.
+            //
+            // ROUND 50 P2 — AND THE TEXT OF THE ROWS THAT WERE READABLE.
+            //
+            // `rowsOk` is all-or-nothing by design, and the caller used
+            // it to decide whether to take the card's text at all. So one
+            // row missing, hidden or clipped threw away the text of the
+            // five on screen, and an invented amount stated in one of
+            // THOSE was reported as an incomplete reading rather than as
+            // the product failure it is.
+            //
+            // Each readable row is carried SEPARATELY rather than joined:
+            // round 35 established that joining renders lets one supply
+            // context for another's digits, and the scanner's exemptions
+            // are all context.
+            const shown = rows.filter(rowShown);
+            // ROUND 53 P2 — AND EVERYTHING ELSE ON THE PANEL THAT IS
+            // VISIBLE, which round 50's fix left behind.
+            //
+            // Carrying only the readable ROWS still discarded every other
+            // visible region of the confirmation whenever one row failed:
+            // a warning banner, a gas note, the confirm control's own
+            // label. `Confirm 100 USDC` beside five readable rows and one
+            // hidden row was reported as an incomplete reading rather
+            // than as the invented figure it is. Half the fix, again.
+            //
+            // Own-text nodes only, and each carried SEPARATELY: `visible`
+            // is the drive's full predicate, and joining renders is what
+            // round 35 forbids because every exemption in the scanner is
+            // context.
+            // ROUND 60 P2 — EXCLUDE THE ROWS ALREADY CARRIED, not every
+            // row.
+            //
+            // Excluding membership in ANY receipt row dropped the
+            // visible leaves of rows that failed `rowShown`. A row whose
+            // LABEL is hidden or clipped while its value is on screen
+            // stating `100 USDC` was therefore removed from `rowsText`
+            // (the row failed) and from `otherText` (it is in a row) —
+            // and `rowsOk` then made `confirmText` null, so the figure
+            // reached no scan at all and the visit reported merely an
+            // incomplete observation.
+            //
+            // `shown` is what is already carried, so it is what must be
+            // excluded. Everything else visible on the panel, wherever
+            // it sits, is scanned — which is what round 53's
+            // whole-panel fix was for, one level finer.
+            const inRow = (n) => shown.some((r) => r === n || r.contains(n));
+            const otherText = [...el.querySelectorAll('*')]
+              .filter(
+                (n) =>
+                  !inRow(n) &&
+                  [...n.childNodes].some(
+                    (c) => c.nodeType === 3 && c.textContent.trim() !== '',
+                  ) &&
+                  visible(n),
+              )
+              .map((n) => visibleTextOf(n))
+              .filter((t) => t.trim() !== '');
+            return {
+              rowsOk: rows.length === 6 && shown.length === rows.length,
+              confirmAction,
+              // SEPARATE from `otherText`, deliberately: the amount scan
+              // wants both, and the row-identity check (round 53) wants
+              // the rows alone. Merging them would make "six rows" mean
+              // "six of anything on the panel".
+              //
+              // ROUND 63 P2 — THE PAINTED TEXT, not `innerText`, and the
+              // previous round computed it and threw it away.
+              //
+              // `rowShown` used `visibleTextOf` as a BOOLEAN and this
+              // projection then recorded the row's raw `innerText`. A row
+              // carrying painted filler beside an erased label or value
+              // therefore passed the readability test AND supplied the
+              // expected disclosure from text nobody can see — all six
+              // pairs satisfied, `confirmScanned=true`, while the lender
+              // reads filler instead of what the receipt must disclose.
+              //
+              // Ninth instance on this PR of a fix reaching one of
+              // several parallel sites, and a new variant of it: the
+              // right value was computed at the right moment and
+              // discarded one line later.
+              // ROUND 68 P2 — WAS THE PANEL STILL THERE in this same pass?
+              //
+              // `ForcedCloseCard` legitimately removes the whole
+              // `ConfirmReceipt` when readiness changes after the panel
+              // opened — paused, sequencer-blocked, otherwise withheld —
+              // while keeping the outer card mounted. This evaluate then
+              // finds no actions and reports `present: false`, which the
+              // hoisted structural arm reads as "the confirmation opened
+              // but no action was rendered beside Back": a product FAIL
+              // invented out of a legitimate cross-render change, since
+              // no atomic snapshot ever saw an open panel missing its
+              // action.
+              //
+              // Recorded IN THIS PASS rather than inferred afterwards,
+              // which is the whole point — the fault and its excuse have
+              // to come from one DOM read or the comparison is between
+              // two different moments (round 9's rule).
+              //
+              // ROUND 69 P2 — DERIVED FROM THE PANEL, not from its rows.
+              //
+              // `rows.length > 0` conflated "the panel is gone" with
+              // "the panel is there and broken". A confirmation still
+              // visibly open on its Back button, with both the receipt
+              // rows and the action removed, reported `panelPresent:
+              // false` — and the guard above then read a directly
+              // observed broken funds confirmation as an explained
+              // removal, downgrading it to incomplete. My own round-68
+              // fix, over-reaching by one case.
+              //
+              // The Back control is the panel: it is what this pass
+              // already located to anchor the action cluster, it is
+              // rendered for every confirmation state, and it survives
+              // exactly the regression that removes everything else.
+              // Rows are CONTENT, and content going missing is the
+              // defect rather than the excuse for it.
+              //
+              // ROUND 70 P2 — EITHER MARKER. Back-only conflated "no Back
+              // control" with "no panel", which is round 69's own
+              // correction by the opposite door: the rows are the other
+              // half of the evidence and they fail independently.
+              panelPresent:
+                (backButton !== undefined && visible(backButton)) || rows.length > 0,
+              rowsText: shown.map((r) => visibleTextOf(r)).filter((t) => t.trim() !== ''),
+              otherText,
+              // ROUND 64 P2 — the WHOLE panel's painted text, carried
+              // beside the raw `confirmText` rather than replacing it.
+              //
+              // `confirmText` has one other job — it is what
+              // `confirmScanned` is derived from and what says the
+              // receipt was COMPLETELY covered — so swapping it would
+              // change two meanings to fix one. This is the scanned
+              // text; that stays the coverage fact.
+              panelText: visibleTextOf(el),
+            };
+          })
+          .catch(() => null);
+        confirmText = receiptShown?.rowsOk
+          ? await card.innerText({ timeout: 2_000 }).catch(() => null)
+          : null;
+        confirmVisibleText = receiptShown?.rowsOk ? (receiptShown.panelText ?? null) : null;
+        confirmAction = receiptShown?.confirmAction;
+        if (confirmAction) confirmAction.panelPresent = receiptShown?.panelPresent;
+        // ROUND 50 P2 — kept whatever `rowsOk` decided, so a figure on a
+        // row the lender COULD see is scanned even when a different row
+        // was unreadable.
+        confirmRowsText = receiptShown?.rowsText ?? null;
+        // ROUND 53 P2 — the panel's OTHER visible text, carried beside
+        // the rows rather than inside them: the amount scan wants both,
+        // the row-identity check wants the rows alone.
+        confirmOtherText = receiptShown?.otherText ?? null;
+        // ROUND 46 P2 — CAN IT ACTUALLY RECEIVE A CLICK?
+        //
+        // Geometrically visible, natively enabled and labelled is not
+        // the same as actionable: an element covering it, or
+        // `pointer-events: none`, leaves every one of those true while
+        // the lender cannot activate it — and the run reports the route
+        // as covered.
+        //
+        // Playwright's `trial: true` runs the full actionability suite
+        // (visible, stable, receives events, enabled) and returns
+        // WITHOUT dispatching the click. That is what makes it usable
+        // here at all: this drive is watch-only and the real click sends
+        // a fee-paying transaction.
+        //
+        // AND IT IS TRIALLED ONLY IF THE INDEX STILL ADDRESSES IT. The
+        // index came from a snapshot; the trial re-queries the DOM. A
+        // re-render in between can leave `nth(i)` on BACK, which is
+        // always clickable — so a broken confirm control would be
+        // reported as usable. The label is re-read and compared first.
+        //
+        // THREE OUTCOMES, ALL THREE WRITTEN (round 47 P2). `true` and
+        // `false` are the trial's verdict; `null` is "this run did not
+        // test it", which happens when the re-read label does not match
+        // the control the snapshot described.
+        //
+        // Writing `null` rather than leaving the field absent is the
+        // whole point. Absent has to keep meaning "a record predating
+        // this field", so that an older observation is not accused of a
+        // gap it could not have filled — but that made the CURRENT
+        // untested case indistinguishable from it, and the verdict then
+        // passed a lender run that had never established the fee-paying
+        // action was usable. The drive knows which case it is in, so it
+        // says so, and the verdict reports an untested confirmation as
+        // an incomplete observation rather than as a success.
+        //
+        // Assigned on every path below, unconditionally, for the reason
+        // this file keeps relearning: a field written at some exits and
+        // not others is how `visibleSubmits` went missing twice.
+        // Either marker proves the panel, matching the detection gate
+        // above rather than inventing a second notion of "still open".
+        const panelStillUp = async () => {
+          const [rows, action] = await Promise.all([
+            card
+              .locator('[data-testid^="forced-close-receipt"], dl.receipt .receipt-row')
+              .count()
+              .catch(() => 0),
+            card.locator('.cluster button').count().catch(() => 0),
+          ]);
+          return rows > 0 || action > 0;
+        };
+
+        if (confirmAction) {
+          if (confirmAction.index >= 0) {
+            const target = card.locator('button').nth(confirmAction.index);
+            const labelNow = await target
+              .innerText({ timeout: 2_000 })
+              .then((t) => t.trim())
+              .catch(() => null);
+            // ROUND 76 P2 — AND A WITHDRAWN PANEL IS NOT AN UNUSABLE
+            // CONTROL, here as well as on Back.
+            //
+            // The label re-read protects the identity of the control; it
+            // does not survive the panel going away DURING the trial,
+            // which `ForcedCloseCard` is explicitly allowed to do when
+            // readiness changes. The detached locator then rejects and
+            // this recorded `false` — an unusable fee-paying action, from
+            // a render that never existed. Round 75 fixed exactly this on
+            // the Back control and left its sibling, which is this PR's
+            // most frequent finding once more.
+            if (labelNow === null || labelNow !== confirmAction.label) {
+              confirmAction.clickable = null;
+            } else {
+              const trialled = await target
+                .click({ trial: true, timeout: 3_000 })
+                .then(() => true)
+                .catch(() => false);
+              confirmAction.clickable = trialled ? true : (await panelStillUp()) ? false : null;
+            }
+          } else {
+            // No control to trial. The verdict FAILS this above on
+            // `present`, so this is unreachable on the passing path —
+            // written anyway so the field's meaning does not depend on
+            // which arm ran.
+            confirmAction.clickable = null;
+          }
+        }
+        // ROUND 65 P2 — AND WHETHER THE LENDER CAN CANCEL.
+        //
+        // This click's failure was swallowed whole and recorded nothing,
+        // so a Back control that is permanently covered or carries
+        // `pointer-events: none` left the receipt and the confirm action
+        // scanning clean — and the verdict passed a confirmation the
+        // lender cannot back out of without leaving the page. On a
+        // pre-signature panel that is the one control whose whole job is
+        // to let them not spend money.
+        //
+        // TRIALLED, not inferred from the real click. The real click is
+        // needed anyway to restore the page, but its failure is
+        // ambiguous: a panel that closed on its own re-render fails it
+        // exactly as an unreachable control does. `trial: true` runs the
+        // full actionability suite — visible, stable, receives events,
+        // enabled — without dispatching, and is taken while the panel is
+        // demonstrably still open.
+        //
+        // THREE OUTCOMES, ALL WRITTEN, the same discipline
+        // `confirmAction.clickable` carries since round 47: `true` /
+        // `false` are the trial's verdict and `null` is "this run did not
+        // establish it". `undefined` has to keep meaning "a record
+        // predating this field", so the current run must never produce
+        // it.
+        // ROUND 75 P2 — AND THE PANEL HAS TO STILL BE THERE.
+        //
+        // `confirmAction` comes from the receipt evaluation; these two
+        // facts were taken in a LATER pass. `ForcedCloseCard` is
+        // explicitly allowed to withdraw the whole confirmation when
+        // readiness changes, so a panel that closed in between recorded
+        // `confirmAction.present: true` beside `backAction.present:
+        // false` — and the missing-Back arm reported a lender trapped on
+        // a panel, from two facts no single render ever showed together.
+        // The same race turns a trial rejection into "the control is
+        // unusable" when what actually happened is that it went away with
+        // everything else.
+        //
+        // So absence and a failed trial are only believed while the panel
+        // is demonstrably still up. Otherwise they are `null` — this run
+        // did not establish it — which is the third outcome the
+        // `confirmAction` trial has carried since round 47, for the same
+        // reason.
+        //
+        const backCount = await back.count().catch(() => 0);
+        backAction = {
+          present: backCount > 0 ? true : (await panelStillUp()) ? false : null,
+          clickable: null,
+        };
+        if (backAction.present) {
+          const trialled = await back
+            .click({ trial: true, timeout: 3_000 })
+            .then(() => true)
+            .catch(() => false);
+          backAction.clickable = trialled ? true : (await panelStillUp()) ? false : null;
+          // ROUND 68 P2 — AND IS IT PAINTED?
+          //
+          // Playwright's actionability suite does not consider ancestor
+          // opacity — `31-observer-visibility.spec.ts` exists because
+          // this drive's predicate and Playwright's disagree on exactly
+          // that — so a Back button under `opacity: 0`, or with
+          // transparent label text, still accepts a trial click and the
+          // confirmation passed with no cancel control the lender can
+          // SEE. The two fee-paying controls have carried painted
+          // evidence since rounds 46 and 54; the one control that exists
+          // to stop a payment had none.
+          //
+          // `visible` for the button itself and the leaf rule for its
+          // label, mirroring `submitLabelPainted` exactly rather than
+          // inventing a second way to ask the same question.
+          backAction.painted = await back
+            .evaluate((el, [clipSrc, paintSrc, boxSrc, visSrc]) => {
+              const scope = new Function(
+                `${clipSrc}\n${paintSrc}\n${boxSrc}\n${visSrc}\nreturn { visible, paintsText };`,
+              )();
+              if (!scope.visible(el)) return false;
+              const leaves = [el, ...el.querySelectorAll('*')].filter((n) =>
+                [...n.childNodes].some(
+                  (c) => c.nodeType === 3 && c.textContent.trim() !== '',
+                ),
+              );
+              // ROUND 94 P2 — AN EMPTY LEAF SET IS NOT "PAINTED" FOR THIS
+              // CONTROL, and here it differs from the submit it was copied
+              // from.
+              //
+              // `submitLabelPainted` treats no-text-at-all as painted
+              // because the submit has its own `labelled` check, which
+              // catches a blank button separately. Back has no such check:
+              // the marker locator still finds it, the trial click still
+              // succeeds, and a Back button with its text removed was
+              // reported as a readable way out. The lender sees a blank
+              // control beside a fee-paying action and cannot tell it is
+              // the way to decline.
+              //
+              // So an empty leaf set is `false` here. Round 68 added this
+              // question precisely because Playwright's actionability
+              // ignores what the lender can see; answering "painted" for a
+              // control with nothing to paint gives that away again.
+              return leaves.length > 0 && leaves.some((n) => scope.visible(n));
+            }, VISIBILITY_HELPER_SOURCES)
+            .catch(() => null);
+        }
+        // Leave the page as it was found. Failing to close it is not a
+        // finding and must not fail the drive.
+        await back.click({ timeout: 3_000 }).catch(() => {});
+      }
+    }
+  }
+  return {
+    // Everything the DOM pass observed, whatever it observed — see the
+    // note above the spread's twin at the top of this block.
+    ...snap,
+    mounted: true,
+    attached: true,
+    confirmText,
+    confirmVisibleText,
+    confirmAction,
+    // ROUND 65 P2 — the CANCEL control, judged like the confirm one.
+    backAction,
+    confirmExpected,
+    // ROUND 50 P2 — whether the OUTER submit could take a click. Carried
+    // so an unreachable control is reported as the defect it is rather
+    // than as an unread confirmation.
+    submitClickable,
+    confirmRowsText,
+    confirmOtherText,
+    settled,
+    // Every render read during the readiness wait, including the ones
+    // the poll superseded (round 31 P2).
+    seenTexts,
+    seenVisibleTexts,
+    seenRenders,
+    // ROUND 35 P2 — travels with `seenTexts`, and for the same reason:
+    // both are things this drive SAW, and the settled snapshot is not a
+    // record of what it saw.
+    visibleCardsPeak,
+    visibleSubmitsPeak,
+    bodyHiddenSeen,
+    generatedUnresolved: generatedUnresolvedSeen,
+  };
 }
 
 /**
@@ -3222,7 +10245,64 @@ visited.push(await visit('/positions'));
 // if every sliced row raced out it reported BLOCKED while eligible
 // candidates sat untried behind the slice (#1529 review round 9).
 let observedDetails = 0;
-for (const l of mine) {
+// WHICH CANDIDATES GO FIRST — the three bands, their history and the
+// reasoning are in `walkOrder.mjs`, where they are a pure function with
+// tests rather than three comment blocks around one expression. This file
+// supplies the ANSWERS and does the asking.
+//
+// Round 74 added no band. It moved WHERE the answers are resolved, which
+// is this file's business and not that module's — so the two are counted
+// differently on purpose, and neither is a stale copy of the other.
+//
+// BOTH answers are resolved once, above the authority choice, so the walk
+// consumes exactly what the choice did rather than asking again against a
+// different candidate set. Round 74 moved `acceptsCloseOut` up there for
+// the reason `acceptedSale` was moved before it: a ranking applied only
+// to the selected authority's loans cannot recover a better candidate one
+// authority away.
+const readyFirst = walkOrderFor({
+  loans: mine,
+  role: ROLE,
+  activeStatus: STATUS_ACTIVE,
+  acceptedSale,
+  acceptsCloseOut,
+});
+if (acceptsCloseOut.size > 0) {
+  // ROUND 79 P2 — SAY WHAT THIS RUN ACTUALLY DID.
+  //
+  // The message claimed the probe ran "across every authority" and
+  // decided "which lender is observed". Once `OBSERVE_ADDRESS` narrows
+  // the pre-pass (round 78) both claims are false in that mode: the
+  // lender was fixed by the override before any probing, and only that
+  // lender's loans were probed. A run report that overstates what it
+  // covered is the same defect as a verdict that does, one layer out.
+  const scoped = process.env.OBSERVE_ADDRESS !== undefined;
+  console.log(
+    `\nresolved close-out capability on ${acceptsCloseOut.size} position(s)` +
+      (scoped
+        ? ` held by the requested lender` +
+          `\n  → the lender was fixed by OBSERVE_ADDRESS, so this decides the visit ORDER only.`
+        : ` across every authority` +
+          `\n  → this decides both which lender is observed and, within that lender, the visit order.`) +
+      `\n  → ${mine.length} eligible loan(s) here against a cap of ${MAX_POSITIONS}, so the order decides ` +
+      `whether the confirmation can be scanned at all.` +
+      `\n  → ordering only: the protocol accepting is not the card offering it, and no verdict reads this.`,
+  );
+}
+
+// Scoped to the OBSERVED authority's own loans. `acceptedSale` is now
+// resolved across every authority so the choice above can use it, and
+// naming its whole contents here would report positions this walk was
+// never going to visit as though they had been passed over in it.
+const demoted = mine.filter((l) => acceptedSale.has(l.id)).map((l) => l.id);
+if (demoted.length > 0) {
+  console.log(
+    `\ndeprioritised ${demoted.length} Active position(s) with an accepted sale ` +
+      `awaiting completion: ${demoted.join(', ')}` +
+      `\n  → the card is correctly unmounted there, so they cannot exercise it.`,
+  );
+}
+for (const l of readyFirst) {
   if (observedDetails >= MAX_POSITIONS) break;
   const changed = await stillEligible(l);
   if (changed) {
@@ -3289,7 +10369,130 @@ for (const v of visited) {
                 .join(', ')}]`
             : '') +
           (v.advancedWhy ? ` (${v.advancedWhy})` : '') +
-          (v.advancedJumps ? '' : `\n      sell-now row: ${v.sellNowText ?? '-'}\n      listing row: ${v.listText ?? '-'}`)
+          (v.advancedJumps ? '' : `\n      sell-now row: ${v.sellNowText ?? '-'}\n      listing row: ${v.listText ?? '-'}`) +
+          // Printed on EVERY lender detail visit, including a blocked
+          // one. A verdict that only appears when it fails leaves the
+          // reader unable to tell "checked and fine" from "never
+          // looked" — which is the distinction this whole drive is
+          // built around.
+          (v.forcedCloseVerdict
+            ? `\n      forced-close: ${v.forcedCloseVerdict.verdict}` +
+              ` (${v.forcedCloseVerdict.why})` +
+              (v.forcedCloseVerdict.verdict === 'pass'
+                ? ` checkRunning=${v.forcedCloseVerdict.checkRunning}` +
+                  // Whether the pre-sign confirmation was opened and
+                  // scanned. Printed because the no-amount claim covers
+                  // that panel too, and a reader has no other way to
+                  // tell a card-only scan from a full one.
+                  ` confirmScanned=${v.forcedCloseVerdict.confirmScanned}` +
+                  // ROUND 27 — the CONTROL COUNT, printed on every pass.
+                  //
+                  // Not decoration. This field has now been dropped in
+                  // the projection between the DOM pass and the verdict
+                  // twice, and both times a green unit suite and a clean
+                  // live run said nothing, because the verdict's tests
+                  // feed it constructed records and the drive never
+                  // showed what it actually carried. The spread above
+                  // stops the drop; this makes the carriage OBSERVABLE,
+                  // so a future silent regression to `undefined` is
+                  // visible in the run output instead of waiting for a
+                  // reviewer to read the projection.
+                  ` submits=${v.forcedCloseVerdict.visibleSubmits}` +
+                  // ROUND 36, SELF-REVIEW — and the CARD PEAK beside it.
+                  //
+                  // `visibleCardsPeak` is carried by hand at three exits
+                  // rather than through the snapshot spread, which is
+                  // precisely the arrangement that lost `visibleSubmits`
+                  // twice. Printing it is the remedy round 27 settled
+                  // on: the carriage becomes observable in the run
+                  // output instead of resting on a reviewer having read
+                  // all three sites.
+                  ` peak=${v.forcedCloseVerdict.visibleCardsPeak}` +
+                  // ROUND 39 — and the CONTROL peak beside the card one.
+                  // Both are carried by hand at three exits rather than
+                  // through the snapshot spread, so both need round 27's
+                  // remedy: a regression to `undefined` at any one of
+                  // those sites shows in the output instead of passing
+                  // confidently. I claimed on the review thread that this
+                  // was printed before it was; it is now.
+                  ` submitPeak=${v.forcedCloseVerdict.visibleSubmitsPeak}` +
+                  // SELF-REVIEW AFTER ROUND 46 — and WHETHER THE TRIAL
+                  // CLICK RAN, since round 47 left exactly one value
+                  // here that should never be seen. An untested action
+                  // is BLOCKED, so a pass can only carry `yes`; an
+                  // `unrecorded` on a current run means the assignment
+                  // went missing, which is round 27's remedy for a field
+                  // carried by hand — print it rather than pass
+                  // confidently.
+                  // SELF-REVIEW AFTER ROUND 50 — and HOW MANY RENDERS
+                  // the unsafe-render arm actually had to judge. An
+                  // empty `seenRenders` scans nothing and passes exactly
+                  // like a clean scan, which is round 27's lesson about
+                  // `visibleSubmits` in a new place.
+                  ` renders=${v.forcedCloseVerdict.rendersJudged}` +
+                  ` confirmClickable=${
+                    v.forcedCloseVerdict.confirmClickable === undefined
+                      ? 'unrecorded'
+                      : v.forcedCloseVerdict.confirmClickable
+                        ? 'yes'
+                        : 'no'
+                  }` +
+                  // ROUND 64 P2 — and whether the settlement-route check
+                  // could fire at all. A route the drive could not read
+                  // makes that arm silent, and a silent arm passes
+                  // exactly like a satisfied one.
+                  ` route=${v.forcedCloseVerdict.routeKnown ? 'checked' : 'unread'}` +
+                  // Whether the protocol's answer was established across
+                  // every block of the bracket, rather than only at its
+                  // ends (round 85). `no`/`unknown` means the protocol
+                  // arms could not accuse on this visit, which a green
+                  // line would otherwise not say.
+                  // ROUND 105 P2 — `spanStable`, not `span`. The block
+                  // interval below took the bare name too, so one record
+                  // carried two different meanings on one key: ambiguous to
+                  // a reader and silently lossy to any key-value parser.
+                  ` spanStable=${v.forcedCloseVerdict.spanStable ?? 'unknown'}`
+                : '') +
+              // ROUND 14 — WHETHER THE ABSENCE GATE COULD HAVE FIRED.
+              //
+              // The gate now requires this observer to have caught up
+              // with the head the PAGE was seen to know, and an
+              // unobserved page head is deliberately not-ready — so a
+              // deployment whose RPC traffic this drive cannot read
+              // would report every absence as incomplete and never
+              // FAIL. That is the safe direction, but it must not be
+              // SILENT: printed on every visit so a reader can tell a
+              // gate that is armed from one that structurally cannot
+              // fire.
+              // ROUND 102 P2 — the upper edge is the one the verdict used:
+              // the higher of the overheard head and the asked ceiling.
+              // `unestablished` is not the same as `unobserved`, and the
+              // two send an operator to different places.
+              // ROUND 104 P2 — each threshold as itself, because they are
+              // compared differently and one combined number cannot say what
+              // had to be cleared.
+              //
+              // ROUND 105 P2 — AND THE COMPARISON IS IN THE EMITTED LABEL.
+              // Round 104's note said each comparison was "stated beside its
+              // figure" and that was true of the source comment only: the
+              // output read `pinned=20 sighting=20 ceiling=20`, three equal
+              // numbers that look interchangeable and are not. The operator
+              // is part of the key now, so the line says what it means
+              // without anyone opening this file.
+              // ROUND 106 P2 — the operator AND the name. Round 105 put the
+              // comparison into the key and dropped the identity with it, so
+              // a differing pinned block and sighting emitted `head>19
+              // head>20`: two tokens on one key, which a reader cannot
+              // attribute and a parser silently halves. That is the same
+              // duplicate-key defect round 105 FIXED for `span=`, recreated
+              // in the same commit that fixed it.
+              ` spanBlocks=${v.forcedCloseHeadFloor ?? 'unobserved'}..${v.forcedCloseHeadScanned ?? 'none'}` +
+              `${v.forcedCloseHeadScanned !== null && v.forcedCloseScanComplete === false ? '(partial)' : ''}` +
+              ` head>pinned=${v.forcedCloseHeadPinned ?? 'unobserved'}` +
+              ` head>sighting=${v.forcedCloseHeadPageSighting ?? 'unobserved'}` +
+              ` head>=ceiling=${v.forcedCloseHeadCeiling ?? (v.forcedCloseCeilingSound === false ? 'unestablished' : 'unobserved')}` +
+              ` confirmedAt=${v.forcedCloseConfirmedAt ?? 'n/a'}`
+            : '')
         : `      chooser=${v.chooser} handover=${v.handover} offset=${v.offset}` +
         ` holdCard=${v.holdCard} freeHeldBtn=${v.freeHeld}`,
     );
@@ -3346,8 +10549,24 @@ if (allowlistTooNarrow.length) {
 }
 // Same split as the provider path: a refused WRITE is a finding about the
 // page; a refused non-write is our allowlist being too narrow.
-const httpWrites = blockedHttp.filter((b) => b.method === null || WRITE_SHAPED.test(b.method));
-const httpGaps = blockedHttp.filter((b) => b.method !== null && !WRITE_SHAPED.test(b.method));
+const httpMalformed = blockedHttp.filter((b) => b.method === MALFORMED_RPC);
+const httpWrites = blockedHttp.filter(
+  (b) => b.method !== MALFORMED_RPC && (b.method === null || WRITE_SHAPED.test(b.method)),
+);
+const httpGaps = blockedHttp.filter(
+  (b) => b.method !== null && b.method !== MALFORMED_RPC && !WRITE_SHAPED.test(b.method),
+);
+if (httpMalformed.length) {
+  // Its own line, and its own words. This is a defect in the page — it
+  // sent something that is not a JSON-RPC request — but calling it an
+  // attempted write sends the reader looking for a signature prompt that
+  // never happened (round 93 P2).
+  console.log(
+    `\nMALFORMED RPC — the page sent ${httpMalformed.length} request(s) this` +
+      ` drive could not parse as JSON-RPC, so they were refused:`,
+  );
+  httpMalformed.slice(0, 8).forEach((b) => console.log(`  ${b.why} → ${b.url}`));
+}
 if (httpWrites.length) {
   console.log(`\nREAD-ONLY VIOLATION — mutating HTTP refused: ${httpWrites.length}`);
   httpWrites.slice(0, 8).forEach((b) => console.log(`  ${b.why} → ${b.url}`));
@@ -3391,7 +10610,7 @@ console.log(`\n${visited.length - failures}/${visited.length} routes clean`);
 // chooser — is only meaningful if the page actually received what it
 // asked for, so unreachable page traffic downgrades those to BLOCKED
 // rather than reporting a flaky egress as a broken product.
-if (pageTriedToWrite.length || httpWrites.length) process.exit(1);
+if (pageTriedToWrite.length || httpWrites.length || httpMalformed.length) process.exit(1);
 // Judged with the write attempts, and ahead of `routeFailures`, for the
 // same reason they are: this is a finding about the APP that a reachable
 // provider positively established. Ordering it after the BLOCKED check
@@ -3405,6 +10624,124 @@ if (malformedRpc.length) {
   malformedRpc.slice(0, 6).forEach((r) => console.log(`  ${r.why} → ${r.url}`));
   process.exit(1);
 }
+// ROUND 38 P2 — A FUNDS DEFECT ALREADY SEEN OUTRANKS EVERY
+// INFRASTRUCTURE BLOCKER BELOW IT.
+//
+// `failures` is consulted at the very end, after the route, WebSocket
+// and wrong-chain gates have each had a chance to exit 2. So a card
+// POSITIVELY OBSERVED stating an amount it cannot know — the one
+// absolute claim this drive makes — was reported as BLOCKED whenever any
+// unrelated request failed, or whenever the deployment happens to use
+// WebSocket RPC at all. The batch reads that as "nothing was learned",
+// and the finding disappears into a re-run.
+//
+// This is the SAME rule `forcedCloseVerdict` applies five times inside a
+// single visit — a definite observation outranks an uncertain one — and
+// it was missing from the one place that decides what the run actually
+// reports. Those blockers are all statements about what could NOT be
+// established; none of them unsees a rendered card.
+//
+// Scoped to forced-close FAILs rather than to `failures` as a whole,
+// deliberately. The other verdicts in `problems` include absence
+// findings, and an absence is exactly the kind of conclusion a
+// transport failure or an unobservable socket read legitimately
+// undermines. What is carried past them is content that was READ.
+//
+// ROUND 39 P2 — `failKind === 'observed'`, AND THE ROUND-38 VERSION OF
+// THIS FILTER DID THE OPPOSITE OF WHAT ITS OWN COMMENT PROMISED.
+//
+// The paragraph above says absence findings must stay behind these gates
+// because a transport failure legitimately explains a missing surface.
+// The filter was `verdict === 'fail'`, which includes the two ABSENCE
+// arms — so a route failure or a wrong-chain page endpoint could remove
+// the card, the observer's own chain would still report the position
+// eligible, and the run would exit 1 accusing the product before the
+// gate that explains it ever ran. The principle was stated correctly and
+// implemented backwards in the same commit.
+//
+// The verdict now says which kind each failure is, rather than this
+// filter guessing from the `why` string. Every arm is tagged
+// explicitly — not defaulted — so a fail added later has to state
+// whether it was READ or INFERRED instead of inheriting whichever
+// default happened to be there.
+// ROUND 79 P2 — AND THE PROMOTION COVERS EVERY DEFECT THE SURFACE ITSELF
+// SHOWED, not only the forced-close card's.
+//
+// Round 78 tagged each problem `observed` or `absence`, and used the tags
+// only at the unknown-chain gate. So a dead Advanced anchor or a
+// mis-ordered row — read off a page that rendered — was still swallowed
+// by the route, WebSocket, wrong-chain and allowlist blockers as "nothing
+// was learned", which is round 38's finding surviving in every guard it
+// was not applied to.
+//
+// NOT EVERY `observed` TAG IS PROMOTED, and the line is deliberate rather
+// than convenient. `kind` answers "could an unknown CHAIN explain this";
+// `blockable` answers the harder "could a blocked REQUEST explain this",
+// and both are now stated at the problem's own site. Those differ:
+//
+//   promoted   a dead jump anchor, a mis-ordered row, and the card's own
+//              observed findings — DOM facts about a page that rendered.
+//              Both are structurally immune to a missing read rather than
+//              merely unlikely to be caused by one, which is what makes
+//              the promotion safe and is worth stating since the gate
+//              rests on it: `waitFirst` is reported as `null` and never
+//              `false` when a row it needs is absent, so a blocked read
+//              cannot manufacture an ordering defect; and an
+//              `advancedAnchors` entry exists only because its jump
+//              BUTTON rendered, and the button and its target section
+//              come from the same component, so missing data removes the
+//              entry rather than breaking the link.
+//   not        a hooks-order crash, an uncaught page error, a nav failure
+//              or a non-2xx. Every one of those is a plausible CONSEQUENCE
+//              of the drive's own allowlist refusing a request, and round
+//              69 added the allowlist gate precisely because this drive
+//              can break the page it is judging. Promoting them would
+//              blame the product for the harness.
+//
+// So the residual is a real defect reported as BLOCKED on a run that also
+// had a transport failure — loud, re-runnable, and the direction this
+// file chooses every time.
+//
+// SELF-REVIEW — READ OFF THE TAG, NOT THE MESSAGE. The first version of
+// this filter was a regex over the `why` string, written thirty lines
+// below the paragraph above that says the verdict must state its own kind
+// "rather than this filter guessing from the `why` string", and that
+// every arm must tag itself "instead of inheriting whichever default
+// happened to be there". A reworded message would have silently dropped
+// out of the promotion, and a new arm would have defaulted to unpromoted
+// with nothing to notice it.
+const observedNow = visited.flatMap((v) =>
+  visitProblemKinds(v, ROLE)
+    .filter((pr) => pr.blockable === false)
+    .map((pr) => ({ path: v.path, why: pr.why })),
+);
+if (observedNow.length) {
+  console.log(
+    `\n${observedNow.length} defect(s) were READ off a page that rendered.` +
+      ` Reported ahead of any infrastructure blocker, for the reason the` +
+      ` forced-close findings are: a blocked request does not reorder` +
+      ` static markup or rebind a control to another anchor.`,
+  );
+  observedNow.forEach(({ path, why }) => console.log(`  ${path}: ${why}`));
+  process.exit(1);
+}
+// ROUND 82 P3 — THE FORCED-CLOSE EXIT USED TO BE WRITTEN TWICE HERE, and
+// the second copy was unreachable.
+//
+// An observed forced-close failure already arrives through the block
+// above: `visitProblemList` reads the card's own `failKind` and pushes it
+// with `blockable: false`, which is exactly what `observedNow` selects,
+// so the process had always exited before the duplicate could run. The
+// only shapes that reach neither are a nav failure and a non-detail path
+// — and `observeForcedClose` runs only for a detail path with a loan, and
+// a nav failure returns before the card is ever scraped, so no such
+// record carries a verdict at all.
+//
+// Two implementations of one exit policy, with two different operator
+// messages, is the drift this file has been caught on repeatedly; the
+// dead copy is the one a future change would have edited. The shared path
+// keeps the ordering argument and prints the same evidence, prefixed
+// `forced-close card:` by the producer.
 if (routeFailures.length) {
   console.log(
     `\nBLOCKED: ${routeFailures.length} page request(s) could not be` +
@@ -3443,9 +10780,47 @@ if (wsRpcMethods.size) {
 // broken chooser (exit 1) instead of the deployment fault it is. See
 // `pageRpcChain` for why the OBSERVE_RPC check above cannot cover this.
 const pageChainWrong = [];
+// ROUND 77 P2 — AND AN UNANSWERABLE PROBE IS NOT AN ACCEPTABLE ONE.
+//
+// `served === null` means the synthetic `eth_chainId` was refused, timed
+// out or came back unreadable — not that the endpoint serves the right
+// chain. Treating it as acceptable let the whole point of this gate
+// escape in the case it was written for: with a deterministic deploy
+// putting a Diamond at the same address on two networks, ordinary reads
+// and heads still answer, so a missing card or a route disagreement
+// against `OBSERVE_RPC` passed every infrastructure gate and exited 1 as
+// a product regression while the page's chain had never been
+// established.
+//
+// Same three-way discipline as everything else here: answered-and-wrong,
+// answered-and-right, and could-not-ask are three outcomes, and the
+// third asserts nothing.
+const pageChainUnknown = [];
 for (const [url, probe] of pageRpcChain) {
-  const served = await probe;
-  if (served !== null && served !== CHAIN_ID) {
+  // ROUND 79 P2 — TWO SOURCES THAT DISAGREE ESTABLISH NOTHING.
+  //
+  // Round 78 preferred the synthetic probe and fell back to the page's
+  // own traffic, which quietly discarded a CONTRADICTION: a synthetic
+  // reply of the expected chain beside captured traffic reporting another
+  // one was accepted, and an inferred missing-surface finding could then
+  // exit 1 against the product on an endpoint that had contradicted
+  // itself. Round 52 settled this for one batch — an endpoint giving two
+  // answers can be relied on for neither — and the rule does not weaken
+  // because the two answers arrived through different doors.
+  //
+  // So: agree, or one source alone, establishes the chain. Disagreement,
+  // and a self-contradicting capture, are UNKNOWN — which the gate below
+  // already treats as a reason to withhold an inference rather than to
+  // accuse the page.
+  const synthetic = await probe;
+  const captured = observedPageChain.get(url);
+  const conflicted =
+    captured === CHAIN_ID_CONFLICT ||
+    (synthetic !== null && captured !== undefined && synthetic !== captured);
+  const served = conflicted ? null : (synthetic ?? captured ?? null);
+  if (served === null) {
+    pageChainUnknown.push(redact(url).slice(0, 120));
+  } else if (served !== CHAIN_ID) {
     pageChainWrong.push({ url: redact(url).slice(0, 120), served });
   }
 }
@@ -3459,6 +10834,103 @@ if (pageChainWrong.length) {
     `  → the deployed site is built against the wrong network, so anything` +
       ` missing here says nothing about the app. Fix the site's RPC config` +
       ` or point this drive at chain ${pageChainWrong[0].served}.`,
+  );
+  process.exit(2);
+}
+// ROUND 69 P2 — THIS DRIVE'S OWN ALLOWLIST COMES BEFORE BLAMING THE APP.
+//
+// The route handler deliberately aborts a read method it does not
+// allowlist, which can make the card or the chooser appear absent. The
+// forced-close filter above already defers the resulting INFERRED
+// failure for exactly that reason — and then the generic exit below ran
+// first anyway, so the drive exited 1 against the product when its own
+// allowlist had stopped the page loading.
+//
+// Placed AFTER the observed-findings exit and BEFORE this one, which is
+// the whole ranking: content that was READ outranks any blocker, and a
+// blocker outranks a conclusion INFERRED from an absence the blocker
+// could have caused.
+if (allowlistTooNarrow.length || httpGaps.length) {
+  console.log(
+    `\n  → ranked ahead of the inferred failures below: this drive's own` +
+      ` request allowlist stopped the page loading, so anything missing` +
+      ` says nothing about the app.`,
+  );
+  process.exit(2);
+}
+// ROUND 77 P2 — AND AN UNESTABLISHED PAGE CHAIN OUTRANKS AN INFERENCE.
+//
+// Placed exactly where the allowlist gate is and for the same reason: a
+// conclusion INFERRED from an absence must not outrank a precondition
+// this run never established. If the page's own endpoint would not say
+// which chain it serves, "the card is missing" and "the route disagrees"
+// are both explained by a deployment on another network — and that is
+// the case this gate exists for, since a deterministic deploy answers
+// ordinary reads at the same address either way.
+//
+// GATED ON EVERY REMAINING FAILURE BEING ONE THE CHAIN COULD EXPLAIN
+// (round 78 P2), which is NOT the same as `failures` being non-zero.
+//
+// I wrote that "the observed findings have already exited above, so
+// whatever remains in `failures` is inferred", and it was false:
+// the exits above extract only SOME of them — at the time, a forced-close
+// filter that has since been folded into the shared path. A hooks-order crash,
+// an uncaught page error, a dead Advanced anchor and a mis-ordered row
+// are all READ, all counted here, and none of them is explained by a
+// page built against another network — so this gate would have
+// downgraded a directly observed defect to "nothing was learned". That
+// is the exact swallow the whole exit ordering exists to prevent, added
+// by the fix that was meant to strengthen it.
+//
+// `visitProblemKinds` tags each problem at the one site that decides
+// them.
+//
+// ROUND 95 P2 — AND A *CLEAN* RUN NEEDS THE CHAIN MOST OF ALL.
+//
+// This used to require at least one absence-shaped failure, on the
+// reasoning that an unanswerable probe is not worth exiting 2 over when
+// nothing is wrong. That reasoning only looks at what this drive FAILS
+// to find, and the drive's main product is what it FINDS: the forced-close
+// card's figures, the receipt rows, the fee copy — all READ off a page the
+// unanswered endpoint served, while every protocol simulation that
+// corroborates them ran against the independently chosen `OBSERVE_RPC`.
+// With a deterministic deploy putting a Diamond at the same address on two
+// networks, those two sides can agree by coincidence, and the run then
+// exited 0 having certified a funds surface it never established was the
+// requested deployment's. A PASS is the strongest claim this drive makes;
+// it is the last verdict that should rest on an unasked question.
+//
+// MEASURED BEFORE TIGHTENING, because round 87 tightened a rule into
+// something honest and useless: the deployment's provider answers a
+// synthetic `eth_chainId` in the ordinary case (HTTP 200, the requested
+// chain), and `pageRpcChain` only ever holds endpoints that carried a
+// Diamond-targeting call. So this blocks the run that genuinely cannot
+// say what it was looking at, not every run.
+//
+// An OBSERVED failure still outranks it, unchanged and for the round-78
+// reason: a crash, a dead anchor or a mis-ordered row is not explained by
+// the page being built against another network, and downgrading one to
+// "nothing was learned" is the swallow this whole exit ordering prevents.
+const remaining = visited.flatMap((v) => visitProblemKinds(v, ROLE));
+const observedRemaining = remaining.filter((p) => p.kind === 'observed');
+const absenceRemaining = remaining.filter((p) => p.kind === 'absence');
+if (pageChainUnknown.length && !observedRemaining.length) {
+  console.log(
+    `\nBLOCKED: ${pageChainUnknown.length} of the page's own RPC endpoint(s)` +
+      ` would not say which chain they serve, so this run cannot tell the` +
+      ` requested deployment from a site built against another network.`,
+  );
+  pageChainUnknown.slice(0, 6).forEach((u) => console.log(`  unanswered → ${u}`));
+  console.log(
+    absenceRemaining.length
+      ? `  → ranked ahead of the inferred failures below, exactly as the` +
+          ` allowlist gap is: a missing surface says nothing about the app` +
+          ` until the page's chain is known. Re-run, or point the probe at an` +
+          ` endpoint that answers eth_chainId.`
+      : `  → nothing failed, and that is not enough: what this run READ came` +
+          ` off that endpoint, while the checks corroborating it ran against` +
+          ` OBSERVE_RPC. Re-run, or point the probe at an endpoint that` +
+          ` answers eth_chainId.`,
   );
   process.exit(2);
 }
@@ -3477,21 +10949,48 @@ if (failures) process.exit(1);
 const advBlocked = visited
   .map((v) => ({ v, why: visitVerdict(v, ROLE).blocked }))
   .filter(({ why }) => why !== null);
+// ROUND 108 P2 — AND THE FORCED-CLOSE GAP IS NAMED BEFORE THIS EXITS.
+//
+// Both incompletenesses can hold on one visit — shared RPC trouble leaves
+// the chooser's readiness unresolved AND the forced-close card unsettled —
+// and this exit ran first, so a funds-facing gap the run explicitly
+// promises to disclose was never computed, let alone mentioned. The
+// RANKING is not the problem and is unchanged: the Advanced arm still
+// decides the exit. What was wrong is that the other gap went unsaid.
+//
+// Computed once, above both exits, so the two readings cannot disagree.
+const fcGap = forcedCloseCoverage(visited, ROLE);
 if (advBlocked.length) {
   console.log(
     `\nBLOCKED: the Advanced probe could not complete on ${advBlocked.length}` +
       ` page(s) — the jump-anchor assertion did not run.`,
   );
   advBlocked.forEach(({ v, why }) => console.log(`  ${v.path}: ${why}`));
+  if (fcGap) {
+    console.log(
+      `  and, separately: ${fcGap} — reported here because this exit would` +
+        ` otherwise have taken the run before that gap was named.`,
+    );
+  }
   process.exit(2);
 }
-if (allowlistTooNarrow.length || httpGaps.length) process.exit(2);
 // Every candidate moved out from under us: the list route alone proves
 // nothing about the chooser, so this run verified nothing.
 if (!visited.some((v) => /^\/positions\/\d+$/.test(v.path))) {
   console.log(
     '\nBLOCKED: no position detail page was observed — nothing verified.',
   );
+  process.exit(2);
+}
+// ROUND 1 P2 — AN ADVERTISED ASSERTION THAT NEVER RAN IS NOT A CLEAN
+// RUN. Every visited position can legitimately produce `blocked` (all
+// FallbackPending, all sale-locked, none held), and a reporter that
+// consumes only `fail` then prints "routes clean" and exits 0 over a
+// check that never once executed. Ranked after `failures` and after the
+// Advanced BLOCKED arm, for the same reason those are ordered as they
+// are: a real regression is still reported as one.
+if (fcGap) {
+  console.log(`\nBLOCKED: ${fcGap}.`);
   process.exit(2);
 }
 process.exit(0);
