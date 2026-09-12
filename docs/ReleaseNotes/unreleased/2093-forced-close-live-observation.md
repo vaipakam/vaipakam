@@ -59,6 +59,13 @@ pass: the run says it never established whether the lender could leave,
 and asks to be re-run. A tested control and an untested one must not
 report the same thing.
 
+Two separate questions are asked about that control, and both follow the
+same rule. Whether it can be activated is one; whether the lender can
+*see* it is the other, and it needs asking separately because the
+activation test is indifferent to a control that has been made
+transparent. Either question going unanswered — not answered *badly*,
+but not reached at all — now leaves the run saying so.
+
 That last distinction is the one the check turns on most often. A wait
 that times out has genuinely looked and kept finding nothing, and
 reporting an absence is right. A wait that never got to ask has
@@ -387,7 +394,7 @@ exercise the confirmation.
 
 ### Stated limits
 
-Four, and the first two are gaps in coverage rather than in the
+Five, and the first two are gaps in coverage rather than in the
 checking.
 
 The pool of positions is inherited from the existing driver, so NFT
@@ -415,6 +422,16 @@ The fourth is intrinsic: a check that watches a live page can never rule
 out that the page changed between two of its own observations, so where
 that race is unavoidable the check reports what it saw and names the
 uncertainty instead of resolving it by assumption.
+
+The fifth is of the same kind and worth stating separately, because it is
+what every comparison with the protocol now rests on. The check
+establishes which state the page could have been showing by watching the
+order in which the page's own data source answered it — and that reasoning
+assumes the data source does not go backwards, which a pool of machines
+serving one request from a machine that has fallen behind would break.
+Nothing observable from outside the page distinguishes that case. It is a
+far narrower assumption than the estimates it replaced, and it is still
+an assumption rather than a measurement.
 
 Closes #2093. The round-by-round record of how each of these rules was
 arrived at — including several cases where a fix left its own new state
