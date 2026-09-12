@@ -1153,9 +1153,12 @@ says whether that second failure was itself a recognised limit or something
 else — it reports the second response and infers no cause), the wait
 exceeded the cap, or **no limit was recognised** — which covers a
 refusal that is not a limit (bad credentials, an unreadable project) AND a
-trace the parser could not read at all, where the group says the debug
-format may have changed and the run cannot tell whether it was limited; treat
-that one as unknown, not as "not a limit". The sweep can also go
+trace the parser could not read a response from. In that case the group
+carries a line from the parser's own verdict saying so — "whether this was a
+rate limit is UNKNOWN, not 'no'" — whether or not the evidence filter beneath
+it recognised any line (it may still print a stray message, and a
+partially-readable trace is exactly where the two disagree); treat that one
+as unknown, not as "not a limit". The sweep can also go
 red before the listing (the run-history lookup for the closed-issue watermark)
 or after it (a truncated listing, an add or a Done-move that did not land);
 those print their own `::error::` line and no diagnostic group.

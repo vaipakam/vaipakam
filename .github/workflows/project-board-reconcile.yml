@@ -349,6 +349,13 @@ jobs:
                 first_attempt_note="rate limited ($reason) — the wait would be ${wait_s}s, over RETRY_WAIT_CAP_SECONDS=${RETRY_WAIT_CAP_SECONDS}, so NOT retried"
                 echo "::error::$first_attempt_note"
               fi
+            elif [ "$verdict_rc" -eq 2 ]; then
+              # The parser found no response it could read. That is a
+              # different finding from "not a limit", and it must survive
+              # into the diagnostic on its own: the evidence filter below
+              # may still recognise a stray message line, and a group with
+              # something in it would otherwise read as a diagnosis.
+              first_attempt_note="the parser could not read a response from the trace — whether this was a rate limit is UNKNOWN, not 'no'"
             fi
           fi
 

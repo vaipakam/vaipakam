@@ -344,6 +344,47 @@ check u "the branch still runs to the end" "$s"
 check u "no retry is attempted on a trace that states no limit ($(attempts) attempt)" "$s"
 [ ! -s "$work/sleeps.txt" ] && s=0 || s=1
 check u "and nothing was waited for" "$s"
+# The parser's own verdict — "could not read a response" — reaches the
+# diagnostic as a line of its own, so "unknown" is stated, not implied.
+grep -q 'whether this was a rate limit is UNKNOWN' "$work/out.txt" && s=0 || s=1
+check u "the diagnostic states the classification is UNKNOWN, from the parser's verdict" "$s"
+
+# ── scenario 4b: a PARTIALLY readable trace ──────────────────────────────────
+# No status line the parser can read, but a JSON message the evidence filter
+# recognises (#2149 r10). The two disagree: the filter prints the message,
+# the parser exits 2. The group must carry BOTH — the message as evidence and
+# the parser's "unknown" — or a group with something in it reads as a
+# diagnosis that was never made.
+cat > "$work/bin/gh" <<SH
+#!/usr/bin/env bash
+if [ "\$1" = "api" ] && [ "\$2" = "rate_limit" ]; then
+  if [ "\$3" = "--jq" ]; then echo 5000; exit 0; fi
+  echo '{"resources":{}}'; exit 0
+fi
+if [ "\$1" = "project" ] && [ "\$2" = "item-list" ]; then
+  echo item-list >> "\$(dirname "\$0")/../calls.txt"
+  if [ -n "\${GH_DEBUG:-}" ]; then
+    echo "=== status line in a format nothing here knows ===" >&2
+    echo '{"message":"API rate limit already exceeded for user ID 275282153."}' >&2
+  fi
+  echo "unknown owner type" >&2
+  exit 1
+fi
+exit 0
+SH
+chmod +x "$work/bin/gh"
+
+echo "partially readable trace (message recognised, status not):"
+run_step && rc=0 || rc=$?
+check v "the step fails" "$([ "$rc" -ne 0 ] && echo 0 || echo 1)"
+[ "$(attempts)" -eq 1 ] && s=0 || s=1
+check v "one attempt — nothing is retried on a verdict the parser could not reach ($(attempts))" "$s"
+grep -q 'API rate limit already exceeded' "$work/out.txt" && s=0 || s=1
+check v "the recognised message is still shown as evidence" "$s"
+grep -q 'whether this was a rate limit is UNKNOWN' "$work/out.txt" && s=0 || s=1
+check v "AND the group says the classification is UNKNOWN" "$s"
+grep -q 'no status line, rate-limit header or error message recognised' "$work/out.txt" && s=1 || s=0
+check v "(it does not claim nothing was recognised — something was)" "$s"
 
 # ── scenario 5: the listing is truncated ─────────────────────────────────────
 # This guard sits AFTER the call, so restructuring the call is exactly the edit
