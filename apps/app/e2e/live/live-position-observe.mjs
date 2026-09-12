@@ -2251,7 +2251,7 @@ const foreignPageRpcEndpoints = new Set();
  * request is a set of independent calls, not a sequence, so the read can
  * be served a block BEFORE the head that appears to precede it. Tightening
  * the ordering test to refuse that turned the live deployment's answer to
- * `span=unknown`, which is honest and also switches three arms off.
+ * `spanStable=unknown`, which is honest and also switches three arms off.
  *
  * The sound construction was available all along and needs no ordering at
  * all: ask the PAGE'S provider for its height BEFORE the page loads.
@@ -2425,7 +2425,7 @@ async function pageProviderHead() {
  * comparison stays incomplete. Deliberately conservative: this drive
  * cannot tell which endpoint served the card's own query, so a single
  * unordered one is enough to make the floor unproven. The cost is
- * `span=unknown` on such a deployment, which the run prints rather than
+ * `spanStable=unknown` on such a deployment, which the run prints rather than
  * leaving a reader to infer from a clean line.
  *
  * THE RESIDUAL, stated: this assumes an endpoint's head does not go
@@ -3216,6 +3216,8 @@ async function visit(path, { expectChooser = false, loan = null } = {}) {
     // the protocol comparison was made over is visible (round 84).
     forcedCloseHeadFloor: forcedClose ? (forcedClose.headFloor ?? null) : null,
     forcedCloseHeadScanned: forcedClose ? (forcedClose.headScanned ?? null) : null,
+    forcedCloseScanComplete: forcedClose ? (forcedClose.headScanComplete ?? null) : null,
+    forcedCloseConfirmedAt: forcedClose ? (forcedClose.headConfirmedAt ?? null) : null,
     forcedCloseHeadPinned: forcedClose ? (forcedClose.headPinned ?? null) : null,
     forcedCloseHeadPageSighting: forcedClose ? (forcedClose.headPageSighting ?? null) : null,
     forcedCloseHeadCeiling: forcedClose ? (forcedClose.headCeiling ?? null) : null,
@@ -4136,7 +4138,7 @@ const SPAN_PROBE_BUDGET = 32n;
  * The ENDPOINTS are the caller's — they are already read and already
  * compared — so only the interior is probed here.
  */
-async function stableAcross(from, to, expected, probe) {
+async function stableAcross(from, to, expected, probe, onProbed) {
   if (expected === undefined || expected === null) return null;
   if (typeof from !== 'bigint' || typeof to !== 'bigint') return null;
   if (from === 0n || to === 0n) return null;
@@ -4167,6 +4169,20 @@ async function stableAcross(from, to, expected, probe) {
       return null;
     }
     if (seen === undefined || seen === null) return null;
+    // ROUND 105 P2 — HOW FAR THIS ACTUALLY GOT, recorded as it goes.
+    //
+    // The result alone cannot say: `false` means it stopped at the FIRST
+    // mismatch, so a 10..20 span that disagreed at 11 read one interior
+    // block, and `null` may mean none were read or several. The report was
+    // projecting the whole interval from a non-null result and `not-scanned`
+    // from a null one, so a scan that stopped at 11 was printed as either
+    // all of 10..20 or none of it — an extent the run never established,
+    // which is the same class as every other unstated figure here.
+    //
+    // A callback rather than a richer return type: the tri-state is consumed
+    // as a tri-state in several places, and widening it to carry extent
+    // would ripple through all of them for a reporting concern.
+    onProbed?.(b);
     if (seen !== expected) return false;
   }
   return true;
@@ -4644,7 +4660,15 @@ async function observeForcedClose(page, loan, headBeforeNav, pageHeadBeforeNav, 
           tokenOwnerOf(loan.lenderTokenId, head),
           saleLockedOn(loan.lenderTokenId, loan.id, head, loan.authority),
         ]);
-        return { status, holder, sale };
+        // ROUND 105 P2 — AND THE BLOCK THEY WERE READ AT.
+        //
+        // `head` is the exact block the confirming status, holder and sale
+        // reads used, and it is the evidence that this observer cleared the
+        // thresholds the report prints. Discarding it meant an absence FAIL
+        // could be emitted alongside the thresholds with no statement of the
+        // head that supposedly satisfied them — an outcome the report cannot
+        // substantiate, which is the one thing this surface must not do.
+        return { status, holder, sale, confirmedAt: head };
       },
     );
     // THE THREE FACTS, NOT A VERDICT. What they mean for eligibility is
@@ -4658,13 +4682,14 @@ async function observeForcedClose(page, loan, headBeforeNav, pageHeadBeforeNav, 
     // position ineligible, which reports "nothing is wrong" for a
     // missing card on the strength of a sale never established.
     later = confirmed.unconfirmed
-      ? { unconfirmed: true, why: confirmed.why }
+      ? { unconfirmed: true, why: confirmed.why, confirmedAt: null }
       : {
           active: Number(confirmed.status.status) === STATUS_ACTIVE,
           stillHeld:
             typeof confirmed.holder === 'string' &&
             confirmed.holder.toLowerCase() === String(observed).toLowerCase(),
           sale: confirmed.sale,
+          confirmedAt: confirmed.confirmedAt,
         };
   }
 
@@ -4766,6 +4791,13 @@ async function observeForcedClose(page, loan, headBeforeNav, pageHeadBeforeNav, 
   // for the first time cannot ride on a height taken from another one.
   // `floorDrained` (round 97 P2): the pre-render sample the floor is built
   // from has to have been complete, for the same reason the ceiling's does.
+  // ROUND 105 P2 — the furthest interior block either stability arm
+  // actually read, so the report can state the extent it established rather
+  // than projecting the whole interval from a non-null verdict.
+  let probedThrough = null;
+  const noteProbed = (b) => {
+    if (probedThrough === null || b > probedThrough) probedThrough = b;
+  };
   const floorSound =
     floorDrained &&
     // ROUND 98 P2 — and no endpoint seen during the scrape sits below it.
@@ -4779,8 +4811,12 @@ async function observeForcedClose(page, loan, headBeforeNav, pageHeadBeforeNav, 
       ? await discovery(
           `checking the close-out answer held across the bracket for loan ${loan.id}`,
           () =>
-            stableAcross(headBefore, pinnedBlock, pinnedDefaultable, (b) =>
-              probeCloseOut(loan.id, b),
+            stableAcross(
+              headBefore,
+              pinnedBlock,
+              pinnedDefaultable,
+              (b) => probeCloseOut(loan.id, b),
+              noteProbed,
             ),
         )
       : null;
@@ -4789,8 +4825,12 @@ async function observeForcedClose(page, loan, headBeforeNav, pageHeadBeforeNav, 
       ? await discovery(
           `checking the settlement route held across the bracket for loan ${loan.id}`,
           () =>
-            stableAcross(headBefore, pinnedBlock, pinnedMatch, (b) =>
-              probeInternalMatch(loan.id, b),
+            stableAcross(
+              headBefore,
+              pinnedBlock,
+              pinnedMatch,
+              (b) => probeInternalMatch(loan.id, b),
+              noteProbed,
             ),
         )
       : null;
@@ -4870,12 +4910,19 @@ async function observeForcedClose(page, loan, headBeforeNav, pageHeadBeforeNav, 
     // `SPAN_PROBE_BUDGET` — and reporting `floor..pinned` in those cases
     // claims a span the run explicitly could not establish, which is the
     // same unstated-figure defect one level up.
-    headScanned:
-      defaultableStable !== null || internalMatchStable !== null ? String(pinnedBlock) : null,
+    // ROUND 105 P2 — the extent actually READ, not projected from a verdict.
+    // `false` means the arm stopped at the first mismatch and `null` may
+    // mean none were read, so neither justifies printing the whole interval.
+    headScanned: probedThrough === null ? null : String(probedThrough),
+    // Whether the interior was read all the way to the endpoint, which is
+    // true only when an arm returned `true`.
+    headScanComplete: defaultableStable === true || internalMatchStable === true,
     headPinned: String(pinnedBlock),
     headPageSighting: pageHead === 0n ? null : String(pageHead),
     headCeiling: ceilingSound ? String(ceiling.head) : null,
     headCeilingSound: ceilingSound,
+    // The block the confirming absence reads were taken at, where one ran.
+    headConfirmedAt: later?.confirmedAt ? String(later.confirmedAt) : null,
   };
 }
 
@@ -9933,7 +9980,11 @@ for (const v of visited) {
                   // ends (round 85). `no`/`unknown` means the protocol
                   // arms could not accuse on this visit, which a green
                   // line would otherwise not say.
-                  ` span=${v.forcedCloseVerdict.spanStable ?? 'unknown'}`
+                  // ROUND 105 P2 — `spanStable`, not `span`. The block
+                  // interval below took the bare name too, so one record
+                  // carried two different meanings on one key: ambiguous to
+                  // a reader and silently lossy to any key-value parser.
+                  ` spanStable=${v.forcedCloseVerdict.spanStable ?? 'unknown'}`
                 : '') +
               // ROUND 14 — WHETHER THE ABSENCE GATE COULD HAVE FIRED.
               //
@@ -9950,14 +10001,23 @@ for (const v of visited) {
               // the higher of the overheard head and the asked ceiling.
               // `unestablished` is not the same as `unobserved`, and the
               // two send an operator to different places.
-              // ROUND 104 P2 — each threshold as itself. They are compared
-              // differently (`>pinned`, `>sighting`, `>=ceiling`), so one
-              // combined number cannot say what had to be cleared; and the
-              // scanned span is printed ONLY when the interior was read.
-              ` span=${v.forcedCloseHeadFloor ?? 'unobserved'}..${v.forcedCloseHeadScanned ?? 'not-scanned'}` +
-              ` pinned=${v.forcedCloseHeadPinned ?? 'unobserved'}` +
-              ` sighting=${v.forcedCloseHeadPageSighting ?? 'unobserved'}` +
-              ` ceiling=${v.forcedCloseHeadCeiling ?? (v.forcedCloseCeilingSound === false ? 'unestablished' : 'unobserved')}`
+              // ROUND 104 P2 — each threshold as itself, because they are
+              // compared differently and one combined number cannot say what
+              // had to be cleared.
+              //
+              // ROUND 105 P2 — AND THE COMPARISON IS IN THE EMITTED LABEL.
+              // Round 104's note said each comparison was "stated beside its
+              // figure" and that was true of the source comment only: the
+              // output read `pinned=20 sighting=20 ceiling=20`, three equal
+              // numbers that look interchangeable and are not. The operator
+              // is part of the key now, so the line says what it means
+              // without anyone opening this file.
+              ` spanBlocks=${v.forcedCloseHeadFloor ?? 'unobserved'}..${v.forcedCloseHeadScanned ?? 'none'}` +
+              `${v.forcedCloseHeadScanned !== null && v.forcedCloseScanComplete === false ? ' (partial)' : ''}` +
+              ` head>${v.forcedCloseHeadPinned ?? 'unobserved'}` +
+              ` head>${v.forcedCloseHeadPageSighting ?? 'unobserved'}` +
+              ` head>=${v.forcedCloseHeadCeiling ?? (v.forcedCloseCeilingSound === false ? 'unestablished' : 'unobserved')}` +
+              ` confirmedAt=${v.forcedCloseConfirmedAt ?? 'n/a'}`
             : '')
         : `      chooser=${v.chooser} handover=${v.handover} offset=${v.offset}` +
         ` holdCard=${v.holdCard} freeHeldBtn=${v.freeHeld}`,

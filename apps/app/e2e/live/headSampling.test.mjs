@@ -299,8 +299,17 @@ describe('the head sample waits for the readings in flight', () => {
   it('checks the protocol answer held at every block of the span', () => {
     expect(at('async function stableAcross(')).toBeGreaterThan(-1);
     const both = src.slice(at('const defaultableStable ='), at('const defaultableStable =') + 1400);
-    expect(both).toContain('stableAcross(headBefore, pinnedBlock, pinnedDefaultable');
-    expect(both).toContain('stableAcross(headBefore, pinnedBlock, pinnedMatch');
+    // Reformatted in round 105 when the extent callback was added, so this
+    // pins the arguments rather than a one-line call shape.
+    expect(both).toContain('pinnedDefaultable');
+    expect(both).toContain('pinnedMatch');
+    expect((both.match(/stableAcross\(/g) ?? []).length, 'both arms scan the span').toBe(2);
+    expect(both).toContain('headBefore');
+    expect(both).toContain('pinnedBlock');
+    // ROUND 105 P2 — and both arms record how far they actually got, so the
+    // report states the extent it established instead of projecting the
+    // whole interval from a non-null verdict.
+    expect((both.match(/noteProbed/g) ?? []).length, 'both arms record extent').toBe(2);
   });
 
   it('brackets the settlement-route read the same way', () => {
