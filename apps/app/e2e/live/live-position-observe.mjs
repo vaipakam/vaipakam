@@ -116,6 +116,7 @@ import {
   CHAIN_ID_CONFLICT,
   classifyRpcFailure,
   codedError,
+  believableResult,
   hexQuantity,
   isTransportFailure,
   recordRpcResponse,
@@ -1727,7 +1728,14 @@ function notePageRpcEndpoint(url, calls, rawBody) {
           signal: AbortSignal.timeout(CHAIN_PROBE_TIMEOUT_MS),
         });
         if (!r.ok) return null;
-        const hex = (await r.json())?.result;
+        // ROUND 99 P2 — THROUGH THE SHARED PARSER, and the third site to
+        // need it. A member may carry a `result` beside a non-null `error`;
+        // viem takes the error, so the page never consumed that chain id.
+        // Believing it here lets this probe AGREE with the captured traffic
+        // on a value the page rejected — and the chain gate, whose whole job
+        // since round 95 is to refuse a clean verdict when the deployment's
+        // chain is unknown, then certifies instead of blocking.
+        const hex = believableResult(await r.json());
         return typeof hex === 'string' ? Number(BigInt(hex)) : null;
       } catch {
         // Unreachable, non-JSON, or timed out — none of them evidence of a

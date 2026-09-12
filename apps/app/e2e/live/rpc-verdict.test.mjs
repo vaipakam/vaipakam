@@ -15,6 +15,7 @@ import {
   blockNumberFromRpcPair,
   CHAIN_ID_CONFLICT,
   blockNumberFromWsFrame,
+  believableResult,
   chainIdFromRpcPair,
   callsTargetContract,
   classifyRpcFailure,
@@ -1127,6 +1128,45 @@ describe('round 50 P2 — a QUANTITY is hex, everywhere it is read', () => {
     const idReply = (result) => ({ id: 7, result });
     expect(chainIdFromRpcPair(idReq, idReply('0x14a34'))).toBe(84532);
     expect(chainIdFromRpcPair(idReq, idReply('84532'))).toBeNull();
+  });
+});
+
+// ROUND 99 P2 — A MEMBER MAY CARRY A RESULT AND AN ERROR, AND viem TAKES
+// THE ERROR. So the page never consumed that value, and no reader here may
+// believe it.
+//
+// Round 98 taught the HEAD parser this and left the two chain-ID readers
+// with the same bug — the parallel-site pattern that is the single most
+// common defect on this change. The rule lives in one exported helper now,
+// and these cases pin the helper AND each reader that uses it, because a
+// reader quietly reaching for `.result` again is precisely what happened.
+describe('an error-bearing member is not a result (round 99)', () => {
+  it('believableResult refuses a member carrying a non-null error', () => {
+    expect(believableResult({ result: '0x14a34', error: { code: -32000 } })).toBeUndefined();
+    expect(believableResult({ result: '0x14a34', error: null })).toBe('0x14a34');
+    expect(believableResult({ result: '0x14a34' })).toBe('0x14a34');
+    // A legitimately absent block is `result: null` with no error, and the
+    // callers already distinguish that from "nothing usable here".
+    expect(believableResult({ result: null })).toBeNull();
+    expect(believableResult(undefined)).toBeUndefined();
+    expect(believableResult('not an object')).toBeUndefined();
+  });
+
+  it('the chain-ID reader refuses it', () => {
+    const idReq = JSON.stringify({ jsonrpc: '2.0', id: 7, method: 'eth_chainId' });
+    expect(chainIdFromRpcPair(idReq, { id: 7, result: '0x14a34' })).toBe(84532);
+    expect(
+      chainIdFromRpcPair(idReq, { id: 7, result: '0x14a34', error: { code: -32000 } }),
+      'the chain gate must report unknown, not certify',
+    ).toBeNull();
+  });
+
+  it('the head reader refuses it', () => {
+    const req = JSON.stringify({ jsonrpc: '2.0', id: 3, method: 'eth_blockNumber' });
+    expect(blockNumberFromRpcPair(req, { id: 3, result: '0x2c8a1f' })).toBe(0x2c8a1fn);
+    expect(
+      blockNumberFromRpcPair(req, { id: 3, result: '0x2c8a1f', error: { code: -32000 } }),
+    ).toBeNull();
   });
 });
 

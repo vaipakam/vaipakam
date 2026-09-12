@@ -391,6 +391,41 @@ export function rpcCallsFromBody(requestBody) {
  * @param {unknown} raw
  * @returns {bigint|null}
  */
+/**
+ * A JSON-RPC member's `result`, or `undefined` when the member does not
+ * carry one this drive may believe.
+ *
+ * ROUND 99 P2 — ONE PARSER, BECAUSE THREE READERS HAD THE SAME BUG AND ONE
+ * OF THEM WAS FIXED.
+ *
+ * A member may carry a `result` AND a non-null `error`. viem takes the
+ * error, so the page never consumed that value — and every reader here that
+ * reached for `item.result` believed it anyway. Round 98 taught the HEAD
+ * parser to refuse the shape and left the two chain-ID readers untouched:
+ * the batch reader below and the synthetic probe in the drive. The chain
+ * gate is the one that matters most, because its whole job since round 95
+ * is to refuse a clean verdict when the deployment's chain is unknown — two
+ * readers agreeing on a value the page rejected is exactly how it would
+ * certify instead of blocking.
+ *
+ * Exported and shared rather than fixed a third time in place. Fixing one
+ * of several parallel sites is the single most common defect on this
+ * change, and a reader that has to remember the rule is a reader that will
+ * eventually forget it.
+ *
+ * `undefined` rather than `null`: a member may legitimately carry
+ * `result: null` (an absent block), and the callers already distinguish
+ * that from "nothing usable here".
+ *
+ * @param {unknown} item one member of a JSON-RPC response
+ * @returns {unknown} the usable `result`, or `undefined`
+ */
+export function believableResult(item) {
+  if (!item || typeof item !== 'object') return undefined;
+  if (item.error !== undefined && item.error !== null) return undefined;
+  return item.result;
+}
+
 export function hexQuantity(raw) {
   if (typeof raw !== 'string') return null;
   if (!/^0x[0-9a-fA-F]+$/.test(raw)) return null;
@@ -512,16 +547,11 @@ export function blockNumberFromRpcPair(requestBody, responseBody) {
   for (const item of items) {
     if (!lone && !wanted.has(item?.id)) continue;
     // ROUND 98 P2 — AN ERROR MEMBER IS AUTHORITATIVE, EVEN BESIDE A RESULT.
-    //
-    // A JSON-RPC member may carry both, and viem takes the error: the page
-    // never consumed that height. This parser read the `result` anyway, so a
-    // height the app rejected could stamp `firstHeadAt`, satisfy
-    // `floorEstablishedFor` with an ordering that never happened, and lift
-    // the floor above the block the card actually rendered at — the accusing
-    // direction, and the same shape the direct pre-navigation probe was
-    // already taught to refuse. This is its sibling, and it was left behind.
-    if (item?.error !== undefined && item?.error !== null) continue;
-    const raw = heightOf(item?.result);
+    // A member may carry both, and viem takes the error: the page never
+    // consumed that height, so believing it could lift the floor above the
+    // block the card actually rendered at. Round 99 moved the test into
+    // `believableResult`, shared with the chain-ID readers that had it too.
+    const raw = heightOf(believableResult(item));
     if (raw === null) continue;
     // ROUND 50 P2 — A QUANTITY IS HEX, and `BigInt` is far too willing.
     // The `catch` here used to carry the comment "not a hex quantity"
@@ -629,7 +659,7 @@ export function chainIdFromRpcPair(requestBody, responseBody) {
     // function over). A decimal id read as hex attributes an endpoint to
     // the wrong chain, which either admits a foreign chain's height or
     // excludes the endpoint actually serving the Diamond.
-    const id = hexQuantity(item?.result);
+    const id = hexQuantity(believableResult(item));
     if (id === null) continue;
     const n = Number(id);
     if (Number.isSafeInteger(n)) seen.add(n);
