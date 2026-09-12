@@ -258,12 +258,10 @@ if [ "\$1" = "project" ] && [ "\$2" = "item-list" ]; then
         echo "{\"id\":\"PVTI_page\${page}_item\${i}\",\"title\":\"BOARD_ITEM_BODY padding padding padding padding\"}" >&2
       done
     done
-    # The failed page is the observed shape (a spent bucket with a reset),
-    # in its REST dress: 403 rather than 200, and a Retry-After beside it
-    # that the parser reports as present and unused.
+    # The failed page is the observed shape (a spent bucket with a reset
+    # and the primary message), in its REST dress: 403 rather than 200.
     echo "> POST /graphql HTTP/1.1 (page 13)" >&2
     echo "< HTTP/2.0 403 Forbidden" >&2
-    echo "< Retry-After: 60" >&2
     echo "< X-Ratelimit-Remaining: 0" >&2
     echo "< X-Ratelimit-Reset: \$(( \$(date -u +%s) + 3 ))" >&2
     echo '{"message":"API rate limit already exceeded for user ID 275282153."}' >&2

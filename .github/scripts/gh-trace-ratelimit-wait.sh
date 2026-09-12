@@ -150,8 +150,8 @@ analyse() { # analyse <trace> <now-epoch>  -> prints "<seconds>\t<reason>", exit
   #     only that the shape did not match.
   #
   # NUMBERS. Both headers are read through `header_int` and the wait through
-  # `clamp_wait`; a `Retry-After` beside the shape is reported as present and
-  # unused, never parsed.
+  # `clamp_wait`. A `Retry-After` is never parsed: its presence makes the
+  # response the secondary shape, a named miss (above).
   local remaining_n reset_n
   remaining_n=$(header_int "${remaining:-}") || return 1
   [ "$remaining_n" = "0" ] || return 1
@@ -166,6 +166,14 @@ analyse() { # analyse <trace> <now-epoch>  -> prints "<seconds>\t<reason>", exit
   # secondary shape (#2149 r17).
   printf '%s' "$message" | grep -qiE 'API rate limit (already )?exceeded' || return 1
   printf '%s' "$message" | grep -qi 'secondary' && return 1
+  # A Retry-After beside the shape is the header-defined secondary form,
+  # and the named-miss contract says that is a miss even with a spent
+  # bucket alongside (#2149 r18): a retry timed to the primary reset could
+  # land before the stated Retry-After and spend the sole retry under a
+  # limit that still holds. An earlier version reported the header as
+  # "present and not used" and matched anyway — the contract and the code
+  # disagreed, and the contract is the one that was thought through.
+  [ -z "${retry:-}" ] || return 1
 
   local wait bound
   read -r wait bound <<<"$(clamp_wait $(( reset_n - now )))"
@@ -174,7 +182,6 @@ analyse() { # analyse <trace> <now-epoch>  -> prints "<seconds>\t<reason>", exit
     low)  reason="$reason — already passed, wait 0" ;;
     high) reason="$reason (wait clamped to ${MAX_WAIT}s)" ;;
   esac
-  [ -z "${retry:-}" ] || reason="$reason; a Retry-After header was also present and is not used"
   printf '%s\t%s\n' "$wait" "$reason"
 }
 
@@ -356,15 +363,17 @@ selftest() {
 '=== some future debug format nothing here knows ===' \
     1789188167 2
 
-  # The shape with a Retry-After beside it: the shape decides the wait and
-  # the header is reported as present and unused — never parsed.
-  expect "the shape beside a Retry-After — the reset, and the header is named as unused" \
+  # The shape's headers and message with a Retry-After beside them: the
+  # header makes it the secondary form, which the contract names as a miss
+  # even with a spent bucket alongside (#2149 r18). An earlier version
+  # matched it and reported the header as "present and not used".
+  expect "a Retry-After beside the shape makes it the secondary miss" \
 '< HTTP/2.0 403 Forbidden
 < Retry-After: 600
 < X-Ratelimit-Remaining: 0
 < X-Ratelimit-Reset: 1789188527
 {"message":"API rate limit exceeded for user ID 275282153."}' \
-    1789188167 0 360 'Retry-After header was also present and is not used'
+    1789188167 1
 
   # Header names are matched case-insensitively — gh has spelled them both ways.
   expect "lower-case header names" \
