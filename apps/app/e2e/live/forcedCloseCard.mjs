@@ -915,6 +915,146 @@ export function saysCheckRunning(text, unknownCopy) {
 }
 
 /**
+ * Has the card SETTLED its readiness — from what it declares where it
+ * declares it, and from its copy only where it does not (#2098).
+ *
+ * Since #2098 the card publishes `data-forced-close-state`, the
+ * resolver's own name for the state it rendered. Where that attribute is
+ * present, settlement is that the declared state is not `unknown` —
+ * read, not inferred. Inferring it from the copy leaving the unresolved
+ * sentence was the fallback this drive carried while the card published
+ * nothing, and it stays as the fallback for a deployed bundle that
+ * predates the attribute. The verdict separately checks that the two
+ * agree where both exist; this only decides WHEN to stop reading.
+ *
+ * `null` from `getAttribute` means the attribute is absent — an older
+ * bundle — and falls through to the copy rule. Any string, recognised
+ * or not, is a declaration and is read as one: an unrecognised state is
+ * something the verdict reports, not something this treats as unsettled.
+ */
+export function cardSettled(snap, unknownCopy) {
+  if (typeof snap?.declaredState === 'string') return snap.declaredState !== 'unknown';
+  return !saysCheckRunning(snap?.visibleText ?? snap?.text ?? '', unknownCopy);
+}
+
+/**
+ * Every state `decideForcedClose` can resolve, with what each one
+ * IMPLIES about the two facts this drive can re-read at the declared
+ * block — `isLoanDefaultable` and `hasInternalMatchCandidate`.
+ *
+ * Derived from the resolver's ORDER, which is the contract's: the
+ * repayment window is judged before anything else these two touch, so
+ * `not-yet` means the chain said not defaultable and every state past it
+ * means the chain said defaultable. The internal match is asked next and
+ * returns on `true`, so `ready-internal-match` means a candidate was
+ * found and every state resolved AFTER that question means none was.
+ * `blocked-sequencer` is resolved BETWEEN the two questions, so it
+ * implies defaultability and nothing about the match; `blocked-paused`
+ * is resolved before either and implies nothing here at all.
+ *
+ * `undefined` for a fact means "no expectation", never "expected
+ * unread". A state absent from this table is one this drive does not
+ * know, which is reported rather than judged — the deployed bundle can
+ * be ahead of this file.
+ */
+const DECLARED_STATE_IMPLIES = {
+  'not-yet': { defaultable: false, internalMatch: undefined },
+  'blocked-sequencer': { defaultable: true, internalMatch: undefined },
+  'ready-internal-match': { defaultable: true, internalMatch: true },
+  'ready-in-kind': { defaultable: true, internalMatch: false },
+  'ready-needs-route': { defaultable: true, internalMatch: false },
+  'ready-rental': { defaultable: true, internalMatch: false },
+  'blocked-no-consent': { defaultable: true, internalMatch: false },
+  'blocked-paused': { defaultable: undefined, internalMatch: undefined },
+  unknown: { defaultable: undefined, internalMatch: undefined },
+  'not-applicable': { defaultable: undefined, internalMatch: undefined },
+};
+
+/**
+ * Does the state the card DECLARES agree with what the chain says at the
+ * block the card NAMES (#2098, #2131)?
+ *
+ * This is the check the two attributes exist to make possible. The
+ * bracket elsewhere in this drive compares the card against the chain
+ * over a span it had to establish from the outside — sampled heads, a
+ * ceiling asked of every provider the page used. Here the card itself
+ * says which block its facts came from, so the comparison is exact: the
+ * same view functions, pinned to that block, either agree with the
+ * declared state or they do not.
+ *
+ * Three answers, kept apart because they cost differently:
+ *
+ *   - `{ judged: true, consistent: true }` — every fact the state
+ *     implies was read at the declared block and matched.
+ *   - `{ judged: true, consistent: false, why }` — a fact was read and
+ *     contradicts the declaration. This is a FAIL: the card stated a
+ *     decision, dated it, and the chain at that date disagrees.
+ *   - `{ judged: false, why }` — nothing was established: the state is
+ *     not one this table knows, or a fact the state implies could not
+ *     be read at that block. Neither is a finding about the product.
+ *
+ * `facts` carries `undefined` for a read that did not answer, and a
+ * state's `undefined` expectation is never compared — so a fact that is
+ * both unexpected and unread is silence, not a contradiction.
+ */
+export function declaredStateConsistent(state, facts) {
+  const implies = typeof state === 'string' ? DECLARED_STATE_IMPLIES[state] : undefined;
+  if (!implies) {
+    return { judged: false, why: `the card declares a state this drive does not recognise ("${state}")` };
+  }
+  const checks = [
+    ['defaultable', 'isLoanDefaultable'],
+    ['internalMatch', 'hasInternalMatchCandidate'],
+  ];
+  // ROUND 1 P2 — "CONSISTENT" MEANS AT LEAST ONE FACT WAS COMPARED. A
+  // state that implies nothing this drive re-reads (`blocked-paused`,
+  // `unknown`, `not-applicable`) used to fall through the loop untouched
+  // and come out `consistent` — a report claiming the chain agreed when
+  // no chain fact had been consulted, which is the same false PASS the
+  // whole `declaredFacts` status exists to prevent. Zero comparisons is
+  // unjudged, and says so.
+  // ROUND 3 P2 — EVERY READABLE FACT IS EXAMINED, AND A CONTRADICTION WINS.
+  // The first version returned `unjudged` at the first unreadable fact,
+  // so `ready-in-kind` with `isLoanDefaultable` unreadable and
+  // `hasInternalMatchCandidate` readable and TRUE — a definite
+  // contradiction of the declared route — was filed as "could not be
+  // read" and the drive passed while holding evidence against the card.
+  // A definite observation outranks an uncertain one, the rule this
+  // module applies everywhere else: the loop now runs to the end, and an
+  // unreadable fact only makes the result unjudged when nothing readable
+  // contradicted the declaration.
+  let compared = 0;
+  const unreadable = [];
+  for (const [key, view] of checks) {
+    const expected = implies[key];
+    if (expected === undefined) continue;
+    const actual = facts?.[key];
+    if (typeof actual !== 'boolean') {
+      unreadable.push(view);
+      continue;
+    }
+    if (actual !== expected) {
+      return {
+        judged: true,
+        consistent: false,
+        why: `the card declares "${state}", which requires ${view} to be ${expected} at the block it names, and the chain says ${actual} there`,
+      };
+    }
+    compared += 1;
+  }
+  if (unreadable.length > 0) {
+    return { judged: false, why: `${unreadable.join(' and ')} could not be read at the declared block` };
+  }
+  if (compared === 0) {
+    return {
+      judged: false,
+      why: `"${state}" implies nothing about the facts this drive re-reads at the declared block`,
+    };
+  }
+  return { judged: true, consistent: true };
+}
+
+/**
  * @typedef {object} ForcedCloseObservation
  * @property {boolean} mounted   the card rendered AND was visible. Round
  *   3 P2 — `attached` alone passes a card left in the DOM by a CSS
@@ -1345,10 +1485,163 @@ function receiptRowFault(obs, copy) {
  * that was actually observed — eligibility qualifying an absence is
  * correct, eligibility suppressing a positive finding is not.
  *
+ * EVERY verdict carries `declaredFacts` (#2098, #2131): the status of the
+ * exact-block comparison between what the card declared and what the
+ * chain said at the block it named — `undeclared` on a bundle that
+ * publishes no attributes, `consistent`, `contradicted`, or `unjudged
+ * (<why>)`. Stamped here, on the wrapper, rather than on each of the
+ * body's many returns: a field added to some of them and not others is
+ * the shape this module has been caught by before. A FAIL the
+ * comparison itself produced already names its own status.
+ *
  * @param {ForcedCloseObservation} obs
  * @param {{unknownCopy: string}} copy
  */
 export function forcedCloseVerdict(obs, copy) {
+  const verdict = forcedCloseVerdictBody(obs, copy);
+  if (typeof verdict.declaredFacts === 'string') return verdict;
+  const declaredFacts =
+    obs && typeof obs === 'object' ? judgeDeclared(obs, copy).declaredFacts : 'undeclared';
+  return { ...verdict, declaredFacts };
+}
+
+/**
+ * The exact-block check (#2098, #2131), as a status and — where it found
+ * one — a failure. Pure over the observation, so the arm inside the
+ * verdict body and the stamp on the wrapper compute the same answer.
+ *
+ * The two checks it makes are described where the body invokes it. What
+ * this decides is only how the result is CLASSIFIED:
+ *
+ *   `undeclared`    the card published no state — nothing to judge and
+ *                   no finding; a drive newer than its target must not
+ *                   fault the target for that.
+ *   `contradicted`  a definite FAIL, carried in `failure`.
+ *   `consistent`    every fact the state implies was read at the named
+ *                   block and agreed.
+ *   `unjudged (…)`  the comparison did not run, and the parenthesis
+ *                   says why: no block named, a block this observer had
+ *                   not reached, a state this file does not know, or a
+ *                   view that declined at that block.
+ */
+function judgeDeclared(obs, copy) {
+  const declared = typeof obs.declaredState === 'string' ? obs.declaredState : null;
+  const fail = (why, declaredFacts) => ({
+    declaredFacts,
+    failure: { verdict: 'fail', failKind: 'observed', why, declaredFacts },
+  });
+  // ROUND 3 P2 — THE DECLARATION-VERSUS-COPY CHECK RUNS ON EVERY RENDER
+  // THIS DRIVE READ, not only the one the poll settled on. The poll
+  // overwrites its snapshot each tick, so a render declaring `unknown`
+  // beside resolved copy — and then correcting itself before the
+  // deadline — reached this function only as its corrected successor,
+  // and the contradiction the lender was shown was discarded. Same
+  // shape as the round-31 amount scan and the round-50 unsafe-control
+  // check: the drive records every render's declaration in
+  // `seenRenders`, and this judges each of them. The settled render is
+  // judged first so a contradiction there is reported in the same words
+  // it always was; a render without a declaration says nothing.
+  //
+  // The chain comparison below stays on the SETTLED declaration alone:
+  // the drive re-reads the chain at the block that render named, and an
+  // intermediate render's block was not re-read.
+  const renders = [
+    {
+      declaredState: declared,
+      declaredBlock: obs.declaredBlock,
+      painted: obs.visibleText ?? obs.text ?? '',
+      settled: true,
+    },
+    ...(Array.isArray(obs.seenRenders) ? obs.seenRenders : []).map((r) => ({
+      declaredState: typeof r?.declaredState === 'string' ? r.declaredState : null,
+      declaredBlock: r?.declaredBlock,
+      painted: r?.visibleText ?? r?.text ?? '',
+      settled: false,
+    })),
+  ];
+  const paintsResolved = (painted) =>
+    Array.isArray(copy?.recognisedCopy) &&
+    copy.recognisedCopy.some(
+      (sentence) => typeof sentence === 'string' && sentence && painted.includes(sentence),
+    );
+  // ROUND 4 P2 — THE SPECIFIC STATE, not only its class. `stateCopy` maps
+  // each resolver state to the body the card paints for it, so a render
+  // declaring one state while painting another's body is judged as the
+  // contradiction it is — `ready-in-kind` declared over the routed-sale
+  // sentence promises the lender collateral the protocol would sell.
+  // Absent from an older constructed record, in which case only the
+  // class checks run.
+  const stateCopy = copy?.stateCopy && typeof copy.stateCopy === 'object' ? copy.stateCopy : null;
+  const paintedStateOtherThan = (state, painted) => {
+    if (!stateCopy) return null;
+    const own = stateCopy[state];
+    if (typeof own === 'string' && own && painted.includes(own)) return null;
+    for (const [other, sentence] of Object.entries(stateCopy)) {
+      if (other === state) continue;
+      if (typeof sentence === 'string' && sentence && painted.includes(sentence)) return other;
+    }
+    return null;
+  };
+  // ROUND 4 P2 — A RESOLVED DECLARATION NAMES ITS BLOCK, OR IT IS A DEFECT.
+  // The spec has every resolved state carry the block it was resolved at,
+  // and the app now makes that true by construction (a failed block read
+  // fails the whole aggregate, so no resolved state can render without
+  // one). A resolved state with the block absent, zero or malformed is
+  // therefore not an older bundle — that publishes NEITHER attribute —
+  // but a card stating a funds outcome without the provenance it
+  // promised, and `unjudged` was letting it pass. `unknown` may carry no
+  // block: the page withholds it when it set the state aside itself.
+  const validBlock = (b) => typeof b === 'string' && /^[1-9]\d*$/.test(b);
+  for (const r of renders) {
+    if (r.declaredState === null) continue;
+    const paintsChecking = saysCheckRunning(r.painted, copy?.unknownCopy ?? '');
+    const where = r.settled ? 'card' : 'a render this drive read';
+    if (r.declaredState !== 'unknown' && paintsChecking) {
+      return fail(
+        `${where} declares the resolved state "${r.declaredState}" while painting the still-checking sentence — two answers about one decision`,
+        'contradicted',
+      );
+    }
+    if (r.declaredState === 'unknown' && !paintsChecking && paintsResolved(r.painted)) {
+      return fail(
+        `${where} declares its state unknown while painting a resolved readiness state — two answers about one decision`,
+        'contradicted',
+      );
+    }
+    const other = paintedStateOtherThan(r.declaredState, r.painted);
+    if (other !== null) {
+      return fail(
+        `${where} declares "${r.declaredState}" while painting the "${other}" explanation — the machine-readable decision and the one the lender reads disagree`,
+        'contradicted',
+      );
+    }
+    if (r.declaredState !== 'unknown' && !validBlock(r.declaredBlock)) {
+      const how =
+        r.declaredBlock === null || r.declaredBlock === undefined
+          ? 'names no block'
+          : `names the block "${r.declaredBlock}"`;
+      return fail(
+        `${where} declares the resolved state "${r.declaredState}" and ${how} — a resolved decision states the block it was made at`,
+        'malformed',
+      );
+    }
+  }
+  if (declared === null) return { declaredFacts: 'undeclared', failure: null };
+  if (obs.declaredChain && typeof obs.declaredChain === 'object') {
+    const agreement = declaredStateConsistent(declared, obs.declaredChain);
+    if (agreement.judged && !agreement.consistent) return fail(agreement.why, 'contradicted');
+    return {
+      declaredFacts: agreement.judged ? 'consistent' : `unjudged (${agreement.why})`,
+      failure: null,
+    };
+  }
+  // The drive did not read at the declared block; it says why where it
+  // can, and "no reason recorded" is itself stated rather than blank.
+  const why = typeof obs.declaredChainWhy === 'string' ? obs.declaredChainWhy : 'no reason recorded';
+  return { declaredFacts: `unjudged (${why})`, failure: null };
+}
+
+function forcedCloseVerdictBody(obs, copy) {
   if (!obs || typeof obs !== 'object') {
     return { verdict: 'blocked', blockedKind: 'incomplete', why: 'no observation recorded' };
   }
@@ -1837,6 +2130,49 @@ export function forcedCloseVerdict(obs, copy) {
         why: `card reports a check still running AND claims unavailability ("${refusal}") — opposite claims about the app's knowledge and the protocol's answer`,
       };
     }
+  }
+
+  // #2098 / #2131 — WHAT THE CARD DECLARES AGAINST WHAT IT PAINTS, AND
+  // AGAINST THE CHAIN AT THE BLOCK IT NAMES.
+  //
+  // The card now publishes `data-forced-close-state` and
+  // `data-forced-close-block`. Two definite checks follow from that, both
+  // placed here among the per-render scans because each is a
+  // contradiction the lender was shown, not an uncertainty:
+  //
+  //   (a) The declared state and the painted copy must agree about
+  //       whether the check is still running. A card declaring a
+  //       resolved state while painting "still checking" — or declaring
+  //       `unknown` while painting recognised resolved copy — is saying
+  //       two things about the same decision, machine-readably and
+  //       visibly. Judged on the SETTLED render, because the attributes
+  //       are read in the same DOM pass as that render's text.
+  //
+  //   (b) The declared state must agree with the chain at the declared
+  //       block. The drive re-reads the two facts the state implies
+  //       (`isLoanDefaultable`, `hasInternalMatchCandidate`) pinned to
+  //       that block; `declaredStateConsistent` says what each state
+  //       requires of them. A mismatch means the card dated a decision
+  //       and the chain at that date disagrees.
+  //
+  // BOTH ARE SILENT ON A RECORD WITHOUT THE ATTRIBUTES. `declaredState`
+  // is `null` for a bundle that predates them and `undefined` for a
+  // record that predates the field; neither is a declaration, and a
+  // drive newer than its target must not report the target for not yet
+  // publishing what the drive knows to read. The chooser's
+  // `data-chooser-*` attributes set that rule in #1855.
+  //
+  // (b) can also be UNJUDGED — the state is one this file does not know,
+  // or a fact could not be read at that block. That is reported, not
+  // failed, and not silently passed either: `declaredFacts` travels out
+  // on EVERY verdict (see the exported wrapper) so the report line can
+  // say `unjudged` in so many words. The bracket elsewhere in the drive
+  // still makes its own, independently-established comparison, so an
+  // unjudged (b) is a check that did not run beside one that did —
+  // stated as such.
+  {
+    const declared = judgeDeclared(obs, copy);
+    if (declared.failure) return declared.failure;
   }
 
 
