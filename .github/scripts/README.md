@@ -65,13 +65,19 @@ so the count above stays honest:
   was a rate limit and how long to wait. It exists because `/rate_limit` does
   not report the bucket a GraphQL request is metered against (#2129) — the
   failed request's own headers are the only trustworthy statement of the
-  limit. The wait is **observed** when a header names it (`Retry-After`, or
-  `X-Ratelimit-Reset` minus now) and **guessed** when only the body says
-  "rate limit" and no header does: that case returns a fixed 60 s, the floor
-  GitHub's own guidance gives, and the reason string says so (`no reset
-  header — default wait`) so the log never presents the guess as a reading.
-  `--selftest` runs its own fixtures, and the step fixtures above run it
-  as-is, from a copy of the real file, never a stub.
+  limit. It recognises exactly two shapes and nothing looser: the **primary**
+  form (`X-Ratelimit-Remaining: 0`, wait = `X-Ratelimit-Reset` minus now —
+  the status is not part of it, since GraphQL answers 200 with the error in
+  the body) and the **secondary** form (status 403 or 429 with `Retry-After`,
+  or with a body saying "secondary rate limit"; wait = `Retry-After`). A
+  response that fits a shape but lacks the header that would name its wait
+  gets a fixed 60 s default, and the reason string says `default wait` so the
+  log never presents the guess as a reading. A 503 with `Retry-After` is
+  deliberately NOT a limit — the nameable miss; calling it one would be the
+  misdiagnosis the trace evidence exists to end. `--selftest` runs its own
+  fixtures, and the step fixtures above run it as-is, from a copy of the real
+  file, never a stub — under a stubbed clock, so no assertion depends on how
+  long the runner took between two reads of `date`.
 
 They run in their OWN workflow, `board-reconcile-fixtures.yml`, not with the
 gates above. Convenience would have put them in theirs; they are an operational

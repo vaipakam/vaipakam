@@ -23,15 +23,16 @@
 # the trace; the failure is the last one. Each response carries the full header
 # set, so the last occurrence of each header belongs to the last response.
 #
-# WHAT COUNTS AS A LIMIT — the two forms this account has actually received:
+# WHAT COUNTS AS A LIMIT — exactly the two forms this account has received,
+# and nothing looser (the rule is spelled out where it is applied, below):
 #   - the PRIMARY form: `X-Ratelimit-Remaining: 0`, with `X-Ratelimit-Reset`
 #     giving the epoch second the bucket refills. HTTP status is 200 for
 #     GraphQL (the error is in the body), 403 for REST.
-#   - the SECONDARY form: HTTP 403 or 429 with `Retry-After` and a body that
-#     says so. It does NOT show in `/rate_limit` at all
-#     (docs/internal/ProjectProcedures.md §3.3).
-# The body's message is read too, because a limit stated only in the body has
-# also been seen; it alone yields a conservative fixed wait.
+#   - the SECONDARY form: HTTP 403 or 429 with `Retry-After`, or with a body
+#     that says "secondary rate limit". It does NOT show in `/rate_limit`
+#     at all (docs/internal/ProjectProcedures.md §3.3).
+# A response missing the header that would name its wait gets a fixed
+# default, and the reason string says the wait is a default, not a reading.
 #
 # The wait this prints is NOT capped here. How long a job is willing to stand
 # still is the job's decision, and it is made where the job can say so.
@@ -74,25 +75,53 @@ analyse() { # analyse <trace> <now-epoch>  -> prints "<seconds>\t<reason>", exit
   message=$(printf '%s\n' "$last" \
     | grep -aoE '"message"[[:space:]]*:[[:space:]]*"[^"]{0,300}"' | tail -n 1 || true)
 
-  # A limit is stated by any one of these; none of them stated means the
-  # failure is something a wait cannot repair.
-  local limited=0
-  [ "${remaining:-}" = "0" ] && limited=1
-  [ -n "${retry:-}" ] && limited=1
-  printf '%s' "$message" | grep -qiE 'rate limit' && limited=1
-  [ "$limited" -eq 1 ] || return 1
+  local status
+  status=$(printf '%s\n' "$last" | head -n 1 | sed -E 's/^[[:space:]]*<?[[:space:]]*HTTP\/[0-9.]+[[:space:]]+([0-9]{3}).*/\1/')
 
+  # TWO SHAPES, AND ONLY THESE TWO. The first version of this treated each
+  # signal on its own as proof of a limit — a `Retry-After` alone, a body
+  # that mentioned "rate limit" alone — and a reviewer found in one round
+  # what that admits: a 503 with `Retry-After` read as a limit, and a
+  # secondary-limit body next to a healthy primary bucket read as "remaining
+  # 0" with the wrong reset (#2149 r2). Adding conditions one at a time is
+  # the unbounded road; the bounded rule is the two documented shapes.
+  #
+  #   PRIMARY   — the bucket is spent: `X-Ratelimit-Remaining: 0`. GraphQL
+  #               answers 200 with the error in the body, REST answers 403,
+  #               so the status is not part of this shape. The wait is the
+  #               time to `X-Ratelimit-Reset`, which belongs to THIS bucket
+  #               precisely because remaining is 0.
+  #   SECONDARY — an abuse-detection refusal: status 403 or 429 AND either
+  #               `Retry-After` or a body saying "secondary rate limit". The
+  #               primary headers on such a response describe a bucket that
+  #               is NOT the problem, so they are never used for the wait.
+  #
+  # Anything else — a 503 with `Retry-After`, a 401, a body mentioning a
+  # limit on a status that is neither 403 nor 429 — is not a limit, and a
+  # wait would not repair it. A 503 is the nameable miss: transient, and a
+  # retry might well succeed, but calling it a rate limit is precisely the
+  # misdiagnosis the trace evidence exists to prevent.
   local wait reason
-  if [ -n "${retry:-}" ] && [ "$retry" -eq "$retry" ] 2>/dev/null; then
-    wait=$retry
-    reason="retry-after $retry s"
-  elif [ -n "${reset:-}" ] && [ "$reset" -eq "$reset" ] 2>/dev/null; then
-    wait=$(( reset - now ))
-    [ "$wait" -lt 0 ] && wait=0
-    reason="remaining 0, reset at $(date -u -d "@$reset" +%Y-%m-%dT%H:%M:%SZ)"
+  if [ "${remaining:-}" = "0" ]; then
+    if [ -n "${reset:-}" ] && [ "$reset" -eq "$reset" ] 2>/dev/null; then
+      wait=$(( reset - now ))
+      [ "$wait" -lt 0 ] && wait=0
+      reason="primary limit — remaining 0, reset at $(date -u -d "@$reset" +%Y-%m-%dT%H:%M:%SZ)"
+    else
+      wait=$MESSAGE_ONLY_WAIT
+      reason="primary limit — remaining 0 but no reset header — default wait"
+    fi
+  elif { [ "$status" = "403" ] || [ "$status" = "429" ]; } \
+       && { [ -n "${retry:-}" ] || printf '%s' "$message" | grep -qi 'secondary rate limit'; }; then
+    if [ -n "${retry:-}" ] && [ "$retry" -eq "$retry" ] 2>/dev/null; then
+      wait=$retry
+      reason="secondary limit — retry-after $retry s"
+    else
+      wait=$MESSAGE_ONLY_WAIT
+      reason="secondary limit stated in the body only, no retry-after — default wait"
+    fi
   else
-    wait=$MESSAGE_ONLY_WAIT
-    reason="limit stated in the body only, no reset header — default wait"
+    return 1
   fi
   printf '%s\t%s\n' "$wait" "$reason"
 }
@@ -139,20 +168,66 @@ selftest() {
 < X-Ratelimit-Reset: 1789188527' \
     1789188999 0 0
 
-  # Secondary form: Retry-After wins over any reset header.
+  # Secondary form: the wait is Retry-After, and the primary headers beside it
+  # (a healthy bucket, a reset an hour out) are not consulted.
   expect "secondary limit (Retry-After)" \
 '< HTTP/2.0 403 Forbidden
 < Retry-After: 60
-< X-Ratelimit-Remaining: 0
-< X-Ratelimit-Reset: 1789188527
+< X-Ratelimit-Remaining: 4998
+< X-Ratelimit-Reset: 1789191767
 {"message":"You have exceeded a secondary rate limit. Please wait a few minutes before you try again."}' \
     1789188167 0 60
 
-  # Only the body says so: the conservative default.
-  expect "limit stated in the body only" \
+  # Both headers say the same thing — the bucket IS spent and Retry-After is
+  # present too. Remaining 0 is the primary shape and its reset is the wait.
+  expect "remaining 0 with a Retry-After beside it — the primary reset wins" \
 '< HTTP/2.0 403 Forbidden
-{"message":"API rate limit exceeded for user ID 275282153."}' \
+< Retry-After: 60
+< X-Ratelimit-Remaining: 0
+< X-Ratelimit-Reset: 1789188527' \
+    1789188167 0 360
+
+  # A secondary refusal with no Retry-After: the body is the only statement of
+  # it, and the wait is the documented default.
+  expect "secondary limit stated in the body only" \
+'< HTTP/2.0 403 Forbidden
+{"message":"You have exceeded a secondary rate limit. Please wait a few minutes before you try again."}' \
     1789188167 0 "$MESSAGE_ONLY_WAIT"
+
+  # THE SECONDARY SHAPE NEXT TO A HEALTHY PRIMARY BUCKET (#2149 r2). The
+  # primary headers are present and say 4,999 remaining with a reset an hour
+  # out; they describe a bucket that is not the problem. The wait is the
+  # secondary default, not the primary reset — and remaining is not 0.
+  expect "secondary body beside healthy primary headers" \
+'< HTTP/2.0 403 Forbidden
+< X-Ratelimit-Limit: 5000
+< X-Ratelimit-Remaining: 4999
+< X-Ratelimit-Reset: 1789191767
+{"message":"You have exceeded a secondary rate limit. Please wait a few minutes before you try again."}' \
+    1789188167 0 "$MESSAGE_ONLY_WAIT"
+
+  expect "429 with Retry-After" \
+'< HTTP/2.0 429 Too Many Requests
+< Retry-After: 30
+< X-Ratelimit-Remaining: 4990' \
+    1789188167 0 30
+
+  # `Retry-After` is also how a 503 says "come back later". That is not a
+  # rate limit, and calling it one is the misdiagnosis this exists to end —
+  # the nameable miss: a retry might well have helped.
+  expect "503 with Retry-After is NOT a limit" \
+'< HTTP/2.0 503 Service Unavailable
+< Retry-After: 120
+{"message":"Service unavailable"}' \
+    1789188167 1
+
+  # A primary-form message on a status that is neither 403 nor 429, with the
+  # bucket not spent: no shape matches.
+  expect "a limit-shaped body on a 200 with remaining > 0 is NOT a limit" \
+'< HTTP/2.0 200 OK
+< X-Ratelimit-Remaining: 12
+{"message":"API rate limit exceeded for user ID 275282153."}' \
+    1789188167 1
 
   # Paginated: eleven good pages, then the limited one. The LAST headers win.
   local pages='' p

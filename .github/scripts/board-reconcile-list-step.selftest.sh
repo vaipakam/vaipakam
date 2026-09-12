@@ -108,6 +108,20 @@ echo "$1" >> "$(dirname "$0")/../sleeps.txt"
 SH
 chmod +x "$work/bin/sleep"
 
+# `date -u +%s` IS STUBBED TOO — one fixed clock for the stub gh that writes a
+# reset and the parser that subtracts it. Read from the real wall clock, the
+# two reads are seconds apart at best, and a runner paused between them turns
+# an exact expectation into a range and a cap-boundary scenario into a coin
+# toss (#2149 r2). Every other form of `date` (the parser formats the reset
+# for its reason string) goes to the real binary.
+REAL_DATE=$(command -v date)
+cat > "$work/bin/date" <<SH
+#!/usr/bin/env bash
+if [ "\$1" = "-u" ] && [ "\$2" = "+%s" ] && [ "\$#" -eq 2 ]; then echo 1789200000; exit 0; fi
+exec "$REAL_DATE" "\$@"
+SH
+chmod +x "$work/bin/date"
+
 # ── scenario 1: the listing is refused ───────────────────────────────────────
 # The shape that actually happened, and the one the old log could not describe:
 # `/rate_limit` reports a HEALTHY table while the request itself came back 403
@@ -127,7 +141,7 @@ if [ "\$1" = "project" ] && [ "\$2" = "item-list" ]; then
 > Authorization: token $SECRET
 < HTTP/2.0 403 Forbidden
 < Retry-After: 60
-< X-Ratelimit-Remaining: 0
+< X-Ratelimit-Remaining: 4999
 < X-Ratelimit-Resource: graphql
 {"message":"You have exceeded a secondary rate limit. Please wait a few minutes before you try again."}
 TRACE
@@ -144,7 +158,7 @@ run_step && rc=0 || rc=$?
 check r "the step fails" "$([ "$rc" -ne 0 ] && echo 0 || echo 1)"
 grep -q '403 Forbidden' "$work/out.txt" && s=0 || s=1
 check r "the failed request's HTTP status is shown" "$s"
-grep -q 'X-Ratelimit-Remaining: 0' "$work/out.txt" && s=0 || s=1
+grep -q 'X-Ratelimit-Remaining: 4999' "$work/out.txt" && s=0 || s=1
 check r "the failed request's rate-limit header is shown" "$s"
 grep -q 'Retry-After: 60' "$work/out.txt" && s=0 || s=1
 check r "retry-after is shown" "$s"
@@ -396,10 +410,10 @@ run_step && rc=0 || rc=$?
 check w "the step SUCCEEDS" "$([ "$rc" -eq 0 ] && echo 0 || echo 1)"
 [ "$(attempts)" -eq 2 ] && s=0 || s=1
 check w "two attempts ($(attempts))" "$s"
-# The reset was ten seconds out at the time the stub wrote it; by the time the
-# step did the subtraction a second may have ticked. Margin is 5 on top.
+# Ten seconds to the reset the stub wrote, plus the 5 s margin — exact,
+# because the stub and the parser read the same stubbed clock.
 slept=$(cat "$work/sleeps.txt")
-{ [ "$slept" = "15" ] || [ "$slept" = "14" ]; } && s=0 || s=1
+[ "$slept" = "15" ] && s=0 || s=1
 check w "it waited until the reset the FAILED REQUEST named, plus margin (got '$slept')" "$s"
 grep -q '::warning::board listing was rate limited' "$work/out.txt" && s=0 || s=1
 check w "the wait is announced, with the reason, as a warning" "$s"
@@ -480,7 +494,7 @@ check m "the step fails" "$([ "$rc" -ne 0 ] && echo 0 || echo 1)"
 check m "one attempt only ($(attempts))" "$s"
 [ ! -s "$work/sleeps.txt" ] && s=0 || s=1
 check m "nothing was waited for (got '$(tr '\n' ' ' < "$work/sleeps.txt")')" "$s"
-grep -qE 'the wait would be (901|902)s, over RETRY_WAIT_CAP_SECONDS=900' "$work/out.txt" && s=0 || s=1
+grep -q 'the wait would be 902s, over RETRY_WAIT_CAP_SECONDS=900' "$work/out.txt" && s=0 || s=1
 check m "the log states the TOTAL wait, margin included, against the cap" "$s"
 
 # ── scenario 8: rate limited, waited, rate limited again ────────────────────
