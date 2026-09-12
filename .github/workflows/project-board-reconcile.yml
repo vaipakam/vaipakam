@@ -341,6 +341,10 @@ jobs:
                   set -e
                   if [ "$retry_rc" -eq 0 ]; then
                     first_attempt_note="$first_attempt_note; the retry was rate limited again (${retry_verdict#*	})"
+                  elif [ "$retry_rc" -eq 2 ]; then
+                    # Same distinction as for the first attempt: "could not
+                    # read" is not "no".
+                    first_attempt_note="$first_attempt_note; the parser could not read a response from the retry's trace — whether the retry was rate limited is UNKNOWN, not 'no'"
                   else
                     first_attempt_note="$first_attempt_note; the retry failed with no recognised limit"
                   fi

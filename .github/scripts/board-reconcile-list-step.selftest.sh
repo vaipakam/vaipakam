@@ -628,6 +628,46 @@ check b "and does not call it one" "$s"
 grep -q '401 Unauthorized' "$work/out.txt" && s=0 || s=1
 check b "the retry's own status is what the evidence shows" "$s"
 
+# ── scenario 8c: rate limited, waited, then a retry trace nothing can read ──
+# The retry fails and its trace has no response the parser can read. That is
+# UNKNOWN for the retry, exactly as it is for a first attempt (#2149 r11) —
+# not "no recognised limit", which is a negative the evidence does not
+# support.
+cat > "$work/bin/gh" <<SH
+#!/usr/bin/env bash
+if [ "\$1" = "api" ] && [ "\$2" = "rate_limit" ]; then
+  if [ "\$3" = "--jq" ]; then echo 5000; exit 0; fi
+  echo '{"resources":{"graphql":{"limit":5000,"remaining":5000}}}'; exit 0
+fi
+if [ "\$1" = "project" ] && [ "\$2" = "item-list" ]; then
+  echo item-list >> "\$(dirname "\$0")/../calls.txt"
+  if [ "\$(grep -c item-list "\$(dirname "\$0")/../calls.txt")" -eq 1 ]; then
+    if [ -n "\${GH_DEBUG:-}" ]; then
+      echo "< HTTP/2.0 200 OK" >&2
+      echo "< X-Ratelimit-Remaining: 0" >&2
+      echo "< X-Ratelimit-Reset: \$(( \$(date -u +%s) + 3 ))" >&2
+      echo '{"message":"API rate limit already exceeded for user ID 275282153."}' >&2
+    fi
+  else
+    [ -n "\${GH_DEBUG:-}" ] && echo "=== some future debug format nothing here knows ===" >&2
+  fi
+  echo "unknown owner type" >&2
+  exit 1
+fi
+exit 0
+SH
+chmod +x "$work/bin/gh"
+
+echo "rate limited, then a retry trace nothing can read:"
+run_step && rc=0 || rc=$?
+check d "the step fails" "$([ "$rc" -ne 0 ] && echo 0 || echo 1)"
+[ "$(attempts)" -eq 2 ] && s=0 || s=1
+check d "two attempts ($(attempts))" "$s"
+grep -q 'whether the retry was rate limited is UNKNOWN' "$work/out.txt" && s=0 || s=1
+check d "the diagnostic says the retry's classification is UNKNOWN" "$s"
+grep -q 'the retry failed with no recognised limit' "$work/out.txt" && s=1 || s=0
+check d "and does not call it 'no recognised limit'" "$s"
+
 if [ "$fail" -ne 0 ]; then
   echo "board-reconcile list-step fixtures: FAILED" >&2
   exit 1

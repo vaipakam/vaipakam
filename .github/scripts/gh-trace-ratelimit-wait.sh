@@ -119,8 +119,14 @@ analyse() { # analyse <trace> <now-epoch>  -> prints "<seconds>\t<reason>", exit
   # has to outlast BOTH, so the longer wait is the wait (#2149 r3). Giving
   # either shape precedence would retry while the other limit still holds.
   local primary_wait='' primary_reason='' secondary_wait='' secondary_reason=''
+  # Header values are validated as decimal digits and normalised through
+  # `10#` before use or output: a zero-padded `Retry-After: 08` passes an
+  # `-eq` self-comparison and then blows up as octal in the caller's
+  # arithmetic — "value too great for base" — leaving the step with neither
+  # its retry nor its diagnostic (#2149 r11).
   if [ "${remaining:-}" = "0" ]; then
-    if [ -n "${reset:-}" ] && [ "$reset" -eq "$reset" ] 2>/dev/null; then
+    if [[ "${reset:-}" =~ ^[0-9]+$ ]]; then
+      reset=$(( 10#$reset ))
       primary_wait=$(( reset - now ))
       [ "$primary_wait" -lt 0 ] && primary_wait=0
       primary_reason="primary limit — remaining 0, reset at $(date -u -d "@$reset" +%Y-%m-%dT%H:%M:%SZ)"
@@ -131,9 +137,9 @@ analyse() { # analyse <trace> <now-epoch>  -> prints "<seconds>\t<reason>", exit
   fi
   if { [ "$status" = "403" ] || [ "$status" = "429" ]; } \
      && { [ -n "${retry:-}" ] || printf '%s' "$message" | grep -qi 'secondary rate limit'; }; then
-    if [ -n "${retry:-}" ] && [ "$retry" -eq "$retry" ] 2>/dev/null; then
-      secondary_wait=$retry
-      secondary_reason="secondary limit — retry-after $retry s"
+    if [[ "${retry:-}" =~ ^[0-9]+$ ]]; then
+      secondary_wait=$(( 10#$retry ))
+      secondary_reason="secondary limit — retry-after $secondary_wait s"
     else
       secondary_wait=$MESSAGE_ONLY_WAIT
       secondary_reason="secondary limit stated in the body only, no retry-after — default wait"
@@ -335,6 +341,26 @@ selftest() {
 '< HTTP/2.0 403 Forbidden
 < retry-after: 30' \
     1789188167 0 30
+
+  # ZERO-PADDED HEADER VALUES (#2149 r11). `Retry-After: 08` passes an `-eq`
+  # self-comparison and is then octal in the caller's `$(( ))` — "value too
+  # great for base". The wait must come out as a plain decimal, and the
+  # reason must carry the normalised number, not the literal.
+  expect "zero-padded Retry-After is normalised to decimal" \
+'< HTTP/2.0 429 Too Many Requests
+< Retry-After: 08' \
+    1789188167 0 8 'retry-after 8 s'
+  expect "zero-padded X-Ratelimit-Reset is normalised too" \
+'< HTTP/2.0 200 OK
+< X-Ratelimit-Remaining: 0
+< X-Ratelimit-Reset: 01789188527' \
+    1789188167 0 360
+  # A Retry-After that is not a number at all (the HTTP-date form is legal)
+  # still marks the secondary shape, but names no usable wait: the default.
+  expect "non-numeric Retry-After falls back to the default, not to arithmetic" \
+'< HTTP/2.0 429 Too Many Requests
+< Retry-After: Sat, 12 Sep 2026 05:00:00 GMT' \
+    1789188167 0 "$MESSAGE_ONLY_WAIT" 'default wait'
 
   # A LARGE BODY ON THE LIMITED RESPONSE (#2149 r4). A limited GraphQL page
   # can still carry data, and a body past the pipe buffer is where a
