@@ -81,6 +81,8 @@ import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
 import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
 import {RewardRemittanceLensFacet} from "../src/facets/RewardRemittanceLensFacet.sol";
+import {RewardCustodyFacet} from "../src/facets/RewardCustodyFacet.sol";
+import {RewardCustodyHolder} from "../src/RewardCustodyHolder.sol";
 import {RewardCompensationDispatchFacet} from "../src/facets/RewardCompensationDispatchFacet.sol";
 import {RewardCommitmentFacet} from "../src/facets/RewardCommitmentFacet.sol";
 import {RepatriationFacet} from "../src/facets/RepatriationFacet.sol";
@@ -269,6 +271,8 @@ contract DeployDiamond is Script {
         RewardAggregatorFacet rewardAggregatorFacet = new RewardAggregatorFacet();
         RewardRemittanceFacet rewardRemittanceFacet = new RewardRemittanceFacet();
         RewardRemittanceLensFacet rewardRemittanceLensFacet = new RewardRemittanceLensFacet();
+        // #1566 slice 4 PR A — custody lifecycle + paid-side rebase.
+        RewardCustodyFacet rewardCustodyFacet = new RewardCustodyFacet();
         RewardCompensationDispatchFacet rewardCompensationDispatchFacet =
             new RewardCompensationDispatchFacet();
         RewardCommitmentFacet rewardCommitmentFacet = new RewardCommitmentFacet();
@@ -303,7 +307,7 @@ contract DeployDiamond is Script {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](77);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](78);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -365,6 +369,11 @@ contract DeployDiamond is Script {
         cuts[76] = _buildCut(
             address(rewardBroadcastFacet),
             _getRewardBroadcastSelectors()
+        );
+        // Slot 77: #1566 slice 4 PR A — the custody facet.
+        cuts[77] = _buildCut(
+            address(rewardCustodyFacet),
+            _getRewardCustodySelectors()
         );
         cuts[26] = _buildCut(address(rewardReporterFacet), _getRewardReporterSelectors());
         cuts[27] = _buildCut(address(rewardAggregatorFacet), _getRewardAggregatorSelectors());
@@ -749,6 +758,30 @@ contract DeployDiamond is Script {
         RewardReporterFacet(diamond).seedArmedFreshPaid(0);
         console.log("P1-b: fresh deployment marked seeded (0).");
 
+        // 5d-ii. #1566 slice 4 PR A — the delivered reward custody holder.
+        //     Constructed for THIS Diamond and bound once, here, while the
+        //     Diamond is still paused. The holder's address is persisted in
+        //     the artifact below (`.rewardCustodyHolder`) and read back by
+        //     every later script; an in-place facet refresh NEVER deploys or
+        //     rebinds one (design §5d) — a refresh that did would leave the
+        //     attributed balance at the old address while the Diamond read
+        //     an empty one. Replacing a holder is its own paused ceremony
+        //     (`replaceRewardCustodyHolder`). Nothing reads the holder until
+        //     PR B's cutover, so binding it changes no live behaviour.
+        //
+        //     The one-shot paid-side REBASE is consumed with a zero total
+        //     for the same reason the P1-b seed is: a fresh deployment has no
+        //     history to import, and consuming the guard now means neither
+        //     migration writer can ever run on a chain that never needed one.
+        //     Role is `Unconfigured` at this point, so the call touches
+        //     neither counter (`max(0, 0)`; the received side is rewritten
+        //     only on `Canonical`).
+        RewardCustodyHolder rewardCustodyHolder = new RewardCustodyHolder(diamond);
+        RewardCustodyFacet(diamond).bindRewardCustodyHolder(address(rewardCustodyHolder));
+        RewardCustodyFacet(diamond).rebaseArmedFreshPaid(0);
+        console.log("Reward custody holder bound:", address(rewardCustodyHolder));
+        console.log("Slice 4: fresh deployment marked rebased (0).");
+
         // 5e. Unpause the protocol. The Diamond is born paused (see
         //     `VaipakamDiamond.constructor` — `LibPausable.pause()` is
         //     the last constructor write) so the half-cut window
@@ -905,6 +938,10 @@ contract DeployDiamond is Script {
         );
         Deployments.writeTreasury(treasury);
         Deployments.writeAdmin(admin);
+        // #1566 slice 4 PR A — the custody holder's address is part of the
+        // deployment's identity (design §5d): later scripts read it back
+        // rather than re-deploying one.
+        Deployments.writeRewardCustodyHolder(address(rewardCustodyHolder));
 
         // Per-facet addresses — written under `.facets.<key>`. The
         // Diamond proxy is the only address frontend / dApp callers
@@ -969,6 +1006,7 @@ contract DeployDiamond is Script {
         Deployments.writeFacet("rewardRemittanceLensFacet", address(rewardRemittanceLensFacet));
         Deployments.writeFacet("rewardCompensationDispatchFacet", address(rewardCompensationDispatchFacet));
         Deployments.writeFacet("rewardCommitmentFacet",   address(rewardCommitmentFacet));
+        Deployments.writeFacet("rewardCustodyFacet",      address(rewardCustodyFacet));
         Deployments.writeFacet("repatriationFacet",       address(repatriationFacet));
         Deployments.writeFacet("configFacet",             address(configFacet));
         // #394 (Codex #647 round-8 P2) — persist the carved-out NumeraireConfigFacet
@@ -1087,6 +1125,7 @@ contract DeployDiamond is Script {
         console.log("RewardRemittanceFacet:", address(rewardRemittanceFacet));
         console.log("RewardRemittanceLensFacet:", address(rewardRemittanceLensFacet));
         console.log("RewardCompensationDispatchFacet:", address(rewardCompensationDispatchFacet));
+        console.log("RewardCustodyFacet:   ", address(rewardCustodyFacet));
         console.log("ConfigFacet:          ", address(configFacet));
         console.log("NumeraireConfigFacet: ", address(numeraireConfigFacet));
         console.log("RiskAccessFacet:      ", address(riskAccessFacet));
@@ -2975,6 +3014,23 @@ contract DeployDiamond is Script {
         // #1662 r7 - the one-shot attribution watermark.
         s[13] =
             RewardCompensationDispatchFacet.armRecoveryAttribution.selector;
+    }
+
+    /// #1566 slice 4 PR A — custody lifecycle, ledger views, paid-side rebase.
+    function _getRewardCustodySelectors()
+        internal
+        pure
+        returns (bytes4[] memory s)
+    {
+        s = new bytes4[](8);
+        s[0] = RewardCustodyFacet.bindRewardCustodyHolder.selector;
+        s[1] = RewardCustodyFacet.replaceRewardCustodyHolder.selector;
+        s[2] = RewardCustodyFacet.rebaseArmedFreshPaid.selector;
+        s[3] = RewardCustodyFacet.rewardCustodyHolder.selector;
+        s[4] = RewardCustodyFacet.armedFreshPaidRebased.selector;
+        s[5] = RewardCustodyFacet.rewardCustodyRow.selector;
+        s[6] = RewardCustodyFacet.rewardCustodySnapshot.selector;
+        s[7] = RewardCustodyFacet.armedFreshLedger.selector;
     }
 
     /// #1434 P2-w4 — the remittance read surface (lens split).

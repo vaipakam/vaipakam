@@ -86,6 +86,7 @@ import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
 import {MulticallFacet} from "../src/facets/MulticallFacet.sol";
 import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
 import {RewardRemittanceLensFacet} from "../src/facets/RewardRemittanceLensFacet.sol";
+import {RewardCustodyFacet} from "../src/facets/RewardCustodyFacet.sol";
 import {VaipakamRewardMessenger, REWARD_MESSENGER_WIRE_GENERATION} from "../src/crosschain/VaipakamRewardMessenger.sol";
 import {VpfiReturnSender, VPFI_RETURN_SENDER_WIRE_GENERATION} from "../src/crosschain/VpfiReturnSender.sol";
 import {VpfiReturnReceiver, VPFI_RETURN_RECEIVER_WIRE_GENERATION} from "../src/crosschain/VpfiReturnReceiver.sol";
@@ -212,7 +213,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     // (#1434) landed on either side of one merge.
     // 74 -> 75: OfferAcceptFeeFacet (#1835) — the borrower-LIF charge split
     // off OfferAcceptFacet, which was 164 bytes under EIP-170.
-    uint256 public constant EXPECTED_FACETS = 77;
+    uint256 public constant EXPECTED_FACETS = 78;
 
     function refresh() external {
         uint256 cid = block.chainid;
@@ -1066,6 +1067,15 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             "rewardBroadcastFacet",
             address(new RewardBroadcastFacet()),
             _getRewardBroadcastSelectors()
+        );
+        // Slot 77: #1566 slice 4 PR A — the custody facet. The refresh cuts
+        // the FACET only; it never deploys or binds a `RewardCustodyHolder`
+        // (design §5d) — that is `DeployRewardCustodyHolder.s.sol`, run once
+        // per live chain, or the paused replacement ceremony.
+        items[77] = Item(
+            "rewardCustodyFacet",
+            address(new RewardCustodyFacet()),
+            _getRewardCustodySelectors()
         );
         items[26] = Item("rewardReporterFacet", address(new RewardReporterFacet()), _getRewardReporterSelectors());
         // #1222 M3 B3 — `getChainRecycledLedger` /

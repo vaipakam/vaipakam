@@ -86,6 +86,8 @@ export interface DeploymentFacets {
   refinanceFacet?: HexAddress;
   repayFacet?: HexAddress;
   rewardAggregatorFacet?: HexAddress;
+  /** #1566 slice 4 PR A — custody lifecycle + paid-side rebase. */
+  rewardCustodyFacet?: HexAddress;
   rewardReporterFacet?: HexAddress;
   riskFacet?: HexAddress;
   stakingRewardsFacet?: HexAddress;
@@ -268,6 +270,14 @@ export interface Deployment {
    *  equivalent receivers — `triggerLiquidationDiscounted` is
    *  permissionless, this is just OUR reference deployment. */
   flashLoanLiquidator?: HexAddress;
+
+  /** #1566 slice 4 PR A — the `RewardCustodyHolder` bound to this Diamond:
+   *  the dedicated custody address for delivered reward funding. Absent on
+   *  a chain that predates the holder and has not yet run
+   *  `DeployRewardCustodyHolder`; NEVER re-deployed by an in-place facet
+   *  refresh (design §5d) — replaced only by the paused ceremony. Nothing
+   *  reads it until slice 4 PR B's cutover. */
+  rewardCustodyHolder?: HexAddress;
 
   /** #625 WI-1 — the production keeper bot's signing EOA on this chain.
    *  The dapp's auto-lend surface reads it to delegate the keeper-driven

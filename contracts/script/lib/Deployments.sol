@@ -231,6 +231,10 @@ library Deployments {
     }
 
     function readFlashLoanLiquidator() internal view returns (address) { return _tryReadAddr(".flashLoanLiquidator"); }
+    /// @notice #1566 slice 4 PR A — optional, non-reverting read of
+    ///         `.rewardCustodyHolder`. Zero on a chain that predates the
+    ///         holder and has not yet run `DeployRewardCustodyHolder`.
+    function readRewardCustodyHolderOptional() internal view returns (address) { return _tryReadAddr(".rewardCustodyHolder"); }
 
     // Track-C mock infra (Base Sepolia testnet only). Falls back to env on chains
     // where these aren't deployed; readers pre-check for `address(0)` and skip.
@@ -325,6 +329,11 @@ library Deployments {
     function writeVpfiReturnReceiver(address a)     internal { _writeAddr(".vpfiReturnReceiver",     a); }
     function writeVpfiReturnReceiverImpl(address a) internal { _writeAddr(".vpfiReturnReceiverImpl", a); }
     function writeFlashLoanLiquidator(address a) internal { _writeAddr(".flashLoanLiquidator", a); }
+    /// @notice #1566 slice 4 PR A — the delivered reward custody holder
+    ///         (`RewardCustodyHolder`) bound to this Diamond. Written once by
+    ///         `DeployDiamond` (fresh deploys) or `DeployRewardCustodyHolder`
+    ///         (live chains); replaced only by the paused ceremony.
+    function writeRewardCustodyHolder(address a) internal { _writeAddr(".rewardCustodyHolder", a); }
     function writeWeth(address a)            internal { _writeAddr(".weth",            a); }
     function writeTreasury(address a)        internal { _writeAddr(".treasury",        a); }
     function writeAdmin(address a)           internal { _writeAddr(".admin",           a); }
