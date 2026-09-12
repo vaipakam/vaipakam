@@ -6,9 +6,18 @@
  * runs the entire drive on import, so none of its top-level wiring can
  * be executed from a unit test; `exitOrdering.test.mjs` and
  * `confirmTrial.test.mjs` exist for the same reason, on different
- * subjects. Three files of this shape is a smell, and the fix is the
- * extraction tracked in #2120 — not folding unrelated subjects into one
- * file, which would make each of them harder to read than it is now.
+ * subjects.
+ *
+ * #2120 — THE TRACKER ITSELF IS NO LONGER HERE. The head state, the two
+ * direct probes and the floor predicate were lifted into `pageHead.mjs`,
+ * which runs under a fake page in `pageHead.test.mjs`; the cases below that
+ * used to read those bodies out of the drive's source now read them out of
+ * the module's, and are kept because they pin SHAPE a behavioural test does
+ * not see — where a stamp is taken, which clock it takes, that there is one
+ * admission. What this file still owns outright is the drive's WIRING: the
+ * order of settle, sample and scrape at the two call sites, which clock the
+ * drive hands the tracker, and that the report consumes what the
+ * observation produces. None of that can run without the drive.
  *
  * WHAT IT PROTECTS. `page.on('response', …)` accepts an async listener
  * and Playwright does not await it. A `latest`-block reply that arrives
@@ -38,6 +47,8 @@ const DRIVE = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
   'live-position-observe.mjs',
 );
+/** The tracker the drive wires in (#2120) — the bodies moved there. */
+const TRACKER = path.join(path.dirname(fileURLToPath(import.meta.url)), 'pageHead.mjs');
 
 /**
  * A whole function from the drive's source, brace-matched from its
@@ -91,11 +102,12 @@ function stripInterpolations(source) {
   return out;
 }
 
-const settleHeadReadsBody = (src) =>
-  functionBody(src, 'async function settleHeadReads(page)');
+const settleHeadReadsBody = (mod) =>
+  functionBody(mod, 'async function settleHeadReads(page)');
 
 describe('the head sample waits for the readings in flight', () => {
   const src = fs.readFileSync(DRIVE, 'utf8');
+  const mod = fs.readFileSync(TRACKER, 'utf8');
   const at = (needle) => src.indexOf(needle);
 
   const SAMPLE = 'const pageHead = pageHeadOf(page);';
@@ -256,19 +268,20 @@ describe('the head sample waits for the readings in flight', () => {
   // assumption about response ordering. The head stays stamped on its ANSWER,
   // which is round 92's rule — an unanswered ask proves nothing.
   it('stamps the read when it is sent and the head when it answers', () => {
-    expect(src, 'the read stamp is on the request listener').toContain(
+    expect(mod, 'the read stamp is on the request listener').toContain(
       "page.on('request', (req) => {",
     );
-    const reqListener = functionBody(src, "page.on('request', (req) => {");
+    const reqListener = functionBody(mod, "page.on('request', (req) => {");
     expect(reqListener).toContain("body.includes('eth_call')");
-    expect(reqListener).toContain('firstReadAt.set(key, orderingNow())');
+    // `now` is the clock the drive hands in — see the clock case below.
+    expect(reqListener).toContain('firstReadAt.set(key, now())');
     // And NOT re-stamped on arrival, which would reintroduce the unsound
     // comparison for any endpoint the request listener missed.
-    expect(src, 'no arrival-time read stamp remains').not.toContain(
+    expect(mod, 'no arrival-time read stamp remains').not.toContain(
       "if (body.includes('eth_call')) stamp(firstReadAt);",
     );
     // The head keeps its answer-time stamp (round 92).
-    expect(src).toContain('stamp(firstHeadAt)');
+    expect(mod).toContain('stamp(firstHeadAt)');
   });
 
   // ROUND 102 P2 — AND THE PROOF IS MEASURED ON A MONOTONIC CLOCK.
@@ -301,18 +314,37 @@ describe('the head sample waits for the readings in flight', () => {
     // any `<name>At` binding, so the rule is about the CLASS of ordering
     // stamps rather than the members of it that existed when it was last
     // edited. Twice is a pattern; a third time would be a choice.
-    const orderingStamps = [
-      ...src.matchAll(
-        /(?:firstReadAt\.set\(key, |map\.set\(key, |const [a-z][A-Za-z]*At = )([A-Za-z.]+\(\))/g,
-      ),
-    ];
-    expect(orderingStamps.length, 'the ordering stamps were found').toBeGreaterThanOrEqual(4);
-    for (const m of orderingStamps) {
-      expect(m[1], 'every ordering stamp uses orderingNow').toBe('orderingNow()');
+    //
+    // AMENDED FOR #2120 — the stamps now live in TWO files, and the rule
+    // is the same one across a seam: the tracker stamps with the `now` it
+    // was HANDED, it never reads a clock of its own, and the drive hands it
+    // `orderingNow`. Any of those three failing puts the floor's proof and
+    // the ledger's comparison on different origins, which is the mixed-
+    // origin defect round 102 closed — so all three are pinned, and the
+    // tracker's half is a negative over every clock it could reach for.
+    const driveStamps = [...src.matchAll(/const [a-z][A-Za-z]*At = ([A-Za-z.]+\(\))/g)];
+    expect(driveStamps.length, 'the drive ordering stamps were found').toBeGreaterThanOrEqual(2);
+    for (const m of driveStamps) {
+      expect(m[1], 'every drive ordering stamp uses orderingNow').toBe('orderingNow()');
     }
-    expect(src, 'no ordering stamp takes the wall clock').not.toMatch(
-      /(?:firstReadAt\.set\(key, |const [a-z][A-Za-z]*At = )Date\.now\(\)/,
+    const trackerStamps = [
+      ...mod.matchAll(/(?:firstReadAt\.set\(key, |map\.set\(key, )([A-Za-z.]+\(\))/g),
+    ];
+    expect(trackerStamps.length, 'the tracker ordering stamps were found').toBeGreaterThanOrEqual(
+      2,
     );
+    for (const m of trackerStamps) {
+      expect(m[1], 'every tracker ordering stamp uses the injected clock').toBe('now()');
+    }
+    expect(mod, 'the tracker reads no clock of its own').not.toMatch(
+      /\b(?:Date|performance)\.now\(\)/,
+    );
+    expect(src, 'no ordering stamp takes the wall clock').not.toMatch(
+      /const [a-z][A-Za-z]*At = Date\.now\(\)/,
+    );
+    // The seam: the drive hands the tracker the same clock it stamps with.
+    const wiring = callContaining(src, 'now: orderingNow', 'createPageHeadTracker(');
+    expect(wiring, 'the tracker is built with the ordering clock').toContain('now: orderingNow,');
     // And the wall clock is still what deadlines use — a monotonic origin
     // there would be a different, confusing change.
     expect(src).toContain('const until = Date.now() + 20_000;');
@@ -380,8 +412,8 @@ describe('the head sample waits for the readings in flight', () => {
 
   it('only trusts the floor when every endpoint the page used is bounded', () => {
     const sig = 'function floorEstablishedFor(page, sampledBeforeNav)';
-    expect(at(sig), 'the floor predicate was not found').toBeGreaterThan(-1);
-    const fn = functionBody(src, sig);
+    expect(mod.indexOf(sig), 'the floor predicate was not found').toBeGreaterThan(-1);
+    const fn = functionBody(mod, sig);
     // Either way of bounding ONE endpoint, inside the per-key loop.
     expect(fn).toContain('sampledBeforeNav?.has(key)');
     // Both stamps, and the ordering test between them.
@@ -395,7 +427,7 @@ describe('the head sample waits for the readings in flight', () => {
     // `eth_call` and not any POST: counting `eth_chainId` or the head
     // announcements themselves would make this permanently false and
     // silently retire three protocol arms.
-    expect(src).toContain("body.includes('eth_call')");
+    expect(mod).toContain("body.includes('eth_call')");
     // And the gate is actually consumed by both stability reads — with no
     // global shortcut past it, which is the round-90 finding.
     const both = src.slice(at('const floorSound ='), at('const floorSound =') + 1200);
@@ -444,11 +476,16 @@ describe('the head sample waits for the readings in flight', () => {
   // `function pageHeadOf(page)` matches the same text — the first
   // version of this case asserted one occurrence, found two, and was
   // measuring the definition rather than a call site.
+  //
+  // #2120 — the definition is the TRACKER'S now, so the drive's count is
+  // call sites alone; the one-definition half of the rule moved with it.
   it('has exactly the two sample sites, each settled first', () => {
+    expect([...mod.matchAll(/function pageHeadOf\(page\)/g)], 'exactly one definition').toHaveLength(
+      1,
+    );
+    expect(src, 'the drive defines no copy').not.toContain('function pageHeadOf(page)');
     const all = [...src.matchAll(/pageHeadOf\(page\)/g)];
-    const declarations = [...src.matchAll(/function pageHeadOf\(page\)/g)];
-    expect(declarations, 'exactly one definition').toHaveLength(1);
-    expect(all.length - declarations.length, 'exactly two call sites').toBe(2);
+    expect(all.length, 'exactly two call sites').toBe(2);
 
     // Each sample is preceded by its own settle, so neither reads a head
     // that an in-flight parse has not yet recorded (round 48).
@@ -469,9 +506,9 @@ describe('the head sample waits for the readings in flight', () => {
     // in between, which is the race itself. So the listener is a plain
     // function that starts the async work and records the promise, not
     // an `async` listener that adds itself partway through.
-    expect(src).toContain("page.on('response', (res) => {");
-    expect(src).not.toContain("page.on('response', async (res) => {");
-    const reg = src.slice(at("page.on('response', (res) => {"));
+    expect(mod).toContain("page.on('response', (res) => {");
+    expect(mod).not.toContain("page.on('response', async (res) => {");
+    const reg = mod.slice(mod.indexOf("page.on('response', (res) => {"));
     expect(reg.slice(0, 400)).toContain('pending.add(done)');
   });
 
@@ -485,7 +522,7 @@ describe('the head sample waits for the readings in flight', () => {
   // already moved past. Draining to EMPTY is still refused for round 48's
   // reason: a polling page never reaches empty and the run would hang.
   it('drains the pending parses to a bounded quiet point', () => {
-    const body = settleHeadReadsBody(src);
+    const body = settleHeadReadsBody(mod);
     // Still a snapshot per pass — the listener adds to the live set while
     // this awaits, so iterating the set itself would be the unbounded
     // loop under another name.
@@ -506,7 +543,7 @@ describe('the head sample waits for the readings in flight', () => {
   // state the page had already moved past — an older protocol range then
   // substantiating a product failure.
   it('reports non-quiescence rather than returning as if drained', () => {
-    const body = settleHeadReadsBody(src);
+    const body = settleHeadReadsBody(mod);
     // The empty-at-entry and empty-during-drain exits are both a positive
     // answer; the fall-through past the budget must not be.
     expect(body).toContain('if (!pending || pending.size === 0) return true;');
@@ -566,10 +603,10 @@ describe('the head sample waits for the readings in flight', () => {
   // used, and refused outright when any of them will not answer — a ceiling
   // over some of them is not a ceiling.
   it('clears a ceiling ASKED after the scrape, not only the observed head', () => {
-    expect(src, 'the ceiling probe exists').toContain(
+    expect(mod, 'the ceiling probe exists').toContain(
       'async function pageProviderCeiling(page)',
     );
-    const probe = functionBody(src, 'async function pageProviderCeiling(page)');
+    const probe = functionBody(mod, 'async function pageProviderCeiling(page)');
     // The HIGHEST, which is the mirror of the floor probe's lowest.
     expect(probe).toContain('if (seen > high) high = seen;');
     expect(probe, 'scoped to the endpoints THIS page used').toContain(
@@ -602,9 +639,12 @@ describe('the head sample waits for the readings in flight', () => {
 // malformed answer it exists to distrust.
 //
 // A source test because the probe lives inside `notePageRpcEndpoint`, which
-// runs only under a live page. Extraction is #2120, as elsewhere here.
+// runs only under a live page. #2120 lifted the HEAD tracker out of the
+// drive; this chain probe is the drive's still, so its two cases stay on the
+// drive's source, and the page-provider reader they sit beside moved.
 describe('the synthetic chain probe validates as a quantity (round 100)', () => {
   const src = fs.readFileSync(DRIVE, 'utf8');
+  const mod = fs.readFileSync(TRACKER, 'utf8');
 
   it('reads the reply through the shared parser, not raw .result', () => {
     expect(src, 'the probe no longer reads a bare result').not.toContain(
@@ -624,11 +664,16 @@ describe('the synthetic chain probe validates as a quantity (round 100)', () => 
     // The fourth reader of a JSON-RPC result. Rounds 98, 99 and 100 each
     // found one that had been left behind, which is the whole argument for
     // there being one parser rather than a rule each reader remembers.
-    expect(src).toContain('const believed = believableResult(parsed);');
-    expect(src).toContain('const seen = hexQuantity(believed);');
-    expect(src, 'no reader left reaching for a raw member result').not.toContain(
-      'hexQuantity(parsed?.result)',
-    );
+    expect(mod).toContain('const believed = believableResult(parsed);');
+    expect(mod).toContain('const seen = hexQuantity(believed);');
+    for (const [name, text] of [
+      ['drive', src],
+      ['tracker', mod],
+    ]) {
+      expect(text, `no ${name} reader left reaching for a raw member result`).not.toContain(
+        'hexQuantity(parsed?.result)',
+      );
+    }
   });
 });
 
@@ -717,10 +762,13 @@ describe('the head facts survive the projection (round 106)', () => {
 // `pageHeadFloorOf` and `floorEstablishedFor` all read — so another chain's
 // heights could become the floor a product accusation is measured against.
 //
-// A source assertion because `admit` is a closure inside `watchPageHead`,
-// which cannot be imported: the module runs the whole drive on import. It is
-// scoped to that closure rather than grepping the file, and it pins the
-// ORDER — the guard has to precede the add, or it guards nothing.
+// A source assertion because `admit` is a closure inside `watchPageHead`.
+// #2120 moved that closure into `pageHead.mjs`, where the BEHAVIOUR — a
+// proven-foreign endpoint stays out on a later page — now runs under a fake
+// page in `pageHead.test.mjs`; the source cases at the bottom of this file
+// are kept for the SHAPE, scoped to the closure rather than grepping the
+// file, and they pin the ORDER — the guard has to precede the add, or it
+// guards nothing.
 describe('the forced-close report emits distinct keys (round 106)', () => {
   const src = fs.readFileSync(DRIVE, 'utf8');
 
@@ -783,7 +831,9 @@ describe('an endpoint that lied about its chain stays untrusted', () => {
   // us it cannot say which chain a height belongs to, and a wrong-chain
   // bound reaching the absence gate lets a degraded page be blamed for
   // omitting a card it was right to omit.
-  const src = fs.readFileSync(DRIVE, 'utf8');
+  //
+  // #2120 — read from the tracker, where `watchPageHead` lives now.
+  const src = fs.readFileSync(TRACKER, 'utf8');
 
   // AMENDED IN ROUND 109. Both of these pinned the SHAPE of two separate
   // inline admissions, which is what let round 108 fix one of them and
