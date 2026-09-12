@@ -1482,3 +1482,154 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
     'a counter mixed with a unit leaves the claim unestablished',
   ).toBe(true);
 });
+
+// #2138 review — THE SCROLL CREDIT IS WHAT A SCROLLER CAN ACTUALLY DO TO
+// THIS BOX. Five ways the first version of the credit was wrong, each a
+// Codex finding on #2157, each pinned against a real engine:
+//
+//   - a scroller between an absolutely positioned box and its containing
+//     block does not move it, and nothing moves a viewport-fixed one;
+//   - `<body>` as an independent scroller (standards mode, `html`
+//     overflow hidden) is real credit while `window.scrollY` stays 0;
+//   - an element's own scroll carries its glyphs and not its box;
+//   - the credit goes through ancestor transforms — under `scale(2)`
+//     restoring 300 moves the row 600;
+//   - a `column-reverse` scroller rests at 0 and scrolls into negative
+//     values, so its restorable distance is to its minimum, not to 0.
+//
+// Every scrolled fixture also asserts the geometry it relies on — a
+// negative rect with the page unscrolled — so a case cannot pass by never
+// reaching the state it claims to test. Layout is stacked from the top of
+// an unscrolled document so the arithmetic in each comment holds.
+test('the scroll credit counts only what moves the box, mapped through transforms', async ({
+  page,
+}) => {
+  // STANDARDS MODE, stated. Without a doctype `setContent` yields a quirks
+  // document, where `body.clientHeight` is the viewport's and a body
+  // scroller's own numbers are wrong; the app under test has a doctype.
+  await page.setContent(`<!DOCTYPE html>
+    <style>html { overflow: hidden } body { margin: 0 } p { margin: 0 }</style>
+    <!-- y 0..40 -->
+    <div id="staticScroller" style="height:40px; overflow:auto">
+      <p id="absUnderStatic" style="position:absolute; top:-100px">absolute, scroller is not its containing block</p>
+      <p id="fixedUnderScroller" style="position:fixed; top:-100px">fixed, nothing carries it</p>
+      <p style="height:400px">filler</p>
+    </div>
+    <!-- y 40..80 -->
+    <div id="positionedScroller" style="position:relative; height:40px; overflow:auto">
+      <p id="absUnderPositioned" style="position:absolute; top:-10px; height:20px">absolute under its own scrolling containing block</p>
+      <p style="height:400px">filler</p>
+    </div>
+    <!-- y 80..120: a 40px box whose own text is followed by 600px of
+         block filler, so it scrolls its text out of its own slit -->
+    <p id="selfScroller" style="height:40px; overflow:auto">an element scrolling its own text<span style="display:block; height:600px"></span></p>
+    <!-- y 120..200: a 40px scroller drawn at twice its size -->
+    <div style="transform:scale(2); transform-origin:0 0; height:80px">
+      <div id="scaledScroller" style="height:40px; overflow:auto">
+        <p id="scaledRow" style="height:20px">under a scaled ancestor</p>
+        <p style="height:400px">filler</p>
+      </div>
+    </div>
+    <!-- y 200..240 -->
+    <div id="reverseScroller" style="height:40px; overflow:auto; display:flex; flex-direction:column-reverse">
+      <p style="height:400px; flex:none">filler shown first</p>
+      <p id="reverseRow" style="height:20px; flex:none">earlier content, above the slit at rest</p>
+    </div>
+  `);
+  const result = await page.evaluate((helpersSrc) => {
+    const family = new Function(`return (${helpersSrc})();`)();
+    const visible = family.visible as (n: Element | null) => boolean;
+    const byId = (id: string) => document.getElementById(id)!;
+    const top = (id: string) => byId(id).getBoundingClientRect().top;
+    // Scroll the three ordinary scrollers by 300 and the self-scroller as
+    // far as it goes; the reverse scroller already rests with its earlier
+    // content above. Then judge.
+    for (const id of ['staticScroller', 'positionedScroller', 'scaledScroller']) {
+      byId(id).scrollTop = 300;
+    }
+    byId('selfScroller').scrollTop = 600;
+    const selfText = document.createRange();
+    selfText.selectNodeContents(byId('selfScroller').firstChild!);
+    return {
+      pageScrollY: window.scrollY,
+      absUnderStaticTop: top('absUnderStatic'),
+      absUnderStatic: visible(byId('absUnderStatic')),
+      fixedUnderScrollerTop: top('fixedUnderScroller'),
+      fixedUnderScroller: visible(byId('fixedUnderScroller')),
+      absUnderPositionedTop: top('absUnderPositioned'),
+      absUnderPositioned: visible(byId('absUnderPositioned')),
+      selfScrollTop: byId('selfScroller').scrollTop,
+      selfScrollerBoxTop: top('selfScroller'),
+      selfTextBottom: selfText.getBoundingClientRect().bottom,
+      selfScroller: visible(byId('selfScroller')),
+      scaledRowTop: top('scaledRow'),
+      scaledRow: visible(byId('scaledRow')),
+      reverseScrollTop: byId('reverseScroller').scrollTop,
+      reverseRowTop: top('reverseRow'),
+      reverseRow: visible(byId('reverseRow')),
+    };
+  }, VISIBILITY_SOURCE);
+
+  expect(result.pageScrollY, 'the page itself never scrolled').toBe(0);
+  // NOT carried by the scroller. The static scroller is not the absolute
+  // box's containing block, so it sits at -100 whatever the scroll offset
+  // is, and a credit of 0 leaves it before the origin; the fixed box is
+  // carried by nothing.
+  expect(result.absUnderStaticTop).toBe(-100);
+  expect(result.absUnderStatic, 'absolute under a static scroller').toBe(false);
+  expect(result.fixedUnderScrollerTop).toBe(-100);
+  expect(result.fixedUnderScroller, 'fixed under a scroller').toBe(false);
+  // Carried. The positioned scroller IS the containing block: at rest the
+  // row is at 30, the 300 of scroll puts it at -270, and 300 of credit
+  // brings its bottom back to +50.
+  expect(result.absUnderPositionedTop).toBe(-270);
+  expect(result.absUnderPositioned, 'absolute under its scrolling containing block').toBe(true);
+  // Own scroll. The box stays at 80 while its text is carried far above
+  // (the block filler is the scroll range); the credit applies to the
+  // glyphs.
+  expect(result.selfScrollTop).toBeGreaterThan(500);
+  expect(result.selfScrollerBoxTop).toBe(80);
+  expect(result.selfTextBottom).toBeLessThan(0);
+  expect(result.selfScroller, 'an element scrolling its own text').toBe(true);
+  // Scaled. The row rests at 120; scrolling 300 under scale(2) puts it at
+  // 120 - 600 = -480. A raw credit of 300 would leave it at -180 and
+  // condemn it; the mapped credit of 600 reaches it.
+  expect(result.scaledRowTop).toBe(-480);
+  expect(result.scaledRow, 'a row under a scale(2) ancestor').toBe(true);
+  // Reverse. At rest (scrollTop 0) the row is 380 above the slit's top of
+  // 200, and the restorable distance is the 380 of negative range, not 0.
+  expect(result.reverseScrollTop).toBe(0);
+  expect(result.reverseRowTop).toBe(-180);
+  expect(result.reverseRow, 'earlier content in a column-reverse scroller').toBe(true);
+});
+
+test('body as an independent scroller is credited when it is not the page scroller', async ({
+  page,
+}) => {
+  // Standards mode, as above: in a quirks document body is the page
+  // scroller or reports the viewport's numbers, and the premise fails.
+  await page.setContent(`<!DOCTYPE html>
+    <style>html { overflow: hidden } body { margin: 0; height: 40px; overflow: auto }</style>
+    <p id="bodyRow" style="height:20px; margin:0">scrolled above body's own slit</p>
+    <p style="height:400px; margin:0">filler</p>
+  `);
+  const result = await page.evaluate((helpersSrc) => {
+    const family = new Function(`return (${helpersSrc})();`)();
+    const visible = family.visible as (n: Element | null) => boolean;
+    document.body.scrollTop = 300;
+    return {
+      bodyIsPageScroller: document.scrollingElement === document.body,
+      bodyScrollTop: document.body.scrollTop,
+      pageScrollY: window.scrollY,
+      rowTop: document.getElementById('bodyRow')!.getBoundingClientRect().top,
+      row: visible(document.getElementById('bodyRow')),
+    };
+  }, VISIBILITY_SOURCE);
+  // The premise, asserted: body scrolled as its own container while the
+  // viewport did not — otherwise this is the ordinary page-scroll case.
+  expect(result.bodyIsPageScroller).toBe(false);
+  expect(result.bodyScrollTop).toBe(300);
+  expect(result.pageScrollY).toBe(0);
+  expect(result.rowTop).toBe(-300);
+  expect(result.row, 'a row scrolled above an independent body scroller').toBe(true);
+});

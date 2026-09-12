@@ -49,6 +49,18 @@
  * flag, so one evaluate's reading cannot leak into another's.
  */
 export function visibilityHelpers() {
+  // Does this computed style establish a containing block for absolutely
+  // and fixed-positioned descendants? Read from the properties that define
+  // it (round 65 P2, see `notClipped`): `transform`, `perspective`,
+  // `filter`, paint/layout `contain`, or a `will-change: transform` hint.
+  // Shared by the clip walk and the scroll-credit walk (#2138), so the two
+  // cannot answer the containing-block question differently.
+  const establishesCB = (cs) =>
+    cs.transform !== 'none' ||
+    cs.perspective !== 'none' ||
+    cs.filter !== 'none' ||
+    /\b(paint|layout|strict|content)\b/.test(cs.contain || '') ||
+    /\btransform\b/.test(cs.willChange || '');
   /**
    * Is `box` parked entirely BEFORE the document's origin — left of it or
    * above it — with no scroll position, the page's or an ancestor
@@ -70,36 +82,98 @@ export function visibilityHelpers() {
    * this predicate is otherwise built to avoid, and the exemption is the
    * same one `notClipped` already grants a scrollable clipper.
    *
-   * QUANTIFIED, not blanket: an ancestor scrolled down by N can be
-   * scrolled back up by N and no further, so the box is reachable only
-   * if that much carries it past the origin. A box parked at -9999px
-   * inside a container scrolled by 300 stays condemned. The page's own
-   * scrolling element is skipped in the walk because `window.scrollX` /
-   * `scrollY` already account for it, and counting it twice would admit
-   * a box the page cannot actually reach.
+   * QUANTIFIED, not blanket, and the quantity is what a scroller can
+   * actually do to THIS box (review of #2138, five findings, each one a
+   * way the first version credited movement that would not happen or
+   * missed movement that would):
    *
-   * Deliberately narrow still. A box parked far to the RIGHT, or an RTL
-   * document's mirrored origin, is a reachability question this cannot
-   * answer from one rect, and guessing would condemn copy the lender can
-   * read. The residual is a missed defect, which is the direction this
-   * file takes every time.
+   *   - ONLY A SCROLLER THAT MOVES THE NODE COUNTS. An absolutely
+   *     positioned box is carried by a scroller only from its containing
+   *     block upwards — a scroller between the two does not move it — and
+   *     a viewport-fixed box is carried by nothing unless an ancestor
+   *     establishes its containing block. Same walk `notClipped` uses,
+   *     same `establishesCB`. So a box parked at -9999px inside a static
+   *     scroller stays condemned for two reasons now.
+   *   - THE PAGE'S OWN SCROLLER IS SKIPPED, because `window.scrollX` /
+   *     `scrollY` already account for it and counting it twice would admit
+   *     a box the page cannot reach. Only that element: in standards mode
+   *     `<body>` can be an independent scroller with the viewport
+   *     unscrolled, and its offset is real credit.
+   *   - THE NODE'S OWN SCROLL counts for its GLYPHS and not for its box:
+   *     scrolling an element carries its text and leaves its border box
+   *     where it is. `ownScroll` is how `paintsText` says which question
+   *     it is asking.
+   *   - THE CREDIT IS MAPPED THROUGH TRANSFORMS. Rects are viewport
+   *     coordinates; `scrollTop` is the scroller's own. Under a scaled
+   *     ancestor restoring 100 moves the box 200, under a rotated one it
+   *     moves sideways, so each scroller's restorable offset goes through
+   *     the accumulated transform chain as a VECTOR (no translation) before
+   *     it is added. Where the engine cannot supply that matrix the credit
+   *     is unquantifiable, and the rule ADMITS rather than guesses.
+   *   - THE RANGE MAY BE NEGATIVE. A `column-reverse` (or `rtl` /
+   *     `row-reverse`) scroller rests at 0 and scrolls toward earlier
+   *     content into negative values, so "how far can it move the content
+   *     back" is the distance to its minimum, not the current offset.
+   *
+   * Deliberately narrow still. A box parked far to the RIGHT beyond every
+   * scroll extent, or an RTL document's mirrored origin, is a reachability
+   * question this cannot answer from one rect, and guessing would condemn
+   * copy the lender can read. The residual is a missed defect, which is
+   * the direction this file takes every time.
    */
-  const unreachableBeforeOrigin = (node, box) => {
+  const unreachableBeforeOrigin = (node, box, { ownScroll = false } = {}) => {
     const beforeX = box.right + window.scrollX <= 0;
     const beforeY = box.bottom + window.scrollY <= 0;
     if (!beforeX && !beforeY) return false;
+    const flow = getComputedStyle(node).position;
+    // `sticky` is in flow for THIS question: it rides its scroller.
+    let reachedCB = flow === 'static' || flow === 'relative' || flow === 'sticky';
+    const pageScroller = document.scrollingElement || document.documentElement;
+    // The viewport displacement of moving a scroller's content by (dx, dy)
+    // in the scroller's own coordinates: the linear part of every transform
+    // from the scroller outwards, applied to a vector. `null` when the
+    // engine cannot say, which the caller treats as unquantifiable.
+    const toViewport = (scroller, dx, dy) => {
+      try {
+        let m = new DOMMatrixReadOnly();
+        for (let a = scroller; a; a = a.parentElement) {
+          const t = getComputedStyle(a).transform;
+          if (t && t !== 'none') m = new DOMMatrixReadOnly(t).multiply(m);
+        }
+        const p = m.transformPoint(new DOMPoint(dx, dy, 0, 0));
+        if (!Number.isFinite(p.x) || !Number.isFinite(p.y)) return null;
+        return { x: p.x, y: p.y };
+      } catch {
+        return null;
+      }
+    };
     let restoreX = 0;
     let restoreY = 0;
-    const pageScroller = document.scrollingElement || document.documentElement;
-    for (let n = node.parentElement; n; n = n.parentElement) {
-      if (n === pageScroller || n === document.documentElement || n === document.body) continue;
+    for (let n = ownScroll ? node : node.parentElement; n; n = n.parentElement) {
       const cs = getComputedStyle(n);
-      if ((cs.overflowY === 'auto' || cs.overflowY === 'scroll') && n.scrollTop > 0) {
-        restoreY += n.scrollTop;
+      if (n !== node && !reachedCB) {
+        if (flow === 'fixed' ? establishesCB(cs) : cs.position !== 'static' || establishesCB(cs)) {
+          reachedCB = true;
+        } else {
+          continue;
+        }
       }
-      if ((cs.overflowX === 'auto' || cs.overflowX === 'scroll') && n.scrollLeft > 0) {
-        restoreX += n.scrollLeft;
-      }
+      if (n === pageScroller || n === document.documentElement) continue;
+      const scrollsY = cs.overflowY === 'auto' || cs.overflowY === 'scroll';
+      const scrollsX = cs.overflowX === 'auto' || cs.overflowX === 'scroll';
+      if (!scrollsY && !scrollsX) continue;
+      const minTop = cs.flexDirection === 'column-reverse' ? -(n.scrollHeight - n.clientHeight) : 0;
+      const minLeft =
+        cs.direction === 'rtl' || cs.flexDirection === 'row-reverse'
+          ? -(n.scrollWidth - n.clientWidth)
+          : 0;
+      const localY = scrollsY ? Math.max(0, n.scrollTop - minTop) : 0;
+      const localX = scrollsX ? Math.max(0, n.scrollLeft - minLeft) : 0;
+      if (localX === 0 && localY === 0) continue;
+      const shift = toViewport(n, localX, localY);
+      if (shift === null) return false;
+      restoreX += shift.x;
+      restoreY += shift.y;
     }
     const stuckX = beforeX && box.right + window.scrollX + restoreX <= 0;
     const stuckY = beforeY && box.bottom + window.scrollY + restoreY <= 0;
@@ -200,12 +274,8 @@ export function visibilityHelpers() {
     // latter group, since a merely positioned ancestor does not capture a
     // fixed box. Anything this cannot decide leaves the ancestor skipped,
     // so the residual stays a missed defect rather than an invented one.
-    const establishesCB = (cs) =>
-      cs.transform !== 'none' ||
-      cs.perspective !== 'none' ||
-      cs.filter !== 'none' ||
-      /\b(paint|layout|strict|content)\b/.test(cs.contain || '') ||
-      /\btransform\b/.test(cs.willChange || '');
+    // `establishesCB` is hoisted to the top of the family (#2138): the
+    // scroll-credit walk asks the same containing-block question.
     let reachedCB = inFlow;
     const r = node.getBoundingClientRect();
     // TRUNCATED TEXT IS CONDEMNED, DELIBERATELY, and this note exists so
@@ -305,6 +375,9 @@ export function visibilityHelpers() {
         (box.width > 0 && left + right >= box.width)
       );
     };
+    // Scrollers passed so far on the way up — see the #2138 note below.
+    let innerScrollsY = false;
+    let innerScrollsX = false;
     for (let n = node; n; n = n.parentElement) {
       const cs = getComputedStyle(n);
       // An empty clip region on the node or on any ancestor hides
@@ -406,16 +479,33 @@ export function visibilityHelpers() {
       // Containers keep the element-rect rule they already had, and their
       // leaves are checked individually anyway — the receipt probe
       // requires every row AND both of its leaves to pass.
+      //
+      // #2138 — AND THE SCROLLER EXEMPTION REACHES THE CLIPPER ABOVE IT.
+      // Rounds 28/29 exempt content scrolled out of a scroll container
+      // because the lender can scroll it back. A NON-scrollable clipper
+      // wrapping that container — a rounded-corner card around a scrolling
+      // list, or `html { overflow: hidden }` above an independently
+      // scrolling body — sees the same scrolled-out rect and condemned it,
+      // one level up from the exemption. Content the inner scroller can
+      // bring back into its slit is inside the wrapper too (the slit sits
+      // in the wrapper's box, or the scroller itself would be the clipped
+      // one), so a clipper is skipped on an axis some scroller between it
+      // and the node can scroll. Only scrollers this walk has already
+      // passed — i.e. ones that actually carry the node, past its
+      // containing block — count. A ZERO-extent clipper is still condemned
+      // above, whatever scrolls inside it: nothing is shown through it.
       for (const q of boxes) {
-        if (clipsY && !scrollsY && q.height > 0) {
+        if (clipsY && !scrollsY && !innerScrollsY && q.height > 0) {
           const shown = Math.min(q.bottom, box.bottom) - Math.max(q.top, box.top);
           if (shown / q.height < 0.5) return false;
         }
-        if (clipsX && !scrollsX && q.width > 0) {
+        if (clipsX && !scrollsX && !innerScrollsX && q.width > 0) {
           const shown = Math.min(q.right, box.right) - Math.max(q.left, box.left);
           if (shown / q.width < 0.5) return false;
         }
       }
+      if (scrollsY) innerScrollsY = true;
+      if (scrollsX) innerScrollsX = true;
     }
     return true;
   };
@@ -526,7 +616,12 @@ export function visibilityHelpers() {
         // Unmeasurable: leaves `glyphs` short, which reads as painted.
       }
     }
-    if (glyphs.length > 0 && glyphs.every((q) => unreachableBeforeOrigin(node, q))) {
+    // `ownScroll`: the element's own scroll carries its glyphs (and not its
+    // box), so it is credited here and not in `shownBox`.
+    if (
+      glyphs.length > 0 &&
+      glyphs.every((q) => unreachableBeforeOrigin(node, q, { ownScroll: true }))
+    ) {
       return false;
     }
     // HOISTED ABOVE THE OCCLUSION RULE (round 90): that rule now reads a

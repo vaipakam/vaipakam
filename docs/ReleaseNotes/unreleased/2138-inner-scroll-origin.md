@@ -16,11 +16,33 @@ can be reported as a card failure.
 The rule now asks the reachability question once, for both places it is
 used, the element's box and the text's own glyph rectangles, and credits a
 scrolling ancestor's offset before condemning. The credit is measured, not
-granted: a region scrolled down by some amount can be scrolled back up by
-that amount and no further, so text parked far above inside a scrolled
-region is still rejected. The fixture reproduces the exact measurement the
-issue recorded, a negative row position with the page unscrolled, and
-asserts both facts so the case cannot pass without testing the rule.
+granted, and review sharpened what "measured" means: only a scrolling
+region that actually carries the element counts, which is decided by the
+same containing-block walk the clipping rule already uses, so a
+viewport-fixed element gets no credit and an absolutely positioned one is
+credited only from its containing block upward; an element's own scroll
+counts for its text and not for its box; the distance a region can move
+its content back runs to that region's minimum, which is negative for a
+reversed layout; the distance is mapped through any ancestor transforms
+before it is compared with on-screen positions, so a doubled region is
+credited double; and only the page's own scrolling element is left out,
+since the page scroll is already accounted for, so a body element that
+scrolls independently is credited. Where the engine cannot supply the
+transform mapping the rule admits rather than guesses. Text parked far
+above inside a scrolled region is still rejected. The fixtures reproduce
+the exact measurements, a negative row position with the page unscrolled,
+and assert them to the pixel so no case can pass without reaching the
+state it claims to test.
+
+Writing those fixtures found the same gap one level up, in the clipping
+rule. A non-scrolling wrapper around a scrolling region, the usual
+rounded-corner card around a scrolling list, judged content scrolled out
+of the region's slit by where it currently sits and condemned it, even
+though the region can scroll it back inside the wrapper. The exemption the
+clipping rule already grants to a scrolling region now also covers a
+wrapper above it on the axis that region can scroll. A wrapper with no
+extent at all is still condemned whatever scrolls inside it, since nothing
+is shown through it.
 
 Also carried: the wording of the previous entry's call-site ordering, in
 the test header and the coverage row, now states the two sites separately
