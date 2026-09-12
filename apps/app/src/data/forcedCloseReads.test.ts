@@ -27,7 +27,13 @@ const fail: MulticallSlot = { status: 'failure', error: new Error('reverted') };
 
 /** An Active ERC-20 loan with ERC-20 collateral and both-party consent,
  *  as `getLoanDetails` decodes it (enums as numbers). */
-const LOAN = { status: 0, assetType: 0, collateralAssetType: 0, riskAndTermsConsentFromBoth: true };
+const LOAN = {
+  status: 0,
+  assetType: 0,
+  collateralAssetType: 0,
+  collateralAsset: ASSET,
+  riskAndTermsConsentFromBoth: true,
+};
 
 /** Every slot answering, in plan order. */
 function allGood(plan: readonly ForcedCloseReadEntry[]): MulticallSlot[] {
@@ -168,6 +174,27 @@ describe('forcedCloseFacts', () => {
     expect(facts.collateralIsNft).toBeUndefined();
     expect(facts.defaultable).toBe(true);
     expect(facts.block).toBe(46_725_021n);
+  });
+
+  // #2148 round 2 P2 — the liquidity slot answers about the asset the
+  // CALLER named; the aggregate's own loan struct says which asset the loan
+  // is actually secured by. They must agree or the answer is not about
+  // this loan.
+  it('reads liquidity only when the asked asset is the loan struct\'s own collateral', () => {
+    const plan = planWith(ASSET);
+    const withLoan = (loan: object) =>
+      forcedCloseFacts(plan, allGood(plan).map((s, i) => (plan[i].key === 'loan' ? ok(loan) : s)));
+    // Same address, different case — still the same asset.
+    expect(withLoan({ ...LOAN, collateralAsset: ASSET.toUpperCase().replace('0X', '0x') }).collateralIlliquid).toBe(false);
+    // A different token: the slot answered about something else.
+    const other = '0x00000000000000000000000000000000000beef0';
+    const facts = withLoan({ ...LOAN, collateralAsset: other });
+    expect(facts.collateralIlliquid).toBeUndefined();
+    // The rest of the decision is untouched by the mismatch.
+    expect(facts.defaultable).toBe(true);
+    expect(facts.block).toBe(46_725_021n);
+    // No struct address to compare against: not an answer either.
+    expect(withLoan({ ...LOAN, collateralAsset: undefined }).collateralIlliquid).toBeUndefined();
   });
 
   it('does not read a struct of an unexpected shape as evidence', () => {

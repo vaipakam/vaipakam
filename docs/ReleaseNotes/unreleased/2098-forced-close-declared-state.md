@@ -30,7 +30,12 @@ aggregate asks the chain its own block number in the same execution.
 The loan's own record rides in the same aggregate, so its status, its
 consent flag and the kind of asset on each leg carry the same
 provenance as the polled facts beside them; the decision consumes
-nothing about the loan from anywhere else. So the block the card names
+nothing about the loan from anywhere else. The one call addressed by
+asset rather than by loan, the liquidity check, is accepted only when
+the asset it was asked about is the collateral the loan record itself
+names; otherwise liquidity is treated as unread and the card says it is
+still checking rather than routing on an answer about some other
+token. So the block the card names
 is the block every fact behind its decision was read at, not a sighting
 taken beside them and not a pinned height a load-balanced provider
 might refuse.

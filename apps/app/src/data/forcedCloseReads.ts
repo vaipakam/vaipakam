@@ -201,6 +201,7 @@ export function forcedCloseFacts(
           status?: unknown;
           assetType?: unknown;
           collateralAssetType?: unknown;
+          collateralAsset?: unknown;
           riskAndTermsConsentFromBoth?: unknown;
         })
       : undefined;
@@ -209,6 +210,26 @@ export function forcedCloseFacts(
   const status = enumField(loan?.status);
   const principalType = enumField(loan?.assetType);
   const collateralType = enumField(loan?.collateralAssetType);
+
+  // THE LIQUIDITY ANSWER IS ABOUT THE LOAN'S OWN COLLATERAL, OR IT IS NOT
+  // AN ANSWER (#2148 round 2 P2). The asset the plan asked `checkLiquidity`
+  // about comes from the caller — the page's indexed row — while every
+  // other loan-scoped call in this aggregate is addressed by loan id. A row
+  // that named a different token would make the liquidity slot describe
+  // some other asset while the block claims the whole decision was
+  // evaluated here, and an "illiquid" answer about the wrong token routes
+  // a loan whose real collateral needs a sale to the in-kind arm. So the
+  // struct's own `collateralAsset` — read in this same execution — has to
+  // match what was asked; otherwise liquidity is UNREAD, and the decision
+  // resolves `unknown` rather than a route built on the wrong question.
+  // Unread rather than thrown: a stale row is a data problem, not a
+  // programming error, and `unknown` is the honest state for it.
+  const askedAsset = plan.find((e) => e.key === 'liquidity')?.contract.args?.[0];
+  const structAsset = loan?.collateralAsset;
+  const liquidityAboutThisLoan =
+    typeof askedAsset === 'string' &&
+    typeof structAsset === 'string' &&
+    askedAsset.toLowerCase() === structAsset.toLowerCase();
 
   return {
     block: typeof blockRaw === 'bigint' ? blockRaw : undefined,
@@ -230,7 +251,9 @@ export function forcedCloseFacts(
     // `hasInternalMatchCandidate` returns `[found, loanId]`.
     internalMatchCandidate: Array.isArray(matchRaw) ? Boolean(matchRaw[0]) : undefined,
     collateralIlliquid:
-      liquidityRaw === undefined ? undefined : Number(liquidityRaw) !== LIQUIDITY_LIQUID,
+      liquidityRaw === undefined || !liquidityAboutThisLoan
+        ? undefined
+        : Number(liquidityRaw) !== LIQUIDITY_LIQUID,
     // LTV against the RESOLVED threshold — `getRiskConfig` has already
     // applied the `0 ⇒ default` rule, so no copy of 11000 lives here.
     // Both halves must have answered; an LTV revert on illiquid
