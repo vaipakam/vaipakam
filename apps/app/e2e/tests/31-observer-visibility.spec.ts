@@ -75,6 +75,39 @@ test('both copies of the drive visibility predicate agree, and reject clipped co
   expect(paintHelpers).toHaveLength(2);
   expect(predicates).toHaveLength(2);
 
+  // ROUND 95 SELF-REVIEW — THE DRIFT ASSERTION, FOR ALL FOUR HELPERS.
+  //
+  // `visibleTextOf` has had one since round 63; the other three never did,
+  // and the whole point of this file is that the duplication is the risk.
+  // The behavioural cases below run each copy against the same fixtures and
+  // compare, which catches a divergence that CHANGES A VERDICT — but only
+  // for the shapes a fixture happens to cover, and a copy differing on a
+  // branch no fixture reaches passes clean. That is exactly what was found
+  // when this assertion was first added: `shownBox`'s two copies had
+  // diverged on the arm taken only when `checkVisibility` is absent, which
+  // Chromium never takes, so every behavioural case agreed while the source
+  // did not. Rounds 29 and 51 were both that shape, and both times the arm
+  // that differed was the one that later became live.
+  //
+  // Compared as CODE — comments stripped, whitespace collapsed — so the two
+  // may explain themselves differently, and must not compute differently.
+  const codeOf = (t: string) =>
+    t
+      .split('\n')
+      .filter((line) => !line.trim().startsWith('//'))
+      .join(' ')
+      .split(/\s+/)
+      .join(' ');
+  for (const [name, copies] of [
+    ['notClipped', clipHelpers],
+    ['paintsText', paintHelpers],
+    ['shownBox', predicates],
+    ['visibleTextOf', arrowBlocks(src, 'visibleTextOf', 'root')],
+  ] as const) {
+    expect(copies, `${name}: expected exactly two copies`).toHaveLength(2);
+    expect(codeOf(copies[0]), `${name}: the two copies have drifted`).toBe(codeOf(copies[1]));
+  }
+
   await page.setContent(`
     <div id="collapsed" style="height:0; overflow:hidden">
       <p id="clipped">a fee row the lender cannot see</p>

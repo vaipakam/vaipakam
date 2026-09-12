@@ -5525,7 +5525,10 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
           return false;
         };
         const shownBox = (node) => {
-          if (node === null) return false;
+          // `!node`, not `node === null`: the twin has always written it this
+          // way, and it is the safer of the two — a caller handing this
+          // `undefined` would throw on the property read below.
+          if (!node) return false;
           // ROUND 23 P2 — SUPPLEMENTS the geometry test, never replaces
           // it. `checkVisibility` answers about display, visibility,
           // opacity and content-visibility; it does not establish that
@@ -7232,6 +7235,30 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
                     visibilityProperty: true,
                     contentVisibilityAuto: true,
                   })
+                ) {
+                  return false;
+                }
+              } else {
+                // THE TWIN'S FALLBACK, which this copy did not have (found by
+                // adding the drift assertion below). Without `checkVisibility`
+                // nothing here looked at `display` or `visibility` at all: a
+                // `display: none` box is still caught by the zero-rect test
+                // further down, but `visibility: hidden` leaves a full-size
+                // rect and an opacity of 1, so this copy would have reported
+                // hidden fee copy as SHOWN.
+                //
+                // NOT a live defect — the drive runs in Chromium, which has
+                // `checkVisibility`, so this arm is unreachable there and both
+                // copies behave identically today. It is recorded and fixed
+                // rather than waved through because "the dead arm differs" is
+                // exactly what rounds 29 and 51 were, and both times the dead
+                // arm was the one that later became live. See the twin for the
+                // full history.
+                const cs = getComputedStyle(node);
+                if (
+                  cs.display === 'none' ||
+                  cs.visibility === 'hidden' ||
+                  cs.visibility === 'collapse'
                 ) {
                   return false;
                 }
