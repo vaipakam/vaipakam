@@ -1,4 +1,4 @@
-## Thread — the live drive's visibility predicate has one definition (PR #TBD)
+## Thread — the live drive's visibility predicate has one definition (PR #2152)
 
 Closes #2102. Review tooling only; nothing a user sees changes, and the
 functional specification is untouched.
