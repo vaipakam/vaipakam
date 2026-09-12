@@ -32,6 +32,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
+import { blockFrom } from './sourceBlock.mjs';
+
 const DRIVE = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
   'live-position-observe.mjs',
@@ -52,19 +54,12 @@ const DRIVE = path.join(
  * instance of a trap and leaving its sibling is the pattern this PR keeps
  * being caught by; there is no number to keep in either now.
  */
-function functionBody(src, signature) {
-  const start = src.indexOf(signature);
-  if (start === -1) throw new Error(`${signature} was renamed or removed`);
-  let depth = 0;
-  for (let i = src.indexOf('{', start); i < src.length; i += 1) {
-    if (src[i] === '{') depth += 1;
-    else if (src[i] === '}') {
-      depth -= 1;
-      if (depth === 0) return src.slice(start, i + 1);
-    }
-  }
-  throw new Error(`${signature} has no matching close brace`);
-}
+/**
+ * Moved to `sourceBlock.mjs` in the round-109 self-audit — a second test
+ * file needed the same brace matcher, and a second COPY is the defect
+ * #2102 records rather than a fix for it.
+ */
+const functionBody = blockFrom;
 
 const settleHeadReadsBody = (src) =>
   functionBody(src, 'async function settleHeadReads(page)');

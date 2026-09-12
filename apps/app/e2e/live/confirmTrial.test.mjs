@@ -37,6 +37,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
+import { blockFrom } from './sourceBlock.mjs';
+
 const DRIVE = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
   'live-position-observe.mjs',
@@ -58,8 +60,24 @@ describe('the trial click is aimed at the control it reported on', () => {
    * all.
    */
   const trialCall = () => src.indexOf('trial: true', at(TRIAL_GATE));
-  /** The whole branch, generously bounded — it is ~30 lines. */
-  const branch = () => src.slice(at(TRIAL_GATE), at(TRIAL_GATE) + 1600);
+  /**
+   * The whole branch, bounded by its own close brace.
+   *
+   * ROUND 109 SELF-AUDIT. This was a fixed 1600-character window, and
+   * the branch is 1737 characters — so it read 92% of the block and
+   * stopped four lines short of the end, inside the arm that handles a
+   * card with no control to trial. The count below was `toBe(2)` over a
+   * block with THREE assignments, and passed, because the third was in
+   * the part the window could not see. Deleting that arm's assignment —
+   * an exit that leaves `clickable` unset, the exact regression this
+   * suite is written against — would not have failed anything.
+   *
+   * The same defect was found and fixed in the extractor case further
+   * down this file in round 66, which recorded the lesson in a comment
+   * and left this sibling on the old shape: the guarded-one-of-N
+   * pattern, in the fix for it.
+   */
+  const branch = () => blockFrom(src, TRIAL_GATE);
 
   it('the branch this is written against still exists', () => {
     // Guards the guard. If the block is renamed, the slices below are
@@ -101,10 +119,30 @@ describe('the trial click is aimed at the control it reported on', () => {
     // leniency for old records silently covers a live gap. Two
     // assignments: the trial's own result, and the `null` for the paths
     // that decline to trial.
+    //
+    // THREE, not two — see `branch()` above for why this said two for
+    // forty rounds. Equality is deliberate: a fourth arm that forgets
+    // the assignment fails here rather than sliding past a `>=`.
     const block = branch();
     const assignments = [...block.matchAll(/confirmAction\.clickable\s*=/g)];
-    expect(assignments.length, 'the outcome must be assigned on both paths').toBe(2);
+    expect(assignments.length, 'the outcome must be assigned on every path').toBe(3);
     expect(block).toContain('= null;');
+    // And the arm the old window could not see, named rather than
+    // counted: a count can be satisfied by three assignments on two
+    // paths, which is the shape that made the original defect
+    // invisible. This one is the no-control arm, whose whole purpose is
+    // that the field's meaning does not depend on which arm ran.
+    // Taken as what FOLLOWS the have-a-control block rather than by
+    // searching for `} else {`, which appears twice in here and would
+    // have returned the trial's own arm — `indexOf` finding an earlier
+    // identical string is how the duplicated-helper fixes in #2102 went
+    // to the wrong copy.
+    const haveControl = blockFrom(block, 'if (confirmAction.index >= 0) {');
+    const noControlArm = block.slice(block.indexOf(haveControl) + haveControl.length);
+    expect(noControlArm, 'the no-control arm is still an else').toContain('else');
+    expect(noControlArm, 'the no-control arm still records an outcome').toContain(
+      'confirmAction.clickable = null;',
+    );
   });
 
   it('distinguishes untested from unclickable rather than collapsing them', () => {
