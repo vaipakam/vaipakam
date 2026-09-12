@@ -113,7 +113,9 @@ analyse() { # analyse <trace> <now-epoch>  -> prints "<seconds>\t<reason>", exit
   #
   #   the bucket is spent: `X-Ratelimit-Remaining` is 0,
   #   `X-Ratelimit-Reset` names the epoch second it refills, AND the body's
-  #   `message` says the request was rejected for it ("rate limit").
+  #   `message` is the primary limit's own ("API rate limit already exceeded
+  #   …" from GraphQL, "API rate limit exceeded …" from REST) — not any body
+  #   that mentions a limit, and never one that says "secondary".
   #
   # GraphQL answers this with HTTP 200 and the error in the body, REST with
   # 403, so the status is not part of the shape — the body IS. Without it,
@@ -131,7 +133,10 @@ analyse() { # analyse <trace> <now-epoch>  -> prints "<seconds>\t<reason>", exit
   #
   #   - a secondary limit (403/429 with `Retry-After` or a "secondary rate
   #     limit" body) is NOT retried; it exits 1 and the diagnostic shows its
-  #     headers, so an operator sees exactly what it was;
+  #     headers, so an operator sees exactly what it was — and that holds
+  #     even when a spent bucket's headers sit beside it: waiting only for
+  #     the primary reset would spend the sole retry under a limit that
+  #     may still hold (#2149 r16);
   #   - a spent bucket whose reset header is missing or unreadable is NOT
   #     retried either — a wait with no stated length would be a guess;
   #   - a response carrying a spent bucket's headers whose body does NOT
@@ -148,7 +153,13 @@ analyse() { # analyse <trace> <now-epoch>  -> prints "<seconds>\t<reason>", exit
   remaining_n=$(header_int "${remaining:-}") || return 1
   [ "$remaining_n" = "0" ] || return 1
   reset_n=$(header_int "${reset:-}") || return 1
-  printf '%s' "$message" | grep -qi 'rate limit' || return 1
+  # The PRIMARY message, in the two forms observed ("API rate limit already
+  # exceeded for user ID …" from GraphQL, "API rate limit exceeded for …"
+  # from REST) — not any body that mentions a limit. A body saying
+  # "secondary rate limit" beside a spent bucket is the secondary shape,
+  # which is a named miss whatever headers accompany it (#2149 r16).
+  printf '%s' "$message" | grep -qiE 'API rate limit (already )?exceeded' || return 1
+  printf '%s' "$message" | grep -qi 'secondary' && return 1
 
   local wait bound
   read -r wait bound <<<"$(clamp_wait $(( reset_n - now )))"
@@ -264,6 +275,16 @@ selftest() {
 < Retry-After: 60
 < X-Ratelimit-Remaining: 4998
 < X-Ratelimit-Reset: 1789191767
+{"message":"You have exceeded a secondary rate limit. Please wait a few minutes before you try again."}' \
+    1789188167 1
+  # A secondary refusal beside a SPENT bucket is still the secondary shape
+  # (#2149 r16): the body names a limit the primary reset says nothing
+  # about, so this is a miss, not a wait for the wrong reset.
+  expect "a secondary body beside a spent bucket is still a named miss" \
+'< HTTP/2.0 403 Forbidden
+< Retry-After: 600
+< X-Ratelimit-Remaining: 0
+< X-Ratelimit-Reset: 1789188527
 {"message":"You have exceeded a secondary rate limit. Please wait a few minutes before you try again."}' \
     1789188167 1
   expect "a secondary body with no headers is a named miss" \
