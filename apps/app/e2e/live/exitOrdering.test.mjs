@@ -66,8 +66,7 @@ describe('a funds defect that was READ outranks every blocker', () => {
   const ROUTE_EXIT = 'if (routeFailures.length) {';
   const WS_EXIT = 'if (wsRpcMethods.size) {';
   const CHAIN_EXIT = 'if (pageChainWrong.length) {';
-  const CHAIN_UNKNOWN_EXIT =
-    'if (pageChainUnknown.length && absenceRemaining.length && !observedRemaining.length) {';
+  const CHAIN_UNKNOWN_EXIT = 'if (pageChainUnknown.length && !observedRemaining.length) {';
   const GENERIC_FAIL_EXIT = 'if (failures) process.exit(1);';
 
   it('every guard this is ranked against still exists', () => {
@@ -156,9 +155,27 @@ describe('a funds defect that was READ outranks every blocker', () => {
   // directly and counted in the same total. Gating on the aggregate
   // downgraded those to "nothing was learned" — the swallow this whole
   // ordering exists to prevent.
-  it('gates the unknown-chain block on absence-shaped failures only', () => {
-    expect(CHAIN_UNKNOWN_EXIT).toContain('absenceRemaining.length');
+  it('gates the unknown-chain block on there being no READ defect', () => {
     expect(CHAIN_UNKNOWN_EXIT).toContain('!observedRemaining.length');
+  });
+
+  // ROUND 95 P2 — AND A CLEAN RUN IS NOT AN EXEMPTION FROM IT.
+  //
+  // Round 78's gate additionally required an absence-shaped failure, on
+  // the reasoning that an unanswerable probe is not worth exiting 2 over
+  // when nothing is wrong. That only weighs what the drive fails to FIND;
+  // its main product is what it READS off the page — the card's figures,
+  // the receipt rows, the fee copy — all served by the endpoint that would
+  // not say which chain it was. A PASS is the strongest claim here, and it
+  // was the one verdict that skipped the question.
+  //
+  // Asserted as an ABSENCE in the condition, because that is the half a
+  // future edit would restore without noticing: nothing else in the file
+  // fails if `absenceRemaining` creeps back into this gate.
+  it('blocks an otherwise CLEAN run too, not just an inferred failure', () => {
+    expect(CHAIN_UNKNOWN_EXIT).not.toContain('absenceRemaining');
+    // Still computed, because the message distinguishes the two cases.
+    expect(src).toContain('const absenceRemaining =');
   });
 
   it('reads those kinds from the module that decides the problems', () => {

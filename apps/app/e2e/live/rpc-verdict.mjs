@@ -984,10 +984,28 @@ export function recordRpcResponse({ status, body, requestBody, url }, ledger) {
   // WHEN, as well as what (round 94 P2). Recovery is scoped by time
   // because nothing else can scope it — see `RETRY_RECOVERY_WINDOW_MS`.
   const at = Date.now();
+  // ROUND 95 P2 — AND *WHICH RESPONSE*, because time alone cannot separate
+  // a retry from a SIBLING. A JSON-RPC batch is one request carrying many
+  // calls, and viem's batch scheduler will happily put two reads of the
+  // same method and params into it — which is one `callKey`. Both outcomes
+  // are then classified out of the same response body and stamped with the
+  // same `at`, so an error in the earlier array slot and an `ok` in the
+  // later one satisfied the recovery predicate exactly: later index, zero
+  // elapsed. Nothing had retried anything. The first caller consumed its
+  // error, the card may have rendered a degraded funds surface from it,
+  // and the ledger came out clean.
+  //
+  // A retry is by definition a SECOND response. So an outcome may only
+  // clear a failure it did not arrive with, and this id — monotonic,
+  // per-response, never reused — is what says so.
+  const response = ++responseSeq;
   for (const outcome of classifyRpcResponse(status, body, requestBody)) {
-    ledger.push({ ...outcome, url, at });
+    ledger.push({ ...outcome, url, at, response });
   }
 }
+
+/** Per-response identity for {@link recordRpcResponse}; see its round-95 note. */
+let responseSeq = 0;
 
 /**
  * How long after a failed attempt a success may still be one of its
@@ -1005,6 +1023,12 @@ export function recordRpcResponse({ status, body, requestBody, url }, ledger) {
  * per call — so every attempt carries a FRESH id and two retries differ
  * from two polls in no observable way. Grouping by request identity is
  * therefore not available; time is what is left.
+ *
+ * One thing IS observable, and round 95 P2 found it by finding where its
+ * absence hurt: two outcomes decoded from the SAME response are certainly
+ * not a retry of one another, whatever their timestamps say. That test
+ * lives in `recoveredAfter` and runs before this window, which cannot
+ * express it — siblings are zero milliseconds apart.
  *
  * The ladder this has to cover is viem's default: `retryCount: 3` with
  * `retryDelay: 150` backing off exponentially, so ~150 + 300 + 600 ms
@@ -1050,15 +1074,29 @@ export function summariseRpcLedger(ledger) {
   ledger.forEach((e, i) => {
     if (e.verdict !== 'ok') return;
     const list = oks.get(e.key);
-    if (list) list.push({ i, at: e.at });
-    else oks.set(e.key, [{ i, at: e.at }]);
+    const ok = { i, at: e.at, response: e.response };
+    if (list) list.push(ok);
+    else oks.set(e.key, [ok]);
   });
   /** Did a LATER success plausibly belong to the same logical request? */
   const recoveredAfter = (e, i) => {
     const list = oks.get(e.key);
     if (!list) return false;
-    return list.some(({ i: j, at }) => {
+    return list.some(({ i: j, at, response }) => {
       if (j <= i) return false;
+      // A SIBLING IN THE SAME RESPONSE IS NOT A RETRY (round 95 P2), and
+      // this is checked before the window rather than inside it: siblings
+      // are zero milliseconds apart, so every time-based test passes them.
+      // Same `undefined`-means-older rule as the timestamps below — a
+      // record written before responses were identified is judged the way
+      // it always was.
+      if (
+        typeof response === 'number' &&
+        typeof e.response === 'number' &&
+        response === e.response
+      ) {
+        return false;
+      }
       // A record predating the timestamps cannot be scoped by them, and
       // must keep behaving as it did — the `undefined`-means-older rule
       // every field in this project follows.

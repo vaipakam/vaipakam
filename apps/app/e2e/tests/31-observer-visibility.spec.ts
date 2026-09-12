@@ -811,6 +811,26 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
           <div style="position:absolute; inset:0; background:#123456"></div>
         </div>
       </div>
+      <!-- ROUND 95 P2 — an opaque backdrop UNDER a transparent catcher.
+           This is the ordinary modal: a backdrop that paints, and a
+           full-size click-catcher above it. Hit-testing returns only the
+           topmost element, so reading the catcher alone found no paint and
+           declared the text visible while the backdrop hid it. The catcher
+           guard and this one pull in opposite directions on purpose, which
+           is why both fixtures sit here. -->
+      <div class="body" id="coveredUnderCatcher" style="position:relative; width:320px">
+        <p style="margin:0">This loan can be closed out now.</p>
+        <div style="position:absolute; inset:0; background:#123456"></div>
+        <div style="position:absolute; inset:0"></div>
+      </div>
+      <!-- And the control that keeps the deeper search from over-reaching:
+           the same two layers with the backdrop erased. Looking past the
+           catcher must not turn a ghost into a cover. -->
+      <div class="body" id="catcherOverGhost" style="position:relative; width:320px">
+        <p style="margin:0">This loan can be closed out now.</p>
+        <div style="position:absolute; inset:0; background:#123456; opacity:0"></div>
+        <div style="position:absolute; inset:0"></div>
+      </div>
       <!-- SELF-REVIEW OF THE OCCLUSION RULE — the page body carries an
            opaque background, as a real stylesheet almost always does. The
            walk from a hit stops at the first element containing the text,
@@ -953,6 +973,8 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
         coveredByErasedSeen: seenScrolled(byId('coveredByErased')),
         coveredByOpaqueChildOfGhostSeen: seenScrolled(byId('coveredByOpaqueChildOfGhost')),
         coveredByOpaqueChildSeen: seenScrolled(byId('coveredByOpaqueChild')),
+        coveredUnderCatcherSeen: seenScrolled(byId('coveredUnderCatcher')),
+        catcherOverGhostSeen: seenScrolled(byId('catcherOverGhost')),
 
         hangingIndentPaintedText: scope.visibleTextOf(byId('hangingIndent')),
         belowFoldPaintedText: scope.visibleTextOf(byId('belowFold')),
@@ -1216,4 +1238,16 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
     result.coveredByOpaqueChildSeen,
     'but the same child under an ordinary wrapper does cover',
   ).toBe('');
+
+  // ROUND 95 P2 — the topmost element is not the only one in front of the
+  // text. A transparent catcher over an opaque backdrop is the ordinary
+  // modal, and reading only the catcher kept hidden copy in the reading.
+  expect(
+    result.coveredUnderCatcherSeen,
+    'an opaque backdrop below a transparent catcher still covers',
+  ).toBe('');
+  expect(
+    result.catcherOverGhostSeen,
+    'but looking past the catcher must not turn a ghost into a cover',
+  ).toContain('closed out now');
 });

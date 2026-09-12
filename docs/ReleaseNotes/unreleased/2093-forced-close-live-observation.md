@@ -460,6 +460,34 @@ page distinguishes that case. It is a far narrower assumption than the
 estimates it replaced, and it is still an assumption rather than a
 measurement.
 
+A sixth is worth stating because it is about what a PASS means. The run
+would only refuse to conclude anything when the page's own data source
+declined to say which network it served *and* something had already
+looked missing. That exempted the verdict where the question matters
+most: a run where nothing went wrong, whose figures were every one of
+them read off that same unidentified source, while the independent checks
+that corroborate them were asking a source chosen separately. Two sources
+can agree by coincidence when the same contract address exists on two
+networks. A clean run with an unanswered network now reports that it
+could not tell what it was looking at, rather than passing. Before
+tightening it, the ordinary case was measured: deployment providers
+answer that question normally, so this stops the run that genuinely
+cannot say, not every run. A fault the run actually SAW still outranks
+it — a crash or a dead control is not explained by the page being built
+for another network, and downgrading one to "nothing was learned" is the
+mistake the whole ordering exists to prevent.
+
+Two narrower corrections in the same pass. The check that decides whether
+text is genuinely on screen asked what sits at the top of each point, and
+an invisible full-size click target — ordinary in every dialog — is
+exactly what sits there; the opaque panel immediately beneath it was
+never looked at, so copy the reader could not see stayed in the reading.
+It now looks down through the layers until it reaches the text itself.
+And the rule that forgives a failed request when a later attempt succeeds
+could be satisfied by a request bundled into the SAME reply rather than
+by a retry, which means a failure the page had already acted on was
+quietly cleared; only a genuinely separate reply can clear one now.
+
 Closes #2093. The round-by-round record of how each of these rules was
 arrived at — including several cases where a fix left its own new state
 unhandled, or was applied to one of several parallel sites — lives in the

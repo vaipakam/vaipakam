@@ -1658,8 +1658,10 @@ const blockedHttp = [];
  * Fired in the background on first sighting so the probes overlap the
  * drive rather than serialising the route handler, and awaited once at
  * verdict time. `null` means "could not tell" — an endpoint may refuse a
- * synthetic probe — and only a DEFINITE mismatch is allowed to block,
- * keeping this loud-but-true rather than one more flaky exit.
+ * synthetic probe. A DEFINITE mismatch blocks as a deployment fault; a
+ * could-not-tell blocks as an unanswered question (round 95), and the two
+ * say different things at the exit. Neither is ranked above a defect this
+ * run actually OBSERVED.
  *
  * @type {Map<string, Promise<number|null>>}
  */
@@ -5305,7 +5307,7 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
           // HIT-TESTED, which is the only way to ask "is something in front of
           // this". Each glyph rectangle is probed at its centre first, and at
           // two corners only when the centre comes back covered — so the common
-          // case costs one `elementFromPoint` per rectangle and reachable text
+          // case costs one `elementsFromPoint` per rectangle and reachable text
           // returns on the first probe.
           //
           // THREE GUARDS AGAINST CONDEMNING LEGIBLE COPY, because this is the
@@ -5315,14 +5317,15 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
           //   - The covering element must actually PAINT. An invisible
           //     click-catcher — a full-page div with no background, which is
           //     ordinary in a modal implementation — is hit first by
-          //     `elementFromPoint` and covers nothing a lender can see. So the
-          //     walk up from the hit looks for a fully opaque background colour
+          //     `elementsFromPoint` and covers nothing a lender can see. So the
+          //     walk up from each hit looks for a fully opaque background colour
           //     or a replaced element, and anything it cannot decide counts as
           //     NOT covering. Unknown means painted, as everywhere else here.
+          //     (The layers BELOW that catcher are examined too — round 95.)
           //   - Points outside the VIEWPORT cannot be hit-tested at all, and
-          //     `elementFromPoint` answers null for them. They are skipped, not
-          //     counted as covered — otherwise every below-the-fold row, which
-          //     the lender reaches by scrolling, would be condemned.
+          //     `elementsFromPoint` answers an empty stack for them. They are
+          //     skipped, not counted as covered — otherwise every below-the-fold
+          //     row, which the lender reaches by scrolling, would be condemned.
           //   - Occlusion must be TOTAL. One reachable probe anywhere in the
           //     text is enough to keep it painted, because partial overlap is
           //     ordinary (a sticky header crossing a row as the page scrolls)
@@ -5343,23 +5346,10 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
           // not a cover, and `body` almost always carries an opaque background:
           // reach it and every foreign hit reads as covered, so the transparent
           // click-catcher guard above would silently invert.
-          const coveredAt = (x, y) => {
-            const hit = document.elementFromPoint(x, y);
-            if (!hit) return false;
-            // ROUND 90 P2 — ONLY THIS NODE AND ITS ANCESTORS ARE EXEMPT. A
-            // DESCENDANT CAN COVER ITS PARENT'S OWN TEXT.
-            //
-            // The first version exempted `node.contains(hit)` as well, which
-            // trusted every descendant — so an absolutely positioned opaque
-            // child laid over its parent's glyphs was declared "not a cover" by
-            // the very fact that it belongs to the element it is hiding.
-            //
-            // `contains` is true of a node itself, so `hit.contains(node)` covers
-            // both the element's own hit and any ancestor's, and nothing else is
-            // waved through. Note the rects probed are the element's OWN text
-            // nodes, so an ordinary inline child is not at these points at all —
-            // a descendant hit here is one that genuinely overlaps the text.
-            if (hit.contains(node)) return false;
+          // Does THIS ONE LAYER of the hit-test stack paint over the text?
+          // Split out of `coveredAt` in round 95 so the answer can be asked of
+          // each layer in turn; the walk itself is unchanged.
+          const layerPaints = (hit) => {
             // Whether anything in the cover's chain actually paints, carried so
             // the walk can keep going and still answer (round 92).
             let paints = false;
@@ -5415,6 +5405,54 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
               if (!paints && bg && bg !== 'transparent' && alphaOf(bg) === 1) paints = true;
             }
             return paints;
+          };
+          // ROUND 95 P2 — THE WHOLE STACK AT THE POINT, NOT THE TOP OF IT.
+          //
+          // `elementFromPoint` returns ONE element: the topmost. The modal
+          // implementation the first guard was written for — a full-size
+          // transparent click-catcher — is exactly what lands there, and its
+          // own chain paints nothing, so the walk correctly answered "this
+          // layer is not a cover" and `coveredAt` then stopped. The OPAQUE
+          // backdrop immediately beneath it, which is the thing the lender
+          // cannot see through, was never examined. Hidden receipt copy could
+          // therefore enter `visibleTextOf` and a fee-facing surface be
+          // certified on text nobody could read.
+          //
+          // `elementsFromPoint` returns the stack topmost-first. Everything
+          // before the entry that contains this node paints ABOVE the glyph at
+          // this point, so each is asked in turn and the first that paints
+          // settles it. Reaching the node's own layer ends the search: nothing
+          // below it can hide it.
+          //
+          // The containment test stays FIRST, for the reason recorded above —
+          // `body` carries an opaque background and sits at the bottom of every
+          // stack, so examining it would read as covered everywhere.
+          //
+          // A layer disqualified by opacity or an `opacity(0)` filter does not
+          // end the search either: it is transparent, and the layers below it
+          // are still in front of the text.
+          const coveredAt = (x, y) => {
+            const stack = document.elementsFromPoint(x, y);
+            if (!stack || !stack.length) return false;
+            for (const hit of stack) {
+              // ROUND 90 P2 — ONLY THIS NODE AND ITS ANCESTORS ARE EXEMPT. A
+              // DESCENDANT CAN COVER ITS PARENT'S OWN TEXT.
+              //
+              // The first version exempted `node.contains(hit)` as well, which
+              // trusted every descendant — so an absolutely positioned opaque
+              // child laid over its parent's glyphs was declared "not a cover"
+              // by the very fact that it belongs to the element it is hiding.
+              //
+              // `contains` is true of a node itself, so `hit.contains(node)`
+              // covers both the element's own hit and any ancestor's, and
+              // nothing else is waved through. Note the rects probed are the
+              // element's OWN text nodes, so an ordinary inline child is not at
+              // these points at all — a descendant hit here is one that
+              // genuinely overlaps the text.
+              if (hit.contains(node)) return false;
+              if (layerPaints(hit)) return true;
+            }
+            return false;
           };
           const vw = window.innerWidth || document.documentElement.clientWidth || 0;
           const vh = window.innerHeight || document.documentElement.clientHeight || 0;
@@ -6996,14 +7034,16 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
               //   - The covering element must actually PAINT. An invisible
               //     click-catcher — a full-page div with no background, which is
               //     ordinary in a modal implementation — is hit first by
-              //     `elementFromPoint` and covers nothing a lender can see. So the
-              //     walk up from the hit looks for a fully opaque background colour
+              //     `elementsFromPoint` and covers nothing a lender can see. So the
+              //     walk up from each hit looks for a fully opaque background colour
               //     or a replaced element, and anything it cannot decide counts as
               //     NOT covering. Unknown means painted, as everywhere else here.
+              //     (The layers BELOW that catcher are examined too — round 95.)
               //   - Points outside the VIEWPORT cannot be hit-tested at all, and
-              //     `elementFromPoint` answers null for them. They are skipped, not
-              //     counted as covered — otherwise every below-the-fold row, which
-              //     the lender reaches by scrolling, would be condemned.
+              //     `elementsFromPoint` answers an empty stack for them. They are
+              //     skipped, not counted as covered — otherwise every
+              //     below-the-fold row, which the lender reaches by scrolling,
+              //     would be condemned.
               //   - Occlusion must be TOTAL. One reachable probe anywhere in the
               //     text is enough to keep it painted, because partial overlap is
               //     ordinary (a sticky header crossing a row as the page scrolls)
@@ -7024,23 +7064,10 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
               // not a cover, and `body` almost always carries an opaque background:
               // reach it and every foreign hit reads as covered, so the transparent
               // click-catcher guard above would silently invert.
-              const coveredAt = (x, y) => {
-                const hit = document.elementFromPoint(x, y);
-                if (!hit) return false;
-                // ROUND 90 P2 — ONLY THIS NODE AND ITS ANCESTORS ARE EXEMPT. A
-                // DESCENDANT CAN COVER ITS PARENT'S OWN TEXT.
-                //
-                // The first version exempted `node.contains(hit)` as well, which
-                // trusted every descendant — so an absolutely positioned opaque
-                // child laid over its parent's glyphs was declared "not a cover" by
-                // the very fact that it belongs to the element it is hiding.
-                //
-                // `contains` is true of a node itself, so `hit.contains(node)` covers
-                // both the element's own hit and any ancestor's, and nothing else is
-                // waved through. Note the rects probed are the element's OWN text
-                // nodes, so an ordinary inline child is not at these points at all —
-                // a descendant hit here is one that genuinely overlaps the text.
-                if (hit.contains(node)) return false;
+              // Does THIS ONE LAYER of the hit-test stack paint over the text?
+              // Split out of `coveredAt` in round 95 so the answer can be asked
+              // of each layer in turn; the walk itself is unchanged.
+              const layerPaints = (hit) => {
                 // Whether anything in the cover's chain actually paints, carried so
                 // the walk can keep going and still answer (round 92).
                 let paints = false;
@@ -7096,6 +7123,53 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
                   if (!paints && bg && bg !== 'transparent' && alphaOf(bg) === 1) paints = true;
                 }
                 return paints;
+              };
+              // ROUND 95 P2 — THE WHOLE STACK AT THE POINT, NOT THE TOP OF IT.
+              //
+              // `elementFromPoint` returns ONE element: the topmost. The modal
+              // implementation the first guard was written for — a full-size
+              // transparent click-catcher — is exactly what lands there, and its
+              // own chain paints nothing, so the walk correctly answered "this
+              // layer is not a cover" and `coveredAt` then stopped. The OPAQUE
+              // backdrop immediately beneath it, which is the thing the lender
+              // cannot see through, was never examined. Hidden receipt copy could
+              // therefore enter `visibleTextOf` and a fee-facing surface be
+              // certified on text nobody could read.
+              //
+              // `elementsFromPoint` returns the stack topmost-first. Everything
+              // before the entry that contains this node paints ABOVE the glyph at
+              // this point, so each is asked in turn and the first that paints
+              // settles it. Reaching the node's own layer ends the search: nothing
+              // below it can hide it.
+              //
+              // The containment test stays FIRST, for the reason recorded above —
+              // `body` carries an opaque background and sits at the bottom of every
+              // stack, so examining it would read as covered everywhere.
+              //
+              // A layer disqualified by opacity or an `opacity(0)` filter does not
+              // end the search either: it is transparent, and the layers below it
+              // are still in front of the text.
+              const coveredAt = (x, y) => {
+                const stack = document.elementsFromPoint(x, y);
+                if (!stack || !stack.length) return false;
+                for (const hit of stack) {
+                  // ROUND 90 P2 — ONLY THIS NODE AND ITS ANCESTORS ARE EXEMPT. A
+                  // DESCENDANT CAN COVER ITS PARENT'S OWN TEXT.
+                  //
+                  // The first version exempted `node.contains(hit)` as well, which
+                  // trusted every descendant — so an absolutely positioned opaque
+                  // child laid over its parent's glyphs was declared "not a cover" by
+                  // the very fact that it belongs to the element it is hiding.
+                  //
+                  // `contains` is true of a node itself, so `hit.contains(node)` covers
+                  // both the element's own hit and any ancestor's, and nothing else is
+                  // waved through. Note the rects probed are the element's OWN text
+                  // nodes, so an ordinary inline child is not at these points at all —
+                  // a descendant hit here is one that genuinely overlaps the text.
+                  if (hit.contains(node)) return false;
+                  if (layerPaints(hit)) return true;
+                }
+                return false;
               };
               const vw = window.innerWidth || document.documentElement.clientWidth || 0;
               const vh = window.innerHeight || document.documentElement.clientHeight || 0;
@@ -9668,24 +9742,54 @@ if (allowlistTooNarrow.length || httpGaps.length) {
 // by the fix that was meant to strengthen it.
 //
 // `visitProblemKinds` tags each problem at the one site that decides
-// them. An unanswerable probe on an otherwise clean run is still not
-// worth exiting 2 over, so this needs at least one absence-shaped
-// failure AND no observed one.
+// them.
+//
+// ROUND 95 P2 — AND A *CLEAN* RUN NEEDS THE CHAIN MOST OF ALL.
+//
+// This used to require at least one absence-shaped failure, on the
+// reasoning that an unanswerable probe is not worth exiting 2 over when
+// nothing is wrong. That reasoning only looks at what this drive FAILS
+// to find, and the drive's main product is what it FINDS: the forced-close
+// card's figures, the receipt rows, the fee copy — all READ off a page the
+// unanswered endpoint served, while every protocol simulation that
+// corroborates them ran against the independently chosen `OBSERVE_RPC`.
+// With a deterministic deploy putting a Diamond at the same address on two
+// networks, those two sides can agree by coincidence, and the run then
+// exited 0 having certified a funds surface it never established was the
+// requested deployment's. A PASS is the strongest claim this drive makes;
+// it is the last verdict that should rest on an unasked question.
+//
+// MEASURED BEFORE TIGHTENING, because round 87 tightened a rule into
+// something honest and useless: the deployment's provider answers a
+// synthetic `eth_chainId` in the ordinary case (HTTP 200, the requested
+// chain), and `pageRpcChain` only ever holds endpoints that carried a
+// Diamond-targeting call. So this blocks the run that genuinely cannot
+// say what it was looking at, not every run.
+//
+// An OBSERVED failure still outranks it, unchanged and for the round-78
+// reason: a crash, a dead anchor or a mis-ordered row is not explained by
+// the page being built against another network, and downgrading one to
+// "nothing was learned" is the swallow this whole exit ordering prevents.
 const remaining = visited.flatMap((v) => visitProblemKinds(v, ROLE));
 const observedRemaining = remaining.filter((p) => p.kind === 'observed');
 const absenceRemaining = remaining.filter((p) => p.kind === 'absence');
-if (pageChainUnknown.length && absenceRemaining.length && !observedRemaining.length) {
+if (pageChainUnknown.length && !observedRemaining.length) {
   console.log(
     `\nBLOCKED: ${pageChainUnknown.length} of the page's own RPC endpoint(s)` +
-      ` would not say which chain they serve, so this run cannot tell a` +
-      ` product regression from a site built against another network.`,
+      ` would not say which chain they serve, so this run cannot tell the` +
+      ` requested deployment from a site built against another network.`,
   );
   pageChainUnknown.slice(0, 6).forEach((u) => console.log(`  unanswered → ${u}`));
   console.log(
-    `  → ranked ahead of the inferred failures below, exactly as the` +
-      ` allowlist gap is: a missing surface says nothing about the app` +
-      ` until the page's chain is known. Re-run, or point the probe at an` +
-      ` endpoint that answers eth_chainId.`,
+    absenceRemaining.length
+      ? `  → ranked ahead of the inferred failures below, exactly as the` +
+          ` allowlist gap is: a missing surface says nothing about the app` +
+          ` until the page's chain is known. Re-run, or point the probe at an` +
+          ` endpoint that answers eth_chainId.`
+      : `  → nothing failed, and that is not enough: what this run READ came` +
+          ` off that endpoint, while the checks corroborating it ran against` +
+          ` OBSERVE_RPC. Re-run, or point the probe at an endpoint that` +
+          ` answers eth_chainId.`,
   );
   process.exit(2);
 }

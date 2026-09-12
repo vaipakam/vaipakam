@@ -814,6 +814,47 @@ describe('recordRpcResponse + summariseRpcLedger', () => {
     });
   });
 
+  // ROUND 95 P2 — a SIBLING IN THE SAME BATCH is not a retry either, and
+  // time cannot say so: both outcomes are decoded from one response body
+  // and stamped with one `at`, so the later array slot satisfied every
+  // window the round-94 rule could express. The first caller had already
+  // consumed its error.
+  describe('recovery excludes siblings of the same response (round 95)', () => {
+    const batchOfSameCall = (first, second) =>
+      ledgerOf(
+        attempt(200, `[${first},${second}]`, rpcReq(call(1), call(2))),
+      );
+
+    it('does NOT let a batch sibling clear its neighbour', () => {
+      const out = summariseRpcLedger(
+        batchOfSameCall(errBody(1, rpcErr(-32005, 'limit')), okBody(2)),
+      );
+      expect(out.unreachable).toEqual([
+        { url: 'https://rpc.example', why: 'eth_call — json-rpc -32005' },
+      ]);
+    });
+
+    it('still clears it when the success is a SEPARATE response in time', () => {
+      // The same two outcomes, one per response — which is what a retry
+      // actually looks like — recover exactly as they did before.
+      const ledger = ledgerOf(
+        attempt(200, errBody(1, rpcErr(-32005, 'limit')), rpcReq(call(1))),
+        attempt(200, okBody(1), rpcReq(call(1))),
+      );
+      expect(summariseRpcLedger(ledger)).toEqual({ malformed: [], unreachable: [] });
+    });
+
+    it('leaves a record without response ids behaving as it did', () => {
+      // `undefined` means a shape predating the field — keep the old
+      // behaviour, never read it as evidence.
+      const out = summariseRpcLedger([
+        { key: 'eth_call|[]', method: 'eth_call', verdict: 'unreachable', why: 'HTTP 429', url: 'u', at: 10 },
+        { key: 'eth_call|[]', method: 'eth_call', verdict: 'ok', at: 10 },
+      ]);
+      expect(out.unreachable).toEqual([]);
+    });
+  });
+
   describe('reconciliation across attempts (round 23)', () => {
     it('clears a failure that a LATER attempt recovered', () => {
       // viem retries, and wagmi wraps these transports in fallback([...]).
