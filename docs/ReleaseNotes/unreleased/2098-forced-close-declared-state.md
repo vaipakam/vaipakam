@@ -1,4 +1,4 @@
-## Thread — the forced close-out card states its decision and the block it was made at (PR #TBD)
+## Thread — the forced close-out card states its decision and the block it was made at (PR #2148)
 
 Closes #2098. Also delivers #2131.
 
