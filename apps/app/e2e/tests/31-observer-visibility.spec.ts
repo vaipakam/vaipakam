@@ -780,6 +780,19 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
         <p style="margin:0">This loan can be closed out now.</p>
         <div style="position:absolute; inset:0; background:oklab(0.5 0.1 0.1)"></div>
       </div>
+      <!-- ROUND 91 P2 — an opaque BACKGROUND on an element that is itself
+           transparent is not a cover. A transition layer left at zero
+           opacity is ordinary, hit-testing still returns it, and reading
+           its background alone condemned plainly visible copy. -->
+      <div class="body" id="coveredByGhost" style="position:relative; width:320px">
+        <p style="margin:0">This loan can be closed out now.</p>
+        <div style="position:absolute; inset:0; background:#123456; opacity:0"></div>
+      </div>
+      <!-- The same by another property. -->
+      <div class="body" id="coveredByErased" style="position:relative; width:320px">
+        <p style="margin:0">This loan can be closed out now.</p>
+        <div style="position:absolute; inset:0; background:#123456; filter:opacity(0)"></div>
+      </div>
       <!-- SELF-REVIEW OF THE OCCLUSION RULE — the page body carries an
            opaque background, as a real stylesheet almost always does. The
            walk from a hit stops at the first element containing the text,
@@ -891,6 +904,8 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
         onOpaquePagePaintedText: scope.visibleTextOf(byId('onOpaquePage')),
         coveredByChildPaintedText: scope.visibleTextOf(byId('coveredByChild')),
         coveredByModernColorPaintedText: scope.visibleTextOf(byId('coveredByModernColor')),
+        coveredByGhostPaintedText: scope.visibleTextOf(byId('coveredByGhost')),
+        coveredByErasedPaintedText: scope.visibleTextOf(byId('coveredByErased')),
         hangingIndentPaintedText: scope.visibleTextOf(byId('hangingIndent')),
         belowFoldPaintedText: scope.visibleTextOf(byId('belowFold')),
         flexRowPaintedText: scope.visibleTextOf(byId('flexRow')),
@@ -1129,4 +1144,16 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
     result.coveredByModernColorPaintedText,
     'and an opaque cover in a modern colour form is one too',
   ).toBe('');
+
+  // ROUND 91 P2 — the other direction, and the one that matters more: a
+  // cover that is itself invisible hides nothing, and condemning the text
+  // under it would be a false FAIL on copy the lender can plainly read.
+  expect(
+    result.coveredByGhostPaintedText,
+    'an opaque background at zero opacity covers nothing',
+  ).toContain('closed out now');
+  expect(
+    result.coveredByErasedPaintedText,
+    'nor does one erased by a filter',
+  ).toContain('closed out now');
 });

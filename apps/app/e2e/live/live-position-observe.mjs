@@ -4350,7 +4350,21 @@ async function observeForcedClose(page, loan, headBeforeNav, pageHeadBeforeNav, 
   // sampled after the scrape, so it is the newest thing the page can have
   // been showing. Where the snapshot is behind it, both answers stay
   // `null` and the verdict reports an incomplete observation.
-  const observerCaughtUp = pageHead === 0n || pinnedBlock >= pageHead;
+  // ROUND 91 P2 — AN UNKNOWN CEILING IS NOT A SATISFIED ONE.
+  //
+  // `pageHead === 0n ||` read "this drive saw no head from the page" as
+  // "the observer has caught up", which is the absence-is-evidence mistake
+  // this file spends most of its comments on. It became reachable in round
+  // 90: the floor can now be established from the pre-navigation sample
+  // alone, so a page whose endpoint never announces a head passes the
+  // floor test and used to pass this one too — and if that provider runs
+  // ahead of this drive's, the card renders from a block the interior scan
+  // never covers.
+  //
+  // A head the page was SEEN to reach is required now. Without one the
+  // comparison is incomplete, which is what the absence gate already
+  // demands of the same number.
+  const observerCaughtUp = pageHead > 0n && pinnedBlock >= pageHead;
   // ROUND 90 P2 — no global shortcut. `floorEstablishedFor` now decides
   // PER ENDPOINT, accepting either the pre-navigation sample or that
   // endpoint's own announcement ordering, so an endpoint this page reached
@@ -5267,6 +5281,26 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
             if (hit.contains(node)) return false;
             for (let n = hit; n && n !== document.documentElement; n = n.parentElement) {
               if (n.contains(node)) return false;
+              // ROUND 91 P2 — AND THE COVER HAS TO BE VISIBLE ITSELF.
+              //
+              // An opaque BACKGROUND on an element that is itself transparent —
+              // `background:#123456; opacity:0`, an ordinary transition layer —
+              // is still what hit-testing returns, and the first version read its
+              // background alpha and declared the text covered. That is a false
+              // FAIL on plainly visible copy, which is the one direction this
+              // predicate must never take.
+              //
+              // Anything less than fully opaque disqualifies the whole chain
+              // rather than being weighed: a half-transparent cover leaves the
+              // text partly legible, and judging how much is the contrast
+              // question this file refuses. `opacity(0)` in a filter is the same
+              // erasure by another property; other filters still cover, so they
+              // are left alone.
+              const cs = getComputedStyle(n);
+              if (cs.visibility === 'hidden' || cs.visibility === 'collapse') return false;
+              const op = Number(cs.opacity);
+              if (Number.isFinite(op) && op < 1) return false;
+              if (/opacity\(\s*0(?:\.0+)?%?\s*\)/i.test(cs.filter || '')) return false;
               if (/^(img|video|canvas|svg)$/i.test(n.tagName)) return true;
               // ROUND 90 P2 — READ BY SHAPE, via the same `alphaOf` the fill test
               // uses. The first version matched `rgba?(…)` only, so an overlay
@@ -5275,7 +5309,7 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
               // transparent and the hidden text stayed in the reading. Round 38
               // learned this exact lesson for the text colour and I wrote the new
               // site against the old standard anyway.
-              const bg = getComputedStyle(n).backgroundColor || '';
+              const bg = cs.backgroundColor || '';
               if (bg && bg !== 'transparent' && alphaOf(bg) === 1) return true;
             }
             return false;
@@ -6907,6 +6941,26 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
                 if (hit.contains(node)) return false;
                 for (let n = hit; n && n !== document.documentElement; n = n.parentElement) {
                   if (n.contains(node)) return false;
+                  // ROUND 91 P2 — AND THE COVER HAS TO BE VISIBLE ITSELF.
+                  //
+                  // An opaque BACKGROUND on an element that is itself transparent —
+                  // `background:#123456; opacity:0`, an ordinary transition layer —
+                  // is still what hit-testing returns, and the first version read its
+                  // background alpha and declared the text covered. That is a false
+                  // FAIL on plainly visible copy, which is the one direction this
+                  // predicate must never take.
+                  //
+                  // Anything less than fully opaque disqualifies the whole chain
+                  // rather than being weighed: a half-transparent cover leaves the
+                  // text partly legible, and judging how much is the contrast
+                  // question this file refuses. `opacity(0)` in a filter is the same
+                  // erasure by another property; other filters still cover, so they
+                  // are left alone.
+                  const cs = getComputedStyle(n);
+                  if (cs.visibility === 'hidden' || cs.visibility === 'collapse') return false;
+                  const op = Number(cs.opacity);
+                  if (Number.isFinite(op) && op < 1) return false;
+                  if (/opacity\(\s*0(?:\.0+)?%?\s*\)/i.test(cs.filter || '')) return false;
                   if (/^(img|video|canvas|svg)$/i.test(n.tagName)) return true;
                   // ROUND 90 P2 — READ BY SHAPE, via the same `alphaOf` the fill test
                   // uses. The first version matched `rgba?(…)` only, so an overlay
@@ -6915,7 +6969,7 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
                   // transparent and the hidden text stayed in the reading. Round 38
                   // learned this exact lesson for the text colour and I wrote the new
                   // site against the old standard anyway.
-                  const bg = getComputedStyle(n).backgroundColor || '';
+                  const bg = cs.backgroundColor || '';
                   if (bg && bg !== 'transparent' && alphaOf(bg) === 1) return true;
                 }
                 return false;
