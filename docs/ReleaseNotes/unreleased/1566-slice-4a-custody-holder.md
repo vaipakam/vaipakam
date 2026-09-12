@@ -1,4 +1,4 @@
-## #1566 slice 4 PR A — a dedicated custody address for delivered reward funding, deployed dark (PR #TBD)
+## #1566 slice 4 PR A — a dedicated custody address for delivered reward funding, deployed dark (PR #2158)
 
 The reward funding delivered to a chain used to sit in the Diamond's own token
 balance, beside every other VPFI the Diamond touches. Slice 4 of the #1566
