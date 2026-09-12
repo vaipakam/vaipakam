@@ -55,6 +55,42 @@ function arrowBlocks(src: string, name: string, arg = 'node'): string[] {
   return out;
 }
 
+/**
+ * A helper's SOURCE, stripped to the code: comments removed, whitespace
+ * collapsed. Two copies of one helper may explain themselves differently
+ * and must not compute differently.
+ *
+ * ROUND 96 P1 — module-level, and used by every drift assertion here.
+ * There were two identical local copies of this: a guard against
+ * duplicated code, itself duplicated, so a later fix to how comments are
+ * stripped could have strengthened one assertion and silently left the
+ * other weaker. Exactly the parallel-site drift the guard exists to catch.
+ */
+const codeOf = (t: string) =>
+  t
+    .split('\n')
+    .filter((line) => !line.trim().startsWith('//'))
+    .join(' ')
+    .split(/\s+/)
+    .join(' ');
+
+/**
+ * Every `const <name> = (<arg>) => <expression>;` in the drive — the
+ * EXPRESSION-bodied form, which {@link arrowBlocks} cannot see because it
+ * matches on `=> {`.
+ *
+ * ROUND 96 P2 — `visible` is written that way at both scrape sites, so it
+ * was the one duplicated pair with no drift assertion at all. The
+ * behavioural harness cannot stand in for one either: it RECONSTRUCTS the
+ * predicate in-page from `shownBox` and `paintsText` rather than running
+ * either production copy, so an edit to one of them passes every fixture
+ * here and every source comparison above it.
+ */
+function arrowExpressions(src: string, name: string, arg = 'node'): string[] {
+  const re = new RegExp(`const ${name} = \\(${arg}\\) => [^\n;]*;`, 'g');
+  return src.match(re) ?? [];
+}
+
 test('both copies of the drive visibility predicate agree, and reject clipped content', async ({
   page,
 }) => {
@@ -91,13 +127,6 @@ test('both copies of the drive visibility predicate agree, and reject clipped co
   //
   // Compared as CODE — comments stripped, whitespace collapsed — so the two
   // may explain themselves differently, and must not compute differently.
-  const codeOf = (t: string) =>
-    t
-      .split('\n')
-      .filter((line) => !line.trim().startsWith('//'))
-      .join(' ')
-      .split(/\s+/)
-      .join(' ');
   for (const [name, copies] of [
     ['notClipped', clipHelpers],
     ['paintsText', paintHelpers],
@@ -106,6 +135,36 @@ test('both copies of the drive visibility predicate agree, and reject clipped co
   ] as const) {
     expect(copies, `${name}: expected exactly two copies`).toHaveLength(2);
     expect(codeOf(copies[0]), `${name}: the two copies have drifted`).toBe(codeOf(copies[1]));
+  }
+
+  // ROUND 96 P2 — AND `visible` IS THE FIFTH PAIR, with a THIRD occurrence.
+  //
+  // It is written as an EXPRESSION body at both scrape sites, so
+  // `arrowBlocks` — which matches on `=> {` — has never seen it. The
+  // round-66 note above says exactly that and does not draw the conclusion.
+  // Nothing else covered it either: the behavioural harness RECONSTRUCTS the
+  // predicate in-page as `shownBox(n) && paintsText(n)` rather than running
+  // either production copy, so an edit to one of them passed every fixture
+  // in this file and every comparison in the loop above.
+  //
+  // THREE, not two, and the third is the load-bearing one. The drive builds
+  // `VISIBILITY_HELPER_SOURCES` for the mount wait by looking itself up with
+  // `self.indexOf('const visible = (node) => shownBox(node) && ...')` — a
+  // STRING LITERAL of the predicate, which sits earlier in the file than
+  // either definition and is therefore what `indexOf` finds FIRST. It works
+  // today only because the literal and the definitions are the same text. If
+  // a definition changed and the literal did not, the lookup would not throw
+  // — it would keep finding the literal and hand the mount wait a predicate
+  // the scrape no longer uses, silently.
+  //
+  // So all three are compared, not just the two definitions.
+  const visibleCopies = arrowExpressions(src, 'visible');
+  expect(
+    visibleCopies,
+    'visible: two definitions plus the self-lookup literal in VISIBILITY_HELPER_SOURCES',
+  ).toHaveLength(3);
+  for (const copy of visibleCopies.slice(1)) {
+    expect(codeOf(copy), 'visible: the copies have drifted').toBe(codeOf(visibleCopies[0]));
   }
 
   await page.setContent(`
@@ -678,13 +737,6 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
   // which would have made it a nuisance rather than a guard. Only whole
   // comment lines are removed, never a trailing `//`, so the regex
   // literals in the body are untouched.
-  const codeOf = (t: string) =>
-    t
-      .split('\n')
-      .filter((line) => !line.trim().startsWith('//'))
-      .join(' ')
-      .split(/\s+/)
-      .join(' ');
   const bothCopies = arrowBlocks(src, 'visibleTextOf', 'root');
   expect(codeOf(bothCopies[0]), 'the two copies have drifted').toBe(codeOf(bothCopies[1]));
 
