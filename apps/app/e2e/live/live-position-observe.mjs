@@ -3215,7 +3215,8 @@ async function visit(path, { expectChooser = false, loan = null } = {}) {
     // The bracket's lower end, reported beside its upper one so the span
     // the protocol comparison was made over is visible (round 84).
     forcedCloseHeadFloor: forcedClose ? (forcedClose.headFloor ?? null) : null,
-    forcedCloseHeadCeiling: forcedClose ? (forcedClose.headCeiling ?? null) : null,
+    forcedCloseHeadScanned: forcedClose ? (forcedClose.headScanned ?? null) : null,
+    forcedCloseHeadBar: forcedClose ? (forcedClose.headBar ?? null) : null,
     forcedCloseCeilingSound: forcedClose ? (forcedClose.headCeilingSound ?? null) : null,
     // DETAIL PAGES ONLY, gated on `loan` (self-inflicted, caught by
     // running it). The lender card exists only on `/positions/<id>`, and
@@ -4848,12 +4849,21 @@ async function observeForcedClose(page, loan, headBeforeNav, pageHeadBeforeNav, 
     // the span it used. Reporting a bound the run did not use is the same
     // defect class as any other unstated figure here.
     //
-    // `headCeiling` is what the bar resolved to, or null when the ceiling
-    // could not be established — in which case the run did not have an
-    // upper edge at all, and saying so is the point.
-    headCeiling: ceilingSound
-      ? String(ceiling.head > pageHead ? ceiling.head : pageHead)
-      : null,
+    // ROUND 103 P2 — AND THE SCANNED SPAN IS THE ONE THAT GETS PRINTED.
+    //
+    // Round 102 replaced `pageHead` here with the BAR the confirmation has
+    // to clear — which is a third quantity, and still not the one the note
+    // promises. `stableAcross` scans `headBefore..pinnedBlock`, and where
+    // the verdict is issued at all `pinnedBlock` is at or above both the
+    // overheard head and the asked ceiling, so reporting the bar understates
+    // the range actually read. One wrong number swapped for another.
+    //
+    // The span is `headFloor..headScanned`. The bar is a different fact and
+    // is reported separately below, because "what was read" and "what the
+    // observer had to clear before it was trusted" are two questions and
+    // collapsing them is what produced two rounds of this.
+    headScanned: String(pinnedBlock),
+    headBar: ceilingSound ? String(ceiling.head > pageHead ? ceiling.head : pageHead) : null,
     headCeilingSound: ceilingSound,
   };
 }
@@ -9929,9 +9939,11 @@ for (const v of visited) {
               // the higher of the overheard head and the asked ceiling.
               // `unestablished` is not the same as `unobserved`, and the
               // two send an operator to different places.
-              ` heads=${v.forcedCloseHeadFloor ?? 'unobserved'}..${
-                v.forcedCloseHeadCeiling ?? (v.forcedCloseCeilingSound === false ? 'unestablished' : 'unobserved')
-              }`
+              // ROUND 103 P2 — the SPAN SCANNED, plus the bar as its own
+              // figure. `unestablished` is not `unobserved`, and neither is
+              // the same as the range that was read.
+              ` heads=${v.forcedCloseHeadFloor ?? 'unobserved'}..${v.forcedCloseHeadScanned ?? 'unobserved'}` +
+              ` bar=${v.forcedCloseHeadBar ?? (v.forcedCloseCeilingSound === false ? 'unestablished' : 'unobserved')}`
             : '')
         : `      chooser=${v.chooser} handover=${v.handover} offset=${v.offset}` +
         ` holdCard=${v.holdCard} freeHeldBtn=${v.freeHeld}`,

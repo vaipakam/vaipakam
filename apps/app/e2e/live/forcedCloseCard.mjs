@@ -989,12 +989,23 @@ export function saysCheckRunning(text, unknownCopy) {
 export function confirmationReady(observerHead, pinnedBlock, pageHead, ceiling) {
   if (typeof observerHead !== 'bigint' || typeof pinnedBlock !== 'bigint') return false;
   if (typeof pageHead !== 'bigint' || pageHead === 0n) return false;
-  let bar = pageHead;
-  if (ceiling !== undefined) {
-    if (!ceiling?.sound || typeof ceiling.head !== 'bigint' || ceiling.head === 0n) return false;
-    if (ceiling.head > bar) bar = ceiling.head;
-  }
-  return observerHead > pinnedBlock && observerHead > bar;
+  // ROUND 103 P2 — THE TWO BOUNDS ARE NOT COMPARED THE SAME WAY, and round
+  // 102 collapsing them into one `bar` erased the difference.
+  //
+  // `pageHead` is a head the page was OVERHEARD to announce. The page can
+  // read at that height or beyond it, so clearing it needs STRICTLY more —
+  // round 14's rule, unchanged.
+  //
+  // The asked ceiling is a height sampled from the page's own providers
+  // AFTER the scrape. Heads do not go backwards, so it already bounds every
+  // block the card could have rendered from: an observer that has READ that
+  // block has covered all of them, and demanding one more blocks an
+  // otherwise conclusive run for nothing. `>=` is the honest comparison for
+  // a bound, where `>` is the honest one for a sighting.
+  if (observerHead <= pinnedBlock || observerHead <= pageHead) return false;
+  if (ceiling === undefined) return true;
+  if (!ceiling?.sound || typeof ceiling.head !== 'bigint' || ceiling.head === 0n) return false;
+  return observerHead >= ceiling.head;
 }
 
 /**

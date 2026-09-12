@@ -1386,6 +1386,22 @@ describe('confirmationReady — round 14: caught up, not merely moved', () => {
       expect(confirmationReady(21n, 10n, 11n, sound(20n))).toBe(true);
     });
 
+    // ROUND 103 P2 — REACHING the asked ceiling is enough; the two bounds
+    // are not compared the same way and round 102 collapsing them into one
+    // `bar` erased the difference.
+    //
+    // `pageHead` is a SIGHTING: the page announced it and can read at or
+    // beyond it, so clearing it needs strictly more. The asked ceiling is a
+    // BOUND sampled after the scrape, so an observer that has read that
+    // block has covered every block the card could have rendered from, and
+    // demanding one more blocks a conclusive run for nothing.
+    it('accepts an observer that REACHES the sound ceiling exactly', () => {
+      expect(confirmationReady(20n, 10n, 11n, sound(20n))).toBe(true);
+      // And the overheard head keeps its strict comparison: level is not
+      // caught up, which is round 14's rule and is not what changed.
+      expect(confirmationReady(11n, 10n, 11n, sound(5n))).toBe(false);
+    });
+
     it('keeps the overheard head as the bar when it is the higher of the two', () => {
       expect(confirmationReady(12n, 10n, 11n, sound(5n))).toBe(true);
       expect(confirmationReady(11n, 10n, 11n, sound(5n))).toBe(false);
