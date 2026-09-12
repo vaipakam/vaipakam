@@ -657,6 +657,10 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
 
   await page.setContent(`
     <style>
+      /* An opaque page background, as a real stylesheet has. The
+         occlusion rule must never read it as a cover — see the
+         onOpaquePage fixture below. */
+      body { background: #ffffff; }
       .card { padding: 16px; }
       .body { font-size: .9rem; }
       .transparent { color: transparent; }
@@ -762,6 +766,15 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
         <p style="margin:0">This loan can be closed out now.</p>
         <div style="position:absolute; inset:0; background:#123456; pointer-events:none"></div>
       </div>
+      <!-- SELF-REVIEW OF THE OCCLUSION RULE — the page body carries an
+           opaque background, as a real stylesheet almost always does. The
+           walk from a hit stops at the first element containing the text,
+           so body is never reached and never read as a cover. Invert that
+           ordering and every foreign hit reads as covered: this fixture is
+           what fails if anyone does. -->
+      <div class="body" id="onOpaquePage" style="position:relative; width:320px">
+        <p style="margin:0">This loan can be closed out now.</p>
+      </div>
       <!-- The control that keeps the rule narrow: below the fold is
            painted, and must stay admitted. -->
       <div class="body" id="belowFold">
@@ -861,6 +874,7 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
         catcherPaintedText: scope.visibleTextOf(byId('catcher')),
         halfCoveredPaintedText: scope.visibleTextOf(byId('halfCovered')),
         occludedNoPointerPaintedText: scope.visibleTextOf(byId('occludedNoPointer')),
+        onOpaquePagePaintedText: scope.visibleTextOf(byId('onOpaquePage')),
         hangingIndentPaintedText: scope.visibleTextOf(byId('hangingIndent')),
         belowFoldPaintedText: scope.visibleTextOf(byId('belowFold')),
         flexRowPaintedText: scope.visibleTextOf(byId('flexRow')),
@@ -1082,5 +1096,9 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
   expect(
     result.occludedNoPointerPaintedText,
     'an opaque cover that takes no pointer events is a KNOWN miss',
+  ).toContain('closed out now');
+  expect(
+    result.onOpaquePagePaintedText,
+    'ordinary copy on a page with an opaque background is still painted',
   ).toContain('closed out now');
 });

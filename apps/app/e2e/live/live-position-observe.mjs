@@ -5184,6 +5184,14 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
           // test. That is a missed defect, which is the direction this file
           // takes every time — the alternative is a geometric overlap test
           // that would condemn the transparent click-catcher above it.
+          // THE CONTAINMENT TEST COMES FIRST INSIDE THE WALK, and swapping it
+          // below the paint tests would condemn the whole page (self-review).
+          // The walk climbs from whatever was hit until it reaches something
+          // that contains this node — the common ancestor — and stops there. Any
+          // element from the common ancestor upward is an ANCESTOR of the text,
+          // not a cover, and `body` almost always carries an opaque background:
+          // reach it and every foreign hit reads as covered, so the transparent
+          // click-catcher guard above would silently invert.
           const coveredAt = (x, y) => {
             const hit = document.elementFromPoint(x, y);
             if (!hit) return false;
@@ -6796,6 +6804,14 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
               // test. That is a missed defect, which is the direction this file
               // takes every time — the alternative is a geometric overlap test
               // that would condemn the transparent click-catcher above it.
+              // THE CONTAINMENT TEST COMES FIRST INSIDE THE WALK, and swapping it
+              // below the paint tests would condemn the whole page (self-review).
+              // The walk climbs from whatever was hit until it reaches something
+              // that contains this node — the common ancestor — and stops there. Any
+              // element from the common ancestor upward is an ANCESTOR of the text,
+              // not a cover, and `body` almost always carries an opaque background:
+              // reach it and every foreign hit reads as covered, so the transparent
+              // click-catcher guard above would silently invert.
               const coveredAt = (x, y) => {
                 const hit = document.elementFromPoint(x, y);
                 if (!hit) return false;
