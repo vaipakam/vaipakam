@@ -5296,11 +5296,20 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
               // question this file refuses. `opacity(0)` in a filter is the same
               // erasure by another property; other filters still cover, so they
               // are left alone.
-              const cs = getComputedStyle(n);
-              if (cs.visibility === 'hidden' || cs.visibility === 'collapse') return false;
-              const op = Number(cs.opacity);
+              //
+              // NO `visibility` TEST HERE, and its removal is the correction
+              // rather than an omission (self-review). Hit-testing already skips
+              // a hidden element, so the check could never fire for the hit
+              // itself — and for an ANCESTOR of the hit it is actively wrong,
+              // since `visibility` is inherited and a child may set `visible`
+              // again, leaving a cover that genuinely paints. Opacity and the
+              // filter do not have that shape: both composite over the whole
+              // subtree, so an ancestor carrying either really does erase the
+              // cover.
+              const coverStyle = getComputedStyle(n);
+              const op = Number(coverStyle.opacity);
               if (Number.isFinite(op) && op < 1) return false;
-              if (/opacity\(\s*0(?:\.0+)?%?\s*\)/i.test(cs.filter || '')) return false;
+              if (/opacity\(\s*0(?:\.0+)?%?\s*\)/i.test(coverStyle.filter || '')) return false;
               if (/^(img|video|canvas|svg)$/i.test(n.tagName)) return true;
               // ROUND 90 P2 — READ BY SHAPE, via the same `alphaOf` the fill test
               // uses. The first version matched `rgba?(…)` only, so an overlay
@@ -5309,7 +5318,7 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
               // transparent and the hidden text stayed in the reading. Round 38
               // learned this exact lesson for the text colour and I wrote the new
               // site against the old standard anyway.
-              const bg = cs.backgroundColor || '';
+              const bg = coverStyle.backgroundColor || '';
               if (bg && bg !== 'transparent' && alphaOf(bg) === 1) return true;
             }
             return false;
@@ -6956,11 +6965,20 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
                   // question this file refuses. `opacity(0)` in a filter is the same
                   // erasure by another property; other filters still cover, so they
                   // are left alone.
-                  const cs = getComputedStyle(n);
-                  if (cs.visibility === 'hidden' || cs.visibility === 'collapse') return false;
-                  const op = Number(cs.opacity);
+                  //
+                  // NO `visibility` TEST HERE, and its removal is the correction
+                  // rather than an omission (self-review). Hit-testing already skips
+                  // a hidden element, so the check could never fire for the hit
+                  // itself — and for an ANCESTOR of the hit it is actively wrong,
+                  // since `visibility` is inherited and a child may set `visible`
+                  // again, leaving a cover that genuinely paints. Opacity and the
+                  // filter do not have that shape: both composite over the whole
+                  // subtree, so an ancestor carrying either really does erase the
+                  // cover.
+                  const coverStyle = getComputedStyle(n);
+                  const op = Number(coverStyle.opacity);
                   if (Number.isFinite(op) && op < 1) return false;
-                  if (/opacity\(\s*0(?:\.0+)?%?\s*\)/i.test(cs.filter || '')) return false;
+                  if (/opacity\(\s*0(?:\.0+)?%?\s*\)/i.test(coverStyle.filter || '')) return false;
                   if (/^(img|video|canvas|svg)$/i.test(n.tagName)) return true;
                   // ROUND 90 P2 — READ BY SHAPE, via the same `alphaOf` the fill test
                   // uses. The first version matched `rgba?(…)` only, so an overlay
@@ -6969,7 +6987,7 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
                   // transparent and the hidden text stayed in the reading. Round 38
                   // learned this exact lesson for the text colour and I wrote the new
                   // site against the old standard anyway.
-                  const bg = cs.backgroundColor || '';
+                  const bg = coverStyle.backgroundColor || '';
                   if (bg && bg !== 'transparent' && alphaOf(bg) === 1) return true;
                 }
                 return false;
