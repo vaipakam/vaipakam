@@ -709,7 +709,7 @@ message, manually re-executable once unpaused, so nothing is lost.
 **Chain scope (Phase 1)**: Ethereum, Base, Polygon, Arbitrum, Optimism.
 BNB Chain is **testnet-tier only** (a cross-chain mirror / rehearsal
 network), NOT a Phase-1 mainnet target — the FunctionalSpecs
-(`ProjectDetailsREADME.md`, `TokenomicsTechSpec.md` §~227) are the source
+(`ProjectDetailsREADME.md`, `TokenomicsTechSpec.md` §10) are the source
 of truth for the mainnet set. zk-rollup chains and Solana are out of scope.
 
 Full detail in
@@ -894,7 +894,7 @@ were right.
 
 Full detail in
 [`docs/FunctionalSpecs/TokenomicsTechSpec.md`](docs/FunctionalSpecs/TokenomicsTechSpec.md)
-§5.2b and the Phase 5 section of
+§6a–§6b and the Phase 5 section of
 [`docs/ReleaseNotes/ReleaseNotes-2026-04-23-to-24.md`](docs/ReleaseNotes/ReleaseNotes-2026-04-23-to-24.md).
 
 ## VPFI rewards/recycling copy rules — release-gate checklist (RL-6)
