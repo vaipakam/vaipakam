@@ -6,7 +6,9 @@ import enBundle from '../../src/i18n/locales/en.json' with { type: 'json' };
 import { canSubmitFromApp } from '../../src/data/forcedClose.ts';
 
 import {
+  cardSettled,
   confirmationReady,
+  declaredStateConsistent,
   forcedCloseCoverage,
   forcedCloseVerdict,
   monetaryAmountsIn,
@@ -15,6 +17,88 @@ import {
 } from './forcedCloseCard.mjs';
 
 const FORCED_CLOSE = enBundle.copy.forcedClose;
+
+// #2098 / #2131 — the card DECLARES its state and the block its facts came
+// from, and the drive reads both instead of inferring the state from prose.
+describe('cardSettled', () => {
+  it('reads settlement off the declared state where the card declares one', () => {
+    // Copy still says "checking" but the attribute says resolved: the
+    // attribute is the source. (The verdict reports that disagreement
+    // separately; this only decides when to stop reading.)
+    expect(cardSettled({ declaredState: 'not-yet', text: FORCED_CLOSE.unknown }, FORCED_CLOSE.unknown)).toBe(true);
+    expect(cardSettled({ declaredState: 'unknown', text: FORCED_CLOSE.readyInKind }, FORCED_CLOSE.unknown)).toBe(false);
+  });
+
+  it('falls back to the painted copy on a bundle that declares nothing', () => {
+    expect(cardSettled({ declaredState: null, text: FORCED_CLOSE.unknown }, FORCED_CLOSE.unknown)).toBe(false);
+    expect(cardSettled({ text: FORCED_CLOSE.readyInKind }, FORCED_CLOSE.unknown)).toBe(true);
+    // Painted text outranks raw text in the fallback, as it does everywhere.
+    expect(
+      cardSettled({ text: FORCED_CLOSE.unknown, visibleText: FORCED_CLOSE.readyInKind }, FORCED_CLOSE.unknown),
+    ).toBe(true);
+  });
+
+  it('treats an unrecognised declaration as a declaration, not as unsettled', () => {
+    // A newer bundle naming a state this drive does not know has still
+    // settled; what to make of the name is the verdict's question.
+    expect(cardSettled({ declaredState: 'ready-something-new', text: '' }, FORCED_CLOSE.unknown)).toBe(true);
+  });
+});
+
+describe('declaredStateConsistent', () => {
+  it('requires not-yet to mean the chain said not defaultable', () => {
+    expect(declaredStateConsistent('not-yet', { defaultable: false })).toEqual({ judged: true, consistent: true });
+    const v = declaredStateConsistent('not-yet', { defaultable: true });
+    expect(v.judged).toBe(true);
+    expect(v.consistent).toBe(false);
+    expect(v.why).toMatch(/isLoanDefaultable to be false/);
+  });
+
+  it('requires every ready state to mean defaultable, and reads the match where the order implies it', () => {
+    for (const state of ['ready-in-kind', 'ready-needs-route', 'ready-rental', 'blocked-no-consent']) {
+      expect(declaredStateConsistent(state, { defaultable: true, internalMatch: false }).consistent).toBe(true);
+      expect(declaredStateConsistent(state, { defaultable: true, internalMatch: true }).consistent).toBe(false);
+      expect(declaredStateConsistent(state, { defaultable: false, internalMatch: false }).consistent).toBe(false);
+    }
+    expect(declaredStateConsistent('ready-internal-match', { defaultable: true, internalMatch: true }).consistent).toBe(true);
+    expect(declaredStateConsistent('ready-internal-match', { defaultable: true, internalMatch: false }).consistent).toBe(false);
+  });
+
+  it('expects nothing of the match for a state resolved before that question', () => {
+    // `blocked-sequencer` is resolved between the two questions, so a
+    // candidate either way is consistent with it, and an unread match is
+    // not a reason to leave it unjudged.
+    expect(declaredStateConsistent('blocked-sequencer', { defaultable: true, internalMatch: true })).toEqual({ judged: true, consistent: true });
+    expect(declaredStateConsistent('blocked-sequencer', { defaultable: true })).toEqual({ judged: true, consistent: true });
+  });
+
+  it('expects nothing of either fact for states resolved before both', () => {
+    for (const state of ['blocked-paused', 'unknown', 'not-applicable']) {
+      expect(declaredStateConsistent(state, {})).toEqual({ judged: true, consistent: true });
+      expect(declaredStateConsistent(state, { defaultable: false, internalMatch: true })).toEqual({ judged: true, consistent: true });
+    }
+  });
+
+  it('is unjudged, never contradicted, when an implied fact could not be read', () => {
+    const v = declaredStateConsistent('ready-in-kind', { defaultable: true, internalMatch: undefined });
+    expect(v.judged).toBe(false);
+    expect(v.why).toMatch(/hasInternalMatchCandidate could not be read/);
+    expect(declaredStateConsistent('not-yet', {}).judged).toBe(false);
+    expect(declaredStateConsistent('not-yet', undefined).judged).toBe(false);
+  });
+
+  it('is unjudged on a state it does not know', () => {
+    const v = declaredStateConsistent('ready-something-new', { defaultable: true });
+    expect(v.judged).toBe(false);
+    expect(v.why).toMatch(/does not recognise/);
+    expect(declaredStateConsistent(undefined, { defaultable: true }).judged).toBe(false);
+  });
+
+  it('stops at the first contradiction and names it', () => {
+    const v = declaredStateConsistent('ready-in-kind', { defaultable: false, internalMatch: true });
+    expect(v.why).toMatch(/isLoanDefaultable/);
+  });
+});
 
 /**
  * Why this file exists, in the same terms `jumpability.test.mjs` states
@@ -210,6 +294,144 @@ describe('forcedCloseVerdict', () => {
     // `undefined` means a shape predating the field, which must keep the
     // old behaviour rather than being read as evidence either way.
     expect(forcedCloseVerdict({ ...held, text: FORCED_CLOSE.unknown }, copy).verdict).toBe('pass');
+  });
+
+  // #2098 / #2131 — THE DECLARED STATE AND BLOCK.
+  describe('declared state and block', () => {
+    // The recognising copy shape the other suites use: with
+    // `recognisedCopy` present the verdict requires the settled text to
+    // match a known state, so the fixtures paint one and set the body to
+    // the same sentence.
+    const declaredCopy = {
+      unknownCopy: FORCED_CLOSE.unknown,
+      readyCopy: [FORCED_CLOSE.readyInKind],
+      withheldCopy: [FORCED_CLOSE.unknown, FORCED_CLOSE.notYet],
+      recognisedCopy: [FORCED_CLOSE.unknown, FORCED_CLOSE.notYet, FORCED_CLOSE.readyInKind],
+      receiptLead: FORCED_CLOSE.receipt.youReceive,
+    };
+    const painting = (sentence) => ({ ...held, text: sentence, bodyText: sentence });
+    const notYet = painting(FORCED_CLOSE.notYet);
+    const checking = { ...painting(FORCED_CLOSE.unknown), settled: false };
+
+    it('stamps every verdict with the exact-block status, undeclared on an older bundle', () => {
+      const v = forcedCloseVerdict(notYet, declaredCopy);
+      expect(v.verdict).toBe('pass');
+      expect(v.declaredFacts).toBe('undeclared');
+      // `null` is what `getAttribute` returns for an absent attribute.
+      expect(forcedCloseVerdict({ ...notYet, declaredState: null }, declaredCopy).declaredFacts).toBe('undeclared');
+      expect(forcedCloseVerdict(null, declaredCopy).declaredFacts).toBe('undeclared');
+    });
+
+    it('FAILS a card declaring a resolved state while painting the still-checking sentence', () => {
+      const v = forcedCloseVerdict(
+        { ...painting(FORCED_CLOSE.unknown), declaredState: 'not-yet', declaredBlock: '100' },
+        declaredCopy,
+      );
+      expect(v.verdict).toBe('fail');
+      expect(v.why).toMatch(/declares the resolved state "not-yet"/);
+      expect(v.declaredFacts).toBe('contradicted');
+    });
+
+    it('FAILS a card declaring unknown while painting a resolved state', () => {
+      const v = forcedCloseVerdict({ ...notYet, declaredState: 'unknown', settled: false }, declaredCopy);
+      expect(v.verdict).toBe('fail');
+      expect(v.why).toMatch(/declares its state unknown/);
+    });
+
+    it('does not fault a declared unknown that paints the checking sentence — that is the honest pair', () => {
+      const v = forcedCloseVerdict({ ...checking, declaredState: 'unknown' }, declaredCopy);
+      expect(v.verdict).not.toBe('fail');
+      expect(v.declaredFacts).toMatch(/^unjudged/);
+    });
+
+    it('FAILS a declared state the chain contradicts at the block the card named', () => {
+      const v = forcedCloseVerdict(
+        {
+          ...notYet,
+          declaredState: 'not-yet',
+          declaredBlock: '100',
+          declaredChain: { defaultable: true, internalMatch: false },
+        },
+        declaredCopy,
+      );
+      expect(v.verdict).toBe('fail');
+      expect(v.why).toMatch(/requires isLoanDefaultable to be false/);
+      expect(v.declaredFacts).toBe('contradicted');
+    });
+
+    it('reports consistent when the chain at the named block agrees, and keeps the ordinary verdict', () => {
+      const v = forcedCloseVerdict(
+        {
+          ...notYet,
+          declaredState: 'not-yet',
+          declaredBlock: '100',
+          declaredChain: { defaultable: false, internalMatch: false },
+        },
+        declaredCopy,
+      );
+      expect(v.verdict).toBe('pass');
+      expect(v.declaredFacts).toBe('consistent');
+    });
+
+    it('reports WHY the comparison did not run, rather than a bare unjudged', () => {
+      const ahead = forcedCloseVerdict(
+        {
+          ...notYet,
+          declaredState: 'not-yet',
+          declaredBlock: '999',
+          declaredChainWhy: "the card names block 999, ahead of this observer's 900",
+        },
+        declaredCopy,
+      );
+      expect(ahead.verdict).toBe('pass');
+      expect(ahead.declaredFacts).toBe("unjudged (the card names block 999, ahead of this observer's 900)");
+      const declined = forcedCloseVerdict(
+        {
+          ...notYet,
+          declaredState: 'not-yet',
+          declaredBlock: '100',
+          declaredChain: { defaultable: undefined, internalMatch: false },
+        },
+        declaredCopy,
+      );
+      expect(declined.verdict).toBe('pass');
+      expect(declined.declaredFacts).toMatch(/^unjudged \(isLoanDefaultable could not be read/);
+      const silent = forcedCloseVerdict({ ...notYet, declaredState: 'not-yet' }, declaredCopy);
+      expect(silent.declaredFacts).toBe('unjudged (no reason recorded)');
+    });
+
+    it('a contradiction outranks a merely incomplete observation', () => {
+      // Definite before uncertain — the module's own ordering rule. A
+      // confirmation that never opened would otherwise report "incomplete"
+      // over a card the chain has already contradicted.
+      const v = forcedCloseVerdict(
+        {
+          ...painting(FORCED_CLOSE.readyInKind),
+          declaredState: 'ready-in-kind',
+          declaredBlock: '100',
+          submitDisabled: false,
+          confirmExpected: true,
+          confirmText: null,
+          declaredChain: { defaultable: false, internalMatch: false },
+        },
+        declaredCopy,
+      );
+      expect(v.verdict).toBe('fail');
+      expect(v.declaredFacts).toBe('contradicted');
+    });
+  });
+
+  it('the drive reads settlement through the one shared helper at both of its sites', () => {
+    // GUARD: the poll's two settlement sites were a pair that drifted more
+    // than once. Both now go through `cardSettled`; a re-inlined copy read
+    // at one of them would re-open the seam this test pins shut.
+    const src = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'live-position-observe.mjs'), 'utf8');
+    const code = src.replace(/^\s*\/\/.*$/gm, '');
+    expect(code.match(/\bcardSettled\(/g)?.length).toBe(2);
+    expect(code.match(/\bsaysCheckRunning\(/g)).toBeNull();
+    // And what the DOM pass reads is what the card publishes.
+    expect(code).toMatch(/getAttribute\('data-forced-close-state'\)/);
+    expect(code).toMatch(/getAttribute\('data-forced-close-block'\)/);
   });
 
   it('PASSES a present, submittable card', () => {

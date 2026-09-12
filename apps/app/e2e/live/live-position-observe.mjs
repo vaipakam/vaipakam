@@ -96,11 +96,11 @@ import {
   snapshotJumpable,
 } from './jumpability.mjs';
 import {
+  cardSettled,
   confirmationReady,
   forcedCloseCoverage,
   forcedCloseVerdict,
   reconcileEligibility,
-  saysCheckRunning,
 } from './forcedCloseCard.mjs';
 import { requireSiteUrl } from './driver.mjs';
 import { redactUrl } from './redact.mjs';
@@ -3334,6 +3334,11 @@ async function visit(path, { expectChooser = false, loan = null } = {}) {
     forcedCloseScanComplete: forcedClose ? (forcedClose.headScanComplete ?? null) : null,
     forcedCloseConfirmedAt: forcedClose ? (forcedClose.headConfirmedAt ?? null) : null,
     forcedCloseHeadPinned: forcedClose ? (forcedClose.headPinned ?? null) : null,
+    // #2098 / #2131 — what the card DECLARED, and whether the chain at the
+    // block it named agreed. `declaredFacts` comes from the verdict so the
+    // report cannot re-derive it differently.
+    forcedCloseDeclaredState: forcedClose ? (forcedClose.declaredState ?? null) : null,
+    forcedCloseDeclaredBlock: forcedClose ? (forcedClose.declaredBlock ?? null) : null,
     forcedCloseHeadPageSighting: forcedClose ? (forcedClose.headPageSighting ?? null) : null,
     forcedCloseHeadCeiling: forcedClose ? (forcedClose.headCeiling ?? null) : null,
     forcedCloseCeilingSound: forcedClose ? (forcedClose.headCeilingSound ?? null) : null,
@@ -4370,17 +4375,53 @@ async function probeInternalMatch(loanId, blockNumber) {
     // wrong about itself — is rethrown. The decode names are enumerated
     // on the SAFE side, so a shape not listed is rethrown and loud rather
     // than quietly absorbed.
-    if (classifyRpcFailure(err) === 'answered') return undefined;
-    if (isTransportFailure(err)) return undefined;
-    const decodeShaped = (e) => {
-      for (let cur = e, hops = 0; cur && hops < 12; cur = cur.cause, hops += 1) {
-        if (/ZeroData|DecodingData|AbiDecoding|ContractFunctionZeroData/.test(cur?.name ?? '')) {
-          return true;
-        }
-      }
-      return false;
-    };
-    if (decodeShaped(err)) return undefined;
+    if (viewDeclined(err)) return undefined;
+    throw err;
+  }
+}
+
+/**
+ * Was this a VIEW declining to answer, as opposed to this drive being
+ * wrong about itself? The classification `probeInternalMatch` states at
+ * length above, named once so `probeDefaultable` cannot drift from it.
+ */
+function viewDeclined(err) {
+  if (classifyRpcFailure(err) === 'answered') return true;
+  if (isTransportFailure(err)) return true;
+  for (let cur = err, hops = 0; cur && hops < 12; cur = cur.cause, hops += 1) {
+    if (/ZeroData|DecodingData|AbiDecoding|ContractFunctionZeroData/.test(cur?.name ?? '')) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * `isLoanDefaultable(loanId)` at a block — the chain's own answer about
+ * the repayment window, which is the first fact `decideForcedClose`
+ * consults and the one every declared state past `not-yet` implies
+ * (#2098, #2131).
+ *
+ * A VIEW, deliberately, and not `probeCloseOut`. That probe SIMULATES
+ * `triggerDefault`, which refuses for reasons beyond the window — no
+ * swap route, a sanctioned caller — so its `false` cannot be compared
+ * against a state that only claims the window has passed. The declared
+ * state is resolved from this view, so this view is what it is checked
+ * against. `undefined` for every way the chain can decline, classified
+ * exactly as `probeInternalMatch` classifies its own.
+ */
+async function probeDefaultable(loanId, blockNumber) {
+  try {
+    const out = await pub.readContract({
+      address: DIAMOND,
+      abi: DIAMOND_ABI_VIEM,
+      functionName: 'isLoanDefaultable',
+      args: [loanId],
+      ...(blockNumber === undefined ? {} : { blockNumber }),
+    });
+    return typeof out === 'boolean' ? out : undefined;
+  } catch (err) {
+    if (viewDeclined(err)) return undefined;
     throw err;
   }
 }
@@ -4704,6 +4745,53 @@ async function observeForcedClose(page, loan, headBeforeNav, pageHeadBeforeNav, 
     Number(live.status) === STATUS_ACTIVE &&
     typeof authorityNow === 'string' &&
     authorityNow.toLowerCase() === String(observed).toLowerCase();
+
+  // #2098 / #2131 — THE CHAIN AT THE BLOCK THE CARD NAMES.
+  //
+  // Where the card published `data-forced-close-block`, the two facts its
+  // declared state implies are re-read pinned to exactly that block, and
+  // the verdict compares them through `declaredStateConsistent`. This is
+  // the exact comparison the bracket below approximates from the outside:
+  // no sampled head, no asked ceiling — the card said which block, so the
+  // question is put at that block.
+  //
+  // Three outcomes, each named rather than collapsed into "unread":
+  //   - no attribute → nothing to compare (`declaredChainWhy` says so);
+  //   - a block this observer has not reached → the page's provider is
+  //     ahead, which the bracket's ceiling logic already reports as
+  //     unsound, and reading there would only fail — stated, not tried;
+  //   - a reachable block → both views read there, `undefined` per fact
+  //     where a read declined, which the verdict reports as unjudged.
+  //
+  // Both reads go through the same probes the bracket uses, so a decline
+  // is classified the same way in both places.
+  const declaredBlock = (() => {
+    if (typeof card.declaredBlock !== 'string' || !/^[1-9]\d*$/.test(card.declaredBlock)) return null;
+    return BigInt(card.declaredBlock);
+  })();
+  let declaredChain = null;
+  let declaredChainWhy = null;
+  if (typeof card.declaredState !== 'string') {
+    declaredChainWhy = 'the card declares no state';
+  } else if (declaredBlock === null) {
+    declaredChainWhy =
+      card.declaredBlock === null || card.declaredBlock === undefined
+        ? 'the card names no block'
+        : `the card names a block this drive cannot parse ("${card.declaredBlock}")`;
+  } else if (declaredBlock > pinnedBlock) {
+    declaredChainWhy = `the card names block ${declaredBlock}, ahead of this observer's ${pinnedBlock}`;
+  } else {
+    declaredChain = await discovery(
+      `re-reading loan ${loan.id} at the block its card names (${declaredBlock})`,
+      async () => {
+        const [defaultable, internalMatch] = await Promise.all([
+          probeDefaultable(loan.id, declaredBlock),
+          probeInternalMatch(loan.id, declaredBlock),
+        ]);
+        return { defaultable, internalMatch };
+      },
+    );
+  }
 
   // ROUND 7 P2 — CONFIRM A MISSING-CARD FAIL BEFORE REPORTING IT.
   //
@@ -5031,6 +5119,12 @@ async function observeForcedClose(page, loan, headBeforeNav, pageHeadBeforeNav, 
     // behaviour unchanged.
     defaultableStable,
     internalMatchStable,
+    // #2098 / #2131 — the chain's answers at the block the card NAMED,
+    // for the verdict's exact-block comparison; and the reason none were
+    // taken, where none were. `declaredState` / `declaredBlock` themselves
+    // ride in through `...card`.
+    declaredChain,
+    declaredChainWhy,
     // ROUND 64 P2 — WHICH SETTLEMENT the protocol would perform, both
     // ends of the same bracket. `triggerDefault` succeeding says the
     // close-out would run; it does not say whether the lender receives
@@ -6706,6 +6800,15 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
           // `card` below for why a `:visible` locator is not the same
           // element as `shown[0]`.
           chosenIndex: all.indexOf(el),
+          // WHAT THE CARD DECLARES, beside what it paints (#2098, #2131).
+          // The state is the resolver's own name for what it rendered
+          // and the block is where its facts were read; both are read
+          // in the same pass as the text so they describe this render.
+          // `null` is an absent attribute — a bundle predating them —
+          // and every consumer treats that as "not declared", never as
+          // a declaration of nothing.
+          declaredState: el.getAttribute('data-forced-close-state'),
+          declaredBlock: el.getAttribute('data-forced-close-block'),
           text: el.innerText,
           bodyPresent: body !== null,
           // ROUND 21 P2 — the BODY's own visibility, separately. A CSS
@@ -6920,10 +7023,13 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
   //
   // `??` so a record predating the field falls back rather than treating
   // an absent value as empty text, which would settle every poll at once.
-  let settled = !saysCheckRunning(
-    snap.visibleText ?? snap.text ?? '',
-    FORCED_CLOSE_COPY.unknownCopy,
-  );
+  //
+  // #2098 — FROM THE DECLARED STATE WHERE THE CARD DECLARES ONE. The card
+  // now publishes `data-forced-close-state`, so settlement is read off it
+  // and the painted-copy inference above is the fallback for a bundle
+  // that predates the attribute. One helper for both sites, because the
+  // pair drifting was the shape this file kept being caught by.
+  let settled = cardSettled(snap, FORCED_CLOSE_COPY.unknownCopy);
   // ROUND 31 P2 — EVERY RENDER THIS DRIVE READ, not just the last one.
   //
   // The poll below overwrites `snap` each tick, so only the FINAL text
@@ -7091,7 +7197,6 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
         visibleCardsPeak,
         visibleSubmitsPeak,
         bodyHiddenSeen,
-    generatedUnresolved: generatedUnresolvedSeen,
         generatedUnresolved: generatedUnresolvedSeen,
       });
     }
@@ -7110,7 +7215,6 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
         visibleCardsPeak,
         visibleSubmitsPeak,
         bodyHiddenSeen,
-    generatedUnresolved: generatedUnresolvedSeen,
         generatedUnresolved: generatedUnresolvedSeen,
       });
     }
@@ -7171,17 +7275,13 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
         visibleCardsPeak,
         visibleSubmitsPeak,
         bodyHiddenSeen,
-    generatedUnresolved: generatedUnresolvedSeen,
         generatedUnresolved: generatedUnresolvedSeen,
       };
     }
     snap = again;
     // Same rule per tick as at the top — both sites, because fixing one
     // of a pair is what this PR keeps being caught by.
-    settled = !saysCheckRunning(
-      snap.visibleText ?? snap.text ?? '',
-      FORCED_CLOSE_COPY.unknownCopy,
-    );
+    settled = cardSettled(snap, FORCED_CLOSE_COPY.unknownCopy);
   }
 
   // ROUND 27 P2 — the field list is GONE, not lengthened.
@@ -10488,6 +10588,11 @@ for (const v of visited) {
               // in the same commit that fixed it.
               ` spanBlocks=${v.forcedCloseHeadFloor ?? 'unobserved'}..${v.forcedCloseHeadScanned ?? 'none'}` +
               `${v.forcedCloseHeadScanned !== null && v.forcedCloseScanComplete === false ? '(partial)' : ''}` +
+              // #2098 / #2131 — the card's own declaration and the exact-block
+              // check on it, each as itself: `declared=` is what the card
+              // said, `declaredFacts=` is what the chain said about it.
+              ` declared=${v.forcedCloseDeclaredState ?? 'none'}@${v.forcedCloseDeclaredBlock ?? 'none'}` +
+              ` declaredFacts=${v.forcedCloseVerdict?.declaredFacts ?? 'unobserved'}` +
               ` head>pinned=${v.forcedCloseHeadPinned ?? 'unobserved'}` +
               ` head>sighting=${v.forcedCloseHeadPageSighting ?? 'unobserved'}` +
               ` head>=ceiling=${v.forcedCloseHeadCeiling ?? (v.forcedCloseCeilingSound === false ? 'unestablished' : 'unobserved')}` +

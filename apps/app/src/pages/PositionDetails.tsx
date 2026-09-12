@@ -3431,6 +3431,11 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           readiness={
             saleHoldResolving ? 'unknown' : forcedCloseReadiness
           }
+          // The block the polled facts behind `readiness` came from —
+          // withheld on the same condition the readiness is overridden,
+          // because an `unknown` the page imposed was not resolved from
+          // those facts and must not be dated as if it were.
+          resolvedBlock={saleHoldResolving ? undefined : forcedCloseReads.block}
           matchFallback={forcedCloseMatchFallback}
           swapToRepayPossible={forcedCloseSwapToRepayPossible}
           confirmOpen={confirmingSurface === 'forced-close'}

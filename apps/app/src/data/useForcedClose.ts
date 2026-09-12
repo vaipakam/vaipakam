@@ -7,15 +7,25 @@
  * questions honestly, including answering "I don't know" when a read
  * fails.
  *
- * ## Why each read is a separate query
+ * ## One aggregate, with per-fact failure kept independent
  *
- * They fail independently and mean different things. Batching them into
- * one query would make a failed LTV read — which happens NORMALLY on
- * illiquid collateral, where `calculateLTV` reverts
- * `IlliquidLoanNoRiskMath` by design — take the defaultability answer
- * down with it, and an illiquid loan is exactly the case where the
- * one-click close-out works. The card would go permanently unknown on
- * the positions it serves best.
+ * The polled facts are read in a single Multicall3 `aggregate3` with
+ * `allowFailure`, built and read back by `forcedCloseReads.ts`. That
+ * module's header carries the argument; the short form is that the old
+ * one-query-per-fact design existed so a failed LTV read — which happens
+ * NORMALLY on illiquid collateral — could not take defaultability down
+ * with it, and a per-call status preserves exactly that while making one
+ * request instead of seven.
+ *
+ * What the aggregate adds is provenance. `Multicall3.getBlockNumber()`
+ * rides inside it, so every fact and the block it was evaluated at come
+ * from the same execution. The card publishes that block (#2098, #2131):
+ * a surface touching funds states what it knows, and "as of which block"
+ * is part of what it knows.
+ *
+ * `consent` stays its own query. It is set at loan init and never changes,
+ * so it carries a long staleTime and no block — any block is a valid
+ * answer for an immutable fact.
  *
  * ## The read that is allowed to fail
  *
@@ -30,7 +40,7 @@ import { useQuery } from '@tanstack/react-query';
 import { usePublicClient } from 'wagmi';
 import { DIAMOND_ABI_VIEM } from '../contracts/diamond';
 import { useActiveChain } from '../chain/useActiveChain';
-import { LIQUIDITY_LIQUID } from '../contracts/preflights';
+import { forcedCloseFacts, forcedCloseReadPlan } from './forcedCloseReads';
 
 /** Poll cadence. The interesting transitions here are slow — a grace
  *  period expiring, a sequencer recovering — but a lender sitting on
@@ -46,6 +56,11 @@ export interface ForcedCloseReads {
   internalMatchCandidate: boolean | undefined;
   collateralIlliquid: boolean | undefined;
   ltvCollapsed: boolean | undefined;
+  /** The block every polled fact above was evaluated at — `block.number`
+   *  of the aggregate's own execution, not a sighting taken beside it.
+   *  `undefined` while unread, when the aggregate failed, or in the one
+   *  case where only the block call inside it failed. */
+  block: bigint | undefined;
   /** When the OLDEST decision input last settled.
    *
    *  The card releases its post-submit hold once this passes the submit
@@ -62,19 +77,21 @@ export interface ForcedCloseReads {
    *  `internalMatch` still served its stale `true`, re-offering an
    *  empty-route close-out that the live simulation would then refuse.
    *
+   *  With the polled facts in one aggregate, one refetch rechecks all of
+   *  them together, which is the strong form of that requirement.
+   *
    *  Settled means data OR error: a query that fails after the submit
    *  has genuinely been rechecked, and its `undefined` feeds the
-   *  decision honestly. Queries that are disabled for this loan shape
-   *  are excluded rather than pinning the minimum at zero forever. */
+   *  decision honestly. */
   updatedAt: number;
 }
 
 export function useForcedCloseReads(opts: {
   loanId: string | number | undefined;
   /** The loan's collateral asset. `undefined` while the loan read is
-   *  in flight — every dependent query stays disabled rather than
-   *  querying a zero address, which `checkLiquidity` rejects outright
-   *  with `InvalidAsset`. */
+   *  in flight — the liquidity read is left out of the aggregate rather
+   *  than asked of a zero address, which `checkLiquidity` rejects
+   *  outright with `InvalidAsset`. */
   collateralAsset: `0x${string}` | undefined;
   /** Only mount these reads for a lender looking at an Active loan.
    *  Everything else pays RPC for an answer nothing renders. */
@@ -86,46 +103,42 @@ export function useForcedCloseReads(opts: {
   const loanId = opts.loanId;
   const on = opts.enabled && loanId !== undefined && Boolean(publicClient);
 
-  const defaultable = useQuery({
-    queryKey: ['forcedClose', 'defaultable', readChain.chainId, String(loanId)],
+  const reads = useQuery({
+    // The asset is part of the key because it changes the plan's shape.
+    queryKey: [
+      'forcedClose',
+      'reads',
+      readChain.chainId,
+      String(loanId),
+      opts.collateralAsset ?? '',
+    ],
     enabled: on,
     refetchInterval: REFETCH_MS,
-    queryFn: async () =>
-      (await publicClient!.readContract({
-        address: diamond,
-        abi: DIAMOND_ABI_VIEM,
-        functionName: 'isLoanDefaultable',
-        args: [BigInt(loanId!)],
-      })) as boolean,
-  });
-
-  const sequencer = useQuery({
-    queryKey: ['forcedClose', 'sequencer', readChain.chainId],
-    enabled: on,
-    refetchInterval: REFETCH_MS,
-    queryFn: async () =>
-      (await publicClient!.readContract({
-        address: diamond,
-        abi: DIAMOND_ABI_VIEM,
-        functionName: 'sequencerHealthy',
-      })) as boolean,
-  });
-
-  /** `AdminFacet.paused()` — `triggerDefault`'s first modifier.
-   *
-   *  Chain-scoped, not loan-scoped, and read at the same cadence as the
-   *  rest so a governance pause during the lender's visit removes the
-   *  button rather than leaving one that is guaranteed to revert. */
-  const paused = useQuery({
-    queryKey: ['forcedClose', 'paused', readChain.chainId],
-    enabled: on,
-    refetchInterval: REFETCH_MS,
-    queryFn: async () =>
-      (await publicClient!.readContract({
-        address: diamond,
-        abi: DIAMOND_ABI_VIEM,
-        functionName: 'paused',
-      })) as boolean,
+    queryFn: async () => {
+      // Every chain this app supports carries the canonical Multicall3 in
+      // its viem definition. A chain without one is a configuration
+      // error, thrown rather than worked around: a second code path that
+      // silently reads seven times without a block is exactly the kind of
+      // divergence this aggregate was built to remove.
+      const multicall3 = publicClient!.chain?.contracts?.multicall3?.address;
+      if (!multicall3) {
+        throw new Error(`no Multicall3 configured for chain ${readChain.chainId}`);
+      }
+      const plan = forcedCloseReadPlan({
+        diamond,
+        multicall3,
+        loanId: BigInt(loanId!),
+        collateralAsset: opts.collateralAsset,
+      });
+      const slots = await publicClient!.multicall({
+        allowFailure: true,
+        // The plan's entries are built against the diamond's ABI and the
+        // one Multicall3 fragment above; the loose `contract` type on the
+        // plan is what lets the mapper be tested without viem's generics.
+        contracts: plan.map((e) => e.contract) as never,
+      });
+      return forcedCloseFacts(plan, slots as never);
+    },
   });
 
   /** `loan.riskAndTermsConsentFromBoth`, straight off the loan struct.
@@ -134,8 +147,7 @@ export function useForcedCloseReads(opts: {
    *  Advanced-mode only — sourcing it there would have left the flag
    *  permanently undefined in Basic mode and stalled the card on
    *  `unknown` for exactly the lenders least likely to know why. It is
-   *  set at init and never changes, so a long staleTime is correct;
-   *  the poll cadence is kept only for the shared invalidation key. */
+   *  set at init and never changes, so a long staleTime is correct. */
   const consent = useQuery({
     queryKey: ['forcedClose', 'consent', readChain.chainId, String(loanId)],
     enabled: on,
@@ -151,107 +163,29 @@ export function useForcedCloseReads(opts: {
     },
   });
 
-  /** `MetricsFacet.hasInternalMatchCandidate(loanId)` — the same view
-   *  `attemptInternalMatchAutoDispatch` consults before it reaches the
-   *  swap branch, so this predicts that dispatch exactly rather than
-   *  modelling it. It already folds in the `internalMatchEnabled`
-   *  config flag and the matchable-collateral filter.
-   *
-   *  Polled at the normal cadence: a candidate is another live loan and
-   *  can appear or vanish while the lender is looking. The confirm-time
-   *  simulation is what covers the gap between this read and the send. */
-  const internalMatch = useQuery({
-    queryKey: ['forcedClose', 'match', readChain.chainId, String(loanId)],
-    enabled: on,
-    refetchInterval: REFETCH_MS,
-    queryFn: async () => {
-      const [found] = (await publicClient!.readContract({
-        address: diamond,
-        abi: DIAMOND_ABI_VIEM,
-        functionName: 'hasInternalMatchCandidate',
-        args: [BigInt(loanId!)],
-      })) as readonly [boolean, bigint];
-      return found;
-    },
-  });
-
-  const liquidity = useQuery({
-    queryKey: [
-      'forcedClose',
-      'liquidity',
-      readChain.chainId,
-      opts.collateralAsset ?? '',
-    ],
-    enabled: on && Boolean(opts.collateralAsset),
-    refetchInterval: REFETCH_MS,
-    queryFn: async () => {
-      const status = await publicClient!.readContract({
-        address: diamond,
-        abi: DIAMOND_ABI_VIEM,
-        functionName: 'checkLiquidity',
-        args: [opts.collateralAsset!],
-      });
-      return Number(status) !== LIQUIDITY_LIQUID;
-    },
-  });
-
-  /** LTV against the RESOLVED threshold.
-   *
-   *  `getRiskConfig` returns `cfgVolatilityLtvThresholdBps()`, which has
-   *  already applied the `0 ⇒ VOLATILITY_LTV_THRESHOLD_BPS` default, so
-   *  the comparison uses the chain's effective number and this file
-   *  carries no copy of 11000. A hard-coded threshold here would be
-   *  correct only until governance retuned it — the same trap as
-   *  recomputing the grace period locally. */
-  const ltv = useQuery({
-    queryKey: ['forcedClose', 'ltv', readChain.chainId, String(loanId)],
-    enabled: on,
-    refetchInterval: REFETCH_MS,
-    retry: false,
-    queryFn: async () => {
-      const [ltvBps, risk] = await Promise.all([
-        publicClient!.readContract({
-          address: diamond,
-          abi: DIAMOND_ABI_VIEM,
-          functionName: 'calculateLTV',
-          args: [BigInt(loanId!)],
-        }) as Promise<bigint>,
-        publicClient!.readContract({
-          address: diamond,
-          abi: DIAMOND_ABI_VIEM,
-          functionName: 'getRiskConfig',
-        }) as Promise<readonly [bigint, bigint]>,
-      ]);
-      return ltvBps > risk[0];
-    },
-  });
+  // `isError` disqualifies a cached value rather than ranking below it —
+  // the house rule from `loanLive` and the sale lock. A stale
+  // "defaultable" retained through a failed refetch would keep a submit
+  // button live against a loan whose status may have moved. The whole
+  // aggregate failing is a provider failure, and every fact reads unknown.
+  const facts = reads.isError ? undefined : reads.data;
 
   return {
-    // `isError` disqualifies a cached value rather than ranking below
-    // it — the house rule from `loanLive` and the sale lock. A stale
-    // "defaultable" retained through a failed refetch would keep a
-    // submit button live against a loan whose status may have moved.
-    defaultable: defaultable.isError ? undefined : defaultable.data,
-    sequencerHealthy: sequencer.isError ? undefined : sequencer.data,
-    paused: paused.isError ? undefined : paused.data,
+    defaultable: facts?.defaultable,
+    sequencerHealthy: facts?.sequencerHealthy,
+    paused: facts?.paused,
     consentFromBoth: consent.isError ? undefined : consent.data,
-    internalMatchCandidate: internalMatch.isError ? undefined : internalMatch.data,
-    collateralIlliquid: liquidity.isError ? undefined : liquidity.data,
-    ltvCollapsed: ltv.isError ? undefined : ltv.data,
+    internalMatchCandidate: facts?.internalMatchCandidate,
+    collateralIlliquid: facts?.collateralIlliquid,
+    ltvCollapsed: facts?.ltvCollapsed,
+    block: facts?.block,
     updatedAt: oldestSettledAt(),
   };
 
-  /** The earliest settle time across every query this decision reads.
-   *
-   *  `liquidity` is included only when it was actually issued — for NFT
-   *  collateral no asset is passed and the query never runs, so
-   *  including it would hold the minimum at zero and the card's
-   *  post-submit hold would never release. */
+  /** The earliest settle time across the two queries this decision reads. */
   function oldestSettledAt(): number {
     const settled = (q: { dataUpdatedAt: number; errorUpdatedAt: number }) =>
       Math.max(q.dataUpdatedAt, q.errorUpdatedAt);
-    const inputs = [defaultable, sequencer, paused, consent, internalMatch, ltv];
-    if (opts.collateralAsset) inputs.push(liquidity);
-    return Math.min(...inputs.map(settled));
+    return Math.min(settled(reads), settled(consent));
   }
 }
