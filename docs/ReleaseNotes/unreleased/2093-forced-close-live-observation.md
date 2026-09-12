@@ -599,6 +599,35 @@ and a source that will not answer makes the check report no upper edge at
 all rather than an optimistic one. A window over some of the sources is
 not a window.
 
+A run of further corrections concerned what the check REPORTS about its
+own work, which matters because the report is how anyone decides whether
+to believe a result. It printed a single number as the edge of the window
+it had examined, and that number was at different times the wrong one in
+three different ways — because the window's edges are not one quantity
+but three, each meaning something different and each compared
+differently. They are now stated separately, each with its own name and
+its own comparison, and the range of history actually read is printed
+only when it was actually read: where the check stopped early, or could
+not start, it says so rather than showing the range it would have
+covered. The moment a close-out's absence was confirmed against is now
+named too, so a reported failure can be checked against the moment that
+produced it.
+
+One correction went the other way and made the check less demanding. It
+was waiting for the data source to move one step beyond a limit it had
+already been shown to have reached, which left otherwise conclusive runs
+reported as inconclusive. A limit that has been asked for and answered is
+reached by arriving at it, not by passing it.
+
+Three guards were added against mistakes that had recurred rather than
+against any single one: the names in the report must all differ from one
+another, every fact the run establishes must reach the report, and the
+rules for confirming an absence are now checked against an independently
+written statement of those rules across every nearby combination of
+inputs, rather than against examples chosen by whoever last changed them.
+The last of these was verified by reintroducing three earlier mistakes in
+turn and confirming it catches each.
+
 Closes #2093. The round-by-round record of how each of these rules was
 arrived at — including several cases where a fix left its own new state
 unhandled, or was applied to one of several parallel sites — lives in the
