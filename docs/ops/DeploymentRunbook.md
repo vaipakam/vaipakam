@@ -1002,7 +1002,7 @@ The schema each script populates (no manual editing needed since the
 | `facets.<name>` (×30) | `DeployDiamond` |
 | `vpfiToken`, `vpfiTokenImpl` | `DeployVPFIToken` (canonical chain). `vpfiOftAdapter` / `vpfiOftAdapterImpl` are LayerZero-era names retained on the `Deployment` type; the CCIP pool is written as `vpfiTokenPool` by `DeployCrosschain` (row below). `isCanonicalVPFI` has a `Deployments.writeIsCanonicalVpfi` helper but **no live script calls it** |
 | `vpfiMirror` | `DeployCrosschain` (mirror chains) — the mirror token's proxy. `vpfiMirrorImpl` is typed on `Deployment` but **no script writes it**: `DeployCrosschain` deploys the implementation and records only the proxy, so a fresh artifact has no such key. *(`DeployVPFIMirror` was removed in T-068.)* |
-| `ccipMessenger`, `vpfiTokenPool`, `vpfiPoolRateGovernor`, `rewardMessenger`; mirror chains also `vpfiMirror`, `rewardRemittanceReceiver(+Impl)`; canonical also `buybackRemittanceReceiver(+Impl)`, `vpfiReturnReceiver(+Impl)` | `DeployCrosschain` — the T-068 CCIP path; each chain's messenger address is its own (no CREATE2) |
+| `ccipMessenger`, `vpfiTokenPool`, `vpfiPoolRateGovernor`, `rewardMessenger`; mirror chains also `vpfiMirror`, `rewardRemittanceReceiver(+Impl)`, `vpfiReturnSender(+Impl)`; canonical also `buybackRemittanceReceiver(+Impl)`, `vpfiReturnReceiver(+Impl)` | `DeployCrosschain` — the T-068 CCIP path; each chain's messenger address is its own (no CREATE2) |
 | `vpfiBuyReceiver`, `vpfiBuyReceiverImpl` | `DeployVPFIBuyReceiver` *(historical — buy flow removed, #687-A)* |
 | `vpfiBuyAdapter`, `vpfiBuyAdapterImpl`, `vpfiBuyReceiverEid`, `vpfiBuyPaymentToken` | `DeployVPFIBuyAdapter` *(historical — buy flow removed, #687-A)* |
 | `rewardOApp`, `rewardOAppBootstrapImpl`, `rewardOAppRealImpl`, `rewardLocalEid`, `rewardBaseEid` | *(historical — `DeployRewardOAppCreate2` and the CREATE2 reward bootstrap were removed in T-068; the reward messenger is `rewardMessenger`, written by `DeployCrosschain` above)* |
@@ -1474,16 +1474,35 @@ On **every** chain, unconditionally:
 4. `RewardReporterFacet.setIsCanonicalRewardChain(<true on Base, false elsewhere>)`
 
 On **Base only** (the canonical reward chain), two registrations, **each
-conditional on its env var**. When the var is unset the script prints a
-`WARNING`, skips the call, and the run still completes green:
+driven by its own env var**:
 
-5. `RewardAggregatorFacet.setExpectedSourceChainIds([...])` from `REWARD_EXPECTED_SOURCE_CHAIN_IDS` — comma-separated chain ids, e.g. `8453,42161,10,137`, canonical included. Unset ⇒ skipped; the aggregator is wired for no source chain.
-6. `RewardCommitmentFacet.setMirrorRewardDeployment(<chainId>, <that chain's Diamond>)`, once per entry of `MIRROR_REWARD_DEPLOYMENTS` — format `chainId:0xaddr,chainId:0xaddr`, no whitespace. Unset ⇒ skipped, and the compensation-quote (kind-11) ingress stays fail-closed for every unregistered chain (`CompQuoteMirrorEraUnset`), so zeroed-day compensation on that lane is unreachable until the registration lands.
+5. `RewardAggregatorFacet.setExpectedSourceChainIds([...])` from `REWARD_EXPECTED_SOURCE_CHAIN_IDS` — comma-separated chain ids, e.g. `8453,42161,10,137`, canonical included.
+6. `RewardCommitmentFacet.setMirrorRewardDeployment(<chainId>, <that chain's Diamond>)`, once per entry of `MIRROR_REWARD_DEPLOYMENTS` — format `chainId:0xaddr,chainId:0xaddr`, no whitespace. Until a chain is registered, the compensation-quote (kind-11) ingress is fail-closed for it (`CompQuoteMirrorEraUnset`) and zeroed-day compensation on that lane is unreachable.
 
-On **every reporter** (non-Base chain), one registration, **conditional the
-same way**:
+On **every reporter** (non-Base chain), one registration, driven the same way:
 
-5'. `RewardReporterFacet.setBaseRewardDeployment(<BASE_REWARD_DEPLOYMENT>)` — Base's Diamond address. Unset ⇒ skipped with a warning, and the V3 (kind-10) broadcast ingress stays DARK on this reporter: day figures still arrive on the kind-5 wire, but no day clock installs and the P2 lapse machinery can never arm. When set, the artifact also gains `baseRewardDeployment`.
+5'. `RewardReporterFacet.setBaseRewardDeployment(<BASE_REWARD_DEPLOYMENT>)` — Base's Diamond address. Until it is set, the V3 (kind-10) broadcast ingress is DARK on this reporter: day figures still arrive on the kind-5 wire, but no day clock installs and the P2 lapse machinery can never arm. When set, the artifact also gains `baseRewardDeployment`.
+
+**What an unset var does depends on which entry point you used — and on
+whether the Diamond was configured before.**
+
+- **The script itself, and `deploy-testnet.sh`:** an unset var prints a
+  `WARNING`, the call is **skipped**, and the run completes green. On a
+  **fresh** Diamond that leaves the ingress in the fail-closed state described
+  above. On a **rerun** against an already-configured Diamond it leaves the
+  **previous** value in force — a skipped registration neither disables nor
+  updates what is stored, so an omitted var is never a way to retire a stale
+  source list, mirror registry or base deployment. Rotate or retire those with
+  the setter and an explicit value; verify with the readbacks below.
+- **`deploy-mainnet.sh`:** none of the three is optional. Its preflight refuses
+  to start without `BASE_REWARD_DEPLOYMENT` on a mirror and
+  `MIRROR_REWARD_DEPLOYMENTS` on Base, and its configure phase additionally
+  requires `REWARD_EXPECTED_SOURCE_CHAIN_IDS` on Base and checks that the
+  registry's chain set equals that list minus Base, with no duplicates — a
+  hard `FAIL` before the spell runs, not a warning.
+- **`deploy-chain.sh`:** does not run the configure phase at all — it prints
+  the `DiamondConfigSpell` command for you to run by hand, so what you get is
+  the script's own warn-and-skip posture.
 
 Then, once per chain:
 
