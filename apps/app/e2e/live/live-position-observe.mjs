@@ -2734,7 +2734,7 @@ function watchPageHead(page) {
  */
 async function settleHeadReads(page) {
   const pending = pageHeadPending.get(page);
-  if (!pending || pending.size === 0) return;
+  if (!pending || pending.size === 0) return true;
   // ROUND 92 P2 — DRAINED TO A BOUNDED QUIET POINT, not one snapshot.
   //
   // Round 48 awaited a single snapshot of the set and argued that anything
@@ -2750,15 +2750,30 @@ async function settleHeadReads(page) {
   // BOUNDED rather than "until empty": a page that polls would never
   // reach empty, and an unbounded drain would hang the run. Six passes is
   // an operational budget, stated as one — on a page whose reads settle it
-  // ends after two, and on one that never stops it ends anyway and the
-  // sample is simply the best available. That residual is unchanged from
-  // round 48; what changes is that an ordinary in-flight reply is no
-  // longer missed.
+  // ends after two, and on one that never stops it ends anyway.
+  //
+  // ROUND 96 P2 — AND IT SAYS WHICH OF THOSE TWO HAPPENED.
+  //
+  // Round 92 wrote "the sample is simply the best available" and called the
+  // residual unchanged from round 48. It was not unchanged: round 48's
+  // sample was a FLOOR, where a response arriving late is genuinely not part
+  // of what the DOM was showing, and this same call now also produces a
+  // CEILING, where it is. Returning quietly after six busy passes hands the
+  // caller a ceiling that is too low while looking exactly like a drained
+  // one — and the catch-up test then reads as satisfied against a state the
+  // page had already moved past, which is how an older protocol range comes
+  // to substantiate a product failure.
+  //
+  // `false` means the budget expired with work still in flight: not a
+  // ceiling, not a lower ceiling, simply not established. The caller that
+  // uses it as a ceiling withholds its verdict; the caller that uses it as a
+  // floor ignores it, because round 48's argument still holds there.
   for (let pass = 0; pass < 6; pass += 1) {
     const inFlight = [...pending];
-    if (inFlight.length === 0) return;
+    if (inFlight.length === 0) return true;
     await Promise.allSettled(inFlight);
   }
+  return pending.size === 0;
 }
 
 function pageHeadOf(page) {
@@ -4194,7 +4209,10 @@ async function observeForcedClose(page, loan, headBeforeNav, pageHeadBeforeNav, 
   // taken too early, or a stale height, which lets the confirming
   // observer settle below the head the DOM was showing and call a
   // correctly absent card a regression.
-  await settleHeadReads(page);
+  // ROUND 96 P2 — whether the drain actually reached quiet. A ceiling read
+  // out of a still-busy set is not a lower ceiling, it is no ceiling;
+  // `observerCaughtUp` below refuses to be satisfied by one.
+  const headSettled = await settleHeadReads(page);
   const pageHead = pageHeadOf(page);
   // ROUND 4 P2 — ONE BLOCK FOR ALL THREE FACTS.
   //
@@ -4447,7 +4465,16 @@ async function observeForcedClose(page, loan, headBeforeNav, pageHeadBeforeNav, 
   // A head the page was SEEN to reach is required now. Without one the
   // comparison is incomplete, which is what the absence gate already
   // demands of the same number.
-  const observerCaughtUp = pageHead > 0n && pinnedBlock >= pageHead;
+  //
+  // ROUND 96 P2 — AND THE CEILING MUST HAVE BEEN DRAINED TO GET IT.
+  //
+  // `pageHead` is the highest head seen so far, which on a page whose head
+  // responses were still being parsed when the budget expired is not the
+  // highest head the page REACHED. Reading it as one lets this test pass
+  // against a state the page had already moved past, on a comparison whose
+  // whole purpose is to establish that it had not. `headSettled` is the
+  // difference between a ceiling and a number that resembles one.
+  const observerCaughtUp = headSettled && pageHead > 0n && pinnedBlock >= pageHead;
   // ROUND 90 P2 — no global shortcut. `floorEstablishedFor` now decides
   // PER ENDPOINT, accepting either the pre-navigation sample or that
   // endpoint's own announcement ordering, so an endpoint this page reached
@@ -5459,12 +5486,40 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
           const inView = (x, y) => x >= 0 && y >= 0 && x < vw && y < vh;
           let probed = 0;
           let allCovered = true;
+          // ROUND 96 P2 — A DIAGONAL IS NOT A RECTANGLE.
+          //
+          // The three probes were the centre and the two opposite corners:
+          // three COLLINEAR points. An opaque diagonal stripe, or three small
+          // badges that happen to sit on that line, cover all of them while
+          // leaving most of the sentence readable — and the text node was then
+          // discarded whole. The rule directly above says occlusion must be
+          // TOTAL, and the sampling did not implement the rule it states.
+          //
+          // The direction is what makes this urgent rather than merely
+          // imprecise: it is a FALSE FAIL on legible funds copy, the one error
+          // this file says gets a whole check switched off.
+          //
+          // Sampled on a GRID now — five positions across the width at three
+          // heights — so a cover has to defeat fifteen points spread over the
+          // whole rectangle rather than three on one line. Still sampling, and
+          // still not a proof of total coverage; what changes is that every
+          // added point can only make a cover HARDER to claim, so the residual
+          // moves further into the missed-defect direction and never into the
+          // invented one.
+          //
+          // The common path costs no more than before: the loop stops at the
+          // first uncovered point, and readable text is uncovered at the first
+          // one tried. Only text that really is covered everywhere pays for
+          // the whole grid.
+          const COL_FRACTIONS = [0.02, 0.25, 0.5, 0.75, 0.98];
+          const ROW_FRACTIONS = [0.25, 0.5, 0.75];
           for (const q of glyphs) {
-            const points = [
-              [q.left + q.width / 2, q.top + q.height / 2],
-              [q.left + 1, q.top + 1],
-              [q.right - 1, q.bottom - 1],
-            ];
+            const points = [];
+            for (const fy of ROW_FRACTIONS) {
+              for (const fx of COL_FRACTIONS) {
+                points.push([q.left + q.width * fx, q.top + q.height * fy]);
+              }
+            }
             for (const [x, y] of points) {
               if (!inView(x, y)) continue;
               probed += 1;
@@ -7179,12 +7234,40 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
               const inView = (x, y) => x >= 0 && y >= 0 && x < vw && y < vh;
               let probed = 0;
               let allCovered = true;
+              // ROUND 96 P2 — A DIAGONAL IS NOT A RECTANGLE.
+              //
+              // The three probes were the centre and the two opposite corners:
+              // three COLLINEAR points. An opaque diagonal stripe, or three small
+              // badges that happen to sit on that line, cover all of them while
+              // leaving most of the sentence readable — and the text node was then
+              // discarded whole. The rule directly above says occlusion must be
+              // TOTAL, and the sampling did not implement the rule it states.
+              //
+              // The direction is what makes this urgent rather than merely
+              // imprecise: it is a FALSE FAIL on legible funds copy, the one error
+              // this file says gets a whole check switched off.
+              //
+              // Sampled on a GRID now — five positions across the width at three
+              // heights — so a cover has to defeat fifteen points spread over the
+              // whole rectangle rather than three on one line. Still sampling, and
+              // still not a proof of total coverage; what changes is that every
+              // added point can only make a cover HARDER to claim, so the residual
+              // moves further into the missed-defect direction and never into the
+              // invented one.
+              //
+              // The common path costs no more than before: the loop stops at the
+              // first uncovered point, and readable text is uncovered at the first
+              // one tried. Only text that really is covered everywhere pays for
+              // the whole grid.
+              const COL_FRACTIONS = [0.02, 0.25, 0.5, 0.75, 0.98];
+              const ROW_FRACTIONS = [0.25, 0.5, 0.75];
               for (const q of glyphs) {
-                const points = [
-                  [q.left + q.width / 2, q.top + q.height / 2],
-                  [q.left + 1, q.top + 1],
-                  [q.right - 1, q.bottom - 1],
-                ];
+                const points = [];
+                for (const fy of ROW_FRACTIONS) {
+                  for (const fx of COL_FRACTIONS) {
+                    points.push([q.left + q.width * fx, q.top + q.height * fy]);
+                  }
+                }
                 for (const [x, y] of points) {
                   if (!inView(x, y)) continue;
                   probed += 1;
@@ -7394,7 +7477,32 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
             // deploy is worse than one with a known-imperfect fallback.
             // On a build carrying the markers the labels are never
             // consulted.
-            const marked = el.querySelector('[data-testid="confirm-receipt-confirm"]') !== null;
+            // ROUND 96 P2 — BOTH MARKERS, OR NEITHER IS TRUSTED.
+            //
+            // `marked` was decided from the CONFIRM marker alone and then used
+            // to gate identification of BACK. So a build carrying the confirm
+            // marker and missing the Back one — an accidental removal, a
+            // rename, a refactor that touched one of the two — switched off the
+            // label fallback and then found no Back control at all. The visibly
+            // labelled Back button fell into `allActions`, and the panel was
+            // reported as offering the lender two fee-paying actions when it
+            // offers one and a way out.
+            //
+            // That is the false-FAIL direction, produced by half of an
+            // instrumentation change rather than by anything the lender could
+            // see. The marker path is only better than the labels when BOTH
+            // markers are there; with one, the labels are the more reliable of
+            // the two and are what round 76 deliberately kept for exactly this
+            // kind of gap.
+            //
+            // RESIDUAL, stated: a half-marked panel is a real instrumentation
+            // regression and this quietly tolerates it rather than reporting
+            // it. Tolerating it costs a known-imperfect heuristic; reporting it
+            // would invent a product FAIL out of a testid, which is the trade
+            // this file makes the same way every time.
+            const marked =
+              el.querySelector('[data-testid="confirm-receipt-confirm"]') !== null &&
+              el.querySelector('[data-testid="confirm-receipt-back"]') !== null;
             const isBack = (b) =>
               marked
                 ? b?.dataset?.testid === 'confirm-receipt-back'

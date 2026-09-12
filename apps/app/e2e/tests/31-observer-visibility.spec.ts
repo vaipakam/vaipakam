@@ -864,6 +864,16 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
         <div style="position:absolute; inset:0; background:#123456; opacity:0"></div>
         <div style="position:absolute; inset:0"></div>
       </div>
+      <!-- ROUND 96 P2 — three COLLINEAR probes (the centre and the two
+           opposite corners) were all that decided total occlusion, so three
+           small covers sitting on that line discarded a sentence the lender
+           can plainly read. The covers are placed BY SCRIPT below, at the
+           exact points the old sampling used — a hand-drawn diagonal band
+           was tried first and passed under the old rule, which made it a
+           fixture that proved nothing rather than a guard. -->
+      <div class="body" id="oldProbePoints" style="position:relative; width:320px">
+        <p style="margin:0">This loan can be closed out now.</p>
+      </div>
       <!-- SELF-REVIEW OF THE OCCLUSION RULE — the page body carries an
            opaque background, as a real stylesheet almost always does. The
            walk from a hit stops at the first element containing the text,
@@ -1008,6 +1018,35 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
         coveredByOpaqueChildSeen: seenScrolled(byId('coveredByOpaqueChild')),
         coveredUnderCatcherSeen: seenScrolled(byId('coveredUnderCatcher')),
         catcherOverGhostSeen: seenScrolled(byId('catcherOverGhost')),
+        oldProbePointsSeen: (() => {
+          // Cover EXACTLY the three points the pre-round-96 sampling used:
+          // the centre of the glyph rectangle and its two opposite corners.
+          // Measured from the text node's own `Range`, the same rectangle
+          // the predicate measures, rather than from the element box — a
+          // left-aligned line is narrower than its container, so element
+          // corners are not the points that were probed.
+          const host = byId('oldProbePoints');
+          const text = host.querySelector('p')!.firstChild!;
+          const range = document.createRange();
+          range.selectNodeContents(text);
+          const q = range.getClientRects()[0];
+          const at: Array<[number, number]> = [
+            [q.left + q.width / 2, q.top + q.height / 2],
+            [q.left + 1, q.top + 1],
+            [q.right - 1, q.bottom - 1],
+          ];
+          const dots = at.map(([x, y]) => {
+            const d = document.createElement('div');
+            d.style.cssText =
+              `position:absolute; width:7px; height:7px; background:#123456;` +
+              `left:${x + window.scrollX - 3}px; top:${y + window.scrollY - 3}px;`;
+            document.body.appendChild(d);
+            return d;
+          });
+          const seen = seenScrolled(host);
+          dots.forEach((d) => d.remove());
+          return seen;
+        })(),
 
         hangingIndentPaintedText: scope.visibleTextOf(byId('hangingIndent')),
         belowFoldPaintedText: scope.visibleTextOf(byId('belowFold')),
@@ -1282,5 +1321,16 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
   expect(
     result.catcherOverGhostSeen,
     'but looking past the catcher must not turn a ghost into a cover',
+  ).toContain('closed out now');
+
+  // ROUND 96 P2 — occlusion must be TOTAL, and three collinear probes
+  // cannot establish that. Three small covers on the centre and the two
+  // opposite corners satisfied every probe the old sampling took, and the
+  // whole sentence was discarded while most of it was plainly readable: a
+  // false FAIL on legible funds copy, the one direction this predicate must
+  // never take.
+  expect(
+    result.oldProbePointsSeen,
+    'three dots on the old probe points do not hide the sentence',
   ).toContain('closed out now');
 });

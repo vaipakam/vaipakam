@@ -283,7 +283,12 @@ describe('the head sample waits for the readings in flight', () => {
   // reason: a polling page never reaches empty and the run would hang.
   it('drains the pending parses to a bounded quiet point', () => {
     const fn = src.slice(at('async function settleHeadReads(page)'));
-    const body = fn.slice(0, 1600);
+    // Widened in round 96 with the note that landed above the loop. A fixed
+    // character window is a fragile pin — it fails LOUD (the assertion below
+    // stops finding the loop) rather than passing over the thing it checks,
+    // which is the acceptable direction, but it needs raising whenever the
+    // preamble grows.
+    const body = fn.slice(0, 2600);
     // Still a snapshot per pass — the listener adds to the live set while
     // this awaits, so iterating the set itself would be the unbounded
     // loop under another name.
@@ -291,6 +296,44 @@ describe('the head sample waits for the readings in flight', () => {
     // Bounded, and the bound is a literal rather than a condition on the
     // set: a condition is how "until empty" comes back.
     expect(body).toMatch(/for \(let pass = 0; pass < \d+; pass \+= 1\)/);
+  });
+
+  // ROUND 96 P2 — AND IT SAYS WHETHER THE BOUND WAS HIT.
+  //
+  // Round 92 bounded the wait and called the residual unchanged from round
+  // 48. It was not: round 48's sample was a FLOOR, where a late reply is
+  // genuinely not part of what the DOM was showing, and this same call now
+  // also feeds a CEILING, where it is. Returning quietly after six busy
+  // passes hands the caller a ceiling that is too low and looks exactly
+  // like a drained one, so the catch-up test reads as satisfied against a
+  // state the page had already moved past — an older protocol range then
+  // substantiating a product failure.
+  it('reports non-quiescence rather than returning as if drained', () => {
+    const fn = src.slice(at('async function settleHeadReads(page)'));
+    const body = fn.slice(0, 2400);
+    // The empty-at-entry and empty-during-drain exits are both a positive
+    // answer; the fall-through past the budget must not be.
+    expect(body).toContain('if (!pending || pending.size === 0) return true;');
+    expect(body).toContain('if (inFlight.length === 0) return true;');
+    expect(body, 'the post-budget return states what it found').toContain(
+      'return pending.size === 0;',
+    );
+  });
+
+  it('the CEILING refuses an undrained sample; the FLOOR still ignores it', () => {
+    // Asserted as the asymmetry, because that is the whole finding: the
+    // same helper serves two questions and only one of them is harmed by a
+    // late reply. Making both refuse would be the round-87 mistake — an
+    // honest tightening that blocks runs it has no reason to.
+    expect(src, 'the ceiling site captures the drain verdict').toContain(
+      'const headSettled = await settleHeadReads(page);',
+    );
+    expect(src, 'and gates the catch-up test on it').toContain(
+      'const observerCaughtUp = headSettled && pageHead > 0n && pinnedBlock >= pageHead;',
+    );
+    // The floor site takes the same call and deliberately discards the
+    // verdict — round 48's argument holds there and is not re-litigated.
+    expect(src).toContain('  await settleHeadReads(page);\n  const headAtRender = pageHeadOf(page);');
   });
 });
 

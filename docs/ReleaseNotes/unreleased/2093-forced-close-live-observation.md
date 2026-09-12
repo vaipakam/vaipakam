@@ -488,6 +488,29 @@ could be satisfied by a request bundled into the SAME reply rather than
 by a retry, which means a failure the page had already acted on was
 quietly cleared; only a genuinely separate reply can clear one now.
 
+Three more corrections, all of the same shape: each would have accused a
+correct page. The check that waits for the page's block readings to finish
+gives up after a fixed number of tries, and said nothing about which of
+those two things happened — so a page still answering could hand back a
+reading that looked settled and was not, and the run could then judge the
+page against a moment it had already passed. It now says which, and the
+comparison that needs a settled reading refuses an unsettled one; the
+comparison that does not need it is unchanged.
+
+The test for whether text is hidden behind something sampled three points
+— the middle of each line and its two opposite corners — which all sit on
+one diagonal. Three small covers on that line satisfied every sample while
+most of the sentence stayed readable, and the whole sentence was thrown
+out. It now samples a grid across the line, which can only make a claim of
+hidden text harder to reach, never easier.
+
+And the confirmation panel decided how to recognise its Back button from a
+marker on the *other* button. A build carrying one marker and not the
+other stopped recognising Back at all, and the panel was reported as
+offering two ways to pay when it offers one and a way out. Both markers
+are required now; with only one, the older label-based recognition is used
+and its imperfection stated, because going blind is worse.
+
 Closes #2093. The round-by-round record of how each of these rules was
 arrived at — including several cases where a fix left its own new state
 unhandled, or was applied to one of several parallel sites — lives in the

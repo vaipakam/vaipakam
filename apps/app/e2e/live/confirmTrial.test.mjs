@@ -159,6 +159,40 @@ describe('the confirmation cluster counts only what is shown', () => {
     expect(src).toContain('present: allActions.length > 0,');
   });
 
+  // ROUND 96 P2 — BOTH MARKERS, OR NEITHER IS TRUSTED.
+  //
+  // `marked` was decided from the CONFIRM marker alone and then used to
+  // gate identification of BACK. A build carrying the confirm marker and
+  // missing the Back one — an accidental removal, a rename, a refactor that
+  // touched one of the two — therefore switched the label fallback OFF and
+  // then found no Back control at all: the visibly labelled Back button
+  // fell into `allActions`, and a panel offering one fee-paying action and
+  // a way out was reported as offering two.
+  //
+  // Round 76 kept the label heuristic precisely for builds where the
+  // markers are not there. Half the markers is that case, not the marked
+  // case, and reading it as the marked case is what produced a false FAIL
+  // out of an instrumentation slip nobody could see on screen.
+  it('enters marker-only identification only when BOTH markers are present', () => {
+    const i = at('const marked =');
+    expect(i, 'the marked test is no longer built here').toBeGreaterThan(-1);
+    const decl = src.slice(i, i + 320);
+    expect(decl).toContain('[data-testid="confirm-receipt-confirm"]');
+    expect(decl, 'the Back marker is part of the decision').toContain(
+      '[data-testid="confirm-receipt-back"]',
+    );
+    expect(decl, 'both, not either').toContain('&&');
+  });
+
+  it('keeps the label fallback rather than going blind on a half-marked panel', () => {
+    // The fallback is known-imperfect and is still the better of the two
+    // when the markup cannot be trusted — a check that goes blind is worse
+    // than one with a stated residual (round 76).
+    const i = at('const isBack = (b) =>');
+    expect(i).toBeGreaterThan(-1);
+    expect(src.slice(i, i + 240)).toContain("/back/i.test((b?.innerText ?? '').trim())");
+  });
+
   it('selects the action from the FILTERED set', () => {
     // Otherwise a hidden first variant could be the control put through
     // the trial click — judging and trialling something the lender
