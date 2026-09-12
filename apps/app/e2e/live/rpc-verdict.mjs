@@ -1177,7 +1177,12 @@ export function summariseRpcLedger(ledger) {
       //
       // Same `undefined`-means-older rule as everything else here: a record
       // written before request times were carried is judged the way it was.
-      if (typeof requestedAt === 'number' && requestedAt < e.at) return false;
+      // ROUND 109 P2 — EQUAL TIMESTAMPS CARRY NO ORDER, so `<=`. Two
+      // handlers can read the same `performance.now()`, and `<` then
+      // accepted a sibling as causally later on no evidence. The floor's
+      // ordering test in the drive settled this in round 87 for exactly the
+      // same reason and uses `>=`; this is that rule, applied here.
+      if (typeof requestedAt === 'number' && requestedAt <= e.at) return false;
       return at - e.at <= RETRY_RECOVERY_WINDOW_MS;
     });
   };

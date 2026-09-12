@@ -599,23 +599,6 @@ describe('the head facts survive the projection (round 106)', () => {
 // which cannot be imported: the module runs the whole drive on import. It is
 // scoped to that closure rather than grepping the file, and it pins the
 // ORDER — the guard has to precede the add, or it guards nothing.
-describe('a proven-foreign endpoint stays out of the head sets (round 108)', () => {
-  const src = fs.readFileSync(DRIVE, 'utf8');
-
-  it('guards the diamond set, not only the known-endpoint set', () => {
-    const i = src.indexOf('const admit = () => {');
-    expect(i, 'the admit closure was not found').toBeGreaterThan(-1);
-    const body = src.slice(i, src.indexOf('};', i) + 2);
-    const guard = body.indexOf('foreignPageRpcEndpoints.has(key)');
-    const add = body.indexOf('diamond.add(key)');
-    expect(guard, 'the module-wide foreign check is inside admit').toBeGreaterThan(-1);
-    expect(add, 'the diamond add is inside admit').toBeGreaterThan(-1);
-    expect(guard, 'the guard precedes the add, or it guards nothing').toBeLessThan(add);
-    // And it RETURNS on a foreign key rather than merely skipping one set.
-    expect(body).toContain('if (foreignPageRpcEndpoints.has(key)) return;');
-  });
-});
-
 describe('the forced-close report emits distinct keys (round 106)', () => {
   const src = fs.readFileSync(DRIVE, 'utf8');
 
@@ -661,29 +644,35 @@ describe('an endpoint that lied about its chain stays untrusted', () => {
   // omitting a card it was right to omit.
   const src = fs.readFileSync(DRIVE, 'utf8');
 
-  it('checks the exclusion before re-admitting', () => {
-    expect(src).toContain('if (!foreign.has(key)) diamond.add(key);');
+  // AMENDED IN ROUND 109. Both of these pinned the SHAPE of two separate
+  // inline admissions, which is what let round 108 fix one of them and
+  // leave the other: the assertions described the arrangement rather than
+  // the property, so they stayed green while half the rule was missing.
+  //
+  // There is exactly ONE admission now, behind one named test that checks
+  // both the per-page and the module-wide exclusion, and that is what these
+  // assert. A second `diamond.add` appearing anywhere is the regression.
+  it('admits through exactly one guarded place', () => {
+    const admissions = [...src.matchAll(/diamond\.add\(key\)/g)];
+    expect(admissions.length, 'one admission, one guard').toBe(1);
+    const helper = src.indexOf('const admitIfNotForeign = () => {');
+    expect(helper, 'the shared admission test was not found').toBeGreaterThan(-1);
+    expect(helper, 'the sole admission is inside it').toBeLessThan(admissions[0].index);
   });
 
-  it('admits nothing UNGUARDED ahead of the exclusion check', () => {
-    // The precise invariant, and the first version of this case got it
-    // wrong by asserting there are no bare admissions at all. There are
-    // two, and both are correct: they sit BELOW
-    // `if (foreign.has(key)) return;`, which guards them already.
-    //
-    // What must hold is that nothing admits the key *before* that line
-    // without testing `foreign` itself — which is exactly the defect
-    // round 51 found, and exactly what a later tidy-up would restore by
-    // deleting the inline guard as redundant.
-    const gate = src.indexOf('if (foreign.has(key)) return;');
-    expect(gate, 'the exclusion check was not found').toBeGreaterThan(-1);
-    const before = src.slice(0, gate);
-    const admissions = [...before.matchAll(/diamond\.add\(key\)/g)];
-    expect(admissions.length, 'an admission ahead of the gate').toBe(1);
-    for (const m of admissions) {
-      const line = before.slice(before.lastIndexOf('\n', m.index) + 1, m.index);
-      expect(line, 'that admission must test `foreign` itself').toContain('!foreign.has(key)');
-    }
+  it('that place checks BOTH the per-page and the module-wide exclusion', () => {
+    const i = src.indexOf('const admitIfNotForeign = () => {');
+    const body = src.slice(i, src.indexOf('};', i) + 2);
+    const guard = body.indexOf('foreign.has(key) || foreignPageRpcEndpoints.has(key)');
+    const add = body.indexOf('diamond.add(key)');
+    expect(guard, 'both exclusions are tested').toBeGreaterThan(-1);
+    expect(guard, 'the guard precedes the add, or it guards nothing').toBeLessThan(add);
+  });
+
+  it('both arms route through it rather than admitting directly', () => {
+    // The expected-chain arm is the one round 108 missed.
+    expect(src).toContain('admitIfNotForeign();');
+    expect(src).toContain('const admit = admitIfNotForeign;');
   });
 
   it('still records the exclusion and revokes an earlier admission', () => {

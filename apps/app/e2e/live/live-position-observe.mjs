@@ -2580,6 +2580,22 @@ function watchPageHead(page) {
   // deployed bundle's own env and cannot be enumerated here.
   const DIAMOND_HEX = String(DIAMOND).replace(/^0x/, '').toLowerCase();
   const markDiamond = (key, body, responseBody) => {
+    // ROUND 109 P2 — ONE admission test for BOTH arms.
+    //
+    // An endpoint enters `diamond` two ways: on an expected-chain reply, and
+    // on the raw-address heuristic further down. Round 108 guarded the second
+    // and left the first — this change's own parallel-site defect, inside the
+    // fix FOR a parallel-site defect. Naming the test once is the only
+    // version of this that stays fixed.
+    //
+    // `foreign` is per-page; `foreignPageRpcEndpoints` is module-wide and
+    // permanent (round 89), and the per-page set is empty on a later visit,
+    // which is the whole reason the module-wide one exists.
+    const admitIfNotForeign = () => {
+      if (foreign.has(key) || foreignPageRpcEndpoints.has(key)) return;
+      diamond.add(key);
+      knownPageRpcEndpoints.add(key);
+    };
     try {
       // WHEN THE ENDPOINT SAYS WHICH CHAIN IT SPEAKS FOR, that settles
       // it in both directions — heights are chain-scoped, so this is the
@@ -2671,7 +2687,18 @@ function watchPageHead(page) {
             // to. Trusting its heights again lets a wrong-chain bound
             // reach the absence gate, where a degraded page can be
             // blamed for omitting a card it was right to omit.
-            if (!foreign.has(key)) diamond.add(key);
+            // ROUND 109 P2 — THE MODULE-WIDE EXCLUSION APPLIES HERE TOO.
+            //
+            // Round 108 guarded the `admit` closure and left this arm, which
+            // admits on an EXPECTED-chain reply and is the second of the two
+            // ways an endpoint enters `diamond`. The per-page `foreign` set
+            // is empty on a later visit, so an endpoint already proven
+            // foreign — one that answered for another chain earlier and is
+            // now answering with the expected id, which is exactly the
+            // inconsistent endpoint this rule exists for — walked straight
+            // back in. `admitIfNotForeign` is the single test both arms use
+            // now, so there is no second place to remember.
+            admitIfNotForeign();
           } else {
             // A DIFFERENT chain is positive evidence the other way, and
             // it outranks the address heuristics below — an ENS endpoint
@@ -2704,11 +2731,7 @@ function watchPageHead(page) {
       // this deployment with another chain's block number is the worst shape
       // the floor can take — round 89's own words, applied to one of the two
       // sets it was written for.
-      const admit = () => {
-        if (foreignPageRpcEndpoints.has(key)) return;
-        diamond.add(key);
-        knownPageRpcEndpoints.add(key);
-      };
+      const admit = admitIfNotForeign;
       if (typeof body === 'string' && body.toLowerCase().includes(DIAMOND_HEX)) {
         admit();
         return;
@@ -2822,6 +2845,7 @@ function watchPageHead(page) {
       const body = req.postData();
       if (!body) return;
       const key = res.url();
+
       // One `res.json()` for both questions: a response body can only be
       // consumed once cheaply, and the chain-id evidence needs it.
       // ROUND 33 P2 — `eth_getBlockByNumber` IS A HEAD ANNOUNCEMENT too,

@@ -901,6 +901,16 @@ describe('recordRpcResponse + summariseRpcLedger', () => {
       expect(out.unreachable).toEqual([]);
     });
 
+    // ROUND 109 P2 — and EQUAL timestamps carry no order either. Two
+    // handlers can read the same monotonic value; the floor's ordering test
+    // settled this in round 87 and refuses equality for the same reason.
+    it('does NOT clear one with a sibling requested at the same instant', () => {
+      const out = summariseRpcLedger([failed(1_000), ok(1_200, 1_000)]);
+      expect(out.unreachable).toEqual([
+        { url: 'https://rpc.example', why: 'eth_call — HTTP 429' },
+      ]);
+    });
+
     it('leaves a record without request times behaving as it did', () => {
       // `undefined` means a shape predating the field — keep the old
       // behaviour, never read it as evidence.
