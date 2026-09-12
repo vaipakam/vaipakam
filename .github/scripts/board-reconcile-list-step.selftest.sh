@@ -75,17 +75,38 @@ run_step() { # run_step <scenario-env...> ; output lands in "$work/out.txt"
   # inheriting the caller's directory drops both into the repository every
   # time anyone runs it. Caught by the repo's own untracked-file check after
   # the first run here.
+  : > "$work/calls.txt"
+  : > "$work/sleeps.txt"
   set +e
   ( cd "$work"
-    export PATH="$work/bin:$PATH" PROJECT_NUMBER=1 PROJECT_OWNER=vaipakam LIST_LIMIT=4000 "$@"
+    export PATH="$work/bin:$PATH" PROJECT_NUMBER=1 PROJECT_OWNER=vaipakam LIST_LIMIT=4000 \
+      RETRY_WAIT_CAP_SECONDS=900 RETRY_MARGIN_SECONDS=5 "$@"
     bash "$work/step.sh" ) > "$work/out.txt" 2>&1
   rc=$?
   set -e
   return $rc
 }
+attempts() { grep -c 'item-list' "$work/calls.txt" || true; }
 
 mkdir -p "$work/bin"
 SECRET='ghp_SuperSecretTokenValue1234567890'
+
+# THE REAL PARSER, not a stub. The step reads its retry decision from
+# `.github/scripts/gh-trace-ratelimit-wait.sh` at a checkout-relative path, so
+# the fixture's working directory carries a copy of the real file. A stub here
+# would let the step and the parser drift apart while both of their fixtures
+# stay green — the same hazard the extraction above exists to close.
+mkdir -p "$work/.github/scripts"
+cp "$repo_root/.github/scripts/gh-trace-ratelimit-wait.sh" "$work/.github/scripts/"
+
+# `sleep` IS stubbed: the retry waits for whatever reset the trace named, and
+# a fixture that really waited a minute per scenario would not get run. The
+# stub records what it was asked for, which is what the assertions read.
+cat > "$work/bin/sleep" <<'SH'
+#!/usr/bin/env bash
+echo "$1" >> "$(dirname "$0")/../sleeps.txt"
+SH
+chmod +x "$work/bin/sleep"
 
 # ── scenario 1: the listing is refused ───────────────────────────────────────
 # The shape that actually happened, and the one the old log could not describe:
@@ -99,6 +120,7 @@ if [ "\$1" = "api" ] && [ "\$2" = "rate_limit" ]; then
   echo '{"resources":{"graphql":{"limit":5000,"remaining":5000}}}'; exit 0
 fi
 if [ "\$1" = "project" ] && [ "\$2" = "item-list" ]; then
+  echo item-list >> "\$(dirname "\$0")/../calls.txt"
   if [ -n "\${GH_DEBUG:-}" ]; then
     cat >&2 <<'TRACE'
 > POST /graphql HTTP/1.1
@@ -149,6 +171,15 @@ check r "the token does NOT appear anywhere in the output" "$s"
 # is the right shape, since a redaction is only as good as its pattern.
 grep -qi 'authorization' "$work/out.txt" && s=1 || s=0
 check r "no Authorization line reaches the output at all" "$s"
+# The refusal names a Retry-After, so this is a limit and the step tries ONCE
+# more after that wait plus the margin — and no more, whatever the second
+# answer is. The stub refuses both times; two attempts, one sleep of 65.
+[ "$(attempts)" -eq 2 ] && s=0 || s=1
+check r "exactly two attempts were made ($(attempts))" "$s"
+[ "$(cat "$work/sleeps.txt")" = "65" ] && s=0 || s=1
+check r "it waited Retry-After + margin = 65 s (got '$(tr '\n' ' ' < "$work/sleeps.txt")')" "$s"
+grep -q 'first attempt was rate limited' "$work/out.txt" && s=0 || s=1
+check r "the diagnostic says the failure shown is the retry" "$s"
 
 # ── scenario 2: the listing succeeds ─────────────────────────────────────────
 # The trace holds the whole board listing on success, so it must be discarded
@@ -161,6 +192,7 @@ if [ "\$1" = "api" ] && [ "\$2" = "rate_limit" ]; then
   echo '{"resources":{}}'; exit 0
 fi
 if [ "\$1" = "project" ] && [ "\$2" = "item-list" ]; then
+  echo item-list >> "\$(dirname "\$0")/../calls.txt"
   [ -n "\${GH_DEBUG:-}" ] && echo "Authorization: token $SECRET" >&2
   [ -n "\${GH_DEBUG:-}" ] && echo "< HTTP/2.0 200 OK" >&2
   echo "{\"items\":[{\"a\":1},{\"a\":2}],\"totalCount\":\${FAKE_TOTAL:-2}}"
@@ -197,6 +229,7 @@ if [ "\$1" = "api" ] && [ "\$2" = "rate_limit" ]; then
   echo '{"resources":{"graphql":{"limit":5000,"remaining":5000}}}'; exit 0
 fi
 if [ "\$1" = "project" ] && [ "\$2" = "item-list" ]; then
+  echo item-list >> "\$(dirname "\$0")/../calls.txt"
   if [ -n "\${GH_DEBUG:-}" ]; then
     for page in \$(seq 1 12); do
       echo "> POST /graphql HTTP/1.1 (page \$page)" >&2
@@ -248,6 +281,10 @@ printed=$(grep -c 'BOARD_ITEM_BODY' "$work/out.txt" || true)
 check p "NO board item bodies reach the log ($printed of 1200)" "$s"
 grep -qF "$SECRET" "$work/out.txt" && s=1 || s=0
 check p "the token does NOT appear anywhere in the output" "$s"
+# The limit is on the LAST page, behind eleven good ones — the parser must
+# read the last response, not the first, or this never retries.
+[ "$(attempts)" -eq 2 ] && s=0 || s=1
+check p "the limit on the last page is still seen as one: two attempts ($(attempts))" "$s"
 
 # ── scenario 4: a trace the filter does not recognise ────────────────────────
 # The failure mode an allow-list introduces, and the reason it is safe anyway.
@@ -262,6 +299,7 @@ if [ "\$1" = "api" ] && [ "\$2" = "rate_limit" ]; then
   echo '{"resources":{}}'; exit 0
 fi
 if [ "\$1" = "project" ] && [ "\$2" = "item-list" ]; then
+  echo item-list >> "\$(dirname "\$0")/../calls.txt"
   if [ -n "\${GH_DEBUG:-}" ]; then
     echo "=== some future debug format nothing here knows ===" >&2
     echo "title: BOARD_ITEM_BODY a private card title" >&2
@@ -282,6 +320,12 @@ grep -q 'BOARD_ITEM_BODY' "$work/out.txt" && s=1 || s=0
 check u "it does NOT fall back to printing the trace" "$s"
 grep -q '::error::listing the board failed' "$work/out.txt" && s=0 || s=1
 check u "the branch still runs to the end" "$s"
+# An unreadable trace states no limit, so there is nothing to wait for and
+# the step must not guess one: one attempt, no sleep.
+[ "$(attempts)" -eq 1 ] && s=0 || s=1
+check u "no retry is attempted on a trace that states no limit ($(attempts) attempt)" "$s"
+[ ! -s "$work/sleeps.txt" ] && s=0 || s=1
+check u "and nothing was waited for" "$s"
 
 # ── scenario 5: the listing is truncated ─────────────────────────────────────
 # This guard sits AFTER the call, so restructuring the call is exactly the edit
@@ -300,6 +344,7 @@ if [ "\$1" = "api" ] && [ "\$2" = "rate_limit" ]; then
   echo '{"resources":{}}'; exit 0
 fi
 if [ "\$1" = "project" ] && [ "\$2" = "item-list" ]; then
+  echo item-list >> "\$(dirname "\$0")/../calls.txt"
   echo "{\"items\":[{\"a\":1},{\"a\":2}],\"totalCount\":\${FAKE_TOTAL:-2}}"
   exit 0
 fi
@@ -312,6 +357,133 @@ run_step FAKE_TOTAL=970 && rc=0 || rc=$?
 check t "the step fails" "$([ "$rc" -ne 0 ] && echo 0 || echo 1)"
 grep -q 'raise LIST_LIMIT' "$work/out.txt" && s=0 || s=1
 check t "the truncation error names the remedy" "$s"
+
+# ── scenario 6: rate limited, then the bucket refills ────────────────────────
+# The case the retry exists for, in the exact shape run 34673730486 recorded:
+# HTTP 200 — GraphQL puts the error in the body — with the request's own
+# headers saying `Remaining: 0` and naming a reset a few seconds out. The
+# first call is refused, the second (after the reset) succeeds, and the step
+# must come out GREEN with the board counted.
+cat > "$work/bin/gh" <<SH
+#!/usr/bin/env bash
+if [ "\$1" = "api" ] && [ "\$2" = "rate_limit" ]; then
+  if [ "\$3" = "--jq" ]; then echo 5000; exit 0; fi
+  echo '{"resources":{"graphql":{"limit":5000,"remaining":5000}}}'; exit 0
+fi
+if [ "\$1" = "project" ] && [ "\$2" = "item-list" ]; then
+  echo item-list >> "\$(dirname "\$0")/../calls.txt"
+  if [ "\$(grep -c item-list "\$(dirname "\$0")/../calls.txt")" -eq 1 ]; then
+    if [ -n "\${GH_DEBUG:-}" ]; then
+      echo "> POST /graphql HTTP/1.1" >&2
+      echo "< HTTP/2.0 200 OK" >&2
+      echo "< X-Ratelimit-Remaining: 0" >&2
+      echo "< X-Ratelimit-Reset: \$(( \$(date -u +%s) + 10 ))" >&2
+      echo "< X-Ratelimit-Resource: graphql" >&2
+      echo '{"message":"API rate limit already exceeded for user ID 275282153."}' >&2
+    fi
+    echo "unknown owner type" >&2
+    exit 1
+  fi
+  echo '{"items":[{"a":1},{"a":2},{"a":3}],"totalCount":3}'
+  exit 0
+fi
+exit 0
+SH
+chmod +x "$work/bin/gh"
+
+echo "rate limited, then refilled:"
+run_step && rc=0 || rc=$?
+check w "the step SUCCEEDS" "$([ "$rc" -eq 0 ] && echo 0 || echo 1)"
+[ "$(attempts)" -eq 2 ] && s=0 || s=1
+check w "two attempts ($(attempts))" "$s"
+# The reset was ten seconds out at the time the stub wrote it; by the time the
+# step did the subtraction a second may have ticked. Margin is 5 on top.
+slept=$(cat "$work/sleeps.txt")
+{ [ "$slept" = "15" ] || [ "$slept" = "14" ]; } && s=0 || s=1
+check w "it waited until the reset the FAILED REQUEST named, plus margin (got '$slept')" "$s"
+grep -q '::warning::board listing was rate limited' "$work/out.txt" && s=0 || s=1
+check w "the wait is announced, with the reason, as a warning" "$s"
+grep -q 'succeeded on the retry' "$work/out.txt" && s=0 || s=1
+check w "the log says the retry is what succeeded" "$s"
+grep -q 'board items: 3 (totalCount 3)' "$work/out.txt" && s=0 || s=1
+check w "the board count comes from the successful attempt" "$s"
+grep -q '::error::' "$work/out.txt" && s=1 || s=0
+check w "no error annotation is left behind by the first attempt" "$s"
+grep -q '::group::gh project item-list' "$work/out.txt" && s=1 || s=0
+check w "the failure diagnostic is NOT printed for a run that recovered" "$s"
+
+# ── scenario 7: rate limited, reset further away than the cap ───────────────
+# Same refusal, but the reset is an hour out. The job says so and stops: a
+# sweep is six-hourly, and a runner parked for an hour is not a fix.
+cat > "$work/bin/gh" <<SH
+#!/usr/bin/env bash
+if [ "\$1" = "api" ] && [ "\$2" = "rate_limit" ]; then
+  if [ "\$3" = "--jq" ]; then echo 5000; exit 0; fi
+  echo '{"resources":{"graphql":{"limit":5000,"remaining":5000}}}'; exit 0
+fi
+if [ "\$1" = "project" ] && [ "\$2" = "item-list" ]; then
+  echo item-list >> "\$(dirname "\$0")/../calls.txt"
+  if [ -n "\${GH_DEBUG:-}" ]; then
+    echo "< HTTP/2.0 200 OK" >&2
+    echo "< X-Ratelimit-Remaining: 0" >&2
+    echo "< X-Ratelimit-Reset: \$(( \$(date -u +%s) + 3600 ))" >&2
+    echo '{"message":"API rate limit already exceeded for user ID 275282153."}' >&2
+  fi
+  echo "unknown owner type" >&2
+  exit 1
+fi
+exit 0
+SH
+chmod +x "$work/bin/gh"
+
+echo "rate limited, reset beyond the cap:"
+run_step && rc=0 || rc=$?
+check c "the step fails" "$([ "$rc" -ne 0 ] && echo 0 || echo 1)"
+[ "$(attempts)" -eq 1 ] && s=0 || s=1
+check c "one attempt only ($(attempts))" "$s"
+[ ! -s "$work/sleeps.txt" ] && s=0 || s=1
+check c "nothing was waited for" "$s"
+grep -q 'over RETRY_WAIT_CAP_SECONDS=900, so NOT retried' "$work/out.txt" && s=0 || s=1
+check c "the log names the cap and says the wait was not taken" "$s"
+grep -q 'X-Ratelimit-Remaining: 0' "$work/out.txt" && s=0 || s=1
+check c "the failed request's evidence is still printed" "$s"
+
+# ── scenario 8: rate limited, waited, rate limited again ────────────────────
+# ONE retry, not a loop. If the bucket is empty again after its own reset,
+# something else is draining it faster than it refills, and a third attempt
+# is how a bounded wait becomes an unbounded one.
+cat > "$work/bin/gh" <<SH
+#!/usr/bin/env bash
+if [ "\$1" = "api" ] && [ "\$2" = "rate_limit" ]; then
+  if [ "\$3" = "--jq" ]; then echo 5000; exit 0; fi
+  echo '{"resources":{"graphql":{"limit":5000,"remaining":5000}}}'; exit 0
+fi
+if [ "\$1" = "project" ] && [ "\$2" = "item-list" ]; then
+  echo item-list >> "\$(dirname "\$0")/../calls.txt"
+  if [ -n "\${GH_DEBUG:-}" ]; then
+    echo "< HTTP/2.0 200 OK" >&2
+    echo "< X-Ratelimit-Remaining: 0" >&2
+    echo "< X-Ratelimit-Reset: \$(( \$(date -u +%s) + 3 ))" >&2
+    echo '{"message":"API rate limit already exceeded for user ID 275282153."}' >&2
+  fi
+  echo "unknown owner type" >&2
+  exit 1
+fi
+exit 0
+SH
+chmod +x "$work/bin/gh"
+
+echo "rate limited twice:"
+run_step && rc=0 || rc=$?
+check a "the step fails" "$([ "$rc" -ne 0 ] && echo 0 || echo 1)"
+[ "$(attempts)" -eq 2 ] && s=0 || s=1
+check a "exactly two attempts — the second refusal is NOT retried ($(attempts))" "$s"
+[ "$(wc -l < "$work/sleeps.txt" | tr -d ' ')" -eq 1 ] && s=0 || s=1
+check a "one wait, not two" "$s"
+grep -q 'this is the retry after' "$work/out.txt" && s=0 || s=1
+check a "the diagnostic says the evidence shown is the retry's" "$s"
+grep -q '::error::listing the board failed' "$work/out.txt" && s=0 || s=1
+check a "the error annotation is emitted" "$s"
 
 if [ "$fail" -ne 0 ]; then
   echo "board-reconcile list-step fixtures: FAILED" >&2

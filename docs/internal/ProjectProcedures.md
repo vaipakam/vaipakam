@@ -1110,6 +1110,37 @@ New Issues land on `@vaipakam-labs` automatically via
 secret). Multi-repo support via this workaround — GitHub Projects'
 own auto-add is one-repo-per-UI-rule.
 
+**That add is single-shot and is NOT retried.** Projects v2 is GraphQL-only,
+so it draws on the PAT owner's 5,000-point GraphQL bucket — the one every
+tool authenticating as that account shares — and when the bucket is empty at
+the instant an issue opens, the add fails and nothing re-runs it — 17 of the
+60 runs preceding 2026-09-02, and #2054, the issue that reported this, was
+itself one of them. Two things stand underneath it:
+
+- **The six-hourly sweep** — `.github/workflows/project-board-reconcile.yml`
+  ("Add un-boarded open issues") compares open and recently-closed issues
+  against the board and adds whatever is missing, whatever the reason it went
+  missing; closed cards it recovers are moved to Done. Its look-back reaches
+  to the last SUCCESSFUL sweep, so an outage widens the next sweep rather
+  than expiring an unrecovered card. Dispatch it by hand with
+  `closed_lookback_days` to backfill after a rename or a long gap.
+- **The sweep's own listing retries once on a rate limit.** The board listing
+  is metered against the same bucket, and every measured failure of it
+  refilled 6–12.5 minutes later (#2129, #2134). So when the FAILED REQUEST's
+  own headers state a limit, the step waits for the reset those headers name
+  (plus a 5 s margin, capped at `RETRY_WAIT_CAP_SECONDS`, 15 min) and tries
+  exactly once more. It reads the wait from the request trace, never from
+  `/rate_limit` — that endpoint does not report the bucket the request was
+  metered against, and the §3.3 note about secondary limits applies. A
+  failure that states no limit (bad credentials, an unreadable project) is
+  not retried; a second limit after the reset is not either — the run fails
+  with the request's status, headers and message in the log, and the next
+  sweep tries again.
+
+A red sweep therefore means one of three things, and the log's diagnostic
+group says which: the limit outlasted one retry, the wait exceeded the cap,
+or the failure was never a limit.
+
 ---
 
 ## 9. Tooling reference

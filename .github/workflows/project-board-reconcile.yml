@@ -28,6 +28,12 @@ name: Reconcile @vaipakam-labs board
 # — adding an item already on the board returns the existing item — so a
 # spurious add costs a request and changes nothing. That asymmetry is why
 # the guards below fail toward re-adding rather than toward skipping.
+#
+# The sweep's own board LISTING draws on the same bucket, and for a while
+# it failed the same way, at the top of the job, before adding anything.
+# Its diagnostic (#2129) settled that the bucket refills minutes after
+# each failure, so the listing now waits for the reset the failed request
+# itself names and tries ONCE more — see the note on that step.
 
 on:
   schedule:
@@ -84,7 +90,26 @@ jobs:
       # workflow guards against — a lookup that fails quietly and leaves a
       # green run behind.
       WORKFLOW_REF: ${{ github.workflow_ref }}
+      # How long the board listing is willing to stand still for a rate
+      # limit before trying ONCE more. The bucket the listing is metered
+      # against refilled 6–12.5 minutes after each measured failure (the
+      # 04:42:58Z and 10:55:55Z runs of 2026-09-12 — #2129, #2134), so a
+      # quarter of an hour covers every sample with margin. A wait beyond this is
+      # reported and NOT taken: a sweep is six-hourly, and a run parked for
+      # an hour would be a cheaper way of hiding the same problem.
+      RETRY_WAIT_CAP_SECONDS: '900'
+      # Slack added to the reset the failed request named, so the retry does
+      # not land on the boundary second and lose the coin toss.
+      RETRY_MARGIN_SECONDS: '5'
     steps:
+      # Only for the trace parser the listing step runs — a sparse checkout
+      # of one directory, no credentials persisted. Everything else in this
+      # job talks to the API and needs no working tree.
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          sparse-checkout: .github/scripts
+          persist-credentials: false
+
       - name: List issues the board should hold
         env:
           # GITHUB_TOKEN, NOT THE PAT — a DIFFERENT IDENTITY, and that is
@@ -242,13 +267,66 @@ jobs:
           # `GH_DEBUG=api` is how gh surfaces those headers, so the call is
           # made under it with the trace kept in a file. On success the file
           # is discarded UNREAD — the board listing never reaches the log.
+          list_board() {
+            GH_DEBUG=api gh project item-list "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" \
+              --format json --limit "$LIST_LIMIT" > board.json 2> list-trace.txt
+          }
           set +e
-          GH_DEBUG=api gh project item-list "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" \
-            --format json --limit "$LIST_LIMIT" > board.json 2> list-trace.txt
+          list_board
           rc=$?
           set -e
+
+          # ONE RETRY, KEYED ON THE FAILED REQUEST'S OWN RESET. The diagnostic
+          # above settled what the failures were (#2129 → #2134): the bucket
+          # is not drained for hours, it is exhausted at the instant the sweep
+          # runs and refills minutes later — every measured reset fell 6–12.5
+          # minutes after the failure. A sweep that gave up at that instant
+          # and reported the board incomplete until the next six-hourly run
+          # was choosing the expensive outcome over a short wait.
+          #
+          # The wait comes from the trace, not from `/rate_limit` — the whole
+          # point of the diagnostic is that the endpoint does not report the
+          # bucket the request is metered against. The parser is
+          # `.github/scripts/gh-trace-ratelimit-wait.sh`: it says whether the
+          # LAST response was a limit and how long until the reset it named.
+          # A failure that is not a limit (bad credentials, a project the
+          # token cannot see) is not retried — waiting would not change it,
+          # and the diagnostic below says what it was.
+          #
+          # ONCE, not until it works. A second failure after the reset means
+          # something else is draining the bucket faster than it refills,
+          # and looping on that is how a six-hourly sweep becomes a runner
+          # parked for an hour. Bounded by RETRY_WAIT_CAP_SECONDS as well: a
+          # reset further away than that is reported and not waited for.
+          first_attempt_note=''
+          if [ "$rc" -ne 0 ]; then
+            set +e
+            verdict=$(bash .github/scripts/gh-trace-ratelimit-wait.sh list-trace.txt)
+            verdict_rc=$?
+            set -e
+            if [ "$verdict_rc" -eq 0 ]; then
+              wait_s=${verdict%%	*}
+              reason=${verdict#*	}
+              if [ "$wait_s" -le "$RETRY_WAIT_CAP_SECONDS" ]; then
+                wait_s=$(( wait_s + RETRY_MARGIN_SECONDS ))
+                echo "::warning::board listing was rate limited ($reason); waiting ${wait_s}s for the reset, then trying once more"
+                first_attempt_note="first attempt was rate limited ($reason); this is the retry after a ${wait_s}s wait"
+                sleep "$wait_s"
+                set +e
+                list_board
+                rc=$?
+                set -e
+                [ "$rc" -ne 0 ] || echo "board listing succeeded on the retry"
+              else
+                first_attempt_note="rate limited ($reason) — the wait would be ${wait_s}s, over RETRY_WAIT_CAP_SECONDS=${RETRY_WAIT_CAP_SECONDS}, so NOT retried"
+                echo "::error::$first_attempt_note"
+              fi
+            fi
+          fi
+
           if [ "$rc" -ne 0 ]; then
             echo "::group::gh project item-list — status, rate-limit headers, error message"
+            [ -z "$first_attempt_note" ] || echo "($first_attempt_note)"
             # AN ALLOW-LIST, NOT A BOUND ON HOW MUCH TO PRINT. Three review
             # rounds went into tuning that bound — prefix, then tail, then its
             # size — and the question has no answer, because the trace carries
