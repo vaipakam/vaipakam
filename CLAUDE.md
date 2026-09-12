@@ -1018,7 +1018,7 @@ Rules:
 ## Executing forge
 
 - When ever running forge build, forge script or forge test, run them in high priority
-- [Run forge build / forge test in high priority](feedback_forge_high_priority.md) — prefix every forge build/test/script with `nice -n -10 ionice -c 2 -n 0`; viaIR runs are 5–15 min and 8 GB RSS, low priority causes 2–3× slowdowns under parallel desktop load
+- Prefix every forge build/test/script with `nice -n -10 ionice -c 2 -n 0`; viaIR runs are 5–15 min and 8 GB RSS, and low priority causes 2–3× slowdowns under parallel desktop load. (This line used to link a `feedback_forge_high_priority.md` that is not in the repository — the rule is the whole content, so it is stated here instead.)
 
 ### Live testnet review is part of definition-of-done (user directive 2026-07-05)
 

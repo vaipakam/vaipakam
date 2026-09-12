@@ -69,7 +69,7 @@ Three deploy scripts after the 2026-05-10 modernization sweep
 | Phase | Confirm flag | Description |
 |---|---|---|
 | `preflight` | — | Read-only. RPC chainId, deployer balance, env-var presence, WETH-pull validation on bnb/polygon. Always run first. |
-| `contracts` | `--confirm-i-have-multisig-ready` | Deploys Diamond + Timelock + VPFI lane + Reward OApp. Step `[1b]` runs `predeploy-check.sh` right after the `forge build` — the deploy-sanity forge suite (`test/deploy/*`: facet EIP-170 sizes + selector coverage + selector-collision check), deploy shell-script lint, and committed-ABI sync — and aborts before any broadcast if it fails (the mainnet script runs the full regression too, via `--full`). Auto-steps: master-flag flip (testnet only). (There is no per-adapter `setRateLimits` step any more — the buy adapter is removed, #687-A; per-lane CCIP rate limits live on the VPFI TokenPool and are set through the bounds-checked `VpfiPoolRateGovernor` in the `ccip-wire` phase.) Refuses to re-run if `addresses.json` already has a `diamond` key — pass `--fresh` (testnet) or `--fresh --confirm-purging-prior-mainnet-deploy` (mainnet) to archive prior state under `.archive/<ISO-8601>/` and redeploy. **Bump `REWARD_VERSION` in `.env` before `--fresh` re-runs** — the Reward OApp proxy is CREATE2-addressed off `REWARD_VERSION`. |
+| `contracts` | `--confirm-i-have-multisig-ready` | Deploys Diamond + Timelock + VPFI lane + Reward OApp. Step `[1b]` runs `predeploy-check.sh` right after the `forge build` — the deploy-sanity forge suite (`test/deploy/*`: facet EIP-170 sizes + selector coverage + selector-collision check), deploy shell-script lint, and committed-ABI sync — and aborts before any broadcast if it fails (the mainnet script runs the full regression too, via `--full`). Auto-steps: master-flag flip (testnet only). (There is no per-adapter `setRateLimits` step any more — the buy adapter is removed, #687-A; per-lane CCIP rate limits live on the VPFI TokenPool and are set through the bounds-checked `VpfiPoolRateGovernor` in the `ccip-wire` phase.) Refuses to re-run if `addresses.json` already has a `diamond` key — pass `--fresh` (testnet) or `--fresh --confirm-purging-prior-mainnet-deploy` (mainnet) to archive prior state under `.archive/<ISO-8601>/` and redeploy. |
 | `ccip-wire` | — | Runs `ConfigureCcip.s.sol` — CCIP lane/channel wiring: chain selectors, remote messengers, channel peers, per-lane VPFI TokenPool rate limits (via the bounds-checked `VpfiPoolRateGovernor`), guardian wiring, `TokenAdminRegistry` CCT registration. Run only after the `contracts` phase has landed on EVERY chain in the topology (it reads each chain's `addresses.json`). Requires `CCIP_LANE_CHAIN_IDS` + `CCIP_GUARDIAN` (refuses to run without them; #855). No DVN policy to review — CCIP's DON/RMN security is uniform for every integrator, so the LayerZero-era `--confirm-dvn-policy-reviewed` gate is gone. |
 | `swap-adapters` | — | Phase 7a aggregator adapters via `DeploySwapAdapters.s.sol`. Requires `INITIAL_SETTLERS` env var (current 0x Settler set). **Required before routing value (conformance-review L-i, decided 2026-07-11):** at least one swap adapter MUST be registered here. A forced close / liquidation on a deployment with **zero** registered adapters reverts `NoSwapAdaptersConfigured` — it does NOT silently fall through to the in-kind collateral fallback (that per-loan fallback engages only after configured routes are actually attempted and fail; spec `ProjectDetailsREADME §7`). `verify` does not check the adapter set, so confirm it is non-empty before `handover`, or every liquidation on that chain will revert. |
 | `configure` | — | `DiamondConfigSpell.s.sol` — composes ConfigureVPFIToken + ConfigureOracle + ConfigureRewardReporter + ConfigureNFTImageURIs into one operator-action. Requires per-chain Chainlink feed addresses + WETH. **ConfigureVPFIBuy is NOT in the launch path (#884)** — the VPFI discount peg stays unset. To opt in **through a wrapper**, pass `--configure-vpfi-peg`; the wrappers deliberately force the `CONFIGURE_VPFI_PEG` env var off, so exporting it does nothing there. The env var is for invoking `DiamondConfigSpell` directly. |
@@ -171,16 +171,13 @@ mainnet without preflight discipline:
   patch. Until that lands: source `nvm` and `nvm use 20` (or 25)
   BEFORE running `deploy-chain.sh`. Confirm with `which node && node
   --version` ≥ 20.0.0.
-- **`REWARD_VERSION` collision recovery.** Step `[5]` deploys the
-  Reward OApp via CREATE2 with a salt derived from `REWARD_VERSION`.
-  If the same `(deployer, salt, init code)` tuple ever landed code
-  on this chain (a prior rehearsal that completed step `[5]` with the
-  same version), the second attempt reverts `Create2DeployFailed
-  (CreateCollision)`. Recovery: bump the `REWARD_VERSION` env var
-  (e.g. `v1-rehearsal-2026-05-06` → `v2-rehearsal-2026-05-06`), then
-  `deploy-chain.sh <slug> --resume` to skip the already-completed
-  steps and re-run from `[5]`. The new salt yields a fresh CREATE2
-  address.
+- **`REWARD_VERSION` / CREATE2 collision recovery — retired (T-068).**
+  This bullet used to describe bumping a CREATE2 salt when a rehearsal
+  had already landed the Reward OApp. That deploy path is gone: the
+  reward messenger is deployed with an ordinary `new` by
+  `DeployCrosschain.s.sol`, no script reads `REWARD_VERSION`, and there
+  is no salt to bump. See the dead-section banner further down and
+  `contracts/.env.example`.
 - **drpc.live throttling on Base Sepolia.** Sustained high-frequency
   reads during forge's broadcast prep phase silently throttle on
   `lb.drpc.live/base-sepolia/...`, causing the deploy to hang for
@@ -195,14 +192,6 @@ mainnet without preflight discipline:
   stop being crawled by the watcher and stop appearing in the
   frontend's chain picker. NOT auto-updated by deploy scripts —
   adding/removing a chain is a one-line operator edit.
-- **CREATE2 OApp address is the same across chains for the same
-  `REWARD_VERSION`.** A bumped version on Base only matters for
-  Base; the same bumped version on Arb and OP yields a different
-  CREATE2 address on each chain only because each chain has its
-  own state. If a prior rehearsal landed a Reward OApp at the v1
-  salt on multiple chains, ALL of them need the same version bump
-  in lockstep — otherwise the cross-chain peer wiring (Reward
-  mesh) won't match the deployed addresses.
 - **Rate-limit verification gate (Item 1, 2026-05-06).**
   *(Historical — the BuyAdapter and its `getRateLimits()` view were
   removed with the on-chain issuer sale, #687-A.)* The production-
@@ -2677,6 +2666,10 @@ those fixes are described in chronological order in
 | Exit gate | `DeployerZeroRolesTest` 10/10 ✓ (Sepolia fork) |
 
 ### Cross-chain CREATE2 parity — confirmed
+
+> *LayerZero-era rehearsal record.* The property below no longer holds and is
+> not meant to: since T-068 the reward messenger is deployed with an ordinary
+> `new` and each chain's address is its own. Kept as what the rehearsal saw.
 
 The Reward OApp landed at the **same address**
 `0xB112C8b7832Ca3b3A8f1D586188424d72B79bDf9` on all three
