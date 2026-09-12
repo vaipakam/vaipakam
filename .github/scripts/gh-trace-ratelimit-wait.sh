@@ -104,8 +104,11 @@ analyse() { # analyse <trace> <now-epoch>  -> prints "<seconds>\t<reason>", exit
   remaining=$(printf '%s\n' "$last" | last_header 'x-ratelimit-remaining')
   reset=$(printf '%s\n' "$last" | last_header 'x-ratelimit-reset')
   retry=$(printf '%s\n' "$last" | last_header 'retry-after')
+  # EVERY message field of the last response, not the last one alone: a
+  # GraphQL body can carry several errors, and evidence of a secondary
+  # limit in any of them is evidence (#2149 r17).
   message=$(printf '%s\n' "$last" \
-    | grep -aoE '"message"[[:space:]]*:[[:space:]]*"[^"]{0,300}"' | tail -n 1 || true)
+    | grep -aoE '"message"[[:space:]]*:[[:space:]]*"[^"]{0,300}"' || true)
 
   # THE ONE SHAPE. This script recognises exactly the shape the board listing
   # has been observed to fail with — twice, on 2026-09-12, both times the
@@ -157,7 +160,10 @@ analyse() { # analyse <trace> <now-epoch>  -> prints "<seconds>\t<reason>", exit
   # exceeded for user ID …" from GraphQL, "API rate limit exceeded for …"
   # from REST) — not any body that mentions a limit. A body saying
   # "secondary rate limit" beside a spent bucket is the secondary shape,
-  # which is a named miss whatever headers accompany it (#2149 r16).
+  # which is a named miss whatever headers accompany it (#2149 r16) — and
+  # that word is looked for in EVERY message field, so a multi-error body
+  # that lists the secondary refusal before the primary one is still the
+  # secondary shape (#2149 r17).
   printf '%s' "$message" | grep -qiE 'API rate limit (already )?exceeded' || return 1
   printf '%s' "$message" | grep -qi 'secondary' && return 1
 
@@ -286,6 +292,16 @@ selftest() {
 < X-Ratelimit-Remaining: 0
 < X-Ratelimit-Reset: 1789188527
 {"message":"You have exceeded a secondary rate limit. Please wait a few minutes before you try again."}' \
+    1789188167 1
+  # A multi-error body that lists the secondary refusal BEFORE the primary
+  # message (#2149 r17): the secondary evidence is anywhere in the response,
+  # not only in its last message field.
+  expect "a secondary message before a primary one, beside a spent bucket, is still a miss" \
+'< HTTP/2.0 200 OK
+< Retry-After: 600
+< X-Ratelimit-Remaining: 0
+< X-Ratelimit-Reset: 1789188527
+{"errors":[{"message":"You have exceeded a secondary rate limit. Please wait a few minutes before you try again."},{"message":"API rate limit already exceeded for user ID 275282153."}]}' \
     1789188167 1
   expect "a secondary body with no headers is a named miss" \
 '< HTTP/2.0 403 Forbidden
