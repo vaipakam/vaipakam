@@ -892,9 +892,10 @@ were right.
 - The diamond holds the custody VPFI until terminal; no intermediate
   transfer. A leaked `vpfiHeld` (non-zero on a Settled loan) is a bug.
 
-Full detail in [`docs/TokenomicsTechSpec.md`](docs/TokenomicsTechSpec.md)
+Full detail in
+[`docs/FunctionalSpecs/TokenomicsTechSpec.md`](docs/FunctionalSpecs/TokenomicsTechSpec.md)
 §5.2b and the Phase 5 section of
-[`docs/ReleaseNotes-2026-04-23-to-24.md`](docs/ReleaseNotes-2026-04-23-to-24.md).
+[`docs/ReleaseNotes/ReleaseNotes-2026-04-23-to-24.md`](docs/ReleaseNotes/ReleaseNotes-2026-04-23-to-24.md).
 
 ## VPFI rewards/recycling copy rules — release-gate checklist (RL-6)
 

@@ -2401,7 +2401,7 @@ VPFI token deployment begins in Phase 1 through the token contract and minting p
   - The deducted VPFI is held in protocol custody for the life of the loan rather than sent immediately to Treasury.
   - On proper close through normal repayment, borrower preclose, or refinance, the borrower earns an effective-tier rebate based on the current Base tier or active mirror cache at settlement. The rebate is paid in VPFI alongside the ordinary borrower claim.
   - On default or HF-based liquidation, the rebate is forfeited: for a matched loan the matcher's configured share is paid to the matcher first and the net becomes Treasury's share, and for an unmatched loan the full held VPFI becomes Treasury's share.
-  - The borrower-side acquisition and rebate flow is defined in `docs/TokenomicsTechSpec.md`.
+  - The borrower-side acquisition and rebate flow is defined in `docs/FunctionalSpecs/TokenomicsTechSpec.md`.
 
 - **VPFI Vault Utility Flow:** For the borrower-side and lender-side discount paths:
   - public VPFI pages should be no-wallet marketing / education surfaces for VPFI utility, explaining the protocol token, tiered fee discounts, and how to deposit externally acquired VPFI into the connected app
