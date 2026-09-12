@@ -79,7 +79,6 @@ contract RewardHorizonSweepFacet is
         uint256 fresh;
         uint256 recycled;
         uint256 armedFresh;
-        uint256 armedFreshPaid;
     }
 
     function sweepExpiredInteractionRewards(uint256[] calldata entryIds)
@@ -168,22 +167,19 @@ contract RewardHorizonSweepFacet is
             (
                 LibInteractionRewards.EntrySplit memory ex,
                 uint256 freshCredited,
-                uint256 armedDelivered
+                /* armedDelivered — the engine's per-day attribution; the
+                   allowance depletes by the fresh credited (#1566 closure 2) */
             ) = LibInteractionRewards.sweepExpiredEntry(
                 entryIds[i], headroom, allowance, freshRecoverable
             );
             headroom -= freshCredited;
-            // All-or-nothing per entry, so a credited entry consumed exactly
-            // its armed share of the allowance.
-            // Codex #1699 r5 P2 — deplete by what was DELIVERED-funded, not
-            // by the raw commitment. On a mirror the two differ whenever the
-            // D1 group cap bit, and charging the raw figure here would retire
-            // allowance for value the entry never received.
-            if (freshCredited != 0 && armedDelivered != 0) {
-                allowance = allowance > armedDelivered
-                    ? allowance - armedDelivered
-                    : 0;
-            }
+            // #1566 closure 2 — the allowance depletes by the FRESH credited,
+            // legacy and armed alike: that is exactly what the reward
+            // operation charges against the delivered ledger below. (Codex
+            // #1699 r5 P2 had it deplete by the armed share the engine
+            // attributed — right while only armed fresh was charged; the
+            // credited figure is already the cap-trimmed amount that moves.)
+            allowance = allowance > freshCredited ? allowance - freshCredited : 0;
             t.fresh += freshCredited;
             t.recycled += ex.recycled;
             t.armedFresh += ex.armedFresh;
@@ -204,7 +200,6 @@ contract RewardHorizonSweepFacet is
             // includes the truncated remainder that moved no tokens. Charging
             // it would shrink the bound for value never paid out of a
             // delivery — the defect `interactionPoolPaidOut` was rejected for.
-            if (freshCredited != 0) t.armedFreshPaid += armedDelivered;
             unchecked { ++i; }
         }
         // Codex #1699 r10 P1 — a CAPPED-ONLY terminal chunk still has a
@@ -233,15 +228,16 @@ contract RewardHorizonSweepFacet is
         // in the outstanding-commitment sum forever (same rule as the claim
         // and forfeit paths).
         LibInteractionRewards.consumeArmedFresh(t.armedFresh);
-        // #1434 P1-b — mirror-only: Base funds its armed days from the 69M cap
-        // directly and receives no remittances, so it has no delivered bound
-        // to charge (and charging one would read zero and brick it).
-        if (t.armedFreshPaid != 0 && LibVaipakam.isMirrorRewardChain(s)) {
-            s.rewardBudgetArmedFreshPaid += t.armedFreshPaid;
-        }
-
+        // #1566 closure 2 — the paid ledger is charged by the reward
+        // operation below with the FRESH total that expires into the bucket,
+        // legacy and armed days alike, and the credit is refused if that
+        // exceeds the remaining delivered headroom. The armed-only,
+        // mirror-only `+= t.armedFreshPaid` that stood here charged by
+        // vintage, and the accumulator that fed it is gone with it; the
+        // per-entry `allowance` decrement above is the only consumer of
+        // `armedDelivered` now.
         if (t.fresh > 0) {
-            LibVpfiRecycle.credit(
+            LibVpfiRecycle.absorbRewardFresh(
                 LibVpfiRecycle.RecycleSource.ExpiredReward,
                 0,
                 t.fresh

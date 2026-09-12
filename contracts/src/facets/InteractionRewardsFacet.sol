@@ -111,7 +111,11 @@ contract InteractionRewardsFacet is
             uint256 freshCredited,
             uint256 recycledReleased,
             uint256 armedOwed,
-            uint256 armedDelivered
+            /* armedDelivered — #1566 closure 2: the engine still attributes
+               it per day for the allowance it consumes inside the sweep, but
+               the paid ledger is charged by {LibVpfiRecycle.absorbRewardFresh}
+               with the fresh share that actually moves, so this facet has no
+               use for it */
         ) = LibInteractionRewards.sweepForfeitedByLoanId(
             loanId, headroom, allowance, freshRecoverable
         );
@@ -128,18 +132,18 @@ contract InteractionRewardsFacet is
         if (armedOwed != 0) {
             LibInteractionRewards.consumeArmedFresh(armedOwed);
         }
-        // #1434 P1-b — charge the mirror's delivered bound with the armed
-        // fresh that actually moved, which the engine attributed per day.
-        if (armedDelivered != 0 && LibVaipakam.isMirrorRewardChain(s)) {
-            s.rewardBudgetArmedFreshPaid += armedDelivered;
-        }
-
+        // #1566 closure 2 — the paid ledger is charged by the reward
+        // operation below with the FRESH share that actually moves into the
+        // bucket, whatever its vintage, and refused beyond the remaining
+        // delivered headroom. The armed-only, mirror-only
+        // `+= armedDelivered` that stood here charged by vintage.
+        //
         // Governor PR-3a/PR-3c (#1217 §4) — forfeit source split: the
         // FRESH share stays in Diamond custody and credits the recycle
         // bucket (genuine absorption); the RECYCLED share never left the
         // bucket, so its commitment releases with ZERO new credit.
         if (freshCredited > 0) {
-            LibVpfiRecycle.credit(
+            LibVpfiRecycle.absorbRewardFresh(
                 LibVpfiRecycle.RecycleSource.ForfeitedReward,
                 loanId,
                 freshCredited

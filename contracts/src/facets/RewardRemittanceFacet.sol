@@ -897,8 +897,16 @@ contract RewardRemittanceFacet is
         // `rewardBudgetFreshUncounted`. The two always sum to `freshLooking`,
         // so an operator can reconcile a chain's counted funding against what
         // Base actually sent without re-deriving anything.
-        uint256 counted =
-            _armedAttributableDelivery(s, dayIds) ? freshShare : 0;
+        // #1566 closure 2 — the received side is VINTAGE-BLIND and
+        // FRESH-ONLY: the authenticated fresh component of a delivery is
+        // credited whatever days it funds, because the paid side now charges
+        // legacy and armed outflows alike at the chokepoints, and a ledger
+        // whose two sides count different nouns is the defect closure 2
+        // exists to remove. Test 2 (armed-attributable days) is retired; test
+        // 1 (composition known) is unchanged — an old-wire packet still
+        // arrives with `freshShare = 0` and lands whole in `uncounted`, which
+        // the cutover epoch (closure 2, second PR) reconciles.
+        uint256 counted = freshShare;
         if (counted != 0) s.rewardBudgetArmedFreshReceived += counted;
         if (freshLooking > counted) {
             s.rewardBudgetFreshUncounted += freshLooking - counted;
@@ -1270,13 +1278,14 @@ contract RewardRemittanceFacet is
         s.receivedRemits[_receiptKey(era, remitId)].classification =
             provisional ? 2 : 0;
 
-        uint256 armedFrom = s.governorCommitArmedFromDay;
-        if (armedFrom != 0 && dayId >= armedFrom) {
-            s.rewardBudgetArmedFreshReceived += amount;
-            dc.armedFreshCounted += SafeCast.toUint128(amount);
-        } else {
-            s.rewardBudgetFreshUncounted += amount;
-        }
+        // #1566 closure 2 — a compensation frame carries no recycled share
+        // (Base dispatches fresh budget for a zeroed day), so `amount` IS its
+        // authenticated fresh component, and it is credited whatever the
+        // day's vintage. `armedFreshCounted` records exactly what this credit
+        // added, which is exactly what a later demotion removes: the two are
+        // inverses by construction rather than by a matching day test.
+        s.rewardBudgetArmedFreshReceived += amount;
+        dc.armedFreshCounted += SafeCast.toUint128(amount);
         emit CompensationCredited(
             dayId, lenderShare18, borrowerShare18, provisional, era
         );
@@ -1387,25 +1396,15 @@ contract RewardRemittanceFacet is
             s.receivedRemits[
                 _receiptKey(dc.provisionalEra, dc.remitId)
             ].classification = 0;
-            // #1634 r3 — reclassify against the NOW-installed D*: the same
-            // core call that delivered this confirming broadcast installs
-            // `armedFromDay` BEFORE this hook runs, so a compensation that
-            // overtook the arming broadcast (credited while the chain was
-            // still unarmed, counted as zero) moves to the armed-fresh
-            // ledger here — otherwise the delivered-fresh bound would
-            // defer this day's claims despite their backing having landed.
-            uint256 armedFrom = s.governorCommitArmedFromDay;
-            if (
-                dc.armedFreshCounted == 0 && armedFrom != 0
-                    && dayId >= armedFrom
-            ) {
-                uint256 credited = dc.creditedAmount;
-                s.rewardBudgetArmedFreshReceived += credited;
-                uint256 unc = s.rewardBudgetFreshUncounted;
-                s.rewardBudgetFreshUncounted =
-                    unc > credited ? unc - credited : 0;
-                dc.armedFreshCounted = SafeCast.toUint128(credited);
-            }
+            // #1566 closure 2 — confirmation PROMOTES NOTHING. The #1634 r3
+            // reclassification that stood here moved a credit from
+            // `uncounted` into `received` when the day turned out to be
+            // armed; under the vintage-blind rule the provisional credit was
+            // counted in full at ingress, so there is nothing left to
+            // promote, and a promotion that re-added it would manufacture
+            // headroom no delivery backs. Confirmation clears the
+            // provisional flag and its receipt; demotion alone reverses the
+            // original credit, by exactly `armedFreshCounted`.
             emit CompensationConfirmed(dayId, baseDeployment);
             return;
         }
@@ -1450,48 +1449,11 @@ contract RewardRemittanceFacet is
 
 
 
-    /**
-     * @dev #1434 P1-a — may this delivery's fresh component be counted as
-     *      ARMED funding on this chain?
-     *
-     *      True only when the chain has installed `D*` AND every day the
-     *      delivery covers is at or after it. Both halves are load-bearing:
-     *
-     *        - Unarmed chain ⇒ false. There is no armed regime to attribute
-     *          funding to yet, so nothing can be armed-attributable.
-     *        - ANY pre-`D*` day ⇒ false for the WHOLE delivery. `_planDay`
-     *          decides armedness per day and the remit carries one summed
-     *          amount for its whole day set, so a batch that straddles the
-     *          cutover cannot be apportioned from what arrives here. It is
-     *          refused entirely rather than split on a guess — under-stating
-     *          this chain's funding, which defers, instead of over-stating
-     *          it, which pays.
-     *
-     *      An empty day set is likewise false: a delivery that names no days
-     *      cannot be shown to fund armed ones.
-     *
-     *      A delivery for armed days that OVERTAKES the arming broadcast is
-     *      therefore uncounted too — the chain is still unarmed when it lands
-     *      and nothing re-attributes it afterwards. That ordering is not
-     *      guaranteed by CCIP, only made unlikely by the schedule (`D*` is a
-     *      future day at arming, and its funding cannot be planned until the
-     *      day finalizes). It is a real conservative gap, not an impossible
-     *      one, and `rewardBudgetFreshUncounted` is what surfaces it.
-     */
-    function _armedAttributableDelivery(
-        LibVaipakam.Storage storage s,
-        uint256[] calldata dayIds
-    ) private view returns (bool) {
-        uint256 armedFrom = s.governorCommitArmedFromDay;
-        if (armedFrom == 0) return false;
-        uint256 n = dayIds.length;
-        if (n == 0) return false;
-        for (uint256 i = 0; i < n; ) {
-            if (dayIds[i] < armedFrom) return false;
-            unchecked { ++i; }
-        }
-        return true;
-    }
+    // #1566 closure 2 — `_armedAttributableDelivery` (#1434 P1-a) was
+    // retired here: the received side no longer keys on whether every day a
+    // delivery covers is at or after `D*`. Its conservative gap (a delivery
+    // overtaking the arming broadcast counted as zero) no longer exists,
+    // because vintage no longer decides what is counted.
 
     /// @dev r4 — composite receipt key: remit ids are per-deployment.
     function _receiptKey(

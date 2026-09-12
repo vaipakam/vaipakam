@@ -317,7 +317,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
         uint256 needLiveOnly = _mut().userClaimFundingNeedRaw(alice);
         assertGt(needLiveOnly, earmark, "fixture: the live entry contributes");
         uint256 perEntry = needLiveOnly - earmark;
-        (, uint256 userLegsLive, uint256 treasuryLegsLive) =
+        (, uint256 userLegsLive, uint256 treasuryLegsLive, ) =
             _lens().getUserArmedFreshNeedWithLegs(alice);
 
         // An identical sibling, FORFEITED. Its value still has to be funded —
@@ -330,7 +330,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
         // leg. The combined total alone is unchanged if the preview ignored
         // the `forfeited` bit and priced both siblings as live `userLegs`, so
         // the arithmetic could be satisfied by a classification regression.
-        (, uint256 userLegsAfter, uint256 treasuryLegsAfter) =
+        (, uint256 userLegsAfter, uint256 treasuryLegsAfter, ) =
             _lens().getUserArmedFreshNeedWithLegs(alice);
         assertEq(
             treasuryLegsLive,
@@ -536,13 +536,14 @@ contract GovernorDualAccumulatorTest is SetupTest {
         );
     }
 
-    /// @dev #1434 P1-b (Codex #1699 r5 P2, reshaped by r18) — the mirror
-    ///      bound is charged by the ARMED fresh that actually moved, never
-    ///      by the unarmed (legacy) fresh. Under the engine the two legs
-    ///      settle in separate chunks, so the property is now directly
-    ///      observable per chunk instead of inferred from a pro-rata of a
-    ///      clamped aggregate: the legacy chunk charges NOTHING, and the
-    ///      armed chunk charges exactly its own credited fresh.
+    /// @dev #1566 closure 2 (re-pointing #1434 P1-b / Codex #1699 r5 P2) —
+    ///      the mirror bound is charged by the FRESH that actually moved,
+    ///      legacy and armed alike. The P1-b version pinned "the legacy chunk
+    ///      charges NOTHING"; that was the closure-2 defect (a legacy
+    ///      forfeit spent delivered backing without being charged). Under
+    ///      the engine the two legs still settle in separate chunks, so the
+    ///      property stays observable per chunk: each charges exactly its
+    ///      own credited fresh (no recycled in this fixture's legacy leg).
     function testP1bForfeitSweepChargesArmedPortionOfWhatItSpent() public {
         // Arm + finalize while still CANONICAL — finalization is Base-only.
         (uint256 floor5, uint256 recycled5) = _armAndFinalize(5, 700 ether);
@@ -561,15 +562,16 @@ contract GovernorDualAccumulatorTest is SetupTest {
         _mut().setLoanActiveLenderEntryId(77, id);
         _mut().setArmedFreshLedgerRaw(1_000_000 ether, 0);
 
-        // Chunk 1: the LEGACY leg settles and stamps the cursor. Pre-arming
-        // fresh was never delivered, so it must charge the bound NOTHING.
+        // Chunk 1: the LEGACY leg settles and stamps the cursor, and charges
+        // the bound by exactly what it credited (#1566 closure 2).
         vm.prank(makeAddr("keeper"));
         uint256 legacySwept = _facet().sweepForfeitedInteractionRewards(77);
         assertGt(legacySwept, 0, "LIVE: the legacy leg settles");
+        uint256 paidAfterLegacy = _mut().getArmedFreshPaidRaw();
         assertEq(
-            _mut().getArmedFreshPaidRaw(),
-            0,
-            "the unarmed leg never charges the delivered bound"
+            paidAfterLegacy,
+            legacySwept,
+            "the legacy leg charges the delivered bound by what it credited"
         );
         assertFalse(
             _mut().getRewardEntryProcessedRaw(id),
@@ -581,10 +583,10 @@ contract GovernorDualAccumulatorTest is SetupTest {
         vm.prank(makeAddr("keeper"));
         uint256 armedSwept = _facet().sweepForfeitedInteractionRewards(77);
         assertGt(armedSwept, 0, "LIVE: the armed day settles");
-        uint256 paid = _mut().getArmedFreshPaidRaw();
-        assertGt(paid, 0, "the armed chunk charges the bound");
+        uint256 armedCharge = _mut().getArmedFreshPaidRaw() - paidAfterLegacy;
+        assertGt(armedCharge, 0, "the armed chunk charges the bound");
         assertLe(
-            paid,
+            armedCharge,
             armedSwept,
             "and by no more than what that chunk actually moved"
         );
@@ -704,12 +706,15 @@ contract GovernorDualAccumulatorTest is SetupTest {
         _mut().setArmedFreshLedgerRaw(1_000_000 ether, 0);
 
         // Measure the UNCLAMPED armed charge first (both chunks, abundant).
+        // #1566 closure 2 — the legacy chunk charges the bound too now, so
+        // the ARMED chunk's nominal charge is the delta across it.
         uint256 snap = vm.snapshotState();
         vm.prank(makeAddr("keeper"));
         _facet().sweepForfeitedInteractionRewards(77);
+        uint256 paidLegacyOnly = _mut().getArmedFreshPaidRaw();
         vm.prank(makeAddr("keeper"));
         uint256 full = _facet().sweepForfeitedInteractionRewards(77);
-        uint256 nominalArmed = _mut().getArmedFreshPaidRaw();
+        uint256 nominalArmed = _mut().getArmedFreshPaidRaw() - paidLegacyOnly;
         vm.revertToState(snap);
         assertGt(full, 0, "LIVE: the armed day genuinely sweeps");
         assertGt(nominalArmed, 0, "LIVE: and it carries an armed charge");
@@ -725,12 +730,13 @@ contract GovernorDualAccumulatorTest is SetupTest {
 
         // The armed chunk still settles — the cap trim is terminal, not a
         // wedge — and charges the bound by the truncated figure only.
+        uint256 paidBefore = _mut().getArmedFreshPaidRaw();
         vm.prank(makeAddr("keeper"));
         uint256 swept = _facet().sweepForfeitedInteractionRewards(77);
         assertGt(swept, 0, "a cap-truncated forfeit still settles");
-        uint256 paid = _mut().getArmedFreshPaidRaw();
+        uint256 armedCharge = _mut().getArmedFreshPaidRaw() - paidBefore;
         assertLt(
-            paid,
+            armedCharge,
             nominalArmed,
             "and the bound is charged the CREDITED figure, not the nominal"
         );

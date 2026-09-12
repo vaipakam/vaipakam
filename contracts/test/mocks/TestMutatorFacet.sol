@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {LibEntitlement} from "../../src/libraries/LibEntitlement.sol";
 import {EncumbranceMutateFacet} from "../../src/facets/EncumbranceMutateFacet.sol";
 import {LibEncumbrance} from "../../src/libraries/LibEncumbrance.sol";
@@ -983,7 +984,54 @@ contract TestMutatorFacet {
         uint256 refId,
         uint256 amount
     ) external {
-        LibVpfiRecycle.credit(source, refId, amount);
+        // #1566 closure 2 — the generic tagged credit no longer exists, and a
+        // test-only door into the bucket would be exactly the bypass the
+        // closure removes. This mutator therefore DISPATCHES to the real
+        // doors: reward classes go through the bounding reward operation
+        // (charged against the delivered headroom like any forfeit or
+        // expiry), and each proven non-reward inflow goes through its own
+        // delta-checked operation — the tokens already sit on the Diamond in
+        // these fixtures, so the pre-transfer snapshot is the balance less
+        // the amount. Any other class has no door and reverts here, which is
+        // the point.
+        if (
+            source == LibVpfiRecycle.RecycleSource.ForfeitedReward
+                || source == LibVpfiRecycle.RecycleSource.ExpiredReward
+        ) {
+            LibVpfiRecycle.absorbRewardFresh(source, refId, amount);
+            return;
+        }
+        uint256 before = IERC20(LibVaipakam.storageSlot().vpfiToken).balanceOf(address(this)) - amount;
+        if (source == LibVpfiRecycle.RecycleSource.NotificationFee) {
+            LibVpfiRecycle.creditNotificationFee(refId, amount, before);
+        } else if (source == LibVpfiRecycle.RecycleSource.FullTariff) {
+            LibVpfiRecycle.creditFullTariff(refId, amount, before);
+        } else if (source == LibVpfiRecycle.RecycleSource.SpendGatedPerk) {
+            LibVpfiRecycle.creditSpendGatedPerk(refId, amount, before);
+        } else {
+            revert("creditRecycleRaw: no door exists for this source (#1566 closure 2)");
+        }
+    }
+
+    /// @notice #1566 closure 2 test-only — drive one of the three delta-checked
+    ///         non-reward inflow operations with a CALLER-SUPPLIED pre-transfer
+    ///         snapshot, so a test can prove the delta check refuses a credit
+    ///         whose tokens never arrived. Any other source reverts: no door.
+    function creditInflowRawWithBefore(
+        LibVpfiRecycle.RecycleSource source,
+        uint256 refId,
+        uint256 amount,
+        uint256 balanceBefore
+    ) external {
+        if (source == LibVpfiRecycle.RecycleSource.NotificationFee) {
+            LibVpfiRecycle.creditNotificationFee(refId, amount, balanceBefore);
+        } else if (source == LibVpfiRecycle.RecycleSource.FullTariff) {
+            LibVpfiRecycle.creditFullTariff(refId, amount, balanceBefore);
+        } else if (source == LibVpfiRecycle.RecycleSource.SpendGatedPerk) {
+            LibVpfiRecycle.creditSpendGatedPerk(refId, amount, balanceBefore);
+        } else {
+            revert("creditInflowRawWithBefore: not an inflow class (#1566 closure 2)");
+        }
     }
 
     /// @notice Governor PR-3b test-only — see {setRecycleBucketRaw}.
