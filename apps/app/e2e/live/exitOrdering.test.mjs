@@ -36,6 +36,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
+import { stripLineComments } from './sourceBlock.mjs';
+
 const DRIVE = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
   'live-position-observe.mjs',
@@ -303,6 +305,36 @@ describe('a funds defect that was READ outranks every blocker', () => {
     expect(skip, 'the skip was not found').toBeGreaterThan(-1);
     expect(spend, 'the cap increment was not found').toBeGreaterThan(-1);
     expect(skip, 'a skipped visit must not reach the increment').toBeLessThan(spend);
+  });
+
+  // ROUND 116 P3 — A MALFORMED ENVELOPE STILL NAMES ITS METHOD.
+  //
+  // The strict reader refuses a body with a bad `id`, a missing `jsonrpc`
+  // or non-array `params`, and the report is meant to say what the page
+  // was TRYING to do — "malformed envelope for eth_call" — rather than
+  // only that the envelope was wrong. The fallback re-parsed the body and
+  // called the same strict reader again, which by construction returned
+  // null: the name was never recovered, and every such report degraded to
+  // the generic wording while reading as though the method had been
+  // looked for. Pinned as a property of the report rather than the
+  // parser: the branch reads names off the ALREADY PARSED object with the
+  // lax reader, and never off the strict one.
+  it('names the method of a malformed envelope from the parsed object, laxly', () => {
+    // Comments stripped: the note explaining the change QUOTES the call it
+    // replaced, and a guard reading prose as code would fail on the
+    // explanation of why it passes.
+    const branch = stripLineComments(
+      src.slice(
+        src.indexOf('ROUND 93 P2 — A MALFORMED ENVELOPE IS ITS OWN CATEGORY'),
+        src.indexOf('badMethod = MALFORMED_RPC;'),
+      ),
+    );
+    expect(branch.length, 'the malformed-envelope branch was not found').toBeGreaterThan(0);
+    expect(branch, 'names come from the lax reader').toContain('rpcMethodNamesIn(parsed)');
+    // Not from the strict one, which cannot succeed here — it just refused
+    // this same body.
+    expect(branch, 'the strict reader is not re-asked').not.toContain('rpcCallsFromBody(body)');
+    expect(branch).not.toContain('rpcRequestCalls(');
   });
 
   // ROUND 111 P2 — AND THE DRIVE'S OWN SETUP FAILURES ARE BLOCKED, NOT FAIL.

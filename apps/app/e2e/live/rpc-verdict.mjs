@@ -358,6 +358,40 @@ export function rpcCallsFromBody(requestBody) {
 }
 
 /**
+ * The method names in a parsed body, WITHOUT validating the envelope.
+ *
+ * ROUND 116 P3 — because the strict reader cannot answer this question,
+ * and the branch that needed it was calling the strict reader twice.
+ *
+ * When `rpcRequestCalls` refuses a body — a bad `id`, a missing
+ * `jsonrpc`, `params` that is not an array — the drive still wants to
+ * name what the page was TRYING to do, so an operator reads "malformed
+ * envelope for eth_call" rather than "malformed json-rpc request". Its
+ * fallback re-parsed the same body and called the same strict validator,
+ * which by construction returns null again: the name was never recovered
+ * and every such report degraded to the generic wording.
+ *
+ * So this is deliberately lax, and deliberately SEPARATE. It answers
+ * "what methods are named in here", nothing else — it does not decide
+ * whether the request is well-formed, and no caller may use it to. That
+ * is why it returns names rather than calls: a shape that cannot be
+ * mistaken for the validated one, so the laxness cannot leak into a
+ * decision about whether a request was legitimate.
+ *
+ * Single and batch alike, since a malformed member can appear in either.
+ */
+export function rpcMethodNamesIn(parsed) {
+  const members = Array.isArray(parsed) ? parsed : [parsed];
+  const names = [];
+  for (const m of members) {
+    if (m && typeof m === 'object' && typeof m.method === 'string' && m.method !== '') {
+      names.push(m.method);
+    }
+  }
+  return [...new Set(names)];
+}
+
+/**
  * A JSON-RPC QUANTITY, or null if the value is not one.
  *
  * ROUND 50 P2, generalised from the finding's own site. An Ethereum

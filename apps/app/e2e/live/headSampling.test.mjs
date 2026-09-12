@@ -32,7 +32,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
-import { blockFrom, callContaining } from './sourceBlock.mjs';
+import { blockFrom, callContaining, stripLineComments } from './sourceBlock.mjs';
 
 const DRIVE = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -60,28 +60,6 @@ const DRIVE = path.join(
  * at the twenty-odd call sites below than the module's own.
  */
 const functionBody = blockFrom;
-
-/**
- * The same text with whole-line comments dropped.
- *
- * Necessary before reading keys off the report, and found by running the
- * rule: the report's source carries long explanatory comments that QUOTE
- * earlier versions of the output — `pinned=20 sighting=20 ceiling=20` and
- * `span=` both appear in them — so parsing the raw slice reported four
- * keys the run never prints. Harmless while none of them collides, and a
- * false duplicate the moment a comment quotes a key that is still live,
- * which would fail the guard on a comment rather than on the output.
- *
- * Whole lines only. A `//` inside a template literal is emitted text (a
- * URL, say) and removing the rest of its line would silently shorten the
- * output being checked, which is the error this guard is against.
- */
-function stripLineComments(source) {
-  return source
-    .split('\n')
-    .filter((l) => !l.trimStart().startsWith('//'))
-    .join('\n');
-}
 
 /**
  * The literal text of a template expression, with every `${...}` removed.

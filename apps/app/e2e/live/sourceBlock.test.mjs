@@ -8,7 +8,7 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { blockFrom, callContaining } from './sourceBlock.mjs';
+import { blockFrom, callContaining, stripLineComments } from './sourceBlock.mjs';
 
 describe('blockFrom', () => {
   it('ends at the matching close, not the first one', () => {
@@ -98,5 +98,37 @@ describe('callContaining', () => {
     // fine.
     const broken = "console.log('oops)');\nconst s = `  card=1`;\n";
     expect(() => callContaining(broken, '`  card=')).toThrow(/not inside the console\.log\( call/);
+  });
+});
+
+describe('stripLineComments', () => {
+  // A guard reads code; the drive's comments quote code. Over-stripping
+  // is the silent direction — a rule over less text passes more easily —
+  // so what must survive is pinned as carefully as what must go.
+  it('drops whole-line comments, however indented', () => {
+    const src = "a();\n// b();\n    // c();\nd();\n";
+    expect(stripLineComments(src)).toBe('a();\nd();\n');
+  });
+
+  it('keeps a trailing comment and its line', () => {
+    // Not a "//"-to-end-of-line stripper: a trailing comment's LINE is
+    // code, and the code half must not be lost with it.
+    expect(stripLineComments("x = 1; // set\n")).toBe('x = 1; // set\n');
+  });
+
+  it('keeps a // inside a string', () => {
+    // A URL is the realistic case. Truncating its line would shorten the
+    // very code being checked.
+    const src = "const u = 'https://rpc.example';\n";
+    expect(stripLineComments(src)).toBe(src);
+  });
+
+  it('keeps a comment-looking line that is not one', () => {
+    expect(stripLineComments("' // not a comment'\n")).toBe("' // not a comment'\n");
+  });
+
+  it('leaves comment-free text untouched', () => {
+    const src = 'a();\nb();\n';
+    expect(stripLineComments(src)).toBe(src);
   });
 });

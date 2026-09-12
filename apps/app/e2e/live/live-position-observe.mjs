@@ -121,6 +121,7 @@ import {
   isTransportFailure,
   recordRpcResponse,
   rpcCallsFromBody,
+  rpcMethodNamesIn,
   rpcRequestCalls,
   summariseRpcLedger,
 } from './rpc-verdict.mjs';
@@ -1903,9 +1904,17 @@ const routeHandler = async (route) => {
           // The METHOD is preserved where the laxer body parser can still
           // read one, so the report names what the page was trying to do
           // rather than only that the envelope was wrong.
-          const named = (rpcCallsFromBody(body) ?? [])
-            .map((c) => c?.method)
-            .filter((m) => typeof m === 'string');
+          // ROUND 116 P3 — read from the ALREADY PARSED object, with a
+          // reader that does not re-ask whether the envelope is valid.
+          //
+          // The previous fallback called `rpcCallsFromBody(body)`, which
+          // parses the same body and hands it to the same strict validator
+          // that had just refused it — so `named` was empty by
+          // construction and every malformed-envelope report degraded to
+          // the generic wording. A fallback that cannot succeed is worse
+          // than none: it reads as though the method was looked for and
+          // not found.
+          const named = rpcMethodNamesIn(parsed);
           badMethod = MALFORMED_RPC;
           why = named.length
             ? `${method} (malformed json-rpc envelope for ${[...new Set(named)].join(', ')})`

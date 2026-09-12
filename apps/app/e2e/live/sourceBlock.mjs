@@ -97,3 +97,23 @@ function balanced(src, start, open, close, what, label) {
   }
   throw new Error(`${label} has no matching ${what}`);
 }
+
+/**
+ * The same text with whole-line comments dropped.
+ *
+ * A source guard reads code, and the drive's comments QUOTE code — retired
+ * report keys, the call a fix replaced — so a rule asserted over the raw
+ * slice matches prose. This was found twice: the distinct-key guard
+ * reported four keys the run never prints, and the malformed-envelope
+ * guard found the strict reader "still called" in the sentence explaining
+ * why it no longer is.
+ *
+ * Whole lines only. A `//` inside a string is text (a URL, say), and
+ * truncating its line would shorten the very code being checked.
+ */
+export function stripLineComments(source) {
+  return source
+    .split('\n')
+    .filter((l) => !l.trimStart().startsWith('//'))
+    .join('\n');
+}

@@ -22,6 +22,7 @@ import {
   classifyRpcResponse,
   isTransportFailure,
   recordRpcResponse,
+  rpcMethodNamesIn,
   rpcRequestCalls,
   summariseRpcLedger,
 } from './rpc-verdict.mjs';
@@ -728,6 +729,58 @@ describe('callsTargetContract', () => {
  * is the same defect in a different coat: `malformed` exits 1 as an app
  * finding, `unreachable` exits 2 as "re-run".
  */
+/**
+ * ROUND 116 P3 — the LAX method reader, and why it is separate.
+ *
+ * The strict reader refuses a body with a bad `id`, a missing `jsonrpc`
+ * or non-array `params`. The drive still wants to name what the page was
+ * TRYING to do in that case, and its fallback called the strict reader a
+ * second time — so the name was never recovered and every
+ * malformed-envelope report degraded to the generic wording. A fallback
+ * that cannot succeed is worse than none: it reads as though the method
+ * was looked for and not found.
+ *
+ * It returns NAMES, not calls, so its laxness cannot be mistaken for a
+ * validated read and leak into a decision about whether a request was
+ * legitimate.
+ */
+describe('rpcMethodNamesIn', () => {
+  it('names the method in an envelope the strict reader refuses', () => {
+    expect(rpcMethodNamesIn({ jsonrpc: '2.0', id: true, method: 'eth_call', params: [] })).toEqual([
+      'eth_call',
+    ]);
+    expect(rpcMethodNamesIn({ method: 'eth_getLogs' })).toEqual(['eth_getLogs']);
+    expect(rpcMethodNamesIn({ jsonrpc: '2.0', id: 1, method: 'eth_call', params: 'nope' })).toEqual([
+      'eth_call',
+    ]);
+  });
+
+  it('reads a batch, and reports each name once', () => {
+    expect(
+      rpcMethodNamesIn([{ method: 'eth_call' }, { method: 'eth_call' }, { method: 'eth_chainId' }]),
+    ).toEqual(['eth_call', 'eth_chainId']);
+  });
+
+  it('names nothing when there is nothing to name', () => {
+    // No invention: an absent, empty or non-string method yields no name,
+    // so the report falls back to the generic wording honestly rather
+    // than printing something that was never in the request.
+    expect(rpcMethodNamesIn({})).toEqual([]);
+    expect(rpcMethodNamesIn({ method: '' })).toEqual([]);
+    expect(rpcMethodNamesIn({ method: 42 })).toEqual([]);
+    expect(rpcMethodNamesIn([])).toEqual([]);
+    expect(rpcMethodNamesIn(null)).toEqual([]);
+    expect(rpcMethodNamesIn('eth_call')).toEqual([]);
+  });
+
+  it('skips malformed members and keeps the readable ones', () => {
+    expect(rpcMethodNamesIn([null, { method: 'eth_call' }, 7, { method: 'eth_chainId' }])).toEqual([
+      'eth_call',
+      'eth_chainId',
+    ]);
+  });
+});
+
 describe('recordRpcResponse + summariseRpcLedger', () => {
   const ledgerOf = (...responses) => {
     const l = [];
