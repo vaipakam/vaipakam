@@ -38,17 +38,23 @@ const DRIVE = path.join(
 );
 
 /**
- * The whole of `settleHeadReads`, brace-matched.
+ * A whole function from the drive's source, brace-matched from its
+ * signature.
  *
- * ROUND 98 — this was a fixed character window (`slice(0, 1600)`, then 2400,
- * then 2600) and it broke three times as explanatory comments grew above the
- * loop. It broke LOUD each time, which is the tolerable direction, but a pin
- * that needs raising whenever a comment lands is a pin that will eventually
- * be raised without being read. Brace matching has no number to keep.
+ * ROUND 98 — `settleHeadReads` was read with a fixed character window
+ * (`slice(0, 1600)`, then 2400, then 2600) and it broke three times as
+ * explanatory comments grew above the loop. It broke LOUD each time, which
+ * is the tolerable direction, but a pin that needs raising whenever a
+ * comment lands is a pin that will eventually be raised without being read.
+ *
+ * ROUND 101 — GENERALISED, because `floorEstablishedFor` was read the same
+ * way and broke for the same reason three rounds later. Retiring one
+ * instance of a trap and leaving its sibling is the pattern this PR keeps
+ * being caught by; there is no number to keep in either now.
  */
-function settleHeadReadsBody(src) {
-  const start = src.indexOf('async function settleHeadReads(page)');
-  if (start === -1) throw new Error('settleHeadReads was renamed or removed');
+function functionBody(src, signature) {
+  const start = src.indexOf(signature);
+  if (start === -1) throw new Error(`${signature} was renamed or removed`);
   let depth = 0;
   for (let i = src.indexOf('{', start); i < src.length; i += 1) {
     if (src[i] === '{') depth += 1;
@@ -57,8 +63,11 @@ function settleHeadReadsBody(src) {
       if (depth === 0) return src.slice(start, i + 1);
     }
   }
-  throw new Error('settleHeadReads has no matching close brace');
+  throw new Error(`${signature} has no matching close brace`);
 }
+
+const settleHeadReadsBody = (src) =>
+  functionBody(src, 'async function settleHeadReads(page)');
 
 describe('the head sample waits for the readings in flight', () => {
   const src = fs.readFileSync(DRIVE, 'utf8');
@@ -207,10 +216,40 @@ describe('the head sample waits for the readings in flight', () => {
   // now counts as bounded when it was sampled OR when its own announcement
   // ordering holds — and this case failed on the signature change, which
   // is what its first assertion is for.
+  // ROUND 101 P2 — THE ORDERING EVIDENCE COMPARES AN ANSWER WITH AN ASK.
+  //
+  // Round 87 established that a batch is a set of independent calls rather
+  // than a sequence, so the `eth_call` beside a head answer can be served a
+  // block earlier. That argument was applied to one response and not to two:
+  // two CONCURRENT requests can be served at M and M+1 and their responses
+  // arrive in either order, so comparing two ARRIVAL times proved nothing and
+  // could put the floor at M+1 for a card rendered from M.
+  //
+  // The read is stamped when it is SENT now, which makes the question sound:
+  // had this endpoint already told us where it was, before we asked it to
+  // read? Heads do not go backwards, so the answer bounds the read with no
+  // assumption about response ordering. The head stays stamped on its ANSWER,
+  // which is round 92's rule — an unanswered ask proves nothing.
+  it('stamps the read when it is sent and the head when it answers', () => {
+    expect(src, 'the read stamp is on the request listener').toContain(
+      "page.on('request', (req) => {",
+    );
+    const reqListener = functionBody(src, "page.on('request', (req) => {");
+    expect(reqListener).toContain("body.includes('eth_call')");
+    expect(reqListener).toContain('firstReadAt.set(key, Date.now())');
+    // And NOT re-stamped on arrival, which would reintroduce the unsound
+    // comparison for any endpoint the request listener missed.
+    expect(src, 'no arrival-time read stamp remains').not.toContain(
+      "if (body.includes('eth_call')) stamp(firstReadAt);",
+    );
+    // The head keeps its answer-time stamp (round 92).
+    expect(src).toContain('stamp(firstHeadAt)');
+  });
+
   it('only trusts the floor when every endpoint the page used is bounded', () => {
     const sig = 'function floorEstablishedFor(page, sampledBeforeNav)';
     expect(at(sig), 'the floor predicate was not found').toBeGreaterThan(-1);
-    const fn = src.slice(at(sig), at(sig) + 2600);
+    const fn = functionBody(src, sig);
     // Either way of bounding ONE endpoint, inside the per-key loop.
     expect(fn).toContain('sampledBeforeNav?.has(key)');
     // Both stamps, and the ordering test between them.

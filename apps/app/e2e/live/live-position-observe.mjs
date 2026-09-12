@@ -2410,15 +2410,28 @@ function floorEstablishedFor(page, sampledBeforeNav) {
     const head = heads.get(key);
     const read = reads.get(key);
     if (head !== undefined) sawHead = true;
-    // A read served before this endpoint announced anything, or before it
+    // A read issued before this endpoint announced anything, or before it
     // announced its first head: nothing this drive saw bounds that read.
     //
-    // STRICTLY earlier (round 87). Equal timestamps mean the two answers
-    // arrived in one response — a batch — and a batch is a set of
-    // independent calls, not a sequence: a block landing between two
-    // members serves the `eth_call` at M and answers `eth_blockNumber`
-    // with M+1, so the read is older than the announcement that appears
-    // to precede it. `>=` refuses that rather than certifying it.
+    // ROUND 101 P2 — AND THE TWO TIMES ARE NO LONGER BOTH ARRIVALS.
+    //
+    // `head` is when a head ANSWER was parsed; `read` is when an `eth_call`
+    // was SENT. So the test asks the sound question: had this endpoint
+    // already told us where it was, before we asked it to read? If so the
+    // read cannot have been served below that height, because heads do not
+    // go backwards, and no assumption about response ordering is involved.
+    //
+    // Round 87 established that a BATCH cannot be read as a sequence — its
+    // members are independent calls, so a block landing between two of them
+    // serves the `eth_call` at M and answers `eth_blockNumber` with M+1.
+    // That argument was applied to one response and not to two, and it is
+    // the same argument: two concurrent requests can be served at M and M+1
+    // and arrive in either order. Comparing two arrival times established
+    // nothing, and set the floor at M+1 for a card rendered from M.
+    //
+    // STILL STRICTLY earlier. Equal timestamps carry no order, and the
+    // request-time stamp can only be earlier than the old arrival-time one,
+    // so this test is harder to satisfy than before — the safe direction.
     if (read !== undefined && (head === undefined || head >= read)) return false;
   }
   return sawHead;
@@ -2658,6 +2671,44 @@ function watchPageHead(page) {
     pending.add(done);
     done.finally(() => pending.delete(done));
   });
+  // ROUND 101 P2 — THE READ IS STAMPED WHEN IT IS ASKED, NOT WHEN IT LANDS.
+  //
+  // Round 87 established that a BATCH cannot be read as a sequence: its
+  // members are independent calls, so a block landing between two of them
+  // serves the `eth_call` at M and answers `eth_blockNumber` with M+1, and
+  // the read is older than the announcement that appears to precede it.
+  // That argument was applied to one response and not to two — and it is the
+  // same argument. Two CONCURRENT requests can be executed at M and M+1 and
+  // have their responses arrive in the opposite order, so comparing two
+  // ARRIVAL times establishes nothing about the order the server served
+  // them in. The floor could then be set at M+1 for a card rendered from M,
+  // which is the accusing direction.
+  //
+  // Stamping the read at REQUEST time makes the comparison sound rather than
+  // deleting the evidence: if this endpoint's head response was parsed
+  // before the read was even SENT, then the endpoint had already reached
+  // that height when it was asked, and heads do not go backwards. Nothing
+  // about arrival order is needed.
+  //
+  // The asymmetry with `firstHeadAt` is deliberate and is round 92's rule
+  // intact: a head must be stamped on the ANSWER, because an unanswered ask
+  // proves nothing about where the endpoint is. A read stamped on the ask is
+  // the conservative end of its own uncertainty — the earliest moment it
+  // could have been served — and moving it earlier can only make this test
+  // harder to satisfy.
+  page.on('request', (req) => {
+    try {
+      if (req.method() !== 'POST') return;
+      const body = req.postData();
+      if (!body || !body.includes('eth_call')) return;
+      const key = req.url();
+      if (!firstReadAt.has(key)) firstReadAt.set(key, Date.now());
+    } catch {
+      // Observational only: a request whose body cannot be read simply
+      // leaves this endpoint unstamped, which the predicate treats as
+      // unbounded rather than as evidence.
+    }
+  });
 
   async function handleResponse(res) {
     try {
@@ -2709,7 +2760,12 @@ function watchPageHead(page) {
       const stamp = (map) => {
         if (!map.has(key)) map.set(key, Date.now());
       };
-      if (body.includes('eth_call')) stamp(firstReadAt);
+      // The read stamp moved to the REQUEST listener above (round 101). It
+      // is deliberately not re-stamped here: `stamp` keeps the first value,
+      // so a response landing for an endpoint already stamped would be a
+      // no-op, but an endpoint whose request listener missed the body would
+      // otherwise pick up an ARRIVAL time and re-introduce exactly the
+      // unsound comparison this moved away from.
       // Cheap reject before parsing — most POSTs are not this.
       if (!announcesHead) return;
       // The PARSE is a pure function in `rpc-verdict.mjs`, tested
