@@ -96,13 +96,31 @@ const CURRENCY_MARK = /\p{Sc}/u;
  * was never part of it. Two characters minimum is kept: a one-letter word
  * is not a symbol anyone writes copy around.
  *
+ * ROUND 109 P2 — AND THE OTHER EDGE OF THE SAME BOUND.
+ *
+ * Round 85 removed the upper length cap as a guess about other people's
+ * tokens, and the sentence above kept the lower one on the same kind of
+ * guess: "a one-letter word is not a symbol anyone writes copy around."
+ * `symbol()` has no minimum length either, so `Loan 100 A principal` fell
+ * through both tests, the identifier exemption read `100` as a loan
+ * NUMBER, and the scanner certified an unsubstantiated amount as clean —
+ * the identical false PASS round 85 fixed at the opposite end, left open
+ * in the same commit that argued the length was never the discriminator.
+ *
+ * A single character cannot carry an internal uppercase RUN, so it needs
+ * its own test rather than a widened one: an all-uppercase single letter.
+ * That is the same signal one step down — a lone capital is as far from
+ * prose as `WETH` is — and it does not reach lower-case `a` or `i`, which
+ * are words in several of the shipped locales.
+ *
  * Demonstrated rather than argued — the all-locale calibration puts every
  * shipped `forcedClose` string in all twenty bundles through the scanner,
- * and it stays green, so nothing this widening newly recognises appears in
- * the product's own copy.
+ * and it stays green, so nothing either widening newly recognises appears
+ * in the product's own copy.
  */
 function isTicker(word) {
   if (typeof word !== 'string') return false;
+  if (/^[A-Z]$/.test(word)) return true;
   if (!/^[A-Za-z][A-Za-z0-9]+$/.test(word)) return false;
   return /[A-Z]{2}/.test(word);
 }

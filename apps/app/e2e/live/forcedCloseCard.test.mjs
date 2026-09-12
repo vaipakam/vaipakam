@@ -3351,6 +3351,23 @@ describe('rounds 42–43 review findings', () => {
       expect(monetaryAmountsIn('Position 2 Settlement')).toEqual([]);
     });
 
+    // ROUND 109 P2 — AND NO FLOOR ON IT EITHER.
+    //
+    // Round 85 removed the cap and kept `two characters minimum`, which is
+    // the same guess about other people's tokens at the other end:
+    // `symbol()` has no minimum length. `Loan 100 A principal` failed both
+    // tests and produced the identical false PASS, in the commit that
+    // argued the length was never the discriminator.
+    it('recognises a symbol shorter than any floor', () => {
+      expect(monetaryAmountsIn('Loan 100 A principal')).toHaveLength(1);
+      expect(monetaryAmountsIn('Position 2 X')).toHaveLength(1);
+      // A lone capital is as far from prose as an uppercase run is, and
+      // the rule reaches no further than that: lower-case single letters
+      // are words in several shipped locales and stay exempt.
+      expect(monetaryAmountsIn('Loan 100 a principal')).toEqual([]);
+      expect(monetaryAmountsIn('Position 2 y')).toEqual([]);
+    });
+
     it('does not fire on ordinary prose after a figure', () => {
       expect(monetaryAmountsIn('Loan 100 is overdue.')).toEqual([]);
       expect(monetaryAmountsIn('The grace period is 3 days.')).toEqual([]);

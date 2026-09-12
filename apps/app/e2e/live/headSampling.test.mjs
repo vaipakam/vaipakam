@@ -32,7 +32,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
-import { blockFrom } from './sourceBlock.mjs';
+import { blockFrom, callContaining } from './sourceBlock.mjs';
 
 const DRIVE = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -53,13 +53,65 @@ const DRIVE = path.join(
  * way and broke for the same reason three rounds later. Retiring one
  * instance of a trap and leaving its sibling is the pattern this PR keeps
  * being caught by; there is no number to keep in either now.
- */
-/**
- * Moved to `sourceBlock.mjs` in the round-109 self-audit — a second test
- * file needed the same brace matcher, and a second COPY is the defect
- * #2102 records rather than a fix for it.
+ *
+ * ROUND 109 SELF-AUDIT — MOVED to `sourceBlock.mjs`, because a second test
+ * file needed the same matcher and a second COPY is the defect #2102
+ * records rather than a fix for it. The name is kept here: it reads better
+ * at the twenty-odd call sites below than the module's own.
  */
 const functionBody = blockFrom;
+
+/**
+ * The same text with whole-line comments dropped.
+ *
+ * Necessary before reading keys off the report, and found by running the
+ * rule: the report's source carries long explanatory comments that QUOTE
+ * earlier versions of the output — `pinned=20 sighting=20 ceiling=20` and
+ * `span=` both appear in them — so parsing the raw slice reported four
+ * keys the run never prints. Harmless while none of them collides, and a
+ * false duplicate the moment a comment quotes a key that is still live,
+ * which would fail the guard on a comment rather than on the output.
+ *
+ * Whole lines only. A `//` inside a template literal is emitted text (a
+ * URL, say) and removing the rest of its line would silently shorten the
+ * output being checked, which is the error this guard is against.
+ */
+function stripLineComments(source) {
+  return source
+    .split('\n')
+    .filter((l) => !l.trimStart().startsWith('//'))
+    .join('\n');
+}
+
+/**
+ * The literal text of a template expression, with every `${...}` removed.
+ *
+ * What is left is what the run actually PRINTS, minus the values — so a
+ * rule about the shape of the output reads the output rather than the
+ * code that produces it, and an `=` inside an expression cannot be
+ * mistaken for a key.
+ */
+function stripInterpolations(source) {
+  let out = '';
+  for (let i = 0; i < source.length; i += 1) {
+    if (source[i] === '$' && source[i + 1] === '{') {
+      let depth = 0;
+      for (let j = i + 1; j < source.length; j += 1) {
+        if (source[j] === '{') depth += 1;
+        else if (source[j] === '}') {
+          depth -= 1;
+          if (depth === 0) {
+            i = j;
+            break;
+          }
+        }
+      }
+      continue;
+    }
+    out += source[i];
+  }
+  return out;
+}
 
 const settleHeadReadsBody = (src) =>
   functionBody(src, 'async function settleHeadReads(page)');
@@ -610,12 +662,22 @@ describe('the head facts survive the projection (round 106)', () => {
   // Writing this found `forcedClosePageHead` — projected since before round
   // 104 moved the report onto the separate thresholds, and read by nothing
   // since. It is removed rather than exempted.
+  //
+  // ROUND 109 P2 — AND `read` MEANS READ BY THE REPORT.
+  //
+  // The first version took `consumed` from the whole driver, so any other
+  // reader answered the question: a later predicate consulting
+  // `v.forcedCloseHeadPinned` keeps it looking consumed while its report
+  // interpolation is gone, and the evidence disappears from the operator's
+  // output with this test green. The leg being checked is projection →
+  // REPORT, so the set has to come from the report.
   it('every projected field is read by the report', () => {
     const projectedNames = [...src.matchAll(/^ {4}(forcedClose[A-Za-z]*):/gm)].map((m) => m[1]);
     expect(projectedNames.length, 'the projection was not found').toBeGreaterThan(5);
-    const consumed = new Set([...src.matchAll(/v\.(forcedClose[A-Za-z]*)/g)].map((m) => m[1]));
+    const report = callContaining(src, '`      card=${v.chooser}');
+    const consumed = new Set([...report.matchAll(/v\.(forcedClose[A-Za-z]*)/g)].map((m) => m[1]));
     const dead = [...new Set(projectedNames)].filter((k) => !consumed.has(k));
-    expect(dead, `projected but never read: ${dead.join(', ')}`).toEqual([]);
+    expect(dead, `projected but never read by the report: ${dead.join(', ')}`).toEqual([]);
   });
 });
 
@@ -637,18 +699,37 @@ describe('the forced-close report emits distinct keys (round 106)', () => {
   const src = fs.readFileSync(DRIVE, 'utf8');
 
   it('no key appears twice in the emitted line', () => {
-    const i = src.indexOf('` spanBlocks=');
+    const i = src.indexOf('` spanStable=');
     expect(i, 'the forced-close report line was not found').toBeGreaterThan(-1);
     // The whole concatenated line, from the stability verdict through the
-    // confirming head.
-    const line = src.slice(src.indexOf('` spanStable='), i + 1200);
+    // confirming head — anchored at BOTH ends. It was a fixed 1200
+    // characters from the block interval, which is the bound #2144 is
+    // about: a window that moves with unrelated edits, silently short in
+    // one direction and reaching into the neighbours in the other.
+    const last = src.indexOf('confirmedAt=${v.forcedCloseConfirmedAt', i);
+    expect(last, 'the last key of the report line was not found').toBeGreaterThan(i);
+    const line = src.slice(i, src.indexOf('\n', last));
     // ROUND 107 P2 — EVERY token, not the first of each template literal.
     //
     // The first version anchored on a backtick, so it saw only the key that
     // opened each literal. Combining two fields into one literal — an
     // ordinary formatting change — hid the second from the guard, which
     // means it could not prevent the exact duplicate it was written for.
-    const keys = [...line.matchAll(/([A-Za-z>=]+)=\$\{/g)].map((m) => m[1]);
+    // ROUND 109 P2 — AND EVERY FORM A KEY IS EMITTED IN.
+    //
+    // Anchoring on `${` reads only keys whose value is interpolated. A
+    // constant token — `spanStable=unknown` written directly, or a ternary
+    // moved outside its interpolation — is emitted exactly like the
+    // others and was invisible here, so it could duplicate another key
+    // while the case named "no key appears twice" stayed green.
+    //
+    // Taken from the EMITTED text rather than the source: the
+    // interpolations are stripped first, so an `=` inside an expression
+    // cannot be read as a key, and what remains is what the operator
+    // sees.
+    const keys = [
+      ...stripInterpolations(stripLineComments(line)).matchAll(/[ `]([A-Za-z][A-Za-z0-9>=]*)=/g),
+    ].map((m) => m[1]);
     expect(keys.length, 'keys were found at all').toBeGreaterThan(3);
     expect(new Set(keys).size, `duplicate key in: ${keys.join(' ')}`).toBe(keys.length);
   });

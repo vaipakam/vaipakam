@@ -8,7 +8,7 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { blockFrom } from './sourceBlock.mjs';
+import { blockFrom, callContaining } from './sourceBlock.mjs';
 
 describe('blockFrom', () => {
   it('ends at the matching close, not the first one', () => {
@@ -51,5 +51,52 @@ describe('blockFrom', () => {
     expect(() => blockFrom('function f() {\n  a();\n', 'function f()')).toThrow(
       /no matching close brace/,
     );
+  });
+});
+
+describe('callContaining', () => {
+  // The report this was written for is one of dozens of `console.log(`
+  // calls, so the anchor is a string INSIDE it. That only works if the
+  // search runs backwards from the anchor — forwards from the file start
+  // finds the first call, which is a different one every time the file
+  // is edited above.
+  const src = [
+    "console.log('unrelated', a(b), c);",
+    'console.log(',
+    "  `  card=${v.chooser}` +",
+    "  ` head=${v.head ?? 'none'}`,",
+    ');',
+    "console.log('after');",
+  ].join('\n');
+
+  it('takes the call the anchor is inside, not the first one in the file', () => {
+    const call = callContaining(src, '`  card=${v.chooser}`');
+    expect(call).toContain('head=');
+    expect(call).not.toContain('unrelated');
+    expect(call).not.toContain('after');
+  });
+
+  it('closes on the call, not on a nested paren', () => {
+    const nested = "console.log(\n  `x=${f(g(h))}` + `y=${1}`,\n);\nconsole.log('next');";
+    const call = callContaining(nested, '`x=');
+    expect(call).toContain('y=');
+    expect(call).not.toContain('next');
+  });
+
+  it('throws when the anchor is gone', () => {
+    expect(() => callContaining(src, '`  gone=')).toThrow(/renamed or removed/);
+  });
+
+  it('throws when no such call encloses the anchor', () => {
+    expect(() => callContaining('const x = `  card=1`;\n', '`  card=')).toThrow(/not inside/);
+  });
+
+  it('refuses a call that closed before reaching the anchor', () => {
+    // The failure an unbalanced paren in a string literal produces. Left
+    // unchecked it returns an earlier, complete call and every rule over
+    // it is about the wrong code — silently, since that slice parses
+    // fine.
+    const broken = "console.log('oops)');\nconst s = `  card=1`;\n";
+    expect(() => callContaining(broken, '`  card=')).toThrow(/not inside the console\.log\( call/);
   });
 });

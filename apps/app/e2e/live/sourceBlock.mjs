@@ -50,15 +50,50 @@
 export function blockFrom(src, header) {
   const start = src.indexOf(header);
   if (start === -1) throw new Error(`${header} was renamed or removed`);
-  const open = src.indexOf('{', start);
-  if (open === -1) throw new Error(`${header} opens no block`);
+  return balanced(src, start, '{', '}', 'close brace', header);
+}
+
+/**
+ * The source of the call that CONTAINS `needle`, from `callee` through
+ * its matching close paren.
+ *
+ * For regions whose boundary is a paren rather than a brace — a report
+ * built as one long `console.log(...)` of concatenated template
+ * literals, which is the case this was written for. The anchor is a
+ * string inside the call rather than the call's own opening, because
+ * `console.log(` appears dozens of times in the drive and nothing about
+ * the opening identifies WHICH call is the report.
+ *
+ * Scoping matters more here than the tidiness of it. A rule that asks
+ * "is this field read by the report?" over the whole file is answered by
+ * any other reader — a later predicate consulting the same field keeps
+ * it looking consumed while its report line is gone, so the evidence
+ * disappears from the operator's output with every test green.
+ */
+export function callContaining(src, needle, callee = 'console.log(') {
+  const inside = src.indexOf(needle);
+  if (inside === -1) throw new Error(`${needle} was renamed or removed`);
+  const start = src.lastIndexOf(callee, inside);
+  if (start === -1) throw new Error(`${needle} is not inside a ${callee} call`);
+  const call = balanced(src, start, '(', ')', 'close paren', needle);
+  // The anchor has to be INSIDE what came back. If the call closed before
+  // reaching it — an unbalanced paren in a string literal is the way that
+  // happens — the slice is some earlier call and every rule over it is
+  // about the wrong code.
+  if (!call.includes(needle)) throw new Error(`${needle} is not inside the ${callee} call found`);
+  return call;
+}
+
+function balanced(src, start, open, close, what, label) {
+  const from = src.indexOf(open, start);
+  if (from === -1) throw new Error(`${label} opens no block`);
   let depth = 0;
-  for (let i = open; i < src.length; i += 1) {
-    if (src[i] === '{') depth += 1;
-    else if (src[i] === '}') {
+  for (let i = from; i < src.length; i += 1) {
+    if (src[i] === open) depth += 1;
+    else if (src[i] === close) {
       depth -= 1;
       if (depth === 0) return src.slice(start, i + 1);
     }
   }
-  throw new Error(`${header} has no matching close brace`);
+  throw new Error(`${label} has no matching ${what}`);
 }
