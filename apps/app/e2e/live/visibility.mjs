@@ -49,6 +49,62 @@
  * flag, so one evaluate's reading cannot leak into another's.
  */
 export function visibilityHelpers() {
+  /**
+   * Is `box` parked entirely BEFORE the document's origin — left of it or
+   * above it — with no scroll position, the page's or an ancestor
+   * container's, from which it becomes readable?
+   *
+   * The document-origin test (round 81) lives here so that its two
+   * consumers — `shownBox` for the element's box, `paintsText` for the
+   * glyph rectangles — decide reachability in one place. Below the fold
+   * is reachable: `window.scrollX` / `scrollY` convert the viewport rect
+   * into document coordinates, so a box at y=4000 has positive
+   * coordinates and is unaffected.
+   *
+   * #2138 — AND SO IS CONTENT SCROLLED ABOVE AN INNER CONTAINER'S SLIT.
+   * A row inside an `overflow: auto` box near the top of the document,
+   * scrolled above that box's own visible slit, has a negative viewport
+   * rect while `window.scrollY` is still 0 — measured in a browser rather
+   * than argued — so the document-origin test alone condemned copy the
+   * lender can scroll straight back to. That is the false-FAIL direction
+   * this predicate is otherwise built to avoid, and the exemption is the
+   * same one `notClipped` already grants a scrollable clipper.
+   *
+   * QUANTIFIED, not blanket: an ancestor scrolled down by N can be
+   * scrolled back up by N and no further, so the box is reachable only
+   * if that much carries it past the origin. A box parked at -9999px
+   * inside a container scrolled by 300 stays condemned. The page's own
+   * scrolling element is skipped in the walk because `window.scrollX` /
+   * `scrollY` already account for it, and counting it twice would admit
+   * a box the page cannot actually reach.
+   *
+   * Deliberately narrow still. A box parked far to the RIGHT, or an RTL
+   * document's mirrored origin, is a reachability question this cannot
+   * answer from one rect, and guessing would condemn copy the lender can
+   * read. The residual is a missed defect, which is the direction this
+   * file takes every time.
+   */
+  const unreachableBeforeOrigin = (node, box) => {
+    const beforeX = box.right + window.scrollX <= 0;
+    const beforeY = box.bottom + window.scrollY <= 0;
+    if (!beforeX && !beforeY) return false;
+    let restoreX = 0;
+    let restoreY = 0;
+    const pageScroller = document.scrollingElement || document.documentElement;
+    for (let n = node.parentElement; n; n = n.parentElement) {
+      if (n === pageScroller || n === document.documentElement || n === document.body) continue;
+      const cs = getComputedStyle(n);
+      if ((cs.overflowY === 'auto' || cs.overflowY === 'scroll') && n.scrollTop > 0) {
+        restoreY += n.scrollTop;
+      }
+      if ((cs.overflowX === 'auto' || cs.overflowX === 'scroll') && n.scrollLeft > 0) {
+        restoreX += n.scrollLeft;
+      }
+    }
+    const stuckX = beforeX && box.right + window.scrollX + restoreX <= 0;
+    const stuckY = beforeY && box.bottom + window.scrollY + restoreY <= 0;
+    return stuckX || stuckY;
+  };
   // ROUND 22 P2 — OPACITY IS NOT INHERITED, so asking the node
   // alone is not asking whether the lender can see it.
   //
@@ -446,18 +502,17 @@ export function visibilityHelpers() {
     //
     // That is NOT the same as saying a scrolled ancestor cannot
     // produce a false condemnation, and the stronger sentence stood
-    // here until it was measured. It can: a row inside an INNER
+    // here until it was measured. It could: a row inside an INNER
     // scroll container near the top of the document, scrolled above
     // that container's own slit, has a negative rect while
-    // `window.scrollY` is 0, so the document-origin test condemns
-    // content the lender can scroll back to. Measured in a browser
-    // rather than argued — `shownBox` returns false for it, and has
-    // since round 81 added the box test; the glyph rule inherits the
-    // question rather than introducing it. Nothing this drive reads
-    // is inside such a container today (the page itself scrolls,
-    // which `window.scrollY` accounts for), so it is a latent gap in
-    // both copies rather than a live one, tracked separately instead
-    // of being patched mid-review.
+    // `window.scrollY` is 0, so a bare document-origin test condemned
+    // content the lender can scroll back to — in `shownBox` since
+    // round 81 added the box test, and here, which inherited the
+    // question rather than introducing it. #2138 closed it in the one
+    // place both consult: `unreachableBeforeOrigin` credits an
+    // ancestor's scroll offset before condemning, so the glyph rule
+    // and the box rule cannot answer the reachability question
+    // differently.
     const glyphs = [];
     for (const c of node.childNodes) {
       if (c.nodeType !== 3 || c.textContent.trim() === '') continue;
@@ -471,12 +526,7 @@ export function visibilityHelpers() {
         // Unmeasurable: leaves `glyphs` short, which reads as painted.
       }
     }
-    if (
-      glyphs.length > 0 &&
-      glyphs.every(
-        (q) => q.right + window.scrollX <= 0 || q.bottom + window.scrollY <= 0,
-      )
-    ) {
+    if (glyphs.length > 0 && glyphs.every((q) => unreachableBeforeOrigin(node, q))) {
       return false;
     }
     // HOISTED ABOVE THE OCCLUSION RULE (round 90): that rule now reads a
@@ -939,21 +989,13 @@ export function visibilityHelpers() {
     // BELOW THE FOLD IS NOT THIS. Content the lender can scroll to is
     // painted and must stay admitted, so the test is in DOCUMENT
     // coordinates and asks whether the box lies wholly before the
-    // document's origin — left of it or above it — which no amount of
-    // scrolling can reach. A box at y=4000 has positive document
-    // coordinates and is unaffected.
-    //
-    // Deliberately narrow. Anything further — a box parked far to the
-    // RIGHT, inside a horizontally scrollable ancestor, or an RTL
-    // document's mirrored origin — is a reachability question this
-    // cannot answer from one rect, and guessing would condemn copy
-    // the lender can read. The residual is a missed defect, which is
-    // the direction this file takes every time.
+    // document's origin — left of it or above it — and (#2138) whether
+    // an ancestor scroll container could carry it back. The rule and
+    // its limits are stated once, on `unreachableBeforeOrigin`, which
+    // `paintsText` consults for the glyph rectangles the same way.
     const r = node.getBoundingClientRect();
     if (!(r.width > 0 && r.height > 0)) return false;
-    const docRight = r.right + window.scrollX;
-    const docBottom = r.bottom + window.scrollY;
-    if (docRight <= 0 || docBottom <= 0) return false;
+    if (unreachableBeforeOrigin(node, r)) return false;
     return notClipped(node);
   };
 

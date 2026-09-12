@@ -79,6 +79,22 @@ test('the drive visibility predicate rejects clipped, erased and unreachable con
   const predicates = [VISIBILITY_SOURCE];
 
   await page.setContent(`
+    <!-- #2138 — FIRST in the document on purpose. An inner scroll
+         container at the top of the page, scrolled down by 300, carries
+         its first row to a NEGATIVE viewport rect while window.scrollY is
+         still 0. A bare document-origin test condemned that row; the
+         lender can scroll the container straight back to it. Placed
+         first so the container really does sit near the origin —
+         further down the page the row's document coordinates would stay
+         positive and the case would test nothing. -->
+    <div id="innerScroller" style="height:40px; overflow:auto; margin:0">
+      <p id="scrolledAbove" style="height:20px; margin:0">scrolled above an inner slit, reachable</p>
+      <!-- Parked far above inside the SAME scrolled container: the
+           container's 300 of scroll cannot carry -9999 back, so the
+           exemption must not become a blanket one. -->
+      <p id="parkedInScroller" style="position:absolute; top:-9999px; margin:0">This loan can be closed out now.</p>
+      <p style="height:400px; margin:0">filler</p>
+    </div>
     <div id="collapsed" style="height:0; overflow:hidden">
       <p id="clipped">a fee row the lender cannot see</p>
     </div>
@@ -196,6 +212,20 @@ test('the drive visibility predicate rejects clipped, erased and unreachable con
           fixedUnderPositioned: visible(byId('fixedUnderPositioned')),
           plain: visible(byId('plain')),
           scrolledOut: visible(byId('scrolledOut')),
+          // #2138 — the container is scrolled HERE, inside the page, so
+          // the row's rect is negative while window.scrollY is 0; the
+          // measurement the issue records, reproduced rather than assumed.
+          ...(() => {
+            const scroller = byId('innerScroller')!;
+            scroller.scrollTop = 300;
+            const row = byId('scrolledAbove')!.getBoundingClientRect();
+            return {
+              scrolledAboveRectTop: row.top,
+              scrolledAbovePageScrollY: window.scrollY,
+              scrolledAbove: visible(byId('scrolledAbove')),
+              parkedInScroller: visible(byId('parkedInScroller')),
+            };
+          })(),
           // ROUND 48 — `clip-path` hides the CONTENT and leaves every
           // other signal intact: full-size box, `checkVisibility`
           // positive, no overflow to walk, an opaque colour.
@@ -304,6 +334,17 @@ test('the drive visibility predicate rejects clipped, erased and unreachable con
     // reachable, and condemning it would be a false failure — the
     // direction that gets a check switched off.
     expect(result.scrolledOut, `scrolled out of a scroller`).toBe(true);
+    // #2138 — and scrolled ABOVE an inner scroller's slit is the same
+    // reachability, arriving through a negative rect the page's own
+    // scroll offset does not explain. The two geometry reads guard the
+    // guard: if the row's rect were not negative, or the page had
+    // scrolled, the case would be passing without testing the rule.
+    expect(result.scrolledAboveRectTop, 'the row sits above the viewport').toBeLessThan(0);
+    expect(result.scrolledAbovePageScrollY, 'and the page itself has not scrolled').toBe(0);
+    expect(result.scrolledAbove, `scrolled above an inner scroller's slit`).toBe(true);
+    // The exemption is quantified by the container's own scroll offset,
+    // not granted to everything under a scrolled container.
+    expect(result.parkedInScroller, `parked at -9999px inside that scroller`).toBe(false);
     // ROUND 48 P2 — `clip-path: inset(50%)` is the modern
     // visually-hidden idiom, and every other test in this predicate
     // vouches for it: the box is full size, `checkVisibility` is
