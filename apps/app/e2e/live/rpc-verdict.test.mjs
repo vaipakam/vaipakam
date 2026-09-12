@@ -769,6 +769,51 @@ describe('recordRpcResponse + summariseRpcLedger', () => {
     expect(out).toEqual({ malformed: [], unreachable: [] });
   });
 
+  // ROUND 94 P2 — a LATER POLL is not a retry, and `callKey` cannot tell
+  // them apart: it is method plus params, and a page polls the same method
+  // and params forever. One poll exhausting every retry — with the card
+  // possibly rendering a degraded funds surface from it — was cleared by
+  // the next poll's success, and the run passed.
+  //
+  // Nothing identifies a logical request from outside the page: viem takes
+  // a fresh id per attempt, so two retries and two polls differ in no
+  // observable way. Time is the discriminator that remains, and these
+  // cases pin both of its edges.
+  describe('recovery is scoped to the retry window (round 94)', () => {
+    const failed = (at) => ({
+      key: 'eth_call|[]',
+      method: 'eth_call',
+      verdict: 'unreachable',
+      why: 'HTTP 429',
+      url: 'https://rpc.example',
+      at,
+    });
+    const ok = (at) => ({ key: 'eth_call|[]', method: 'eth_call', verdict: 'ok', at });
+
+    it('still clears a failure a retry recovered', () => {
+      const out = summariseRpcLedger([failed(1_000), ok(1_650)]);
+      expect(out.unreachable).toEqual([]);
+    });
+
+    it('does NOT clear it from a poll seconds later', () => {
+      const out = summariseRpcLedger([failed(1_000), ok(4_000)]);
+      expect(out.unreachable).toEqual([
+        { url: 'https://rpc.example', why: 'eth_call — HTTP 429' },
+      ]);
+    });
+
+    it('leaves a record without timestamps behaving as it did', () => {
+      // `undefined` means a shape predating the field, which every rule in
+      // this project treats as "keep the old behaviour" rather than as
+      // evidence of anything.
+      const out = summariseRpcLedger([
+        { key: 'eth_call|[]', method: 'eth_call', verdict: 'unreachable', why: 'HTTP 429', url: 'u' },
+        { key: 'eth_call|[]', method: 'eth_call', verdict: 'ok' },
+      ]);
+      expect(out.unreachable).toEqual([]);
+    });
+  });
+
   describe('reconciliation across attempts (round 23)', () => {
     it('clears a failure that a LATER attempt recovered', () => {
       // viem retries, and wagmi wraps these transports in fallback([...]).

@@ -981,10 +981,45 @@ export function classifyRpcResponse(status, body, requestBody) {
  * @param {Array} ledger
  */
 export function recordRpcResponse({ status, body, requestBody, url }, ledger) {
+  // WHEN, as well as what (round 94 P2). Recovery is scoped by time
+  // because nothing else can scope it — see `RETRY_RECOVERY_WINDOW_MS`.
+  const at = Date.now();
   for (const outcome of classifyRpcResponse(status, body, requestBody)) {
-    ledger.push({ ...outcome, url });
+    ledger.push({ ...outcome, url, at });
   }
 }
+
+/**
+ * How long after a failed attempt a success may still be one of its
+ * RETRIES rather than a separate poll.
+ *
+ * ROUND 94 P2 — because `callKey` is method plus params, and a page polls
+ * the same method and params forever. A success from a LATER POLL was
+ * clearing a failure the page had already consumed: one poll exhausted
+ * every retry, the card may have rendered a degraded funds surface from
+ * it, and the next poll's success wiped the record clean.
+ *
+ * NOTHING IDENTIFIES A LOGICAL REQUEST FROM OUTSIDE THE PAGE, and that is
+ * measured rather than assumed: viem's `buildRequest` wraps the transport
+ * in `withRetry`, and the HTTP transport takes `body.id ?? idCache.take()`
+ * per call — so every attempt carries a FRESH id and two retries differ
+ * from two polls in no observable way. Grouping by request identity is
+ * therefore not available; time is what is left.
+ *
+ * The ladder this has to cover is viem's default: `retryCount: 3` with
+ * `retryDelay: 150` backing off exponentially, so ~150 + 300 + 600 ms
+ * plus the transport time of each attempt. 1.5s covers that and stays
+ * below any poll cadence the app can produce — its reads refetch on new
+ * blocks, and the deployment's chain is on two-second blocks.
+ *
+ * THE RESIDUAL, and its direction. A provider slower than this window
+ * means a genuine retry-recovery is not credited, so the run exits 2
+ * BLOCKED on a page that recovered — loud and re-runnable, which is the
+ * direction round 23 chose this rule's existence to avoid and the one
+ * this file takes when it must pick. A page polling faster than 1.5s
+ * would mis-scope the other way; none does.
+ */
+const RETRY_RECOVERY_WINDOW_MS = 1_500;
 
 /**
  * Turn the attempt ledger into the two verdict buckets.
@@ -1008,10 +1043,29 @@ export function recordRpcResponse({ status, body, requestBody, url }, ledger) {
  *            unreachable: Array<{url: string, why: string}>}}
  */
 export function summariseRpcLedger(ledger) {
-  const lastOk = new Map();
+  // Every success per call, with when it happened — a single "last one"
+  // cannot answer a question that is now about proximity rather than
+  // order (round 94).
+  const oks = new Map();
   ledger.forEach((e, i) => {
-    if (e.verdict === 'ok') lastOk.set(e.key, i);
+    if (e.verdict !== 'ok') return;
+    const list = oks.get(e.key);
+    if (list) list.push({ i, at: e.at });
+    else oks.set(e.key, [{ i, at: e.at }]);
   });
+  /** Did a LATER success plausibly belong to the same logical request? */
+  const recoveredAfter = (e, i) => {
+    const list = oks.get(e.key);
+    if (!list) return false;
+    return list.some(({ i: j, at }) => {
+      if (j <= i) return false;
+      // A record predating the timestamps cannot be scoped by them, and
+      // must keep behaving as it did — the `undefined`-means-older rule
+      // every field in this project follows.
+      if (typeof at !== 'number' || typeof e.at !== 'number') return true;
+      return at - e.at <= RETRY_RECOVERY_WINDOW_MS;
+    });
+  };
 
   const malformed = [];
   const unreachable = [];
@@ -1035,7 +1089,7 @@ export function summariseRpcLedger(ledger) {
     // `unreachable` is recoverable", which would have taken round 23's
     // case with it; what actually distinguishes them is what the fault is
     // a property of, so that is what is recorded.
-    if (e.recoverable !== false && (lastOk.get(e.key) ?? -1) > i) return;
+    if (e.recoverable !== false && recoveredAfter(e, i)) return;
     // One entry per (verdict, call, reason): a read retried three times
     // and still dead is one problem, not three.
     const dedupe = `${e.verdict}|${e.key}|${e.why}`;

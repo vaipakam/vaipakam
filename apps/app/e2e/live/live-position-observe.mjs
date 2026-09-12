@@ -7947,7 +7947,24 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
                   (c) => c.nodeType === 3 && c.textContent.trim() !== '',
                 ),
               );
-              return leaves.length === 0 || leaves.some((n) => scope.visible(n));
+              // ROUND 94 P2 — AN EMPTY LEAF SET IS NOT "PAINTED" FOR THIS
+              // CONTROL, and here it differs from the submit it was copied
+              // from.
+              //
+              // `submitLabelPainted` treats no-text-at-all as painted
+              // because the submit has its own `labelled` check, which
+              // catches a blank button separately. Back has no such check:
+              // the marker locator still finds it, the trial click still
+              // succeeds, and a Back button with its text removed was
+              // reported as a readable way out. The lender sees a blank
+              // control beside a fee-paying action and cannot tell it is
+              // the way to decline.
+              //
+              // So an empty leaf set is `false` here. Round 68 added this
+              // question precisely because Playwright's actionability
+              // ignores what the lender can see; answering "painted" for a
+              // control with nothing to paint gives that away again.
+              return leaves.length > 0 && leaves.some((n) => scope.visible(n));
             }, VISIBILITY_HELPER_SOURCES)
             .catch(() => null);
         }

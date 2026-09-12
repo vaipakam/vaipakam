@@ -211,8 +211,26 @@ function visitProblemList(v, role) {
   // return has to remember to match is a rule that keeps being
   // forgotten. Anything that observes a defect sets this, and this
   // function honours it without needing to recognise the shape.
+  // ROUND 94 P2 — `read`, not `observed`: a blocked REQUEST cannot make
+  // these two states true at once.
+  //
+  // Both producers report a contradiction inside ONE render. A card whose
+  // own attributes say `ready` and `jumpable` while it renders no switch
+  // to reach the row; a Basic-mode switch standing beside jump buttons
+  // that exist only in Advanced. Neither is an absence: in the first the
+  // attributes assert the state the missing control contradicts, and in
+  // the second both things are present at the same time. A refused
+  // request can remove a surface; it cannot make a component assert
+  // readiness it does not have, nor render two mutually exclusive modes
+  // together.
+  //
+  // Tagged `blockable: true`, they dropped out of the promotion above the
+  // infrastructure gates — so a run that also hit any failed request, any
+  // WebSocket traffic or an unknown page chain exited 2 over the blocker
+  // and never printed a defect it had read directly. That is round 38's
+  // swallow, in the one arm it had not been applied to.
   if (v.advancedFailed) {
-    observed(v.advancedWhy ?? 'the lender Advanced audit reported a failure');
+    read(v.advancedWhy ?? 'the lender Advanced audit reported a failure');
   }
 
   // PER CHECK, NOT PER RUN (Codex #1853 r18). Round 13 suppressed the

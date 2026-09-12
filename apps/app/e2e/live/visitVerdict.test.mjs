@@ -531,6 +531,25 @@ describe('visitProblemKinds', () => {
     ).toBe(true);
   });
 
+  // ROUND 94 P2 — an Advanced failure is READ, and a blocked request
+  // cannot explain it.
+  //
+  // Both producers report a contradiction inside one render: a card whose
+  // own attributes say ready and jumpable while it renders no switch, and
+  // a Basic-mode switch standing beside Advanced-only jump buttons. A
+  // refused request can remove a surface; it cannot make a component
+  // assert readiness it does not have, nor render two exclusive modes at
+  // once. Tagged blockable, they dropped out of the promotion and a run
+  // that also hit any blocker exited 2 over the blocker.
+  it('promotes an explicit Advanced failure past the blockers', () => {
+    const p = visitProblemKinds(
+      detail({ advancedFailed: true, advancedWhy: 'switch beside jumps' }),
+      'lender',
+    ).find((x) => x.why.includes('switch beside jumps'));
+    expect(p?.kind).toBe('observed');
+    expect(p?.blockable).toBe(false);
+  });
+
   // SELF-REVIEW AFTER ROUND 79 — `blockable` is the second question, and
   // every arm answers it at its own site.
   it('marks what a blocked request could explain', () => {
