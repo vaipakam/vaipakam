@@ -32,8 +32,9 @@ name: Reconcile @vaipakam-labs board
 # The sweep's own board LISTING draws on the same bucket, and for a while
 # it failed the same way, at the top of the job, before adding anything.
 # Its diagnostic (#2129) settled that the bucket refills minutes after
-# each failure, so the listing now waits for the reset the failed request
-# itself names and tries ONCE more — see the note on that step.
+# each failure, so when the failed response is a recognised rate limit the
+# listing now waits the delay the parser derives from that response and
+# tries ONCE more — see the note on that step.
 
 on:
   schedule:
@@ -98,8 +99,9 @@ jobs:
       # reported and NOT taken: a sweep is six-hourly, and a run parked for
       # an hour would be a cheaper way of hiding the same problem.
       RETRY_WAIT_CAP_SECONDS: '900'
-      # Slack added to the reset the failed request named, so the retry does
-      # not land on the boundary second and lose the coin toss.
+      # Slack added to whatever wait the parser returned, so a retry timed
+      # to a reset does not land on the boundary second and lose the coin
+      # toss.
       RETRY_MARGIN_SECONDS: '5'
     steps:
       # Only for the trace parser the listing step runs — a sparse checkout
@@ -289,18 +291,21 @@ jobs:
           # bucket the request is metered against. The parser is
           # `.github/scripts/gh-trace-ratelimit-wait.sh`: it says whether the
           # LAST response matched a rate-limit shape it supports, and how
-          # long to wait. What counts as a limit is defined in that script's
-          # header and NOT restated here. Only a recognised limit is retried;
+          # long to wait. What counts as a limit is defined in the "TWO
+          # SHAPES" block inside that script's `analyse` function, pinned by
+          # its self-test, and NOT restated here. Only a recognised limit is retried;
           # anything else — bad credentials, a project the token cannot see,
           # a 503 — goes straight to the diagnostic below, which says what it
           # was. That is a statement about what this step retries, not a
           # claim that a retry could not have helped.
           #
-          # ONCE, not until it works. A second failure after the reset means
-          # something else is draining the bucket faster than it refills,
-          # and looping on that is how a six-hourly sweep becomes a runner
-          # parked for an hour. Bounded by RETRY_WAIT_CAP_SECONDS as well: a
-          # reset further away than that is reported and not waited for.
+          # ONCE, not until it works: looping is how a six-hourly sweep
+          # becomes a runner parked for an hour. If the retry fails too, its
+          # trace is classified the same way and the diagnostic says whether
+          # that second failure was itself a recognised limit — the step
+          # reports what the second response says and infers nothing about
+          # why. Bounded by RETRY_WAIT_CAP_SECONDS as well: a wait longer
+          # than that is reported and not taken.
           first_attempt_note=''
           if [ "$rc" -ne 0 ]; then
             set +e
@@ -323,7 +328,23 @@ jobs:
                 list_board
                 rc=$?
                 set -e
-                [ "$rc" -ne 0 ] || echo "board listing succeeded on the retry"
+                if [ "$rc" -eq 0 ]; then
+                  echo "board listing succeeded on the retry"
+                else
+                  # Classify the retry's own trace before anything is said
+                  # about it: "limited again" and "failed for some other
+                  # reason" are different findings, and only the second
+                  # response can tell them apart.
+                  set +e
+                  retry_verdict=$(bash .github/scripts/gh-trace-ratelimit-wait.sh list-trace.txt)
+                  retry_rc=$?
+                  set -e
+                  if [ "$retry_rc" -eq 0 ]; then
+                    first_attempt_note="$first_attempt_note; the retry was rate limited again (${retry_verdict#*	})"
+                  else
+                    first_attempt_note="$first_attempt_note; the retry failed with no recognised limit"
+                  fi
+                fi
               else
                 first_attempt_note="rate limited ($reason) — the wait would be ${wait_s}s, over RETRY_WAIT_CAP_SECONDS=${RETRY_WAIT_CAP_SECONDS}, so NOT retried"
                 echo "::error::$first_attempt_note"

@@ -64,11 +64,12 @@ so the count above stays honest:
   wait: it reads a `GH_DEBUG=api` trace and reports whether the LAST response
   matched a rate-limit shape it supports, and how long to wait. It exists
   because `/rate_limit` does not report the bucket a GraphQL request is
-  metered against (#2129) — the failed request's own headers are the only
-  trustworthy statement of the limit. **The rule — which shapes count, how
-  each wait is derived, which waits are defaults rather than readings, and
-  what is deliberately not a limit — is stated in the script's own header
-  and next to the code that applies it, and is not repeated here.** Three
+  metered against (#2129) — the failed response itself, its status, headers
+  and body, is the only trustworthy evidence of the limit. **The rule — which
+  shapes count, how each wait is derived, which waits are defaults rather
+  than readings, and what is deliberately not a limit — is stated once, in
+  the `TWO SHAPES` comment block inside the script's `analyse` function,
+  directly above the code that applies it, and is not repeated here.** Three
   review rounds on #2149 found every paraphrase of it, in this file and the
   handbook, drifting from the code; one statement, where the self-test can
   hold it to account, is the fix. `--selftest` runs those fixtures, and the

@@ -535,8 +535,57 @@ check a "exactly two attempts — the second refusal is NOT retried ($(attempts)
 check a "one wait, not two" "$s"
 grep -q 'this is the retry after' "$work/out.txt" && s=0 || s=1
 check a "the diagnostic says the evidence shown is the retry's" "$s"
+# The retry's own trace is classified, not assumed: the second response WAS a
+# limit here, and the diagnostic says so — with the parser's reason, not a
+# guess about who drained the bucket (#2149 r9).
+grep -q 'the retry was rate limited again (primary limit' "$work/out.txt" && s=0 || s=1
+check a "the diagnostic classifies the retry's failure as a limit, from its own trace" "$s"
 grep -q '::error::listing the board failed' "$work/out.txt" && s=0 || s=1
 check a "the error annotation is emitted" "$s"
+
+# ── scenario 8b: rate limited, waited, then refused for another reason ──────
+# The retry fails, but NOT with a limit — a 401. The diagnostic must say that
+# the second failure was something else, and must not call it a limit.
+cat > "$work/bin/gh" <<SH
+#!/usr/bin/env bash
+if [ "\$1" = "api" ] && [ "\$2" = "rate_limit" ]; then
+  if [ "\$3" = "--jq" ]; then echo 5000; exit 0; fi
+  echo '{"resources":{"graphql":{"limit":5000,"remaining":5000}}}'; exit 0
+fi
+if [ "\$1" = "project" ] && [ "\$2" = "item-list" ]; then
+  echo item-list >> "\$(dirname "\$0")/../calls.txt"
+  if [ "\$(grep -c item-list "\$(dirname "\$0")/../calls.txt")" -eq 1 ]; then
+    if [ -n "\${GH_DEBUG:-}" ]; then
+      echo "< HTTP/2.0 200 OK" >&2
+      echo "< X-Ratelimit-Remaining: 0" >&2
+      echo "< X-Ratelimit-Reset: \$(( \$(date -u +%s) + 3 ))" >&2
+      echo '{"message":"API rate limit already exceeded for user ID 275282153."}' >&2
+    fi
+  else
+    if [ -n "\${GH_DEBUG:-}" ]; then
+      echo "< HTTP/2.0 401 Unauthorized" >&2
+      echo "< X-Ratelimit-Remaining: 4999" >&2
+      echo '{"message":"Bad credentials"}' >&2
+    fi
+  fi
+  echo "unknown owner type" >&2
+  exit 1
+fi
+exit 0
+SH
+chmod +x "$work/bin/gh"
+
+echo "rate limited, then refused for another reason on the retry:"
+run_step && rc=0 || rc=$?
+check b "the step fails" "$([ "$rc" -ne 0 ] && echo 0 || echo 1)"
+[ "$(attempts)" -eq 2 ] && s=0 || s=1
+check b "two attempts ($(attempts))" "$s"
+grep -q 'the retry failed with no recognised limit' "$work/out.txt" && s=0 || s=1
+check b "the diagnostic says the retry's failure was NOT a recognised limit" "$s"
+grep -q 'rate limited again' "$work/out.txt" && s=1 || s=0
+check b "and does not call it one" "$s"
+grep -q '401 Unauthorized' "$work/out.txt" && s=0 || s=1
+check b "the retry's own status is what the evidence shows" "$s"
 
 if [ "$fail" -ne 0 ]; then
   echo "board-reconcile list-step fixtures: FAILED" >&2

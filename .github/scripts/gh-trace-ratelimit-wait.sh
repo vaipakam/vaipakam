@@ -147,7 +147,10 @@ analyse() { # analyse <trace> <now-epoch>  -> prints "<seconds>\t<reason>", exit
       reason="both limits — $secondary_reason (longer than the primary reset)"
     else
       wait=$primary_wait
-      reason="both limits — $primary_reason (not shorter than retry-after)"
+      # Name the secondary wait it beat as what it actually was — a
+      # Retry-After reading or the default — never as a header that may not
+      # have existed (#2149 r9).
+      reason="both limits — $primary_reason (not shorter than the secondary wait: $secondary_reason)"
     fi
   elif [ -n "$primary_wait" ]; then
     wait=$primary_wait; reason=$primary_reason
@@ -169,7 +172,7 @@ selftest() {
     if [ "$2" -eq 0 ]; then printf '  ok    %s\n' "$1"
     else printf '  FAIL  %s\n' "$1" >&2; fail=1; fi
   }
-  expect() { # expect <label> <trace-text> <now> <exit> [<seconds>]
+  expect() { # expect <label> <trace-text> <now> <exit> [<seconds> [<reason-substring>]]
     local out rc
     printf '%s\n' "$2" > "$work/t.txt"
     # UNDER `set -e`, as the step runs it. The first version of this harness
@@ -180,6 +183,14 @@ selftest() {
     check "$1: exit $4" "$([ "$rc" -eq "$4" ] && echo 0 || echo 1)"
     if [ "$#" -ge 5 ]; then
       check "$1: waits $5 s (got '${out%%	*}')" "$([ "${out%%	*}" = "$5" ] && echo 0 || echo 1)"
+    fi
+    # The reason string is operator-facing evidence, so what it CLAIMS is
+    # part of the contract: a case may pin a phrase it must carry.
+    if [ "$#" -ge 6 ]; then
+      case "${out#*	}" in
+        *"$6"*) check "$1: reason says '$6'" 0 ;;
+        *)      check "$1: reason says '$6' (got '${out#*	}')" 1 ;;
+      esac
     fi
   }
 
@@ -226,6 +237,15 @@ selftest() {
 < X-Ratelimit-Remaining: 0
 < X-Ratelimit-Reset: 1789188527' \
     1789188167 0 600
+  # Both shapes, but the secondary side is body-only: the reset wins over a
+  # DEFAULT, and the reason must say it beat a default — not a Retry-After
+  # that was never there (#2149 r9).
+  expect "both limits, secondary side body-only — the reset, and the reason names the default" \
+'< HTTP/2.0 403 Forbidden
+< X-Ratelimit-Remaining: 0
+< X-Ratelimit-Reset: 1789188527
+{"message":"You have exceeded a secondary rate limit. Please wait a few minutes before you try again."}' \
+    1789188167 0 360 'default wait'
 
   # A secondary refusal with no Retry-After: the body is the only statement of
   # it, and the wait is the documented default.
@@ -298,7 +318,8 @@ selftest() {
 {"data":{"items":[]}}' \
     1789188167 1
 
-  # A refusal that is not a limit: waiting would not help, so say so.
+  # A refusal that matches no supported shape: exit 1, and nothing more is
+  # claimed about it.
   expect "a 401 is not a limit" \
 '< HTTP/2.0 401 Unauthorized
 < X-Ratelimit-Remaining: 4998

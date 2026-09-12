@@ -1134,9 +1134,10 @@ stand underneath it:
   if that recognises a rate limit it waits the number of seconds the parser
   returns (plus a 5 s margin, the total capped at `RETRY_WAIT_CAP_SECONDS`,
   15 min) and tries exactly once more. **What counts as a limit, and how each
-  wait is derived, is defined in that script's header and nowhere else** —
-  this handbook does not restate the rule, because three review rounds
-  showed every restatement drifting from it. Two things the reader does need:
+  wait is derived, is defined once — in the `TWO SHAPES` comment block inside
+  that script's `analyse` function, pinned by its self-test — and nowhere
+  else**; this handbook does not restate the rule, because three review
+  rounds showed every restatement drifting from it. Two things the reader does need:
   the wait comes from the request trace and never from `/rate_limit`, which
   does not report the bucket the request was metered against; and the log's
   reason string says which shape matched and whether the wait was READ from
@@ -1147,8 +1148,10 @@ stand underneath it:
   the next sweep tries again.
 
 When it is the **listing** that failed, a red sweep means one of three things,
-and the log's diagnostic group says which: the limit outlasted one retry, the
-wait exceeded the cap, or **no limit was recognised** — which covers a
+and the log's diagnostic group says which: the retry failed too (the group
+says whether that second failure was itself a recognised limit or something
+else — it reports the second response and infers no cause), the wait
+exceeded the cap, or **no limit was recognised** — which covers a
 refusal that is not a limit (bad credentials, an unreadable project) AND a
 trace the parser could not read at all, where the group says the debug
 format may have changed and the run cannot tell whether it was limited; treat
