@@ -2151,6 +2151,69 @@ const pageFirstHeadAt = new WeakMap(); // page -> Map<key, number>
 const pageFirstReadAt = new WeakMap(); // page -> Map<key, number>
 
 /**
+ * Every endpoint proven to serve the deployment, across ALL pages.
+ *
+ * ROUND 87 — the per-page `pageDiamondKeys` cannot answer "which endpoint
+ * will this NEXT page read from", and that is the question the sound floor
+ * needs: an endpoint learned on the list visit is the one the detail
+ * visits will use, so its head can be sampled BEFORE the detail page
+ * loads. Module-scoped for exactly that reason, and additive — an endpoint
+ * proven once stays proven.
+ */
+const knownPageRpcEndpoints = new Set();
+
+/**
+ * The head THE PAGE'S OWN PROVIDER is at, asked directly.
+ *
+ * ROUND 87 — and this is what finally makes the bracket's lower end sound
+ * rather than better-estimated.
+ *
+ * Rounds 84 to 86 tried three ways to bound the block a render came from:
+ * the first head the page announced, this drive's own pre-navigation
+ * sample, and an ordering test over the two. Round 87 broke the last of
+ * them correctly — a JSON-RPC batch holding both an `eth_call` and a head
+ * request is a set of independent calls, not a sequence, so the read can
+ * be served a block BEFORE the head that appears to precede it. Tightening
+ * the ordering test to refuse that turned the live deployment's answer to
+ * `span=unknown`, which is honest and also switches three arms off.
+ *
+ * The sound construction was available all along and needs no ordering at
+ * all: ask the PAGE'S provider for its height BEFORE the page loads.
+ * Blocks only advance, so any `latest` read that provider serves
+ * afterwards is at or above that height — whatever it batches, in whatever
+ * order. This drive knows the endpoint because an earlier visit's traffic
+ * proved it serves the deployment.
+ *
+ * The residual is unchanged and is the one already stated: a pool serving
+ * one request from a machine that has fallen behind can answer below its
+ * own reported height. Nothing observable from outside distinguishes it.
+ */
+async function pageProviderHead() {
+  let low = 0n;
+  for (const url of knownPageRpcEndpoints) {
+    try {
+      const resp = await ufetch(url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_blockNumber', params: [] }),
+      });
+      const parsed = await resp.json();
+      const seen = BigInt(parsed?.result ?? 0);
+      // The LOWEST across endpoints, for the reason the floor takes the
+      // lower of its sources everywhere else: this drive cannot tell which
+      // of them will serve the card's query, so the further back one is
+      // the only safe answer.
+      if (seen > 0n && (low === 0n || seen < low)) low = seen;
+    } catch {
+      // An endpoint that will not answer contributes nothing. It is not a
+      // failure: the floor simply falls back to its other sources, and the
+      // ordering test still decides whether those bound anything.
+    }
+  }
+  return low === 0n ? null : low;
+}
+
+/**
  * Can the bracket's lower end be trusted to sit at or below the block the
  * card's data came from?
  *
@@ -2208,7 +2271,14 @@ function floorEstablishedFor(page) {
     if (head !== undefined) sawHead = true;
     // A read served before this endpoint announced anything, or before it
     // announced its first head: nothing this drive saw bounds that read.
-    if (read !== undefined && (head === undefined || head > read)) return false;
+    //
+    // STRICTLY earlier (round 87). Equal timestamps mean the two answers
+    // arrived in one response — a batch — and a batch is a set of
+    // independent calls, not a sequence: a block landing between two
+    // members serves the `eth_call` at M and answers `eth_blockNumber`
+    // with M+1, so the read is older than the announcement that appears
+    // to precede it. `>=` refuses that rather than certifying it.
+    if (read !== undefined && (head === undefined || head >= read)) return false;
   }
   return sawHead;
 }
@@ -2366,9 +2436,13 @@ function watchPageHead(page) {
       if (foreign.has(key)) return;
       if (typeof body === 'string' && body.toLowerCase().includes(DIAMOND_HEX)) {
         diamond.add(key);
+        knownPageRpcEndpoints.add(key);
         return;
       }
-      if (callsTargetContract(rpcCallsFromBody(body), DIAMOND)) diamond.add(key);
+      if (callsTargetContract(rpcCallsFromBody(body), DIAMOND)) {
+        diamond.add(key);
+        knownPageRpcEndpoints.add(key);
+      }
     } catch {
       // Observational only.
     }
@@ -2463,18 +2537,27 @@ function watchPageHead(page) {
       // announcements are not state reads, and counting them would make
       // the test permanently false and quietly retire three arms.
       //
-      // A BATCH CARRYING BOTH counts as the announcement, and that is the
-      // right answer rather than a gap in this branch (self-review). viem
-      // batches, so a single body can hold `eth_blockNumber` beside the
-      // card's `eth_call` — and when it does, the head was known no later
-      // than the read was served, which is exactly what the ordering test
-      // needs to conclude. Leaving the read unstamped there says "nothing
-      // preceded the announcement", which is true.
+      // A BATCH CARRYING BOTH IS UNORDERED, and my own self-review note
+      // here said the opposite — that the head "was known no later than
+      // the read was served" — which round 87 refuted correctly.
+      //
+      // A JSON-RPC batch is one HTTP request holding independent calls.
+      // Nothing requires a server to serve them from one block, and
+      // ordinary implementations handle members in sequence: a block
+      // landing between two of them serves the `eth_call` at M and answers
+      // `eth_blockNumber` with N = M+1. The read is then OLDER than the
+      // announcement it supposedly followed, which is exactly the case
+      // this ordering test exists to exclude.
+      //
+      // So both are stamped, and the comparison below requires the head to
+      // be STRICTLY earlier. A mixed batch lands both at one timestamp and
+      // fails that, which is the honest answer: the batch says the two
+      // happened together, not in an order.
       const stamp = (map) => {
         if (!map.has(key)) map.set(key, Date.now());
       };
       if (announcesHead) stamp(firstHeadAt);
-      else if (body.includes('eth_call')) stamp(firstReadAt);
+      if (body.includes('eth_call')) stamp(firstReadAt);
       // Cheap reject before parsing — most POSTs are not this.
       if (!announcesHead) return;
       // The PARSE is a pure function in `rpc-verdict.mjs`, tested
@@ -2656,12 +2739,18 @@ async function visit(path, { expectChooser = false, loan = null } = {}) {
   // on the consumer's own condition rather than a copy of its intent, so
   // the two cannot drift into disagreeing about which visits bracket.
   let headBeforeNav = null;
+  let pageHeadBeforeNav = null;
   if (ROLE === 'lender' && loan) {
     try {
       headBeforeNav = await pub.getBlockNumber({ cacheTime: 0 });
     } catch {
       headBeforeNav = null;
     }
+    // ROUND 87 — and the same question asked of the PAGE'S provider, which
+    // is the only source that bounds what the page's own reads can return.
+    // See `pageProviderHead`. Null on the first visit, which needs no
+    // floor: the list route carries no forced-close observation.
+    pageHeadBeforeNav = await pageProviderHead();
   }
   const pageErrors = [];
   const consoleErrors = [];
@@ -2708,7 +2797,7 @@ async function visit(path, { expectChooser = false, loan = null } = {}) {
   // product is right about — the same class of error `stillEligible`
   // exists to avoid for the lender card.
   const forcedClose =
-    ROLE === 'lender' && loan ? await observeForcedClose(page, loan, headBeforeNav) : null;
+    ROLE === 'lender' && loan ? await observeForcedClose(page, loan, headBeforeNav, pageHeadBeforeNav) : null;
   const holdCard = await page.getByTestId('sale-listing-hold-card').count();
   const freeHeld = await page.getByTestId('free-held-options').count();
   const out = {
@@ -3782,7 +3871,7 @@ async function probeInternalMatch(loanId, blockNumber) {
  * reserves for a PRODUCT REGRESSION. A prerequisite read that could not
  * answer is BLOCKED, never a finding about the app.
  */
-async function observeForcedClose(page, loan, headBeforeNav) {
+async function observeForcedClose(page, loan, headBeforeNav, pageHeadBeforeNav) {
   // ROUND 55 P2 — BRACKET THE OBSERVATION, because the answer that
   // validates a render must not come from after it.
   //
@@ -3860,8 +3949,12 @@ async function observeForcedClose(page, loan, headBeforeNav) {
   const headFloor = pageHeadFloorOf(page);
   const announced = headFloor === 0n ? headAtRender : headFloor;
   const preNav = typeof headBeforeNav === 'bigint' ? headBeforeNav : 0n;
-  const headBefore =
-    announced === 0n ? preNav : preNav === 0n ? announced : announced < preNav ? announced : preNav;
+  // ROUND 87 — the SOUND source, and the only one of the three that bounds
+  // what the page's own reads can return. See `pageProviderHead`.
+  const pageNav = typeof pageHeadBeforeNav === 'bigint' ? pageHeadBeforeNav : 0n;
+  const headBefore = [announced, preNav, pageNav]
+    .filter((h) => h > 0n)
+    .reduce((low, h) => (low === 0n || h < low ? h : low), 0n);
   // ROUND 57 P2 — THE OTHER END OF THE BRACKET, AT THE PAGE'S OWN HEAD.
   //
   // Round 55 took a pre-read on `OBSERVE_RPC` at wall-clock `latest`,
@@ -4141,7 +4234,14 @@ async function observeForcedClose(page, loan, headBeforeNav) {
   // the evidence — did this endpoint announce a head before it served its
   // first contract read — and where it is absent both answers stay `null`,
   // which the verdict already reports as an incomplete observation.
-  const floorSound = floorEstablishedFor(page);
+  // ROUND 87 — a head sampled from the PAGE'S OWN PROVIDER before the page
+  // loaded establishes the floor by construction: blocks only advance, so
+  // any `latest` read that provider serves afterwards is at or above it,
+  // whatever it batches and in whatever order. Where that sample exists
+  // the announcement-ordering test is not needed; where it does not — the
+  // endpoint was not yet known, or would not answer — the ordering test is
+  // still the best available evidence and decides.
+  const floorSound = pageNav > 0n || floorEstablishedFor(page);
   const defaultableStable =
     floorSound &&
     defaultableBefore !== undefined &&

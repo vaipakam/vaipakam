@@ -118,11 +118,23 @@ describe('the head sample waits for the readings in flight', () => {
     // trusted over the other — the page's announcement is the better
     // evidence where it is lower, since a lagging page provider is the one
     // case `headBeforeNav` cannot cover.
-    const decl = src.slice(at('const headFloor ='), at('const headFloor =') + 500);
+    //
+    // AMENDED AGAIN IN ROUND 87 — there are now THREE sources and the
+    // floor is the lowest of them. The one that matters is the third: a
+    // head sampled from the PAGE'S OWN provider before the page loaded,
+    // which bounds what that provider's later `latest` reads can return
+    // by construction. The other two remain because they still lower the
+    // floor where they are further back, and because the page-provider
+    // sample is absent on the first visit and on an endpoint that will
+    // not answer.
+    const decl = src.slice(at('const headFloor ='), at('const headFloor =') + 700);
     expect(decl).toContain('pageHeadFloorOf(page)');
     expect(decl).toContain('headBeforeNav');
-    expect(decl).toMatch(/announced === 0n \? preNav/);
-    expect(decl).toMatch(/announced < preNav \? announced : preNav/);
+    expect(decl).toContain('pageHeadBeforeNav');
+    expect(decl).toMatch(/\[announced, preNav, pageNav\]/);
+    // The lowest, never the first available: taking any other one would
+    // put the floor above a block the card could have read.
+    expect(decl).toMatch(/h < low \? h : low/);
   });
 
   // ROUND 85 P2 — and the pre-navigation sample has to be taken BEFORE the
@@ -166,11 +178,15 @@ describe('the head sample waits for the readings in flight', () => {
   // see because every page request goes through its interception.
   it('only trusts the floor when the endpoint announced a head before reading', () => {
     expect(at('function floorEstablishedFor(page)')).toBeGreaterThan(-1);
-    const fn = src.slice(at('function floorEstablishedFor(page)'), at('function floorEstablishedFor(page)') + 700);
+    const fn = src.slice(at('function floorEstablishedFor(page)'), at('function floorEstablishedFor(page)') + 1600);
     // Both stamps, and the ordering test between them.
     expect(fn).toContain('pageFirstHeadAt');
     expect(fn).toContain('pageFirstReadAt');
-    expect(fn).toMatch(/head === undefined \|\| head > read/);
+    // STRICTLY earlier since round 87: equal timestamps mean one response
+    // carried both, and a JSON-RPC batch is a set of independent calls
+    // rather than a sequence — the `eth_call` can be served a block before
+    // the head request beside it.
+    expect(fn).toMatch(/head === undefined \|\| head >= read/);
     // `eth_call` and not any POST: counting `eth_chainId` or the head
     // announcements themselves would make this permanently false and
     // silently retire three protocol arms.

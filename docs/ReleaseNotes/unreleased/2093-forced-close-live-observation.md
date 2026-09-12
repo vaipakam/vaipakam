@@ -190,16 +190,19 @@ so plainly when it could not cover the window instead of treating two
 matching ends as proof.
 
 Both of those rest on the earlier end of the window genuinely sitting at
-or below the state the card displayed, and that took three attempts to
+or below the state the card displayed, and that took four attempts to
 stop guessing at. A page's own data source can answer a read from a block
 behind the one this check has already seen, so no estimate of "early
-enough" is a guarantee. What can be established is an ordering: whether
-the page's data source reported its current block *before* it served the
-card's first read. Where it did, a later read cannot have come from
-further back; where it did not, nothing bounds that read and the check
-says the comparison was not established rather than making it anyway.
-The run reports which of the two happened, so a window that could not be
-covered is visible rather than looking like a clean result.
+enough" is a guarantee, and neither is any inference from the order
+things arrived in — a single network request can carry several questions
+whose answers need not come from the same moment. What settles it is
+asking the page's own data source for its current block *before the page
+is loaded at all*. Blocks only advance, so anything that source serves
+the page afterwards is at or above that point, whatever it is asked and
+in whatever order. Where that reading cannot be taken the check says the
+comparison was not established rather than making it anyway, and the run
+reports which of the two happened, so a window that could not be covered
+is visible rather than looking like a clean result.
 
 Where that answer and the page disagree, the check reports it as
 something inferred rather than something seen, because the commonest
@@ -424,14 +427,14 @@ that race is unavoidable the check reports what it saw and names the
 uncertainty instead of resolving it by assumption.
 
 The fifth is of the same kind and worth stating separately, because it is
-what every comparison with the protocol now rests on. The check
-establishes which state the page could have been showing by watching the
-order in which the page's own data source answered it — and that reasoning
-assumes the data source does not go backwards, which a pool of machines
-serving one request from a machine that has fallen behind would break.
-Nothing observable from outside the page distinguishes that case. It is a
-far narrower assumption than the estimates it replaced, and it is still
-an assumption rather than a measurement.
+what every comparison with the protocol now rests on. Establishing which
+state the page could have been showing means asking its data source where
+the chain is before the page loads — and that assumes the source does not
+go backwards, which a pool of machines serving one request from a machine
+that has fallen behind would break. Nothing observable from outside the
+page distinguishes that case. It is a far narrower assumption than the
+estimates it replaced, and it is still an assumption rather than a
+measurement.
 
 Closes #2093. The round-by-round record of how each of these rules was
 arrived at — including several cases where a fix left its own new state
