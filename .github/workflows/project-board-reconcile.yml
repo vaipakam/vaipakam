@@ -291,9 +291,10 @@ jobs:
           # bucket the request is metered against. The parser is
           # `.github/scripts/gh-trace-ratelimit-wait.sh`: it says whether the
           # LAST response matched a rate-limit shape it supports, and how
-          # long to wait. What counts as a limit is defined in the "TWO
-          # SHAPES" block inside that script's `analyse` function, pinned by
-          # its self-test, and NOT restated here. Only a recognised limit is retried;
+          # long to wait. What counts as a limit — and which misses are
+          # accepted by name — is defined in the "THE ONE SHAPE" block inside
+          # that script's `analyse` function, pinned by its self-test, and
+          # NOT restated here. Only a recognised limit is retried;
           # anything else — bad credentials, a project the token cannot see,
           # a 503 — goes straight to the diagnostic below, which says what it
           # was. That is a statement about what this step retries, not a
@@ -318,9 +319,9 @@ jobs:
               # reset four seconds inside it is not a wait inside it.
               wait_s=$(( ${verdict%%	*} + RETRY_MARGIN_SECONDS ))
               if [ "$wait_s" -le "$RETRY_WAIT_CAP_SECONDS" ]; then
-                # "before trying once more", not "for the reset": only the
-                # primary shape names a reset. A secondary wait is Retry-After
-                # or a default, and the reason string already says which.
+                # The reason string carries the reset the response named and
+                # says whether the parser's own bound clamped it; this line
+                # adds only the margin-inclusive total.
                 echo "::warning::board listing was rate limited ($reason); waiting ${wait_s}s before trying once more"
                 first_attempt_note="first attempt was rate limited ($reason); this is the retry after a ${wait_s}s wait"
                 sleep "$wait_s"

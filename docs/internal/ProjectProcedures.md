@@ -1133,19 +1133,22 @@ stand underneath it:
   the failed request's trace to `.github/scripts/gh-trace-ratelimit-wait.sh`;
   if that recognises a rate limit it waits the number of seconds the parser
   returns (plus a 5 s margin, the total capped at `RETRY_WAIT_CAP_SECONDS`,
-  15 min) and tries exactly once more. **What counts as a limit, and how each
-  wait is derived, is defined once — in the `TWO SHAPES` comment block inside
-  that script's `analyse` function, pinned by its self-test — and nowhere
-  else**; this handbook does not restate the rule, because three review
-  rounds showed every restatement drifting from it. Two things the reader does need:
-  the wait comes from the request trace and never from `/rate_limit`, which
-  does not report the bucket the request was metered against; and the log's
-  reason string says which shape matched and whether the wait was READ from
-  a header or is a DEFAULT — a default is a guess, and the log says so.
-  Anything the parser does not recognise is not retried, whatever it was;
-  a second limit after the wait is not retried either. In both cases the
-  run fails with the request's status, headers and message in the log, and
-  the next sweep tries again.
+  15 min) and tries exactly once more. **What counts as a limit, how the wait
+  is derived and bounded, and which misses are accepted by name, is defined
+  once — in the `THE ONE SHAPE` comment block inside that script's `analyse`
+  function, pinned by its self-test — and nowhere else**; this handbook does
+  not restate the rule, because three review rounds showed every restatement
+  drifting from it. Three things the reader does need: the wait comes from
+  the request trace and never from `/rate_limit`, which does not report the
+  bucket the request was metered against; the wait is never a guess — it is
+  the reset the failed response itself named, bounded to a day at most, and
+  the reason string says when that bound applied; and a secondary limit
+  (`Retry-After` / an abuse-detection body) is a named miss — it is NOT
+  retried, its headers are shown in the diagnostic, and the next sweep is
+  the retry. Anything the parser does not recognise is not retried, whatever
+  it was; a second limit after the wait is not retried either. In both cases
+  the run fails with the request's status, headers and message in the log,
+  and the next sweep tries again.
 
 When it is the **listing** that failed, a red sweep means one of three things,
 and the log's diagnostic group says which: the retry failed too (the group

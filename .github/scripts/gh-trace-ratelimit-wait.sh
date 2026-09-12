@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
-# Read a `GH_DEBUG=api` trace and say whether the LAST response in it was a
-# rate limit — and if so, how long to wait before the same request would be
-# worth repeating.
+# Read a `GH_DEBUG=api` trace and say whether the LAST response in it is the
+# one rate-limit shape this account has ever been observed to hit on the
+# board listing — and if so, how long to wait before the same request would
+# be worth repeating.
 #
 #   bash .github/scripts/gh-trace-ratelimit-wait.sh <trace-file>
-#     stdout : "<seconds>\t<reason>"   (only when the trace shows a limit)
-#     exit 0 : the last response matched a supported rate-limit shape; stdout
-#              says how long to wait
-#     exit 1 : no supported rate-limit shape was recognised. That is ALL it
-#              says — not that a retry would be pointless. A 503 with
-#              Retry-After exits 1 and might well succeed on a retry; this
-#              script only refuses to call it a rate limit.
+#     stdout : "<seconds>\t<reason>"   (only when the shape matched)
+#     exit 0 : the last response matched the supported shape; stdout says how
+#              long to wait
+#     exit 1 : it did not. That is ALL it says — not that a retry would be
+#              pointless, and not that the response was no kind of limit.
+#              The misses this accepts are named at the rule, below.
 #     exit 2 : no response could be read from the trace at all
 #
 #   bash .github/scripts/gh-trace-ratelimit-wait.sh --selftest
@@ -19,61 +19,58 @@
 # GraphQL request is metered against: on run 34673730486 the failed request's
 # own headers said `X-Ratelimit-Remaining: 0` / `X-Ratelimit-Used: 5000` while
 # `/rate_limit`, read 200 ms later, said 5000 remaining (#2129). The only
-# trustworthy evidence is the FAILED RESPONSE itself — its status, headers
-# and body — and gh surfaces that only through its debug trace. So the
-# decision to wait is read from there and never from `/rate_limit`. The
-# LENGTH of the wait is read from a header where one names it, and is a
-# fixed local default (`MESSAGE_ONLY_WAIT`) where the response states a
-# limit but no header names a wait; the reason string says which.
+# trustworthy evidence is the FAILED RESPONSE itself, and gh surfaces that
+# only through its debug trace. So the decision to wait, and the length of
+# the wait, are read from there and never from `/rate_limit`.
 #
 # WHY THE LAST RESPONSE. A paginated listing writes one response per page into
 # the trace; the failure is the last one. Each response carries the full header
 # set, so the last occurrence of each header belongs to the last response.
 #
-# WHAT COUNTS AS A LIMIT is stated ONCE, in the comment block headed "TWO
-# SHAPES" directly above the code that applies it, and pinned by the
-# self-test cases beneath. It is deliberately not repeated here: this header
-# used to carry a second copy, and the two drifted apart (#2149 r7).
+# WHAT COUNTS AS A LIMIT is stated ONCE, in the comment block headed "THE ONE
+# SHAPE" directly above the code that applies it, and pinned by the self-test
+# cases beneath. It is deliberately not repeated here (#2149 r7).
 #
-# The wait this prints is NOT capped here. How long a job is willing to stand
-# still is the job's decision, and it is made where the job can say so.
+# The wait this prints is bounded by MAX_WAIT (below) and NOT otherwise
+# capped here. How long a job is willing to stand still is the job's
+# decision, and it is made where the job can say so.
 set -euo pipefail
 
-# Seconds to wait when the trace says "rate limited" but carries neither a
-# reset instant nor a retry-after — the floor GitHub's own guidance gives for
-# a secondary limit.
-MESSAGE_ONLY_WAIT=60
-
-# The largest wait this script will ever print — one day. Every numeric
-# header is an untrusted string, and the edge list of what one can contain
-# (zero-padding, values near the 64-bit limit that wrap once the caller adds
-# a margin, an HTTP-date instead of seconds) does not end (#2149 r11–r12).
-# So the OUTPUT is bounded instead of the input being enumerated: values are
-# parsed by one normaliser with a length bound, and any wait above this is
-# clamped to it and says so. The caller's own cap then refuses it.
+# The largest wait this script will ever print — one day. A header value is
+# an untrusted string, and the list of what one can contain does not end
+# (#2149 r11–r13: zero padding, values near the 64-bit limit, exact-bound
+# values). So the OUTPUT is bounded instead of the input being enumerated:
+# every number is read by one normaliser, every wait passes one clamp, and a
+# clamp that bit says so in the reason. The caller's own cap then refuses it.
 MAX_WAIT=86400
 
 # header_int <value> — the one normaliser for a numeric header. Prints the
 # value as a plain decimal and returns 0, or prints nothing and returns 1 if
-# it is not a run of digits (surrounding whitespace ignored). A run of MORE
-# than fifteen digits is a number, just one larger than any sane header —
-# it is represented by a fifteen-digit ceiling, which is what makes `10#`
-# safe (fifteen digits cannot overflow) and lets clamp_wait handle it like
-# any other oversized wait rather than misreporting it as "not a number".
+# it is not a run of digits (surrounding whitespace ignored). Leading zeros
+# are dropped FIRST, so `0000000000000001` is 1 and a padded `0` is 0; only
+# THEN is the length bounded — a run of more than fifteen significant digits
+# is a number larger than any sane header and is represented by a
+# fifteen-digit ceiling, which is what makes `10#` safe (fifteen digits
+# cannot overflow) and lets clamp_wait treat it like any oversized wait.
 header_int() {
   local v=$1
   v=${v#"${v%%[![:space:]]*}"}; v=${v%"${v##*[![:space:]]}"}
   [[ "$v" =~ ^[0-9]+$ ]] || return 1
+  v=${v#"${v%%[!0]*}"}
+  [ -n "$v" ] || v=0
   if [ "${#v}" -gt 15 ]; then printf '%s' 999999999999999; return 0; fi
   printf '%s' "$(( 10#$v ))"
 }
 
-# clamp_wait <seconds> — never below 0, never above MAX_WAIT.
+# clamp_wait <seconds> — prints "<seconds> <clamped>" where <clamped> is 1
+# if the bound was applied and 0 if the value came through unchanged. The
+# flag is tracked, not inferred from the output: a wait of exactly MAX_WAIT
+# was not clamped and must not be reported as if it were (#2149 r13).
 clamp_wait() {
-  local w=$1
-  [ "$w" -lt 0 ] && w=0
-  [ "$w" -gt "$MAX_WAIT" ] && w=$MAX_WAIT
-  printf '%s' "$w"
+  local w=$1 c=0
+  if [ "$w" -lt 0 ]; then w=0; c=1; fi
+  if [ "$w" -gt "$MAX_WAIT" ]; then w=$MAX_WAIT; c=1; fi
+  printf '%s %s' "$w" "$c"
 }
 
 # Where the trace formats its lines: gh prefixes response headers with `< `
@@ -83,8 +80,8 @@ last_header() { # last_header <header-name-lowercase>  (the response text on std
   # An absent header is an empty answer, not a failure: under `pipefail` a
   # grep with no match fails the pipeline, and a `var=$(...)` of a failing
   # pipeline is fatal under `set -e` — which is how the first version of this
-  # returned 1 on every trace that lacked `Retry-After`, while its own
-  # self-test, running under `set +e`, kept passing.
+  # returned 1 on every trace that lacked a header, while its own self-test,
+  # running under `set +e`, kept passing.
   { grep -aiE "^[[:space:]]*<?[[:space:]]*$1:" || true; } | tail -n 1 \
     | sed -E 's/^[^:]*:[[:space:]]*//; s/[[:space:]]+$//'
 }
@@ -93,133 +90,57 @@ analyse() { # analyse <trace> <now-epoch>  -> prints "<seconds>\t<reason>", exit
   local trace=$1 now=$2
   # Cut the trace down to the LAST response — everything from its status
   # line on. Reading "the last occurrence of each header" over the whole
-  # trace would be almost the same thing, but not quite: a body message
-  # belongs to one response, and a limited page followed by a good one
-  # would otherwise be judged by the earlier page's message.
+  # trace would be almost the same thing, but not quite: a limited page
+  # followed by a good one must be judged by the good one.
   local last_status
   last_status=$({ grep -aniE '^[[:space:]]*<?[[:space:]]*HTTP/' "$trace" || true; } | tail -n 1 | cut -d: -f1)
   [ -n "${last_status:-}" ] || return 2
   local last
   last=$(tail -n "+$last_status" "$trace")
-  local remaining reset retry message
+  local remaining reset retry
   remaining=$(printf '%s\n' "$last" | last_header 'x-ratelimit-remaining')
   reset=$(printf '%s\n' "$last" | last_header 'x-ratelimit-reset')
   retry=$(printf '%s\n' "$last" | last_header 'retry-after')
-  message=$(printf '%s\n' "$last" \
-    | grep -aoE '"message"[[:space:]]*:[[:space:]]*"[^"]{0,300}"' | tail -n 1 || true)
 
-  # The status line is the first line of the last response — taken by
-  # parameter expansion, NOT by piping the response through `head -n 1`:
-  # with a body larger than the pipe buffer, `head` exits after one line
-  # while `printf` is still writing, `pipefail` turns the SIGPIPE into 141,
-  # and `set -e` ends the analysis with no verdict — on exactly the large
-  # GraphQL responses a limited listing can carry (#2149 r4).
-  local status_line status
-  status_line=${last%%$'\n'*}
-  status=$(printf '%s\n' "$status_line" | sed -E 's/^[[:space:]]*<?[[:space:]]*HTTP\/[0-9.]+[[:space:]]+([0-9]{3}).*/\1/')
-
-  # TWO SHAPES, AND ONLY THESE TWO. The first version of this treated each
-  # signal on its own as proof of a limit — a `Retry-After` alone, a body
-  # that mentioned "rate limit" alone — and a reviewer found in one round
-  # what that admits: a 503 with `Retry-After` read as a limit, and a
-  # secondary-limit body next to a healthy primary bucket read as "remaining
-  # 0" with the wrong reset (#2149 r2). Adding conditions one at a time is
-  # the unbounded road; the bounded rule is the two documented shapes.
+  # THE ONE SHAPE. This script recognises exactly the shape the board listing
+  # has been observed to fail with — twice, on 2026-09-12, both times the
+  # same (#2129, #2134) — and nothing else:
   #
-  #   PRIMARY   — the bucket is spent: `X-Ratelimit-Remaining: 0`. GraphQL
-  #               answers 200 with the error in the body, REST answers 403,
-  #               so the status is not part of this shape. The wait is the
-  #               time to `X-Ratelimit-Reset`, which belongs to THIS bucket
-  #               precisely because remaining is 0.
-  #   SECONDARY — an abuse-detection refusal: status 403 or 429 AND either
-  #               `Retry-After` or a body saying "secondary rate limit". When
-  #               the primary headers beside it show a bucket that is NOT
-  #               exhausted, they describe something that is not the problem
-  #               and are not used for the wait. When they show `Remaining:
-  #               0`, BOTH shapes match, and the overlap rule below applies:
-  #               the longer of the two waits.
+  #   the bucket is spent: `X-Ratelimit-Remaining` is 0, and
+  #   `X-Ratelimit-Reset` names the epoch second it refills.
   #
-  # Anything else — a 503 with `Retry-After`, a 401, a body mentioning a
-  # limit on a status that is neither 403 nor 429 — matches no supported
-  # shape and exits 1, which says exactly that and nothing about whether a
-  # retry would help (see the exit-code contract at the top). A 503 is the
-  # nameable miss: transient, and a retry might well succeed, but calling it
-  # a rate limit is precisely the misdiagnosis the trace evidence exists to
-  # prevent.
+  # GraphQL answers this with HTTP 200 and the error in the body, REST with
+  # 403, so the status is not part of the shape. The wait is the time to the
+  # reset, which belongs to THIS bucket precisely because remaining is 0.
   #
-  # NUMBERS. `Retry-After` may be seconds or an HTTP-date; both are honoured.
-  # Every numeric header is read through `header_int` (digits only, at most
-  # fifteen of them, zero-padding dropped) and every wait through
-  # `clamp_wait` (never below 0, never above MAX_WAIT). A header that is
-  # present but unreadable is reported as present and unreadable, never as
-  # absent.
-  # Each shape that matches contributes its own wait; when both match — a
-  # 403/429 whose bucket is spent AND which carries Retry-After — the retry
-  # has to outlast BOTH, so the longer wait is the wait (#2149 r3). Giving
-  # either shape precedence would retry while the other limit still holds.
-  local primary_wait='' primary_reason='' secondary_wait='' secondary_reason=''
-  # Header values are validated as decimal digits and normalised through
-  # `10#` before use or output: a zero-padded `Retry-After: 08` passes an
-  # `-eq` self-comparison and then blows up as octal in the caller's
-  # arithmetic — "value too great for base" — leaving the step with neither
-  # its retry nor its diagnostic (#2149 r11).
-  # Every numeric header goes through header_int; every wait through
-  # clamp_wait. Nothing else touches a header's digits.
-  local remaining_n reset_n retry_n
-  remaining_n=$(header_int "${remaining:-}") || remaining_n=''
-  reset_n=$(header_int "${reset:-}") || reset_n=''
-  retry_n=$(header_int "${retry:-}") || retry_n=''
+  # An earlier version also recognised a SECONDARY shape — 403/429 with
+  # `Retry-After` or an abuse-detection body — and eleven review rounds of
+  # edges followed: which header wins when both appear, a `Retry-After`
+  # that is a date, a body with no header, a default that was a guess
+  # presented as a reading. None of it was ever observed on this listing.
+  # It is deleted, and these are the NAMED MISSES, accepted on purpose:
+  #
+  #   - a secondary limit (403/429 with `Retry-After` or a "secondary rate
+  #     limit" body) is NOT retried; it exits 1 and the diagnostic shows its
+  #     headers, so an operator sees exactly what it was;
+  #   - a spent bucket whose reset header is missing or unreadable is NOT
+  #     retried either — a wait with no stated length would be a guess;
+  #   - a 503 with `Retry-After`, a 401, anything else: exit 1, which says
+  #     only that the shape did not match.
+  #
+  # NUMBERS. Both headers are read through `header_int` and the wait through
+  # `clamp_wait`; a `Retry-After` beside the shape is reported as present and
+  # unused, never parsed.
+  local remaining_n reset_n
+  remaining_n=$(header_int "${remaining:-}") || return 1
+  [ "$remaining_n" = "0" ] || return 1
+  reset_n=$(header_int "${reset:-}") || return 1
 
-  if [ "${remaining_n:-}" = "0" ]; then
-    if [ -n "$reset_n" ]; then
-      primary_wait=$(clamp_wait $(( reset_n - now )))
-      primary_reason="primary limit — remaining 0, reset at $(date -u -d "@$reset_n" +%Y-%m-%dT%H:%M:%SZ)"
-      [ "$primary_wait" -eq "$MAX_WAIT" ] && primary_reason="$primary_reason (clamped to ${MAX_WAIT}s)"
-    else
-      primary_wait=$MESSAGE_ONLY_WAIT
-      primary_reason="primary limit — remaining 0 but no usable reset header — default wait"
-    fi
-  fi
-  if { [ "$status" = "403" ] || [ "$status" = "429" ]; } \
-     && { [ -n "${retry:-}" ] || printf '%s' "$message" | grep -qi 'secondary rate limit'; }; then
-    local retry_at
-    if [ -n "$retry_n" ]; then
-      secondary_wait=$(clamp_wait "$retry_n")
-      secondary_reason="secondary limit — retry-after $secondary_wait s"
-      [ "$secondary_wait" -eq "$MAX_WAIT" ] && secondary_reason="$secondary_reason (clamped from $retry_n)"
-    elif [ -n "${retry:-}" ] && retry_at=$(date -u -d "$retry" +%s 2>/dev/null); then
-      # The HTTP-date form is legal for Retry-After; the wait is the time
-      # until it. A date already passed is a wait of zero.
-      secondary_wait=$(clamp_wait $(( retry_at - now )))
-      secondary_reason="secondary limit — retry-after names $(date -u -d "@$retry_at" +%Y-%m-%dT%H:%M:%SZ)"
-    elif [ -n "${retry:-}" ]; then
-      secondary_wait=$MESSAGE_ONLY_WAIT
-      secondary_reason="secondary limit — retry-after present but not a number or a date this can read — default wait"
-    else
-      secondary_wait=$MESSAGE_ONLY_WAIT
-      secondary_reason="secondary limit stated in the body only, no retry-after — default wait"
-    fi
-  fi
-
-  local wait reason
-  if [ -n "$primary_wait" ] && [ -n "$secondary_wait" ]; then
-    if [ "$secondary_wait" -gt "$primary_wait" ]; then
-      wait=$secondary_wait
-      reason="both limits — $secondary_reason (longer than the primary reset)"
-    else
-      wait=$primary_wait
-      # Name the secondary wait it beat as what it actually was — a
-      # Retry-After reading or the default — never as a header that may not
-      # have existed (#2149 r9).
-      reason="both limits — $primary_reason (not shorter than the secondary wait: $secondary_reason)"
-    fi
-  elif [ -n "$primary_wait" ]; then
-    wait=$primary_wait; reason=$primary_reason
-  elif [ -n "$secondary_wait" ]; then
-    wait=$secondary_wait; reason=$secondary_reason
-  else
-    return 1
-  fi
+  local wait clamped
+  read -r wait clamped <<<"$(clamp_wait $(( reset_n - now )))"
+  local reason="remaining 0, reset at $(date -u -d "@$reset_n" +%Y-%m-%dT%H:%M:%SZ)"
+  [ "$clamped" -eq 0 ] || reason="$reason (wait clamped to ${MAX_WAIT}s)"
+  [ -z "${retry:-}" ] || reason="$reason; a Retry-After header was also present and is not used"
   printf '%s\t%s\n' "$wait" "$reason"
 }
 
@@ -233,7 +154,7 @@ selftest() {
     if [ "$2" -eq 0 ]; then printf '  ok    %s\n' "$1"
     else printf '  FAIL  %s\n' "$1" >&2; fail=1; fi
   }
-  expect() { # expect <label> <trace-text> <now> <exit> [<seconds> [<reason-substring>]]
+  expect() { # expect <label> <trace-text> <now> <exit> [<seconds> [<reason-substring>|!<absent-substring>]]
     local out rc
     printf '%s\n' "$2" > "$work/t.txt"
     # UNDER `set -e`, as the step runs it. The first version of this harness
@@ -246,17 +167,26 @@ selftest() {
       check "$1: waits $5 s (got '${out%%	*}')" "$([ "${out%%	*}" = "$5" ] && echo 0 || echo 1)"
     fi
     # The reason string is operator-facing evidence, so what it CLAIMS is
-    # part of the contract: a case may pin a phrase it must carry.
+    # part of the contract: a case may pin a phrase it must carry, or — with
+    # a leading `!` — one it must not.
     if [ "$#" -ge 6 ]; then
-      case "${out#*	}" in
-        *"$6"*) check "$1: reason says '$6'" 0 ;;
-        *)      check "$1: reason says '$6' (got '${out#*	}')" 1 ;;
+      local want=$6
+      case "$want" in
+        !*) want=${want#!}
+            case "${out#*	}" in
+              *"$want"*) check "$1: reason must NOT say '$want' (got '${out#*	}')" 1 ;;
+              *)         check "$1: reason does not say '$want'" 0 ;;
+            esac ;;
+        *)  case "${out#*	}" in
+              *"$want"*) check "$1: reason says '$want'" 0 ;;
+              *)         check "$1: reason says '$want' (got '${out#*	}')" 1 ;;
+            esac ;;
       esac
     fi
   }
 
   # The shape from run 34673730486: 200, remaining 0, a reset six minutes out.
-  expect "primary limit on GraphQL (HTTP 200, headers say 0)" \
+  expect "the observed shape (HTTP 200, remaining 0, reset six minutes out)" \
 '> POST /graphql HTTP/1.1
 < HTTP/2.0 200 OK
 < X-Ratelimit-Limit: 5000
@@ -272,83 +202,6 @@ selftest() {
 < X-Ratelimit-Remaining: 0
 < X-Ratelimit-Reset: 1789188527' \
     1789188999 0 0
-
-  # Secondary form: the wait is Retry-After, and the primary headers beside it
-  # (a healthy bucket, a reset an hour out) are not consulted.
-  expect "secondary limit (Retry-After)" \
-'< HTTP/2.0 403 Forbidden
-< Retry-After: 60
-< X-Ratelimit-Remaining: 4998
-< X-Ratelimit-Reset: 1789191767
-{"message":"You have exceeded a secondary rate limit. Please wait a few minutes before you try again."}' \
-    1789188167 0 60
-
-  # BOTH SHAPES AT ONCE — the bucket is spent AND Retry-After is present on a
-  # 403. The retry has to outlast both, so the longer wait wins, whichever
-  # side it is on (#2149 r3).
-  expect "both limits, reset further out than Retry-After — the reset" \
-'< HTTP/2.0 403 Forbidden
-< Retry-After: 60
-< X-Ratelimit-Remaining: 0
-< X-Ratelimit-Reset: 1789188527' \
-    1789188167 0 360
-  expect "both limits, Retry-After further out than the reset — Retry-After" \
-'< HTTP/2.0 429 Too Many Requests
-< Retry-After: 600
-< X-Ratelimit-Remaining: 0
-< X-Ratelimit-Reset: 1789188527' \
-    1789188167 0 600
-  # Both shapes, but the secondary side is body-only: the reset wins over a
-  # DEFAULT, and the reason must say it beat a default — not a Retry-After
-  # that was never there (#2149 r9).
-  expect "both limits, secondary side body-only — the reset, and the reason names the default" \
-'< HTTP/2.0 403 Forbidden
-< X-Ratelimit-Remaining: 0
-< X-Ratelimit-Reset: 1789188527
-{"message":"You have exceeded a secondary rate limit. Please wait a few minutes before you try again."}' \
-    1789188167 0 360 'default wait'
-
-  # A secondary refusal with no Retry-After: the body is the only statement of
-  # it, and the wait is the documented default.
-  expect "secondary limit stated in the body only" \
-'< HTTP/2.0 403 Forbidden
-{"message":"You have exceeded a secondary rate limit. Please wait a few minutes before you try again."}' \
-    1789188167 0 "$MESSAGE_ONLY_WAIT"
-
-  # THE SECONDARY SHAPE NEXT TO A HEALTHY PRIMARY BUCKET (#2149 r2). The
-  # primary headers are present and say 4,999 remaining with a reset an hour
-  # out; they describe a bucket that is not the problem. The wait is the
-  # secondary default, not the primary reset — and remaining is not 0.
-  expect "secondary body beside healthy primary headers" \
-'< HTTP/2.0 403 Forbidden
-< X-Ratelimit-Limit: 5000
-< X-Ratelimit-Remaining: 4999
-< X-Ratelimit-Reset: 1789191767
-{"message":"You have exceeded a secondary rate limit. Please wait a few minutes before you try again."}' \
-    1789188167 0 "$MESSAGE_ONLY_WAIT"
-
-  expect "429 with Retry-After" \
-'< HTTP/2.0 429 Too Many Requests
-< Retry-After: 30
-< X-Ratelimit-Remaining: 4990' \
-    1789188167 0 30
-
-  # `Retry-After` is also how a 503 says "come back later". That is not a
-  # rate limit, and calling it one is the misdiagnosis this exists to end —
-  # the nameable miss: a retry might well have helped.
-  expect "503 with Retry-After is NOT a limit" \
-'< HTTP/2.0 503 Service Unavailable
-< Retry-After: 120
-{"message":"Service unavailable"}' \
-    1789188167 1
-
-  # A primary-form message on a status that is neither 403 nor 429, with the
-  # bucket not spent: no shape matches.
-  expect "a limit-shaped body on a 200 with remaining > 0 is NOT a limit" \
-'< HTTP/2.0 200 OK
-< X-Ratelimit-Remaining: 12
-{"message":"API rate limit exceeded for user ID 275282153."}' \
-    1789188167 1
 
   # Paginated: eleven good pages, then the limited one. The LAST headers win.
   local pages='' p
@@ -379,69 +232,110 @@ selftest() {
 {"data":{"items":[]}}' \
     1789188167 1
 
-  # A refusal that matches no supported shape: exit 1, and nothing more is
-  # claimed about it.
-  expect "a 401 is not a limit" \
+  # ── the named misses: none of these is the shape ──────────────────────────
+  expect "a secondary limit (403 + Retry-After, healthy bucket) is a named miss" \
+'< HTTP/2.0 403 Forbidden
+< Retry-After: 60
+< X-Ratelimit-Remaining: 4998
+< X-Ratelimit-Reset: 1789191767
+{"message":"You have exceeded a secondary rate limit. Please wait a few minutes before you try again."}' \
+    1789188167 1
+  expect "a secondary body with no headers is a named miss" \
+'< HTTP/2.0 403 Forbidden
+{"message":"You have exceeded a secondary rate limit. Please wait a few minutes before you try again."}' \
+    1789188167 1
+  expect "429 with Retry-After is a named miss" \
+'< HTTP/2.0 429 Too Many Requests
+< Retry-After: 30
+< X-Ratelimit-Remaining: 4990' \
+    1789188167 1
+  expect "a spent bucket with NO reset header is a named miss (no guessed wait)" \
+'< HTTP/2.0 403 Forbidden
+< X-Ratelimit-Remaining: 0
+{"message":"API rate limit exceeded for user ID 275282153."}' \
+    1789188167 1
+  expect "a spent bucket with an unreadable reset is a named miss" \
+'< HTTP/2.0 200 OK
+< X-Ratelimit-Remaining: 0
+< X-Ratelimit-Reset: soon' \
+    1789188167 1
+  expect "503 with Retry-After is not the shape" \
+'< HTTP/2.0 503 Service Unavailable
+< Retry-After: 120
+{"message":"Service unavailable"}' \
+    1789188167 1
+  expect "a limit-shaped body on a 200 with remaining > 0 is not the shape" \
+'< HTTP/2.0 200 OK
+< X-Ratelimit-Remaining: 12
+{"message":"API rate limit exceeded for user ID 275282153."}' \
+    1789188167 1
+  expect "a 401 is not the shape" \
 '< HTTP/2.0 401 Unauthorized
 < X-Ratelimit-Remaining: 4998
 {"message":"Bad credentials"}' \
     1789188167 1
-
   expect "an unreadable trace" \
 '=== some future debug format nothing here knows ===' \
     1789188167 2
 
+  # The shape with a Retry-After beside it: the shape decides the wait and
+  # the header is reported as present and unused — never parsed.
+  expect "the shape beside a Retry-After — the reset, and the header is named as unused" \
+'< HTTP/2.0 403 Forbidden
+< Retry-After: 600
+< X-Ratelimit-Remaining: 0
+< X-Ratelimit-Reset: 1789188527' \
+    1789188167 0 360 'Retry-After header was also present and is not used'
+
   # Header names are matched case-insensitively — gh has spelled them both ways.
   expect "lower-case header names" \
-'< HTTP/2.0 403 Forbidden
-< retry-after: 30' \
-    1789188167 0 30
+'< HTTP/2.0 200 OK
+< x-ratelimit-remaining: 0
+< x-ratelimit-reset: 1789188527' \
+    1789188167 0 360
 
-  # ZERO-PADDED HEADER VALUES (#2149 r11). `Retry-After: 08` passes an `-eq`
-  # self-comparison and is then octal in the caller's `$(( ))` — "value too
-  # great for base". The wait must come out as a plain decimal, and the
-  # reason must carry the normalised number, not the literal.
-  expect "zero-padded Retry-After is normalised to decimal" \
-'< HTTP/2.0 429 Too Many Requests
-< Retry-After: 08' \
-    1789188167 0 8 'retry-after 8 s'
-  expect "zero-padded X-Ratelimit-Reset is normalised too" \
+  # ── numbers: one normaliser, one clamp (#2149 r11–r13) ─────────────────────
+  expect "zero-padded reset is normalised" \
 '< HTTP/2.0 200 OK
 < X-Ratelimit-Remaining: 0
 < X-Ratelimit-Reset: 01789188527' \
     1789188167 0 360
-  # The HTTP-date form of Retry-After is legal and names a real instant; the
-  # wait is the time until it (#2149 r12). `now` is 04:42:47Z; 05:00:00Z is
-  # 17 min 13 s = 1033 s later.
-  expect "HTTP-date Retry-After is honoured, not defaulted" \
-'< HTTP/2.0 429 Too Many Requests
-< Retry-After: Sat, 12 Sep 2026 05:00:00 GMT' \
-    1789188167 0 1033 'names 2026-09-12T05:00:00Z'
-  # A Retry-After that is neither a number nor a date still marks the shape
-  # but names no usable wait: the default, and the reason says the header
-  # was PRESENT and unreadable — not absent.
-  expect "unreadable Retry-After falls back to the default and says so" \
-'< HTTP/2.0 429 Too Many Requests
-< Retry-After: soon' \
-    1789188167 0 "$MESSAGE_ONLY_WAIT" 'present but not a number or a date'
-  # THE OUTPUT IS BOUNDED (#2149 r12). A value near the 64-bit limit would
-  # wrap negative once the caller adds its margin and sail under the cap;
-  # the wait is clamped to MAX_WAIT and the reason says so.
-  expect "a Retry-After near INT64_MAX is clamped to MAX_WAIT" \
-'< HTTP/2.0 429 Too Many Requests
-< Retry-After: 9223372036854775807' \
-    1789188167 0 "$MAX_WAIT" 'clamped'
-  expect "a reset a year out is clamped to MAX_WAIT" \
-'< HTTP/2.0 200 OK
-< X-Ratelimit-Remaining: 0
-< X-Ratelimit-Reset: 1820724167' \
-    1789188167 0 "$MAX_WAIT" 'clamped'
-  # Remaining goes through the same normaliser: `00` is an exhausted bucket.
   expect "zero-padded Remaining is still an exhausted bucket" \
 '< HTTP/2.0 200 OK
 < X-Ratelimit-Remaining: 00
 < X-Ratelimit-Reset: 1789188527' \
     1789188167 0 360
+  # Leading zeros are dropped BEFORE the length bound (#2149 r13): sixteen
+  # characters of padding do not make a small number a ceiling, and sixteen
+  # zeros are still zero.
+  expect "a reset padded past fifteen characters is still its value" \
+'< HTTP/2.0 200 OK
+< X-Ratelimit-Remaining: 0
+< X-Ratelimit-Reset: 0000001789188527' \
+    1789188167 0 360
+  expect "Remaining padded past fifteen characters is still an exhausted bucket" \
+'< HTTP/2.0 200 OK
+< X-Ratelimit-Remaining: 0000000000000000
+< X-Ratelimit-Reset: 1789188527' \
+    1789188167 0 360
+  # THE OUTPUT IS BOUNDED. A reset far out is clamped to MAX_WAIT and says so.
+  expect "a reset a year out is clamped to MAX_WAIT" \
+'< HTTP/2.0 200 OK
+< X-Ratelimit-Remaining: 0
+< X-Ratelimit-Reset: 1820724167' \
+    1789188167 0 "$MAX_WAIT" 'clamped'
+  expect "a reset near INT64_MAX is clamped to MAX_WAIT, not wrapped" \
+'< HTTP/2.0 200 OK
+< X-Ratelimit-Remaining: 0
+< X-Ratelimit-Reset: 9223372036854775807' \
+    1789188167 0 "$MAX_WAIT" 'clamped'
+  # A wait of EXACTLY MAX_WAIT was not clamped and must not say it was
+  # (#2149 r13): the flag is tracked, not inferred from the output.
+  expect "a reset exactly MAX_WAIT away is not reported as clamped" \
+"< HTTP/2.0 200 OK
+< X-Ratelimit-Remaining: 0
+< X-Ratelimit-Reset: $(( 1789188167 + MAX_WAIT ))" \
+    1789188167 0 "$MAX_WAIT" '!clamped'
 
   # A LARGE BODY ON THE LIMITED RESPONSE (#2149 r4). A limited GraphQL page
   # can still carry data, and a body past the pipe buffer is where a

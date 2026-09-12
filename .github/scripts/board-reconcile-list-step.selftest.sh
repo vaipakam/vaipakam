@@ -185,19 +185,19 @@ check r "the token does NOT appear anywhere in the output" "$s"
 # is the right shape, since a redaction is only as good as its pattern.
 grep -qi 'authorization' "$work/out.txt" && s=1 || s=0
 check r "no Authorization line reaches the output at all" "$s"
-# The refusal names a Retry-After, so this is a limit and the step tries ONCE
-# more after that wait plus the margin — and no more, whatever the second
-# answer is. The stub refuses both times; two attempts, one sleep of 65.
-[ "$(attempts)" -eq 2 ] && s=0 || s=1
-check r "exactly two attempts were made ($(attempts))" "$s"
-[ "$(cat "$work/sleeps.txt")" = "65" ] && s=0 || s=1
-check r "it waited Retry-After + margin = 65 s (got '$(tr '\n' ' ' < "$work/sleeps.txt")')" "$s"
-grep -q 'first attempt was rate limited' "$work/out.txt" && s=0 || s=1
-check r "the diagnostic says the failure shown is the retry" "$s"
-# A secondary wait comes from Retry-After (or a default) and names no reset;
-# the warning must not claim one (#2149 r5).
-grep '::warning::' "$work/out.txt" | grep -q 'for the reset' && s=1 || s=0
-check r "the wait warning does not claim a reset for a secondary limit" "$s"
+# THE NAMED MISS, PINNED. This refusal is a SECONDARY limit — 403, a
+# Retry-After, a healthy primary bucket — and the parser deliberately does
+# not recognise it (#2149 r13: eleven rounds of edges on that branch, none of
+# them ever observed on this listing, so the branch is gone). The step must
+# therefore NOT retry, must not wait, and must say what it saw — the
+# evidence above shows the Retry-After for the operator — while claiming no
+# classification the parser did not make.
+[ "$(attempts)" -eq 1 ] && s=0 || s=1
+check r "a secondary limit is NOT retried — one attempt ($(attempts))" "$s"
+[ ! -s "$work/sleeps.txt" ] && s=0 || s=1
+check r "and nothing was waited for" "$s"
+grep -q '::warning::board listing was rate limited' "$work/out.txt" && s=1 || s=0
+check r "no rate-limit warning is emitted for a shape the parser does not recognise" "$s"
 
 # ── scenario 2: the listing succeeds ─────────────────────────────────────────
 # The trace holds the whole board listing on success, so it must be discarded
@@ -258,13 +258,15 @@ if [ "\$1" = "project" ] && [ "\$2" = "item-list" ]; then
         echo "{\"id\":\"PVTI_page\${page}_item\${i}\",\"title\":\"BOARD_ITEM_BODY padding padding padding padding\"}" >&2
       done
     done
-    cat >&2 <<'TRACE'
-> POST /graphql HTTP/1.1 (page 13)
-< HTTP/2.0 403 Forbidden
-< Retry-After: 60
-< X-Ratelimit-Remaining: 0
-{"message":"You have exceeded a secondary rate limit. Please wait a few minutes before you try again."}
-TRACE
+    # The failed page is the observed shape (a spent bucket with a reset),
+    # in its REST dress: 403 rather than 200, and a Retry-After beside it
+    # that the parser reports as present and unused.
+    echo "> POST /graphql HTTP/1.1 (page 13)" >&2
+    echo "< HTTP/2.0 403 Forbidden" >&2
+    echo "< Retry-After: 60" >&2
+    echo "< X-Ratelimit-Remaining: 0" >&2
+    echo "< X-Ratelimit-Reset: \$(( \$(date -u +%s) + 3 ))" >&2
+    echo '{"message":"API rate limit already exceeded for user ID 275282153."}' >&2
   fi
   echo "unknown owner type" >&2
   exit 1
@@ -282,7 +284,7 @@ grep -q '403 Forbidden' "$work/out.txt" && s=0 || s=1
 check p "the FAILED page's status survives" "$s"
 grep -q 'X-Ratelimit-Remaining: 0' "$work/out.txt" && s=0 || s=1
 check p "the failed page's rate-limit header survives" "$s"
-grep -q 'secondary rate limit' "$work/out.txt" && s=0 || s=1
+grep -q 'API rate limit already exceeded' "$work/out.txt" && s=0 || s=1
 check p "the error body survives" "$s"
 grep -q '::endgroup::' "$work/out.txt" && s=0 || s=1
 check p "the log group is closed" "$s"
@@ -579,7 +581,7 @@ check a "the diagnostic says the evidence shown is the retry's" "$s"
 # The retry's own trace is classified, not assumed: the second response WAS a
 # limit here, and the diagnostic says so — with the parser's reason, not a
 # guess about who drained the bucket (#2149 r9).
-grep -q 'the retry was rate limited again (primary limit' "$work/out.txt" && s=0 || s=1
+grep -q 'the retry was rate limited again (remaining 0, reset at' "$work/out.txt" && s=0 || s=1
 check a "the diagnostic classifies the retry's failure as a limit, from its own trace" "$s"
 grep -q '::error::listing the board failed' "$work/out.txt" && s=0 || s=1
 check a "the error annotation is emitted" "$s"
