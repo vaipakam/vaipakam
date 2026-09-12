@@ -19,19 +19,26 @@
  *      one copy that DID get the rule was the receipt's, and the
  *      receipt is what that run's canary exercised.
  *
- *    - the predicate exists in TWO copies (one per `page.evaluate` body,
+ *    - the predicate existed in TWO copies (one per `page.evaluate` body,
  *      which cannot share a Node-side closure) and they had already
- *      drifted before anyone noticed. That divergence is #2102; until it
- *      is unified, "both copies agree" is the property worth pinning.
+ *      drifted before anyone noticed. #2102 unified them: the family now
+ *      lives in `e2e/live/visibility.mjs` and every consumer in the drive
+ *      composes it through `withVisibility`, so "both copies agree" is no
+ *      longer a property to pin — there is one copy. What this file pins
+ *      instead is that the drive defines NONE of it inline.
  *
- *  The predicate is read out of the drive's own SOURCE rather than
- *  re-implemented here. A paraphrase would test the paraphrase, which is
- *  the mistake this file is guarding against in the first place.
+ *  The predicate is the PRODUCTION definition, imported from that module
+ *  and run in the page, rather than re-implemented here. A paraphrase
+ *  would test the paraphrase, which is the mistake this file is guarding
+ *  against in the first place. The one helper still sliced out of the
+ *  drive's source is `rowShown`, the receipt-row rule, which is defined
+ *  once at its only site.
  */
 import { test, expect } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { VISIBILITY_SOURCE } from '../live/visibility.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DRIVE = path.join(HERE, '..', 'live', 'live-position-observe.mjs');
@@ -55,117 +62,21 @@ function arrowBlocks(src: string, name: string, arg = 'node'): string[] {
   return out;
 }
 
-/**
- * A helper's SOURCE, stripped to the code: comments removed, whitespace
- * collapsed. Two copies of one helper may explain themselves differently
- * and must not compute differently.
- *
- * ROUND 96 P1 — module-level, and used by every drift assertion here.
- * There were two identical local copies of this: a guard against
- * duplicated code, itself duplicated, so a later fix to how comments are
- * stripped could have strengthened one assertion and silently left the
- * other weaker. Exactly the parallel-site drift the guard exists to catch.
- */
-const codeOf = (t: string) =>
-  t
-    .split('\n')
-    .filter((line) => !line.trim().startsWith('//'))
-    .join(' ')
-    .split(/\s+/)
-    .join(' ');
-
-/**
- * Every `const <name> = (<arg>) => <expression>;` in the drive — the
- * EXPRESSION-bodied form, which {@link arrowBlocks} cannot see because it
- * matches on `=> {`.
- *
- * ROUND 96 P2 — `visible` is written that way at both scrape sites, so it
- * was the one duplicated pair with no drift assertion at all. The
- * behavioural harness cannot stand in for one either: it RECONSTRUCTS the
- * predicate in-page from `shownBox` and `paintsText` rather than running
- * either production copy, so an edit to one of them passes every fixture
- * here and every source comparison above it.
- */
-function arrowExpressions(src: string, name: string, arg = 'node'): string[] {
-  const re = new RegExp(`const ${name} = \\(${arg}\\) => [^\n;]*;`, 'g');
-  return src.match(re) ?? [];
-}
-
-test('both copies of the drive visibility predicate agree, and reject clipped content', async ({
+test('the drive visibility predicate rejects clipped, erased and unreachable content', async ({
   page,
 }) => {
+  // #2102 — ONE definition, imported. The census of copies and the drift
+  // assertions that lived here guarded a duplication that no longer
+  // exists; what is guarded now is that it cannot come back: the drive
+  // defines no helper of the family inline, and composes the module in.
   const src = fs.readFileSync(DRIVE, 'utf8');
-  const clipHelpers = arrowBlocks(src, 'notClipped');
-  const paintHelpers = arrowBlocks(src, 'paintsText');
-  // ROUND 66 P2 — the predicate is now `shownBox` (the box) composed with
-  // `paintsText` (the element's own text), and `visible` is a one-liner
-  // over them. `arrowBlocks` only finds `=> {` forms, so the pair under
-  // test is `shownBox`; `visible` is reconstructed in-page below.
-  const predicates = arrowBlocks(src, 'shownBox');
-
-  // Pinned counts, deliberately. If the drive grows a third copy, or
-  // unifies down to one (#2102), this test is describing a shape that no
-  // longer exists and must be revisited rather than quietly passing over
-  // whichever copies it still happens to find.
-  expect(clipHelpers).toHaveLength(2);
-  expect(paintHelpers).toHaveLength(2);
-  expect(predicates).toHaveLength(2);
-
-  // ROUND 95 SELF-REVIEW — THE DRIFT ASSERTION, FOR ALL FOUR HELPERS.
-  //
-  // `visibleTextOf` has had one since round 63; the other three never did,
-  // and the whole point of this file is that the duplication is the risk.
-  // The behavioural cases below run each copy against the same fixtures and
-  // compare, which catches a divergence that CHANGES A VERDICT — but only
-  // for the shapes a fixture happens to cover, and a copy differing on a
-  // branch no fixture reaches passes clean. That is exactly what was found
-  // when this assertion was first added: `shownBox`'s two copies had
-  // diverged on the arm taken only when `checkVisibility` is absent, which
-  // Chromium never takes, so every behavioural case agreed while the source
-  // did not. Rounds 29 and 51 were both that shape, and both times the arm
-  // that differed was the one that later became live.
-  //
-  // Compared as CODE — comments stripped, whitespace collapsed — so the two
-  // may explain themselves differently, and must not compute differently.
-  for (const [name, copies] of [
-    ['notClipped', clipHelpers],
-    ['paintsText', paintHelpers],
-    ['shownBox', predicates],
-    ['visibleTextOf', arrowBlocks(src, 'visibleTextOf', 'root')],
-  ] as const) {
-    expect(copies, `${name}: expected exactly two copies`).toHaveLength(2);
-    expect(codeOf(copies[0]), `${name}: the two copies have drifted`).toBe(codeOf(copies[1]));
-  }
-
-  // ROUND 96 P2 — AND `visible` IS THE FIFTH PAIR, with a THIRD occurrence.
-  //
-  // It is written as an EXPRESSION body at both scrape sites, so
-  // `arrowBlocks` — which matches on `=> {` — has never seen it. The
-  // round-66 note above says exactly that and does not draw the conclusion.
-  // Nothing else covered it either: the behavioural harness RECONSTRUCTS the
-  // predicate in-page as `shownBox(n) && paintsText(n)` rather than running
-  // either production copy, so an edit to one of them passed every fixture
-  // in this file and every comparison in the loop above.
-  //
-  // THREE, not two, and the third is the load-bearing one. The drive builds
-  // `VISIBILITY_HELPER_SOURCES` for the mount wait by looking itself up with
-  // `self.indexOf('const visible = (node) => shownBox(node) && ...')` — a
-  // STRING LITERAL of the predicate, which sits earlier in the file than
-  // either definition and is therefore what `indexOf` finds FIRST. It works
-  // today only because the literal and the definitions are the same text. If
-  // a definition changed and the literal did not, the lookup would not throw
-  // — it would keep finding the literal and hand the mount wait a predicate
-  // the scrape no longer uses, silently.
-  //
-  // So all three are compared, not just the two definitions.
-  const visibleCopies = arrowExpressions(src, 'visible');
-  expect(
-    visibleCopies,
-    'visible: two definitions plus the self-lookup literal in VISIBILITY_HELPER_SOURCES',
-  ).toHaveLength(3);
-  for (const copy of visibleCopies.slice(1)) {
-    expect(codeOf(copy), 'visible: the copies have drifted').toBe(codeOf(visibleCopies[0]));
-  }
+  expect(src, 'the drive defines no visibility helper inline').not.toMatch(
+    /const (notClipped|paintsText|shownBox|visibleTextOf) = \((node|root)\) => \{/,
+  );
+  expect(src, 'the drive composes the module in').toContain(
+    "import { withVisibility } from './visibility.mjs';",
+  );
+  const predicates = [VISIBILITY_SOURCE];
 
   await page.setContent(`
     <div id="collapsed" style="height:0; overflow:hidden">
@@ -245,14 +156,14 @@ test('both copies of the drive visibility predicate agree, and reject clipped co
     </div>
   `);
 
-  for (const [i, predicate] of predicates.entries()) {
+  for (const predicate of predicates) {
     const result = await page.evaluate(
-      ([clipSrc, paintSrc, visSrc]) => {
-        // One shared scope for the pair: `visible` calls `notClipped`,
-        // and `eval` of a `const` would not leak either into scope here.
-        const visible = new Function(
-          `${clipSrc}\n${paintSrc}\n${visSrc}\nreturn (n) => shownBox(n) && paintsText(n);`,
-        )() as (n: Element | null) => boolean;
+      (helpersSrc) => {
+        // The production family, instantiated in the page exactly as the
+        // drive's composition does it.
+        const visible = new Function(`return (${helpersSrc})();`)().visible as (
+          n: Element | null,
+        ) => boolean;
         const byId = (id: string) => document.getElementById(id);
         return {
           clipped: visible(byId('clipped')),
@@ -313,7 +224,7 @@ test('both copies of the drive visibility predicate agree, and reject clipped co
             typeof byId('plain')!.checkVisibility === 'function',
         };
       },
-      [clipHelpers[i], paintHelpers[i], predicate] as const,
+      predicate,
     );
 
     expect(result.usesCheckVisibility, 'the engine exposes checkVisibility').toBe(
@@ -323,32 +234,32 @@ test('both copies of the drive visibility predicate agree, and reject clipped co
     // descendant keeps a full-size layout box and `innerText` keeps
     // yielding its text. Neither `checkVisibility` nor a rect test sees
     // this on its own.
-    expect(result.clipped, `copy ${i}: content inside height:0/overflow:hidden`).toBe(
+    expect(result.clipped, `content inside height:0/overflow:hidden`).toBe(
       false,
     );
     // A clipper does not have to be exactly zero to hide everything.
     // `height: 1px` leaves the ancestor non-zero, so the collapsed rule
     // passed it while the lender saw one pixel of a loss disclosure.
-    expect(result.slivered, `copy ${i}: content inside height:1px/overflow:hidden`).toBe(
+    expect(result.slivered, `content inside height:1px/overflow:hidden`).toBe(
       false,
     );
     // `checkVisibility` says nothing about colour, and neither did any
     // geometry test — so `color: transparent` left every receipt value
     // laid out, measurable and readable through `innerText` while the
     // lender saw nothing.
-    expect(result.transparentLeaf, `copy ${i}: a dd painted in transparent`).toBe(false);
-    expect(result.transparentWrapper, `copy ${i}: a wrapper with no own text`).toBe(true);
-    expect(result.repaintedChild, `copy ${i}: a child that repaints itself`).toBe(true);
-    expect(result.plain, `copy ${i}: ordinary content`).toBe(true);
+    expect(result.transparentLeaf, `a dd painted in transparent`).toBe(false);
+    expect(result.transparentWrapper, `a wrapper with no own text`).toBe(true);
+    expect(result.repaintedChild, `a child that repaints itself`).toBe(true);
+    expect(result.plain, `ordinary content`).toBe(true);
     // The other end of the same rule, pinned so the threshold cannot be
     // tightened into a false failure: a row clipped by a single pixel is
     // still a row the lender can read.
-    expect(result.trimmed, `copy ${i}: clipped by one pixel`).toBe(true);
+    expect(result.trimmed, `clipped by one pixel`).toBe(true);
     // Half of a TWO-LINE leaf surviving is not the leaf being readable:
     // it is one whole line on screen and one whole line gone, and
     // `innerText` yields both. The element-level ratio accepted this at
     // exactly 50%; the per-line rule does not.
-    expect(result.twoLines, `copy ${i}: a two-line value with line two clipped`).toBe(
+    expect(result.twoLines, `a two-line value with line two clipped`).toBe(
       false,
     );
     // THE LIMIT OF THE PER-LINE RULE, and a correction to my own first
@@ -358,8 +269,8 @@ test('both copies of the drive visibility predicate agree, and reject clipped co
     // and the verdict that follows says "card is in the DOM but not
     // visible", which is the wrong sentence about a card largely on
     // screen. Leaves are checked individually anyway.
-    expect(result.cardish, `copy ${i}: a container whose last row is clipped`).toBe(true);
-    expect(result.selfClipped, `copy ${i}: a dd clipping its own text`).toBe(false);
+    expect(result.cardish, `a container whose last row is clipped`).toBe(true);
+    expect(result.selfClipped, `a dd clipping its own text`).toBe(false);
     // ROUND 65 P2 — WHICH ancestors clip an OUT-OF-FLOW box.
     //
     // `inFlow` was computed once from the observed node, so every
@@ -373,59 +284,59 @@ test('both copies of the drive visibility predicate agree, and reject clipped co
     // from over-reaching into a false FAIL.
     expect(
       result.absClipped,
-      `copy ${i}: absolute, pushed outside its own containing block`,
+      `absolute, pushed outside its own containing block`,
     ).toBe(false);
-    expect(result.absInside, `copy ${i}: absolute, inside its containing block`).toBe(true);
+    expect(result.absInside, `absolute, inside its containing block`).toBe(true);
     expect(
       result.absUnderStatic,
-      `copy ${i}: a STATIC overflow ancestor is not an absolute box's containing block`,
+      `a STATIC overflow ancestor is not an absolute box's containing block`,
     ).toBe(true);
     expect(
       result.fixedUnderPositioned,
-      `copy ${i}: a merely positioned ancestor does not capture a FIXED box`,
+      `a merely positioned ancestor does not capture a FIXED box`,
     ).toBe(true);
     expect(
       result.selfClippedAbs,
-      `copy ${i}: a POSITIONED dd clipping its own text`,
+      `a POSITIONED dd clipping its own text`,
     ).toBe(false);
     // The deliberate limit of the rule, pinned so it cannot be tightened
     // by accident: content merely scrolled out of a scroll container is
     // reachable, and condemning it would be a false failure — the
     // direction that gets a check switched off.
-    expect(result.scrolledOut, `copy ${i}: scrolled out of a scroller`).toBe(true);
+    expect(result.scrolledOut, `scrolled out of a scroller`).toBe(true);
     // ROUND 48 P2 — `clip-path: inset(50%)` is the modern
     // visually-hidden idiom, and every other test in this predicate
     // vouches for it: the box is full size, `checkVisibility` is
     // positive, there is no overflow to walk and the colour is opaque,
     // while nothing is painted and `innerText` yields every word.
-    expect(result.clipPathLeaf, `copy ${i}: a dt under clip-path: inset(50%)`).toBe(false);
-    expect(result.clipPathPct, `copy ${i}: a dd clipped past collapse in %`).toBe(false);
-    expect(result.clipPathPx, `copy ${i}: a dd clipped to nothing in px`).toBe(false);
+    expect(result.clipPathLeaf, `a dt under clip-path: inset(50%)`).toBe(false);
+    expect(result.clipPathPct, `a dd clipped past collapse in %`).toBe(false);
+    expect(result.clipPathPx, `a dd clipped to nothing in px`).toBe(false);
     expect(
       result.underClippedAncestor,
-      `copy ${i}: content under an emptied clip region`,
+      `content under an emptied clip region`,
     ).toBe(false);
     // The deliberate limits, pinned in the direction that matters more.
     // A partial inset is ordinary decorative clipping; `round` describes
     // corners, not extent; and a `circle()` — even an empty one — is a
     // geometry question this predicate does not attempt, so it counts as
     // painted. The residual is a missed defect, never an invented one.
-    expect(result.clipPathPartial, `copy ${i}: a partial inset`).toBe(true);
-    expect(result.clipPathRounded, `copy ${i}: an inset with a corner radius`).toBe(true);
-    expect(result.clipPathCircle, `copy ${i}: a shape function, not judged`).toBe(true);
+    expect(result.clipPathPartial, `a partial inset`).toBe(true);
+    expect(result.clipPathRounded, `an inset with a corner radius`).toBe(true);
+    expect(result.clipPathCircle, `a shape function, not judged`).toBe(true);
     // ROUND 51 P2 — `filter: opacity(0)` paints nothing while every
     // other signal stays green, and it is checked on the same ancestor
     // walk as `opacity` because a filter applies to the subtree the same
     // way.
-    expect(result.filterLeaf, `copy ${i}: a dt under filter: opacity(0)`).toBe(false);
-    expect(result.filterPct, `copy ${i}: the same stated as a percentage`).toBe(false);
-    expect(result.filterChain, `copy ${i}: zero opacity inside a filter chain`).toBe(false);
-    expect(result.underFilter, `copy ${i}: content under an erased ancestor`).toBe(false);
+    expect(result.filterLeaf, `a dt under filter: opacity(0)`).toBe(false);
+    expect(result.filterPct, `the same stated as a percentage`).toBe(false);
+    expect(result.filterChain, `zero opacity inside a filter chain`).toBe(false);
+    expect(result.underFilter, `content under an erased ancestor`).toBe(false);
     // The limits, pinned in the direction that matters more: a partial
     // opacity is a deliberate design choice, and a filter this cannot
     // reason about counts as painted.
-    expect(result.filterPartial, `copy ${i}: filter: opacity(0.4)`).toBe(true);
-    expect(result.filterOther, `copy ${i}: a filter that is not opacity`).toBe(true);
+    expect(result.filterPartial, `filter: opacity(0.4)`).toBe(true);
+    expect(result.filterOther, `a filter that is not opacity`).toBe(true);
   }
 });
 
@@ -453,13 +364,6 @@ test('both copies of the drive visibility predicate agree, and reject clipped co
 test('the drive addresses the card its own predicate judged, not Playwright’s', async ({
   page,
 }) => {
-  const src = fs.readFileSync(DRIVE, 'utf8');
-  const clipSrc = arrowBlocks(src, 'notClipped')[0];
-  const paintSrc = arrowBlocks(src, 'paintsText')[0];
-  // ROUND 66 P2 — `shownBox` is the block-bodied half; `visible` is
-  // composed from it and `paintsText` in-page, exactly as the drive does.
-  const visSrc = arrowBlocks(src, 'shownBox')[0];
-
   await page.setContent(`
     <div style="opacity:0">
       <div data-testid="forced-close-card" id="ghost">the transparent one</div>
@@ -482,22 +386,17 @@ test('the drive addresses the card its own predicate judged, not Playwright’s'
   // What the DOM pass actually chooses, and the index it now reports so
   // the interaction can address the same element.
   const chosenIndex = await page.evaluate(
-    ([clip, paint, vis]) => {
-      // All THREE helpers, in dependency order. `visible` calls both
-      // `notClipped` and `paintsText`, and injecting a subset throws a
-      // `ReferenceError` inside the page — which is how this was caught:
-      // adding `paintsText` to the drive broke this second injection
-      // while the first, already updated, went on passing.
-      const visible = new Function(
-        `${clip}\n${paint}\n${vis}\nreturn (n) => shownBox(n) && paintsText(n);`,
-      )() as (
+    (helpersSrc) => {
+      // The whole family at once — there is no subset to inject and no
+      // dependency order to get wrong (#2102).
+      const visible = new Function(`return (${helpersSrc})();`)().visible as (
         n: Element | null,
       ) => boolean;
       const all = [...document.querySelectorAll('[data-testid="forced-close-card"]')];
       const shown = all.filter(visible);
       return all.indexOf(shown[0]);
     },
-    [clipSrc, paintSrc, visSrc] as const,
+    VISIBILITY_SOURCE,
   );
 
   expect(chosenIndex, 'the predicate skips the transparent card').toBe(1);
@@ -525,27 +424,18 @@ test('the drive addresses the card its own predicate judged, not Playwright’s'
  */
 test('a receipt row with a blank label is not a readable row', async ({ page }) => {
   const src = fs.readFileSync(DRIVE, 'utf8');
-  const clipSrc = arrowBlocks(src, 'notClipped')[0];
-  const paintSrc = arrowBlocks(src, 'paintsText')[0];
-  // ROUND 66 P2 — `shownBox` is the block-bodied half; `visible` is
-  // composed from it and `paintsText` in-page, exactly as the drive does.
-  const visSrc = arrowBlocks(src, 'shownBox')[0];
   // ROUND 62 P2 — `hasText` is GONE. It asked `innerText` of the
   // `dt`/`dd` WRAPPER, and `visible` on a wrapper is deliberately
   // lenient, so a label in a transparent child passed both. Replaced by
   // `visibleTextOf`, which collects only the text whose element chain is
-  // visible.
-  //
-  // Index [1] is the RECEIPT scope's copy — the same ordering as
-  // `visible` above, and the reason the copies are counted.
-  const textSrc = arrowBlocks(src, 'visibleTextOf', 'root')[1];
+  // visible — imported from the module since #2102.
   const rowSrc = arrowBlocks(src, 'rowShown', 'row')[0];
 
-  // One `rowShown`, and `visibleTextOf` in the same two copies `visible`
-  // has (#2102). If either changes this test is describing a shape that
-  // no longer exists.
+  // One `rowShown` — its only site — and NO inline `visibleTextOf` (#2102).
+  // If either changes this test is describing a shape that no longer
+  // exists.
   expect(arrowBlocks(src, 'rowShown', 'row')).toHaveLength(1);
-  expect(arrowBlocks(src, 'visibleTextOf', 'root')).toHaveLength(2);
+  expect(arrowBlocks(src, 'visibleTextOf', 'root')).toHaveLength(0);
   expect(arrowBlocks(src, 'hasText', 'el'), 'hasText was replaced').toHaveLength(0);
 
   await page.setContent(`
@@ -568,9 +458,9 @@ test('a receipt row with a blank label is not a readable row', async ({ page }) 
   `);
 
   const result = await page.evaluate(
-    ([clip, paint, vis, text, row]) => {
+    ([helpersSrc, row]) => {
       const scope = new Function(
-        `${clip}\n${paint}\n${vis}\nconst visible = (n) => shownBox(n) && paintsText(n);\n${text}\n${row}\nreturn { rowShown, visible, visibleTextOf };`,
+        `const { visible, visibleTextOf } = (${helpersSrc})();\n${row}\nreturn { rowShown, visible, visibleTextOf };`,
       )() as {
         rowShown: (r: Element) => boolean;
         visible: (n: Element | null) => boolean;
@@ -618,7 +508,7 @@ test('a receipt row with a blank label is not a readable row', async ({ page }) 
         emptyLabelLooksVisible: scope.visible(byId('blankLabel').querySelector('dt')),
       };
     },
-    [clipSrc, paintSrc, visSrc, textSrc, rowSrc] as const,
+    [VISIBILITY_SOURCE, rowSrc] as const,
   );
 
   expect(result.good, 'a populated row').toBe(true);
@@ -711,39 +601,15 @@ test('a receipt row with a blank label is not a readable row', async ({ page }) 
 // (rounds 29 and 51).
 test('an explanation erased inside the body is not a visible body', async ({ page }) => {
   const src = fs.readFileSync(DRIVE, 'utf8');
-  const clipSrc = arrowBlocks(src, 'notClipped')[0];
-  const paintSrc = arrowBlocks(src, 'paintsText')[0];
-  // ROUND 66 P2 — `shownBox` is the block-bodied half; `visible` is
-  // composed from it and `paintsText` in-page, exactly as the drive does.
-  const visSrc = arrowBlocks(src, 'shownBox')[0];
   // ROUND 62 P2 — `textLeavesOf` became `visibleTextOf`. "At least one
   // visible leaf" accepted an unrelated leaf while the sentence the
   // verdict MATCHES was erased; reporting the painted TEXT and
   // recognising state from that binds the check to the copy that
   // governs the action.
   //
-  // Index [0] is the CARD-SCRAPE scope's copy, the same ordering as
-  // `visible`.
-  const leafSrc = arrowBlocks(src, 'visibleTextOf', 'root')[0];
-  expect(arrowBlocks(src, 'visibleTextOf', 'root')).toHaveLength(2);
+  // Imported from the module since #2102; the drive carries no copy.
+  expect(arrowBlocks(src, 'visibleTextOf', 'root')).toHaveLength(0);
   expect(arrowBlocks(src, 'textLeavesOf', 'root'), 'replaced').toHaveLength(0);
-
-
-  // AND THE TWO COPIES MUST AGREE, which nothing asserted when they were
-  // written. `visible` has a whole test for this property because its two
-  // copies had already drifted (#2102); a second duplicated helper with
-  // no such assertion is that story queued up again. Compared as source
-  // with whitespace normalised — the copies sit at different indentation
-  // — because textual identity is the strongest form of "they agree" and
-  // the cheapest to check.
-  // COMMENT LINES DROPPED, code compared. The two copies carry different
-  // prose on purpose — one cross-references the other — and this
-  // assertion failed on exactly that when it compared the raw source,
-  // which would have made it a nuisance rather than a guard. Only whole
-  // comment lines are removed, never a trailing `//`, so the regex
-  // literals in the body are untouched.
-  const bothCopies = arrowBlocks(src, 'visibleTextOf', 'root');
-  expect(codeOf(bothCopies[0]), 'the two copies have drifted').toBe(codeOf(bothCopies[1]));
 
   await page.setContent(`
     <style>
@@ -1061,9 +927,9 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
   `);
 
   const result = await page.evaluate(
-    ([clip, paint, vis, leaf]) => {
+    (helpersSrc) => {
       const scope = new Function(
-        `${clip}\n${paint}\n${vis}\nconst visible = (n) => shownBox(n) && paintsText(n);\n${leaf}\nreturn { visible, shownBox, visibleTextOf };`,
+        `const { visible, shownBox, visibleTextOf } = (${helpersSrc})();\nreturn { visible, shownBox, visibleTextOf };`,
       )() as {
         visible: (n: Element | null) => boolean;
         shownBox: (n: Element | null) => boolean;
@@ -1229,7 +1095,7 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
         textStillReadable: (byId('transparent') as HTMLElement).innerText.trim().length > 0,
       };
     },
-    [clipSrc, paintSrc, visSrc, leafSrc] as const,
+    VISIBILITY_SOURCE,
   );
 
   expect(result.plain, 'a readable explanation in a child').toBe(true);
