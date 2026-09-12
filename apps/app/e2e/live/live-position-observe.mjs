@@ -5332,7 +5332,7 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
           //     and reading half a sentence is not the defect this catches.
           //
           // STATED RESIDUAL, and it is the mirror of the first guard rather
-          // than a second win: `elementFromPoint` looks straight through an
+          // than a second win: `elementsFromPoint` looks straight through an
           // element with `pointer-events: none`, so an OPAQUE overlay carrying
           // that property hides the text visually and is invisible to this
           // test. That is a missed defect, which is the direction this file
@@ -7024,7 +7024,7 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
               // HIT-TESTED, which is the only way to ask "is something in front of
               // this". Each glyph rectangle is probed at its centre first, and at
               // two corners only when the centre comes back covered — so the common
-              // case costs one `elementFromPoint` per rectangle and reachable text
+              // case costs one `elementsFromPoint` per rectangle and reachable text
               // returns on the first probe.
               //
               // THREE GUARDS AGAINST CONDEMNING LEGIBLE COPY, because this is the
@@ -7050,7 +7050,7 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
               //     and reading half a sentence is not the defect this catches.
               //
               // STATED RESIDUAL, and it is the mirror of the first guard rather
-              // than a second win: `elementFromPoint` looks straight through an
+              // than a second win: `elementsFromPoint` looks straight through an
               // element with `pointer-events: none`, so an OPAQUE overlay carrying
               // that property hides the text visually and is invisible to this
               // test. That is a missed defect, which is the direction this file

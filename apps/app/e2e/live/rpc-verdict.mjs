@@ -980,6 +980,16 @@ export function classifyRpcResponse(status, body, requestBody) {
  *          requestBody: string|undefined, url: string}} response
  * @param {Array} ledger
  */
+/**
+ * Per-response identity for {@link recordRpcResponse}; see its round-95
+ * note. Declared ABOVE its only writer rather than below it: a `let` is
+ * not initialised until its own line runs, so a future caller reached
+ * during module evaluation would throw on the temporal dead zone rather
+ * than read a zero. Nothing calls it that early today, which is exactly
+ * the kind of thing that stops being true quietly.
+ */
+let responseSeq = 0;
+
 export function recordRpcResponse({ status, body, requestBody, url }, ledger) {
   // WHEN, as well as what (round 94 P2). Recovery is scoped by time
   // because nothing else can scope it — see `RETRY_RECOVERY_WINDOW_MS`.
@@ -1003,9 +1013,6 @@ export function recordRpcResponse({ status, body, requestBody, url }, ledger) {
     ledger.push({ ...outcome, url, at, response });
   }
 }
-
-/** Per-response identity for {@link recordRpcResponse}; see its round-95 note. */
-let responseSeq = 0;
 
 /**
  * How long after a failed attempt a success may still be one of its
