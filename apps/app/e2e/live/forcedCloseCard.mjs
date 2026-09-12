@@ -980,6 +980,24 @@ export function saysCheckRunning(text, unknownCopy) {
  * absence as incomplete — conservative, loudly, rather than confidently
  * wrong.
  *
+ * ROUND 114 P2 — UNLESS A SOUND CEILING WAS OBTAINED, in which case the
+ * missing sighting costs nothing.
+ *
+ * The sentence above is right about what an unobserved sighting proves,
+ * and it was applied one step too early: as an unconditional first test,
+ * before the ceiling was looked at. A page can issue Diamond `eth_call`s
+ * without ever emitting a block-number reply — the endpoints are
+ * identified from the call traffic, not from head announcements — so a
+ * ceiling can be asked of every one of them after the scrape while the
+ * sighting stays `0n`. That ceiling already bounds every block the card
+ * could have rendered from, which is the whole question; the sighting
+ * would add nothing to it. Refusing there reports a bound as
+ * unestablished on a run that established it, and the deployment exits
+ * BLOCKED for want of evidence it had.
+ *
+ * So the zero-sighting refusal applies only where there is no sound
+ * ceiling to stand in for it.
+ *
  * ROUND 102 P2 — AND THE ASKED CEILING IS PART OF THE BAR.
  *
  * `pageHead` is the highest head this drive OVERHEARD the page announce.
@@ -1006,7 +1024,7 @@ export function saysCheckRunning(text, unknownCopy) {
  */
 export function confirmationReady(observerHead, pinnedBlock, pageHead, ceiling) {
   if (typeof observerHead !== 'bigint' || typeof pinnedBlock !== 'bigint') return false;
-  if (typeof pageHead !== 'bigint' || pageHead === 0n) return false;
+  if (typeof pageHead !== 'bigint') return false;
   // ROUND 103 P2 — THE TWO BOUNDS ARE NOT COMPARED THE SAME WAY, and round
   // 102 collapsing them into one `bar` erased the difference.
   //
@@ -1021,7 +1039,7 @@ export function confirmationReady(observerHead, pinnedBlock, pageHead, ceiling) 
   // otherwise conclusive run for nothing. `>=` is the honest comparison for
   // a bound, where `>` is the honest one for a sighting.
   if (observerHead <= pinnedBlock) return false;
-  if (ceiling === undefined) return observerHead > pageHead;
+  if (ceiling === undefined) return pageHead > 0n && observerHead > pageHead;
   if (!ceiling?.sound || typeof ceiling.head !== 'bigint' || ceiling.head === 0n) return false;
   // ROUND 104 P2 — A SOUND CEILING SUBSUMES THE SIGHTING IT COVERS.
   //

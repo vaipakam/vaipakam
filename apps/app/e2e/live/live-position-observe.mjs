@@ -4848,12 +4848,16 @@ async function observeForcedClose(page, loan, headBeforeNav, pageHeadBeforeNav, 
   // Unanswered endpoints make it `false` rather than lowering it — a
   // ceiling that covers some of the endpoints the page used is not a
   // ceiling, and this refuses rather than approximating.
+  // ROUND 114 P2 — and `pageHead > 0n` is no longer among them. A sound
+  // ceiling is REQUIRED below, and it is asked of every endpoint the page
+  // was seen to use — identified from Diamond call traffic, which a page
+  // produces whether or not it ever announces a head. So on a deployment
+  // that emits no block-number reply the ceiling is obtained and the
+  // sighting is `0n`, and demanding the sighting as well refused a run that
+  // had the bound. `pinnedBlock >= pageHead` is trivially true at `0n` and
+  // stays as the sighting's own test where there is one.
   const observerCaughtUp =
-    headSettled &&
-    pageHead > 0n &&
-    pinnedBlock >= pageHead &&
-    ceilingSound &&
-    pinnedBlock >= ceiling.head;
+    headSettled && pinnedBlock >= pageHead && ceilingSound && pinnedBlock >= ceiling.head;
   // ROUND 90 P2 — no global shortcut. `floorEstablishedFor` now decides
   // PER ENDPOINT, accepting either the pre-navigation sample or that
   // endpoint's own announcement ordering, so an endpoint this page reached

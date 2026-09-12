@@ -1364,6 +1364,26 @@ describe('confirmationReady — round 14: caught up, not merely moved', () => {
     expect(confirmationReady(99n, 10n, 0n)).toBe(false);
   });
 
+  // ROUND 114 P2 — BUT A SOUND CEILING STANDS IN FOR THE MISSING SIGHTING.
+  //
+  // A page can issue Diamond `eth_call`s without ever emitting a
+  // block-number reply: the endpoints are identified from the call traffic,
+  // so the ceiling can be asked of every one of them while the sighting
+  // stays `0n`. The ceiling bounds every block the card could have rendered
+  // from, which is the entire question — refusing there reports a bound as
+  // unestablished on a run that established it.
+  it('confirms on a sound ceiling even when no page head was ever seen', () => {
+    expect(confirmationReady(20n, 10n, 0n, { sound: true, head: 20n })).toBe(true);
+    // And the ceiling still has to be reached and the snapshot still passed.
+    expect(confirmationReady(19n, 10n, 0n, { sound: true, head: 20n })).toBe(false);
+    expect(confirmationReady(20n, 20n, 0n, { sound: true, head: 20n })).toBe(false);
+    // An UNSOUND ceiling stands in for nothing — that is the case the
+    // zero-sighting rule is still for.
+    expect(confirmationReady(20n, 10n, 0n, { sound: false, head: 20n })).toBe(false);
+    expect(confirmationReady(20n, 10n, 0n, { sound: true, head: 0n })).toBe(false);
+    expect(confirmationReady(20n, 10n, 0n, undefined)).toBe(false);
+  });
+
   it('is false rather than throwing on non-bigint input', () => {
     expect(confirmationReady(12, 10n, 11n)).toBe(false);
     expect(confirmationReady(12n, 10n, undefined)).toBe(false);
@@ -1456,12 +1476,15 @@ describe('confirmationReady — round 14: caught up, not merely moved', () => {
       /** The specification, written from the prose, not from the code. */
       const expected = (observer, pinned, sighting, ceiling) => {
         if (typeof observer !== 'bigint' || typeof pinned !== 'bigint') return false;
-        if (typeof sighting !== 'bigint' || sighting === 0n) return false;
+        if (typeof sighting !== 'bigint') return false;
         // This observer must have moved past the block it scraped at.
         if (observer <= pinned) return false;
-        // No ceiling: the sighting is all there is, and it is a sighting, so
-        // strictly past it.
-        if (ceiling === undefined) return observer > sighting;
+        // No ceiling: the sighting is all there is, so it must exist, and it
+        // is a sighting, so strictly past it. An unobserved sighting with
+        // nothing to stand in for it establishes nothing (round 114 moved
+        // this test here from the top, where it also refused runs that HAD
+        // a sound ceiling).
+        if (ceiling === undefined) return sighting > 0n && observer > sighting;
         // An unestablished ceiling is not a reason to trust a lower number.
         if (!ceiling.sound || typeof ceiling.head !== 'bigint' || ceiling.head === 0n) return false;
         // A sound ceiling bounds everything the card could have read, so it
