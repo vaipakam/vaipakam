@@ -946,6 +946,23 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
              style="position:absolute; top:400px; margin:0">This loan can be closed out now.</p>
         </div>
       </div>
+      <!-- ROUND 111 P2 — CSS-GENERATED TEXT IS TEXT THE LENDER READS.
+           A stylesheet regression adding content to ::after paints an
+           amount on screen that appears in no childNodes, so the walk
+           could not see it and the funds scan certified the card clean.
+           The styled-away sibling is the control: a pseudo can be hidden
+           independently of its owner, and inventing text from one that
+           paints nothing would be the opposite error.
+           (No backticks in here: this block is inside a template literal,
+           and putting one in has broken spec discovery four times now.) -->
+      <style>
+        #generatedAmount::after { content: "100 USDC"; }
+        #generatedHidden::after { content: "250 WETH"; visibility: hidden; }
+        #generatedCounter::after { content: counter(page); }
+      </style>
+      <div class="body" id="generatedAmount" style="width:320px"><span>Close-out</span></div>
+      <div class="body" id="generatedHidden" style="width:320px"><span>Close-out</span></div>
+      <div class="body" id="generatedCounter" style="width:320px"><span>Close-out</span></div>
       <!-- The percentage spelling of the same thing. -->
       <div class="body" id="coveredByPercentFilter" style="position:relative; width:320px">
         <p style="margin:0">This loan can be closed out now.</p>
@@ -1131,6 +1148,9 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
         coveredUnderCatcherSeen: seenScrolled(byId('coveredUnderCatcher')),
         catcherOverGhostSeen: seenScrolled(byId('catcherOverGhost')),
         clippedAboveCB: bodyVisible(byId('clippedAboveCBLeaf')),
+        generatedAmountText: scope.visibleTextOf(byId('generatedAmount')),
+        generatedHiddenText: scope.visibleTextOf(byId('generatedHidden')),
+        generatedCounterText: scope.visibleTextOf(byId('generatedCounter')),
         coveredByHalfFilterSeen: seenScrolled(byId('coveredByHalfFilter')),
         coveredByPercentFilterSeen: seenScrolled(byId('coveredByPercentFilter')),
         coveredByFullFilterSeen: seenScrolled(byId('coveredByFullFilter')),
@@ -1498,4 +1518,22 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
     result.clippedAboveCB,
     'a hidden ancestor above the containing block still clips',
   ).toBe(false);
+
+  // ROUND 111 P2 — generated text is collected, because the lender reads
+  // it and the funds scan was certifying cards that displayed an amount
+  // through ::after. Only a QUOTED string, and only when the pseudo
+  // actually paints: a hidden one contributes nothing, and counter()
+  // cannot be read without inventing text.
+  expect(
+    result.generatedAmountText,
+    'text painted through ::after reaches the scan',
+  ).toContain('100 USDC');
+  expect(
+    result.generatedHiddenText,
+    'but a styled-away pseudo contributes nothing',
+  ).not.toContain('250 WETH');
+  expect(
+    result.generatedCounterText,
+    'and a non-string content invents no text',
+  ).toBe('Close-out');
 });

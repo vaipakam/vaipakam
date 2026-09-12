@@ -6410,6 +6410,58 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
           if (!shownBox(root)) return '';
           const unpainted = /^(script|style|template|title|noscript)$/i;
           const parts = [];
+          // ROUND 111 P2 — CSS-GENERATED TEXT IS TEXT THE LENDER READS.
+          //
+          // `::before` / `::after` content is painted on screen and appears in no
+          // `childNodes`, so this walk could not see it and the amount scan
+          // returned a clean verdict on a card displaying `100 USDC`. That is the
+          // false-PASS direction on the one absolute claim this drive makes — the
+          // card states no amount it cannot substantiate — so the text is
+          // collected rather than the assertion declined: declining on any
+          // generated content would switch the check off for every decorative
+          // bullet or icon, which is the same check lost by a different door.
+          //
+          // Only a QUOTED string counts. `counter()`, `attr()`, `url()` and the
+          // `none` / `normal` defaults are not copy this can read, and guessing at
+          // them would invent text. And only when the pseudo actually paints: its
+          // own display, visibility, opacity and colour alpha are checked the way
+          // `paintsText` checks an element's, since a pseudo can be styled away
+          // independently of its owner.
+          const pseudoText = (el, which) => {
+            let cs;
+            try {
+              cs = getComputedStyle(el, which);
+            } catch {
+              return '';
+            }
+            if (!cs) return '';
+            const content = cs.content;
+            if (!content || content === 'none' || content === 'normal') return '';
+            if (cs.display === 'none' || cs.visibility !== 'visible') return '';
+            if (Number.parseFloat(cs.opacity) === 0) return '';
+            // THE SAME ALPHA RULE AS `alphaOf`, and written out because that one
+            // lives in the occlusion scope and is not reachable from here. My
+            // first version was a one-line regex taking the LAST number before
+            // the paren, which reads `rgb(0, 0, 0)` as alpha 0 and dropped every
+            // pseudo painted in plain black — a fix that silently did nothing,
+            // caught only because the fixture failed. A colour parser written a
+            // third time is the #2102 duplication one level down, and is recorded
+            // there rather than left implicit.
+            const colour = String(cs.color).trim();
+            if (colour === 'transparent') return '';
+            const fn = /^[a-zA-Z-]+\(([^]*)\)$/.exec(colour);
+            if (fn) {
+              const body = fn[1];
+              const cut = body.lastIndexOf('/');
+              const parts = body.split(',');
+              const raw = cut >= 0 ? body.slice(cut + 1) : parts.length === 4 ? parts[3] : null;
+              if (raw !== null && Number.parseFloat(raw) === 0) return '';
+            }
+            const quoted = [...content.matchAll(/"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)'/g)]
+              .map((m) => (m[1] ?? m[2] ?? '').replace(/\\(.)/g, '$1'))
+              .join('');
+            return quoted;
+          };
           // ROUND 66 P2 — AN ELEMENT'S OWN TEXT AND ITS SUBTREE ARE JUDGED
           // SEPARATELY.
           //
@@ -6497,11 +6549,24 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
                 const boundary = breaksLine(child, prevBox);
                 if (boundary) parts.push('\n');
                 prevBox = child;
+                // Generated text sits around the element's own children, so
+                // it is collected in the order it is painted.
+                const before = pseudoText(child, '::before');
+                if (before) parts.push(before);
                 walk(child);
+                const after = pseudoText(child, '::after');
+                if (after) parts.push(after);
               }
             }
           };
+          // The ROOT's own generated text too — the walk only sees children,
+          // and a card whose amount is painted through its own ::after is
+          // exactly the shape this was written for.
+          const rootBefore = pseudoText(root, '::before');
+          if (rootBefore) parts.push(rootBefore);
           walk(root);
+          const rootAfter = pseudoText(root, '::after');
+          if (rootAfter) parts.push(rootAfter);
           // Horizontal whitespace collapses; the deliberate breaks do not.
           return parts
             .join('')
@@ -8461,6 +8526,58 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
               if (!shownBox(root)) return '';
               const unpainted = /^(script|style|template|title|noscript)$/i;
               const parts = [];
+              // ROUND 111 P2 — CSS-GENERATED TEXT IS TEXT THE LENDER READS.
+              //
+              // `::before` / `::after` content is painted on screen and appears in no
+              // `childNodes`, so this walk could not see it and the amount scan
+              // returned a clean verdict on a card displaying `100 USDC`. That is the
+              // false-PASS direction on the one absolute claim this drive makes — the
+              // card states no amount it cannot substantiate — so the text is
+              // collected rather than the assertion declined: declining on any
+              // generated content would switch the check off for every decorative
+              // bullet or icon, which is the same check lost by a different door.
+              //
+              // Only a QUOTED string counts. `counter()`, `attr()`, `url()` and the
+              // `none` / `normal` defaults are not copy this can read, and guessing at
+              // them would invent text. And only when the pseudo actually paints: its
+              // own display, visibility, opacity and colour alpha are checked the way
+              // `paintsText` checks an element's, since a pseudo can be styled away
+              // independently of its owner.
+              const pseudoText = (el, which) => {
+                let cs;
+                try {
+                  cs = getComputedStyle(el, which);
+                } catch {
+                  return '';
+                }
+                if (!cs) return '';
+                const content = cs.content;
+                if (!content || content === 'none' || content === 'normal') return '';
+                if (cs.display === 'none' || cs.visibility !== 'visible') return '';
+                if (Number.parseFloat(cs.opacity) === 0) return '';
+                // THE SAME ALPHA RULE AS `alphaOf`, and written out because that one
+                // lives in the occlusion scope and is not reachable from here. My
+                // first version was a one-line regex taking the LAST number before
+                // the paren, which reads `rgb(0, 0, 0)` as alpha 0 and dropped every
+                // pseudo painted in plain black — a fix that silently did nothing,
+                // caught only because the fixture failed. A colour parser written a
+                // third time is the #2102 duplication one level down, and is recorded
+                // there rather than left implicit.
+                const colour = String(cs.color).trim();
+                if (colour === 'transparent') return '';
+                const fn = /^[a-zA-Z-]+\(([^]*)\)$/.exec(colour);
+                if (fn) {
+                  const body = fn[1];
+                  const cut = body.lastIndexOf('/');
+                  const parts = body.split(',');
+                  const raw = cut >= 0 ? body.slice(cut + 1) : parts.length === 4 ? parts[3] : null;
+                  if (raw !== null && Number.parseFloat(raw) === 0) return '';
+                }
+                const quoted = [...content.matchAll(/"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)'/g)]
+                  .map((m) => (m[1] ?? m[2] ?? '').replace(/\\(.)/g, '$1'))
+                  .join('');
+                return quoted;
+              };
               // ROUND 66 P2 — AN ELEMENT'S OWN TEXT AND ITS SUBTREE ARE JUDGED
               // SEPARATELY.
               //
@@ -8513,11 +8630,24 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
                     const boundary = breaksLine(child, prevBox);
                     if (boundary) parts.push('\n');
                     prevBox = child;
+                    // Generated text sits around the element's own children, so it is
+                    // collected in the order it is painted.
+                    const before = pseudoText(child, '::before');
+                    if (before) parts.push(before);
                     walk(child);
+                    const after = pseudoText(child, '::after');
+                    if (after) parts.push(after);
                   }
                 }
               };
+              // The ROOT's own generated text too — the walk only sees children,
+              // and a card whose amount is painted through its own ::after is
+              // exactly the shape this was written for.
+              const rootBefore = pseudoText(root, '::before');
+              if (rootBefore) parts.push(rootBefore);
               walk(root);
+              const rootAfter = pseudoText(root, '::after');
+              if (rootAfter) parts.push(rootAfter);
               // Horizontal whitespace collapses; the deliberate breaks do not.
               return parts
                 .join('')
