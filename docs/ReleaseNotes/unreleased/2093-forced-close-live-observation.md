@@ -628,6 +628,34 @@ inputs, rather than against examples chosen by whoever last changed them.
 The last of these was verified by reintroducing three earlier mistakes in
 turn and confirming it catches each.
 
+### What the check does differently after the final review pass
+
+Five changes an operator reading a run's output will notice, each stated
+in the direction it errs:
+
+- **Text drawn by the stylesheet is read.** Copy painted before or after
+  an element — the kind a styling regression can add — appears in no
+  element the page lists, and the amount check could not see it. It is
+  read now. Where its value is one the check cannot resolve, the run says
+  the amount claim was not established rather than calling the card
+  clean.
+- **Token symbols are matched by shape, not alphabet.** A symbol written
+  in full-width or other non-Latin letters was not recognised, so a
+  figure beside it was excused as an identifier. The rule is unchanged —
+  an uppercase run — and now applies to every script that has case.
+  Scripts without case still do not read as symbols.
+- **A missing copy bundle is the harness's fault, not the deployment's.**
+  If the check's own reference copy cannot be read, the run exits as
+  blocked, naming the key, instead of reporting a product regression it
+  never observed.
+- **An accepted sale is re-read before a position is visited.** A sale
+  accepted after the run ranked its candidates no longer spends one of
+  the visit budget on a card that is correctly absent, so a usable
+  candidate further down is still reached.
+- **A malformed request still names its method.** The report says what
+  the page was trying to do — "malformed envelope for eth_call" — rather
+  than only that the envelope was wrong.
+
 Closes #2093. The round-by-round record of how each of these rules was
 arrived at — including several cases where a fix left its own new state
 unhandled, or was applied to one of several parallel sites — lives in the
