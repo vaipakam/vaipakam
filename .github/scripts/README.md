@@ -69,7 +69,9 @@ so the count above stays honest:
   form (`X-Ratelimit-Remaining: 0`, wait = `X-Ratelimit-Reset` minus now —
   the status is not part of it, since GraphQL answers 200 with the error in
   the body) and the **secondary** form (status 403 or 429 with `Retry-After`,
-  or with a body saying "secondary rate limit"; wait = `Retry-After`). A
+  or with a body saying "secondary rate limit"; wait = `Retry-After`). When
+  both shapes match one response, the retry has to outlast both, so the
+  longer of the two waits is the wait. A
   response that fits a shape but lacks the header that would name its wait
   gets a fixed 60 s default, and the reason string says `default wait` so the
   log never presents the guess as a reading. A 503 with `Retry-After` is

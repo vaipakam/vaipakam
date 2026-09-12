@@ -101,25 +101,45 @@ analyse() { # analyse <trace> <now-epoch>  -> prints "<seconds>\t<reason>", exit
   # wait would not repair it. A 503 is the nameable miss: transient, and a
   # retry might well succeed, but calling it a rate limit is precisely the
   # misdiagnosis the trace evidence exists to prevent.
-  local wait reason
+  # Each shape that matches contributes its own wait; when both match — a
+  # 403/429 whose bucket is spent AND which carries Retry-After — the retry
+  # has to outlast BOTH, so the longer wait is the wait (#2149 r3). Giving
+  # either shape precedence would retry while the other limit still holds.
+  local primary_wait='' primary_reason='' secondary_wait='' secondary_reason=''
   if [ "${remaining:-}" = "0" ]; then
     if [ -n "${reset:-}" ] && [ "$reset" -eq "$reset" ] 2>/dev/null; then
-      wait=$(( reset - now ))
-      [ "$wait" -lt 0 ] && wait=0
-      reason="primary limit — remaining 0, reset at $(date -u -d "@$reset" +%Y-%m-%dT%H:%M:%SZ)"
+      primary_wait=$(( reset - now ))
+      [ "$primary_wait" -lt 0 ] && primary_wait=0
+      primary_reason="primary limit — remaining 0, reset at $(date -u -d "@$reset" +%Y-%m-%dT%H:%M:%SZ)"
     else
-      wait=$MESSAGE_ONLY_WAIT
-      reason="primary limit — remaining 0 but no reset header — default wait"
+      primary_wait=$MESSAGE_ONLY_WAIT
+      primary_reason="primary limit — remaining 0 but no reset header — default wait"
     fi
-  elif { [ "$status" = "403" ] || [ "$status" = "429" ]; } \
-       && { [ -n "${retry:-}" ] || printf '%s' "$message" | grep -qi 'secondary rate limit'; }; then
+  fi
+  if { [ "$status" = "403" ] || [ "$status" = "429" ]; } \
+     && { [ -n "${retry:-}" ] || printf '%s' "$message" | grep -qi 'secondary rate limit'; }; then
     if [ -n "${retry:-}" ] && [ "$retry" -eq "$retry" ] 2>/dev/null; then
-      wait=$retry
-      reason="secondary limit — retry-after $retry s"
+      secondary_wait=$retry
+      secondary_reason="secondary limit — retry-after $retry s"
     else
-      wait=$MESSAGE_ONLY_WAIT
-      reason="secondary limit stated in the body only, no retry-after — default wait"
+      secondary_wait=$MESSAGE_ONLY_WAIT
+      secondary_reason="secondary limit stated in the body only, no retry-after — default wait"
     fi
+  fi
+
+  local wait reason
+  if [ -n "$primary_wait" ] && [ -n "$secondary_wait" ]; then
+    if [ "$secondary_wait" -gt "$primary_wait" ]; then
+      wait=$secondary_wait
+      reason="both limits — $secondary_reason (longer than the primary reset)"
+    else
+      wait=$primary_wait
+      reason="both limits — $primary_reason (not shorter than retry-after)"
+    fi
+  elif [ -n "$primary_wait" ]; then
+    wait=$primary_wait; reason=$primary_reason
+  elif [ -n "$secondary_wait" ]; then
+    wait=$secondary_wait; reason=$secondary_reason
   else
     return 1
   fi
@@ -178,14 +198,21 @@ selftest() {
 {"message":"You have exceeded a secondary rate limit. Please wait a few minutes before you try again."}' \
     1789188167 0 60
 
-  # Both headers say the same thing — the bucket IS spent and Retry-After is
-  # present too. Remaining 0 is the primary shape and its reset is the wait.
-  expect "remaining 0 with a Retry-After beside it — the primary reset wins" \
+  # BOTH SHAPES AT ONCE — the bucket is spent AND Retry-After is present on a
+  # 403. The retry has to outlast both, so the longer wait wins, whichever
+  # side it is on (#2149 r3).
+  expect "both limits, reset further out than Retry-After — the reset" \
 '< HTTP/2.0 403 Forbidden
 < Retry-After: 60
 < X-Ratelimit-Remaining: 0
 < X-Ratelimit-Reset: 1789188527' \
     1789188167 0 360
+  expect "both limits, Retry-After further out than the reset — Retry-After" \
+'< HTTP/2.0 429 Too Many Requests
+< Retry-After: 600
+< X-Ratelimit-Remaining: 0
+< X-Ratelimit-Reset: 1789188527' \
+    1789188167 0 600
 
   # A secondary refusal with no Retry-After: the body is the only statement of
   # it, and the wait is the documented default.
