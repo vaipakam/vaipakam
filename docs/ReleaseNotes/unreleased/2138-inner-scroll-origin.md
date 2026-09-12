@@ -1,4 +1,4 @@
-## Thread — Live-drive visibility rule credits an inner scroll container (PR #TBD)
+## Thread — Live-drive visibility rule credits an inner scroll container (PR #2157)
 
 The check that watches the lender's forced close-out card on the deployed
 build reads only copy a sighted lender can actually see. One of its rules
