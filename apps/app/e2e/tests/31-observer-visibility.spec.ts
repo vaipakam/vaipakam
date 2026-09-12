@@ -916,6 +916,25 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
         <div style="position:absolute; inset:0; background:#123456; opacity:0"></div>
         <div style="position:absolute; inset:0"></div>
       </div>
+      <!-- ROUND 97 P2 — a REPLACED element is not automatically a cover.
+           A fully transparent 1x1 PNG stretched over the row reports
+           opacity 1 and is what hit-testing returns, and the old tag test
+           counted any img/video/canvas/svg as painting — so decorative
+           artwork discarded readable copy. Nothing cheap can tell whether
+           its pixels are opaque (naturalWidth says it loaded; reading the
+           pixels back taints on a cross-origin image), so undecidable
+           counts as NOT covering, as everywhere else here. -->
+      <div class="body" id="coveredByGhostImage" style="position:relative; width:320px">
+        <p style="margin:0">This loan can be closed out now.</p>
+        <img alt="" style="position:absolute; inset:0; width:100%; height:100%" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7">
+      </div>
+      <!-- And the same element carrying an opaque BACKGROUND is still a
+           cover: the background test never depended on the tag, so removing
+           the tag shortcut must not take this with it. -->
+      <div class="body" id="coveredByPaintedImage" style="position:relative; width:320px">
+        <p style="margin:0">This loan can be closed out now.</p>
+        <img alt="" style="position:absolute; inset:0; width:100%; height:100%; background:#123456" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7">
+      </div>
       <!-- ROUND 96 P2 — three COLLINEAR probes (the centre and the two
            opposite corners) were all that decided total occlusion, so three
            small covers sitting on that line discarded a sentence the lender
@@ -1070,6 +1089,8 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
         coveredByOpaqueChildSeen: seenScrolled(byId('coveredByOpaqueChild')),
         coveredUnderCatcherSeen: seenScrolled(byId('coveredUnderCatcher')),
         catcherOverGhostSeen: seenScrolled(byId('catcherOverGhost')),
+        coveredByGhostImageSeen: seenScrolled(byId('coveredByGhostImage')),
+        coveredByPaintedImageSeen: seenScrolled(byId('coveredByPaintedImage')),
         oldProbePointsSeen: (() => {
           // Cover EXACTLY the three points the pre-round-96 sampling used:
           // the centre of the glyph rectangle and its two opposite corners.
@@ -1385,4 +1406,18 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
     result.oldProbePointsSeen,
     'three dots on the old probe points do not hide the sentence',
   ).toContain('closed out now');
+
+  // ROUND 97 P2 — a replaced element is not evidence of paint. A fully
+  // transparent image over the row reports opacity 1 and is what
+  // hit-testing returns; the tag test counted it as a cover and threw the
+  // sentence away. Nothing cheap can read its pixels, so it is undecidable
+  // — and undecidable counts as not covering.
+  expect(
+    result.coveredByGhostImageSeen,
+    'a transparent image covers nothing',
+  ).toContain('closed out now');
+  expect(
+    result.coveredByPaintedImageSeen,
+    'but the same image with an opaque background still covers',
+  ).toBe('');
 });

@@ -4097,7 +4097,24 @@ async function observeForcedClose(page, loan, headBeforeNav, pageHeadBeforeNav, 
   // The LATER sample below is kept and still feeds the absence gate,
   // where "has the page caught up" is the question and the newest head
   // is the right answer. Two samples, two different questions.
-  await settleHeadReads(page);
+  // ROUND 97 P2 — AND THIS ONE'S VERDICT IS KEPT TOO. I said in round 96
+  // that the floor could ignore it, and named round 48 as the reason. That
+  // was wrong, and the distinction I missed is which reply is in question.
+  //
+  // Round 48 is about a reply that ARRIVES after the sample: genuinely not
+  // part of what the DOM was showing, and rightly ignored. This is about a
+  // reply that arrived BEFORE it and had not finished parsing — already the
+  // page's, and dropped only because the drain ran out of passes.
+  //
+  // The damage is in the accusing direction, which is why it is not merely
+  // untidy. A lagging endpoint discovered late leaves its head unrecorded,
+  // the floor is then built from an ahead OBSERVE_RPC height N, and the
+  // pending parse lands recording page head M below it. Both later checks —
+  // the announcement ordering and the post-scrape drain — pass. So a card
+  // that rendered at M is judged against a scan covering only N and later,
+  // and across a grace transition between the two that is a correct card
+  // accused.
+  const floorDrained = await settleHeadReads(page);
   const headAtRender = pageHeadOf(page);
   // ROUND 84 P2 — AND THE PRE-RENDER END GOES TO THE FLOOR, not to the
   // newest head the page happened to have reached.
@@ -4479,7 +4496,10 @@ async function observeForcedClose(page, loan, headBeforeNav, pageHeadBeforeNav, 
   // PER ENDPOINT, accepting either the pre-navigation sample or that
   // endpoint's own announcement ordering, so an endpoint this page reached
   // for the first time cannot ride on a height taken from another one.
-  const floorSound = floorEstablishedFor(page, pageSampledBeforeNav) && observerCaughtUp;
+  // `floorDrained` (round 97 P2): the pre-render sample the floor is built
+  // from has to have been complete, for the same reason the ceiling's does.
+  const floorSound =
+    floorDrained && floorEstablishedFor(page, pageSampledBeforeNav) && observerCaughtUp;
   const defaultableStable =
     floorSound &&
     defaultableBefore !== undefined &&
@@ -5420,7 +5440,27 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
               // returning there accepted a paint the wrapper erases. Readable
               // copy was then discarded — the false-FAIL direction again, from
               // the fix that was supposed to close it.
-              if (!paints && /^(img|video|canvas|svg)$/i.test(n.tagName)) paints = true;
+              //
+              // ROUND 97 P2 — AND THE TAG TEST THAT USED TO LIVE HERE IS GONE.
+              //
+              // It read `/^(img|video|canvas|svg)$/.test(n.tagName)` and counted
+              // any replaced element as painting. A fully transparent PNG, an
+              // untouched canvas or a mostly-empty SVG all report `opacity: 1`
+              // and are all what hit-testing returns, so any of them spanning the
+              // glyph discarded plainly readable copy — the false-FAIL direction,
+              // on a funds surface, from a rule that never looked at a pixel.
+              //
+              // DELETED RATHER THAN NARROWED, because there is no cheap honest
+              // version. `naturalWidth` says an image loaded, not that it is
+              // opaque; reading pixels back means a canvas draw, and a
+              // cross-origin image taints the canvas and throws. Undecidable
+              // counts as NOT covering here, as everywhere else in this
+              // predicate.
+              //
+              // STATED RESIDUAL: an opaque image laid over the text with no
+              // background colour of its own is no longer detected. That is a
+              // missed defect, which is the trade this file makes every time —
+              // the alternative invents failures out of decorative artwork.
               // ROUND 90 P2 — READ BY SHAPE, via the same `alphaOf` the fill test
               // uses. The first version matched `rgba?(…)` only, so an overlay
               // painted in `oklab(…)` or `color(display-p3 …)` — forms Chromium
@@ -7181,7 +7221,27 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
                   // returning there accepted a paint the wrapper erases. Readable
                   // copy was then discarded — the false-FAIL direction again, from
                   // the fix that was supposed to close it.
-                  if (!paints && /^(img|video|canvas|svg)$/i.test(n.tagName)) paints = true;
+                  //
+                  // ROUND 97 P2 — AND THE TAG TEST THAT USED TO LIVE HERE IS GONE.
+                  //
+                  // It read `/^(img|video|canvas|svg)$/.test(n.tagName)` and counted
+                  // any replaced element as painting. A fully transparent PNG, an
+                  // untouched canvas or a mostly-empty SVG all report `opacity: 1`
+                  // and are all what hit-testing returns, so any of them spanning the
+                  // glyph discarded plainly readable copy — the false-FAIL direction,
+                  // on a funds surface, from a rule that never looked at a pixel.
+                  //
+                  // DELETED RATHER THAN NARROWED, because there is no cheap honest
+                  // version. `naturalWidth` says an image loaded, not that it is
+                  // opaque; reading pixels back means a canvas draw, and a
+                  // cross-origin image taints the canvas and throws. Undecidable
+                  // counts as NOT covering here, as everywhere else in this
+                  // predicate.
+                  //
+                  // STATED RESIDUAL: an opaque image laid over the text with no
+                  // background colour of its own is no longer detected. That is a
+                  // missed defect, which is the trade this file makes every time —
+                  // the alternative invents failures out of decorative artwork.
                   // ROUND 90 P2 — READ BY SHAPE, via the same `alphaOf` the fill test
                   // uses. The first version matched `rgba?(…)` only, so an overlay
                   // painted in `oklab(…)` or `color(display-p3 …)` — forms Chromium

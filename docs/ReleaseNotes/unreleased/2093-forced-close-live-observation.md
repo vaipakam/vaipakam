@@ -511,6 +511,23 @@ offering two ways to pay when it offers one and a way out. Both markers
 are required now; with only one, the older label-based recognition is used
 and its imperfection stated, because going blind is worse.
 
+Two further corrections, both in the same direction again. The wait for
+the page's block readings now has to have completed at BOTH ends of the
+window the check brackets, not just the later one — a reading that was
+already on its way when the wait gave up belongs to what the page had,
+and dropping it could place the window's lower edge above the moment the
+card was actually drawn, so a correct card would be judged against a
+stretch of history that never included it.
+
+And the test for whether text is hidden behind something used to treat any
+image, video or drawing surface over the text as proof that the text was
+covered. A fully transparent image is none of those things, and there is
+no cheap, honest way to ask a picture whether its pixels hide anything —
+so the rule is removed rather than narrowed. The cost is stated: an opaque
+picture laid over the text with no colour of its own will no longer be
+noticed. That is a missed problem rather than an invented one, which is
+the trade this check makes every time.
+
 Closes #2093. The round-by-round record of how each of these rules was
 arrived at — including several cases where a fix left its own new state
 unhandled, or was applied to one of several parallel sites — lives in the

@@ -320,20 +320,37 @@ describe('the head sample waits for the readings in flight', () => {
     );
   });
 
-  it('the CEILING refuses an undrained sample; the FLOOR still ignores it', () => {
-    // Asserted as the asymmetry, because that is the whole finding: the
-    // same helper serves two questions and only one of them is harmed by a
-    // late reply. Making both refuse would be the round-87 mistake — an
-    // honest tightening that blocks runs it has no reason to.
-    expect(src, 'the ceiling site captures the drain verdict').toContain(
+  // ROUND 97 P2 — AND THE FLOOR NEEDS IT TOO. The round-96 version of this
+  // case asserted the opposite and was WRONG, which is worth leaving on the
+  // record rather than quietly rewriting.
+  //
+  // Round 48 is about a reply that ARRIVES after the sample: not part of
+  // what the DOM was showing, rightly ignored. The budget expiring is a
+  // different reply — one that arrived BEFORE the sample and had not
+  // finished parsing. That one is already the page's, and dropping it makes
+  // the floor too HIGH: a lagging endpoint discovered late leaves its head
+  // unrecorded, the floor is built from an ahead OBSERVE_RPC height, the
+  // pending parse then lands below it, and both the ordering check and the
+  // post-scrape drain pass anyway. A card that rendered at the lower height
+  // is then judged against a scan that never covers it.
+  //
+  // So BOTH sites keep the verdict, and the bracket is sound only when both
+  // ends were completely sampled.
+  it('both the FLOOR and the CEILING refuse an undrained sample', () => {
+    expect(src, 'the pre-render site captures the drain verdict').toContain(
+      'const floorDrained = await settleHeadReads(page);',
+    );
+    expect(src, 'the post-scrape site captures it').toContain(
       'const headSettled = await settleHeadReads(page);',
     );
-    expect(src, 'and gates the catch-up test on it').toContain(
+    expect(src, 'the catch-up test is gated on the ceiling drain').toContain(
       'const observerCaughtUp = headSettled && pageHead > 0n && pinnedBlock >= pageHead;',
     );
-    // The floor site takes the same call and deliberately discards the
-    // verdict — round 48's argument holds there and is not re-litigated.
-    expect(src).toContain('  await settleHeadReads(page);\n  const headAtRender = pageHeadOf(page);');
+    expect(src, 'and the bracket on the floor drain').toContain('floorDrained &&');
+    // No bare call left: a third sample site added without capturing the
+    // verdict is the shape this whole finding was.
+    const bare = [...src.matchAll(/(?<![=]\s)\n\s*await settleHeadReads\(page\);/g)];
+    expect(bare, 'every settle site keeps its verdict').toHaveLength(0);
   });
 });
 
