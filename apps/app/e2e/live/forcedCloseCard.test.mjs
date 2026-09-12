@@ -1438,6 +1438,67 @@ describe('confirmationReady — round 14: caught up, not merely moved', () => {
       expect(confirmationReady(99n, 10n, 11n, { sound: true, head: 0n })).toBe(false);
     });
 
+    // A GRID, BECAUSE HAND-PICKED CASES KEPT MISSING THE BOUNDARY.
+    //
+    // Round 102 added the ceiling and its cases never exercised
+    // exactly-at-the-ceiling; round 103 changed that comparison and its
+    // cases never exercised ceiling-equals-sighting. Both corrections would
+    // have shipped unguarded, and both were caught only by reverting the fix
+    // by hand and re-running. That is not a method that scales past the
+    // person remembering to do it.
+    //
+    // So the rules are written out INDEPENDENTLY here, from the prose above
+    // rather than from the implementation — the same discipline the
+    // functional specs use, and the reason this can catch the code rather
+    // than agree with it — and compared across every combination in a small
+    // window around the interesting values.
+    it('matches the stated rules across every nearby combination', () => {
+      /** The specification, written from the prose, not from the code. */
+      const expected = (observer, pinned, sighting, ceiling) => {
+        if (typeof observer !== 'bigint' || typeof pinned !== 'bigint') return false;
+        if (typeof sighting !== 'bigint' || sighting === 0n) return false;
+        // This observer must have moved past the block it scraped at.
+        if (observer <= pinned) return false;
+        // No ceiling: the sighting is all there is, and it is a sighting, so
+        // strictly past it.
+        if (ceiling === undefined) return observer > sighting;
+        // An unestablished ceiling is not a reason to trust a lower number.
+        if (!ceiling.sound || typeof ceiling.head !== 'bigint' || ceiling.head === 0n) return false;
+        // A sound ceiling bounds everything the card could have read, so it
+        // replaces the sighting WHERE IT COVERS IT. Where it does not, the
+        // sighting keeps its strict test.
+        if (ceiling.head < sighting && observer <= sighting) return false;
+        return observer >= ceiling.head;
+      };
+
+      const vals = [0n, 9n, 10n, 11n, 12n];
+      const ceilings = [
+        undefined,
+        { sound: false, head: 10n },
+        { sound: true, head: 0n },
+        ...vals.map((h) => ({ sound: true, head: h })),
+      ];
+      let compared = 0;
+      for (const observer of vals) {
+        for (const pinned of vals) {
+          for (const sighting of vals) {
+            for (const ceiling of ceilings) {
+              compared += 1;
+              expect(
+                confirmationReady(observer, pinned, sighting, ceiling),
+                `observer=${observer} pinned=${pinned} sighting=${sighting} ceiling=${JSON.stringify(
+                  ceiling,
+                  (_k, v) => (typeof v === 'bigint' ? String(v) : v),
+                )}`,
+              ).toBe(expected(observer, pinned, sighting, ceiling));
+            }
+          }
+        }
+      }
+      // Guards the guard: a grid that silently shrank to nothing would pass.
+      expect(compared, 'the grid actually ran').toBe(vals.length ** 3 * ceilings.length);
+    });
+
     it('leaves a caller that passes no ceiling behaving as it did', () => {
       // `undefined` means a caller predating the field, which every rule in
       // this project treats as "keep the old behaviour".
