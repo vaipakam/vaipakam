@@ -328,8 +328,32 @@ const REFUSAL_CLAIM =
  * (`complete, but the protocol ` → a comma AND a `but`).
  */
 const NEGATION = /\b(not|never|isn't|isn’t|no|nothing)\b/gi;
-/** A comma, a dash, a semicolon or a conjunction — a new clause starts. */
-const CLAUSE_BREAK = /[,;:—–]|\b(but|however|yet|although|though|whereas|and)\b/i;
+/**
+ * A comma, a dash, a semicolon or a conjunction — a new clause starts.
+ *
+ * ROUND 93 P2 — SUBORDINATORS TOO, not only the coordinating ones.
+ *
+ * `The check is not complete because the protocol has refused this` has
+ * its `not` governing "complete"; the refusal after `because` is
+ * affirmative, and the card is therefore showing two states at once. With
+ * no break recognised, the negation reached across and the contradiction
+ * was discarded — the card reported merely incomplete instead of
+ * mutually inconsistent, which is the weaker verdict on the surface that
+ * most needs the stronger one.
+ *
+ * CONSERVATIVELY CHOSEN, because this list moves the rule in the
+ * accusing direction: a word added here stops a negation governing, so
+ * more refusals count as stated. Only subordinators that reliably open a
+ * new clause are in — `because`, `since`, `unless`, `until`, `whenever`,
+ * `while`. `as`, `if`, `when`, `so`, `after` and `before` are left out
+ * deliberately: each is common enough inside an ordinary negated span
+ * that including it would start inventing contradictions.
+ *
+ * The residual is therefore a MISSED contradiction on a subordinator not
+ * listed, which is the direction this file takes everywhere else.
+ */
+const CLAUSE_BREAK =
+  /[,;:—–]|\b(but|however|yet|although|though|whereas|and|because|since|unless|until|whenever|while)\b/i;
 
 /** Does a negation in `prefix` govern a refusal beginning right after it? */
 function refusalIsNegated(prefix) {

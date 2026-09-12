@@ -272,12 +272,25 @@ describe('the head sample waits for the readings in flight', () => {
     expect(reg.slice(0, 400)).toContain('pending.add(done)');
   });
 
-  it('awaits a snapshot rather than looping until the set empties', () => {
-    // A parse completing can start another response's work, so draining
-    // to empty is unbounded on a page that polls. Everything that
-    // arrived before the sample is what the sample needs.
+  // AMENDED IN ROUND 92 — the drain is BOUNDED, not a single snapshot.
+  //
+  // Round 48's reasoning held for the FLOOR and not for the ceiling this
+  // same call now feeds: a reply landing while the await settles is one
+  // the page has consumed, so its head belongs to what the page was
+  // showing, and missing it leaves the ceiling too LOW — which is what
+  // lets the catch-up test satisfy itself against a state the page had
+  // already moved past. Draining to EMPTY is still refused for round 48's
+  // reason: a polling page never reaches empty and the run would hang.
+  it('drains the pending parses to a bounded quiet point', () => {
     const fn = src.slice(at('async function settleHeadReads(page)'));
-    expect(fn.slice(0, 400)).toContain('[...pending]');
+    const body = fn.slice(0, 1600);
+    // Still a snapshot per pass — the listener adds to the live set while
+    // this awaits, so iterating the set itself would be the unbounded
+    // loop under another name.
+    expect(body).toContain('[...pending]');
+    // Bounded, and the bound is a literal rather than a condition on the
+    // set: a condition is how "until empty" comes back.
+    expect(body).toMatch(/for \(let pass = 0; pass < \d+; pass \+= 1\)/);
   });
 });
 

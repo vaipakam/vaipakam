@@ -274,6 +274,16 @@ const ALLOWED_RPC = new Set([
  *  allowlist gap rather than a violation. */
 const WRITE_SHAPED = /^(eth_send|eth_sign|personal_sign|wallet_send)/;
 
+/**
+ * The `method` recorded for a request this drive could not parse as
+ * JSON-RPC at all (round 93 P2).
+ *
+ * A sentinel rather than `null`, because `null` already means "not RPC,
+ * therefore presumed mutating" in the report's partition — and a read
+ * with a malformed `id` was being printed as an attempted signature.
+ */
+const MALFORMED_RPC = '<malformed json-rpc>';
+
 const pub = createPublicClient({ transport: http(RPC) });
 
 /** Origin of the configured RPC, or null if `OBSERVE_RPC` is unparseable.
@@ -1820,7 +1830,27 @@ const routeHandler = async (route) => {
         // in our own allowlist (#1529 review round 24).
         const calls = rpcRequestCalls(parsed);
         if (!calls) {
-          why = `${method} (malformed json-rpc request)`;
+          // ROUND 93 P2 — A MALFORMED ENVELOPE IS ITS OWN CATEGORY, not an
+          // attempted write.
+          //
+          // `badMethod` stayed null here, and the report partitions a null
+          // method into the WRITE bucket — so a read with a bad `id` was
+          // printed as `READ-ONLY VIOLATION — the page asked to sign or
+          // send`, sending an operator after an attempted write that never
+          // happened. The severity is right (a page sending a malformed
+          // request is a defect in the page, which is round 21's rule);
+          // the accusation was not.
+          //
+          // The METHOD is preserved where the laxer body parser can still
+          // read one, so the report names what the page was trying to do
+          // rather than only that the envelope was wrong.
+          const named = (rpcCallsFromBody(body) ?? [])
+            .map((c) => c?.method)
+            .filter((m) => typeof m === 'string');
+          badMethod = MALFORMED_RPC;
+          why = named.length
+            ? `${method} (malformed json-rpc envelope for ${[...new Set(named)].join(', ')})`
+            : `${method} (malformed json-rpc request)`;
         } else {
           const denied = calls
             .filter((c) => !ALLOWED_RPC.has(c.method))
@@ -2703,7 +2733,30 @@ function watchPageHead(page) {
 async function settleHeadReads(page) {
   const pending = pageHeadPending.get(page);
   if (!pending || pending.size === 0) return;
-  await Promise.allSettled([...pending]);
+  // ROUND 92 P2 — DRAINED TO A BOUNDED QUIET POINT, not one snapshot.
+  //
+  // Round 48 awaited a single snapshot of the set and argued that anything
+  // arriving afterwards is "by definition not part of what the DOM was
+  // showing". That is true of the FLOOR and false of the CEILING, which is
+  // the use this same call now has: a response landing while the await
+  // settles is one the page has consumed, so the head it carries belongs
+  // to what the page was showing — and leaving it unrecorded makes the
+  // ceiling too LOW, which is exactly what lets the catch-up test declare
+  // itself satisfied against a state the page had already moved past.
+  //
+  // Round 48's reason for not looping remains sound and is why this is
+  // BOUNDED rather than "until empty": a page that polls would never
+  // reach empty, and an unbounded drain would hang the run. Six passes is
+  // an operational budget, stated as one — on a page whose reads settle it
+  // ends after two, and on one that never stops it ends anyway and the
+  // sample is simply the best available. That residual is unchanged from
+  // round 48; what changes is that an ordinary in-flight reply is no
+  // longer missed.
+  for (let pass = 0; pass < 6; pass += 1) {
+    const inFlight = [...pending];
+    if (inFlight.length === 0) return;
+    await Promise.allSettled(inFlight);
+  }
 }
 
 function pageHeadOf(page) {
@@ -9264,8 +9317,24 @@ if (allowlistTooNarrow.length) {
 }
 // Same split as the provider path: a refused WRITE is a finding about the
 // page; a refused non-write is our allowlist being too narrow.
-const httpWrites = blockedHttp.filter((b) => b.method === null || WRITE_SHAPED.test(b.method));
-const httpGaps = blockedHttp.filter((b) => b.method !== null && !WRITE_SHAPED.test(b.method));
+const httpMalformed = blockedHttp.filter((b) => b.method === MALFORMED_RPC);
+const httpWrites = blockedHttp.filter(
+  (b) => b.method !== MALFORMED_RPC && (b.method === null || WRITE_SHAPED.test(b.method)),
+);
+const httpGaps = blockedHttp.filter(
+  (b) => b.method !== null && b.method !== MALFORMED_RPC && !WRITE_SHAPED.test(b.method),
+);
+if (httpMalformed.length) {
+  // Its own line, and its own words. This is a defect in the page — it
+  // sent something that is not a JSON-RPC request — but calling it an
+  // attempted write sends the reader looking for a signature prompt that
+  // never happened (round 93 P2).
+  console.log(
+    `\nMALFORMED RPC — the page sent ${httpMalformed.length} request(s) this` +
+      ` drive could not parse as JSON-RPC, so they were refused:`,
+  );
+  httpMalformed.slice(0, 8).forEach((b) => console.log(`  ${b.why} → ${b.url}`));
+}
 if (httpWrites.length) {
   console.log(`\nREAD-ONLY VIOLATION — mutating HTTP refused: ${httpWrites.length}`);
   httpWrites.slice(0, 8).forEach((b) => console.log(`  ${b.why} → ${b.url}`));
@@ -9309,7 +9378,7 @@ console.log(`\n${visited.length - failures}/${visited.length} routes clean`);
 // chooser — is only meaningful if the page actually received what it
 // asked for, so unreachable page traffic downgrades those to BLOCKED
 // rather than reporting a flaky egress as a broken product.
-if (pageTriedToWrite.length || httpWrites.length) process.exit(1);
+if (pageTriedToWrite.length || httpWrites.length || httpMalformed.length) process.exit(1);
 // Judged with the write attempts, and ahead of `routeFailures`, for the
 // same reason they are: this is a finding about the APP that a reachable
 // provider positively established. Ordering it after the BLOCKED check

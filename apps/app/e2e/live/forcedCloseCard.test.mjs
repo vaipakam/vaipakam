@@ -965,6 +965,38 @@ describe('round 11 review findings', () => {
     expect(v.why).toMatch(/opposite claims/);
   });
 
+  // ROUND 93 P2 — a SUBORDINATOR opens a new clause too, and the
+  // negation must not reach across it.
+  //
+  // `not complete because the protocol has refused this` has its `not`
+  // governing "complete"; the refusal after `because` is affirmative, so
+  // the card is showing two states at once. With no break recognised the
+  // negation reached across and the contradiction was discarded, leaving
+  // the weaker "merely incomplete" verdict on the surface that most needs
+  // the stronger one.
+  it('FAILS a refusal in a clause the negation does not govern', () => {
+    const v = forcedCloseVerdict(
+      {
+        ...base,
+        text: `${FORCED_CLOSE.unknown} The check is not complete because the protocol has refused this.`,
+      },
+      copy,
+    );
+    expect(v.verdict).toBe('fail');
+    expect(v.why).toMatch(/opposite claims/);
+  });
+
+  // The other direction, which is what keeps the list conservative: a
+  // genuine negation with no clause break still governs, and the shipped
+  // `unknown` string is exactly that shape.
+  it('still does not fire when the negation really does govern', () => {
+    const v = forcedCloseVerdict(
+      { ...base, text: FORCED_CLOSE.unknown, bodyText: FORCED_CLOSE.unknown },
+      copy,
+    );
+    expect(v.verdict).toBe('pass');
+  });
+
   it('catches a ticker behind punctuation', () => {
     expect(monetaryAmountsIn('You receive 1m (USDC)')).toHaveLength(1);
     expect(monetaryAmountsIn('Loan 100: USDC principal')).toHaveLength(1);
