@@ -5513,11 +5513,23 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
           // the whole grid.
           const COL_FRACTIONS = [0.02, 0.25, 0.5, 0.75, 0.98];
           const ROW_FRACTIONS = [0.25, 0.5, 0.75];
+          // KEPT AT LEAST A PIXEL INSIDE (self-review of the grid above).
+          // The rules it replaced were absolute 1px insets from the corners,
+          // and a fraction is not: on a narrow rectangle 0.02 lands on the
+          // boundary, where hit-testing can resolve to the NEIGHBOUR rather
+          // than to the glyph. An opaque badge beside a short figure would
+          // then answer for a point that is not on the text. It cannot
+          // condemn on its own — total occlusion needs every point, and the
+          // interior ones sit over the glyph — but a sample that is not on
+          // the thing being measured should not be taken at all. Rectangles
+          // too narrow to have an inside are probed at their centre.
+          const inset = (extent, f) =>
+            extent <= 2 ? extent / 2 : Math.min(Math.max(extent * f, 1), extent - 1);
           for (const q of glyphs) {
             const points = [];
             for (const fy of ROW_FRACTIONS) {
               for (const fx of COL_FRACTIONS) {
-                points.push([q.left + q.width * fx, q.top + q.height * fy]);
+                points.push([q.left + inset(q.width, fx), q.top + inset(q.height, fy)]);
               }
             }
             for (const [x, y] of points) {
@@ -7261,11 +7273,23 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
               // the whole grid.
               const COL_FRACTIONS = [0.02, 0.25, 0.5, 0.75, 0.98];
               const ROW_FRACTIONS = [0.25, 0.5, 0.75];
+              // KEPT AT LEAST A PIXEL INSIDE (self-review of the grid above).
+              // The rules it replaced were absolute 1px insets from the corners,
+              // and a fraction is not: on a narrow rectangle 0.02 lands on the
+              // boundary, where hit-testing can resolve to the NEIGHBOUR rather
+              // than to the glyph. An opaque badge beside a short figure would
+              // then answer for a point that is not on the text. It cannot
+              // condemn on its own — total occlusion needs every point, and the
+              // interior ones sit over the glyph — but a sample that is not on
+              // the thing being measured should not be taken at all. Rectangles
+              // too narrow to have an inside are probed at their centre.
+              const inset = (extent, f) =>
+                extent <= 2 ? extent / 2 : Math.min(Math.max(extent * f, 1), extent - 1);
               for (const q of glyphs) {
                 const points = [];
                 for (const fy of ROW_FRACTIONS) {
                   for (const fx of COL_FRACTIONS) {
-                    points.push([q.left + q.width * fx, q.top + q.height * fy]);
+                    points.push([q.left + inset(q.width, fx), q.top + inset(q.height, fy)]);
                   }
                 }
                 for (const [x, y] of points) {
