@@ -1,6 +1,6 @@
 # Release Notes — 2026-09-12
 
-Three entries, all about the lender's forced close-out card — the surface
+Four entries, all about the lender's forced close-out card — the surface
 that lets a lender wind down an overdue loan — and the check that watches
 it on the deployed build.
 
@@ -26,6 +26,19 @@ check's rule for whether the lender can actually see an element — the
 rule every content claim in the first entry rests on — had been written
 twice, and the copies had once drifted. It is now written once and
 reaches every place the check asks the question by construction.
+
+The fourth is the same kind of change, on the first entry's hardest
+piece. The part of the check that learns the page's sound block bounds —
+a floor the card's data cannot predate and a ceiling it cannot postdate,
+never one exact block, since the check cannot tie a render to a block
+and reports a disagreement anywhere inside that interval as incomplete —
+lived inside the check itself, where it could only be inspected and never
+run. It now stands alone and is exercised directly under the orderings
+the rules are about: an endpoint proving itself before or after it
+announces a head, a head answered before or after the first read is
+asked, a foreign chain answer landing before or after an address-based
+admission, and a reply still being parsed when a sample is taken. The
+check's own behaviour is unchanged.
 
 ## Thread — the lender's forced close-out is now watched on the deployed build
 
@@ -797,3 +810,46 @@ reaches the card pass, the receipt pass, the mount wait, the cancel
 control read, and the fixture suite by construction — the acceptance
 test the issue set.
 <!-- assembled-fragment: 2102-visibility-predicate-one-definition.md sha256=ed720f6251c8fd247ab454bf917d844703b4c5b358a3fc8b9c28e339d997b3bf -->
+
+## Thread — Live-drive page-head tracker extracted and run under test (PR #2155)
+
+The live position-observe drive judges the forced close-out card against
+the protocol at a bracket of blocks, and that bracket is built from what the
+deployed page's own RPC traffic discloses: which endpoints serve the
+deployment, the highest and lowest block each one announced, whether a head
+was announced before the first contract read was asked, and two direct
+probes of the page's provider for the floor and the ceiling. That whole
+tracker — some nine hundred lines of state, listeners, resolvers and probes,
+with the review-round reasoning that shaped each rule — sat inside the drive
+itself. The drive runs on import, so none of it could be executed from a
+unit test; every rule about it was pinned by reading the drive's source,
+which can say where a stamp is taken but never whether the rule holds when
+the events actually arrive.
+
+The tracker is now its own module, built once by the drive with the
+deployment being observed, the drive's endpoint-to-chain map, its uncached
+fetch and probe timeout, and its ordering clock. Behaviour is unchanged and
+every explanatory note moved with the code it explains. A new suite drives
+the tracker through a fake page and covers the rules the bracket rests on:
+heads count only on endpoints proven for the deployment in either order of
+proof and announcement, an endpoint that answered for another chain stays
+out for the whole run and across pages, two chain answers record as a
+contradiction, the drain waits for parses in flight and admits when it
+never reached quiet, the floor is proven per endpoint by an answer that
+preceded the ask, and the direct probes take the lowest for the floor and
+the highest for the ceiling while naming which endpoints answered. The
+source guards that remain are the drive's own wiring — at the pre-render
+site, drain the pending reads, then sample the floor, then read the card;
+at the post-scrape site, read the card, then drain, then sample the
+observed head and ask the provider for the ceiling, so that the ceiling
+is taken after everything the card could have read — and the one seam
+the extraction created:
+the tracker stamps with the clock it is handed and reads none of its own,
+and the drive hands it the same monotonic clock its ledger uses, so the
+floor's ordering proof and the ledger's comparison cannot drift onto two
+clock origins. The fake page stand-in the RPC-watch suite carried inline is
+shared between the two suites now rather than copied.
+
+Closes #2120. No product surface changes; the connected app and the
+contracts are untouched.
+<!-- assembled-fragment: 2120-page-head-tracker.md sha256=8960a39fbf0fce510b20451b23845a5332a457795bd0632a22771e0af8c0460c -->
