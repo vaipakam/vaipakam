@@ -520,6 +520,37 @@ describe('the synthetic chain probe validates as a quantity (round 100)', () => 
   });
 });
 
+// ROUND 106 P2 — THE REPORT'S KEYS ARE DISTINCT, asserted rather than
+// remembered.
+//
+// Round 105 fixed a duplicate `span=` key — two meanings on one name in one
+// record, ambiguous to a reader and silently lossy to any key-value parser —
+// and in the SAME commit introduced `head>19 head>20` for the pinned block
+// and the sighting, which is the identical defect. Twice in one change is
+// enough to stop relying on noticing it.
+describe('the forced-close report emits distinct keys (round 106)', () => {
+  const src = fs.readFileSync(DRIVE, 'utf8');
+
+  it('no key appears twice in the emitted line', () => {
+    const i = src.indexOf('` spanBlocks=');
+    expect(i, 'the forced-close report line was not found').toBeGreaterThan(-1);
+    // The whole concatenated line, from the stability verdict through the
+    // confirming head.
+    const line = src.slice(src.indexOf('` spanStable='), i + 1200);
+    const keys = [...line.matchAll(/` ([A-Za-z>=]+)=\$/g)].map((m) => m[1]);
+    expect(keys.length, 'keys were found at all').toBeGreaterThan(3);
+    expect(new Set(keys).size, `duplicate key in: ${keys.join(' ')}`).toBe(keys.length);
+  });
+
+  it('each threshold keeps its NAME as well as its operator', () => {
+    // The operator alone was round 105's attempt and is what produced the
+    // duplicate: a comparison is not an identity.
+    expect(src).toContain('head>pinned=');
+    expect(src).toContain('head>sighting=');
+    expect(src).toContain('head>=ceiling=');
+  });
+});
+
 describe('an endpoint that lied about its chain stays untrusted', () => {
   // SAME SUBJECT as the file above it: which heights the drive is
   // willing to treat as the page's view of the chain. Round 19

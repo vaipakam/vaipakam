@@ -4913,7 +4913,22 @@ async function observeForcedClose(page, loan, headBeforeNav, pageHeadBeforeNav, 
     // ROUND 105 P2 — the extent actually READ, not projected from a verdict.
     // `false` means the arm stopped at the first mismatch and `null` may
     // mean none were read, so neither justifies printing the whole interval.
-    headScanned: probedThrough === null ? null : String(probedThrough),
+    //
+    // ROUND 106 P2 — AND A COMPLETED SCAN REACHES THE ENDPOINT, which
+    // `probedThrough` cannot say. The interior loop is `b < to`, so the
+    // callback never sees `to` itself: a completed 10..20 bracket recorded
+    // 19, and an adjacent bracket with no interior at all recorded nothing
+    // and printed `10..none` despite having completed. The endpoints are the
+    // caller's — already read, already compared — so a complete scan has
+    // established the whole interval including them.
+    //
+    // `probedThrough` is therefore for PARTIAL scans only, where it is the
+    // one honest figure available.
+    headScanned: (() => {
+      const complete = defaultableStable === true || internalMatchStable === true;
+      if (complete) return String(pinnedBlock);
+      return probedThrough === null ? null : String(probedThrough);
+    })(),
     // Whether the interior was read all the way to the endpoint, which is
     // true only when an arm returned `true`.
     headScanComplete: defaultableStable === true || internalMatchStable === true,
@@ -10012,11 +10027,18 @@ for (const v of visited) {
               // numbers that look interchangeable and are not. The operator
               // is part of the key now, so the line says what it means
               // without anyone opening this file.
+              // ROUND 106 P2 — the operator AND the name. Round 105 put the
+              // comparison into the key and dropped the identity with it, so
+              // a differing pinned block and sighting emitted `head>19
+              // head>20`: two tokens on one key, which a reader cannot
+              // attribute and a parser silently halves. That is the same
+              // duplicate-key defect round 105 FIXED for `span=`, recreated
+              // in the same commit that fixed it.
               ` spanBlocks=${v.forcedCloseHeadFloor ?? 'unobserved'}..${v.forcedCloseHeadScanned ?? 'none'}` +
-              `${v.forcedCloseHeadScanned !== null && v.forcedCloseScanComplete === false ? ' (partial)' : ''}` +
-              ` head>${v.forcedCloseHeadPinned ?? 'unobserved'}` +
-              ` head>${v.forcedCloseHeadPageSighting ?? 'unobserved'}` +
-              ` head>=${v.forcedCloseHeadCeiling ?? (v.forcedCloseCeilingSound === false ? 'unestablished' : 'unobserved')}` +
+              `${v.forcedCloseHeadScanned !== null && v.forcedCloseScanComplete === false ? '(partial)' : ''}` +
+              ` head>pinned=${v.forcedCloseHeadPinned ?? 'unobserved'}` +
+              ` head>sighting=${v.forcedCloseHeadPageSighting ?? 'unobserved'}` +
+              ` head>=ceiling=${v.forcedCloseHeadCeiling ?? (v.forcedCloseCeilingSound === false ? 'unestablished' : 'unobserved')}` +
               ` confirmedAt=${v.forcedCloseConfirmedAt ?? 'n/a'}`
             : '')
         : `      chooser=${v.chooser} handover=${v.handover} offset=${v.offset}` +
