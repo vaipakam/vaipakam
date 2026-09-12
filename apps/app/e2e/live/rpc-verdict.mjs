@@ -1030,7 +1030,10 @@ export function classifyRpcResponse(status, body, requestBody) {
  */
 let responseSeq = 0;
 
-export function recordRpcResponse({ status, body, requestBody, url, requestedAt }, ledger) {
+export function recordRpcResponse(
+  { status, body, requestBody, url, requestedAt, deliveredAt },
+  ledger,
+) {
   // WHEN, as well as what (round 94 P2). Recovery is scoped by time
   // because nothing else can scope it — see `RETRY_RECOVERY_WINDOW_MS`.
   //
@@ -1044,7 +1047,23 @@ export function recordRpcResponse({ status, body, requestBody, url, requestedAt 
   // comparison is meaningless. `performance.now()` counts from an arbitrary
   // origin and is unaffected by clock adjustment; only differences are ever
   // read here, so the changed origin costs nothing.
-  const at = performance.now();
+  //
+  // ROUND 112 P2 — AND THE CALLER MAY STAMP IT EARLIER, because this
+  // function does not run when the response is delivered.
+  //
+  // The drive records AFTER `route.fulfill` on purpose: the page must get
+  // the provider's real answer whatever we go on to conclude about it. But
+  // that puts the page's receipt of a failure BEFORE this line, and viem
+  // can have issued its retry in between — so a genuine retry's
+  // `requestedAt` could be at or before this `at`, and the causal test
+  // below would reject it as an in-flight sibling. A recovered failure then
+  // stays in the ledger and a correctly rendered page exits BLOCKED.
+  //
+  // `deliveredAt` is stamped immediately before the fulfill, which is the
+  // conservative boundary: nothing the page issued strictly before that
+  // instant can be a reaction to this response. The fallback keeps callers
+  // that cannot stamp it — and the catch paths — on the old behaviour.
+  const at = typeof deliveredAt === 'number' ? deliveredAt : performance.now();
   // ROUND 95 P2 — AND *WHICH RESPONSE*, because time alone cannot separate
   // a retry from a SIBLING. A JSON-RPC batch is one request carrying many
   // calls, and viem's batch scheduler will happily put two reads of the

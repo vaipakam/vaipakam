@@ -917,6 +917,93 @@ describe('recordRpcResponse + summariseRpcLedger', () => {
       const out = summariseRpcLedger([failed(1_000), ok(1_200, undefined)]);
       expect(out.unreachable).toEqual([]);
     });
+
+    // ROUND 112 P2 — AND THE FAILURE IS STAMPED WHEN THE PAGE GETS IT.
+    //
+    // The causal test is only as good as the instant it compares against.
+    // The drive records a response AFTER handing it to the page, on purpose
+    // — the page must get the provider's real answer whatever we conclude
+    // about it — so the page can receive a failure, viem can issue its
+    // retry, and only THEN does the arrival get stamped. The retry's
+    // `requestedAt` is therefore at or before that stamp, and the rule
+    // above reads a genuine retry as an in-flight sibling: the failure
+    // stays in the ledger and a correctly rendered page exits BLOCKED.
+    //
+    // So the caller stamps the instant of delivery and the ledger uses it.
+    it('uses the delivery stamp the caller supplies as the arrival time', () => {
+      const l = [];
+      recordRpcResponse(
+        {
+          status: 429,
+          body: 'slow down',
+          requestBody: rpcReq(call(1, 'eth_call')),
+          url: 'https://rpc.example',
+          deliveredAt: 1_000,
+        },
+        l,
+      );
+      expect(l[0].at, 'the supplied delivery stamp is the arrival time').toBe(1_000);
+    });
+
+    it('clears a retry sent in the gap between delivery and recording', () => {
+      // The shape the drive actually produces: delivery at 1000, the retry
+      // asked for at 1050, the record written at 1100. Stamped at record
+      // time the retry looks simultaneous-or-earlier and is refused;
+      // stamped at delivery it is plainly later.
+      const l = [];
+      recordRpcResponse(
+        {
+          status: 429,
+          body: 'slow down',
+          requestBody: rpcReq(call(1, 'eth_call')),
+          url: 'https://rpc.example',
+          deliveredAt: 1_000,
+        },
+        l,
+      );
+      recordRpcResponse(
+        {
+          status: 200,
+          body: okBody(1),
+          requestBody: rpcReq(call(1, 'eth_call')),
+          url: 'https://rpc.example',
+          deliveredAt: 1_100,
+          requestedAt: 1_050,
+        },
+        l,
+      );
+      expect(summariseRpcLedger(l).unreachable).toEqual([]);
+    });
+
+    it('still refuses a sibling that was in flight before delivery', () => {
+      // The fix must not undo round 108: asked for at 900, delivered at
+      // 1000 — never a reaction to it.
+      const l = [];
+      recordRpcResponse(
+        {
+          status: 429,
+          body: 'slow down',
+          requestBody: rpcReq(call(1, 'eth_call')),
+          url: 'https://rpc.example',
+          deliveredAt: 1_000,
+        },
+        l,
+      );
+      recordRpcResponse(
+        {
+          status: 200,
+          body: okBody(1),
+          requestBody: rpcReq(call(1, 'eth_call')),
+          url: 'https://rpc.example',
+          deliveredAt: 1_100,
+          requestedAt: 900,
+        },
+        l,
+      );
+      expect(summariseRpcLedger(l).unreachable).toEqual([
+        { url: 'https://rpc.example', why: 'eth_call — HTTP 429' },
+      ]);
+    });
   });
 
   describe('reconciliation across attempts (round 23)', () => {

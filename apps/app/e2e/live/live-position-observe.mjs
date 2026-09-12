@@ -1939,6 +1939,14 @@ const routeHandler = async (route) => {
         headers[k] = v;
       }
     });
+    // Stamped BEFORE the fulfill, and on the ordering clock (round 112
+    // P2). The record below happens after the page already has the
+    // response, and viem can start a retry in that gap — so stamping the
+    // arrival at record time can place a genuine retry's request at or
+    // before it, which the causal test reads as an in-flight sibling.
+    // Nothing the page issued strictly before this instant can be a
+    // reaction to a response it has not been handed yet.
+    const deliveredAt = orderingNow();
     await route.fulfill({ status: resp.status, headers, body: buf });
     // A resolved fetch is not the same as an answered call. The provider
     // can hand back a JSON-RPC error, or a 429, over a perfectly healthy
@@ -1969,6 +1977,7 @@ const routeHandler = async (route) => {
         // Redact BEFORE truncating, as the catch path does below.
         url: redact(req.url()).slice(0, 160),
         requestedAt,
+        deliveredAt,
       },
       rpcLedger,
     );

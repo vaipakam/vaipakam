@@ -317,15 +317,23 @@ describe('the head sample waits for the readings in flight', () => {
     //
     // Asserted as a NEGATIVE — nothing takes an ordering stamp from the wall
     // clock — so a fourth site is covered without being enumerated.
+    // AMENDED AGAIN IN ROUND 112, which added `deliveredAt` — a FOURTH
+    // stamp, and the enumeration would have missed it exactly as it missed
+    // the third. The `const requestedAt = ` alternative is generalised to
+    // any `<name>At` binding, so the rule is about the CLASS of ordering
+    // stamps rather than the members of it that existed when it was last
+    // edited. Twice is a pattern; a third time would be a choice.
     const orderingStamps = [
-      ...src.matchAll(/(?:firstReadAt\.set\(key, |map\.set\(key, |const requestedAt = )([A-Za-z.]+\(\))/g),
+      ...src.matchAll(
+        /(?:firstReadAt\.set\(key, |map\.set\(key, |const [a-z][A-Za-z]*At = )([A-Za-z.]+\(\))/g,
+      ),
     ];
-    expect(orderingStamps.length, 'the ordering stamps were found').toBeGreaterThanOrEqual(3);
+    expect(orderingStamps.length, 'the ordering stamps were found').toBeGreaterThanOrEqual(4);
     for (const m of orderingStamps) {
       expect(m[1], 'every ordering stamp uses orderingNow').toBe('orderingNow()');
     }
     expect(src, 'no ordering stamp takes the wall clock').not.toMatch(
-      /(?:firstReadAt\.set\(key, |const requestedAt = )Date\.now\(\)/,
+      /(?:firstReadAt\.set\(key, |const [a-z][A-Za-z]*At = )Date\.now\(\)/,
     );
     // And the wall clock is still what deadlines use — a monotonic origin
     // there would be a different, confusing change.
@@ -338,6 +346,14 @@ describe('the head sample waits for the readings in flight', () => {
   // `rpc-verdict.mjs`. The comparison is meaningless unless both come from
   // `performance.now()`, and that pairing spans two files, so neither file's
   // own tests can see it. This is the only place that can.
+  //
+  // AMENDED IN ROUND 112, which gave the ledger's `at` a second source: the
+  // caller may now stamp it before the fulfill. Both sources have to be
+  // monotonic, so the assertion is that every value `at` can take is —
+  // `deliveredAt`, which the drive stamps with `orderingNow`, or the local
+  // `performance.now()` fallback. Pinning the old literal would have failed
+  // on the correct change, which is the pin that gets widened without being
+  // read.
   it('the ledger stamps arrival on the same clock the drive stamps requests', () => {
     const verdictSrc = fs.readFileSync(
       path.join(path.dirname(DRIVE), 'rpc-verdict.mjs'),
@@ -346,10 +362,21 @@ describe('the head sample waits for the readings in flight', () => {
     expect(src, 'the drive stamps requests monotonically').toContain(
       'const orderingNow = () => performance.now();',
     );
-    expect(verdictSrc, 'the ledger stamps arrival monotonically').toContain(
-      'const at = performance.now();',
-    );
-    expect(verdictSrc, 'and no longer on the wall clock').not.toContain('const at = Date.now();');
+    const atBinding = verdictSrc.match(/const at = (.+);/);
+    expect(atBinding, "the ledger's arrival stamp was not found").not.toBeNull();
+    // Every clock reading in it, however it is written.
+    const clocks = [...atBinding[1].matchAll(/([A-Za-z]+)\.now\(\)/g)].map((m) => m[1]);
+    expect(clocks.length, 'no clock reading in the arrival stamp').toBeGreaterThan(0);
+    for (const c of clocks) {
+      expect(c, 'the ledger stamps arrival monotonically').toBe('performance');
+    }
+    // And the other source is the drive's own ordering clock, not a second
+    // reading taken somewhere else.
+    if (atBinding[1].includes('deliveredAt')) {
+      expect(src, 'the caller stamps delivery on the ordering clock').toContain(
+        'const deliveredAt = orderingNow();',
+      );
+    }
   });
 
   it('only trusts the floor when every endpoint the page used is bounded', () => {
