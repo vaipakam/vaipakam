@@ -19,24 +19,21 @@
 # GraphQL request is metered against: on run 34673730486 the failed request's
 # own headers said `X-Ratelimit-Remaining: 0` / `X-Ratelimit-Used: 5000` while
 # `/rate_limit`, read 200 ms later, said 5000 remaining (#2129). The only
-# trustworthy statement of the limit is the FAILED REQUEST's own headers, and
-# gh surfaces those only through its debug trace. So the decision to wait, and
-# the length of the wait, are read from there and from nowhere else.
+# trustworthy evidence is the FAILED RESPONSE itself — its status, headers
+# and body — and gh surfaces that only through its debug trace. So the
+# decision to wait is read from there and never from `/rate_limit`. The
+# LENGTH of the wait is read from a header where one names it, and is a
+# fixed local default (`MESSAGE_ONLY_WAIT`) where the response states a
+# limit but no header names a wait; the reason string says which.
 #
 # WHY THE LAST RESPONSE. A paginated listing writes one response per page into
 # the trace; the failure is the last one. Each response carries the full header
 # set, so the last occurrence of each header belongs to the last response.
 #
-# WHAT COUNTS AS A LIMIT — exactly the two forms this account has received,
-# and nothing looser (the rule is spelled out where it is applied, below):
-#   - the PRIMARY form: `X-Ratelimit-Remaining: 0`, with `X-Ratelimit-Reset`
-#     giving the epoch second the bucket refills. HTTP status is 200 for
-#     GraphQL (the error is in the body), 403 for REST.
-#   - the SECONDARY form: HTTP 403 or 429 with `Retry-After`, or with a body
-#     that says "secondary rate limit". It does NOT show in `/rate_limit`
-#     at all (docs/internal/ProjectProcedures.md §3.3).
-# A response missing the header that would name its wait gets a fixed
-# default, and the reason string says the wait is a default, not a reading.
+# WHAT COUNTS AS A LIMIT is stated ONCE, in the comment block headed "TWO
+# SHAPES" directly above the code that applies it, and pinned by the
+# self-test cases beneath. It is deliberately not repeated here: this header
+# used to carry a second copy, and the two drifted apart (#2149 r7).
 #
 # The wait this prints is NOT capped here. How long a job is willing to stand
 # still is the job's decision, and it is made where the job can say so.
@@ -111,10 +108,12 @@ analyse() { # analyse <trace> <now-epoch>  -> prints "<seconds>\t<reason>", exit
   #               the longer of the two waits.
   #
   # Anything else — a 503 with `Retry-After`, a 401, a body mentioning a
-  # limit on a status that is neither 403 nor 429 — is not a limit, and a
-  # wait would not repair it. A 503 is the nameable miss: transient, and a
-  # retry might well succeed, but calling it a rate limit is precisely the
-  # misdiagnosis the trace evidence exists to prevent.
+  # limit on a status that is neither 403 nor 429 — matches no supported
+  # shape and exits 1, which says exactly that and nothing about whether a
+  # retry would help (see the exit-code contract at the top). A 503 is the
+  # nameable miss: transient, and a retry might well succeed, but calling it
+  # a rate limit is precisely the misdiagnosis the trace evidence exists to
+  # prevent.
   # Each shape that matches contributes its own wait; when both match — a
   # 403/429 whose bucket is spent AND which carries Retry-After — the retry
   # has to outlast BOTH, so the longer wait is the wait (#2149 r3). Giving
