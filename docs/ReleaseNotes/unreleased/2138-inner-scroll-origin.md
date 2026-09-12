@@ -38,11 +38,23 @@ Writing those fixtures found the same gap one level up, in the clipping
 rule. A non-scrolling wrapper around a scrolling region, the usual
 rounded-corner card around a scrolling list, judged content scrolled out
 of the region's slit by where it currently sits and condemned it, even
-though the region can scroll it back inside the wrapper. The exemption the
-clipping rule already grants to a scrolling region now also covers a
-wrapper above it on the axis that region can scroll. A wrapper with no
-extent at all is still condemned whatever scrolls inside it, since nothing
-is shown through it.
+though the region can scroll it back inside the wrapper. A second review
+round then showed that a blanket exemption for such wrappers overshoots in
+the other direction, admitting a region whose slit the wrapper never shows
+and content a region can only carry further away. So the clipping rule
+and the origin rule now share one measure of what a scrolling region can
+do, a range of movement in both directions rather than only back toward
+its resting position, which is also what rescues content in a region
+turned upside down. At a scrolling region the rule asks only whether the
+content can reach the slit at all, since asking whether most of it can be
+seen at once is the wrong question of something read by scrolling; at a
+non-scrolling wrapper above it, the rule asks whether the slit itself is
+mostly shown. A wrapper with no extent at all is still condemned whatever
+scrolls inside it. The list of properties that make an element the
+reference for absolutely positioned descendants gained two more, each
+confirmed by measurement in the check's own browser, and one candidate the
+review raised, container queries, was measured not to be one and left out
+on that evidence.
 
 Also carried: the wording of the previous entry's call-site ordering, in
 the test header and the coverage row, now states the two sites separately

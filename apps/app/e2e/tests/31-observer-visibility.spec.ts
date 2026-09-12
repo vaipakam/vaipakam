@@ -1517,7 +1517,7 @@ test('the scroll credit counts only what moves the box, mapped through transform
     </div>
     <!-- y 40..80 -->
     <div id="positionedScroller" style="position:relative; height:40px; overflow:auto">
-      <p id="absUnderPositioned" style="position:absolute; top:-10px; height:20px">absolute under its own scrolling containing block</p>
+      <p id="absUnderPositioned" style="position:absolute; top:0; height:20px">absolute under its own scrolling containing block</p>
       <p style="height:400px">filler</p>
     </div>
     <!-- y 80..120: a 40px box whose own text is followed by 600px of
@@ -1535,6 +1535,27 @@ test('the scroll credit counts only what moves the box, mapped through transform
       <p style="height:400px; flex:none">filler shown first</p>
       <p id="reverseRow" style="height:20px; flex:none">earlier content, above the slit at rest</p>
     </div>
+    <!-- y 240..280: a clipper whose inner scroller's slit (340..380) lies
+         wholly outside it — an inner scroll range must not exempt this -->
+    <div id="outsideClipper" style="height:40px; overflow:hidden">
+      <div id="outsideScroller" style="margin-top:100px; height:40px; overflow:auto">
+        <p id="outsideRow" style="height:20px">in a scroller the clipper never shows</p>
+        <p style="height:400px">filler</p>
+      </div>
+    </div>
+    <!-- y 280..320: content the scroller can only carry FURTHER away -->
+    <div id="awayScroller" style="height:40px; overflow:auto">
+      <p id="awayRow" style="margin-top:-100px; height:20px">above the slit, and scrolling only moves it up</p>
+      <p style="height:400px">filler</p>
+    </div>
+    <!-- y 320..360: a scroller turned upside down, resting at its minimum,
+         whose FAR end is the one that rescues -->
+    <div style="transform:rotate(180deg); transform-origin:50% 50%; height:40px">
+      <div id="rotatedScroller" style="height:40px; overflow:auto">
+        <p style="height:400px">filler shown first</p>
+        <p id="rotatedRow" style="height:20px">local bottom, viewport top</p>
+      </div>
+    </div>
   `);
   const result = await page.evaluate((helpersSrc) => {
     const family = new Function(`return (${helpersSrc})();`)();
@@ -1548,6 +1569,7 @@ test('the scroll credit counts only what moves the box, mapped through transform
       byId(id).scrollTop = 300;
     }
     byId('selfScroller').scrollTop = 600;
+    byId('outsideScroller').scrollTop = 300;
     const selfText = document.createRange();
     selfText.selectNodeContents(byId('selfScroller').firstChild!);
     return {
@@ -1567,6 +1589,13 @@ test('the scroll credit counts only what moves the box, mapped through transform
       reverseScrollTop: byId('reverseScroller').scrollTop,
       reverseRowTop: top('reverseRow'),
       reverseRow: visible(byId('reverseRow')),
+      outsideRowTop: top('outsideRow'),
+      outsideRow: visible(byId('outsideRow')),
+      awayRowTop: top('awayRow'),
+      awayRow: visible(byId('awayRow')),
+      rotatedScrollTop: byId('rotatedScroller').scrollTop,
+      rotatedRowTop: top('rotatedRow'),
+      rotatedRow: visible(byId('rotatedRow')),
     };
   }, VISIBILITY_SOURCE);
 
@@ -1580,9 +1609,9 @@ test('the scroll credit counts only what moves the box, mapped through transform
   expect(result.fixedUnderScrollerTop).toBe(-100);
   expect(result.fixedUnderScroller, 'fixed under a scroller').toBe(false);
   // Carried. The positioned scroller IS the containing block: at rest the
-  // row is at 30, the 300 of scroll puts it at -270, and 300 of credit
-  // brings its bottom back to +50.
-  expect(result.absUnderPositionedTop).toBe(-270);
+  // row is at 40, the 300 of scroll puts it at -260, and 300 of credit
+  // brings its bottom back to +60.
+  expect(result.absUnderPositionedTop).toBe(-260);
   expect(result.absUnderPositioned, 'absolute under its scrolling containing block').toBe(true);
   // Own scroll. The box stays at 80 while its text is carried far above
   // (the block filler is the scroll range); the credit applies to the
@@ -1601,6 +1630,24 @@ test('the scroll credit counts only what moves the box, mapped through transform
   expect(result.reverseScrollTop).toBe(0);
   expect(result.reverseRowTop).toBe(-180);
   expect(result.reverseRow, 'earlier content in a column-reverse scroller').toBe(true);
+  // #2157 round 2 — the clipper exemption is not blanket. The inner
+  // scroller's slit (340..380) never shows through a clipper at 240..280,
+  // whatever it scrolls: the row (at 340 - 300 = 40, so not before the
+  // origin) is condemned by the clip walk, not the origin test.
+  expect(result.outsideRowTop).toBe(40);
+  expect(result.outsideRow, 'a scroller whose slit lies outside its clipper').toBe(false);
+  // And a scroller at rest can only carry a negative-margin row further
+  // up: at 180 it is not before the origin, and no scroll position brings
+  // it into the 280..320 slit.
+  expect(result.awayRowTop).toBe(180);
+  expect(result.awayRow, 'content the scroller can only move away').toBe(false);
+  // Upside down, at rest (scrollTop 0 = its minimum): the row sits at the
+  // scroller's local bottom, which rotation puts 360 above the slit's top
+  // of 320, i.e. at -60. Moving toward the MAXIMUM offset — the end a
+  // toward-minimum credit never considers — carries it back.
+  expect(result.rotatedScrollTop).toBe(0);
+  expect(result.rotatedRowTop).toBe(-60);
+  expect(result.rotatedRow, 'a rotated scroller rescued by its far end').toBe(true);
 });
 
 test('body as an independent scroller is credited when it is not the page scroller', async ({
