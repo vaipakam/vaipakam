@@ -3211,7 +3211,6 @@ async function visit(path, { expectChooser = false, loan = null } = {}) {
       : null,
     // Reported, not judged: evidence about whether the absence gate is
     // armed on this deployment (round 14).
-    forcedClosePageHead: forcedClose ? (forcedClose.pageHead ?? null) : null,
     // The bracket's lower end, reported beside its upper one so the span
     // the protocol comparison was made over is visible (round 84).
     forcedCloseHeadFloor: forcedClose ? (forcedClose.headFloor ?? null) : null,
@@ -4804,6 +4803,12 @@ async function observeForcedClose(page, loan, headBeforeNav, pageHeadBeforeNav, 
     floorStillLowest &&
     floorEstablishedFor(page, pageSampledBeforeNav) &&
     observerCaughtUp;
+  // ROUND 107 P2 — which arms were ATTEMPTED, so completion can be judged
+  // per arm rather than by whichever one finished. Same conditions as the
+  // two arms below, named once so the two cannot drift apart.
+  const defaultableAttempted =
+    floorSound && defaultableBefore !== undefined && defaultableBefore === pinnedDefaultable;
+  const matchAttempted = floorSound && matchBefore !== undefined && matchBefore === pinnedMatch;
   const defaultableStable =
     floorSound &&
     defaultableBefore !== undefined &&
@@ -4839,6 +4844,14 @@ async function observeForcedClose(page, loan, headBeforeNav, pageHeadBeforeNav, 
     { lenderHoldsActive: pinnedHoldsActive, saleLocked: pinnedSale },
     later,
   );
+  // ROUND 107 P2 — complete only when every ATTEMPTED arm finished, and at
+  // least one was attempted. An arm that never ran says nothing either way.
+  const attemptedResults = [
+    defaultableAttempted ? defaultableStable : undefined,
+    matchAttempted ? internalMatchStable : undefined,
+  ].filter((r) => r !== undefined);
+  const scanComplete =
+    attemptedResults.length > 0 && attemptedResults.every((r) => r === true);
   return {
     ...card,
     lenderHoldsActive,
@@ -4924,14 +4937,20 @@ async function observeForcedClose(page, loan, headBeforeNav, pageHeadBeforeNav, 
     //
     // `probedThrough` is therefore for PARTIAL scans only, where it is the
     // one honest figure available.
-    headScanned: (() => {
-      const complete = defaultableStable === true || internalMatchStable === true;
-      if (complete) return String(pinnedBlock);
-      return probedThrough === null ? null : String(probedThrough);
-    })(),
-    // Whether the interior was read all the way to the endpoint, which is
-    // true only when an arm returned `true`.
-    headScanComplete: defaultableStable === true || internalMatchStable === true,
+    // ROUND 107 P2 — EVERY ARM THAT WAS ATTEMPTED, not whichever one
+    // happened to finish.
+    //
+    // `||` promoted the shared extent to the endpoint and dropped the
+    // `(partial)` marker as soon as ONE arm completed, even where its
+    // sibling stopped at an early mismatch and `spanStable` therefore says
+    // `no` or `unknown`. Two independently probed facts collapsed into one
+    // completion bit, and the bit reported the more flattering of them.
+    //
+    // An arm that was never ATTEMPTED — its precondition did not hold — says
+    // nothing either way and must not make the scan incomplete; an arm that
+    // was attempted and did not finish must.
+    headScanned: scanComplete ? String(pinnedBlock) : probedThrough === null ? null : String(probedThrough),
+    headScanComplete: scanComplete,
     headPinned: String(pinnedBlock),
     headPageSighting: pageHead === 0n ? null : String(pageHead),
     headCeiling: ceilingSound ? String(ceiling.head) : null,

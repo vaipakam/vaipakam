@@ -563,6 +563,26 @@ describe('the head facts survive the projection (round 106)', () => {
     const missing = [...new Set(produced)].filter((k) => !projected.has(k));
     expect(missing, `observation fields never projected: ${missing.join(', ')}`).toEqual([]);
   });
+
+  // ROUND 107 P2 — AND THE SECOND LEG, which the first version did not
+  // check while the note claimed it did.
+  //
+  // The path is observation → visit-record projection → report. Checking
+  // only the first leg means a report interpolation can be deleted while its
+  // projection remains, and nothing fails: the distinct-key case verifies
+  // uniqueness, not presence. That is precisely the dropped-field regression
+  // this guard was written to prevent, so it has to look at both ends.
+  //
+  // Writing this found `forcedClosePageHead` — projected since before round
+  // 104 moved the report onto the separate thresholds, and read by nothing
+  // since. It is removed rather than exempted.
+  it('every projected field is read by the report', () => {
+    const projectedNames = [...src.matchAll(/^ {4}(forcedClose[A-Za-z]*):/gm)].map((m) => m[1]);
+    expect(projectedNames.length, 'the projection was not found').toBeGreaterThan(5);
+    const consumed = new Set([...src.matchAll(/v\.(forcedClose[A-Za-z]*)/g)].map((m) => m[1]));
+    const dead = [...new Set(projectedNames)].filter((k) => !consumed.has(k));
+    expect(dead, `projected but never read: ${dead.join(', ')}`).toEqual([]);
+  });
 });
 
 describe('the forced-close report emits distinct keys (round 106)', () => {
@@ -574,7 +594,13 @@ describe('the forced-close report emits distinct keys (round 106)', () => {
     // The whole concatenated line, from the stability verdict through the
     // confirming head.
     const line = src.slice(src.indexOf('` spanStable='), i + 1200);
-    const keys = [...line.matchAll(/` ([A-Za-z>=]+)=\$/g)].map((m) => m[1]);
+    // ROUND 107 P2 — EVERY token, not the first of each template literal.
+    //
+    // The first version anchored on a backtick, so it saw only the key that
+    // opened each literal. Combining two fields into one literal — an
+    // ordinary formatting change — hid the second from the guard, which
+    // means it could not prevent the exact duplicate it was written for.
+    const keys = [...line.matchAll(/([A-Za-z>=]+)=\$\{/g)].map((m) => m[1]);
     expect(keys.length, 'keys were found at all').toBeGreaterThan(3);
     expect(new Set(keys).size, `duplicate key in: ${keys.join(' ')}`).toBe(keys.length);
   });
