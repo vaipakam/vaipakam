@@ -1310,6 +1310,11 @@ contract RewardReporterFacet is
     ///      not any single knob — changed across a config write. Levelling
     ///      `paid` up to `received` errs safe: the chain resumes with no
     ///      delivered headroom and earns it back from the next remittance.
+    ///      #1566 closure 2 — RETAINED on purpose: this is an administrative
+    ///      state transition, not an outflow, so it does not move to the
+    ///      chokepoints that now charge the paid ledger by what leaves. Delete
+    ///      it and an old delivered residual becomes reusable after a role
+    ///      transition and re-attachment.
     ///      Shared by every setter that feeds the role predicate, so the
     ///      check IS the operation and a new role input inherits it.
     function _retireDeliveredResidualOnRoleChange(
@@ -1438,7 +1443,17 @@ contract RewardReporterFacet is
      *
      *         Fresh deploys need no seed — both counters start at zero — so
      *         this is only for chains carrying pre-P1-b history.
-     * @param  amount Armed fresh already paid out before this upgrade.
+     *
+     *         #1566 closure 2 — the counter this seeds now means fresh reward
+     *         value paid out of delivered funding WHATEVER the day's vintage
+     *         (charged at the claim's delivery and at the reward-absorption
+     *         credit), so a seed must cover legacy payouts too. This one-shot
+     *         writer is retained as the paid-side starting point; the
+     *         migration-capable writers the design specifies for a chain
+     *         mid-flight (received-side import, `paid = max(existing,
+     *         reconciled)`) arrive with the second closure-2 PR.
+     * @param  amount Fresh reward value already paid out of delivered
+     *                funding before this upgrade, any vintage.
      */
     function seedArmedFreshPaid(uint256 amount)
         external

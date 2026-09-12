@@ -1113,4 +1113,18 @@ interface IVaipakamErrors {
     ///         simply not for sale: this one says the CHAIN is not set up,
     ///         which is an operator condition rather than a governance one.
     error PerkVpfiTokenNotSet();
+
+    // ─── #1566 closure 2 — the delivered-headroom chokepoints ───────────────
+
+    /// @notice A FRESH reward outflow exceeds the delivered headroom still
+    ///         unspent on this chain. Raised at the chokepoint BEFORE the
+    ///         transfer (the claim's delivery, the reward-absorption credit),
+    ///         so the whole operation rolls back.
+    error DeliveredFreshBoundExceeded(uint256 fresh, uint256 remaining);
+
+    /// @notice A non-reward inflow was credited to the recycle bucket without
+    ///         the VPFI having verifiably ARRIVED: the Diamond's balance rose
+    ///         by less than the amount between the caller's snapshot and the
+    ///         credit. The tag is derived from the operation, never chosen.
+    error RecycleInflowUnverified(uint8 source, uint256 expected, uint256 delta);
 }

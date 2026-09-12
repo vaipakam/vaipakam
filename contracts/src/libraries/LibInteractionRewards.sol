@@ -1614,11 +1614,24 @@ library LibInteractionRewards {
         uint256 freshLeft = freshBudget > legacyFreshReserved
             ? freshBudget - legacyFreshReserved
             : 0;
+        // #1566 closure 2 — the delivered allowance the armed days may price
+        // against is what remains AFTER the legacy slice this same claim will
+        // spend: the chokepoint charges legacy and armed fresh together at
+        // delivery, so a walk that priced armed days against the whole bound
+        // would let the claim exceed it and revert as a whole, where the
+        // rule is that a delivered shortfall DEFERS the armed days. Same
+        // reservation `freshLeft` makes against the 69M pool, for the same
+        // reason. Saturating: a legacy slice already beyond the bound leaves
+        // nothing for the walk, and the chokepoint refuses the claim.
+        uint256 deliveredLeft = deliveredFreshBound(s);
+        deliveredLeft = deliveredLeft > legacyFreshReserved
+            ? deliveredLeft - legacyFreshReserved
+            : 0;
         WalkCtx memory ctx = WalkCtx({
             pool: PoolBudget({
                 fresh: freshLeft,
                 recycled: s.recycleBucket,
-                deliveredFresh: deliveredFreshBound(s)
+                deliveredFresh: deliveredLeft
             }),
             advanced: false,
             daysLeft: LibVaipakam.MAX_INTERACTION_CLAIM_DAYS
@@ -1817,14 +1830,23 @@ library LibInteractionRewards {
             // paid side from whatever mirror-era spending exists (zero, or the
             // operator's `seedArmedFreshPaid` figure), which is the only
             // reading under which received and paid describe the same era.
-            if (
-                freshSpent != 0
-                    && _isArmedDay(s, d)
-                    && LibVaipakam.isMirrorRewardChain(s)
-            ) {
-                s.rewardBudgetArmedFreshPaid += freshSpent;
-                // Codex #1699 r1 P1 — deplete the IN-MEMORY bound too, not
-                // just the storage counter.
+            // #1566 closure 2 — the STORAGE charge no longer happens here.
+            // It used to: `rewardBudgetArmedFreshPaid += freshSpent`, armed
+            // days only, mirrors only. That charged by VINTAGE while the
+            // balance it protects is vintage-blind, so a pre-`D*` legacy
+            // slice (settled by `_processEntry`, which never enters this
+            // walk) spent delivered backing the bound had already counted
+            // as available. The charge now lives at the two outflow
+            // chokepoints — {chargeDeliveredFresh} inside the claim's
+            // delivery and {LibVpfiRecycle.absorbRewardFresh} for the
+            // bucket credits — where it is taken from what MOVES, legacy
+            // and armed alike, and REJECTED before the transfer when it
+            // exceeds the remaining delivered headroom. The in-memory
+            // depletion below stays: it is what lets later days in the
+            // same claim defer against the allowance this day just used.
+            if (freshSpent != 0 && _isArmedDay(s, d)) {
+                // Codex #1699 r1 P1 — deplete the IN-MEMORY bound, so later
+                // days in this walk see the allowance this day consumed.
                 //
                 // `deliveredFreshBound` is read ONCE when the walk builds its
                 // `PoolBudget`, so without this every day in the same claim
@@ -2180,7 +2202,7 @@ library LibInteractionRewards {
         // against the allowance it is compared to would be circular).
         // r15 P2 — BOTH destinations reserve: a forfeited entry's legacy
         // slice spends the pool on its way to treasury.
-        (userLegs, treasuryLegs) = previewForUserEntriesLegacyOnly(s, user);
+        (userLegs, treasuryLegs, ) = previewForUserEntriesLegacyOnly(s, user);
         (, armed) = _dryRunShareOfPoolDays(
             s,
             user,
@@ -2335,7 +2357,18 @@ library LibInteractionRewards {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         // Codex #1699 r15 P2 — display the USER legs; reserve BOTH halves.
         uint256 treasuryLegs;
-        (userTotal, treasuryLegs) = previewForUserEntriesLegacyOnly(s, user);
+        uint256 legacyFresh;
+        (userTotal, treasuryLegs, legacyFresh) =
+            previewForUserEntriesLegacyOnly(s, user);
+        // #1566 closure 2 — the preview reads the delivered bound the way the
+        // claim spends it: the legacy legs' FRESH part is charged first at
+        // the delivery chokepoint, so (a) a legacy slice beyond the bound
+        // makes the claim REVERT, and the preview quotes zero for it rather
+        // than an amount the claim cannot pay; (b) the armed dry run prices
+        // against what the legacy legs leave, as `_walkShareOfPoolDays` does.
+        uint256 deliveredLeft = deliveredFreshBound(s);
+        if (legacyFresh > deliveredLeft) return 0;
+        deliveredLeft -= legacyFresh;
         // Codex #1699 r14 P2 — the walk leg's fresh budget reserves the
         // PRECEDING legs, exactly as the live claim threads it: the facet
         // subtracts the window reward before `claimForUserEntries`, which
@@ -2346,7 +2379,7 @@ library LibInteractionRewards {
         (uint256 dryTotal, ) = _dryRunShareOfPoolDays(
             s,
             user,
-            deliveredFreshBound(s),
+            deliveredLeft,
             _userWalkFreshBudget(s, user, userTotal + treasuryLegs)
         );
         userTotal += dryTotal;
@@ -2388,7 +2421,11 @@ library LibInteractionRewards {
     function previewForUserEntriesLegacyOnly(
         LibVaipakam.Storage storage s,
         address user
-    ) internal view returns (uint256 userLegs, uint256 treasuryLegs) {
+    )
+        internal
+        view
+        returns (uint256 userLegs, uint256 treasuryLegs, uint256 legacyFresh)
+    {
         uint256[] storage ids = s.userRewardEntryIds[user];
         uint256 len = ids.length;
         uint256 armedFrom = s.governorCommitArmedFromDay;
@@ -2426,11 +2463,16 @@ library LibInteractionRewards {
                 // could accrue while the corresponding live claim still
                 // defers on delivered allowance.
                 (, EntrySplit memory tSplit, , ) = _entryPriceCore(s, id, e);
-                treasuryLegs +=
+                uint256 tFresh =
                     tSplit.total - tSplit.recycled - tSplit.armedFresh;
+                treasuryLegs += tFresh;
+                legacyFresh += tFresh; // #1566 closure 2 — nets the delivered bound
             } else if (_entryClaimable(s, e)) {
                 // #1008 (S13) — cap is baked into cumMin; no feed read here.
-                userLegs += _previewEntryLeg(s, id, e, armedFrom);
+                (uint256 leg, uint256 legFresh) =
+                    _previewEntryLeg(s, id, e, armedFrom);
+                userLegs += leg;
+                legacyFresh += legFresh;
             }
             unchecked { ++i; }
         }
@@ -2464,22 +2506,32 @@ library LibInteractionRewards {
     ///        same regime identity the settle uses;
     ///      - cursor stamped or all-armed: 0 — the walk owns what remains,
     ///        and {_dryRunShareOfPoolDays} prices it.
+    /// @return leg      What the user leg pays (total, recycled included).
+    /// @return legFresh Its FRESH part — #1566 closure 2: the preview nets
+    ///                  this against the delivered bound before the armed dry
+    ///                  run, exactly as the live claim reserves it, so the
+    ///                  two agree on a mirror with legacy legs.
     function _previewEntryLeg(
         LibVaipakam.Storage storage s,
         uint256 id,
         LibVaipakam.RewardEntry storage e,
         uint256 armedFrom
-    ) private view returns (uint256) {
+    ) private view returns (uint256 leg, uint256 legFresh) {
         if (armedFrom == 0 || e.endDay <= armedFrom) {
-            return _previewEntryReward(s, id, e);
+            (EntrySplit memory toUser, , , ) = _entryPriceCore(s, id, e);
+            return (
+                toUser.total,
+                toUser.total - toUser.recycled - toUser.armedFresh
+            );
         }
         if (s.rewardEntryClaimNextDay[id] != 0 || e.startDay >= armedFrom) {
-            return 0; // the walk owns everything that remains
+            return (0, 0); // the walk owns everything that remains
         }
         (, , , EntryPriceState memory st) = _entryPriceCore(s, id, e);
-        if (!st.priced) return 0;
-        return
+        if (!st.priced) return (0, 0);
+        uint256 fresh =
             st.rawSplit.total - st.rawSplit.recycled - st.rawSplit.armedFresh;
+        return (fresh, fresh);
     }
 
     /// @dev #1351 slice 2e — a VIEW DryRun of {_walkShareOfPoolDays}: same
@@ -4236,6 +4288,50 @@ library LibInteractionRewards {
         return received > paid ? received - paid : 0;
     }
 
+    /// @notice #1566 closure 2 — a FRESH outflow of reward value is being
+    ///         made: bound it against the remaining delivered headroom and
+    ///         charge the paid ledger, in one call, BEFORE the value moves.
+    /// @dev    This is the chokepoint the closure-2 design names. The
+    ///         ledger measured a VINTAGE (armed fresh received minus armed
+    ///         fresh paid) while the balance it protects is vintage-blind:
+    ///         legacy and armed payouts spend the same tokens, so a legacy
+    ///         payout drained backing the armed bound had already counted as
+    ///         available, and the bound reported itself satisfied. The fix is
+    ///         to charge by what MOVES, at the points where it moves — the
+    ///         claim's delivery and the reward-absorption credit — with the
+    ///         fresh component handed in explicitly by the single caller of
+    ///         each. `paid` is deliberately NOT the operand: the claim's
+    ///         `paid` includes the recycled share, which the bucket backs,
+    ///         and charging it would exhaust the bound on funding it never
+    ///         received (design §5c, correction 1).
+    ///
+    ///         Rejecting is what makes this a BOUND rather than a record: an
+    ///         earlier reading of the design charged the ledger after the
+    ///         transfer, which observed an over-draw that had already
+    ///         happened. Reverting here rolls the whole claim back.
+    ///
+    ///         The charge is taken only where the ledger is live — the
+    ///         `Mirror` role. `Canonical` and `Unconfigured` bound at `max`
+    ///         (their column lands with slice 4 and its migration), and a
+    ///         write there would be a counter with no `received` behind it.
+    ///         `Detached` bounds at zero, so any non-zero fresh outflow is
+    ///         refused, which is the fail-closed half closure 3 installed.
+    /// @param  s     Diamond storage.
+    /// @param  fresh The FRESH component about to leave — never the total.
+    function chargeDeliveredFresh(
+        LibVaipakam.Storage storage s,
+        uint256 fresh
+    ) internal {
+        if (fresh == 0) return;
+        uint256 remaining = deliveredFreshBound(s);
+        if (fresh > remaining) {
+            revert IVaipakamErrors.DeliveredFreshBoundExceeded(fresh, remaining);
+        }
+        if (LibVaipakam.rewardRole(s) == LibVaipakam.RewardRole.Mirror) {
+            s.rewardBudgetArmedFreshPaid += fresh;
+        }
+    }
+
     // ─── Internals ───────────────────────────────────────────────────────────
 
     /// @dev #1002 (S4) + Codex #1061 P1 — an entry may be routed (claimed or
@@ -4494,7 +4590,7 @@ library LibInteractionRewards {
 
     /// @dev #1351 slice 2d-0 — THE entry pricing arithmetic AND its routing.
     ///      One implementation, read by both the settling claim
-    ///      ({_processEntry}) and the read-only preview ({_previewEntryReward}).
+    ///      ({_processEntry}) and the read-only preview ({_previewEntryLeg}).
     ///
     ///      Deliberately NOT "one function with a DryRun/Settle flag": the two
     ///      callers differ in something a runtime flag cannot express — the
@@ -4592,24 +4688,6 @@ library LibInteractionRewards {
         (toUser, toTreasury, c) = _loanSideCapCompute(s, id, e, split);
     }
 
-    /// @dev Read-only entry pricing — {_entryPriceCore} with no writes at all.
-    ///      As a view it cannot advance the cursor, so on a finalized day the
-    ///      claim has not yet advanced through it returns 0: it UNDER-reports,
-    ///      never over-reports (#1147 r8 L3).
-    ///
-    ///      Matching the claim is load-bearing — the expiry funding gate reads
-    ///      this via {userClaimFundingNeed}, and a preview that diverged could
-    ///      advance the expiry clock on a reward the claim would not actually
-    ///      pay (Codex #1371 r2). It now matches BY CONSTRUCTION rather than by
-    ///      keeping a second implementation in step.
-    function _previewEntryReward(
-        LibVaipakam.Storage storage s,
-        uint256 id,
-        LibVaipakam.RewardEntry storage e
-    ) private view returns (uint256 reward) {
-        (EntrySplit memory toUser, , , ) = _entryPriceCore(s, id, e);
-        return toUser.total;
-    }
 
     // ─── #1353 (M2 PR-5c) — loan-side interaction-reward cap ─────────────────
     //
@@ -4914,7 +4992,7 @@ library LibInteractionRewards {
         // choke point for both {closeLoan} (loan terminal) and
         // {transferLenderEntry} (lender sold, loan continues — the OLD entry
         // closes here while a fresh open entry is allocated for the buyer), so
-        // the `closed` gate in {_processEntry}/{_previewEntryReward} opens
+        // the `closed` gate in {_processEntry}/{_previewEntryLeg} opens
         // exactly when the entry's window is done. {repointRewardEntry}
         // deliberately does NOT route through here — a re-pointed entry keeps
         // accruing (its loan is still open), so it stays `closed == false`.

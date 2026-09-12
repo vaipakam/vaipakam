@@ -2737,8 +2737,13 @@ contract RewardRemitLedgerTest is SetupTest {
     // bound on a mirror (it is the GLOBAL 69M cap less LOCAL payouts, so every
     // mirror believes it owns the whole pool).
     //
-    // It counts ARMED-ATTRIBUTABLE, COMPOSITION-KNOWN deliveries only, and
-    // records everything else as `uncounted` rather than dropping it. There is
+    // #1566 closure 2 — it counts the authenticated FRESH component of every
+    // COMPOSITION-KNOWN delivery, whatever days it funds (vintage-blind), and
+    // records the rest as `uncounted` rather than dropping it. The
+    // armed-attributable test that used to gate counting is retired: the paid
+    // side now charges legacy and armed outflows alike at the chokepoints, so
+    // a receipt for a pre-`D*` day is matched by the spend it funds on the
+    // SAME ledger — the double-count finding (b) guarded against cannot arise. There is
     // no subtraction here and no baseline: the first shape of this slice
     // netted a lifetime receipt cumulative against a payout snapshot taken at
     // arming, and baselining one side of a subtraction is what made it
@@ -2788,87 +2793,77 @@ contract RewardRemitLedgerTest is SetupTest {
         assertEq(uncounted, 7e18, "and is recorded, not discarded");
     }
 
-    /// @dev **Finding (b).** Funding delivered for PRE-`D*` days is not armed
-    ///      funding and must not enter. The withdrawn design counted it and
-    ///      then tried to net it out with a payout snapshot taken at arming —
-    ///      which erased the spend while keeping the receipt, so 100 VPFI
-    ///      delivered and spent before arming reported as 100 VPFI of
-    ///      reusable headroom. Never entering removes the whole class.
+    /// @dev **Finding (b), inverted by #1566 closure 2.** Funding delivered
+    ///      for PRE-`D*` days now ENTERS the ledger. The withdrawn design's
+    ///      defect was counting the receipt while erasing the spend (a payout
+    ///      snapshot taken at arming); the vintage rule that replaced it
+    ///      refused the receipt instead, which left the pre-arming SPEND
+    ///      unbounded — the closure-2 defect. With both sides vintage-blind,
+    ///      100 VPFI delivered and spent before arming is 100 received and
+    ///      100 paid: zero reusable headroom, and every legacy claim bounded.
     ///
-    ///      Both legs run in ONE test so the negative cannot pass vacuously:
-    ///      the armed-day delivery proves the fixture counts at all.
-    function test_DeliveredFresh_PreArmingDeliveryIsNotCounted() public {
+    ///      Both legs run in ONE test so the change cannot pass vacuously:
+    ///      the armed-day delivery is counted exactly as before.
+    function test_DeliveredFresh_PreArmingDeliveryIsCounted_VintageBlind() public {
         _configureMirror();
         uint256 dStar = _today() + 5;
         _armFrom(dStar);
-
-        // Armed day -> counted.
         remit.onRewardBudgetReceived(
             address(vpfiTok), 3e18, _days(dStar), CHAIN_BASE, 42,
             address(0xBA5E), 0, 3e18
         );
         (uint256 counted, ) = rlens.getDeliveredFreshPosition();
-        assertEq(counted, 3e18, "fixture counts armed deliveries");
-
-        // A day before the cutover -> refused, same everything else.
+        assertEq(counted, 3e18, "armed-day delivery counts as before");
         remit.onRewardBudgetReceived(
             address(vpfiTok), 100e18, _days(dStar - 1), CHAIN_BASE, 43,
             address(0xBA5E), 0, 100e18
         );
-
         uint256 uncounted;
         (counted, uncounted) = rlens.getDeliveredFreshPosition();
-        assertEq(counted, 3e18, "pre-arming funding did not enter");
-        assertEq(uncounted, 100e18, "it is visible as uncounted");
+        assertEq(counted, 103e18, "pre-arming funding enters the same ledger");
+        assertEq(uncounted, 0, "nothing is parked when the composition is stated");
     }
 
-    /// @dev A batch straddling the cutover is refused WHOLE rather than
-    ///      apportioned. `_planDay` decides armedness per day but the remit
-    ///      carries one summed amount for its whole day set, so nothing that
-    ///      arrives here can split it; guessing a split would over-state on
-    ///      the guess. Documented as a deliberate under-count.
-    function test_DeliveredFresh_BatchStraddlingCutoverIsNotCounted() public {
+    /// @dev A batch straddling the cutover no longer needs apportioning:
+    ///      under the vintage-blind rule (#1566 closure 2) the summed fresh
+    ///      share counts whichever side of `D*` each day sits on, so there is
+    ///      nothing to guess and nothing to refuse whole. The all-armed pair
+    ///      runs beside it so the straddle is shown to be treated identically.
+    function test_DeliveredFresh_BatchStraddlingCutoverIsCounted() public {
         _configureMirror();
         uint256 dStar = _today() + 5;
         _armFrom(dStar);
-
         remit.onRewardBudgetReceived(
             address(vpfiTok), 8e18, _days2(dStar - 1, dStar), CHAIN_BASE, 42,
             address(0xBA5E), 0, 8e18
         );
-
         (uint256 counted, uint256 uncounted) = rlens.getDeliveredFreshPosition();
-        assertEq(counted, 0, "one unarmed day refuses the whole batch");
-        assertEq(uncounted, 8e18, "and the shortfall is visible");
-
-        // The all-armed pair IS counted — so the refusal above is the
-        // straddle, not merely "two days".
+        assertEq(counted, 8e18, "a straddling batch counts its fresh share");
+        assertEq(uncounted, 0, "nothing refused");
         remit.onRewardBudgetReceived(
             address(vpfiTok), 8e18, _days2(dStar, dStar + 1), CHAIN_BASE, 43,
             address(0xBA5E), 0, 8e18
         );
         (counted, ) = rlens.getDeliveredFreshPosition();
-        assertEq(counted, 8e18, "an all-armed batch counts");
+        assertEq(counted, 16e18, "an all-armed batch counts the same way");
     }
 
-    /// @dev An unarmed chain has no armed regime to attribute funding to, and
-    ///      a delivery naming no days cannot be shown to fund armed ones.
-    ///      Both refuse; both stay visible.
-    function test_DeliveredFresh_UnarmedChainAndEmptyDaySetCountNothing()
-        public
-    {
+    /// @dev An UNARMED mirror counts too (#1566 closure 2): the ledger is live
+    ///      on any mirror because its paid side charges legacy outflows, so a
+    ///      delivery landing before `D*` is installed — or one naming no days
+    ///      at all — is counted by its authenticated fresh share. Under the
+    ///      retired rule both were refused; refusing them left the legacy
+    ///      claims they fund with a delivered bound of zero AND a paid side
+    ///      that never charged, the inconsistency this closure removes.
+    function test_DeliveredFresh_UnarmedChainAndEmptyDaySetCount() public {
         _configureMirror();
-
-        // Unarmed: `governorCommitArmedFromDay` is still 0.
         remit.onRewardBudgetReceived(
             address(vpfiTok), 5e18, _days(9), CHAIN_BASE, 42,
             address(0xBA5E), 0, 5e18
         );
         (uint256 counted, uint256 uncounted) = rlens.getDeliveredFreshPosition();
-        assertEq(counted, 0, "unarmed chain counts nothing");
-        assertEq(uncounted, 5e18, "recorded");
-
-        // Armed, but the delivery names no days.
+        assertEq(counted, 5e18, "an unarmed chain counts its fresh share");
+        assertEq(uncounted, 0, "nothing refused");
         uint256 dStar = _today() + 5;
         _armFrom(dStar);
         remit.onRewardBudgetReceived(
@@ -2876,8 +2871,8 @@ contract RewardRemitLedgerTest is SetupTest {
             address(0xBA5E), 0, 6e18
         );
         (counted, uncounted) = rlens.getDeliveredFreshPosition();
-        assertEq(counted, 0, "empty day set counts nothing");
-        assertEq(uncounted, 11e18, "both refusals accumulate");
+        assertEq(counted, 11e18, "an empty day set changes nothing about counting");
+        assertEq(uncounted, 0, "still nothing refused");
     }
 
     /// @dev Only the FRESH component accrues. The recycled component is
@@ -2902,11 +2897,14 @@ contract RewardRemitLedgerTest is SetupTest {
         assertEq(uncounted, 0, "the remainder was fully attributed");
     }
 
-    /// @dev The accounting identity the pair exists to support: across a
-    ///      counted delivery, a refused one, and one carrying recycled
+    /// @dev The accounting identity the pair exists to support: across an
+    ///      armed-day delivery, a pre-arming one and one carrying recycled
     ///      backing, `counted + uncounted` equals the summed NON-RECYCLED
     ///      delivery. Nothing is invented and nothing is lost — which is what
     ///      makes `uncounted` usable for reconciliation rather than a hint.
+    ///      #1566 closure 2 — the pre-arming delivery is COUNTED now, so the
+    ///      identity holds with `uncounted` at zero; an unstated composition
+    ///      is the only thing that lands there (see the finding-(c) test).
     function test_DeliveredFresh_CountedPlusUncountedIsExhaustive() public {
         _configureMirror();
         uint256 dStar = _today() + 5;
@@ -2927,10 +2925,10 @@ contract RewardRemitLedgerTest is SetupTest {
         );
 
         (uint256 counted, uint256 uncounted) = rlens.getDeliveredFreshPosition();
-        // 7 counted + 5 refused + 5 counted = 12 counted, 5 uncounted; the
-        // 4e18 recycled leg belongs to the bucket, not to either counter.
-        assertEq(counted, 12e18, "both armed deliveries counted");
-        assertEq(uncounted, 5e18, "the pre-arming one refused");
+        // 7 + 5 + 5 = 17 counted, 0 uncounted (vintage-blind); the 4e18
+        // recycled leg belongs to the bucket, not to either counter.
+        assertEq(counted, 17e18, "all three fresh shares counted, any vintage");
+        assertEq(uncounted, 0, "nothing refused when every composition is stated");
         assertEq(
             counted + uncounted,
             (7e18) + (5e18) + (9e18 - 4e18),

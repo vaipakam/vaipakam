@@ -79,7 +79,6 @@ contract RewardHorizonSweepFacet is
         uint256 fresh;
         uint256 recycled;
         uint256 armedFresh;
-        uint256 armedFreshPaid;
     }
 
     function sweepExpiredInteractionRewards(uint256[] calldata entryIds)
@@ -204,7 +203,6 @@ contract RewardHorizonSweepFacet is
             // includes the truncated remainder that moved no tokens. Charging
             // it would shrink the bound for value never paid out of a
             // delivery — the defect `interactionPoolPaidOut` was rejected for.
-            if (freshCredited != 0) t.armedFreshPaid += armedDelivered;
             unchecked { ++i; }
         }
         // Codex #1699 r10 P1 — a CAPPED-ONLY terminal chunk still has a
@@ -233,15 +231,16 @@ contract RewardHorizonSweepFacet is
         // in the outstanding-commitment sum forever (same rule as the claim
         // and forfeit paths).
         LibInteractionRewards.consumeArmedFresh(t.armedFresh);
-        // #1434 P1-b — mirror-only: Base funds its armed days from the 69M cap
-        // directly and receives no remittances, so it has no delivered bound
-        // to charge (and charging one would read zero and brick it).
-        if (t.armedFreshPaid != 0 && LibVaipakam.isMirrorRewardChain(s)) {
-            s.rewardBudgetArmedFreshPaid += t.armedFreshPaid;
-        }
-
+        // #1566 closure 2 — the paid ledger is charged by the reward
+        // operation below with the FRESH total that expires into the bucket,
+        // legacy and armed days alike, and the credit is refused if that
+        // exceeds the remaining delivered headroom. The armed-only,
+        // mirror-only `+= t.armedFreshPaid` that stood here charged by
+        // vintage, and the accumulator that fed it is gone with it; the
+        // per-entry `allowance` decrement above is the only consumer of
+        // `armedDelivered` now.
         if (t.fresh > 0) {
-            LibVpfiRecycle.credit(
+            LibVpfiRecycle.absorbRewardFresh(
                 LibVpfiRecycle.RecycleSource.ExpiredReward,
                 0,
                 t.fresh

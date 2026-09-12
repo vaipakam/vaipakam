@@ -6290,10 +6290,19 @@ library LibVaipakam {
         ///      differencing these fields by hand — it must SATURATE,
         ///      because the received side below carries an unwind and can
         ///      legitimately fall below the paid side after a released or
-        ///      reclassified delivery. The paid side is written at the three
-        ///      sites that actually spend armed fresh (the claim walk, the
-        ///      expiry batch, the forfeit sweep) rather than derived from
-        ///      these splits, precisely because of the shape described above.
+        ///      reclassified delivery. The paid side is charged at the TWO
+        ///      outflow chokepoints (#1566 closure 2: the claim's delivery and
+        ///      the reward-absorption credit) rather than derived from these
+        ///      splits, precisely because of the shape described above.
+        ///
+        ///      #1566 closure 2 — VINTAGE-BLIND since then, despite the name:
+        ///      Σ of the authenticated FRESH component of every
+        ///      composition-known delivery, whatever days it funds. The
+        ///      armed-attributable test was retired together with the
+        ///      armed-only paid charge, because a ledger whose two sides
+        ///      count different nouns cannot bound the balance both spend.
+        ///      The field keeps its name: renaming a storage field is a
+        ///      layout event the provenance walker gates on.
         uint256 rewardBudgetArmedFreshReceived;
         /// @dev The reconciliation counterpart: Σ of the fresh-looking
         ///      amount of every delivery this chain declined to count above.
@@ -6301,7 +6310,9 @@ library LibVaipakam {
         ///      delivery for a legacy/d2 payload, whose recycled share was
         ///      never transmitted.
         ///
-        ///      Not decorative. Both exclusions are silent by construction:
+        ///      Not decorative. The exclusion (an unstated composition — the
+        ///      day-vintage exclusion was retired by #1566 closure 2) is
+        ///      silent by construction:
         ///      an uncounted delivery moves real VPFI into this Diamond and
         ///      changes no other figure, so without this counter the only
         ///      symptom would be armed claims deferring for funding the
@@ -7052,9 +7063,21 @@ library LibVaipakam {
         ///      Codex #1556 r1): it counts LIFETIME payouts including
         ///      ordinary-schedule days that no delivery ever funded, so
         ///      charging them against delivered fresh would defer every
-        ///      later day on any chain with prior activity. Only
-        ///      armed-day fresh belongs here, because only armed-day fresh
-        ///      is what a remittance delivers.
+        ///      later day on any chain with prior activity.
+        ///
+        ///      #1566 closure 2 — VINTAGE-BLIND since then, despite the name:
+        ///      Σ of fresh reward value this chain paid out of delivered
+        ///      funding, legacy and armed days alike, charged at the two
+        ///      outflow chokepoints ({LibInteractionRewards.chargeDeliveredFresh}
+        ///      inside the claim's delivery and {LibVpfiRecycle.absorbRewardFresh}
+        ///      for the bucket credits) and REFUSED there before the transfer
+        ///      when the fresh outflow exceeds `received − paid`. The
+        ///      "only armed-day fresh belongs here" rule this note used to
+        ///      state was the closure-2 defect: legacy payouts spent the same
+        ///      backing without being charged. Written only in the `Mirror`
+        ///      role; the canonical column lands with slice 4. The field
+        ///      keeps its name: renaming a storage field is a layout event
+        ///      the provenance walker gates on.
         ///
         ///      The bound `received − paid` MUST be evaluated SATURATING
         ///      in both terms. The received side is NOT monotone: it

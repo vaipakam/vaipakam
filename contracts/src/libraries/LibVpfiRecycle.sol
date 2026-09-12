@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "./LibVaipakam.sol";
+import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {LibInteractionRewards} from "./LibInteractionRewards.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
@@ -176,7 +177,84 @@ library LibVpfiRecycle {
     error InsufficientRecycleBacking(uint256 needed, uint256 available);
 
     /**
+     * @notice #1566 closure 2 — the ONLY doors into the recycle bucket.
+     * @dev    The generic tagged entry point (`credit(source, …)`) is gone:
+     *         it accepted any caller-selected `RecycleSource`, so a future
+     *         reward terminal could credit the bucket while omitting the
+     *         delivered-headroom charge next to it — recording by convention,
+     *         which the closure-2 design rejects twice over (a denylist of
+     *         known reward tags is defeated by a tag it does not list; an
+     *         allowed TAG on a generic entry is defeated the same way).
+     *         What remains is an allowed OPERATION per proven non-reward
+     *         inflow — each derives its tag from the ingress transfer it
+     *         verifies by balance delta — plus ONE reward operation,
+     *         {absorbRewardFresh}, that rejects against the remaining
+     *         delivered headroom and charges the paid ledger atomically with
+     *         the credit. A new absorption class cannot compile-and-forget
+     *         its way in: it either gains its own provenance-verifying
+     *         operation here, argued not to be reward value, or it goes
+     *         through the reward operation and pays the charge.
+     */
+    function creditNotificationFee(uint256 refId, uint256 amount, uint256 balanceBefore) internal {
+        _requireInflowDelta(RecycleSource.NotificationFee, amount, balanceBefore);
+        _credit(RecycleSource.NotificationFee, refId, amount);
+    }
+
+    /// @notice See {creditNotificationFee} — the Full-tariff `C*` charged into
+    ///         Diamond custody at accept (#1352 / #1383).
+    function creditFullTariff(uint256 refId, uint256 amount, uint256 balanceBefore) internal {
+        _requireInflowDelta(RecycleSource.FullTariff, amount, balanceBefore);
+        _credit(RecycleSource.FullTariff, refId, amount);
+    }
+
+    /// @notice See {creditNotificationFee} — a spend-gated perk purchase
+    ///         (#1204), VPFI spent from the buyer's own vault.
+    function creditSpendGatedPerk(uint256 refId, uint256 amount, uint256 balanceBefore) internal {
+        _requireInflowDelta(RecycleSource.SpendGatedPerk, amount, balanceBefore);
+        _credit(RecycleSource.SpendGatedPerk, refId, amount);
+    }
+
+    /**
+     * @notice #1566 closure 2 — the reward-absorption operation: FRESH reward
+     *         value that terminates into the bucket (a forfeit's fresh share,
+     *         an expired entry's fresh share) is bounded against the remaining
+     *         delivered headroom, charged to the paid ledger and credited, in
+     *         one call. Rejects BEFORE the credit, exactly like the claim's
+     *         delivery chokepoint: the two sweep callers happen to carry their
+     *         own per-entry bounds today, but a future reward terminal is
+     *         forced through here, and without the rejection it could convert
+     *         unrelated Diamond VPFI into recycled backing with the ledger
+     *         overdrawn and the credit already made.
+     * @param  source Reward class being absorbed (ForfeitedReward / ExpiredReward).
+     * @param  refId  Class-specific reference id (0 when aggregate).
+     * @param  fresh  The FRESH component — never a total that includes the
+     *                recycled share, which the bucket already holds.
+     */
+    function absorbRewardFresh(RecycleSource source, uint256 refId, uint256 fresh) internal {
+        if (fresh == 0) return;
+        LibInteractionRewards.chargeDeliveredFresh(LibVaipakam.storageSlot(), fresh);
+        _credit(source, refId, fresh);
+    }
+
+    /// @dev The delta check every non-reward inflow operation performs: the
+    ///      caller snapshots the Diamond's VPFI balance BEFORE its ingress
+    ///      transfer, and the credit is accepted only if the balance rose by
+    ///      at least `amount` since. A fee-on-transfer token, a failed pull
+    ///      that was swallowed, or a caller that never moved tokens all fail
+    ///      here rather than minting an unbacked ledger slice.
+    function _requireInflowDelta(RecycleSource source, uint256 amount, uint256 balanceBefore) private view {
+        if (amount == 0) return;
+        uint256 now_ = IERC20(LibVaipakam.storageSlot().vpfiToken).balanceOf(address(this));
+        uint256 delta = now_ > balanceBefore ? now_ - balanceBefore : 0;
+        if (delta < amount) {
+            revert IVaipakamErrors.RecycleInflowUnverified(uint8(source), amount, delta);
+        }
+    }
+
+    /**
      * @notice Credit `amount` of Diamond-custody VPFI to the recycle bucket.
+     *         PRIVATE since #1566 closure 2 — reachable only through the
+     *         operations above.
      * @dev    No-op on zero. Reverts {InsufficientRecycleBacking} when the
      *         Diamond's live VPFI balance cannot cover the post-credit
      *         bucket — the ledger-slice property is enforced HERE, not
@@ -188,11 +266,11 @@ library LibVpfiRecycle {
      * @param  refId  Class-specific reference id (0 when aggregate).
      * @param  amount VPFI wei to credit.
      */
-    function credit(
+    function _credit(
         RecycleSource source,
         uint256 refId,
         uint256 amount
-    ) internal {
+    ) private {
         if (amount == 0) return;
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         uint256 bal = IERC20(s.vpfiToken).balanceOf(address(this));

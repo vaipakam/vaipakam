@@ -315,7 +315,13 @@ contract RewardRemittanceLensFacet {
      *         On the canonical chain, and on an `Unconfigured` one, the
      *         bound does not apply and `remaining` reads
      *         `type(uint256).max`.
-     * @return paid      Armed fresh this chain has paid out.
+     * @return paid      Fresh reward value this chain has paid out of its
+     *                   delivered funding, whatever the day's vintage
+     *                   (#1566 closure 2 — charged at the claim's delivery
+     *                   and at the reward-absorption credit, never per day
+     *                   inside the walk). The field keeps its historical
+     *                   "Armed" name; renaming a storage field is a layout
+     *                   event the provenance walker gates on.
      * @return remaining Delivered-less-paid allowance still spendable.
      */
     function getDeliveredFreshBound()
@@ -355,12 +361,17 @@ contract RewardRemittanceLensFacet {
      *         remits, so both figures stay zero there regardless of how much
      *         it may legitimately pay. Base's own bound is
      *         {LibInteractionRewards.poolRemaining}.
-     * @return counted   Σ fresh component of deliveries that were both
-     *                   composition-known and armed-attributable.
-     * @return uncounted Σ fresh-looking amount of every delivery that failed
-     *                   either test. Non-zero means this chain's counted
-     *                   funding UNDERSTATES what Base sent — the safe
-     *                   direction, but one an operator must see.
+     * @return counted   Σ authenticated fresh component of every
+     *                   composition-known delivery, whatever days it funds
+     *                   (#1566 closure 2 retired the armed-attributable
+     *                   test; the paid side is vintage-blind, so the
+     *                   received side is too).
+     * @return uncounted Σ fresh-looking amount of every delivery whose
+     *                   composition was NOT stated (an old-wire packet).
+     *                   Non-zero means this chain's counted funding
+     *                   UNDERSTATES what Base sent — the safe direction,
+     *                   but one an operator must see; the cutover epoch of
+     *                   the second closure-2 PR is what reconciles it.
      */
     function getDeliveredFreshPosition()
         external

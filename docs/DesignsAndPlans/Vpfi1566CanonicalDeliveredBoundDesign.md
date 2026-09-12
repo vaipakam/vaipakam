@@ -4740,6 +4740,74 @@ is not sufficient. §6 item 1 already anticipated this shape for Option B
 and it applies here. It is more work than five `+=` lines — and the five
 `+=` lines do not close the hole.
 
+#### LANDED 2026-09-12 — closure 2, first of two PRs: the chokepoints and the fresh-only re-base
+
+What the first PR ships, mapped to the rules above:
+
+- **The claim chokepoint enforces.** `RewardClaimFacet._deliverReward`
+  (still exactly one caller) takes the FRESH component as its own argument
+  and, before either delivery route runs, calls
+  `LibInteractionRewards.chargeDeliveredFresh`: refuse with
+  `DeliveredFreshBoundExceeded` when the fresh outflow exceeds the remaining
+  delivered headroom, otherwise charge the paid ledger by that fresh amount.
+  The per-day storage write inside the share-of-pool walk is gone; only its
+  in-memory depletion remains, so later days in one claim still defer against
+  the allowance an earlier day used. A pre-`D*` legacy slice, which never
+  entered the walk, now meets the bound at the only place its value leaves.
+  **And the walk's delivered budget nets that legacy slice first**: the armed
+  days price against `bound − legacyFresh` (saturating), the same reservation
+  the walk already makes against the 69M pool, so a delivered shortfall still
+  DEFERS the armed days rather than pushing the whole claim over the bound
+  and reverting it. The read-only preview follows the same order — it quotes
+  zero when the legacy legs alone exceed the bound (the claim would revert),
+  and prices the armed dry run against what the legacy legs leave — so
+  preview and claim keep agreeing on a mirror that has legacy legs.
+- **One reward-absorption operation, rejecting before it credits.**
+  `LibVpfiRecycle.absorbRewardFresh` bounds, charges and credits in one call;
+  the claim's treasury leg, the forfeit sweep and the expiry sweep all go
+  through it with their fresh share. Both sweeps keep their per-entry
+  allowance; the operation's own refusal is proven directly, since nothing
+  live can reach it.
+- **The generic tagged credit no longer exists.** `LibVpfiRecycle._credit`
+  is private; the three proven non-reward inflows each have their own
+  delta-checked operation (`creditNotificationFee`, `creditFullTariff`,
+  `creditSpendGatedPerk`) that derives its tag from the transfer it verifies
+  against a pre-transfer balance snapshot. A source with no operation has no
+  door — the test mutator that used to drive the generic credit now
+  dispatches to these same doors and reverts for anything else.
+- **The received side is vintage-blind and fresh-only.** The ordinary
+  ingress credits the authenticated fresh share whatever days the delivery
+  funds (the armed-attributable helper and its straddle refusal are retired;
+  an old-wire packet still lands whole in `uncounted`); the compensation
+  credit, whose frame carries no recycled share, credits its amount at ingress
+  and records it as what a demotion later removes; confirmation promotes
+  nothing. The two fixtures the section asks for exist: provisional-confirm
+  and provisional-demote, each proven against the credit it starts from.
+- **The two administrative writers are retained unchanged** — the
+  role-transition retirement and `seedArmedFreshPaid`. Their natspec now
+  describes the vintage-blind noun.
+- **The charge is taken only in the `Mirror` role.** `Canonical` and
+  `Unconfigured` still bound at `max` and are not written, because their
+  column lands with slice 4 and its migration; `Detached` refuses every fresh
+  outflow at the chokepoint, which is closure 3's fail-closed half exercised
+  through closure 2's door.
+
+What the SECOND PR carries, deliberately not approximated here: the cutover
+apparatus this section specifies for deployments mid-flight — the migration
+mode that refuses consumers while the ingresses stay executable (and enters
+the expiry predicates with the observation boundary stamped), the open legacy
+reconciliation epoch with ingress-stamped packet identities (the
+`transportMessageId` port change across the adapter, the five receivers and
+the Diamond ingress), the three-bound classification entries with their
+cumulative component counters, the bounded reclassification operation with
+FIFO spent-ness over the live queue, the netted bootstrap envelope for
+pre-upgrade inventory, the `UNCLASSIFIED` ingress attribution, the
+restitution position for deficit-covering ingress, the custody-only funding
+writer, and `paid = max(existing, reconciled)` on import. On every deployed
+chain today the ledger is empty and no mirror is armed, so the first PR
+changes no live figure; the second is what makes the redefinition safe for a
+chain that has one.
+
 ### Sequencing
 
 **RATIFIED 2026-09-07: a read-only GRANDFATHERED CENSUS runs FIRST, before

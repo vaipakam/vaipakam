@@ -734,124 +734,96 @@ contract ShareOfPoolClaimWalkTest is SetupTest {
         );
     }
 
-    /// @dev #1434 P1-b — the ENTRY-PATH question, settled by experiment.
+    /// @dev #1566 closure 2 — the ENTRY-PATH question, re-settled.
     ///
     ///      A claim has TWO legs: `_processEntry` prices each entry's window
-    ///      from the cum rows, and the ShareOfPool walk prices armed days
-    ///      per-day. Only the walk consults the delivered bound, so the
-    ///      obvious worry is that the entry leg pays armed fresh unbounded.
+    ///      (the pre-`D*` legacy slice) and the ShareOfPool walk prices the
+    ///      armed days. Only the walk ever consulted the delivered bound, and
+    ///      the #1434 P1-b version of this test pinned that as CORRECT:
+    ///      "bounding pre-`D*` fresh by delivered funding would be WRONG —
+    ///      that value predates arming and no remittance ever funded it".
+    ///      Closure 2 overturns exactly that. The ledger's two sides must
+    ///      count the same noun as the balance they protect, and that
+    ///      balance is vintage-blind: a legacy payout drains the very backing
+    ///      the armed bound has counted as available. So on a mirror EVERY
+    ///      fresh outflow is bounded by delivered funding and charged at the
+    ///      delivery chokepoint — legacy and armed alike — and a mirror with
+    ///      nothing delivered pays nothing, legacy included (its legacy
+    ///      history is what the second closure-2 PR's migration imports).
     ///
-    ///      This fixture is the one that can tell: arming starts at day 2, so
-    ///      the entry's window straddles it — day 1 is pre-`D*` legacy, days
-    ///      2-3 are armed — with ZERO delivered funding. If the entry leg paid
-    ///      armed value, this claim would exceed day 1's legacy share.
-    ///
-    ///      Bounding pre-`D*` fresh by delivered funding would be WRONG, note:
-    ///      that value predates arming and no remittance ever funded it, so
-    ///      the legacy leg paying while the armed days defer is the correct
-    ///      split, not a leak.
-    function test_P1b_EntryLegPaysLegacyOnly_ArmedStaysBounded() public {
+    ///      Same fixture as before: arming starts at day 2, the entry spans
+    ///      days 1-3, day 1 is legacy.
+    function test_C2_EntryLegIsBoundedToo_WholeClaimChargedAtDelivery() public {
         _configureMirror();
         _armedDay(1, 0.4e18);
         _armedDay(2, 0.4e18);
         _armedDay(3, 0.4e18);
-        // Arming starts at day 2 — day 1 is pre-D* legacy.
         _mut().setGovernorCommitArmedFromDayRaw(2);
         _loanSideOpen(3);
         _entry(1, 4);
         _mut().userClaimFundingNeedRaw(alice);
-        // Nothing delivered: every ARMED day must defer.
+        // (1) Nothing delivered: the LEGACY leg is refused at the chokepoint
+        //     before any transfer — the assertion that fails on the old code,
+        //     where the legacy leg paid "unbounded".
         _mut().setArmedFreshLedgerRaw(0, 0);
-
-        uint256 legacyPaid = _claim();
-
-        // (1) The armed days contributed nothing: the delivered bound was
-        //     never charged. This is what would break if the entry leg paid
-        //     armed value behind the walk's back.
+        assertEq(_preview(), 0, "preview agrees: nothing is payable");
+        vm.prank(alice);
+        vm.expectPartialRevert(IVaipakamErrors.DeliveredFreshBoundExceeded.selector);
+        RewardClaimFacet(address(diamond)).claimInteractionRewards();
+        assertEq(_mut().getArmedFreshPaidRaw(), 0, "nothing charged on a refusal");
+        // (2) Delivered generously: legacy AND armed pay, and the ledger is
+        //     charged by everything fresh that moved — not only the armed
+        //     part, which is the second assertion the old code fails.
+        _mut().setArmedFreshLedgerRaw(1_000_000e18, 0); // above the ~1e22-2e22 wei these fixtures pay
+        uint256 quoted = _preview();
+        uint256 paid = _claim();
+        assertGt(paid, 0, "legacy + armed pay once delivered");
+        assertEq(paid, quoted, "the preview quoted exactly what was paid");
         assertEq(
             _mut().getArmedFreshPaidRaw(),
-            0,
-            "no ARMED fresh is paid while nothing is delivered"
-        );
-        // (2) The legacy leg DID pay, and is deliberately not bounded by
-        //     delivered funding. Asserting it is non-zero keeps this test
-        //     honest: if the legacy leg silently stopped paying, assertion
-        //     (1) alone would still hold and the test would go vacuous.
-        assertGt(legacyPaid, 0, "the pre-D* legacy leg pays, unbounded");
-
-        // (3) The armed days were DEFERRED, not consumed — so funding them
-        //     later still pays. This is the assertion that distinguishes
-        //     "deferred" from "paid" and from "silently dropped"; a naive
-        //     upper bound on the figure in (2) cannot, because the legacy
-        //     leg draws on the ordinary schedule pool rather than the armed
-        //     day caps (which is what an earlier revision of this test got
-        //     wrong).
-        _mut().setArmedFreshLedgerRaw(100e18, 0);
-        _mut().userClaimFundingNeedRaw(alice);
-        assertGt(_claim(), 0, "the deferred armed days pay once funded");
-        assertGt(
-            _mut().getArmedFreshPaidRaw(),
-            0,
-            "and only THEN is the delivered bound charged"
+            paid,
+            "charged by the whole fresh outflow, legacy included (no recycled in this fixture)"
         );
     }
 
-    /// @dev #1434 P1-b — with NO arming set, a mirror's ordinary payouts must
-    ///      leave the armed-paid ledger untouched.
+    /// @dev #1566 closure 2 — with NO arming set, a mirror's ordinary payouts
+    ///      are bounded and charged like any other fresh outflow.
     ///
-    ///      Read what this does and does NOT prove. It does NOT prove the
-    ///      walk's `_isArmedDay` filter is load-bearing; an earlier version of
-    ///      this comment claimed exactly that and was wrong. With
-    ///      `governorCommitArmedFromDay == 0` the ShareOfPool walk returns
-    ///      before doing anything, so the whole payout below comes from the
-    ///      ENTRY path. Both the filter and the unarmed-day exemption are
-    ///      equivalent mutants — a mutation run measured byte-identical gas
-    ///      with each removed — because no unarmed day can ever reach the
-    ///      walk (early return with no arming; cursor floored at `armedFrom`
-    ///      otherwise). Do not "strengthen" this test to kill them; it can't,
-    ///      and neither can any other.
+    ///      The #1434 P1-b version pinned the opposite ("ordinary-day fresh
+    ///      never charges the delivered bound") and explained that the paid
+    ///      ledger was "mirror-era ARMED spending only". That reading is the
+    ///      closure-2 defect: with `governorCommitArmedFromDay == 0` the walk
+    ///      returns immediately and the whole payout comes from the entry
+    ///      path, which never consulted the bound — so an unarmed mirror paid
+    ///      fresh reward value out of a balance no delivery had funded.
+    ///      Now the entry path meets the bound at the delivery chokepoint.
     ///
-    ///      What it DOES pin is still worth having: on an un-armed mirror the
-    ///      entry path pays normally (`paid` is large here) while
-    ///      `rewardBudgetArmedFreshPaid` stays exactly zero. That ledger is
-    ///      mirror-era armed spending only, and a chain with no arming has
-    ///      none — the property that keeps `deliveredFreshBound` from
-    ///      flooring at zero and bricking the chain.
-    function test_P1b_UnarmedDayFreshNeverChargesTheDeliveredBound() public {
+    ///      The delivered ledger is ZERO in the refusal leg, not merely
+    ///      generous: at zero, the refusal is what proves the bound binds on
+    ///      an unarmed day.
+    function test_C2_UnarmedMirrorFreshIsBoundedAndCharged() public {
         _configureMirror();
-        // Days are FINALIZED but arming is never set, so `_isArmedDay` is
-        // false for both: ordinary schedule days, which is the whole point.
         _armedDay(1, 0.4e18);
         _armedDay(2, 0.4e18);
-        // ShareOfPool mode WITHOUT local arming — the shape a mirror really
-        // can hold, since `RewardReporterFacet`'s broadcast ingress stamps the
-        // mode straight from the wire's `capMode` with no arming guard (only
-        // the canonical-side stamp checks `armed`). It does NOT make the walk
-        // filter testable: the cap mode is irrelevant while
-        // `governorCommitArmedFromDay` is zero, because the walk returns
-        // before reading it. Setting it here documents the reachable state,
-        // nothing more.
         _mut().setDayCapModeRaw(1, 1);
         _mut().setDayCapModeRaw(2, 1);
-        // The delivered bound is ZERO, not merely generous. An earlier
-        // revision funded it at 100e18 against a sub-1e18 payout, so the
-        // bound could never bind and BOTH the exemption and the paid-side
-        // `_isArmedDay` filter were unobservable — the test passed whether
-        // or not either existed. At zero, an unarmed day that wrongly
-        // consulted the bound would find nothing and DEFER, so `paid`
-        // collapsing to zero is what proves the exemption is load-bearing.
         _mut().setArmedFreshLedgerRaw(0, 0);
         _loanSideOpen(2);
         _entry(1, 3);
         _mut().userClaimFundingNeedRaw(alice);
-
+        assertEq(_preview(), 0, "unfunded: the preview quotes nothing");
+        vm.prank(alice);
+        vm.expectPartialRevert(IVaipakamErrors.DeliveredFreshBoundExceeded.selector);
+        RewardClaimFacet(address(diamond)).claimInteractionRewards();
+        _mut().setArmedFreshLedgerRaw(1_000_000e18, 0); // above the ~1e22-2e22 wei these fixtures pay
+        uint256 quoted = _preview();
         uint256 paid = _claim();
-
-        assertGt(paid, 0, "LIVE: the unarmed days genuinely paid");
+        assertGt(paid, 0, "LIVE: the unarmed days pay once delivered");
+        assertEq(paid, quoted, "and the preview quoted exactly that");
         assertEq(
             _mut().getArmedFreshPaidRaw(),
-            0,
-            "ordinary-day fresh never charges the delivered bound"
+            paid,
+            "ordinary-day fresh charges the delivered bound by what it paid"
         );
     }
 
