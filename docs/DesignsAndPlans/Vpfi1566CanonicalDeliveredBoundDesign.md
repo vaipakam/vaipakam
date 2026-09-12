@@ -5766,6 +5766,156 @@ anger, not before this piece ships.
 
 The canonical column still lands with slice 4, unchanged.
 
+## 5d. PLAN — slice 4 in three PRs, and where closure 2's second PR sits (2026-09-12)
+
+**Status:** implementation plan, written after closure 2's first PR (#2151)
+was opened and before any slice-4 code exists. It maps the rules of §5b
+(slice 4), §5c (the matrix and the era-bound carry-forward) and §5c's closure-2
+cutover onto PRs an implementer can open in order, with the dependency each
+carries. Every rule cited here is stated normatively above; this section adds
+only the cut and the sequence. Nothing in it changes a ratified decision.
+
+### The cut
+
+Slice 4 is three PRs, because its three parts have different deployment
+consequences and a different blast radius, and one of them depends on closure
+2's cutover apparatus:
+
+**Slice 4 PR A — the dedicated custody holder and the funding writers.
+Deployable dark: no payout changes behaviour.**
+
+- A new Diamond-owned custody contract (the "holder" of §5b): VPFI custody with
+  an internal attribution ledger — rows for LIVE FRESH, one row per retired
+  ERA, RECYCLED, RECOVERY, INTENT, UNCLASSIFIED and RESTITUTION — credited only
+  by the Diamond after a delta-checked ingress or an attribution transfer, and
+  debited only by the Diamond's registered reward outflows to a named
+  recipient. Invariant, tested and pinned as a Foundry invariant: the sum of
+  attributed rows never exceeds the holder's balance, and no row goes negative.
+  "Holder balance" anywhere in this design means a consumer's ALLOCATED row,
+  never the global balance (§5c: a global-min lets an unfunded ledger spend a
+  funded one's custody).
+- `fundRewardPool(amount)` — registered writer 1 of 3: ADMIN-role, transfers
+  `amount` from the caller INTO THE HOLDER, delta-checked against the holder's
+  balance, credits the live-fresh row and `received` in the same act.
+- `rebaseArmedFreshPaid(total)` — the paid-side importer §5b requires: ADMIN,
+  paused, one-shot under its own guard, sets `paid = max(existing, total)` and
+  on the canonical chain sets `received` to that same figure (the
+  zero-headroom baseline, `received = paid`, never `received = 0`), and
+  consumes `armedFreshPaidSeeded` so the additive P1-b seeder can never run
+  after it.
+- `bootstrapRewardPool(H)` is NOT written and NOT cut: no deployment of this
+  programme carries a provable provenance ledger, and §5b removes the selector
+  for that deployment class outright. The retail deploy scripts never learn it.
+- The recovery ingress (`onStrandedReturnReceived` → `RepatriationFacet`)
+  credits the holder's RECOVERY row instead of forwarding into the shared
+  balance; the `…FromRecovery` redispatches debit that row and remain
+  uncharged against the delivered ledger (their original outflow was charged).
+- Storage: every new field is APPENDED after `rewardRoleConfigured`, the
+  current tail of `LibVaipakam.Storage` — never inserted — per the #2092 rule.
+  New facet(s) register at all six mandatory sites plus `Deployments.writeFacet`
+  and the frontend ABI barrel (CLAUDE.md "When you add a facet").
+
+**Slice 4 PR B — the canonical column: the bound binds on Base.**
+
+- `deliveredFreshBound`: `Canonical` → `received − paid` (saturating);
+  `Unconfigured` stays `max` (the frozen column, §5c); `Detached` stays 0;
+  `Mirror` unchanged. `chargeDeliveredFresh` charges on Canonical as well as
+  Mirror. Rows 1, 5, 12 and 13 take their canonical answers from the matrix —
+  the aggregate vintage-blind measurement #2151 installed already serves row
+  13; only the `max` short-circuit goes.
+- Transports reject before they send: `remitRewardBudget` checks `st.fresh`
+  against `received − paid` ahead of `dispatchRemitTail` (the existing check at
+  its line 535 is the 69M schedule, a different bound), and
+  `remitManualBudget` / `remitSupplementalBudget` do the same on their
+  non-recovery branches; each charges the same amount atomically after the
+  send. `dispatchRemitTail` pulls the FRESH share from the holder's live-fresh
+  row into the outbound escrow (delta-checked) and the recycled share from the
+  holder's RECYCLED row — two custody sources, combined explicitly.
+- The gates read the holder: `LibVpfiRecycle.backingPosition`'s balance term
+  and `_entryExecutableNow`'s funding read become the consumer's eligible
+  holder attribution; `InteractionRewardBackingShort` is raised against that
+  figure. No reward gate reads `balanceOf(address(this))` again.
+- Claims debit the holder: `_deliverReward` moves the fresh component out of
+  the live-fresh row to the claimant (vault or wallet); an absorption
+  (`absorbRewardFresh`) is an IN-HOLDER transfer, fresh row → recycled row,
+  moving no tokens; `LibVpfiRecycle.consume` and the repatriation surplus
+  debit the recycled row.
+- The recycled custody switch: `recycleBucket` becomes an attribution over the
+  holder's RECYCLED row, preceded by the paused bootstrap reconciliation §5c
+  requires (provenance proven, replacement funded, or written down). On every
+  deployed chain `getRecycleBucket()` reads zero (verified live 2026-09-12), so
+  the reconciliation certifies a zero row and moves nothing; the ceremony is
+  still executed and recorded, because the rule is about the switch, not the
+  amount.
+- Migration ceremony per canonical deployment (Base Sepolia first): pause →
+  `rebaseArmedFreshPaid(P)` with `P` reconstructed from the indexed payout
+  events, including historical expiry and forfeit absorptions and any
+  retirement watermark → verify `received == paid` → unpause → fund forward
+  through `fundRewardPool`. Recorded in the deployment runbook step that
+  carries the other #1566 ceremonies.
+- Tests: a canonical claim is refused with nothing funded and pays once
+  `fundRewardPool` lands; every non-recovery transport rejects beyond headroom
+  and charges within it; a mixed send draws its two shares from two rows; the
+  gates accept a state that is fully funded in the holder with no spare Diamond
+  VPFI; and the two invariants — holder attribution ≤ holder balance, and
+  #2141's "the Diamond's own VPFI balance equals the sum of its protocol
+  ledgers" — run under the existing invariant handlers.
+
+**Slice 4 PR C — the era-bound carry-forward (role transitions).**
+
+- An era registry: the current era id; per era, a holder row, an outstanding
+  LIABILITY counter and an OPEN-CLASSIFICATION counter (§5c: two counters, two
+  obligation classes, one terminal condition), and a terminal flag.
+- `_retireDeliveredResidualOnRoleChange` re-keys `max(received − paid, 0)`
+  into the retiring era's holder row on EVERY effective role change (entering
+  `Detached`, and both direct transitions `setIsCanonicalRewardChain` permits)
+  and carries a negative residual as an opening deficit on the new baseline —
+  the restitution rules of closure 2's second PR decide how that deficit is
+  later released, which is one of the two dependencies below.
+- Claims and sweeps decompose their fresh need PER ERA (a new
+  `rewardEntryEra[id]` stamp at entry creation; every pre-upgrade entry goes
+  to ONE conservative bootstrap era through a paused, paginated backfill that
+  gates role changes and terminalization until it is finalized); each era's
+  debit is capped by the need accrued in it, the era row is consumed first and
+  the excess falls through to live headroom; rows 2 and 6 record a paid delta
+  only for the portion that fell through.
+- Executability and the sweep allowances take `eraBalance + liveHeadroom`,
+  after the matching transport-epoch balance — the transport epochs come from
+  closure 2's second PR, the second dependency.
+- Terminal disposition: an era whose two counters read zero releases its
+  surplus to live headroom (writer 2 of 3, the era-terminal transfer) or, while
+  `Detached`, into the pending RECOVERY position, later drained by the delayed
+  pending-to-live credit (writer 3 of 3) once an active era exists. Crossing
+  the expiry horizon is not a terminal; a recorded absorption is.
+- Tests: transitions in both directions; per-era decomposition against a mixed
+  claim; terminal release to live and to pending; the backfill's completion
+  proof; the `Detached` bound at zero with era rows still consumable.
+
+### The order, and why
+
+**#2151 (closure 2, first PR) → slice 4 PR A → slice 4 PR B → closure 2's
+second PR (the cutover apparatus) → slice 4 PR C.**
+
+PRs A and B depend on nothing outside this document and share no storage or
+migration question with the cutover apparatus, so they go first and give Base
+a bound that binds before any mirror migration is attempted. PR C depends on
+two things the cutover PR defines — the restitution position that receives a
+carried deficit, and the transport-epoch balances that precede era balances in
+rows 1, 5 and 13 — so it cannot be specified honestly ahead of it; building it
+first would mean inventing those two mechanisms twice. The owner's ratified
+sequence ("closures 3 and 2 → slice 4") is preserved: closure 2's ENFORCING
+half is #2151, its MIGRATION half is the cutover PR, and slice 4's parts land
+around the second exactly where their dependencies fall.
+
+### What stays out of every slice-4 PR
+
+The #1219 dark build and #2047 (ratified 2026-09-07, sequenced after slice 4);
+the M7 ceremonies (last); and any per-call-site "remember to check" discipline
+on the shared balance — the holder is the mechanism, and a single outbound
+primitive asserting `balance − outflow ≥ reserve` may be added on top of it as
+defence in depth, never instead of it (§5b, "the outbound-primitive chokepoint
+… is WITHDRAWN as an alternative").
+
 ## 6. Recommendation (superseded by §5b — retained for its reasoning)
 
 **No recommendation is offered.** An earlier revision of this note recommended
