@@ -55,7 +55,17 @@ when one scrolling region sits inside another, the inner region's slit is
 itself carried by the outer region's scroll, so it is placed where that
 scroll can best bring it into view before the content is judged against
 it; and a region styled to scroll but with nothing to scroll is treated as
-the plain wrapper it behaves as, decided per axis. The list of properties that make an element the
+the plain wrapper it behaves as, decided per axis. A fourth round tightened
+the same model further: whether a region scrolls is read in on-screen axes
+after any rotation, one scroll position has to serve every wrapper above
+a region rather than each wrapper choosing its own, a wrapper that clips
+only one axis leaves the other alone, and the two ways a horizontal
+direction can be reversed cancel each other when combined, as measured in
+the check's browser. One case from that round, a sticky row pinned to its
+region, is deferred to its own issue with the reasoning recorded there.
+The root element's overflow was also found to have been read as clipping
+at the root's own box when it clips at the viewport, and is now judged as
+the viewport. The list of properties that make an element the
 reference for absolutely positioned descendants gained two more, each
 confirmed by measurement in the check's own browser, and one candidate the
 review raised, container queries, was measured not to be one and left out

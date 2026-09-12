@@ -100,23 +100,28 @@ export function visibilityHelpers() {
    *   - `unquantifiable` when the engine cannot supply the matrix. Callers
    *     admit rather than guess.
    *
-   * @returns {null | {unquantifiable: true} | {lo: {x: number, y: number}, hi: {x: number, y: number}, spanX: number, spanY: number}}
-   *   `null` when `n` is not styled as a scroll container at all; a zero
-   *   `spanY` / `spanX` means that axis has scroller styling and no
-   *   movement.
+   * @returns {null | {unquantifiable: true} | {lo: {x: number, y: number}, hi: {x: number, y: number}}}
+   *   `null` when `n` is not styled as a scroll container at all; a
+   *   zero-width interval on an axis means scroller styling and no
+   *   movement there.
    */
   const scrollShiftRange = (n, cs) => {
     const scrollsY = cs.overflowY === 'auto' || cs.overflowY === 'scroll';
     const scrollsX = cs.overflowX === 'auto' || cs.overflowX === 'scroll';
     if (!scrollsY && !scrollsX) return null;
-    // `spanY` / `spanX` are returned beside the range (#2157 round 3): an
-    // `overflow: auto` box whose content fits has the STYLE of a scroller
-    // and none of the movement, and the clip walk must treat that axis as
-    // an ordinary clipper — its content cannot be scrolled into view.
+    // An `overflow: auto` box whose content fits has the STYLE of a
+    // scroller and none of the movement (#2157 round 3): its range on that
+    // axis is [0, 0], which the clip walk reads as "clipper", in viewport
+    // axes after the mapping below.
     const spanY = scrollsY ? Math.max(0, n.scrollHeight - n.clientHeight) : 0;
     const spanX = scrollsX ? Math.max(0, n.scrollWidth - n.clientWidth) : 0;
     const minTop = cs.flexDirection === 'column-reverse' ? -spanY : 0;
-    const minLeft = cs.direction === 'rtl' || cs.flexDirection === 'row-reverse' ? -spanX : 0;
+    // MEASURED in the drive's Chromium (#2157 round 4): `rtl` alone and
+    // `row-reverse` alone each scroll [-span, 0]; both together cancel and
+    // scroll [0, span] with the overflow on the right. So the horizontal
+    // reversal is the XOR of the two, not either of them.
+    const reversedX = (cs.direction === 'rtl') !== (cs.flexDirection === 'row-reverse');
+    const minLeft = reversedX ? -spanX : 0;
     const sY = scrollsY ? n.scrollTop : 0;
     const sX = scrollsX ? n.scrollLeft : 0;
     const local = {
@@ -132,7 +137,7 @@ export function visibilityHelpers() {
         if (t && t !== 'none') m = new DOMMatrixReadOnly(t).multiply(m ?? new DOMMatrixReadOnly());
       }
       if (m === null) {
-        return { lo: { x: local.xLo, y: local.yLo }, hi: { x: local.xHi, y: local.yHi }, spanX, spanY };
+        return { lo: { x: local.xLo, y: local.yLo }, hi: { x: local.xHi, y: local.yHi } };
       }
       const lo = { x: Infinity, y: Infinity };
       const hi = { x: -Infinity, y: -Infinity };
@@ -149,7 +154,7 @@ export function visibilityHelpers() {
         lo.y = Math.min(lo.y, p.y);
         hi.y = Math.max(hi.y, p.y);
       }
-      return { lo, hi, spanX, spanY };
+      return { lo, hi };
     } catch {
       return { unquantifiable: true };
     }
@@ -500,10 +505,35 @@ export function visibilityHelpers() {
       const clipsY = cs.overflowY !== 'visible';
       const clipsX = cs.overflowX !== 'visible';
       if (!clipsY && !clipsX) continue;
-      const box = n.getBoundingClientRect();
+      // THE ROOT'S OVERFLOW IS THE VIEWPORT'S (#2157 round 4, found by a
+      // fixture): `overflow` on the root element — and on `<body>` when the
+      // root's is `visible`, to which it propagates — clips and scrolls the
+      // VIEWPORT, not that element's own layout box. Reading the box here
+      // condemned a transformed scroller that stood taller than the root's
+      // 40px layout box while sitting well inside the viewport. So such an
+      // element is judged as the viewport, with the page scroller's own
+      // scroll metrics.
+      const actsAsViewport =
+        n === document.documentElement ||
+        (n === document.body &&
+          getComputedStyle(document.documentElement).overflowX === 'visible' &&
+          getComputedStyle(document.documentElement).overflowY === 'visible');
+      const box = actsAsViewport
+        ? {
+            top: 0,
+            left: 0,
+            right: window.innerWidth,
+            bottom: window.innerHeight,
+            width: window.innerWidth,
+            height: window.innerHeight,
+          }
+        : n.getBoundingClientRect();
       if (clipsY && box.height === 0) return false;
       if (clipsX && box.width === 0) return false;
-      const range = scrollShiftRange(n, cs);
+      const range = scrollShiftRange(
+        actsAsViewport ? document.scrollingElement || document.documentElement : n,
+        cs,
+      );
       // ROUND 43 P2 — PER LINE, not per element.
       //
       // The half-of-the-element rule reads a MULTI-LINE leaf as visible
@@ -606,8 +636,11 @@ export function visibilityHelpers() {
       if (range !== null && range.unquantifiable) unbounded = true;
       // PER AXIS (#2157 round 3): an `overflow: auto` box whose content fits
       // on an axis has no movement there and is an ordinary clipper for it.
-      const scrollsY = range !== null && !range.unquantifiable && range.spanY > 0;
-      const scrollsX = range !== null && !range.unquantifiable && range.spanX > 0;
+      // ... and in VIEWPORT axes (round 4): the range is already mapped
+      // through the transform chain, so a `rotate(90deg)` vertical scroller
+      // shows its movement on X here, and a zero-extent axis shows none.
+      const scrollsY = range !== null && !range.unquantifiable && range.hi.y - range.lo.y > 0;
+      const scrollsX = range !== null && !range.unquantifiable && range.hi.x - range.lo.x > 0;
       if (range !== null && !range.unquantifiable) {
         add(shift, range);
         if (slit !== null) add(slitShift, range);
@@ -638,21 +671,21 @@ export function visibilityHelpers() {
           // bring it against this box before anything is judged — an inner
           // scrollport currently below an outer scroller's slit comes into
           // view together with its row when the outer one scrolls.
-          const dy = clamp(
-            (box.top + box.bottom - slit.top - slit.bottom) / 2,
-            slitShift.yLo,
-            slitShift.yHi,
-          );
-          const dx = clamp(
-            (box.left + box.right - slit.left - slit.right) / 2,
-            slitShift.xLo,
-            slitShift.xHi,
-          );
+          // ONLY ON THE AXES THIS BOX CLIPS (round 4): an ancestor that
+          // permits vertical overflow neither moves nor trims the slit
+          // vertically, so a vertically protruding scrollport keeps its
+          // full vertical extent for the clippers above.
+          const dy = clipsY
+            ? clamp((box.top + box.bottom - slit.top - slit.bottom) / 2, slitShift.yLo, slitShift.yHi)
+            : 0;
+          const dx = clipsX
+            ? clamp((box.left + box.right - slit.left - slit.right) / 2, slitShift.xLo, slitShift.xHi)
+            : 0;
           const S = {
-            top: Math.max(slit.top + dy, box.top),
-            bottom: Math.min(slit.bottom + dy, box.bottom),
-            left: Math.max(slit.left + dx, box.left),
-            right: Math.min(slit.right + dx, box.right),
+            top: clipsY ? Math.max(slit.top + dy, box.top) : slit.top,
+            bottom: clipsY ? Math.min(slit.bottom + dy, box.bottom) : slit.bottom,
+            left: clipsX ? Math.max(slit.left + dx, box.left) : slit.left,
+            right: clipsX ? Math.min(slit.right + dx, box.right) : slit.right,
           };
           // The SLIT has to be shown through this box: any positive extent
           // on an axis this box scrolls, the half rule on one it merely
@@ -685,12 +718,22 @@ export function visibilityHelpers() {
               return false;
             }
           }
-          // Everything seen from here up is seen through this box too. The
-          // slit keeps its full carrying range for the clippers above: the
-          // placement chosen here was for THIS box, and pinning it would
-          // condemn a row a higher clipper could still be shown by a
-          // different scroll position — the admitting error, deliberately.
+          // Everything seen from here up is seen through this box too, and
+          // ONE scroll position has to serve every box (round 4): the slit's
+          // carrying range is narrowed to the offsets that keep it
+          // overlapping this box, so a higher clipper cannot be satisfied by
+          // an offset that would have taken the slit back out of this one.
+          // Overlap rather than the half rule, and per clipped axis — an
+          // over-approximation in the admitting direction, stated.
           slit = want;
+          if (clipsY) {
+            slitShift.yLo = Math.max(slitShift.yLo, box.top - want.bottom);
+            slitShift.yHi = Math.min(slitShift.yHi, box.bottom - want.top);
+          }
+          if (clipsX) {
+            slitShift.xLo = Math.max(slitShift.xLo, box.left - want.right);
+            slitShift.xHi = Math.min(slitShift.xHi, box.right - want.left);
+          }
         }
       }
     }

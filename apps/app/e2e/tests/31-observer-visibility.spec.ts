@@ -1744,3 +1744,161 @@ test('nested scrollers carry the inner slit, and a zero-extent scroller is a cli
   expect(result.shiftedRowTop).toBe(1);
   expect(result.shiftedRow, 'a row shifted out of a zero-extent scroller').toBe(false);
 });
+
+// #2157 round 4 — four more, each pinned against a real engine:
+//
+//   - ONE scroll position has to serve every box: a slit placed inside an
+//     outer scroller cannot then be re-placed elsewhere to satisfy a
+//     clipper above it;
+//   - scroller-vs-clipper is decided in VIEWPORT axes: a rotated vertical
+//     scroller moves its content horizontally;
+//   - an ancestor that clips one axis leaves the slit alone on the other;
+//   - `rtl` and `row-reverse` together cancel (measured: [0, span]).
+test('one scroll position serves every box above the slit', async ({ page }) => {
+  await page.setContent(`<!DOCTYPE html>
+    <style>html { overflow: hidden } body { margin: 0 } p { margin: 0 }</style>
+    <!-- 0..40: a clipper. The outer scroller's fixed box (100..140) lies
+         wholly outside it, so nothing the inner scroller shows can ever
+         be seen — but an offset chosen freely for the clipper alone would
+         place the inner slit at 0..40 and pass it. -->
+    <div id="clip" style="height:40px; overflow:hidden">
+      <div id="outer" style="margin-top:100px; height:40px; overflow:auto">
+        <p style="height:300px">outer filler</p>
+        <div id="inner" style="height:40px; overflow:auto">
+          <p id="row" style="height:20px">seen through two boxes that never both show it</p>
+          <p style="height:400px">inner filler</p>
+        </div>
+      </div>
+    </div>
+  `);
+  const result = await page.evaluate((helpersSrc) => {
+    const family = new Function(`return (${helpersSrc})();`)();
+    const visible = family.visible as (n: Element | null) => boolean;
+    const byId = (id: string) => document.getElementById(id)!;
+    byId('inner').scrollTop = 300;
+    return {
+      outerTop: byId('outer').getBoundingClientRect().top,
+      innerTop: byId('inner').getBoundingClientRect().top,
+      rowTop: byId('row').getBoundingClientRect().top,
+      row: visible(byId('row')),
+    };
+  }, VISIBILITY_SOURCE);
+  expect(result.outerTop).toBe(100);
+  expect(result.innerTop).toBe(400);
+  // At +100 the row is not before the origin: only the clip walk decides.
+  expect(result.rowTop).toBe(100);
+  expect(result.row, 'a slit that cannot serve the outer box and the clipper at once').toBe(false);
+});
+
+test('a rotated vertical scroller is a horizontal scroller in viewport axes', async ({
+  page,
+}) => {
+  await page.setContent(`<!DOCTYPE html>
+    <style>html { overflow: hidden } body { margin: 0 } p { margin: 0 }</style>
+    <!-- local (x, y) → viewport (40 - y, x): the 200×40 scroller stands
+         on its side at x 0..40, y 0..200, and its vertical scroll moves
+         content along viewport X. -->
+    <div style="transform:translate(40px, 0) rotate(90deg); transform-origin:0 0; width:200px; height:40px">
+      <div id="scroller" style="width:200px; height:40px; overflow:auto">
+        <p id="row" style="height:20px">carried sideways</p>
+        <p style="height:400px">filler</p>
+      </div>
+    </div>
+  `);
+  const result = await page.evaluate((helpersSrc) => {
+    const family = new Function(`return (${helpersSrc})();`)();
+    const visible = family.visible as (n: Element | null) => boolean;
+    const byId = (id: string) => document.getElementById(id)!;
+    byId('scroller').scrollTop = 300;
+    const box = byId('scroller').getBoundingClientRect();
+    const row = byId('row').getBoundingClientRect();
+    return {
+      boxRight: box.right,
+      boxBottom: box.bottom,
+      rowLeft: row.left,
+      rowTop: row.top,
+      rootBoxBottom: document.documentElement.getBoundingClientRect().bottom,
+      row: visible(byId('row')),
+    };
+  }, VISIBILITY_SOURCE);
+  // The row sits 280 to the RIGHT of the box after 300 of local scroll —
+  // no vertical overlap question at all, and a local-axis classification
+  // would apply the half rule on X and condemn it.
+  expect(result.boxRight).toBe(40);
+  expect(result.boxBottom).toBe(200);
+  expect(result.rowLeft).toBe(320);
+  expect(result.rowTop).toBe(0);
+  // And the root's own layout box (40px, the wrapper's unrotated height)
+  // is shorter than the standing scroller: `html { overflow: hidden }`
+  // clips at the VIEWPORT, not at that box, and reading the box condemned
+  // this row before the rule was corrected.
+  expect(result.rootBoxBottom).toBeLessThan(200);
+  expect(result.row, 'reachable by the scroll that moves it, whichever axis that is').toBe(true);
+});
+
+test('an ancestor that clips one axis leaves the slit alone on the other', async ({ page }) => {
+  await page.setContent(`<!DOCTYPE html>
+    <style>html { overflow: hidden } body { margin: 0 } p { margin: 0 }</style>
+    <!-- 0..12: a vertical clipper showing 12px of a 40px scrollport. In
+         between, a wrapper that clips X only and is shorter than the
+         scroller; trimming the slit to it would make the clipper's share
+         look like 12 of 20 instead of 12 of 40. -->
+    <div style="height:12px; overflow-y:hidden">
+      <div style="height:20px; overflow-x:clip; overflow-y:visible">
+        <div id="scroller" style="height:40px; overflow:auto">
+          <p id="row" style="height:20px">mostly hidden scrollport</p>
+          <p style="height:400px">filler</p>
+        </div>
+      </div>
+    </div>
+  `);
+  const result = await page.evaluate((helpersSrc) => {
+    const family = new Function(`return (${helpersSrc})();`)();
+    const visible = family.visible as (n: Element | null) => boolean;
+    const byId = (id: string) => document.getElementById(id)!;
+    byId('scroller').scrollTop = 300;
+    return {
+      scrollerBottom: byId('scroller').getBoundingClientRect().bottom,
+      rowTop: byId('row').getBoundingClientRect().top,
+      row: visible(byId('row')),
+    };
+  }, VISIBILITY_SOURCE);
+  expect(result.scrollerBottom).toBe(40);
+  expect(result.rowTop).toBe(-300);
+  expect(result.row, 'a 40px scrollport of which the clipper shows 12').toBe(false);
+});
+
+test('rtl and row-reverse together cancel, and either alone reverses', async ({ page }) => {
+  await page.setContent(`<!DOCTYPE html>
+    <style>html { overflow: hidden } body { margin: 0 } p { margin: 0; flex: none; height: 20px }</style>
+    <div id="both" dir="rtl" style="display:flex; flex-direction:row-reverse; overflow:auto; width:200px; height:40px">
+      <p style="width:400px">filler</p><p id="bothRow" style="width:100px">off to the right, reachable</p>
+    </div>
+    <div id="rtlOnly" dir="rtl" style="display:flex; overflow:auto; width:200px; height:40px">
+      <p style="width:400px">filler</p><p id="rtlRow" style="width:100px">off to the left, reachable</p>
+    </div>
+  `);
+  const result = await page.evaluate((helpersSrc) => {
+    const family = new Function(`return (${helpersSrc})();`)();
+    const visible = family.visible as (n: Element | null) => boolean;
+    const byId = (id: string) => document.getElementById(id)!;
+    return {
+      bothScrollLeft: byId('both').scrollLeft,
+      bothRowLeft: byId('bothRow').getBoundingClientRect().left,
+      bothRow: visible(byId('bothRow')),
+      rtlScrollLeft: byId('rtlOnly').scrollLeft,
+      rtlRowLeft: byId('rtlRow').getBoundingClientRect().left,
+      rtlRow: visible(byId('rtlRow')),
+    };
+  }, VISIBILITY_SOURCE);
+  // Measured shape: both reversals cancel, the overflow is on the right
+  // and the range is [0, span]; a single reversal puts it on the left
+  // with [-span, 0]. Treating the pair as a single reversal would point
+  // the credit the wrong way and condemn the first row.
+  expect(result.bothScrollLeft).toBe(0);
+  expect(result.bothRowLeft).toBe(400);
+  expect(result.bothRow, 'rtl + row-reverse').toBe(true);
+  expect(result.rtlScrollLeft).toBe(0);
+  expect(result.rtlRowLeft).toBe(-300);
+  expect(result.rtlRow, 'rtl alone').toBe(true);
+});
