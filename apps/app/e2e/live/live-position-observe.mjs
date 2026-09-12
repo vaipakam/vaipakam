@@ -2765,9 +2765,18 @@ async function settleHeadReads(page) {
   // to substantiate a product failure.
   //
   // `false` means the budget expired with work still in flight: not a
-  // ceiling, not a lower ceiling, simply not established. The caller that
-  // uses it as a ceiling withholds its verdict; the caller that uses it as a
-  // floor ignores it, because round 48's argument still holds there.
+  // ceiling, not a lower ceiling, simply not established.
+  //
+  // ROUND 98 P2 — AND BOTH CALLERS WITHHOLD ON IT. The sentence that used to
+  // end this paragraph said the floor caller ignores `false`, on round 48's
+  // argument. Round 97 overturned that — round 48 is about a reply that
+  // ARRIVES after the sample, while the budget expiring is a reply that
+  // arrived BEFORE it and had not finished parsing, which is already the
+  // page's, and dropping it makes the floor too HIGH. The code was fixed and
+  // this contract was not, which left the overturned behaviour documented as
+  // the current one, three lines above the loop, for a future refactor to
+  // restore. Neither end of the bracket is established while this returns
+  // `false`.
   for (let pass = 0; pass < 6; pass += 1) {
     const inFlight = [...pending];
     if (inFlight.length === 0) return true;
@@ -4231,6 +4240,38 @@ async function observeForcedClose(page, loan, headBeforeNav, pageHeadBeforeNav, 
   // `observerCaughtUp` below refuses to be satisfied by one.
   const headSettled = await settleHeadReads(page);
   const pageHead = pageHeadOf(page);
+  // ROUND 98 P2 — THE FLOOR IS RE-READ AFTER THE SCRAPE, AND ONLY LOWERED.
+  //
+  // The third finding in a row on this bracket, and each one has been the
+  // same shape: a head that belonged to the render did not reach `headBefore`
+  // in time. Round 97 closed the case where a reply was in flight when the
+  // drain gave up; this is the case where it had not been SENT yet. The
+  // sample sits ahead of several awaited protocol probes and the DOM scrape,
+  // so an endpoint first seen during that window announces a head M below the
+  // sampled floor N, passes the ordering check (its head did precede its
+  // first `eth_call`), and serves the render being judged — while the bracket
+  // still starts at N. Across a transition between M and N that is a correct
+  // card accused.
+  //
+  // Patched three times, so this takes the definition instead: the floor is
+  // the LOWEST head seen on a Diamond-serving endpoint across the whole
+  // observation window, not at one instant in it. Re-reading after the scrape
+  // and keeping the minimum is sound in one direction only, which is why it
+  // REPORTED AS INCOMPLETE RATHER THAN SILENTLY LOWERED, which is the part
+  // worth being careful about. `headBefore` is not just the scan's lower
+  // bound: the "before" answers were already PROBED at it, above, before the
+  // scrape. Substituting a lower block here would leave the bracket's two
+  // endpoints measured at different heights from the interior it claims to
+  // have scanned — a bracket that looks sound and is not.
+  //
+  // Re-probing at the new floor would be the richer answer and is two more
+  // RPC round trips on a path that almost never runs; a rarely exercised
+  // branch on the accusing side is the thing that keeps biting this file. So
+  // the cheap honest answer: if the floor moved down after the scrape, this
+  // run did not establish the bracket, and the arms below return `null`
+  // rather than a verdict.
+  const floorAfter = pageHeadFloorOf(page);
+  const floorStillLowest = !(floorAfter > 0n && (headBefore === 0n || floorAfter < headBefore));
   // ROUND 4 P2 — ONE BLOCK FOR ALL THREE FACTS.
   //
   // `Promise.all` makes these concurrent; it does not pin them to a
@@ -4499,7 +4540,11 @@ async function observeForcedClose(page, loan, headBeforeNav, pageHeadBeforeNav, 
   // `floorDrained` (round 97 P2): the pre-render sample the floor is built
   // from has to have been complete, for the same reason the ceiling's does.
   const floorSound =
-    floorDrained && floorEstablishedFor(page, pageSampledBeforeNav) && observerCaughtUp;
+    floorDrained &&
+    // ROUND 98 P2 — and no endpoint seen during the scrape sits below it.
+    floorStillLowest &&
+    floorEstablishedFor(page, pageSampledBeforeNav) &&
+    observerCaughtUp;
   const defaultableStable =
     floorSound &&
     defaultableBefore !== undefined &&
@@ -5365,10 +5410,16 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
           //     click-catcher — a full-page div with no background, which is
           //     ordinary in a modal implementation — is hit first by
           //     `elementsFromPoint` and covers nothing a lender can see. So the
-          //     walk up from each hit looks for a fully opaque background colour
-          //     or a replaced element, and anything it cannot decide counts as
-          //     NOT covering. Unknown means painted, as everywhere else here.
-          //     (The layers BELOW that catcher are examined too — round 95.)
+          //     walk up from each hit looks for a fully opaque background
+          //     colour — and ONLY that, since round 98. Anything it cannot
+          //     decide counts as NOT covering, which is what "unknown means
+          //     painted" amounts to for this rule: the text stays in the
+          //     reading. (The layers BELOW that catcher are examined too —
+          //     round 95.) It used to accept a replaced element as paint on
+          //     the strength of its tag, which condemned readable copy under
+          //     a transparent image; that is gone, and this sentence named it
+          //     for one round after it went, which is how a description sends
+          //     a later change back to the behaviour just removed.
           //   - Points outside the VIEWPORT cannot be hit-tested at all, and
           //     `elementsFromPoint` answers an empty stack for them. They are
           //     skipped, not counted as covered — otherwise every below-the-fold
@@ -7145,10 +7196,16 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
               //     click-catcher — a full-page div with no background, which is
               //     ordinary in a modal implementation — is hit first by
               //     `elementsFromPoint` and covers nothing a lender can see. So the
-              //     walk up from each hit looks for a fully opaque background colour
-              //     or a replaced element, and anything it cannot decide counts as
-              //     NOT covering. Unknown means painted, as everywhere else here.
-              //     (The layers BELOW that catcher are examined too — round 95.)
+              //     walk up from each hit looks for a fully opaque background
+              //     colour — and ONLY that, since round 98. Anything it cannot
+              //     decide counts as NOT covering, which is what "unknown means
+              //     painted" amounts to for this rule: the text stays in the
+              //     reading. (The layers BELOW that catcher are examined too —
+              //     round 95.) It used to accept a replaced element as paint on
+              //     the strength of its tag, which condemned readable copy under
+              //     a transparent image; that is gone, and this sentence named it
+              //     for one round after it went, which is how a description sends
+              //     a later change back to the behaviour just removed.
               //   - Points outside the VIEWPORT cannot be hit-tested at all, and
               //     `elementsFromPoint` answers an empty stack for them. They are
               //     skipped, not counted as covered — otherwise every

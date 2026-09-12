@@ -528,6 +528,32 @@ picture laid over the text with no colour of its own will no longer be
 noticed. That is a missed problem rather than an invented one, which is
 the trade this check makes every time.
 
+A further correction on the same window, and it is the third of its kind,
+so the rule was rewritten rather than patched again. The check brackets the
+moment the card was drawn between a block its data cannot predate and one
+it cannot postdate, and each of the last three corrections has been a
+block that belonged to the render arriving too late to widen that window.
+This one is a data source the check had never seen before, first observed
+while the page was being read, reporting a position further back than the
+window's lower edge and serving the very rendering under judgement. The
+lower edge is now re-checked after the page has been read, and where
+something turns out to sit below it the run reports that it could not
+establish the window at all rather than quietly moving it — the readings
+that anchor the window were already taken at the old edge, so moving it
+would leave a window whose ends and whose middle were measured at
+different moments.
+
+Two of the round's other corrections were descriptions left contradicting
+code changed moments earlier: a note still saying one half of that window
+tolerates an incomplete reading, and a note still describing a picture as
+proof that text is hidden. Both had been true one revision earlier. A
+description that survives the behaviour it describes is how a later change
+gets steered back into the problem just fixed, which is why they are
+treated here as defects rather than tidying. And a reading of the chain's
+current position was accepted from a reply that carried an error alongside
+it — the apps themselves treat such a reply as a failure, so the position
+it named was never one the page acted on.
+
 Closes #2093. The round-by-round record of how each of these rules was
 arrived at — including several cases where a fix left its own new state
 unhandled, or was applied to one of several parallel sites — lives in the

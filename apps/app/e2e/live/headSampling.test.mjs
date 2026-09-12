@@ -37,6 +37,29 @@ const DRIVE = path.join(
   'live-position-observe.mjs',
 );
 
+/**
+ * The whole of `settleHeadReads`, brace-matched.
+ *
+ * ROUND 98 — this was a fixed character window (`slice(0, 1600)`, then 2400,
+ * then 2600) and it broke three times as explanatory comments grew above the
+ * loop. It broke LOUD each time, which is the tolerable direction, but a pin
+ * that needs raising whenever a comment lands is a pin that will eventually
+ * be raised without being read. Brace matching has no number to keep.
+ */
+function settleHeadReadsBody(src) {
+  const start = src.indexOf('async function settleHeadReads(page)');
+  if (start === -1) throw new Error('settleHeadReads was renamed or removed');
+  let depth = 0;
+  for (let i = src.indexOf('{', start); i < src.length; i += 1) {
+    if (src[i] === '{') depth += 1;
+    else if (src[i] === '}') {
+      depth -= 1;
+      if (depth === 0) return src.slice(start, i + 1);
+    }
+  }
+  throw new Error('settleHeadReads has no matching close brace');
+}
+
 describe('the head sample waits for the readings in flight', () => {
   const src = fs.readFileSync(DRIVE, 'utf8');
   const at = (needle) => src.indexOf(needle);
@@ -282,13 +305,7 @@ describe('the head sample waits for the readings in flight', () => {
   // already moved past. Draining to EMPTY is still refused for round 48's
   // reason: a polling page never reaches empty and the run would hang.
   it('drains the pending parses to a bounded quiet point', () => {
-    const fn = src.slice(at('async function settleHeadReads(page)'));
-    // Widened in round 96 with the note that landed above the loop. A fixed
-    // character window is a fragile pin — it fails LOUD (the assertion below
-    // stops finding the loop) rather than passing over the thing it checks,
-    // which is the acceptable direction, but it needs raising whenever the
-    // preamble grows.
-    const body = fn.slice(0, 2600);
+    const body = settleHeadReadsBody(src);
     // Still a snapshot per pass — the listener adds to the live set while
     // this awaits, so iterating the set itself would be the unbounded
     // loop under another name.
@@ -309,8 +326,7 @@ describe('the head sample waits for the readings in flight', () => {
   // state the page had already moved past — an older protocol range then
   // substantiating a product failure.
   it('reports non-quiescence rather than returning as if drained', () => {
-    const fn = src.slice(at('async function settleHeadReads(page)'));
-    const body = fn.slice(0, 2400);
+    const body = settleHeadReadsBody(src);
     // The empty-at-entry and empty-during-drain exits are both a positive
     // answer; the fall-through past the budget must not be.
     expect(body).toContain('if (!pending || pending.size === 0) return true;');

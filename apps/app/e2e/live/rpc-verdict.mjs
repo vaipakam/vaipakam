@@ -511,6 +511,16 @@ export function blockNumberFromRpcPair(requestBody, responseBody) {
   let best = null;
   for (const item of items) {
     if (!lone && !wanted.has(item?.id)) continue;
+    // ROUND 98 P2 — AN ERROR MEMBER IS AUTHORITATIVE, EVEN BESIDE A RESULT.
+    //
+    // A JSON-RPC member may carry both, and viem takes the error: the page
+    // never consumed that height. This parser read the `result` anyway, so a
+    // height the app rejected could stamp `firstHeadAt`, satisfy
+    // `floorEstablishedFor` with an ordering that never happened, and lift
+    // the floor above the block the card actually rendered at — the accusing
+    // direction, and the same shape the direct pre-navigation probe was
+    // already taught to refuse. This is its sibling, and it was left behind.
+    if (item?.error !== undefined && item?.error !== null) continue;
     const raw = heightOf(item?.result);
     if (raw === null) continue;
     // ROUND 50 P2 — A QUANTITY IS HEX, and `BigInt` is far too willing.
