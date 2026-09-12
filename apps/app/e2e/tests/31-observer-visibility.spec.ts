@@ -1902,3 +1902,60 @@ test('rtl and row-reverse together cancel, and either alone reverses', async ({ 
   expect(result.rtlRowLeft).toBe(-300);
   expect(result.rtlRow, 'rtl alone').toBe(true);
 });
+
+// #2157 round 5 — the range helper reads the styles that actually move
+// content: a flex reversal reverses only a flex container, and the
+// individual `rotate` / `scale` properties are transforms too.
+test('flex reversal applies only to flex containers, and individual transform properties count', async ({
+  page,
+}) => {
+  await page.setContent(`<!DOCTYPE html>
+    <style>body { margin: 0 } p { margin: 0 }</style>
+    <!-- 0..40: a BLOCK scroller carrying flex-direction: column-reverse,
+         which does nothing to it; its range is the ordinary [0, span], so
+         a negative-margin row above the slit can only be carried away. -->
+    <div id="blockReverse" style="height:40px; overflow:auto; flex-direction:column-reverse; margin-top:120px">
+      <p id="blockRow" style="margin-top:-100px; height:20px">above, and the reversal is a no-op</p>
+      <p style="height:400px">filler</p>
+    </div>
+    <!-- a 40px scroller drawn at twice its size via the individual
+         property, not transform: scale(2) -->
+    <div style="scale:2; transform-origin:0 0; height:80px">
+      <div id="scaledScroller" style="height:40px; overflow:auto">
+        <p id="scaledRow" style="height:20px">under an individual scale</p>
+        <p style="height:400px">filler</p>
+      </div>
+    </div>
+  `);
+  const result = await page.evaluate((helpersSrc) => {
+    const family = new Function(`return (${helpersSrc})();`)();
+    const visible = family.visible as (n: Element | null) => boolean;
+    const byId = (id: string) => document.getElementById(id)!;
+    byId('scaledScroller').scrollTop = 300;
+    return {
+      blockDisplay: getComputedStyle(byId('blockReverse')).display,
+      blockFlexDirection: getComputedStyle(byId('blockReverse')).flexDirection,
+      blockScrollTop: byId('blockReverse').scrollTop,
+      blockRowTop: byId('blockRow').getBoundingClientRect().top,
+      blockRow: visible(byId('blockRow')),
+      wrapperTransform: getComputedStyle(byId('scaledScroller').parentElement!).transform,
+      wrapperScale: getComputedStyle(byId('scaledScroller').parentElement!).scale,
+      scaledRowTop: byId('scaledRow').getBoundingClientRect().top,
+      scaledRow: visible(byId('scaledRow')),
+    };
+  }, VISIBILITY_SOURCE);
+  // The computed flex-direction IS reported on the block scroller, and
+  // must be ignored: at rest the row sits at 120 - 100 = 20, outside the
+  // 120..160 slit, and no scroll position brings it in.
+  expect(result.blockDisplay).toBe('block');
+  expect(result.blockFlexDirection).toBe('column-reverse');
+  expect(result.blockScrollTop).toBe(0);
+  expect(result.blockRowTop).toBe(20);
+  expect(result.blockRow, 'a block scroller is not reversed by flex-direction').toBe(false);
+  // `scale: 2` leaves computed `transform` at none; the row still sits at
+  // 160 - 600 = -440 and a raw credit of 300 would condemn it.
+  expect(result.wrapperTransform).toBe('none');
+  expect(result.wrapperScale).toBe('2');
+  expect(result.scaledRowTop).toBe(-440);
+  expect(result.scaledRow, 'a row under an individual scale property').toBe(true);
+});

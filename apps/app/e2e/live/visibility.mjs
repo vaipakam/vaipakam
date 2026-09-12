@@ -115,12 +115,16 @@ export function visibilityHelpers() {
     // axes after the mapping below.
     const spanY = scrollsY ? Math.max(0, n.scrollHeight - n.clientHeight) : 0;
     const spanX = scrollsX ? Math.max(0, n.scrollWidth - n.clientWidth) : 0;
-    const minTop = cs.flexDirection === 'column-reverse' ? -spanY : 0;
+    // A flex reversal only reverses a FLEX container (#2157 round 5): the
+    // computed `flex-direction` is reported on any element, and on a block
+    // scroller it has no layout effect and the range stays [0, span].
+    const isFlex = cs.display === 'flex' || cs.display === 'inline-flex';
+    const minTop = isFlex && cs.flexDirection === 'column-reverse' ? -spanY : 0;
     // MEASURED in the drive's Chromium (#2157 round 4): `rtl` alone and
     // `row-reverse` alone each scroll [-span, 0]; both together cancel and
     // scroll [0, span] with the overflow on the right. So the horizontal
     // reversal is the XOR of the two, not either of them.
-    const reversedX = (cs.direction === 'rtl') !== (cs.flexDirection === 'row-reverse');
+    const reversedX = (cs.direction === 'rtl') !== (isFlex && cs.flexDirection === 'row-reverse');
     const minLeft = reversedX ? -spanX : 0;
     const sY = scrollsY ? n.scrollTop : 0;
     const sX = scrollsX ? n.scrollLeft : 0;
@@ -133,8 +137,31 @@ export function visibilityHelpers() {
     let m = null;
     try {
       for (let a = n; a; a = a.parentElement) {
-        const t = getComputedStyle(a).transform;
-        if (t && t !== 'none') m = new DOMMatrixReadOnly(t).multiply(m ?? new DOMMatrixReadOnly());
+        const acs = getComputedStyle(a);
+        // The individual properties `rotate` / `scale` (`translate` has no
+        // linear part) are NOT folded into the computed `transform`
+        // (#2157 round 5); per the spec they apply before it, so the local
+        // matrix is R · S · transform. A 3-D rotate axis other than z
+        // cannot be composed into this plane and is unquantifiable.
+        let local = new DOMMatrixReadOnly();
+        const rot = String(acs.rotate ?? 'none').trim();
+        if (rot && rot !== 'none') {
+          const parts = rot.split(/\s+/);
+          const angle = parts[parts.length - 1];
+          const axis = parts.slice(0, -1).join(' ');
+          if (axis !== '' && axis !== 'z' && axis !== '0 0 1') return { unquantifiable: true };
+          if (!/deg$/.test(angle)) return { unquantifiable: true };
+          local = local.rotate(Number.parseFloat(angle));
+        }
+        const sc = String(acs.scale ?? 'none').trim();
+        if (sc && sc !== 'none') {
+          const f = sc.split(/\s+/).map(Number);
+          if (f.some((v) => !Number.isFinite(v))) return { unquantifiable: true };
+          local = local.scale(f[0], f.length > 1 ? f[1] : f[0]);
+        }
+        const t = acs.transform;
+        if (t && t !== 'none') local = local.multiply(new DOMMatrixReadOnly(t));
+        if (!local.isIdentity) m = local.multiply(m ?? new DOMMatrixReadOnly());
       }
       if (m === null) {
         return { lo: { x: local.xLo, y: local.yLo }, hi: { x: local.xHi, y: local.yHi } };

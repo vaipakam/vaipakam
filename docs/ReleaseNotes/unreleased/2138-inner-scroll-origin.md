@@ -65,7 +65,12 @@ the check's browser. One case from that round, a sticky row pinned to its
 region, is deferred to its own issue with the reasoning recorded there.
 The root element's overflow was also found to have been read as clipping
 at the root's own box when it clips at the viewport, and is now judged as
-the viewport. The list of properties that make an element the
+the viewport. A fifth round added that a reversed flex direction only
+reverses an actual flex container, and that the newer stand-alone rotate
+and scale properties count as transforms the way the combined property
+does; the exact treatment of a region rotated off the page's axes, where
+the per-axis bounds admit more than a single scroll position can reach,
+is deferred to its own issue with the reasoning recorded there. The list of properties that make an element the
 reference for absolutely positioned descendants gained two more, each
 confirmed by measurement in the check's own browser, and one candidate the
 review raised, container queries, was measured not to be one and left out
