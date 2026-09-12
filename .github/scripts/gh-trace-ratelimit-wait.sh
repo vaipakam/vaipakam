@@ -44,6 +44,38 @@ set -euo pipefail
 # a secondary limit.
 MESSAGE_ONLY_WAIT=60
 
+# The largest wait this script will ever print — one day. Every numeric
+# header is an untrusted string, and the edge list of what one can contain
+# (zero-padding, values near the 64-bit limit that wrap once the caller adds
+# a margin, an HTTP-date instead of seconds) does not end (#2149 r11–r12).
+# So the OUTPUT is bounded instead of the input being enumerated: values are
+# parsed by one normaliser with a length bound, and any wait above this is
+# clamped to it and says so. The caller's own cap then refuses it.
+MAX_WAIT=86400
+
+# header_int <value> — the one normaliser for a numeric header. Prints the
+# value as a plain decimal and returns 0, or prints nothing and returns 1 if
+# it is not a run of digits (surrounding whitespace ignored). A run of MORE
+# than fifteen digits is a number, just one larger than any sane header —
+# it is represented by a fifteen-digit ceiling, which is what makes `10#`
+# safe (fifteen digits cannot overflow) and lets clamp_wait handle it like
+# any other oversized wait rather than misreporting it as "not a number".
+header_int() {
+  local v=$1
+  v=${v#"${v%%[![:space:]]*}"}; v=${v%"${v##*[![:space:]]}"}
+  [[ "$v" =~ ^[0-9]+$ ]] || return 1
+  if [ "${#v}" -gt 15 ]; then printf '%s' 999999999999999; return 0; fi
+  printf '%s' "$(( 10#$v ))"
+}
+
+# clamp_wait <seconds> — never below 0, never above MAX_WAIT.
+clamp_wait() {
+  local w=$1
+  [ "$w" -lt 0 ] && w=0
+  [ "$w" -gt "$MAX_WAIT" ] && w=$MAX_WAIT
+  printf '%s' "$w"
+}
+
 # Where the trace formats its lines: gh prefixes response headers with `< `
 # and echoes the JSON body verbatim. Both prefixes are optional here, so a
 # trace that dropped them (or a fixture that never had them) still parses.
@@ -114,6 +146,13 @@ analyse() { # analyse <trace> <now-epoch>  -> prints "<seconds>\t<reason>", exit
   # nameable miss: transient, and a retry might well succeed, but calling it
   # a rate limit is precisely the misdiagnosis the trace evidence exists to
   # prevent.
+  #
+  # NUMBERS. `Retry-After` may be seconds or an HTTP-date; both are honoured.
+  # Every numeric header is read through `header_int` (digits only, at most
+  # fifteen of them, zero-padding dropped) and every wait through
+  # `clamp_wait` (never below 0, never above MAX_WAIT). A header that is
+  # present but unreadable is reported as present and unreadable, never as
+  # absent.
   # Each shape that matches contributes its own wait; when both match — a
   # 403/429 whose bucket is spent AND which carries Retry-After — the retry
   # has to outlast BOTH, so the longer wait is the wait (#2149 r3). Giving
@@ -124,22 +163,38 @@ analyse() { # analyse <trace> <now-epoch>  -> prints "<seconds>\t<reason>", exit
   # `-eq` self-comparison and then blows up as octal in the caller's
   # arithmetic — "value too great for base" — leaving the step with neither
   # its retry nor its diagnostic (#2149 r11).
-  if [ "${remaining:-}" = "0" ]; then
-    if [[ "${reset:-}" =~ ^[0-9]+$ ]]; then
-      reset=$(( 10#$reset ))
-      primary_wait=$(( reset - now ))
-      [ "$primary_wait" -lt 0 ] && primary_wait=0
-      primary_reason="primary limit — remaining 0, reset at $(date -u -d "@$reset" +%Y-%m-%dT%H:%M:%SZ)"
+  # Every numeric header goes through header_int; every wait through
+  # clamp_wait. Nothing else touches a header's digits.
+  local remaining_n reset_n retry_n
+  remaining_n=$(header_int "${remaining:-}") || remaining_n=''
+  reset_n=$(header_int "${reset:-}") || reset_n=''
+  retry_n=$(header_int "${retry:-}") || retry_n=''
+
+  if [ "${remaining_n:-}" = "0" ]; then
+    if [ -n "$reset_n" ]; then
+      primary_wait=$(clamp_wait $(( reset_n - now )))
+      primary_reason="primary limit — remaining 0, reset at $(date -u -d "@$reset_n" +%Y-%m-%dT%H:%M:%SZ)"
+      [ "$primary_wait" -eq "$MAX_WAIT" ] && primary_reason="$primary_reason (clamped to ${MAX_WAIT}s)"
     else
       primary_wait=$MESSAGE_ONLY_WAIT
-      primary_reason="primary limit — remaining 0 but no reset header — default wait"
+      primary_reason="primary limit — remaining 0 but no usable reset header — default wait"
     fi
   fi
   if { [ "$status" = "403" ] || [ "$status" = "429" ]; } \
      && { [ -n "${retry:-}" ] || printf '%s' "$message" | grep -qi 'secondary rate limit'; }; then
-    if [[ "${retry:-}" =~ ^[0-9]+$ ]]; then
-      secondary_wait=$(( 10#$retry ))
+    local retry_at
+    if [ -n "$retry_n" ]; then
+      secondary_wait=$(clamp_wait "$retry_n")
       secondary_reason="secondary limit — retry-after $secondary_wait s"
+      [ "$secondary_wait" -eq "$MAX_WAIT" ] && secondary_reason="$secondary_reason (clamped from $retry_n)"
+    elif [ -n "${retry:-}" ] && retry_at=$(date -u -d "$retry" +%s 2>/dev/null); then
+      # The HTTP-date form is legal for Retry-After; the wait is the time
+      # until it. A date already passed is a wait of zero.
+      secondary_wait=$(clamp_wait $(( retry_at - now )))
+      secondary_reason="secondary limit — retry-after names $(date -u -d "@$retry_at" +%Y-%m-%dT%H:%M:%SZ)"
+    elif [ -n "${retry:-}" ]; then
+      secondary_wait=$MESSAGE_ONLY_WAIT
+      secondary_reason="secondary limit — retry-after present but not a number or a date this can read — default wait"
     else
       secondary_wait=$MESSAGE_ONLY_WAIT
       secondary_reason="secondary limit stated in the body only, no retry-after — default wait"
@@ -355,12 +410,38 @@ selftest() {
 < X-Ratelimit-Remaining: 0
 < X-Ratelimit-Reset: 01789188527' \
     1789188167 0 360
-  # A Retry-After that is not a number at all (the HTTP-date form is legal)
-  # still marks the secondary shape, but names no usable wait: the default.
-  expect "non-numeric Retry-After falls back to the default, not to arithmetic" \
+  # The HTTP-date form of Retry-After is legal and names a real instant; the
+  # wait is the time until it (#2149 r12). `now` is 04:42:47Z; 05:00:00Z is
+  # 17 min 13 s = 1033 s later.
+  expect "HTTP-date Retry-After is honoured, not defaulted" \
 '< HTTP/2.0 429 Too Many Requests
 < Retry-After: Sat, 12 Sep 2026 05:00:00 GMT' \
-    1789188167 0 "$MESSAGE_ONLY_WAIT" 'default wait'
+    1789188167 0 1033 'names 2026-09-12T05:00:00Z'
+  # A Retry-After that is neither a number nor a date still marks the shape
+  # but names no usable wait: the default, and the reason says the header
+  # was PRESENT and unreadable — not absent.
+  expect "unreadable Retry-After falls back to the default and says so" \
+'< HTTP/2.0 429 Too Many Requests
+< Retry-After: soon' \
+    1789188167 0 "$MESSAGE_ONLY_WAIT" 'present but not a number or a date'
+  # THE OUTPUT IS BOUNDED (#2149 r12). A value near the 64-bit limit would
+  # wrap negative once the caller adds its margin and sail under the cap;
+  # the wait is clamped to MAX_WAIT and the reason says so.
+  expect "a Retry-After near INT64_MAX is clamped to MAX_WAIT" \
+'< HTTP/2.0 429 Too Many Requests
+< Retry-After: 9223372036854775807' \
+    1789188167 0 "$MAX_WAIT" 'clamped'
+  expect "a reset a year out is clamped to MAX_WAIT" \
+'< HTTP/2.0 200 OK
+< X-Ratelimit-Remaining: 0
+< X-Ratelimit-Reset: 1820724167' \
+    1789188167 0 "$MAX_WAIT" 'clamped'
+  # Remaining goes through the same normaliser: `00` is an exhausted bucket.
+  expect "zero-padded Remaining is still an exhausted bucket" \
+'< HTTP/2.0 200 OK
+< X-Ratelimit-Remaining: 00
+< X-Ratelimit-Reset: 1789188527' \
+    1789188167 0 360
 
   # A LARGE BODY ON THE LIMITED RESPONSE (#2149 r4). A limited GraphQL page
   # can still carry data, and a body past the pipe buffer is where a
