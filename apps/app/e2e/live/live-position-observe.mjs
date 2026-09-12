@@ -116,6 +116,7 @@ import {
   CHAIN_ID_CONFLICT,
   classifyRpcFailure,
   codedError,
+  hexQuantity,
   isTransportFailure,
   recordRpcResponse,
   rpcCallsFromBody,
@@ -2196,9 +2197,31 @@ async function pageProviderHead() {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_blockNumber', params: [] }),
+        // ROUND 88 P2 — BOUNDED, like the chain probe beside it. `fetch`
+        // has no default timeout, so an endpoint that accepts the request
+        // and never answers hangs this call forever — and it runs BEFORE
+        // the navigation, so the whole run stalls rather than falling back
+        // to the ordering test the way the comment above promises. The
+        // fallback only exists if this can actually fail.
+        signal: AbortSignal.timeout(CHAIN_PROBE_TIMEOUT_MS),
       });
+      if (!resp.ok) continue;
       const parsed = await resp.json();
-      const seen = BigInt(parsed?.result ?? 0);
+      // ROUND 88 P2 — A JSON-RPC QUANTITY, not whatever `BigInt` will take.
+      //
+      // `BigInt` accepts `"101"` and a bare number; an Ethereum height is
+      // hex with an `0x` prefix. `hexQuantity` is the rule the page-head
+      // parsers have used since round 50 for exactly this reason, and this
+      // probe was the fourth reader of the same kind of field written to
+      // its own laxer standard — the parallel-site shape again, this time
+      // with me adding the new site.
+      //
+      // It matters here in the direction that accuses: a misread height
+      // that comes out too HIGH puts the floor above the block the card
+      // rendered, and the interior scan then never looks at the state the
+      // lender was actually shown.
+      const seen = hexQuantity(parsed?.result);
+      if (seen === null) continue;
       // The LOWEST across endpoints, for the reason the floor takes the
       // lower of its sources everywhere else: this drive cannot tell which
       // of them will serve the card's query, so the further back one is

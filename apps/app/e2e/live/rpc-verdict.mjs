@@ -372,6 +372,12 @@ export function rpcCallsFromBody(requestBody) {
  * the repeated correction on this PR: a fix applied to one of several
  * parallel sites.
  *
+ * EXPORTED SINCE ROUND 88, for a fourth consumer with the same problem:
+ * the drive's direct page-provider head probe was reading its result with
+ * a bare `BigInt`, which is exactly what this exists to stop. It bounds
+ * the block a product claim is made against, so it is the last place that
+ * should be lenient about what a height looks like.
+ *
  * The heights matter most, and specifically when they come out too LOW.
  * The absence gate makes the confirming observer clear the head the PAGE
  * was seen to reach, so an artificially low bound lets the observer
@@ -385,7 +391,7 @@ export function rpcCallsFromBody(requestBody) {
  * @param {unknown} raw
  * @returns {bigint|null}
  */
-function hexQuantity(raw) {
+export function hexQuantity(raw) {
   if (typeof raw !== 'string') return null;
   if (!/^0x[0-9a-fA-F]+$/.test(raw)) return null;
   try {

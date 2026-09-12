@@ -199,10 +199,17 @@ whose answers need not come from the same moment. What settles it is
 asking the page's own data source for its current block *before the page
 is loaded at all*. Blocks only advance, so anything that source serves
 the page afterwards is at or above that point, whatever it is asked and
-in whatever order. Where that reading cannot be taken the check says the
-comparison was not established rather than making it anyway, and the run
-reports which of the two happened, so a window that could not be covered
-is visible rather than looking like a clean result.
+in whatever order.
+
+That reading is not always available — the first page visited has not yet
+revealed which data source it uses, and a source can decline to answer.
+The check then falls back to the weaker evidence it can still gather:
+whether that source reported its position before it served the page's
+first read, which bounds the read where it holds. Only when neither is
+available does the check say the comparison was not established rather
+than making it anyway. The run reports which of those happened, so a
+window that could not be covered is visible rather than looking like a
+clean result.
 
 Where that answer and the page disagree, the check reports it as
 something inferred rather than something seen, because the commonest
