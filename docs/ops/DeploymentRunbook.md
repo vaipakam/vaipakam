@@ -1001,7 +1001,7 @@ The schema each script populates (no manual editing needed since the
 | `diamond`, `vaultImpl`, `treasury`, `admin` | `DeployDiamond` |
 | `facets.<name>` (×30) | `DeployDiamond` |
 | `vpfiToken`, `vpfiTokenImpl` | `DeployVPFIToken` (canonical chain). `vpfiOftAdapter` / `vpfiOftAdapterImpl` are LayerZero-era names retained on the `Deployment` type; the CCIP pool is written as `vpfiTokenPool` by `DeployCrosschain` (row below). `isCanonicalVPFI` has a `Deployments.writeIsCanonicalVpfi` helper but **no live script calls it** |
-| `vpfiMirror`, `vpfiMirrorImpl` | `DeployCrosschain` (mirror chains). *(`DeployVPFIMirror` was removed in T-068.)* |
+| `vpfiMirror` | `DeployCrosschain` (mirror chains) — the mirror token's proxy. `vpfiMirrorImpl` is typed on `Deployment` but **no script writes it**: `DeployCrosschain` deploys the implementation and records only the proxy, so a fresh artifact has no such key. *(`DeployVPFIMirror` was removed in T-068.)* |
 | `ccipMessenger`, `vpfiTokenPool`, `vpfiPoolRateGovernor`, `rewardMessenger`; mirror chains also `vpfiMirror`, `rewardRemittanceReceiver(+Impl)`; canonical also `buybackRemittanceReceiver(+Impl)`, `vpfiReturnReceiver(+Impl)` | `DeployCrosschain` — the T-068 CCIP path; each chain's messenger address is its own (no CREATE2) |
 | `vpfiBuyReceiver`, `vpfiBuyReceiverImpl` | `DeployVPFIBuyReceiver` *(historical — buy flow removed, #687-A)* |
 | `vpfiBuyAdapter`, `vpfiBuyAdapterImpl`, `vpfiBuyReceiverEid`, `vpfiBuyPaymentToken` | `DeployVPFIBuyAdapter` *(historical — buy flow removed, #687-A)* |
@@ -1229,7 +1229,7 @@ If any check fails → **do not broadcast**.
 - `AccessControlFacet.hasRole(DEFAULT_ADMIN_ROLE, ADMIN_ADDRESS)` == `true` and the deployer holds zero roles.
 - `AdminFacet.getTreasury()` == `TREASURY_ADDRESS`.
 - `VaultFactoryFacet.getVaipakamVaultImplementationAddress()` != `0x0`.
-- `RewardReporterFacet.getRewardReporterConfig()` returns zeros for `rewardMessenger`/`localChainId`/`baseChainId` — wiring happens in §3b.
+- `RewardReporterFacet.getRewardReporterConfig()` returns `rewardMessenger == 0x0` and `baseChainId == 0` — wiring happens in §3b. `localChainId` is **not** zero on a fresh Diamond: it is read from the chain itself (`block.chainid`) and equals the chain you deployed on from the first block. `isCanonicalRewardChain` is `false`, and `rewardGraceSeconds` reports the facet's built-in 4h default rather than zero.
 
 **Authority-state matrix after the deploy + handover sequence.** Different
 chains can land in different ownership states depending on whether the
@@ -1463,30 +1463,41 @@ The script prints `RewardOAppProxy (CROSS-CHAIN IDENTICAL)` — the value MUST m
 
 Driven by `ConfigureRewardReporter.s.sol`, which runs inside the `configure`
 phase (`DiamondConfigSpell`). Chains are keyed by **EVM chain id** — there are
-no eids. The steps it performs, on **every** chain:
+no eids. Every setter is idempotent. Which side a chain is on is decided by the
+chain id the script runs on (Base = 8453 / 84532), never by an env var.
 
-1. `RewardReporterFacet.setRewardMessenger(<.rewardMessenger from the artifact>)`
-2. `RewardReporterFacet.setBaseChainId(<Base's chain id>)`
-3. `RewardReporterFacet.setRewardGraceSeconds(14400)` — 4h default
+On **every** chain, unconditionally:
 
-On **Base only** (the canonical reward chain):
+1. `RewardReporterFacet.setBaseChainId(<BASE_CHAIN_ID>)` — Base's EVM chain id. On a reporter a zero is **refused**: it would put the Diamond into the DETACHED role and stop reward claims.
+2. `RewardReporterFacet.setRewardMessenger(<.rewardMessenger from the artifact>)` — `REWARD_MESSENGER_PROXY` may override, and must agree with the artifact
+3. `RewardReporterFacet.setRewardGraceSeconds(<REWARD_GRACE_SECONDS>)` — default 14400 (4h)
+4. `RewardReporterFacet.setIsCanonicalRewardChain(<true on Base, false elsewhere>)`
 
-4. `RewardReporterFacet.setIsCanonicalRewardChain(true)`
-5. `RewardAggregatorFacet.setExpectedSourceChainIds([...])` — every reporter chain's id, canonical included
+On **Base only** (the canonical reward chain), two registrations, **each
+conditional on its env var**. When the var is unset the script prints a
+`WARNING`, skips the call, and the run still completes green:
 
-On **all other chains** (reporters):
+5. `RewardAggregatorFacet.setExpectedSourceChainIds([...])` from `REWARD_EXPECTED_SOURCE_CHAIN_IDS` — comma-separated chain ids, e.g. `8453,42161,10,137`, canonical included. Unset ⇒ skipped; the aggregator is wired for no source chain.
+6. `RewardCommitmentFacet.setMirrorRewardDeployment(<chainId>, <that chain's Diamond>)`, once per entry of `MIRROR_REWARD_DEPLOYMENTS` — format `chainId:0xaddr,chainId:0xaddr`, no whitespace. Unset ⇒ skipped, and the compensation-quote (kind-11) ingress stays fail-closed for every unregistered chain (`CompQuoteMirrorEraUnset`), so zeroed-day compensation on that lane is unreachable until the registration lands.
 
-4'. `RewardReporterFacet.setIsCanonicalRewardChain(false)` — explicit, do not rely on default
-5'. `RewardReporterFacet.setBaseRewardDeployment(<Base's Diamond>)`
+On **every reporter** (non-Base chain), one registration, **conditional the
+same way**:
+
+5'. `RewardReporterFacet.setBaseRewardDeployment(<BASE_REWARD_DEPLOYMENT>)` — Base's Diamond address. Unset ⇒ skipped with a warning, and the V3 (kind-10) broadcast ingress stays DARK on this reporter: day figures still arrive on the kind-5 wire, but no day clock installs and the P2 lapse machinery can never arm. When set, the artifact also gains `baseRewardDeployment`.
 
 Then, once per chain:
 
-6. `InteractionRewardsFacet.setInteractionLaunchTimestamp(<unix ts of launch day 00:00 UTC>)` — `SetInteractionLaunch.s.sol`, same value on every chain
+7. `InteractionRewardsFacet.setInteractionLaunchTimestamp(<unix ts of launch day 00:00 UTC>)` — `SetInteractionLaunch.s.sol`, same value on every chain
 
-**Post-step verification** (`getRewardReporterConfig()` returns
-`rewardMessenger, localChainId, baseChainId, isCanonicalRewardChain, rewardGraceSeconds`):
-- On Base: `isCanonicalRewardChain == true`, `localChainId == baseChainId`, expected-source list matches intent.
-- On every reporter: `isCanonicalRewardChain == false`, `rewardMessenger != 0x0`, `baseChainId != 0`.
+**Post-step verification.** The script sanity-checks the messenger candidate
+before it broadcasts, but reads none of the configuration back afterwards, and
+a run that skipped a conditional registration exits green — so read the
+conditional ones back explicitly, on every chain.
+
+`getRewardReporterConfig()` returns `rewardMessenger, localChainId, baseChainId, isCanonicalRewardChain, rewardGraceSeconds`:
+- On every chain: `rewardMessenger != 0x0`, `baseChainId` == Base's chain id, `localChainId` == the chain you are on.
+- On Base: `isCanonicalRewardChain == true` (hence `localChainId == baseChainId`); `RewardAggregatorFacet.getExpectedSourceChainIds()` matches intent; `RewardCommitmentFacet.getMirrorRewardDeployment(<chainId>)` returns that chain's Diamond for **every** reporter chain — a zero means step 6 was skipped or missed that chain.
+- On every reporter: `isCanonicalRewardChain == false`; `RewardReporterFacet.getBaseRewardDeployment()` == Base's Diamond — a zero means step 5' was skipped and the V3 ingress is dark.
 - `getInteractionLaunchTimestamp()` is non-zero on every chain and identical across chains.
 
 ---
