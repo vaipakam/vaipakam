@@ -997,15 +997,16 @@ The schema each script populates (no manual editing needed since the
 | Key | Written by |
 |---|---|
 | `chainId`, `chainSlug`, `deployedAt`, `deployBlock` | `DeployDiamond` |
-| `lzEid`, `lzEndpoint` | `DeployDiamond` (eid) + each OApp deploy script (endpoint) |
+| `lzEid`, `lzEndpoint` | *(historical — LayerZero removed in T-068; no script writes these any more)* |
 | `diamond`, `vaultImpl`, `treasury`, `admin` | `DeployDiamond` |
 | `facets.<name>` (×30) | `DeployDiamond` |
-| `vpfiToken`, `vpfiTokenImpl`, `vpfiOftAdapter`, `vpfiOftAdapterImpl`, `isCanonicalVPFI=true` | `DeployVPFICanonical` |
-| `vpfiMirror`, `vpfiMirrorImpl`, `isCanonicalVPFI=false` | `DeployVPFIMirror` |
+| `vpfiToken`, `vpfiTokenImpl` | `DeployVPFIToken` (canonical chain). `vpfiOftAdapter` / `vpfiOftAdapterImpl` are LayerZero-era names retained on the `Deployment` type; the CCIP pool is written as `vpfiTokenPool` by `DeployCrosschain` (row below). `isCanonicalVPFI` has a `Deployments.writeIsCanonicalVpfi` helper but **no live script calls it** |
+| `vpfiMirror`, `vpfiMirrorImpl` | `DeployCrosschain` (mirror chains). *(`DeployVPFIMirror` was removed in T-068.)* |
+| `ccipMessenger`, `vpfiTokenPool`, `vpfiPoolRateGovernor`, `rewardMessenger`; mirror chains also `vpfiMirror`, `rewardRemittanceReceiver(+Impl)`; canonical also `buybackRemittanceReceiver(+Impl)`, `vpfiReturnReceiver(+Impl)` | `DeployCrosschain` — the T-068 CCIP path; each chain's messenger address is its own (no CREATE2) |
 | `vpfiBuyReceiver`, `vpfiBuyReceiverImpl` | `DeployVPFIBuyReceiver` *(historical — buy flow removed, #687-A)* |
 | `vpfiBuyAdapter`, `vpfiBuyAdapterImpl`, `vpfiBuyReceiverEid`, `vpfiBuyPaymentToken` | `DeployVPFIBuyAdapter` *(historical — buy flow removed, #687-A)* |
-| `rewardOApp`, `rewardOAppBootstrapImpl`, `rewardOAppRealImpl`, `rewardLocalEid`, `rewardBaseEid`, `isCanonicalReward` | `DeployRewardOAppCreate2` |
-| `rewardOApp` / `rewardLocalEid` / `rewardBaseEid` / `rewardGraceSeconds` / `isCanonicalReward` | `ConfigureRewardReporter` (idempotent overwrite) |
+| `rewardOApp`, `rewardOAppBootstrapImpl`, `rewardOAppRealImpl`, `rewardLocalEid`, `rewardBaseEid` | *(historical — `DeployRewardOAppCreate2` and the CREATE2 reward bootstrap were removed in T-068; the reward messenger is `rewardMessenger`, written by `DeployCrosschain` above)* |
+| `rewardMessenger`, `rewardBaseChainId`, `rewardGraceSeconds`, `isCanonicalReward`; mirror chains also `baseRewardDeployment` | `ConfigureRewardReporter` (idempotent overwrite; reads `.rewardMessenger` from the artifact, or `REWARD_MESSENGER_PROXY` as an explicit override that must agree with it) |
 | `vpfiDiscountEthPriceAsset`, `vpfiDiscountWeiPerVpfi` | `ConfigureVPFIBuy` — fee-discount price config only: the chain's ETH reference asset for discount math + the wei-per-VPFI discount price anchor. **Both stay ZERO at launch (#884)**; setting them switches the lender hold discount from direct reduction to VPFI-payment-authoritative |
 | `vpfiBuyWeiPerVpfi`, `vpfiBuyGlobalCap`, `vpfiBuyPerWalletCap`, `vpfiBuyEnabled` | *(historical — fixed-rate sale removed, #687-A; no script writes these any more)* |
 | `interactionLaunchTimestamp`, `interactionCapVpfiPerEth` | `SetInteractionLaunch` |
@@ -1228,7 +1229,7 @@ If any check fails → **do not broadcast**.
 - `AccessControlFacet.hasRole(DEFAULT_ADMIN_ROLE, ADMIN_ADDRESS)` == `true` and the deployer holds zero roles.
 - `AdminFacet.getTreasury()` == `TREASURY_ADDRESS`.
 - `VaultFactoryFacet.getVaipakamVaultImplementationAddress()` != `0x0`.
-- `RewardReporterFacet.getRewardReporterConfig()` returns zeros for `rewardOApp`/`localEid`/`baseEid` — wiring happens in §3.
+- `RewardReporterFacet.getRewardReporterConfig()` returns zeros for `rewardMessenger`/`localChainId`/`baseChainId` — wiring happens in §3b.
 
 **Authority-state matrix after the deploy + handover sequence.** Different
 chains can land in different ownership states depending on whether the
@@ -1460,29 +1461,32 @@ The script prints `RewardOAppProxy (CROSS-CHAIN IDENTICAL)` — the value MUST m
 
 ### 3b. Reward config wiring
 
-On **every** chain:
+Driven by `ConfigureRewardReporter.s.sol`, which runs inside the `configure`
+phase (`DiamondConfigSpell`). Chains are keyed by **EVM chain id** — there are
+no eids. The steps it performs, on **every** chain:
 
-1. `RewardReporterFacet.setLocalEid(<LZ eid of this chain>)`
-2. `RewardReporterFacet.setBaseEid(<LZ eid of Base>)`
-3. `RewardReporterFacet.setRewardOApp(<RewardOApp proxy from §3a>)`
-4. `RewardReporterFacet.setRewardGraceSeconds(14400)` — 4h default
+1. `RewardReporterFacet.setRewardMessenger(<.rewardMessenger from the artifact>)`
+2. `RewardReporterFacet.setBaseChainId(<Base's chain id>)`
+3. `RewardReporterFacet.setRewardGraceSeconds(14400)` — 4h default
 
 On **Base only** (the canonical reward chain):
 
-5. `RewardReporterFacet.setIsCanonicalRewardChain(true)`
-6. `RewardAggregatorFacet.setExpectedSourceEids([eidA, eidB, ...])` — every reporter chain's eid
+4. `RewardReporterFacet.setIsCanonicalRewardChain(true)`
+5. `RewardAggregatorFacet.setExpectedSourceChainIds([...])` — every reporter chain's id, canonical included
 
 On **all other chains** (reporters):
 
-5'. `RewardReporterFacet.setIsCanonicalRewardChain(false)` — explicit, do not rely on default
+4'. `RewardReporterFacet.setIsCanonicalRewardChain(false)` — explicit, do not rely on default
+5'. `RewardReporterFacet.setBaseRewardDeployment(<Base's Diamond>)`
 
 Then, once per chain:
 
-7. `InteractionRewardsFacet.setInteractionLaunchTimestamp(<unix ts of launch day 00:00 UTC>)`
+6. `InteractionRewardsFacet.setInteractionLaunchTimestamp(<unix ts of launch day 00:00 UTC>)` — `SetInteractionLaunch.s.sol`, same value on every chain
 
-**Post-step verification:**
-- On Base: `getRewardReporterConfig()` returns `isCanonical == true`, `localEid == baseEid`, expected-source-eids list matches intent.
-- On every reporter: `getRewardReporterConfig()` returns `isCanonical == false`, `rewardOApp != 0x0`, `baseEid != 0`.
+**Post-step verification** (`getRewardReporterConfig()` returns
+`rewardMessenger, localChainId, baseChainId, isCanonicalRewardChain, rewardGraceSeconds`):
+- On Base: `isCanonicalRewardChain == true`, `localChainId == baseChainId`, expected-source list matches intent.
+- On every reporter: `isCanonicalRewardChain == false`, `rewardMessenger != 0x0`, `baseChainId != 0`.
 - `getInteractionLaunchTimestamp()` is non-zero on every chain and identical across chains.
 
 ---
