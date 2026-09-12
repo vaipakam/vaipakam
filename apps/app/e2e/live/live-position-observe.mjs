@@ -5522,9 +5522,10 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
               // Anything less than fully opaque disqualifies the whole chain
               // rather than being weighed: a half-transparent cover leaves the
               // text partly legible, and judging how much is the contrast
-              // question this file refuses. `opacity(0)` in a filter is the same
-              // erasure by another property; other filters still cover, so they
-              // are left alone.
+              // question this file refuses. A filter carrying an `opacity()` below
+              // 1 says the same thing by another property (round 100 — it used to
+              // read only an exact zero); other filters still cover, so they are
+              // left alone.
               //
               // NO `visibility` TEST HERE, and its removal is the correction
               // rather than an omission (self-review). Hit-testing already skips
@@ -5614,9 +5615,9 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
           // `body` carries an opaque background and sits at the bottom of every
           // stack, so examining it would read as covered everywhere.
           //
-          // A layer disqualified by opacity or an `opacity(0)` filter does not
-          // end the search either: it is transparent, and the layers below it
-          // are still in front of the text.
+          // A layer disqualified by its opacity, or by a filter that is not fully
+          // opaque, does not end the search either: it is see-through, and the
+          // layers below it are still in front of the text.
           const coveredAt = (x, y) => {
             const stack = document.elementsFromPoint(x, y);
             if (!stack || !stack.length) return false;
@@ -7337,9 +7338,10 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
                   // Anything less than fully opaque disqualifies the whole chain
                   // rather than being weighed: a half-transparent cover leaves the
                   // text partly legible, and judging how much is the contrast
-                  // question this file refuses. `opacity(0)` in a filter is the same
-                  // erasure by another property; other filters still cover, so they
-                  // are left alone.
+                  // question this file refuses. A filter carrying an `opacity()` below
+                  // 1 says the same thing by another property (round 100 — it used to
+                  // read only an exact zero); other filters still cover, so they are
+                  // left alone.
                   //
                   // NO `visibility` TEST HERE, and its removal is the correction
                   // rather than an omission (self-review). Hit-testing already skips
@@ -7429,9 +7431,9 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
               // `body` carries an opaque background and sits at the bottom of every
               // stack, so examining it would read as covered everywhere.
               //
-              // A layer disqualified by opacity or an `opacity(0)` filter does not
-              // end the search either: it is transparent, and the layers below it
-              // are still in front of the text.
+              // A layer disqualified by its opacity, or by a filter that is not fully
+              // opaque, does not end the search either: it is see-through, and the
+              // layers below it are still in front of the text.
               const coveredAt = (x, y) => {
                 const stack = document.elementsFromPoint(x, y);
                 if (!stack || !stack.length) return false;
