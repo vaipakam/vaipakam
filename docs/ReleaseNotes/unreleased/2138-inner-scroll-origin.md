@@ -50,7 +50,12 @@ content can reach the slit at all, since asking whether most of it can be
 seen at once is the wrong question of something read by scrolling; at a
 non-scrolling wrapper above it, the rule asks whether the slit itself is
 mostly shown. A wrapper with no extent at all is still condemned whatever
-scrolls inside it. The list of properties that make an element the
+scrolls inside it. A third round added two refinements to the same idea:
+when one scrolling region sits inside another, the inner region's slit is
+itself carried by the outer region's scroll, so it is placed where that
+scroll can best bring it into view before the content is judged against
+it; and a region styled to scroll but with nothing to scroll is treated as
+the plain wrapper it behaves as, decided per axis. The list of properties that make an element the
 reference for absolutely positioned descendants gained two more, each
 confirmed by measurement in the check's own browser, and one candidate the
 review raised, container queries, was measured not to be one and left out

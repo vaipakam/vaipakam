@@ -100,13 +100,19 @@ export function visibilityHelpers() {
    *   - `unquantifiable` when the engine cannot supply the matrix. Callers
    *     admit rather than guess.
    *
-   * @returns {null | {unquantifiable: true} | {lo: {x: number, y: number}, hi: {x: number, y: number}}}
-   *   `null` when `n` is not a scroll container at all.
+   * @returns {null | {unquantifiable: true} | {lo: {x: number, y: number}, hi: {x: number, y: number}, spanX: number, spanY: number}}
+   *   `null` when `n` is not styled as a scroll container at all; a zero
+   *   `spanY` / `spanX` means that axis has scroller styling and no
+   *   movement.
    */
   const scrollShiftRange = (n, cs) => {
     const scrollsY = cs.overflowY === 'auto' || cs.overflowY === 'scroll';
     const scrollsX = cs.overflowX === 'auto' || cs.overflowX === 'scroll';
     if (!scrollsY && !scrollsX) return null;
+    // `spanY` / `spanX` are returned beside the range (#2157 round 3): an
+    // `overflow: auto` box whose content fits has the STYLE of a scroller
+    // and none of the movement, and the clip walk must treat that axis as
+    // an ordinary clipper — its content cannot be scrolled into view.
     const spanY = scrollsY ? Math.max(0, n.scrollHeight - n.clientHeight) : 0;
     const spanX = scrollsX ? Math.max(0, n.scrollWidth - n.clientWidth) : 0;
     const minTop = cs.flexDirection === 'column-reverse' ? -spanY : 0;
@@ -126,7 +132,7 @@ export function visibilityHelpers() {
         if (t && t !== 'none') m = new DOMMatrixReadOnly(t).multiply(m ?? new DOMMatrixReadOnly());
       }
       if (m === null) {
-        return { lo: { x: local.xLo, y: local.yLo }, hi: { x: local.xHi, y: local.yHi } };
+        return { lo: { x: local.xLo, y: local.yLo }, hi: { x: local.xHi, y: local.yHi }, spanX, spanY };
       }
       const lo = { x: Infinity, y: Infinity };
       const hi = { x: -Infinity, y: -Infinity };
@@ -143,7 +149,7 @@ export function visibilityHelpers() {
         lo.y = Math.min(lo.y, p.y);
         hi.y = Math.max(hi.y, p.y);
       }
-      return { lo, hi };
+      return { lo, hi, spanX, spanY };
     } catch {
       return { unquantifiable: true };
     }
@@ -418,8 +424,22 @@ export function visibilityHelpers() {
     // test below: the summed displacement range they offer the content,
     // the intersection of their slits (the slit anything scrolled into
     // view is seen through), and whether one of them was unquantifiable.
-    const shift = { xLo: 0, xHi: 0, yLo: 0, yHi: 0 };
+    const zero = () => ({ xLo: 0, xHi: 0, yLo: 0, yHi: 0 });
+    const add = (r, range) => {
+      r.xLo += range.lo.x;
+      r.xHi += range.hi.x;
+      r.yLo += range.lo.y;
+      r.yHi += range.hi.y;
+    };
+    // What moves the ROW: every scroller passed so far.
+    const shift = zero();
+    // The innermost slit the row is seen through, in CURRENT coordinates;
+    // `innerShift` is how far the row can move relative to that slit (the
+    // scrollers at or below it), `slitShift` how far the slit itself can be
+    // carried by the scrollers passed since it was set (#2157 round 3).
     let slit = null;
+    let innerShift = zero();
+    const slitShift = zero();
     let unbounded = false;
     for (let n = node; n; n = n.parentElement) {
       const cs = getComputedStyle(n);
@@ -557,6 +577,24 @@ export function visibilityHelpers() {
       // A ZERO-extent clipper is still condemned above whatever scrolls
       // inside it, and an UNQUANTIFIABLE scroller (no transform matrix from
       // the engine) admits everything above it rather than guessing.
+      //
+      // ROUND 3 OF #2157 — TWO MORE, both about what "scroller" meant:
+      //
+      //   NESTED SCROLLERS. The slit was intersected with an outer
+      //   scroller's box where it currently sits, so an inner scrollport
+      //   below the outer one's slit gave an empty window and its row was
+      //   condemned — although the outer scroll carries slit and row into
+      //   view TOGETHER. The slit now has its own carrying range
+      //   (`slitShift`, the scrollers passed since it was set) and is placed
+      //   where that range best brings it against each box; the row is then
+      //   judged relative to the slit by the scrollers at or below it
+      //   (`innerShift`).
+      //
+      //   ZERO EXTENT. `overflow: auto` with content that fits is a scroller
+      //   by style and a clipper by behaviour, and it was granted the
+      //   any-overlap test on the strength of the style. Scroller-vs-clipper
+      //   is decided PER AXIS by the range's actual span, so a relatively
+      //   positioned row shifted out of such a box gets the half rule.
       const reach = (lo, hi, from, to, want) => {
         // Best-case overlap of an extent `[from, to]` moved by any amount in
         // `[lo, hi]` with `want`: centre it as far as the range allows.
@@ -564,53 +602,97 @@ export function visibilityHelpers() {
         const d = Math.min(Math.max(desired, lo), hi);
         return Math.min(to + d, want.hi) - Math.max(from + d, want.lo);
       };
-      const shown = slit === null
-        ? box
-        : {
-            top: Math.max(box.top, slit.top),
-            bottom: Math.min(box.bottom, slit.bottom),
-            left: Math.max(box.left, slit.left),
-            right: Math.min(box.right, slit.right),
-          };
+      const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi);
       if (range !== null && range.unquantifiable) unbounded = true;
+      // PER AXIS (#2157 round 3): an `overflow: auto` box whose content fits
+      // on an axis has no movement there and is an ordinary clipper for it.
+      const scrollsY = range !== null && !range.unquantifiable && range.spanY > 0;
+      const scrollsX = range !== null && !range.unquantifiable && range.spanX > 0;
       if (range !== null && !range.unquantifiable) {
-        shift.xLo += range.lo.x;
-        shift.xHi += range.hi.x;
-        shift.yLo += range.lo.y;
-        shift.yHi += range.hi.y;
+        add(shift, range);
+        if (slit !== null) add(slitShift, range);
       }
       if (!unbounded) {
-        if (range !== null) {
-          for (const q of boxes) {
-            const wantY = { lo: shown.top, hi: shown.bottom };
-            const wantX = { lo: shown.left, hi: shown.right };
-            if (clipsY && q.height > 0 && reach(shift.yLo, shift.yHi, q.top, q.bottom, wantY) <= 0) {
-              return false;
-            }
-            if (clipsX && q.width > 0 && reach(shift.xLo, shift.xHi, q.left, q.right, wantX) <= 0) {
-              return false;
-            }
-          }
-        } else if (slit !== null) {
-          const slitH = slit.bottom - slit.top;
-          const slitW = slit.right - slit.left;
-          if (clipsY && slitH > 0 && (shown.bottom - shown.top) / slitH < 0.5) return false;
-          if (clipsX && slitW > 0 && (shown.right - shown.left) / slitW < 0.5) return false;
-        } else {
+        if (slit === null) {
           for (const q of boxes) {
             if (clipsY && q.height > 0) {
-              const seen = Math.min(q.bottom, box.bottom) - Math.max(q.top, box.top);
-              if (seen / q.height < 0.5) return false;
+              const seen = scrollsY
+                ? reach(shift.yLo, shift.yHi, q.top, q.bottom, { lo: box.top, hi: box.bottom })
+                : Math.min(q.bottom, box.bottom) - Math.max(q.top, box.top);
+              if (scrollsY ? seen <= 0 : seen / q.height < 0.5) return false;
             }
             if (clipsX && q.width > 0) {
-              const seen = Math.min(q.right, box.right) - Math.max(q.left, box.left);
-              if (seen / q.width < 0.5) return false;
+              const seen = scrollsX
+                ? reach(shift.xLo, shift.xHi, q.left, q.right, { lo: box.left, hi: box.right })
+                : Math.min(q.right, box.right) - Math.max(q.left, box.left);
+              if (scrollsX ? seen <= 0 : seen / q.width < 0.5) return false;
             }
           }
+          if (scrollsY || scrollsX) {
+            slit = { top: box.top, bottom: box.bottom, left: box.left, right: box.right };
+            innerShift = { ...shift };
+          }
+        } else {
+          // NESTED (#2157 round 3): the slit is carried by the scrollers
+          // passed since it was set, so it is placed where those can best
+          // bring it against this box before anything is judged — an inner
+          // scrollport currently below an outer scroller's slit comes into
+          // view together with its row when the outer one scrolls.
+          const dy = clamp(
+            (box.top + box.bottom - slit.top - slit.bottom) / 2,
+            slitShift.yLo,
+            slitShift.yHi,
+          );
+          const dx = clamp(
+            (box.left + box.right - slit.left - slit.right) / 2,
+            slitShift.xLo,
+            slitShift.xHi,
+          );
+          const S = {
+            top: Math.max(slit.top + dy, box.top),
+            bottom: Math.min(slit.bottom + dy, box.bottom),
+            left: Math.max(slit.left + dx, box.left),
+            right: Math.min(slit.right + dx, box.right),
+          };
+          // The SLIT has to be shown through this box: any positive extent
+          // on an axis this box scrolls, the half rule on one it merely
+          // clips — a scrollport mostly hidden shows at most a sliver of
+          // anything scrolled into it, and one wholly outside shows nothing.
+          if (clipsY) {
+            const seen = S.bottom - S.top;
+            if (seen <= 0 || (!scrollsY && seen / (slit.bottom - slit.top) < 0.5)) return false;
+          }
+          if (clipsX) {
+            const seen = S.right - S.left;
+            if (seen <= 0 || (!scrollsX && seen / (slit.right - slit.left) < 0.5)) return false;
+          }
+          // And the ROW has to reach the part of the slit that is shown,
+          // moving relative to the slit by the scrollers at or below it.
+          const want = { top: S.top - dy, bottom: S.bottom - dy, left: S.left - dx, right: S.right - dx };
+          for (const q of boxes) {
+            if (
+              clipsY &&
+              q.height > 0 &&
+              reach(innerShift.yLo, innerShift.yHi, q.top, q.bottom, { lo: want.top, hi: want.bottom }) <= 0
+            ) {
+              return false;
+            }
+            if (
+              clipsX &&
+              q.width > 0 &&
+              reach(innerShift.xLo, innerShift.xHi, q.left, q.right, { lo: want.left, hi: want.right }) <= 0
+            ) {
+              return false;
+            }
+          }
+          // Everything seen from here up is seen through this box too. The
+          // slit keeps its full carrying range for the clippers above: the
+          // placement chosen here was for THIS box, and pinning it would
+          // condemn a row a higher clipper could still be shown by a
+          // different scroll position — the admitting error, deliberately.
+          slit = want;
         }
       }
-      // Everything seen from here up is seen through this box too.
-      slit = range !== null || slit !== null ? shown : slit;
     }
     return true;
   };

@@ -1680,3 +1680,67 @@ test('body as an independent scroller is credited when it is not the page scroll
   expect(result.rowTop).toBe(-300);
   expect(result.row, 'a row scrolled above an independent body scroller').toBe(true);
 });
+
+// #2157 round 3 — two more things "scroller" has to mean:
+//
+//   - NESTED. An inner scrollport currently below an outer scroller's slit
+//     is carried into view TOGETHER with its row when the outer one
+//     scrolls. Intersecting the inner slit with the outer box where it
+//     currently sits condemned that row.
+//   - ZERO EXTENT. `overflow: auto` whose content fits is a clipper by
+//     behaviour whatever its style says; a relatively positioned row
+//     shifted out of it cannot be scrolled back and gets the half rule.
+test('nested scrollers carry the inner slit, and a zero-extent scroller is a clipper', async ({
+  page,
+}) => {
+  await page.setContent(`<!DOCTYPE html>
+    <style>html { overflow: hidden } body { margin: 0 } p { margin: 0 }</style>
+    <!-- y 0..40: the outer scroller, at rest; its inner scroller sits 200
+         down, outside the outer slit until the outer one scrolls -->
+    <div id="outer" style="height:40px; overflow:auto">
+      <p style="height:200px">outer filler</p>
+      <div id="inner" style="height:40px; overflow:auto">
+        <p id="nestedRow" style="height:20px">above the inner slit, below the outer one</p>
+        <p style="height:400px">inner filler</p>
+      </div>
+    </div>
+    <!-- y 40..80: scroller styling, no scroll extent -->
+    <div id="zeroExtent" style="height:40px; overflow:auto">
+      <p id="shiftedRow" style="position:relative; top:-39px; height:20px">one pixel of this is inside the box</p>
+    </div>
+  `);
+  const result = await page.evaluate((helpersSrc) => {
+    const family = new Function(`return (${helpersSrc})();`)();
+    const visible = family.visible as (n: Element | null) => boolean;
+    const byId = (id: string) => document.getElementById(id)!;
+    byId('inner').scrollTop = 300;
+    const zero = byId('zeroExtent');
+    return {
+      pageScrollY: window.scrollY,
+      outerScrollTop: byId('outer').scrollTop,
+      innerScrollTop: byId('inner').scrollTop,
+      innerTop: byId('inner').getBoundingClientRect().top,
+      nestedRowTop: byId('nestedRow').getBoundingClientRect().top,
+      nestedRow: visible(byId('nestedRow')),
+      zeroSpan: zero.scrollHeight - zero.clientHeight,
+      shiftedRowTop: byId('shiftedRow').getBoundingClientRect().top,
+      shiftedRow: visible(byId('shiftedRow')),
+    };
+  }, VISIBILITY_SOURCE);
+
+  expect(result.pageScrollY).toBe(0);
+  // The premise: outer at rest with the inner scroller 200 below its slit,
+  // inner scrolled 300 so the row sits at 200 - 300 = -100. Scrolling the
+  // outer by 200 brings the inner slit to 0..40; scrolling the inner back
+  // brings the row into it.
+  expect(result.outerScrollTop).toBe(0);
+  expect(result.innerScrollTop).toBe(300);
+  expect(result.innerTop).toBe(200);
+  expect(result.nestedRowTop).toBe(-100);
+  expect(result.nestedRow, 'a row in a nested scroller the outer one can reveal').toBe(true);
+  // No movement to credit: the row shifted to 1 leaves one pixel of twenty
+  // inside the box and nothing scrolls it back, so the half rule condemns.
+  expect(result.zeroSpan).toBe(0);
+  expect(result.shiftedRowTop).toBe(1);
+  expect(result.shiftedRow, 'a row shifted out of a zero-extent scroller').toBe(false);
+});
