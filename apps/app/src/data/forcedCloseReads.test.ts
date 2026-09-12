@@ -25,12 +25,18 @@ const planWith = (asset: `0x${string}` | undefined) =>
 const ok = (result: unknown): MulticallSlot => ({ status: 'success', result });
 const fail: MulticallSlot = { status: 'failure', error: new Error('reverted') };
 
+/** An Active ERC-20 loan with ERC-20 collateral and both-party consent,
+ *  as `getLoanDetails` decodes it (enums as numbers). */
+const LOAN = { status: 0, assetType: 0, collateralAssetType: 0, riskAndTermsConsentFromBoth: true };
+
 /** Every slot answering, in plan order. */
 function allGood(plan: readonly ForcedCloseReadEntry[]): MulticallSlot[] {
   return plan.map((e) => {
     switch (e.key) {
       case 'block':
         return ok(46_725_021n);
+      case 'loan':
+        return ok(LOAN);
       case 'defaultable':
         return ok(true);
       case 'sequencer':
@@ -68,6 +74,7 @@ describe('forcedCloseReadPlan', () => {
       expect(e.contract.address).toBe(DIAMOND);
     }
     const byKey = Object.fromEntries(planWith(ASSET).map((e) => [e.key, e.contract]));
+    expect(byKey.loan.args).toEqual([7n]);
     expect(byKey.defaultable.args).toEqual([7n]);
     expect(byKey.match.args).toEqual([7n]);
     expect(byKey.ltv.args).toEqual([7n]);
@@ -80,6 +87,10 @@ describe('forcedCloseFacts', () => {
     const plan = planWith(ASSET);
     expect(forcedCloseFacts(plan, allGood(plan))).toEqual({
       block: 46_725_021n,
+      active: true,
+      consentFromBoth: true,
+      assetType: 'erc20',
+      collateralIsNft: false,
       defaultable: true,
       sequencerHealthy: true,
       paused: false,
@@ -127,6 +138,43 @@ describe('forcedCloseFacts', () => {
     const facts = forcedCloseFacts(plan, slots);
     expect(facts.block).toBeUndefined();
     expect(facts.defaultable).toBe(true);
+  });
+
+  // #2148 round 1 P1 — the loan's OWN status, consent and shape come from
+  // the same execution as the polled facts, so the published block dates
+  // the whole decision rather than part of it.
+  it('reads status, consent and shape off the loan struct in the same aggregate', () => {
+    const plan = planWith(ASSET);
+    const withLoan = (loan: object) =>
+      forcedCloseFacts(plan, allGood(plan).map((s, i) => (plan[i].key === 'loan' ? ok(loan) : s)));
+    expect(withLoan({ ...LOAN, status: 1 }).active).toBe(false);
+    expect(withLoan({ ...LOAN, riskAndTermsConsentFromBoth: false }).consentFromBoth).toBe(false);
+    expect(withLoan({ ...LOAN, assetType: 1 }).assetType).toBe('rental');
+    expect(withLoan({ ...LOAN, collateralAssetType: 2 }).collateralIsNft).toBe(true);
+    // Enums may decode as bigint on some paths; the mapper reads either.
+    expect(withLoan({ ...LOAN, status: 0n, assetType: 0n, collateralAssetType: 1n })).toMatchObject({
+      active: true,
+      assetType: 'erc20',
+      collateralIsNft: true,
+    });
+  });
+
+  it('leaves status, consent and shape unread when the loan slot failed, and the rest standing', () => {
+    const plan = planWith(ASSET);
+    const facts = forcedCloseFacts(plan, allGood(plan).map((s, i) => (plan[i].key === 'loan' ? fail : s)));
+    expect(facts.active).toBeUndefined();
+    expect(facts.consentFromBoth).toBeUndefined();
+    expect(facts.assetType).toBeUndefined();
+    expect(facts.collateralIsNft).toBeUndefined();
+    expect(facts.defaultable).toBe(true);
+    expect(facts.block).toBe(46_725_021n);
+  });
+
+  it('does not read a struct of an unexpected shape as evidence', () => {
+    const plan = planWith(ASSET);
+    const facts = forcedCloseFacts(plan, allGood(plan).map((s, i) => (plan[i].key === 'loan' ? ok(['not', 'a', 'struct']) : s)));
+    expect(facts.active).toBeUndefined();
+    expect(facts.consentFromBoth).toBeUndefined();
   });
 
   it('reads the match candidate off the tuple', () => {

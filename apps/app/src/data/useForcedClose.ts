@@ -23,9 +23,16 @@
  * a surface touching funds states what it knows, and "as of which block"
  * is part of what it knows.
  *
- * `consent` stays its own query. It is set at loan init and never changes,
- * so it carries a long staleTime and no block — any block is a valid
- * answer for an immutable fact.
+ * EVERY decision input is in the aggregate, including the loan's own
+ * status, consent flag and shape (#2148 round 1 P1). The first version
+ * left consent as a separate long-staleTime query — set at init, never
+ * changes, any block is a valid answer — and took status and shape from
+ * the page's own reads. The immutability argument was sound and still
+ * beside the point: the block is published as the height the DECISION was
+ * made at, and a decision assembled from inputs evaluated at different
+ * times has no single height. Reading the loan struct as one more call in
+ * the same execution makes the claim true without exceptions, at the cost
+ * of one call in an `eth_call` that was already being made.
  *
  * ## The read that is allowed to fail
  *
@@ -38,7 +45,6 @@
  */
 import { useQuery } from '@tanstack/react-query';
 import { usePublicClient } from 'wagmi';
-import { DIAMOND_ABI_VIEM } from '../contracts/diamond';
 import { useActiveChain } from '../chain/useActiveChain';
 import { forcedCloseFacts, forcedCloseReadPlan } from './forcedCloseReads';
 
@@ -49,6 +55,12 @@ import { forcedCloseFacts, forcedCloseReadPlan } from './forcedCloseReads';
 const REFETCH_MS = 30_000;
 
 export interface ForcedCloseReads {
+  /** `loan.status === Active`, from the aggregate. */
+  active: boolean | undefined;
+  /** The principal leg's kind, from the aggregate. */
+  assetType: 'erc20' | 'rental' | undefined;
+  /** The collateral leg is an NFT, from the aggregate. */
+  collateralIsNft: boolean | undefined;
   defaultable: boolean | undefined;
   sequencerHealthy: boolean | undefined;
   paused: boolean | undefined;
@@ -56,12 +68,12 @@ export interface ForcedCloseReads {
   internalMatchCandidate: boolean | undefined;
   collateralIlliquid: boolean | undefined;
   ltvCollapsed: boolean | undefined;
-  /** The block every polled fact above was evaluated at — `block.number`
-   *  of the aggregate's own execution, not a sighting taken beside it.
+  /** The block every fact above was evaluated at — `block.number` of
+   *  the aggregate's own execution, not a sighting taken beside it.
    *  `undefined` while unread, when the aggregate failed, or in the one
    *  case where only the block call inside it failed. */
   block: bigint | undefined;
-  /** When the OLDEST decision input last settled.
+  /** When the decision inputs last settled.
    *
    *  The card releases its post-submit hold once this passes the submit
    *  stamp, so the question it must answer is "has every fact behind
@@ -76,9 +88,10 @@ export interface ForcedCloseReads {
    *  `defaultable` refetch could land first and release the hold while
    *  `internalMatch` still served its stale `true`, re-offering an
    *  empty-route close-out that the live simulation would then refuse.
+   *  It then became the OLDEST settle time across several queries.
    *
-   *  With the polled facts in one aggregate, one refetch rechecks all of
-   *  them together, which is the strong form of that requirement.
+   *  With every fact in one aggregate there is one query and one settle
+   *  time, which is the strong form of that requirement by construction.
    *
    *  Settled means data OR error: a query that fails after the submit
    *  has genuinely been rechecked, and its `undefined` feeds the
@@ -141,28 +154,6 @@ export function useForcedCloseReads(opts: {
     },
   });
 
-  /** `loan.riskAndTermsConsentFromBoth`, straight off the loan struct.
-   *
-   *  Read HERE rather than taken from the page's `loanLive`, which is
-   *  Advanced-mode only — sourcing it there would have left the flag
-   *  permanently undefined in Basic mode and stalled the card on
-   *  `unknown` for exactly the lenders least likely to know why. It is
-   *  set at init and never changes, so a long staleTime is correct. */
-  const consent = useQuery({
-    queryKey: ['forcedClose', 'consent', readChain.chainId, String(loanId)],
-    enabled: on,
-    staleTime: 10 * 60_000,
-    queryFn: async () => {
-      const live = (await publicClient!.readContract({
-        address: diamond,
-        abi: DIAMOND_ABI_VIEM,
-        functionName: 'getLoanDetails',
-        args: [BigInt(loanId!)],
-      })) as { riskAndTermsConsentFromBoth: boolean };
-      return Boolean(live.riskAndTermsConsentFromBoth);
-    },
-  });
-
   // `isError` disqualifies a cached value rather than ranking below it —
   // the house rule from `loanLive` and the sale lock. A stale
   // "defaultable" retained through a failed refetch would keep a submit
@@ -171,21 +162,17 @@ export function useForcedCloseReads(opts: {
   const facts = reads.isError ? undefined : reads.data;
 
   return {
+    active: facts?.active,
+    assetType: facts?.assetType,
+    collateralIsNft: facts?.collateralIsNft,
     defaultable: facts?.defaultable,
     sequencerHealthy: facts?.sequencerHealthy,
     paused: facts?.paused,
-    consentFromBoth: consent.isError ? undefined : consent.data,
+    consentFromBoth: facts?.consentFromBoth,
     internalMatchCandidate: facts?.internalMatchCandidate,
     collateralIlliquid: facts?.collateralIlliquid,
     ltvCollapsed: facts?.ltvCollapsed,
     block: facts?.block,
-    updatedAt: oldestSettledAt(),
+    updatedAt: Math.max(reads.dataUpdatedAt, reads.errorUpdatedAt),
   };
-
-  /** The earliest settle time across the two queries this decision reads. */
-  function oldestSettledAt(): number {
-    const settled = (q: { dataUpdatedAt: number; errorUpdatedAt: number }) =>
-      Math.max(q.dataUpdatedAt, q.errorUpdatedAt);
-    return Math.min(settled(reads), settled(consent));
-  }
 }

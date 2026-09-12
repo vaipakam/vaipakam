@@ -35,7 +35,9 @@
  * order is shared by construction rather than by discipline.
  */
 import { DIAMOND_ABI_VIEM } from '../contracts/diamond';
+import { LOAN_STATUS_ACTIVE } from '../contracts/loanLive';
 import { LIQUIDITY_LIQUID } from '../contracts/preflights';
+import { AssetType } from '../lib/types';
 
 /** `Multicall3.getBlockNumber()` — on the deployed contract, though viem's
  *  bundled `multicall3Abi` does not carry it. */
@@ -51,6 +53,7 @@ export const MULTICALL3_BLOCK_NUMBER_ABI = [
 
 export type ForcedCloseReadKey =
   | 'block'
+  | 'loan'
   | 'defaultable'
   | 'sequencer'
   | 'paused'
@@ -78,12 +81,32 @@ export interface MulticallSlot {
   error?: unknown;
 }
 
-/** The facts `decideForcedClose` consumes, plus where they came from. */
+/** EVERY chain fact `decideForcedClose` consumes, plus where they came
+ *  from. Every, not most (#2148 round 1 P1): the block is published as
+ *  the height the decision was made at, and that is true only if every
+ *  input to the decision was evaluated in the same execution — so the
+ *  loan's own status, consent flag and shape are read HERE, from the
+ *  loan struct inside the aggregate, rather than taken from the page's
+ *  separately-timed status query or the indexed row. The one input not
+ *  here is whether the viewer holds the lender position, which is not a
+ *  fact about the loan and only ever removes the card (and with it the
+ *  block) rather than dating it. */
 export interface ForcedCloseFacts {
   /** `block.number` of the execution that produced every other field.
    *  `undefined` only if that one call failed — the facts are still
    *  facts, of a block the card then cannot name. */
   block: bigint | undefined;
+  /** `loan.status === Active`, from the struct read in the aggregate. */
+  active: boolean | undefined;
+  /** `loan.riskAndTermsConsentFromBoth`, same read. Set at init and
+   *  never changes, so it would be true at any block — it is read here
+   *  anyway so the provenance claim needs no exceptions. */
+  consentFromBoth: boolean | undefined;
+  /** The PRINCIPAL leg — an NFT rental never takes the swap path. */
+  assetType: 'erc20' | 'rental' | undefined;
+  /** The COLLATERAL leg is an ERC-721/1155 — a separate axis from the
+   *  principal leg; see `ForcedCloseInput.collateralIsNft`. */
+  collateralIsNft: boolean | undefined;
   defaultable: boolean | undefined;
   sequencerHealthy: boolean | undefined;
   paused: boolean | undefined;
@@ -115,6 +138,9 @@ export function forcedCloseReadPlan(input: {
         functionName: 'getBlockNumber',
       },
     },
+    // The loan itself, so status / consent / shape carry the same
+    // provenance as the polled facts beside them.
+    { key: 'loan', contract: { ...d, functionName: 'getLoanDetails', args: [input.loanId] } },
     { key: 'defaultable', contract: { ...d, functionName: 'isLoanDefaultable', args: [input.loanId] } },
     { key: 'sequencer', contract: { ...d, functionName: 'sequencerHealthy' } },
     { key: 'paused', contract: { ...d, functionName: 'paused' } },
@@ -160,13 +186,44 @@ export function forcedCloseFacts(
     ok.has(key) ? Boolean(ok.get(key)) : undefined;
 
   const blockRaw = ok.get('block');
+  const loanRaw = ok.get('loan');
   const matchRaw = ok.get('match');
   const liquidityRaw = ok.get('liquidity');
   const ltvRaw = ok.get('ltv');
   const riskRaw = ok.get('risk');
 
+  // The loan struct's three fields the decision reads. Each is `undefined`
+  // when the slot failed OR the field is not the shape expected — a struct
+  // from a different ABI is not evidence of anything.
+  const loan =
+    loanRaw !== null && typeof loanRaw === 'object'
+      ? (loanRaw as {
+          status?: unknown;
+          assetType?: unknown;
+          collateralAssetType?: unknown;
+          riskAndTermsConsentFromBoth?: unknown;
+        })
+      : undefined;
+  const enumField = (v: unknown): number | undefined =>
+    typeof v === 'number' ? v : typeof v === 'bigint' ? Number(v) : undefined;
+  const status = enumField(loan?.status);
+  const principalType = enumField(loan?.assetType);
+  const collateralType = enumField(loan?.collateralAssetType);
+
   return {
     block: typeof blockRaw === 'bigint' ? blockRaw : undefined,
+    active: status === undefined ? undefined : status === LOAN_STATUS_ACTIVE,
+    consentFromBoth:
+      typeof loan?.riskAndTermsConsentFromBoth === 'boolean'
+        ? loan.riskAndTermsConsentFromBoth
+        : undefined,
+    assetType:
+      principalType === undefined
+        ? undefined
+        : principalType === AssetType.ERC20
+          ? 'erc20'
+          : 'rental',
+    collateralIsNft: collateralType === undefined ? undefined : collateralType !== AssetType.ERC20,
     defaultable: bool('defaultable'),
     sequencerHealthy: bool('sequencer'),
     paused: bool('paused'),

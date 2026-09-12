@@ -1006,6 +1006,14 @@ export function declaredStateConsistent(state, facts) {
     ['defaultable', 'isLoanDefaultable'],
     ['internalMatch', 'hasInternalMatchCandidate'],
   ];
+  // ROUND 1 P2 — "CONSISTENT" MEANS AT LEAST ONE FACT WAS COMPARED. A
+  // state that implies nothing this drive re-reads (`blocked-paused`,
+  // `unknown`, `not-applicable`) used to fall through the loop untouched
+  // and come out `consistent` — a report claiming the chain agreed when
+  // no chain fact had been consulted, which is the same false PASS the
+  // whole `declaredFacts` status exists to prevent. Zero comparisons is
+  // unjudged, and says so.
+  let compared = 0;
   for (const [key, view] of checks) {
     const expected = implies[key];
     if (expected === undefined) continue;
@@ -1020,6 +1028,13 @@ export function declaredStateConsistent(state, facts) {
         why: `the card declares "${state}", which requires ${view} to be ${expected} at the block it names, and the chain says ${actual} there`,
       };
     }
+    compared += 1;
+  }
+  if (compared === 0) {
+    return {
+      judged: false,
+      why: `"${state}" implies nothing about the facts this drive re-reads at the declared block`,
+    };
   }
   return { judged: true, consistent: true };
 }

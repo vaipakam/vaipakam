@@ -1418,11 +1418,32 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
    *  by `unknown` rather than by `false`: visible, explicitly waiting on
    *  a check, and non-submittable. Not the lender is still a firm
    *  `false`; that is a fact, not an unread. */
+  /** #2148 round 1 P1 — EVERY chain input from the ONE aggregate.
+   *
+   *  Status, consent and both legs' shape used to come from the page's
+   *  own status query and the loan row, with the polled facts from the
+   *  readiness hook. The card now publishes the block its decision was
+   *  made at, and that is only true if the whole decision was evaluated
+   *  there — so the loan struct is read inside the same aggregate and
+   *  the decision consumes nothing else about the loan. The status the
+   *  page resolves for its other surfaces is unchanged; this decision
+   *  simply no longer reads it.
+   *
+   *  Two page-side inputs remain, and both can only HIDE the card, never
+   *  date a state. Holding the lender position is a fact about the
+   *  viewer, not the loan. The page's own reconciled status is kept as a
+   *  NEGATIVE gate: a loan the page has affirmatively seen leave Active
+   *  has nothing to force, and the readiness reads are not mounted for
+   *  it — so without this gate a repaid loan would resolve `unknown` and
+   *  paint "still checking" over a position that is settled. Where the
+   *  page's status is Active or unread, the aggregate's own status
+   *  decides, so every state the card actually renders was resolved from
+   *  the block it names. */
   const forcedCloseActive = !isLenderHolder
     ? false
-    : resolvedLoanStatus === undefined
-      ? undefined
-      : resolvedLoanStatus === LoanStatus.Active;
+    : resolvedLoanStatus !== undefined && resolvedLoanStatus !== LoanStatus.Active
+      ? false
+      : forcedCloseReads.active;
   const forcedCloseInput: ForcedCloseInput = {
     active: forcedCloseActive,
     defaultable: forcedCloseReads.defaultable,
@@ -1430,21 +1451,13 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     paused: forcedCloseReads.paused,
     consentFromBoth: forcedCloseReads.consentFromBoth,
     internalMatchCandidate: forcedCloseReads.internalMatchCandidate,
-    assetType:
-      loan.data === null || loan.data === undefined
-        ? undefined
-        : loanIsRental
-          ? 'rental'
-          : 'erc20',
+    assetType: forcedCloseReads.assetType,
     // The PRINCIPAL leg above and the COLLATERAL leg here are separate
     // axes (round 28 P1). An ERC-20 loan secured by an NFT is neither a
     // rental nor a liquidity question — the liquidity read is never
     // issued for it, so without this the decision waited on an answer
     // that could not arrive.
-    collateralIsNft:
-      loan.data === null || loan.data === undefined
-        ? undefined
-        : collateralIsNft,
+    collateralIsNft: forcedCloseReads.collateralIsNft,
     collateralIlliquid: forcedCloseReads.collateralIlliquid,
     ltvCollapsed: forcedCloseReads.ltvCollapsed,
   };

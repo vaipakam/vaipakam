@@ -72,10 +72,18 @@ describe('declaredStateConsistent', () => {
     expect(declaredStateConsistent('blocked-sequencer', { defaultable: true })).toEqual({ judged: true, consistent: true });
   });
 
-  it('expects nothing of either fact for states resolved before both', () => {
+  it('is UNJUDGED, never consistent, for states that imply nothing it re-reads', () => {
+    // Round 1 P2: these three used to come out `consistent` with zero
+    // comparisons made — a claim the chain agreed, resting on nothing. A
+    // wrongly declared pause must not be affirmed by a verifier that
+    // never reads the pause flag.
     for (const state of ['blocked-paused', 'unknown', 'not-applicable']) {
-      expect(declaredStateConsistent(state, {})).toEqual({ judged: true, consistent: true });
-      expect(declaredStateConsistent(state, { defaultable: false, internalMatch: true })).toEqual({ judged: true, consistent: true });
+      for (const facts of [{}, { defaultable: false, internalMatch: true }]) {
+        const v = declaredStateConsistent(state, facts);
+        expect(v.judged).toBe(false);
+        expect(v.consistent).toBeUndefined();
+        expect(v.why).toMatch(/implies nothing/);
+      }
     }
   });
 

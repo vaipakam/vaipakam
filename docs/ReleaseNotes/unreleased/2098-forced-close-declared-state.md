@@ -27,9 +27,13 @@ card permanently undecided on the positions it serves best. The reads
 are now one aggregate that returns a status per call, which keeps that
 independence while making one request instead of seven, and the
 aggregate asks the chain its own block number in the same execution.
-So the block the card names is the block the facts were read at, not a
-sighting taken beside them and not a pinned height a load-balanced
-provider might refuse.
+The loan's own record rides in the same aggregate, so its status, its
+consent flag and the kind of asset on each leg carry the same
+provenance as the polled facts beside them; the decision consumes
+nothing about the loan from anywhere else. So the block the card names
+is the block every fact behind its decision was read at, not a sighting
+taken beside them and not a pinned height a load-balanced provider
+might refuse.
 
 The live drive reads both attributes and uses them. Settlement is read
 off the declared state where one exists, and inferred from the copy

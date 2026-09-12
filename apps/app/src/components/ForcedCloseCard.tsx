@@ -645,8 +645,9 @@ export function ForcedCloseCard({
     // REVERSIBLE. `useForcedCloseReads` is enabled on the page's
     // `effectivelyActive`, so a close-out that lands the loan in
     // `FallbackPending` — seen by the live-status rail or another tab
-    // before this watcher processes the receipt — disables all seven
-    // reads while the card stays mounted. They keep their PRE-CLOSE
+    // before this watcher processes the receipt — disables the readiness
+    // aggregate (one query since #2148; seven before it) while the card
+    // stays mounted. It keeps its PRE-CLOSE
     // cache. The active set is then empty, the target completes on the
     // spot, and if the borrower later cures back to Active those
     // queries reactivate and serve the old readings to a card whose
