@@ -1134,7 +1134,10 @@ stand underneath it:
   (plus a 5 s margin, capped at `RETRY_WAIT_CAP_SECONDS`, 15 min) and tries
   exactly once more. It reads the wait from the request trace, never from
   `/rate_limit` — that endpoint does not report the bucket the request was
-  metered against, and the §3.3 note about secondary limits applies. A
+  metered against, and the §3.3 note about secondary limits applies. One
+  wait is a guess rather than a reading: a 403/429 whose only statement of
+  the limit is a "secondary rate limit" body, with no `Retry-After`, gets a
+  fixed 60 s, and the log's reason string says `default wait` for it. A
   failure that states no limit (bad credentials, an unreadable project) is
   not retried; a second limit after the reset is not either — the run fails
   with the request's status, headers and message in the log, and the next
@@ -1142,7 +1145,11 @@ stand underneath it:
 
 When it is the **listing** that failed, a red sweep means one of three things,
 and the log's diagnostic group says which: the limit outlasted one retry, the
-wait exceeded the cap, or the failure was never a limit. The sweep can also go
+wait exceeded the cap, or **no limit was recognised** — which covers a
+refusal that is not a limit (bad credentials, an unreadable project) AND a
+trace the parser could not read at all, where the group says the debug
+format may have changed and the run cannot tell whether it was limited; treat
+that one as unknown, not as "not a limit". The sweep can also go
 red before the listing (the run-history lookup for the closed-issue watermark)
 or after it (a truncated listing, an add or a Done-move that did not land);
 those print their own `::error::` line and no diagnostic group.

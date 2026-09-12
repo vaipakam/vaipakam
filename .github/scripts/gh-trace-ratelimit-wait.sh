@@ -75,8 +75,15 @@ analyse() { # analyse <trace> <now-epoch>  -> prints "<seconds>\t<reason>", exit
   message=$(printf '%s\n' "$last" \
     | grep -aoE '"message"[[:space:]]*:[[:space:]]*"[^"]{0,300}"' | tail -n 1 || true)
 
-  local status
-  status=$(printf '%s\n' "$last" | head -n 1 | sed -E 's/^[[:space:]]*<?[[:space:]]*HTTP\/[0-9.]+[[:space:]]+([0-9]{3}).*/\1/')
+  # The status line is the first line of the last response — taken by
+  # parameter expansion, NOT by piping the response through `head -n 1`:
+  # with a body larger than the pipe buffer, `head` exits after one line
+  # while `printf` is still writing, `pipefail` turns the SIGPIPE into 141,
+  # and `set -e` ends the analysis with no verdict — on exactly the large
+  # GraphQL responses a limited listing can carry (#2149 r4).
+  local status_line status
+  status_line=${last%%$'\n'*}
+  status=$(printf '%s\n' "$status_line" | sed -E 's/^[[:space:]]*<?[[:space:]]*HTTP\/[0-9.]+[[:space:]]+([0-9]{3}).*/\1/')
 
   # TWO SHAPES, AND ONLY THESE TWO. The first version of this treated each
   # signal on its own as proof of a limit — a `Retry-After` alone, a body
@@ -301,6 +308,20 @@ selftest() {
 '< HTTP/2.0 403 Forbidden
 < retry-after: 30' \
     1789188167 0 30
+
+  # A LARGE BODY ON THE LIMITED RESPONSE (#2149 r4). A limited GraphQL page
+  # can still carry data, and a body past the pipe buffer is where a
+  # `head -n 1` reading the status line exits early, `pipefail` reports 141
+  # and `set -e` ends the analysis with no verdict. 200 KB, well past any
+  # pipe buffer; the verdict must be the same as for a small one.
+  local big
+  big=$(head -c 200000 /dev/zero | tr '\0' 'x')
+  expect "a 200 KB body on the limited response still yields a verdict" \
+"< HTTP/2.0 200 OK
+< X-Ratelimit-Remaining: 0
+< X-Ratelimit-Reset: 1789188527
+{\"data\":{\"padding\":\"$big\"},\"message\":\"API rate limit already exceeded for user ID 275282153.\"}" \
+    1789188167 0 360
 
   if [ "$fail" -ne 0 ]; then echo "gh-trace-ratelimit-wait selftest: FAILED" >&2; return 1; fi
   echo "gh-trace-ratelimit-wait selftest: all passed"
