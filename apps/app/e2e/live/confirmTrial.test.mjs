@@ -291,23 +291,29 @@ describe('a reading that did not happen is never reported as an absence', () => 
     expect(src).toContain('mountFault: String(mountFault?.message ?? mountFault)');
   });
 
-  it('refuses an unbalanced extraction at import instead of at the first poll', () => {
-    // Without this the brace walk can run off the end of the file and
-    // return everything from the helper to EOF — source `new Function`
-    // rejects on the first poll, inside the very `catch` above. Failing
-    // at import, by name, is the difference between a named error and a
-    // silent false absence.
-    const i = at("const block = (name) => {");
-    expect(i, 'the extractor was not found').toBeGreaterThan(-1);
-    // WINDOWED TO THE WHOLE FUNCTION, not to a character count. The first
-    // version sliced 1600 characters and passed until round 66 added a
-    // special case to the extractor and pushed the guard past the
-    // window — a test failing because the file grew, which teaches
-    // nothing and trains a reader to widen the number. Bounded by the
-    // next declaration instead.
-    const end = src.indexOf('const SCRAPE_FAILED', i);
-    expect(end, 'the extractor is no longer followed by SCRAPE_FAILED').toBeGreaterThan(i);
-    expect(src.slice(i, end)).toContain('if (depth !== 0) {');
+  it('runs the mount wait on the ONE predicate definition, composed on the Node side (#2102)', () => {
+    // The wait used to rebuild `visible` from source strings sliced out
+    // of this file by brace-matching and run through `new Function`
+    // INSIDE the page — an extraction that could run off the end of the
+    // file, a fixed arity that silently dropped a helper when the
+    // predicate was split (round 66), and a third copy of the predicate
+    // to keep in step with the two scrape copies. All three of those
+    // hazards were the extraction's; the extraction is gone. The helpers
+    // live in `visibility.mjs`, and every consumer in the drive — the
+    // mount wait included — goes through `withVisibility`, which composes
+    // them with the body in Node and hands Playwright plain code.
+    expect(src, 'the source-slicing extractor is gone').not.toContain('VISIBILITY_HELPER_SOURCES');
+    expect(src, 'no predicate is defined inline any more').not.toMatch(
+      /const (notClipped|paintsText|shownBox|visibleTextOf) = \((node|root)\) => \{/,
+    );
+    expect(src, 'nothing in the drive evaluates source inside the page').not.toContain('new Function(');
+    expect(src).toContain("import { withVisibility } from './visibility.mjs';");
+    const wait = src.indexOf('.waitForFunction(');
+    expect(wait, 'the mount wait was not found').toBeGreaterThan(-1);
+    const waitEnd = src.indexOf('{ timeout: timeoutMs, polling: 250 }', wait);
+    expect(waitEnd, 'the mount wait no longer carries its options').toBeGreaterThan(wait);
+    expect(src.slice(wait, waitEnd)).toContain('withVisibility((V) =>');
+    expect(src.slice(wait, waitEnd)).toContain('.some(V.visible)');
   });
 
   it('builds the nothing-established shape in exactly ONE place', () => {
@@ -329,23 +335,20 @@ describe('a reading that did not happen is never reported as an absence', () => 
     expect(all.length - declarations.length, 'every site goes through it').toBe(5);
   });
 
-  it('passes the helper sources by SPREAD, not by a fixed arity', () => {
-    // ROUND 66, and this one was caught by a live run rather than by a
-    // test, which is why it is pinned now.
-    //
-    // The wait destructured exactly three source strings. Splitting the
-    // predicate into four left the fourth silently dropped, so the
-    // composed function referenced an undefined name and threw
-    // `ReferenceError` inside the wait's own `catch` — recorded as "no
-    // card was ever visible". A false absence, which is the precise
-    // failure the balance check above exists to prevent, re-entered by
-    // the one door it does not cover.
-    //
-    // Joining whatever the array holds cannot go out of step with it.
-    expect(src).toContain('(sources) => {');
-    expect(src).toContain("new Function(`${sources.join('\\n')}\\nreturn visible;`)");
-    expect(src, 'a fixed arity is exactly the regression').not.toContain(
-      '([clipSrc, paintSrc, visSrc]) => {',
+  it('composes every predicate consumer the same way, so a helper cannot be dropped at one site (#2102)', () => {
+    // ROUND 66's regression, generalised. The wait once destructured
+    // exactly three source strings and silently dropped the fourth when
+    // the predicate was split — a `ReferenceError` inside its own catch,
+    // recorded as "no card was ever visible". The composition now has no
+    // per-site list of helpers to keep in step: the module returns the
+    // whole family and each body destructures what it uses. So the guard
+    // is that every consumer goes through it — the two scrape passes,
+    // the mount wait and the back-button read — and that no site carries
+    // a hand-written source list.
+    const sites = [...src.matchAll(/withVisibility\(\(V(?:, el)?\) =>/g)];
+    expect(sites, 'card pass, receipt pass, mount wait, back-button read').toHaveLength(4);
+    expect(src, 'a per-site helper list is exactly the regression').not.toMatch(
+      /\[clipSrc, paintSrc(, boxSrc)?, visSrc\]/,
     );
   });
 
