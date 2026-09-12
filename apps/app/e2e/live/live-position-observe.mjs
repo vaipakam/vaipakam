@@ -1735,8 +1735,20 @@ function notePageRpcEndpoint(url, calls, rawBody) {
         // on a value the page rejected — and the chain gate, whose whole job
         // since round 95 is to refuse a clean verdict when the deployment's
         // chain is unknown, then certifies instead of blocking.
-        const hex = believableResult(await r.json());
-        return typeof hex === 'string' ? Number(BigInt(hex)) : null;
+        // ROUND 100 P2 — AND A CHAIN ID IS A QUANTITY, validated the way the
+        // captured-response reader validates it.
+        //
+        // `BigInt('84532')` happily parses a DECIMAL string, so an endpoint
+        // answering `"84532"` — which is not a valid JSON-RPC quantity — was
+        // read here as the requested chain while `chainIdFromRpcPair`
+        // correctly rejected the same value. With no separate chain reply in
+        // the page's traffic, this probe is then the sole source, and the
+        // gate certifies a deployment it never identified. `hexQuantity` plus
+        // the safe-integer check is exactly what the other reader applies.
+        const id = hexQuantity(believableResult(await r.json()));
+        if (id === null) return null;
+        const n = Number(id);
+        return Number.isSafeInteger(n) ? n : null;
       } catch {
         // Unreachable, non-JSON, or timed out — none of them evidence of a
         // wrong chain.
@@ -2286,7 +2298,13 @@ async function pageProviderHead() {
       // the same kind of "not the reply I asked for" and gets the same
       // refusal rather than a best-effort read of its first member.
       if (Array.isArray(parsed)) continue;
-      if (parsed?.error !== undefined && parsed?.error !== null) continue;
+      // ROUND 100 P2 — THROUGH THE SHARED PARSER, as the fourth reader of a
+      // JSON-RPC `result`. The array guard above is head-specific and stays;
+      // the non-null-error rule is not, and `believableResult` exists
+      // precisely because each reader keeping its own copy is how rounds 98,
+      // 99 and 100 each found one that had been left behind.
+      const believed = believableResult(parsed);
+      if (believed === undefined) continue;
       // ROUND 88 P2 — A JSON-RPC QUANTITY, not whatever `BigInt` will take.
       //
       // `BigInt` accepts `"101"` and a bare number; an Ethereum height is
@@ -2300,7 +2318,7 @@ async function pageProviderHead() {
       // that comes out too HIGH puts the floor above the block the card
       // rendered, and the interior scan then never looks at the state the
       // lender was actually shown.
-      const seen = hexQuantity(parsed?.result);
+      const seen = hexQuantity(believed);
       if (seen === null) continue;
       // The LOWEST across endpoints, for the reason the floor takes the
       // lower of its sources everywhere else: this drive cannot tell which
@@ -2731,14 +2749,28 @@ function watchPageHead(page) {
  * conservative guess, and the gate treats it as not-ready.
  */
 /**
- * Let the head readings already in flight finish before they are read.
+ * Let the head readings already in flight finish before they are read, and
+ * say whether they all did.
  *
- * ROUND 48 P2, and see `pageHeadPending`. Awaiting a SNAPSHOT of the set
- * rather than the set itself: a parse that completes may start another
- * response's work, and looping until empty would make this unbounded on
- * a page that polls. Everything that arrived before the sample is what
- * the sample needs; anything arriving after it is, by definition, not
- * part of what the DOM was showing.
+ * ROUND 48 P2, and see `pageHeadPending`: iterating the live set would be
+ * unbounded on a page that polls, so each pass awaits a SNAPSHOT of it.
+ *
+ * ROUND 100 P2 — THIS SUMMARY IS NOW THE THIRD CONTRACT ON THIS FUNCTION TO
+ * BE CORRECTED, and it was left saying two things that have both been
+ * overturned inside it.
+ *
+ * "A single snapshot": round 92 made it drain repeatedly, up to a bounded
+ * budget, because a reply landing while the first await settles is one the
+ * page HAS consumed. "Anything arriving after it is, by definition, not part
+ * of what the DOM was showing": true of the FLOOR, which is what round 48
+ * was about, and false of the CEILING this same call now also feeds — round
+ * 97 established that both callers must withhold when the drain runs out of
+ * passes.
+ *
+ * So: a BOUNDED drain to quiescence, returning `true` only when the pending
+ * set actually emptied. Neither end of the bracket is established on `false`.
+ * See the notes inside for the full history; the point of repeating it here
+ * is that a reader who stops at the summary should not be told the opposite.
  */
 async function settleHeadReads(page) {
   const pending = pageHeadPending.get(page);
@@ -5452,6 +5484,21 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
           // not a cover, and `body` almost always carries an opaque background:
           // reach it and every foreign hit reads as covered, so the transparent
           // click-catcher guard above would silently invert.
+          // Is this element's `filter` less than fully opaque?
+          //
+          // The same parse `filterErases` performs, asking the weaker question:
+          // that one wants erased-entirely, this one wants anything short of
+          // solid, because a cover you can read through is not a cover. A
+          // chain multiplies, so one component below 1 settles it.
+          const filterBelowOpaque = (f) => {
+            if (!f || f === 'none') return false;
+            for (const m of String(f).matchAll(/opacity\(([^)]*)\)/gi)) {
+              const t = m[1].trim();
+              const v = t.endsWith('%') ? Number(t.slice(0, -1)) / 100 : Number(t);
+              if (Number.isFinite(v) && v < 1) return true;
+            }
+            return false;
+          };
           // Does THIS ONE LAYER of the hit-test stack paint over the text?
           // Split out of `coveredAt` in round 95 so the answer can be asked of
           // each layer in turn; the walk itself is unchanged.
@@ -5491,7 +5538,20 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
               const coverStyle = getComputedStyle(n);
               const op = Number(coverStyle.opacity);
               if (Number.isFinite(op) && op < 1) return false;
-              if (/opacity\(\s*0(?:\.0+)?%?\s*\)/i.test(coverStyle.filter || '')) return false;
+              // ROUND 100 P2 — ANY filter opacity BELOW 1, not only exactly zero.
+              //
+              // The regex here matched `opacity(0)` and nothing else, so a cover
+              // at `filter: opacity(0.5)` — computed `opacity` still 1 — counted
+              // as fully opaque and the text under it was discarded, while the
+              // lender can read it straight through. The rule two paragraphs up
+              // says anything less than fully opaque disqualifies the chain; the
+              // element `opacity` test honours that and this one did not.
+              //
+              // Parsed rather than matched, the same way `filterErases` parses
+              // it, percentage form included. A value this cannot read is left
+              // alone — unreadable is not evidence of transparency, and the
+              // surrounding rule already treats undecidable as not-covering.
+              if (filterBelowOpaque(coverStyle.filter)) return false;
               // ROUND 92 P2 — FOUND IS NOT FINISHED. The walk continues to the
               // common ancestor even after something opaque is seen, because
               // opacity does not INHERIT: an overlay written as an opaque child
@@ -7239,6 +7299,21 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
               // not a cover, and `body` almost always carries an opaque background:
               // reach it and every foreign hit reads as covered, so the transparent
               // click-catcher guard above would silently invert.
+              // Is this element's `filter` less than fully opaque?
+              //
+              // The same parse `filterErases` performs, asking the weaker question:
+              // that one wants erased-entirely, this one wants anything short of
+              // solid, because a cover you can read through is not a cover. A
+              // chain multiplies, so one component below 1 settles it.
+              const filterBelowOpaque = (f) => {
+                if (!f || f === 'none') return false;
+                for (const m of String(f).matchAll(/opacity\(([^)]*)\)/gi)) {
+                  const t = m[1].trim();
+                  const v = t.endsWith('%') ? Number(t.slice(0, -1)) / 100 : Number(t);
+                  if (Number.isFinite(v) && v < 1) return true;
+                }
+                return false;
+              };
               // Does THIS ONE LAYER of the hit-test stack paint over the text?
               // Split out of `coveredAt` in round 95 so the answer can be asked
               // of each layer in turn; the walk itself is unchanged.
@@ -7278,7 +7353,20 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
                   const coverStyle = getComputedStyle(n);
                   const op = Number(coverStyle.opacity);
                   if (Number.isFinite(op) && op < 1) return false;
-                  if (/opacity\(\s*0(?:\.0+)?%?\s*\)/i.test(coverStyle.filter || '')) return false;
+                  // ROUND 100 P2 — ANY filter opacity BELOW 1, not only exactly zero.
+                  //
+                  // The regex here matched `opacity(0)` and nothing else, so a cover
+                  // at `filter: opacity(0.5)` — computed `opacity` still 1 — counted
+                  // as fully opaque and the text under it was discarded, while the
+                  // lender can read it straight through. The rule two paragraphs up
+                  // says anything less than fully opaque disqualifies the chain; the
+                  // element `opacity` test honours that and this one did not.
+                  //
+                  // Parsed rather than matched, the same way `filterErases` parses
+                  // it, percentage form included. A value this cannot read is left
+                  // alone — unreadable is not evidence of transparency, and the
+                  // surrounding rule already treats undecidable as not-covering.
+                  if (filterBelowOpaque(coverStyle.filter)) return false;
                   // ROUND 92 P2 — FOUND IS NOT FINISHED. The walk continues to the
                   // common ancestor even after something opaque is seen, because
                   // opacity does not INHERIT: an overlay written as an opaque child

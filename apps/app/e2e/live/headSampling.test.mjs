@@ -370,6 +370,47 @@ describe('the head sample waits for the readings in flight', () => {
   });
 });
 
+// ROUND 100 P2 — THE SYNTHETIC CHAIN PROBE VALIDATES LIKE ITS SIBLING.
+//
+// `BigInt('84532')` parses a DECIMAL string happily, so an endpoint
+// answering `"84532"` — not a valid JSON-RPC quantity — was read by the
+// synthetic probe as the requested chain, while `chainIdFromRpcPair`
+// correctly rejected the same value. Where the page's own traffic carries no
+// chain reply, the probe is the sole source and the gate then certifies a
+// deployment it never identified: the round-95 block is defeated by the
+// malformed answer it exists to distrust.
+//
+// A source test because the probe lives inside `notePageRpcEndpoint`, which
+// runs only under a live page. Extraction is #2120, as elsewhere here.
+describe('the synthetic chain probe validates as a quantity (round 100)', () => {
+  const src = fs.readFileSync(DRIVE, 'utf8');
+
+  it('reads the reply through the shared parser, not raw .result', () => {
+    expect(src, 'the probe no longer reads a bare result').not.toContain(
+      "const hex = (await r.json())?.result;",
+    );
+    expect(src).toContain('hexQuantity(believableResult(await r.json()))');
+  });
+
+  it('applies the same safe-integer check the captured reader applies', () => {
+    const i = src.indexOf('hexQuantity(believableResult(await r.json()))');
+    expect(i, 'the probe body moved').toBeGreaterThan(-1);
+    const body = src.slice(i, i + 320);
+    expect(body).toContain('Number.isSafeInteger(n)');
+  });
+
+  it('routes the page-provider head through the shared parser too', () => {
+    // The fourth reader of a JSON-RPC result. Rounds 98, 99 and 100 each
+    // found one that had been left behind, which is the whole argument for
+    // there being one parser rather than a rule each reader remembers.
+    expect(src).toContain('const believed = believableResult(parsed);');
+    expect(src).toContain('const seen = hexQuantity(believed);');
+    expect(src, 'no reader left reaching for a raw member result').not.toContain(
+      'hexQuantity(parsed?.result)',
+    );
+  });
+});
+
 describe('an endpoint that lied about its chain stays untrusted', () => {
   // SAME SUBJECT as the file above it: which heights the drive is
   // willing to treat as the page's view of the chain. Round 19

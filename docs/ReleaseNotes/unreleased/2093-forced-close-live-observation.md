@@ -554,6 +554,31 @@ current position was accepted from a reply that carried an error alongside
 it — the apps themselves treat such a reply as a failure, so the position
 it named was never one the page acted on.
 
+Four more, and three of them are the same recurring shape: a rule fixed in
+one place and left unfixed in another that does the same job. The check
+asks a data source directly which network it serves, and accepted an
+answer written in the wrong number format — one the apps themselves would
+reject — while the parallel reader of the same field correctly refused it.
+Where the page's own traffic carries no such answer, that direct question
+is the only source, so the refusal-to-certify-an-unknown-network rule was
+being defeated by exactly the malformed answer it exists to distrust. A
+fourth reader of the same kind of reply was still carrying its own copy of
+a rule that had been centralised one revision earlier, and is now routed
+through the shared one.
+
+The fourth is about what counts as hidden. A cover set to half
+transparency was treated as solid, because only a fully-erased cover was
+recognised, and text the reader can see straight through was discarded as
+hidden. Anything short of solid is now recognised, with a fully-opaque
+cover kept as a check that widening the rule did not disarm it.
+
+And a summary describing this check's waiting behaviour still said the
+opposite of what it does, two revisions after the behaviour changed — the
+second time in as many revisions that a description outlived what it
+described. Those are recorded here as defects rather than tidying, because
+a stale description is how a later change gets steered back into a problem
+already fixed.
+
 Closes #2093. The round-by-round record of how each of these rules was
 arrived at — including several cases where a fix left its own new state
 unhandled, or was applied to one of several parallel sites — lives in the

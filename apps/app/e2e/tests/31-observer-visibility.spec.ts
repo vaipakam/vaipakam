@@ -916,6 +916,29 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
         <div style="position:absolute; inset:0; background:#123456; opacity:0"></div>
         <div style="position:absolute; inset:0"></div>
       </div>
+      <!-- ROUND 100 P2 — a HALF-transparent filter is not a cover either.
+           filter:opacity(.5) leaves the computed opacity at 1, so the
+           zero-only regex did not match and an opaque background behind it
+           counted as solid — while the lender reads the sentence straight
+           through. The element-opacity test already rejected anything
+           below 1; this one only rejected exactly zero.
+           (No backticks in here: this block is inside a template literal,
+           and putting one in has broken spec discovery four times now.) -->
+      <div class="body" id="coveredByHalfFilter" style="position:relative; width:320px">
+        <p style="margin:0">This loan can be closed out now.</p>
+        <div style="position:absolute; inset:0; background:#123456; filter:opacity(.5)"></div>
+      </div>
+      <!-- The percentage spelling of the same thing. -->
+      <div class="body" id="coveredByPercentFilter" style="position:relative; width:320px">
+        <p style="margin:0">This loan can be closed out now.</p>
+        <div style="position:absolute; inset:0; background:#123456; filter:opacity(50%)"></div>
+      </div>
+      <!-- And the control: a FULLY opaque filter still covers, so widening
+           the test from zero to below-one must not disarm it. -->
+      <div class="body" id="coveredByFullFilter" style="position:relative; width:320px">
+        <p style="margin:0">This loan can be closed out now.</p>
+        <div style="position:absolute; inset:0; background:#123456; filter:opacity(1)"></div>
+      </div>
       <!-- ROUND 97 P2 — a REPLACED element is not automatically a cover.
            A fully transparent 1x1 PNG stretched over the row reports
            opacity 1 and is what hit-testing returns, and the old tag test
@@ -1089,6 +1112,9 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
         coveredByOpaqueChildSeen: seenScrolled(byId('coveredByOpaqueChild')),
         coveredUnderCatcherSeen: seenScrolled(byId('coveredUnderCatcher')),
         catcherOverGhostSeen: seenScrolled(byId('catcherOverGhost')),
+        coveredByHalfFilterSeen: seenScrolled(byId('coveredByHalfFilter')),
+        coveredByPercentFilterSeen: seenScrolled(byId('coveredByPercentFilter')),
+        coveredByFullFilterSeen: seenScrolled(byId('coveredByFullFilter')),
         coveredByGhostImageSeen: seenScrolled(byId('coveredByGhostImage')),
         coveredByPaintedImageSeen: seenScrolled(byId('coveredByPaintedImage')),
         oldProbePointsSeen: (() => {
@@ -1419,5 +1445,22 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
   expect(
     result.coveredByPaintedImageSeen,
     'but the same image with an opaque background still covers',
+  ).toBe('');
+
+  // ROUND 100 P2 — a filter below full opacity is not a cover. The element
+  // `opacity` test has always rejected anything under 1; the filter test
+  // matched only exactly zero, so `opacity(.5)` over an opaque background
+  // read as solid and discarded copy the lender can read through it.
+  expect(
+    result.coveredByHalfFilterSeen,
+    'a half-transparent filter leaves the sentence readable',
+  ).toContain('closed out now');
+  expect(
+    result.coveredByPercentFilterSeen,
+    'and the percentage spelling of it',
+  ).toContain('closed out now');
+  expect(
+    result.coveredByFullFilterSeen,
+    'but a fully opaque filter still covers',
   ).toBe('');
 });
