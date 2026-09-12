@@ -793,6 +793,24 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
         <p style="margin:0">This loan can be closed out now.</p>
         <div style="position:absolute; inset:0; background:#123456; filter:opacity(0)"></div>
       </div>
+      <!-- ROUND 92 P2 — an opaque CHILD inside a transparent wrapper.
+           Opacity does not inherit, so the child reports 1 while the
+           wrapper erases the whole overlay: stopping at the first opaque
+           element accepted a paint that is not on screen. -->
+      <div class="body" id="coveredByOpaqueChildOfGhost" style="position:relative; width:320px">
+        <p style="margin:0">This loan can be closed out now.</p>
+        <div style="position:absolute; inset:0; opacity:0">
+          <div style="position:absolute; inset:0; background:#123456"></div>
+        </div>
+      </div>
+      <!-- And the same shape where the wrapper paints nothing but does not
+           erase: the child genuinely covers, so this one is condemned. -->
+      <div class="body" id="coveredByOpaqueChild" style="position:relative; width:320px">
+        <p style="margin:0">This loan can be closed out now.</p>
+        <div style="position:absolute; inset:0">
+          <div style="position:absolute; inset:0; background:#123456"></div>
+        </div>
+      </div>
       <!-- SELF-REVIEW OF THE OCCLUSION RULE — the page body carries an
            opaque background, as a real stylesheet almost always does. The
            walk from a hit stops at the first element containing the text,
@@ -897,15 +915,36 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
         offLeftPaintedText: scope.visibleTextOf(byId('offLeft')),
         indentedOutPaintedText: scope.visibleTextOf(byId('indentedOut')),
         indentedShortLabelPaintedText: scope.visibleTextOf(byId('indentedShortLabel')),
-        occludedPaintedText: scope.visibleTextOf(byId('occluded')),
-        catcherPaintedText: scope.visibleTextOf(byId('catcher')),
-        halfCoveredPaintedText: scope.visibleTextOf(byId('halfCovered')),
-        occludedNoPointerPaintedText: scope.visibleTextOf(byId('occludedNoPointer')),
-        onOpaquePagePaintedText: scope.visibleTextOf(byId('onOpaquePage')),
-        coveredByChildPaintedText: scope.visibleTextOf(byId('coveredByChild')),
-        coveredByModernColorPaintedText: scope.visibleTextOf(byId('coveredByModernColor')),
-        coveredByGhostPaintedText: scope.visibleTextOf(byId('coveredByGhost')),
-        coveredByErasedPaintedText: scope.visibleTextOf(byId('coveredByErased')),
+        // OCCLUSION IS A VIEWPORT QUESTION, so these readings scroll their
+        // fixture into view first. Hit-testing cannot reach a point outside
+        // the viewport — the rule deliberately skips those rather than
+        // counting them as covered — so on a page this long the fixture's
+        // POSITION would otherwise decide the verdict, and a case added
+        // above one of these would silently flip it to passing for the
+        // wrong reason. Found by a new fixture landing below the fold and
+        // failing for that reason rather than for the rule under test.
+        ...Object.fromEntries(
+          [
+            'occluded',
+            'catcher',
+            'halfCovered',
+            'occludedNoPointer',
+            'onOpaquePage',
+            'coveredByChild',
+            'coveredByModernColor',
+            'coveredByGhost',
+            'coveredByErased',
+            'coveredByOpaqueChildOfGhost',
+            'coveredByOpaqueChild',
+          ].map((id) => {
+            const el = byId(id);
+            el.scrollIntoView({ block: 'center' });
+            const text = scope.visibleTextOf(el);
+            window.scrollTo(0, 0);
+            return [`${id}Seen`, text];
+          }),
+        ),
+
         hangingIndentPaintedText: scope.visibleTextOf(byId('hangingIndent')),
         belowFoldPaintedText: scope.visibleTextOf(byId('belowFold')),
         flexRowPaintedText: scope.visibleTextOf(byId('flexRow')),
@@ -1111,13 +1150,13 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
 
   // ROUND 89 P2 — the last door in the present-but-invisible class, and the
   // three controls that keep it from swinging the other way.
-  expect(result.occludedPaintedText, 'text under an opaque cover is not painted').toBe('');
+  expect(result.occludedSeen, 'text under an opaque cover is not painted').toBe('');
   expect(
-    result.catcherPaintedText,
+    result.catcherSeen,
     'but a transparent click-catcher hides nothing and must not condemn it',
   ).toContain('closed out now');
   expect(
-    result.halfCoveredPaintedText,
+    result.halfCoveredSeen,
     'and a partial cover leaves the text readable',
   ).toContain('closed out now');
   // The stated residual, pinned as a KNOWN limit rather than left to be
@@ -1125,11 +1164,11 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
   // so this one is missed. Asserted so that closing it later is a deliberate
   // change to a recorded behaviour.
   expect(
-    result.occludedNoPointerPaintedText,
+    result.occludedNoPointerSeen,
     'an opaque cover that takes no pointer events is a KNOWN miss',
   ).toContain('closed out now');
   expect(
-    result.onOpaquePagePaintedText,
+    result.onOpaquePageSeen,
     'ordinary copy on a page with an opaque background is still painted',
   ).toContain('closed out now');
 
@@ -1137,11 +1176,11 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
   // walked past: a cover that BELONGS to the text it hides, and one
   // painted in a colour notation an rgba-only parser cannot read.
   expect(
-    result.coveredByChildPaintedText,
+    result.coveredByChildSeen,
     'a descendant laid over its parent text is still a cover',
   ).toBe('');
   expect(
-    result.coveredByModernColorPaintedText,
+    result.coveredByModernColorSeen,
     'and an opaque cover in a modern colour form is one too',
   ).toBe('');
 
@@ -1149,11 +1188,23 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
   // cover that is itself invisible hides nothing, and condemning the text
   // under it would be a false FAIL on copy the lender can plainly read.
   expect(
-    result.coveredByGhostPaintedText,
+    result.coveredByGhostSeen,
     'an opaque background at zero opacity covers nothing',
   ).toContain('closed out now');
   expect(
-    result.coveredByErasedPaintedText,
+    result.coveredByErasedSeen,
     'nor does one erased by a filter',
   ).toContain('closed out now');
+
+  // ROUND 92 P2 — opacity does not INHERIT, so the first opaque element
+  // found is not the end of the question: an opaque child inside a wrapper
+  // at zero opacity paints nothing at all.
+  expect(
+    result.coveredByOpaqueChildOfGhostSeen,
+    'an opaque child inside an erased wrapper covers nothing',
+  ).toContain('closed out now');
+  expect(
+    result.coveredByOpaqueChildSeen,
+    'but the same child under an ordinary wrapper does cover',
+  ).toBe('');
 });

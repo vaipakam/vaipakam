@@ -2234,6 +2234,19 @@ async function pageProviderHead() {
       });
       if (!resp.ok) continue;
       const parsed = await resp.json();
+      // ROUND 93 P2 — A SUCCESSFUL REPLY, not merely a parseable one.
+      //
+      // A member carrying BOTH `result` and `error` is malformed, and the
+      // page's own client treats the error as authoritative — so reading
+      // the result here takes a number the page never acted on and makes
+      // it the floor a product accusation is measured against. A bogus
+      // high one puts that floor above the block the card rendered.
+      //
+      // An array is a batch answering a request this never sent, which is
+      // the same kind of "not the reply I asked for" and gets the same
+      // refusal rather than a best-effort read of its first member.
+      if (Array.isArray(parsed)) continue;
+      if (parsed?.error !== undefined && parsed?.error !== null) continue;
       // ROUND 88 P2 — A JSON-RPC QUANTITY, not whatever `BigInt` will take.
       //
       // `BigInt` accepts `"101"` and a bare number; an Ethereum height is
@@ -2638,7 +2651,6 @@ function watchPageHead(page) {
       const stamp = (map) => {
         if (!map.has(key)) map.set(key, Date.now());
       };
-      if (announcesHead) stamp(firstHeadAt);
       if (body.includes('eth_call')) stamp(firstReadAt);
       // Cheap reject before parsing — most POSTs are not this.
       if (!announcesHead) return;
@@ -2647,7 +2659,23 @@ function watchPageHead(page) {
       // and error members where a result was expected are the cases
       // that matter, and a live chain will not reliably produce any of
       // them — inline here, none of them could be exercised.
-      recordHead(key, blockNumberFromRpcPair(body, parsed));
+      // ROUND 92 P2 — THE ORDERING EVIDENCE IS STAMPED ON AN ANSWER, not
+      // on a question.
+      //
+      // `announcesHead` is a string test over the REQUEST body, so it was
+      // stamping `firstHeadAt` for an endpoint that was merely ASKED for a
+      // head — including one that answered HTTP 200 with a malformed
+      // result, where `recordHead` records nothing at all. The ordering
+      // test then read a real announcement where there had been none, and
+      // the floor could be declared sound on an endpoint that never told
+      // this drive where it was.
+      //
+      // Stamped from the PARSED height instead, beside the recording it
+      // belongs with, so the two cannot disagree about whether a head
+      // arrived.
+      const announced = blockNumberFromRpcPair(body, parsed);
+      if (announced !== null && announced !== undefined) stamp(firstHeadAt);
+      recordHead(key, announced);
     } catch {
       // Observational only. See the note above.
     }
@@ -5279,8 +5307,13 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
             // nodes, so an ordinary inline child is not at these points at all —
             // a descendant hit here is one that genuinely overlaps the text.
             if (hit.contains(node)) return false;
+            // Whether anything in the cover's chain actually paints, carried so
+            // the walk can keep going and still answer (round 92).
+            let paints = false;
             for (let n = hit; n && n !== document.documentElement; n = n.parentElement) {
-              if (n.contains(node)) return false;
+              // The common ancestor: everything below it has been examined, so
+              // whatever was found is the answer.
+              if (n.contains(node)) return paints;
               // ROUND 91 P2 — AND THE COVER HAS TO BE VISIBLE ITSELF.
               //
               // An opaque BACKGROUND on an element that is itself transparent —
@@ -5310,7 +5343,14 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
               const op = Number(coverStyle.opacity);
               if (Number.isFinite(op) && op < 1) return false;
               if (/opacity\(\s*0(?:\.0+)?%?\s*\)/i.test(coverStyle.filter || '')) return false;
-              if (/^(img|video|canvas|svg)$/i.test(n.tagName)) return true;
+              // ROUND 92 P2 — FOUND IS NOT FINISHED. The walk continues to the
+              // common ancestor even after something opaque is seen, because
+              // opacity does not INHERIT: an overlay written as an opaque child
+              // inside a wrapper at `opacity: 0` reports 1 on the child, and
+              // returning there accepted a paint the wrapper erases. Readable
+              // copy was then discarded — the false-FAIL direction again, from
+              // the fix that was supposed to close it.
+              if (!paints && /^(img|video|canvas|svg)$/i.test(n.tagName)) paints = true;
               // ROUND 90 P2 — READ BY SHAPE, via the same `alphaOf` the fill test
               // uses. The first version matched `rgba?(…)` only, so an overlay
               // painted in `oklab(…)` or `color(display-p3 …)` — forms Chromium
@@ -5319,9 +5359,9 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
               // learned this exact lesson for the text colour and I wrote the new
               // site against the old standard anyway.
               const bg = coverStyle.backgroundColor || '';
-              if (bg && bg !== 'transparent' && alphaOf(bg) === 1) return true;
+              if (!paints && bg && bg !== 'transparent' && alphaOf(bg) === 1) paints = true;
             }
-            return false;
+            return paints;
           };
           const vw = window.innerWidth || document.documentElement.clientWidth || 0;
           const vh = window.innerHeight || document.documentElement.clientHeight || 0;
@@ -6948,8 +6988,13 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
                 // nodes, so an ordinary inline child is not at these points at all —
                 // a descendant hit here is one that genuinely overlaps the text.
                 if (hit.contains(node)) return false;
+                // Whether anything in the cover's chain actually paints, carried so
+                // the walk can keep going and still answer (round 92).
+                let paints = false;
                 for (let n = hit; n && n !== document.documentElement; n = n.parentElement) {
-                  if (n.contains(node)) return false;
+                  // The common ancestor: everything below it has been examined, so
+                  // whatever was found is the answer.
+                  if (n.contains(node)) return paints;
                   // ROUND 91 P2 — AND THE COVER HAS TO BE VISIBLE ITSELF.
                   //
                   // An opaque BACKGROUND on an element that is itself transparent —
@@ -6979,7 +7024,14 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
                   const op = Number(coverStyle.opacity);
                   if (Number.isFinite(op) && op < 1) return false;
                   if (/opacity\(\s*0(?:\.0+)?%?\s*\)/i.test(coverStyle.filter || '')) return false;
-                  if (/^(img|video|canvas|svg)$/i.test(n.tagName)) return true;
+                  // ROUND 92 P2 — FOUND IS NOT FINISHED. The walk continues to the
+                  // common ancestor even after something opaque is seen, because
+                  // opacity does not INHERIT: an overlay written as an opaque child
+                  // inside a wrapper at `opacity: 0` reports 1 on the child, and
+                  // returning there accepted a paint the wrapper erases. Readable
+                  // copy was then discarded — the false-FAIL direction again, from
+                  // the fix that was supposed to close it.
+                  if (!paints && /^(img|video|canvas|svg)$/i.test(n.tagName)) paints = true;
                   // ROUND 90 P2 — READ BY SHAPE, via the same `alphaOf` the fill test
                   // uses. The first version matched `rgba?(…)` only, so an overlay
                   // painted in `oklab(…)` or `color(display-p3 …)` — forms Chromium
@@ -6988,9 +7040,9 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
                   // learned this exact lesson for the text colour and I wrote the new
                   // site against the old standard anyway.
                   const bg = coverStyle.backgroundColor || '';
-                  if (bg && bg !== 'transparent' && alphaOf(bg) === 1) return true;
+                  if (!paints && bg && bg !== 'transparent' && alphaOf(bg) === 1) paints = true;
                 }
-                return false;
+                return paints;
               };
               const vw = window.innerWidth || document.documentElement.clientWidth || 0;
               const vh = window.innerHeight || document.documentElement.clientHeight || 0;
