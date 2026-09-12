@@ -103,9 +103,12 @@ analyse() { # analyse <trace> <now-epoch>  -> prints "<seconds>\t<reason>", exit
   #               time to `X-Ratelimit-Reset`, which belongs to THIS bucket
   #               precisely because remaining is 0.
   #   SECONDARY — an abuse-detection refusal: status 403 or 429 AND either
-  #               `Retry-After` or a body saying "secondary rate limit". The
-  #               primary headers on such a response describe a bucket that
-  #               is NOT the problem, so they are never used for the wait.
+  #               `Retry-After` or a body saying "secondary rate limit". When
+  #               the primary headers beside it show a bucket that is NOT
+  #               exhausted, they describe something that is not the problem
+  #               and are not used for the wait. When they show `Remaining:
+  #               0`, BOTH shapes match, and the overlap rule below applies:
+  #               the longer of the two waits.
   #
   # Anything else — a 503 with `Retry-After`, a 401, a body mentioning a
   # limit on a status that is neither 403 nor 429 — is not a limit, and a
