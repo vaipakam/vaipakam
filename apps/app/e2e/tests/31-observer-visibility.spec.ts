@@ -732,6 +732,36 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
       <div class="body" id="hangingIndent">
         <p style="text-indent:-12px; padding-left:12px">This loan can be closed out now.</p>
       </div>
+      <!-- ROUND 89 P2 — an opaque sibling laid over the text defeats every
+           other test: real rect, real document coordinates, full opacity,
+           nothing clipped, glyphs measurable. The lender sees the overlay.
+           The wrapper is positioned so the absolute overlay is placed
+           against it rather than against the page. -->
+      <div class="body" id="occluded" style="position:relative; width:320px">
+        <p style="margin:0">This loan can be closed out now.</p>
+        <div style="position:absolute; inset:0; background:#123456"></div>
+      </div>
+      <!-- THE FALSE-POSITIVE GUARD, and the reason the rule asks whether the
+           cover PAINTS rather than merely whether something is on top: a
+           full-size transparent click-catcher is ordinary modal markup and
+           hides nothing. -->
+      <div class="body" id="catcher" style="position:relative; width:320px">
+        <p style="margin:0">This loan can be closed out now.</p>
+        <div style="position:absolute; inset:0"></div>
+      </div>
+      <!-- Partial cover stays painted: a sticky header crossing a row as the
+           page scrolls is ordinary, and half a sentence is not this defect. -->
+      <div class="body" id="halfCovered" style="position:relative; width:320px">
+        <p style="margin:0">This loan can be closed out now.</p>
+        <div style="position:absolute; left:0; top:0; right:0; height:4px; background:#123456"></div>
+      </div>
+      <!-- The STATED RESIDUAL, pinned so it is a known limit rather than a
+           surprise: an opaque cover that does not take pointer events is
+           invisible to hit-testing, so this text is still reported painted. -->
+      <div class="body" id="occludedNoPointer" style="position:relative; width:320px">
+        <p style="margin:0">This loan can be closed out now.</p>
+        <div style="position:absolute; inset:0; background:#123456; pointer-events:none"></div>
+      </div>
       <!-- The control that keeps the rule narrow: below the fold is
            painted, and must stay admitted. -->
       <div class="body" id="belowFold">
@@ -827,6 +857,10 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
         offLeftPaintedText: scope.visibleTextOf(byId('offLeft')),
         indentedOutPaintedText: scope.visibleTextOf(byId('indentedOut')),
         indentedShortLabelPaintedText: scope.visibleTextOf(byId('indentedShortLabel')),
+        occludedPaintedText: scope.visibleTextOf(byId('occluded')),
+        catcherPaintedText: scope.visibleTextOf(byId('catcher')),
+        halfCoveredPaintedText: scope.visibleTextOf(byId('halfCovered')),
+        occludedNoPointerPaintedText: scope.visibleTextOf(byId('occludedNoPointer')),
         hangingIndentPaintedText: scope.visibleTextOf(byId('hangingIndent')),
         belowFoldPaintedText: scope.visibleTextOf(byId('belowFold')),
         flexRowPaintedText: scope.visibleTextOf(byId('flexRow')),
@@ -1029,4 +1063,24 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
     result.indentedShortLabelPaintedText,
     'a short label indented out of a wide box is not painted either',
   ).toBe('');
+
+  // ROUND 89 P2 — the last door in the present-but-invisible class, and the
+  // three controls that keep it from swinging the other way.
+  expect(result.occludedPaintedText, 'text under an opaque cover is not painted').toBe('');
+  expect(
+    result.catcherPaintedText,
+    'but a transparent click-catcher hides nothing and must not condemn it',
+  ).toContain('closed out now');
+  expect(
+    result.halfCoveredPaintedText,
+    'and a partial cover leaves the text readable',
+  ).toContain('closed out now');
+  // The stated residual, pinned as a KNOWN limit rather than left to be
+  // discovered: hit-testing cannot see a cover that takes no pointer events,
+  // so this one is missed. Asserted so that closing it later is a deliberate
+  // change to a recorded behaviour.
+  expect(
+    result.occludedNoPointerPaintedText,
+    'an opaque cover that takes no pointer events is a KNOWN miss',
+  ).toContain('closed out now');
 });

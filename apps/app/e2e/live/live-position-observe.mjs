@@ -5139,6 +5139,90 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
           ) {
             return false;
           }
+          // ROUND 89 P2 — AND TEXT COVERED BY SOMETHING OPAQUE IS NOT
+          // PAINTED EITHER.
+          //
+          // An opaque positioned sibling laid over the explanation or a receipt
+          // row defeats every test above it: the covered node still reports
+          // `checkVisibility`, a real rect at real document coordinates, full
+          // opacity, no clipping and measurable glyphs. So the whole class this
+          // predicate exists for — copy present in the markup and absent from
+          // the lender's screen — had one door left open, and it is the door a
+          // CSS regression is most likely to walk through: an overlay that grew,
+          // a z-index that flipped.
+          //
+          // HIT-TESTED, which is the only way to ask "is something in front of
+          // this". Each glyph rectangle is probed at its centre first, and at
+          // two corners only when the centre comes back covered — so the common
+          // case costs one `elementFromPoint` per rectangle and reachable text
+          // returns on the first probe.
+          //
+          // THREE GUARDS AGAINST CONDEMNING LEGIBLE COPY, because this is the
+          // one rule in this file that can invent a finding out of ordinary
+          // layout:
+          //
+          //   - The covering element must actually PAINT. An invisible
+          //     click-catcher — a full-page div with no background, which is
+          //     ordinary in a modal implementation — is hit first by
+          //     `elementFromPoint` and covers nothing a lender can see. So the
+          //     walk up from the hit looks for a fully opaque background colour
+          //     or a replaced element, and anything it cannot decide counts as
+          //     NOT covering. Unknown means painted, as everywhere else here.
+          //   - Points outside the VIEWPORT cannot be hit-tested at all, and
+          //     `elementFromPoint` answers null for them. They are skipped, not
+          //     counted as covered — otherwise every below-the-fold row, which
+          //     the lender reaches by scrolling, would be condemned.
+          //   - Occlusion must be TOTAL. One reachable probe anywhere in the
+          //     text is enough to keep it painted, because partial overlap is
+          //     ordinary (a sticky header crossing a row as the page scrolls)
+          //     and reading half a sentence is not the defect this catches.
+          //
+          // STATED RESIDUAL, and it is the mirror of the first guard rather
+          // than a second win: `elementFromPoint` looks straight through an
+          // element with `pointer-events: none`, so an OPAQUE overlay carrying
+          // that property hides the text visually and is invisible to this
+          // test. That is a missed defect, which is the direction this file
+          // takes every time — the alternative is a geometric overlap test
+          // that would condemn the transparent click-catcher above it.
+          const coveredAt = (x, y) => {
+            const hit = document.elementFromPoint(x, y);
+            if (!hit) return false;
+            if (node.contains(hit) || hit.contains(node)) return false;
+            for (let n = hit; n && n !== document.documentElement; n = n.parentElement) {
+              if (node.contains(n) || n.contains(node)) return false;
+              if (/^(img|video|canvas|svg)$/i.test(n.tagName)) return true;
+              const bg = getComputedStyle(n).backgroundColor || '';
+              const m = bg.match(/^rgba?\(([^)]*)\)$/i);
+              if (m) {
+                const parts = m[1].split(/[,/]/).map((t) => t.trim());
+                const alpha = parts.length > 3 ? Number(parts[3]) : 1;
+                if (Number.isFinite(alpha) && alpha === 1) return true;
+              }
+            }
+            return false;
+          };
+          const vw = window.innerWidth || document.documentElement.clientWidth || 0;
+          const vh = window.innerHeight || document.documentElement.clientHeight || 0;
+          const inView = (x, y) => x >= 0 && y >= 0 && x < vw && y < vh;
+          let probed = 0;
+          let allCovered = true;
+          for (const q of glyphs) {
+            const points = [
+              [q.left + q.width / 2, q.top + q.height / 2],
+              [q.left + 1, q.top + 1],
+              [q.right - 1, q.bottom - 1],
+            ];
+            for (const [x, y] of points) {
+              if (!inView(x, y)) continue;
+              probed += 1;
+              if (!coveredAt(x, y)) {
+                allCovered = false;
+                break;
+              }
+            }
+            if (!allCovered) break;
+          }
+          if (probed > 0 && allCovered) return false;
           const fill = cs.webkitTextFillColor || cs.color || '';
           // ROUND 38 P2 — EVERY COMPUTED COLOUR FORM, not just `rgb()`/`rgba()`.
           //
@@ -6667,6 +6751,90 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
               ) {
                 return false;
               }
+              // ROUND 89 P2 — AND TEXT COVERED BY SOMETHING OPAQUE IS NOT
+              // PAINTED EITHER.
+              //
+              // An opaque positioned sibling laid over the explanation or a receipt
+              // row defeats every test above it: the covered node still reports
+              // `checkVisibility`, a real rect at real document coordinates, full
+              // opacity, no clipping and measurable glyphs. So the whole class this
+              // predicate exists for — copy present in the markup and absent from
+              // the lender's screen — had one door left open, and it is the door a
+              // CSS regression is most likely to walk through: an overlay that grew,
+              // a z-index that flipped.
+              //
+              // HIT-TESTED, which is the only way to ask "is something in front of
+              // this". Each glyph rectangle is probed at its centre first, and at
+              // two corners only when the centre comes back covered — so the common
+              // case costs one `elementFromPoint` per rectangle and reachable text
+              // returns on the first probe.
+              //
+              // THREE GUARDS AGAINST CONDEMNING LEGIBLE COPY, because this is the
+              // one rule in this file that can invent a finding out of ordinary
+              // layout:
+              //
+              //   - The covering element must actually PAINT. An invisible
+              //     click-catcher — a full-page div with no background, which is
+              //     ordinary in a modal implementation — is hit first by
+              //     `elementFromPoint` and covers nothing a lender can see. So the
+              //     walk up from the hit looks for a fully opaque background colour
+              //     or a replaced element, and anything it cannot decide counts as
+              //     NOT covering. Unknown means painted, as everywhere else here.
+              //   - Points outside the VIEWPORT cannot be hit-tested at all, and
+              //     `elementFromPoint` answers null for them. They are skipped, not
+              //     counted as covered — otherwise every below-the-fold row, which
+              //     the lender reaches by scrolling, would be condemned.
+              //   - Occlusion must be TOTAL. One reachable probe anywhere in the
+              //     text is enough to keep it painted, because partial overlap is
+              //     ordinary (a sticky header crossing a row as the page scrolls)
+              //     and reading half a sentence is not the defect this catches.
+              //
+              // STATED RESIDUAL, and it is the mirror of the first guard rather
+              // than a second win: `elementFromPoint` looks straight through an
+              // element with `pointer-events: none`, so an OPAQUE overlay carrying
+              // that property hides the text visually and is invisible to this
+              // test. That is a missed defect, which is the direction this file
+              // takes every time — the alternative is a geometric overlap test
+              // that would condemn the transparent click-catcher above it.
+              const coveredAt = (x, y) => {
+                const hit = document.elementFromPoint(x, y);
+                if (!hit) return false;
+                if (node.contains(hit) || hit.contains(node)) return false;
+                for (let n = hit; n && n !== document.documentElement; n = n.parentElement) {
+                  if (node.contains(n) || n.contains(node)) return false;
+                  if (/^(img|video|canvas|svg)$/i.test(n.tagName)) return true;
+                  const bg = getComputedStyle(n).backgroundColor || '';
+                  const m = bg.match(/^rgba?\(([^)]*)\)$/i);
+                  if (m) {
+                    const parts = m[1].split(/[,/]/).map((t) => t.trim());
+                    const alpha = parts.length > 3 ? Number(parts[3]) : 1;
+                    if (Number.isFinite(alpha) && alpha === 1) return true;
+                  }
+                }
+                return false;
+              };
+              const vw = window.innerWidth || document.documentElement.clientWidth || 0;
+              const vh = window.innerHeight || document.documentElement.clientHeight || 0;
+              const inView = (x, y) => x >= 0 && y >= 0 && x < vw && y < vh;
+              let probed = 0;
+              let allCovered = true;
+              for (const q of glyphs) {
+                const points = [
+                  [q.left + q.width / 2, q.top + q.height / 2],
+                  [q.left + 1, q.top + 1],
+                  [q.right - 1, q.bottom - 1],
+                ];
+                for (const [x, y] of points) {
+                  if (!inView(x, y)) continue;
+                  probed += 1;
+                  if (!coveredAt(x, y)) {
+                    allCovered = false;
+                    break;
+                  }
+                }
+                if (!allCovered) break;
+              }
+              if (probed > 0 && allCovered) return false;
               const fill = cs.webkitTextFillColor || cs.color || '';
               // ROUND 38 P2 — EVERY COMPUTED COLOUR FORM, not just `rgb()`/`rgba()`.
               //

@@ -122,6 +122,23 @@ Line breaks are now kept, while words split across styling inside a
 single line are still joined without one, since a bolded word must not
 become two.
 
+The last of these is the simplest one to picture and was the last one
+found: text with something laid over it. The words are in the markup, the
+box is where it should be, nothing about the text itself is hidden — and
+an opaque panel sits on top. The check now asks whether anything is in
+front of the letters rather than only whether the letters are there.
+
+Three things keep that from condemning copy the lender can read, because
+this is the rule most able to invent a fault out of ordinary layout. What
+covers the text has to actually paint something — an invisible full-page
+catcher, which is how modal dialogs are usually built, hides nothing.
+Text below the fold cannot be tested this way at all, so it is left
+alone rather than assumed covered. And the cover has to be total: a
+header crossing a row as the page scrolls is ordinary, and half a
+sentence is not the defect being caught. The stated cost of the first of
+those is that a cover which ignores pointer input is missed entirely —
+recorded as a known limit rather than left to be discovered.
+
 Deciding that text is invisible has a matching limit. Transparent letters
 are not always unreadable — a shadow or an outline can draw the glyphs
 the fill leaves blank — so the check no longer concludes "erased" from
