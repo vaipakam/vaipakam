@@ -869,6 +869,21 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
         visibleTextOf: (r: Element | null) => string;
       };
       const byId = (id: string) => document.getElementById(id)!;
+      // Read a fixture's painted text with it SCROLLED INTO VIEW.
+      //
+      // Occlusion is a viewport question: hit-testing cannot reach a point
+      // outside the viewport, and the rule deliberately skips those rather
+      // than counting them as covered. On a fixture page this long the
+      // element's POSITION would otherwise decide the verdict — a case
+      // added above another could silently flip it to passing for the
+      // wrong reason, and a new one landing below the fold failed for that
+      // rather than for the rule under test.
+      const seenScrolled = (el: Element) => {
+        el.scrollIntoView({ block: 'center' });
+        const text = scope.visibleTextOf(el);
+        window.scrollTo(0, 0);
+        return text;
+      };
       // EXACTLY the expression the drive assigns to `bodyVisible` — and
       // it is `shownBox`, not `visible`, since round 66: a container
       // whose own text is transparent still SHOWS a repainted child, and
@@ -923,27 +938,21 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
         // above one of these would silently flip it to passing for the
         // wrong reason. Found by a new fixture landing below the fold and
         // failing for that reason rather than for the rule under test.
-        ...Object.fromEntries(
-          [
-            'occluded',
-            'catcher',
-            'halfCovered',
-            'occludedNoPointer',
-            'onOpaquePage',
-            'coveredByChild',
-            'coveredByModernColor',
-            'coveredByGhost',
-            'coveredByErased',
-            'coveredByOpaqueChildOfGhost',
-            'coveredByOpaqueChild',
-          ].map((id) => {
-            const el = byId(id);
-            el.scrollIntoView({ block: 'center' });
-            const text = scope.visibleTextOf(el);
-            window.scrollTo(0, 0);
-            return [`${id}Seen`, text];
-          }),
-        ),
+        //
+        // Written out one key at a time rather than built from a list: a
+        // computed spread types as `{}` and every assertion below then
+        // fails to compile, which is how this reached CI once already.
+        occludedSeen: seenScrolled(byId('occluded')),
+        catcherSeen: seenScrolled(byId('catcher')),
+        halfCoveredSeen: seenScrolled(byId('halfCovered')),
+        occludedNoPointerSeen: seenScrolled(byId('occludedNoPointer')),
+        onOpaquePageSeen: seenScrolled(byId('onOpaquePage')),
+        coveredByChildSeen: seenScrolled(byId('coveredByChild')),
+        coveredByModernColorSeen: seenScrolled(byId('coveredByModernColor')),
+        coveredByGhostSeen: seenScrolled(byId('coveredByGhost')),
+        coveredByErasedSeen: seenScrolled(byId('coveredByErased')),
+        coveredByOpaqueChildOfGhostSeen: seenScrolled(byId('coveredByOpaqueChildOfGhost')),
+        coveredByOpaqueChildSeen: seenScrolled(byId('coveredByOpaqueChild')),
 
         hangingIndentPaintedText: scope.visibleTextOf(byId('hangingIndent')),
         belowFoldPaintedText: scope.visibleTextOf(byId('belowFold')),
