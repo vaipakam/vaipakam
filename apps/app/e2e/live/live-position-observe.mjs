@@ -444,6 +444,34 @@ const STATUS_ACTIVE = 0;
  * Sourcing it means a rename fails loudly at startup instead.
  */
 const FORCED_CLOSE_COPY = (() => {
+  try {
+    return readForcedCloseCopy();
+  } catch (err) {
+    // ROUND 111 P2 — A LOCAL SETUP FAILURE IS BLOCKED, NOT A PRODUCT FAIL.
+    //
+    // This ran at module scope and threw, so Node exited 1 — which in this
+    // batch means "the deployed surface regressed". The message it threw
+    // said the opposite in words: that the harness cannot judge the card
+    // without its own copy. A missing, malformed or renamed key in THIS
+    // repo is an observation that never ran, and reporting it as a product
+    // regression blames the deployment for the drive's own state.
+    //
+    // Exit 2, like every other "nothing could be observed" path here.
+    console.log(
+      `\nBLOCKED: the drive's own copy bundle could not be read.\n  ${err.message}`,
+    );
+    process.exit(2);
+  }
+})();
+
+/**
+ * Read and validate the forced-close copy this drive matches against.
+ *
+ * Separated from the binding above only so the failure can be CLASSIFIED:
+ * everything in here still throws, loudly and by name, and the caller
+ * turns that into the right exit code.
+ */
+function readForcedCloseCopy() {
   const bundle = JSON.parse(
     fs.readFileSync(
       path.join(path.dirname(fileURLToPath(import.meta.url)), '../../src/i18n/locales/en.json'),
@@ -628,7 +656,7 @@ const FORCED_CLOSE_COPY = (() => {
       need(fc.blockedNoConsent, 'blockedNoConsent'),
     ],
   };
-})();
+}
 /**
  * LoanStatus.FallbackPending. The lender card mounts on it DELIBERATELY
  * (`PositionDetails.tsx`: `row.status === 'active' || 'fallback_pending'`,

@@ -271,4 +271,32 @@ describe('a funds defect that was READ outranks every blocker', () => {
   it('passes the role into the coverage gate', () => {
     expect(src).toContain('forcedCloseCoverage(visited, ROLE)');
   });
+
+  // ROUND 111 P2 — AND THE DRIVE'S OWN SETUP FAILURES ARE BLOCKED, NOT FAIL.
+  //
+  // The copy bundle is read at module scope, and the read threw. An
+  // uncaught throw there exits 1, which in this batch means "the deployed
+  // surface regressed" — while the message being thrown said the opposite
+  // in words: that the harness cannot judge the card without its own copy.
+  // A missing, malformed or renamed key in THIS repo is an observation that
+  // never ran, and every other such path here exits 2.
+  //
+  // Ranked with the other exit-ordering rules because it is the same
+  // property: what the run says happened must match what it observed. This
+  // one gets it wrong before observing anything at all.
+  it('classifies a local copy-bundle failure as BLOCKED, not as a product FAIL', () => {
+    const i = src.indexOf('const FORCED_CLOSE_COPY = (() => {');
+    expect(i, 'the copy binding was not found').toBeGreaterThan(-1);
+    const binding = src.slice(i, src.indexOf('function readForcedCloseCopy()', i));
+    expect(binding, 'the read is not guarded').toContain('} catch (err) {');
+    expect(binding, 'a setup failure must exit BLOCKED').toContain('process.exit(2)');
+    // And it still says WHICH failure, by name — a silent 2 would hide a
+    // renamed key behind "nothing could be observed".
+    expect(binding).toContain('err.message');
+    // The validation itself still throws rather than returning a partial
+    // bundle: the catch classifies the failure, it does not tolerate it.
+    expect(src, 'the copy validation still fails loudly').toContain(
+      'is missing from ',
+    );
+  });
 });
