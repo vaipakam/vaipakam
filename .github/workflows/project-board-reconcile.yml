@@ -214,11 +214,101 @@ jobs:
           # this job fails, the log should say whether it ran out of
           # points or hit something else. `rate_limit` is REST and is not
           # itself metered.
+          #
+          # THE PREFLIGHT ALONE DID NOT MEET THAT INTENT, so the failure
+          # branch below exists (#2129). Four consecutive scheduled runs
+          # died here reporting exactly two things: `5000` points remaining
+          # and `unknown owner type`. That pair says neither "out of points"
+          # nor what else it hit — the number looks healthy and the message
+          # names no cause — and two different explanations were argued from
+          # it and withdrawn before the run that settled anything.
+          #
+          # The reading is taken BEFORE the call and covers ONE resource, so
+          # it cannot speak for the moment of failure and cannot see a limit
+          # binding anywhere else.
+          #
+          # AND NO LATER SNAPSHOT FIXES THAT, which is the whole point.
+          # `docs/internal/ProjectProcedures.md` records it for this account:
+          # a secondary limit does NOT appear in `/rate_limit` — the endpoint
+          # keeps reporting 5000/5000 while requests come back 403 or 429 —
+          # and the same account has had the PRIMARY form while it read 5000
+          # too. So a second `/rate_limit` call after a failure can print the
+          # same healthy table and leave the log exactly as ambiguous. The
+          # evidence the procedure asks for is the FAILED REQUEST's own status
+          # and its `retry-after` / `x-ratelimit-*` headers.
           remaining=$(gh api rate_limit --jq '.resources.graphql.remaining')
           echo "GraphQL points remaining: $remaining"
 
-          gh project item-list "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" \
-            --format json --limit "$LIST_LIMIT" > board.json
+          # `GH_DEBUG=api` is how gh surfaces those headers, so the call is
+          # made under it with the trace kept in a file. On success the file
+          # is discarded UNREAD — the board listing never reaches the log.
+          set +e
+          GH_DEBUG=api gh project item-list "$PROJECT_NUMBER" --owner "$PROJECT_OWNER" \
+            --format json --limit "$LIST_LIMIT" > board.json 2> list-trace.txt
+          rc=$?
+          set -e
+          if [ "$rc" -ne 0 ]; then
+            echo "::group::gh project item-list — status, rate-limit headers, error message"
+            # AN ALLOW-LIST, NOT A BOUND ON HOW MUCH TO PRINT. Three review
+            # rounds went into tuning that bound — prefix, then tail, then its
+            # size — and the question has no answer, because the trace carries
+            # arbitrary RESPONSE BODIES. This repository is PUBLIC, its Actions
+            # logs are public, and the board spans repositories and carries
+            # Drafts that exist nowhere else. Board item bodies must not reach
+            # these logs at any size (#2139 r3). `--limit 4000` against a
+            # hundred-item page size is a dozen requests, so a failure on a
+            # later page has eleven pages of card titles sitting in front of
+            # it, and every byte window is a different amount of that.
+            #
+            # So the group carries a NAMED SET instead: the status line, the
+            # rate-limit and retry headers, the request id, and the error
+            # message. That is the whole of what tells "wait for the limit"
+            # apart from "fix the secret". Everything else is payload and is
+            # never read.
+            #
+            # An allow-list can fail to RECOGNISE a line; it cannot leak one.
+            # That is the safe direction here and the opposite of the deny-list
+            # it replaces — if gh's debug format is not what this expects, the
+            # group says it found nothing rather than printing the trace. The
+            # redaction stays underneath as defence in depth, though nothing it
+            # matches can reach this point.
+            #
+            # All of it is exercised by
+            # `.github/scripts/board-reconcile-list-step.selftest.sh`, which
+            # EXTRACTS this step rather than copying it and runs it against a
+            # stubbed gh — including the case that actually happened
+            # (`/rate_limit` reporting 5000 while the request came back 403),
+            # a paginated failure after eleven good pages, and a trace this
+            # filter does not recognise at all.
+            grep -aiE '^[[:space:]]*[<>]?[[:space:]]*(HTTP/|x-ratelimit-|retry-after|x-github-request-id)' \
+              list-trace.txt > trace-evidence.txt || true
+            grep -aoE '"(message|documentation_url)"[[:space:]]*:[[:space:]]*"[^"]{0,300}"' \
+              list-trace.txt >> trace-evidence.txt || true
+            if [ -s trace-evidence.txt ]; then
+              sed -E \
+                -e 's/gh[pousr]_[A-Za-z0-9]{16,}/***redacted***/g' \
+                -e 's/github_pat_[A-Za-z0-9_]{16,}/***redacted***/g' \
+                -e 's/^([[:space:]]*[<>]?[[:space:]]*[Aa]uthorization:).*/\1 ***redacted***/' \
+                trace-evidence.txt | tail -c 20000
+            else
+              # Said out loud, because an empty group would otherwise read as
+              # "nothing went wrong at the transport level", which is a claim
+              # this has not made.
+              echo "(no status line, rate-limit header or error message recognised"
+              echo " in $(wc -c < list-trace.txt | tr -d ' ') bytes of trace — the"
+              echo " debug format may have changed; the trace is NOT printed"
+              echo " because it carries board contents)"
+            fi
+            echo ""
+            echo "::endgroup::"
+            # SECONDARY evidence, and labelled as such: it is the right table
+            # for a PRIMARY limit and says nothing about a secondary one.
+            echo "::group::rate_limit after the failure (all resources — primary limits only)"
+            gh api rate_limit || echo "(rate_limit itself failed)"
+            echo "::endgroup::"
+            echo "::error::listing the board failed — read the request trace first; the rate_limit table cannot see a secondary limit"
+            exit 1
+          fi
           items=$(jq '.items | length' board.json)
           total=$(jq '.totalCount // (.items | length)' board.json)
           echo "board items: $items (totalCount $total)"
