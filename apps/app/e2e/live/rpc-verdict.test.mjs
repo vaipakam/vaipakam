@@ -975,6 +975,48 @@ describe('recordRpcResponse + summariseRpcLedger', () => {
       expect(summariseRpcLedger(l).unreachable).toEqual([]);
     });
 
+    // ROUND 113 P2 — AND A REQUEST BEGUN *DURING* DELIVERY PROVES NOTHING.
+    //
+    // The first version of the round-112 fix stamped the near edge, before
+    // the awaited fulfill. Fulfillment takes time, so a sibling started
+    // while it was pending was stamped LATER than the failure's arrival
+    // even though the page had not seen the failure and it could not be a
+    // reaction to it — and a later success then cleared a call whose
+    // original caller consumed an error. There is no stamp for "the page
+    // received this", so the ambiguous interval is closed at its far edge:
+    // `deliveredAt` is the instant delivery COMPLETED, and anything begun
+    // before that cannot prove recovery.
+    it('does NOT clear a failure with a request begun while it was being delivered', () => {
+      const l = [];
+      recordRpcResponse(
+        {
+          status: 429,
+          body: 'slow down',
+          requestBody: rpcReq(call(1, 'eth_call')),
+          url: 'https://rpc.example',
+          // Delivery began around 1000 and completed at 1100.
+          deliveredAt: 1_100,
+        },
+        l,
+      );
+      recordRpcResponse(
+        {
+          status: 200,
+          body: okBody(1),
+          requestBody: rpcReq(call(1, 'eth_call')),
+          url: 'https://rpc.example',
+          deliveredAt: 1_300,
+          // Begun mid-delivery. Later than the near edge, earlier than
+          // receipt — no evidence of causation either way, so refused.
+          requestedAt: 1_050,
+        },
+        l,
+      );
+      expect(summariseRpcLedger(l).unreachable).toEqual([
+        { url: 'https://rpc.example', why: 'eth_call — HTTP 429' },
+      ]);
+    });
+
     it('still refuses a sibling that was in flight before delivery', () => {
       // The fix must not undo round 108: asked for at 900, delivered at
       // 1000 — never a reaction to it.

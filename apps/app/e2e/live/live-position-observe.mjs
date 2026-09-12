@@ -1939,15 +1939,30 @@ const routeHandler = async (route) => {
         headers[k] = v;
       }
     });
-    // Stamped BEFORE the fulfill, and on the ordering clock (round 112
-    // P2). The record below happens after the page already has the
-    // response, and viem can start a retry in that gap — so stamping the
-    // arrival at record time can place a genuine retry's request at or
-    // before it, which the causal test reads as an in-flight sibling.
-    // Nothing the page issued strictly before this instant can be a
-    // reaction to a response it has not been handed yet.
-    const deliveredAt = orderingNow();
     await route.fulfill({ status: resp.status, headers, body: buf });
+    // Stamped HERE — the instant delivery completed — and on the ordering
+    // clock. Rounds 112 and 113 are one question answered from both sides,
+    // and the answer is that this boundary is the only defensible one.
+    //
+    // Round 112: stamping at record time is too LATE. Several statements
+    // separate the fulfill from the record, and viem can issue its retry in
+    // that gap, so a genuine retry's request lands at or before the stamp
+    // and the causal test refuses it as an in-flight sibling — a recovered
+    // failure kept in the ledger, and a correctly rendered page BLOCKED.
+    //
+    // Round 113: stamping before the fulfill is too EARLY. Fulfillment is
+    // awaited, so a request begun WHILE it is pending is stamped after a
+    // pre-fulfill mark even though the page has not seen the failure and it
+    // cannot be a reaction to it. The causal test would then read an
+    // in-flight sibling as a retry and clear a failure whose original
+    // caller consumed an error — certifying a funds surface that was never
+    // fully served, which is the accusing direction and the worse one.
+    //
+    // There is no stamp for "Chromium handed this to the page", so the
+    // ambiguous interval is closed by taking the LATER edge of it: a
+    // request begun during fulfillment is treated as unable to prove
+    // recovery, because it is.
+    const deliveredAt = orderingNow();
     // A resolved fetch is not the same as an answered call. The provider
     // can hand back a JSON-RPC error, or a 429, over a perfectly healthy
     // HTTP response — and passing that on without a verdict is how a

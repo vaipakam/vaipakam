@@ -1053,16 +1053,21 @@ export function recordRpcResponse(
   //
   // The drive records AFTER `route.fulfill` on purpose: the page must get
   // the provider's real answer whatever we go on to conclude about it. But
-  // that puts the page's receipt of a failure BEFORE this line, and viem
-  // can have issued its retry in between — so a genuine retry's
-  // `requestedAt` could be at or before this `at`, and the causal test
-  // below would reject it as an in-flight sibling. A recovered failure then
-  // stays in the ledger and a correctly rendered page exits BLOCKED.
+  // several statements separate the two, and viem can have issued its retry
+  // in between — so a genuine retry's `requestedAt` could be at or before
+  // this `at`, and the causal test below would reject it as an in-flight
+  // sibling. A recovered failure then stays in the ledger and a correctly
+  // rendered page exits BLOCKED.
   //
-  // `deliveredAt` is stamped immediately before the fulfill, which is the
-  // conservative boundary: nothing the page issued strictly before that
-  // instant can be a reaction to this response. The fallback keeps callers
-  // that cannot stamp it — and the catch paths — on the old behaviour.
+  // ROUND 113 P2 — AND NOT TOO EARLY EITHER. `deliveredAt` is stamped at
+  // the instant delivery COMPLETED, not before it began: fulfillment is
+  // awaited, and a request begun while it was pending cannot be a reaction
+  // to a failure the page had not yet seen. Stamping the near edge would
+  // have let such a sibling clear the failure — certifying a funds surface
+  // whose original caller consumed an error, which is the worse direction.
+  //
+  // The fallback keeps callers that cannot stamp it — and the catch paths —
+  // on the old behaviour.
   const at = typeof deliveredAt === 'number' ? deliveredAt : performance.now();
   // ROUND 95 P2 — AND *WHICH RESPONSE*, because time alone cannot separate
   // a retry from a SIBLING. A JSON-RPC batch is one request carrying many

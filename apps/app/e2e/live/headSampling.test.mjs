@@ -379,6 +379,27 @@ describe('the head sample waits for the readings in flight', () => {
     }
   });
 
+  // ROUND 113 P2 — AND THE DELIVERY STAMP IS TAKEN AFTER THE FULFILL.
+  //
+  // Which side of the await it sits on IS the fix, and the two sides fail
+  // in opposite directions: before it, a sibling begun during fulfillment
+  // is stamped later than the failure's arrival and clears a call whose
+  // caller consumed an error; several statements after it, a genuine retry
+  // is stamped earlier and a correctly rendered page exits BLOCKED. The
+  // ledger's own tests cannot see this — they receive the number, not where
+  // it was taken — so it is pinned here.
+  it('stamps delivery after the fulfill resolves, not before it begins', () => {
+    const fulfill = at('await route.fulfill({ status: resp.status, headers, body: buf });');
+    const stamp = at('const deliveredAt = orderingNow();');
+    expect(fulfill, 'the fulfill was not found').toBeGreaterThan(-1);
+    expect(stamp, 'the delivery stamp was not found').toBeGreaterThan(-1);
+    expect(stamp, 'the stamp must follow the fulfill').toBeGreaterThan(fulfill);
+    // And exactly one of each, so the ordering cannot be satisfied by a
+    // second copy somewhere else in the file.
+    expect([...src.matchAll(/const deliveredAt = orderingNow\(\);/g)]).toHaveLength(1);
+    expect([...src.matchAll(/await route\.fulfill\(/g)]).toHaveLength(1);
+  });
+
   it('only trusts the floor when every endpoint the page used is bounded', () => {
     const sig = 'function floorEstablishedFor(page, sampledBeforeNav)';
     expect(at(sig), 'the floor predicate was not found').toBeGreaterThan(-1);
