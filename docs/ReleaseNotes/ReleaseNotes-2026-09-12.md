@@ -1,3 +1,16 @@
+# Release Notes — 2026-09-12
+
+One entry. The lender's forced close-out card — the surface that lets a
+lender wind down an overdue loan — now has a committed check that runs
+against the deployed build, alongside the existing check of the exit
+chooser on the same page. It states no amount it cannot substantiate and
+it is present on every position it applies to; where the check cannot
+establish either, it says so rather than passing. The entry is long
+because most of the work was making an *absence* judgement defensible:
+reporting a missing card is an accusation, and it is only sound when the
+check can show the card's data could not have come from a block it has
+not itself read.
+
 ## Thread — the lender's forced close-out is now watched on the deployed build
 
 The forced close-out card shipped without a committed post-deploy check.
@@ -661,3 +674,4 @@ arrived at — including several cases where a fix left its own new state
 unhandled, or was applied to one of several parallel sites — lives in the
 pull request's review threads, the commit messages, and the coverage
 matrix entry, which is where that detail belongs.
+<!-- assembled-fragment: 2093-forced-close-live-observation.md sha256=6527d2c08070a66f3d11bb06224860b5f1cbff54e5501bac6fde0f7afe1ccb76 -->
