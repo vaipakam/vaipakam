@@ -28,12 +28,17 @@ twice, and the copies had once drifted. It is now written once and
 reaches every place the check asks the question by construction.
 
 The fourth is the same kind of change, on the first entry's hardest
-piece. The part of the check that learns which block the page was at —
-the basis of every "the card's data could not have come from a block
-the check has not read" argument above — lived inside the check itself,
-where it could only be inspected and never run. It now stands alone and
-is exercised directly, under every ordering of events a live page can
-produce, with the check's own behaviour unchanged.
+piece. The part of the check that learns the page's sound block bounds —
+a floor the card's data cannot predate and a ceiling it cannot postdate,
+never one exact block, since the check cannot tie a render to a block
+and reports a disagreement anywhere inside that interval as incomplete —
+lived inside the check itself, where it could only be inspected and never
+run. It now stands alone and is exercised directly under the orderings
+the rules are about: an endpoint proving itself before or after it
+announces a head, a head answered before or after the first read is
+asked, a foreign chain answer landing before or after an address-based
+admission, and a reply still being parsed when a sample is taken. The
+check's own behaviour is unchanged.
 
 ## Thread — the lender's forced close-out is now watched on the deployed build
 
@@ -833,8 +838,12 @@ contradiction, the drain waits for parses in flight and admits when it
 never reached quiet, the floor is proven per endpoint by an answer that
 preceded the ask, and the direct probes take the lowest for the floor and
 the highest for the ceiling while naming which endpoints answered. The
-source guards that remain are the drive's own wiring — settle before sample
-before scrape at both call sites — and the one seam the extraction created:
+source guards that remain are the drive's own wiring — at the pre-render
+site, drain the pending reads, then sample the floor, then read the card;
+at the post-scrape site, read the card, then drain, then sample the
+observed head and ask the provider for the ceiling, so that the ceiling
+is taken after everything the card could have read — and the one seam
+the extraction created:
 the tracker stamps with the clock it is handed and reads none of its own,
 and the drive hands it the same monotonic clock its ledger uses, so the
 floor's ordering proof and the ledger's comparison cannot drift onto two
