@@ -62,24 +62,19 @@ so the count above stays honest:
   to wait, or is rate limited again after waiting.
 - `gh-trace-ratelimit-wait.sh` is what that step calls to decide whether to
   wait: it reads a `GH_DEBUG=api` trace and reports whether the LAST response
-  was a rate limit and how long to wait. It exists because `/rate_limit` does
-  not report the bucket a GraphQL request is metered against (#2129) — the
-  failed request's own headers are the only trustworthy statement of the
-  limit. It recognises exactly two shapes and nothing looser: the **primary**
-  form (`X-Ratelimit-Remaining: 0`, wait = `X-Ratelimit-Reset` minus now —
-  the status is not part of it, since GraphQL answers 200 with the error in
-  the body) and the **secondary** form (status 403 or 429 with `Retry-After`,
-  or with a body saying "secondary rate limit"; wait = `Retry-After`). When
-  both shapes match one response, the retry has to outlast both, so the
-  longer of the two waits is the wait. A
-  response that fits a shape but lacks the header that would name its wait
-  gets a fixed 60 s default, and the reason string says `default wait` so the
-  log never presents the guess as a reading. A 503 with `Retry-After` is
-  deliberately NOT a limit — the nameable miss; calling it one would be the
-  misdiagnosis the trace evidence exists to end. `--selftest` runs its own
-  fixtures, and the step fixtures above run it as-is, from a copy of the real
-  file, never a stub — under a stubbed clock, so no assertion depends on how
-  long the runner took between two reads of `date`.
+  matched a rate-limit shape it supports, and how long to wait. It exists
+  because `/rate_limit` does not report the bucket a GraphQL request is
+  metered against (#2129) — the failed request's own headers are the only
+  trustworthy statement of the limit. **The rule — which shapes count, how
+  each wait is derived, which waits are defaults rather than readings, and
+  what is deliberately not a limit — is stated in the script's own header
+  and next to the code that applies it, and is not repeated here.** Three
+  review rounds on #2149 found every paraphrase of it, in this file and the
+  handbook, drifting from the code; one statement, where the self-test can
+  hold it to account, is the fix. `--selftest` runs those fixtures, and the
+  step fixtures above run the script as-is, from a copy of the real file,
+  never a stub — under a stubbed clock, so no assertion depends on how long
+  the runner took between two reads of `date`.
 
 They run in their OWN workflow, `board-reconcile-fixtures.yml`, not with the
 gates above. Convenience would have put them in theirs; they are an operational

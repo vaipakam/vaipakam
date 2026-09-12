@@ -1127,21 +1127,24 @@ stand underneath it:
   to the last SUCCESSFUL sweep, so an outage widens the next sweep rather
   than expiring an unrecovered card. Dispatch it by hand with
   `closed_lookback_days` to backfill after a rename or a long gap.
-- **The sweep's own listing retries once on a rate limit.** The board listing
-  is metered against the same bucket, and every measured failure of it
-  refilled 6–12.5 minutes later (#2129, #2134). So when the FAILED REQUEST's
-  own headers state a limit, the step waits for the reset those headers name
-  (plus a 5 s margin, capped at `RETRY_WAIT_CAP_SECONDS`, 15 min) and tries
-  exactly once more. It reads the wait from the request trace, never from
-  `/rate_limit` — that endpoint does not report the bucket the request was
-  metered against, and the §3.3 note about secondary limits applies. One
-  wait is a guess rather than a reading: a 403/429 whose only statement of
-  the limit is a "secondary rate limit" body, with no `Retry-After`, gets a
-  fixed 60 s, and the log's reason string says `default wait` for it. A
-  failure that states no limit (bad credentials, an unreadable project) is
-  not retried; a second limit after the reset is not either — the run fails
-  with the request's status, headers and message in the log, and the next
-  sweep tries again.
+- **The sweep's own listing retries once on a recognised rate limit.** The
+  board listing is metered against the same bucket, and every measured
+  failure of it refilled 6–12.5 minutes later (#2129, #2134). The step hands
+  the failed request's trace to `.github/scripts/gh-trace-ratelimit-wait.sh`;
+  if that recognises a rate limit it waits the number of seconds the parser
+  returns (plus a 5 s margin, the total capped at `RETRY_WAIT_CAP_SECONDS`,
+  15 min) and tries exactly once more. **What counts as a limit, and how each
+  wait is derived, is defined in that script's header and nowhere else** —
+  this handbook does not restate the rule, because three review rounds
+  showed every restatement drifting from it. Two things the reader does need:
+  the wait comes from the request trace and never from `/rate_limit`, which
+  does not report the bucket the request was metered against; and the log's
+  reason string says which shape matched and whether the wait was READ from
+  a header or is a DEFAULT — a default is a guess, and the log says so.
+  Anything the parser does not recognise is not retried, whatever it was;
+  a second limit after the wait is not retried either. In both cases the
+  run fails with the request's status, headers and message in the log, and
+  the next sweep tries again.
 
 When it is the **listing** that failed, a red sweep means one of three things,
 and the log's diagnostic group says which: the limit outlasted one retry, the

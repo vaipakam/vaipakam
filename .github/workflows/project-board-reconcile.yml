@@ -288,10 +288,13 @@ jobs:
           # point of the diagnostic is that the endpoint does not report the
           # bucket the request is metered against. The parser is
           # `.github/scripts/gh-trace-ratelimit-wait.sh`: it says whether the
-          # LAST response was a limit and how long until the reset it named.
-          # A failure that is not a limit (bad credentials, a project the
-          # token cannot see) is not retried — waiting would not change it,
-          # and the diagnostic below says what it was.
+          # LAST response matched a rate-limit shape it supports, and how
+          # long to wait. What counts as a limit is defined in that script's
+          # header and NOT restated here. Only a recognised limit is retried;
+          # anything else — bad credentials, a project the token cannot see,
+          # a 503 — goes straight to the diagnostic below, which says what it
+          # was. That is a statement about what this step retries, not a
+          # claim that a retry could not have helped.
           #
           # ONCE, not until it works. A second failure after the reset means
           # something else is draining the bucket faster than it refills,
