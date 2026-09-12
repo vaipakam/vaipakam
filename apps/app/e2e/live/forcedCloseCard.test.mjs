@@ -106,6 +106,22 @@ describe('declaredStateConsistent', () => {
     const v = declaredStateConsistent('ready-in-kind', { defaultable: false, internalMatch: true });
     expect(v.why).toMatch(/isLoanDefaultable/);
   });
+
+  // Round 3 P2 — a readable contradiction outranks an unreadable sibling.
+  it('lets a readable fact contradict the declaration even when another implied fact was unreadable', () => {
+    const v = declaredStateConsistent('ready-in-kind', { defaultable: undefined, internalMatch: true });
+    expect(v.judged).toBe(true);
+    expect(v.consistent).toBe(false);
+    expect(v.why).toMatch(/hasInternalMatchCandidate to be false/);
+  });
+
+  it('is unjudged only when nothing readable contradicted, and names every unreadable fact', () => {
+    const v = declaredStateConsistent('ready-in-kind', { defaultable: undefined, internalMatch: false });
+    expect(v.judged).toBe(false);
+    expect(v.why).toMatch(/^isLoanDefaultable could not be read/);
+    const both = declaredStateConsistent('ready-in-kind', {});
+    expect(both.why).toMatch(/isLoanDefaultable and hasInternalMatchCandidate could not be read/);
+  });
 });
 
 /**
@@ -406,6 +422,74 @@ describe('forcedCloseVerdict', () => {
       expect(declined.declaredFacts).toMatch(/^unjudged \(isLoanDefaultable could not be read/);
       const silent = forcedCloseVerdict({ ...notYet, declaredState: 'not-yet' }, declaredCopy);
       expect(silent.declaredFacts).toBe('unjudged (no reason recorded)');
+    });
+
+    // Round 3 P2 — the declaration-versus-copy check is applied to EVERY
+    // render the poll read, not only the settled one. Each synthetic render
+    // carries explicit control facts: the unsafe-control arm reads a render
+    // with no control fields as an offered action, which is a different
+    // finding from the one these cases are about.
+    const withheldControl = { submitVisible: false, submitDisabled: true };
+    it('FAILS a render that declared unknown beside resolved copy, even though the card settled clean', () => {
+      const v = forcedCloseVerdict(
+        {
+          ...notYet,
+          declaredState: 'not-yet',
+          declaredBlock: '100',
+          declaredChain: { defaultable: false, internalMatch: false },
+          seenRenders: [
+            { ...withheldControl, text: FORCED_CLOSE.notYet, visibleText: FORCED_CLOSE.notYet, declaredState: 'unknown', declaredBlock: null },
+            { ...withheldControl, text: FORCED_CLOSE.notYet, visibleText: FORCED_CLOSE.notYet, declaredState: 'not-yet', declaredBlock: '100' },
+          ],
+        },
+        declaredCopy,
+      );
+      expect(v.verdict).toBe('fail');
+      expect(v.why).toMatch(/a render this drive read declares its state unknown/);
+    });
+
+    it('FAILS a render that declared a resolved state beside the checking sentence, settled render clean', () => {
+      const v = forcedCloseVerdict(
+        {
+          ...notYet,
+          declaredState: 'not-yet',
+          declaredBlock: '100',
+          seenRenders: [
+            { ...withheldControl, text: FORCED_CLOSE.unknown, visibleText: FORCED_CLOSE.unknown, declaredState: 'not-yet', declaredBlock: '99' },
+          ],
+        },
+        declaredCopy,
+      );
+      expect(v.verdict).toBe('fail');
+      expect(v.why).toMatch(/a render this drive read declares the resolved state "not-yet"/);
+    });
+
+    it('judges intermediate renders even when the settled card declares nothing', () => {
+      // An older-bundle settled snapshot cannot happen beside a declaring
+      // intermediate render in practice, but the rule must not depend on
+      // the settled render to reach the others.
+      const v = forcedCloseVerdict(
+        {
+          ...notYet,
+          seenRenders: [{ ...withheldControl, text: FORCED_CLOSE.notYet, visibleText: FORCED_CLOSE.notYet, declaredState: 'unknown' }],
+        },
+        declaredCopy,
+      );
+      expect(v.verdict).toBe('fail');
+    });
+
+    it('leaves renders without a declaration out of the per-render check', () => {
+      const v = forcedCloseVerdict(
+        {
+          ...notYet,
+          declaredState: 'not-yet',
+          declaredBlock: '100',
+          declaredChain: { defaultable: false, internalMatch: false },
+          seenRenders: [{ ...withheldControl, text: FORCED_CLOSE.unknown, visibleText: FORCED_CLOSE.unknown }],
+        },
+        declaredCopy,
+      );
+      expect(v.verdict).toBe('pass');
     });
 
     it('a contradiction outranks a merely incomplete observation', () => {

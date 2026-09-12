@@ -7143,6 +7143,12 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
         // carried since round 50 — a click is instantaneous.
         submitLabelled: v.submitLabelled,
         submitLabelPainted: v.submitLabelPainted,
+        // #2148 ROUND 3 P2 — AND WHAT THE RENDER DECLARED. The verdict
+        // checks each render's declaration against its painted copy, so
+        // an intermediate render declaring `unknown` beside resolved copy
+        // is judged even after the card corrected itself.
+        declaredState: v.declaredState,
+        declaredBlock: v.declaredBlock,
       });
     }
     if (typeof v?.visibleCards === 'number' && v.visibleCards > visibleCardsPeak) {

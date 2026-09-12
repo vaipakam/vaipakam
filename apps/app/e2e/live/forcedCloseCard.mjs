@@ -1013,13 +1013,25 @@ export function declaredStateConsistent(state, facts) {
   // no chain fact had been consulted, which is the same false PASS the
   // whole `declaredFacts` status exists to prevent. Zero comparisons is
   // unjudged, and says so.
+  // ROUND 3 P2 — EVERY READABLE FACT IS EXAMINED, AND A CONTRADICTION WINS.
+  // The first version returned `unjudged` at the first unreadable fact,
+  // so `ready-in-kind` with `isLoanDefaultable` unreadable and
+  // `hasInternalMatchCandidate` readable and TRUE — a definite
+  // contradiction of the declared route — was filed as "could not be
+  // read" and the drive passed while holding evidence against the card.
+  // A definite observation outranks an uncertain one, the rule this
+  // module applies everywhere else: the loop now runs to the end, and an
+  // unreadable fact only makes the result unjudged when nothing readable
+  // contradicted the declaration.
   let compared = 0;
+  const unreadable = [];
   for (const [key, view] of checks) {
     const expected = implies[key];
     if (expected === undefined) continue;
     const actual = facts?.[key];
     if (typeof actual !== 'boolean') {
-      return { judged: false, why: `${view} could not be read at the declared block` };
+      unreadable.push(view);
+      continue;
     }
     if (actual !== expected) {
       return {
@@ -1029,6 +1041,9 @@ export function declaredStateConsistent(state, facts) {
       };
     }
     compared += 1;
+  }
+  if (unreadable.length > 0) {
+    return { judged: false, why: `${unreadable.join(' and ')} could not be read at the declared block` };
   }
   if (compared === 0) {
     return {
@@ -1511,32 +1526,56 @@ export function forcedCloseVerdict(obs, copy) {
  */
 function judgeDeclared(obs, copy) {
   const declared = typeof obs.declaredState === 'string' ? obs.declaredState : null;
-  if (declared === null) return { declaredFacts: 'undeclared', failure: null };
-  const settledPainted = obs.visibleText ?? obs.text ?? '';
-  const paintsChecking = saysCheckRunning(settledPainted, copy?.unknownCopy ?? '');
   const fail = (why, declaredFacts) => ({
     declaredFacts,
     failure: { verdict: 'fail', failKind: 'observed', why, declaredFacts },
   });
-  if (declared !== 'unknown' && paintsChecking) {
-    return fail(
-      `card declares the resolved state "${declared}" while painting the still-checking sentence — two answers about one decision`,
-      'contradicted',
-    );
-  }
-  if (
-    declared === 'unknown' &&
-    !paintsChecking &&
+  // ROUND 3 P2 — THE DECLARATION-VERSUS-COPY CHECK RUNS ON EVERY RENDER
+  // THIS DRIVE READ, not only the one the poll settled on. The poll
+  // overwrites its snapshot each tick, so a render declaring `unknown`
+  // beside resolved copy — and then correcting itself before the
+  // deadline — reached this function only as its corrected successor,
+  // and the contradiction the lender was shown was discarded. Same
+  // shape as the round-31 amount scan and the round-50 unsafe-control
+  // check: the drive records every render's declaration in
+  // `seenRenders`, and this judges each of them. The settled render is
+  // judged first so a contradiction there is reported in the same words
+  // it always was; a render without a declaration says nothing.
+  //
+  // The chain comparison below stays on the SETTLED declaration alone:
+  // the drive re-reads the chain at the block that render named, and an
+  // intermediate render's block was not re-read.
+  const renders = [
+    { declaredState: declared, painted: obs.visibleText ?? obs.text ?? '', settled: true },
+    ...(Array.isArray(obs.seenRenders) ? obs.seenRenders : []).map((r) => ({
+      declaredState: typeof r?.declaredState === 'string' ? r.declaredState : null,
+      painted: r?.visibleText ?? r?.text ?? '',
+      settled: false,
+    })),
+  ];
+  const paintsResolved = (painted) =>
     Array.isArray(copy?.recognisedCopy) &&
     copy.recognisedCopy.some(
-      (sentence) => typeof sentence === 'string' && sentence && settledPainted.includes(sentence),
-    )
-  ) {
-    return fail(
-      'card declares its state unknown while painting a resolved readiness state — two answers about one decision',
-      'contradicted',
+      (sentence) => typeof sentence === 'string' && sentence && painted.includes(sentence),
     );
+  for (const r of renders) {
+    if (r.declaredState === null) continue;
+    const paintsChecking = saysCheckRunning(r.painted, copy?.unknownCopy ?? '');
+    const where = r.settled ? 'card' : 'a render this drive read';
+    if (r.declaredState !== 'unknown' && paintsChecking) {
+      return fail(
+        `${where} declares the resolved state "${r.declaredState}" while painting the still-checking sentence — two answers about one decision`,
+        'contradicted',
+      );
+    }
+    if (r.declaredState === 'unknown' && !paintsChecking && paintsResolved(r.painted)) {
+      return fail(
+        `${where} declares its state unknown while painting a resolved readiness state — two answers about one decision`,
+        'contradicted',
+      );
+    }
   }
+  if (declared === null) return { declaredFacts: 'undeclared', failure: null };
   if (obs.declaredChain && typeof obs.declaredChain === 'object') {
     const agreement = declaredStateConsistent(declared, obs.declaredChain);
     if (agreement.judged && !agreement.consistent) return fail(agreement.why, 'contradicted');
