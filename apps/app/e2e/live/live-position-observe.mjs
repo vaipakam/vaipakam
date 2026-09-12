@@ -2264,6 +2264,61 @@ const foreignPageRpcEndpoints = new Set();
  * one request from a machine that has fallen behind can answer below its
  * own reported height. Nothing observable from outside distinguishes it.
  */
+/**
+ * The HIGHEST head the page's own Diamond-serving endpoints are at, asked
+ * directly AFTER the scrape — the bracket's upper end.
+ *
+ * ROUND 101 P2 — BECAUSE THE RECORDED HEAD IS NOT A CEILING.
+ *
+ * `pageHead` is the highest head this drive OBSERVED the page announce, and
+ * `headSettled` only says the announcements it saw finished parsing. Neither
+ * bounds an unpinned `eth_call` the page issues afterwards: the provider can
+ * advance between its last head reply and that read, serve it at a higher
+ * block, and the card then renders from state the interior scan never
+ * reaches while `pinnedBlock >= pageHead` is satisfied. That is the accusing
+ * direction — a correct card judged against a range that excludes it.
+ *
+ * Asking AFTER the scrape is what makes this sound: heads do not go
+ * backwards, so a height reported now is at or above anything served during
+ * the scrape. The HIGHEST across endpoints, which is the opposite of
+ * `pageProviderHead`'s lowest and for the mirrored reason — the floor takes
+ * the furthest back because any endpoint might have served the card, and the
+ * ceiling takes the furthest forward for exactly the same reason.
+ *
+ * `sampled` is returned for the same reason it is there: an endpoint that
+ * would not answer is not bounded, and a caller that cannot bound every
+ * endpoint the page used has no ceiling rather than a slightly worse one.
+ *
+ * @returns {Promise<{head: bigint, sampled: Set<string>}>}
+ */
+async function pageProviderCeiling(page) {
+  let high = 0n;
+  const sampled = new Set();
+  const diamond = pageDiamondKeys.get(page);
+  for (const url of diamond ?? []) {
+    if (foreignPageRpcEndpoints.has(url)) continue;
+    try {
+      const resp = await ufetch(url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_blockNumber', params: [] }),
+        signal: AbortSignal.timeout(CHAIN_PROBE_TIMEOUT_MS),
+      });
+      if (!resp.ok) continue;
+      const parsed = await resp.json();
+      if (Array.isArray(parsed)) continue;
+      const seen = hexQuantity(believableResult(parsed));
+      if (seen === null || seen <= 0n) continue;
+      if (seen > high) high = seen;
+      sampled.add(url);
+    } catch {
+      // Unanswerable: this endpoint contributes no bound, and the caller
+      // refuses the ceiling rather than proceeding with a partial one.
+    }
+  }
+  return { head: high, sampled };
+}
+
 async function pageProviderHead() {
   let low = 0n;
   // WHICH endpoints this bound, not only the height (round 90). A sample
@@ -4336,6 +4391,21 @@ async function observeForcedClose(page, loan, headBeforeNav, pageHeadBeforeNav, 
   // `observerCaughtUp` below refuses to be satisfied by one.
   const headSettled = await settleHeadReads(page);
   const pageHead = pageHeadOf(page);
+  // ROUND 101 P2 — AND A REAL CEILING, ASKED RATHER THAN OBSERVED.
+  //
+  // `pageHead` is the highest head this drive SAW announced, which does not
+  // bound an unpinned `eth_call` the page issued after that announcement:
+  // the provider can advance in between and serve the read higher. See
+  // `pageProviderCeiling` — asked after the scrape, highest across the
+  // endpoints this page actually used, and refused outright unless every one
+  // of them answered.
+  const ceiling = await pageProviderCeiling(page);
+  const diamondKeys = pageDiamondKeys.get(page) ?? new Set();
+  const ceilingSound =
+    ceiling.head > 0n &&
+    [...diamondKeys].every(
+      (k) => ceiling.sampled.has(k) || foreignPageRpcEndpoints.has(k),
+    );
   // ROUND 98 P2 — THE FLOOR IS RE-READ AFTER THE SCRAPE, AND ONLY LOWERED.
   //
   // The third finding in a row on this bracket, and each one has been the
@@ -4628,7 +4698,25 @@ async function observeForcedClose(page, loan, headBeforeNav, pageHeadBeforeNav, 
   // against a state the page had already moved past, on a comparison whose
   // whole purpose is to establish that it had not. `headSettled` is the
   // difference between a ceiling and a number that resembles one.
-  const observerCaughtUp = headSettled && pageHead > 0n && pinnedBlock >= pageHead;
+  //
+  // ROUND 101 P2 — AND THE BAR IS THE ASKED CEILING, NOT THE OBSERVED HEAD.
+  //
+  // `pageHead` stays in the test: it is the head the page was SEEN to reach,
+  // and a run that saw none has established nothing. What it cannot do is
+  // bound a read issued after the last announcement, so the observer must
+  // also clear a height sampled from the page's own providers AFTER the
+  // scrape. Heads do not go backwards, so that height is at or above
+  // anything served during it.
+  //
+  // Unanswered endpoints make it `false` rather than lowering it — a
+  // ceiling that covers some of the endpoints the page used is not a
+  // ceiling, and this refuses rather than approximating.
+  const observerCaughtUp =
+    headSettled &&
+    pageHead > 0n &&
+    pinnedBlock >= pageHead &&
+    ceilingSound &&
+    pinnedBlock >= ceiling.head;
   // ROUND 90 P2 — no global shortcut. `floorEstablishedFor` now decides
   // PER ENDPOINT, accepting either the pre-navigation sample or that
   // endpoint's own announcement ordering, so an endpoint this page reached

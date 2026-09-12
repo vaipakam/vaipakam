@@ -398,14 +398,55 @@ describe('the head sample waits for the readings in flight', () => {
     expect(src, 'the post-scrape site captures it').toContain(
       'const headSettled = await settleHeadReads(page);',
     );
-    expect(src, 'the catch-up test is gated on the ceiling drain').toContain(
-      'const observerCaughtUp = headSettled && pageHead > 0n && pinnedBlock >= pageHead;',
+    const caughtUp = src.slice(
+      src.indexOf('const observerCaughtUp ='),
+      src.indexOf('const observerCaughtUp =') + 320,
+    );
+    expect(caughtUp, 'the catch-up test is gated on the ceiling drain').toContain(
+      'headSettled &&',
     );
     expect(src, 'and the bracket on the floor drain').toContain('floorDrained &&');
     // No bare call left: a third sample site added without capturing the
     // verdict is the shape this whole finding was.
     const bare = [...src.matchAll(/(?<![=]\s)\n\s*await settleHeadReads\(page\);/g)];
     expect(bare, 'every settle site keeps its verdict').toHaveLength(0);
+  });
+
+  // ROUND 101 P2 — AND THE OBSERVED HEAD IS NOT A CEILING BY ITSELF.
+  //
+  // `pageHead` is the highest head the drive SAW announced, and `headSettled`
+  // only says the announcements it saw finished parsing. Neither bounds an
+  // unpinned `eth_call` the page issues afterwards: the provider can advance
+  // between its last head reply and that read and serve it higher, so a card
+  // rendered from a block the interior scan never reaches passed the test
+  // whose whole job is to establish that it did not.
+  //
+  // Asked after the scrape, highest across the endpoints the page actually
+  // used, and refused outright when any of them will not answer — a ceiling
+  // over some of them is not a ceiling.
+  it('clears a ceiling ASKED after the scrape, not only the observed head', () => {
+    expect(src, 'the ceiling probe exists').toContain(
+      'async function pageProviderCeiling(page)',
+    );
+    const probe = functionBody(src, 'async function pageProviderCeiling(page)');
+    // The HIGHEST, which is the mirror of the floor probe's lowest.
+    expect(probe).toContain('if (seen > high) high = seen;');
+    expect(probe, 'scoped to the endpoints THIS page used').toContain(
+      'pageDiamondKeys.get(page)',
+    );
+    // Sampled after the scrape, not before it.
+    const sampleAt = src.indexOf('const ceiling = await pageProviderCeiling(page);');
+    expect(sampleAt, 'the ceiling sample was not found').toBeGreaterThan(-1);
+    expect(src.indexOf('const card = await readForcedCloseCard(page);')).toBeLessThan(sampleAt);
+    // And consumed, with an unbounded endpoint refusing rather than lowering.
+    const caughtUp = src.slice(
+      src.indexOf('const observerCaughtUp ='),
+      src.indexOf('const observerCaughtUp =') + 320,
+    );
+    expect(caughtUp).toContain('ceilingSound');
+    expect(caughtUp).toContain('pinnedBlock >= ceiling.head');
+    const sound = src.slice(src.indexOf('const ceilingSound ='), src.indexOf('const ceilingSound =') + 400);
+    expect(sound, 'every endpoint the page used must be sampled').toContain('.every(');
   });
 });
 

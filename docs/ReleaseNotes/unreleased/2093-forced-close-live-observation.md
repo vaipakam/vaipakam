@@ -579,6 +579,26 @@ described. Those are recorded here as defects rather than tidying, because
 a stale description is how a later change gets steered back into a problem
 already fixed.
 
+Two more on the same window, both about bounds that were being inferred
+rather than established. The lower edge could be set from the order two
+replies happened to arrive in, which says nothing about the order the data
+source served them — two questions asked at once can be answered from
+different moments and come back in either order. The check had already
+reasoned exactly this way about several questions sent in one envelope,
+and had not applied it to two envelopes. It now asks the sound question
+instead: had this source already said where it was before we asked it to
+read? Positions only move forward, so an answer given earlier bounds a
+read asked later, with nothing assumed about arrival order.
+
+The upper edge had the mirror problem: it was the furthest-forward
+position the check had happened to overhear, which does not bound a
+reading the page requests afterwards — the source can move on in between
+and serve it further forward still. The upper edge is now asked for
+directly once the page has been read, from every source that page used,
+and a source that will not answer makes the check report no upper edge at
+all rather than an optimistic one. A window over some of the sources is
+not a window.
+
 Closes #2093. The round-by-round record of how each of these rules was
 arrived at — including several cases where a fix left its own new state
 unhandled, or was applied to one of several parallel sites — lives in the
