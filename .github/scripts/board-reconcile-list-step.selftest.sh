@@ -448,6 +448,41 @@ check c "the log names the cap and says the wait was not taken" "$s"
 grep -q 'X-Ratelimit-Remaining: 0' "$work/out.txt" && s=0 || s=1
 check c "the failed request's evidence is still printed" "$s"
 
+# ── scenario 7b: the reset is inside the cap, the margin takes it over ───────
+# The cap bounds the whole stand-still. A reset 897 s out passes a naive
+# `wait <= cap` check and then sleeps 902 s once the margin is added — which
+# is the configured bound not being enforced (#2149 r1). Compare the total.
+cat > "$work/bin/gh" <<SH
+#!/usr/bin/env bash
+if [ "\$1" = "api" ] && [ "\$2" = "rate_limit" ]; then
+  if [ "\$3" = "--jq" ]; then echo 5000; exit 0; fi
+  echo '{"resources":{"graphql":{"limit":5000,"remaining":5000}}}'; exit 0
+fi
+if [ "\$1" = "project" ] && [ "\$2" = "item-list" ]; then
+  echo item-list >> "\$(dirname "\$0")/../calls.txt"
+  if [ -n "\${GH_DEBUG:-}" ]; then
+    echo "< HTTP/2.0 200 OK" >&2
+    echo "< X-Ratelimit-Remaining: 0" >&2
+    echo "< X-Ratelimit-Reset: \$(( \$(date -u +%s) + 897 ))" >&2
+    echo '{"message":"API rate limit already exceeded for user ID 275282153."}' >&2
+  fi
+  echo "unknown owner type" >&2
+  exit 1
+fi
+exit 0
+SH
+chmod +x "$work/bin/gh"
+
+echo "rate limited, reset inside the cap but margin over it:"
+run_step && rc=0 || rc=$?
+check m "the step fails" "$([ "$rc" -ne 0 ] && echo 0 || echo 1)"
+[ "$(attempts)" -eq 1 ] && s=0 || s=1
+check m "one attempt only ($(attempts))" "$s"
+[ ! -s "$work/sleeps.txt" ] && s=0 || s=1
+check m "nothing was waited for (got '$(tr '\n' ' ' < "$work/sleeps.txt")')" "$s"
+grep -qE 'the wait would be (901|902)s, over RETRY_WAIT_CAP_SECONDS=900' "$work/out.txt" && s=0 || s=1
+check m "the log states the TOTAL wait, margin included, against the cap" "$s"
+
 # ── scenario 8: rate limited, waited, rate limited again ────────────────────
 # ONE retry, not a loop. If the bucket is empty again after its own reset,
 # something else is draining it faster than it refills, and a third attempt

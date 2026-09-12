@@ -305,10 +305,11 @@ jobs:
             verdict_rc=$?
             set -e
             if [ "$verdict_rc" -eq 0 ]; then
-              wait_s=${verdict%%	*}
               reason=${verdict#*	}
+              # The cap bounds the whole stand-still, margin included — a
+              # reset four seconds inside it is not a wait inside it.
+              wait_s=$(( ${verdict%%	*} + RETRY_MARGIN_SECONDS ))
               if [ "$wait_s" -le "$RETRY_WAIT_CAP_SECONDS" ]; then
-                wait_s=$(( wait_s + RETRY_MARGIN_SECONDS ))
                 echo "::warning::board listing was rate limited ($reason); waiting ${wait_s}s for the reset, then trying once more"
                 first_attempt_note="first attempt was rate limited ($reason); this is the retry after a ${wait_s}s wait"
                 sleep "$wait_s"

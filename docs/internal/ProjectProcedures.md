@@ -1110,12 +1110,15 @@ New Issues land on `@vaipakam-labs` automatically via
 secret). Multi-repo support via this workaround — GitHub Projects'
 own auto-add is one-repo-per-UI-rule.
 
-**That add is single-shot and is NOT retried.** Projects v2 is GraphQL-only,
-so it draws on the PAT owner's 5,000-point GraphQL bucket — the one every
-tool authenticating as that account shares — and when the bucket is empty at
-the instant an issue opens, the add fails and nothing re-runs it — 17 of the
-60 runs preceding 2026-09-02, and #2054, the issue that reported this, was
-itself one of them. Two things stand underneath it:
+**That add has no automatic retry.** Projects v2 is GraphQL-only, so it draws
+on the PAT owner's 5,000-point GraphQL bucket — the one every tool
+authenticating as that account shares — and when the bucket is empty at the
+instant an issue opens, the add fails and nothing re-runs it for that event —
+17 of the 60 runs preceding 2026-09-02, and #2054, the issue that reported
+this, was itself one of them. The workflow does fire again if the issue is
+later **reopened** or **transferred** (its other two triggers), so either of
+those re-attempts the add as a side effect; nothing else does. Two things
+stand underneath it:
 
 - **The six-hourly sweep** — `.github/workflows/project-board-reconcile.yml`
   ("Add un-boarded open issues") compares open and recently-closed issues
@@ -1137,9 +1140,12 @@ itself one of them. Two things stand underneath it:
   with the request's status, headers and message in the log, and the next
   sweep tries again.
 
-A red sweep therefore means one of three things, and the log's diagnostic
-group says which: the limit outlasted one retry, the wait exceeded the cap,
-or the failure was never a limit.
+When it is the **listing** that failed, a red sweep means one of three things,
+and the log's diagnostic group says which: the limit outlasted one retry, the
+wait exceeded the cap, or the failure was never a limit. The sweep can also go
+red before the listing (the run-history lookup for the closed-issue watermark)
+or after it (a truncated listing, an add or a Done-move that did not land);
+those print their own `::error::` line and no diagnostic group.
 
 ---
 

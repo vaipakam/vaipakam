@@ -62,12 +62,16 @@ so the count above stays honest:
   to wait, or is rate limited again after waiting.
 - `gh-trace-ratelimit-wait.sh` is what that step calls to decide whether to
   wait: it reads a `GH_DEBUG=api` trace and reports whether the LAST response
-  was a rate limit and how many seconds until the reset it named. It exists
-  because `/rate_limit` does not report the bucket a GraphQL request is
-  metered against (#2129) — the failed request's own headers are the only
-  trustworthy statement of the limit. `--selftest` runs its own fixtures, and
-  the step fixtures above run it as-is, from a copy of the real file, never a
-  stub.
+  was a rate limit and how long to wait. It exists because `/rate_limit` does
+  not report the bucket a GraphQL request is metered against (#2129) — the
+  failed request's own headers are the only trustworthy statement of the
+  limit. The wait is **observed** when a header names it (`Retry-After`, or
+  `X-Ratelimit-Reset` minus now) and **guessed** when only the body says
+  "rate limit" and no header does: that case returns a fixed 60 s, the floor
+  GitHub's own guidance gives, and the reason string says so (`no reset
+  header — default wait`) so the log never presents the guess as a reading.
+  `--selftest` runs its own fixtures, and the step fixtures above run it
+  as-is, from a copy of the real file, never a stub.
 
 They run in their OWN workflow, `board-reconcile-fixtures.yml`, not with the
 gates above. Convenience would have put them in theirs; they are an operational
