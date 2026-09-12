@@ -257,13 +257,52 @@ describe('the head sample waits for the readings in flight', () => {
     expect(src, 'the ordering clock is declared once').toContain(
       'const orderingNow = () => performance.now();',
     );
-    // BOTH stamps, or the comparison mixes two origins and means nothing.
-    const stamps = [...src.matchAll(/(firstReadAt\.set\(key, |map\.set\(key, )([A-Za-z.]+\(\))/g)];
-    expect(stamps, 'both ordering stamps were found').toHaveLength(2);
-    for (const m of stamps) expect(m[2], 'ordering stamps use orderingNow').toBe('orderingNow()');
+    // EVERY value that takes part in an ordering comparison, or the
+    // comparison mixes two origins and means nothing.
+    //
+    // AMENDED IN ROUND 109 SELF-REVIEW. The first version enumerated the two
+    // stamps that existed when it was written and asserted `toHaveLength(2)`.
+    // Round 108 added a THIRD — `requestedAt`, compared against the ledger's
+    // arrival time — and the guard did not notice, because it matched only
+    // the two patterns it already knew. That is the same guarded-one-of-N
+    // shape rounds 107 and 109 found in two other guards of mine; here it is
+    // caught by sweeping my own rules rather than by a reviewer.
+    //
+    // Asserted as a NEGATIVE — nothing takes an ordering stamp from the wall
+    // clock — so a fourth site is covered without being enumerated.
+    const orderingStamps = [
+      ...src.matchAll(/(?:firstReadAt\.set\(key, |map\.set\(key, |const requestedAt = )([A-Za-z.]+\(\))/g),
+    ];
+    expect(orderingStamps.length, 'the ordering stamps were found').toBeGreaterThanOrEqual(3);
+    for (const m of orderingStamps) {
+      expect(m[1], 'every ordering stamp uses orderingNow').toBe('orderingNow()');
+    }
+    expect(src, 'no ordering stamp takes the wall clock').not.toMatch(
+      /(?:firstReadAt\.set\(key, |const requestedAt = )Date\.now\(\)/,
+    );
     // And the wall clock is still what deadlines use — a monotonic origin
     // there would be a different, confusing change.
     expect(src).toContain('const until = Date.now() + 20_000;');
+  });
+
+  // ROUND 109 SELF-REVIEW — AND THE LEDGER'S CLOCK IS THE SAME ONE.
+  //
+  // `requestedAt` is stamped in the drive and compared against `at` in
+  // `rpc-verdict.mjs`. The comparison is meaningless unless both come from
+  // `performance.now()`, and that pairing spans two files, so neither file's
+  // own tests can see it. This is the only place that can.
+  it('the ledger stamps arrival on the same clock the drive stamps requests', () => {
+    const verdictSrc = fs.readFileSync(
+      path.join(path.dirname(DRIVE), 'rpc-verdict.mjs'),
+      'utf8',
+    );
+    expect(src, 'the drive stamps requests monotonically').toContain(
+      'const orderingNow = () => performance.now();',
+    );
+    expect(verdictSrc, 'the ledger stamps arrival monotonically').toContain(
+      'const at = performance.now();',
+    );
+    expect(verdictSrc, 'and no longer on the wall clock').not.toContain('const at = Date.now();');
   });
 
   it('only trusts the floor when every endpoint the page used is bounded', () => {
