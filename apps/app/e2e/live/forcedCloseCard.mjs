@@ -113,16 +113,32 @@ const CURRENCY_MARK = /\p{Sc}/u;
  * prose as `WETH` is — and it does not reach lower-case `a` or `i`, which
  * are words in several of the shipped locales.
  *
+ * ROUND 116 P2 — AND NOT ONLY IN ASCII, which was the third guess about
+ * other people's tokens in the same function.
+ *
+ * `symbol()` is an arbitrary string. `Loan 100 ＵＳＤＣ principal` — the
+ * full-width forms, which a locale or a paste can produce — matched no
+ * ticker, no currency mark, no glyph and no lower-case unit, so the
+ * identifier exemption read `100` as a loan NUMBER and the scan came back
+ * clean on a visible amount. The same false PASS as the length bounds, by
+ * alphabet rather than by length.
+ *
+ * The discriminator is unchanged and is what makes widening safe: an
+ * UPPERCASE RUN, now asked of Unicode rather than of ASCII. Scripts with
+ * no case — CJK, Arabic, Devanagari — have no `\p{Lu}`, so ordinary words
+ * in them still do not read as tickers, which is the property that keeps
+ * this from firing on prose in the shipped locales.
+ *
  * Demonstrated rather than argued — the all-locale calibration puts every
  * shipped `forcedClose` string in all twenty bundles through the scanner,
- * and it stays green, so nothing either widening newly recognises appears
- * in the product's own copy.
+ * and it stays green, so nothing any of these widenings newly recognises
+ * appears in the product's own copy.
  */
 function isTicker(word) {
   if (typeof word !== 'string') return false;
-  if (/^[A-Z]$/.test(word)) return true;
-  if (!/^[A-Za-z][A-Za-z0-9]+$/.test(word)) return false;
-  return /[A-Z]{2}/.test(word);
+  if (/^\p{Lu}$/u.test(word)) return true;
+  if (!/^\p{L}[\p{L}\p{N}]+$/u.test(word)) return false;
+  return /\p{Lu}{2}/u.test(word);
 }
 
 /**
@@ -438,7 +454,7 @@ function hasTickerNear(after) {
   // sentence. Splitting on punctuation alone left exactly the boundary
   // that real card markup produces.
   const clause = String(after).split(/[\n.;!?—–]|,\s/)[0] ?? '';
-  for (const word of clause.split(/[^A-Za-z0-9]+/)) {
+  for (const word of clause.split(/[^\p{L}\p{N}]+/u)) {
     if (isTicker(word)) return true;
   }
   return false;
@@ -610,7 +626,7 @@ export function monetaryAmountsIn(text) {
     // is and for no new one: a compound adjective is how English writes
     // that phrase, not a different claim about the number.
     const trailing = after.match(
-      /^[\s‐-―-]*([A-Za-z%][A-Za-z0-9]*)\s*([A-Za-z][A-Za-z0-9]*)?/,
+      /^[\s‐-―-]*([\p{L}%][\p{L}\p{N}]*)\s*([\p{L}][\p{L}\p{N}]*)?/u,
     );
     // ROUND 11 P2 — LOOK PAST PUNCTUATION, not only whitespace.
     //
@@ -726,7 +742,7 @@ export function monetaryAmountsIn(text) {
     // word is not, so it does not.
     const firstWordAfter = (() => {
       const clause = String(after).split(/[\n.;!?—–]|,\s/)[0] ?? '';
-      const w = clause.match(/^[\s(\[{:,;«»"'‘’“”)\]}\u2013\u2014-]*([A-Za-z][A-Za-z0-9]*)/);
+      const w = clause.match(/^[\s(\[{:,;«»"'‘’“”)\]}\u2013\u2014-]*([\p{L}][\p{L}\p{N}]*)/u);
       return w ? w[1] : '';
     })();
     const trailingLower = LOWERCASE_ASSET_UNIT.test(firstWordAfter);
@@ -810,7 +826,7 @@ export function monetaryAmountsIn(text) {
         // just the absence of a ticker. See `AMBIGUOUS_UNIT`.
         // Strip the UNIT only — `trailing[0]` also swallows the word
         // after it, which is precisely the word being looked for.
-        const afterUnit = after.replace(/^\s*[A-Za-z%][A-Za-z0-9]*/, '');
+        const afterUnit = after.replace(/^\s*[\p{L}%][\p{L}\p{N}]*/u, '');
         const temporal = DURATION_LEAD.test(before) || DURATION_TRAIL.test(afterUnit);
         if (AMBIGUOUS_UNIT.test(unit) && !temporal) {
           hits.push(fragment(text, start, end));
@@ -848,7 +864,7 @@ export function monetaryAmountsIn(text) {
     }
 
     // A ticker immediately BEFORE the number — `USDC 120`.
-    const leading = before.match(/([A-Za-z][A-Za-z0-9]*)\s*$/);
+    const leading = before.match(/([\p{L}][\p{L}\p{N}]*)\s*$/u);
     if (leading && isTicker(leading[1])) {
       hits.push(fragment(text, start, end));
       continue;
@@ -1480,6 +1496,37 @@ export function forcedCloseVerdict(obs, copy) {
     why: `states an amount it cannot know: ${amounts.join(' | ')}`,
     amounts,
   });
+
+  // ROUND 116 P2 — GENERATED CONTENT THE DRIVE COULD NOT RESOLVE MEANS
+  // THE NO-AMOUNT CLAIM IS UNVERIFIED, not satisfied.
+  //
+  // Round 111 taught the walk to read `::before` / `::after`, because the
+  // lender reads that text and it appears in no `childNodes`. It reads the
+  // QUOTED parts. A content value mixing a dynamic component with a
+  // literal unit — `attr(data-amount) " USDC"`, `counter(balance) " USDC"`
+  // — therefore yielded `USDC` with the number silently dropped, so the
+  // scan saw no digits and certified a card that visibly states an amount.
+  // The same false PASS the pseudo-element work was written to close,
+  // reopened by reading only half of what is painted.
+  //
+  // `attr()` is resolved, because the value is right there on the element.
+  // A counter is not: its value comes from the document's counter state at
+  // paint time, which nothing cheap can read back. So where an
+  // unresolvable component remains, this declines to certify rather than
+  // guessing in either direction — inventing an amount would be a false
+  // FAIL on ordinary decorative content, and ignoring it is the false PASS
+  // this arm exists to prevent.
+  //
+  // Scoped to the case where nothing else was found: a card that already
+  // states an amount is reported as stating one, and the unresolved part
+  // adds nothing to that.
+  if (amounts.length === 0 && obs.generatedUnresolved === true) {
+    return {
+      verdict: 'blocked',
+      blockedKind: 'incomplete',
+      why: 'the card paints generated text this drive cannot resolve, so whether it states an amount was not established',
+    };
+  }
 
   // A FAILED SCRAPE IS NOT A MOUNTED CARD WITH UNREADABLE TEXT. Its
   // record carries `mounted: true` so the absence rules below cannot

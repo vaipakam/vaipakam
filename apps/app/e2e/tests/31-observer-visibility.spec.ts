@@ -574,7 +574,12 @@ test('a receipt row with a blank label is not a readable row', async ({ page }) 
       )() as {
         rowShown: (r: Element) => boolean;
         visible: (n: Element | null) => boolean;
-        visibleTextOf: (r: Element | null) => string;
+        // The unresolved-generated-content signal rides on the function
+        // rather than the return value, so the signature stays a string
+        // for its twenty call sites (round 116).
+        visibleTextOf: ((r: Element | null) => string) & {
+          sawUnresolvedGenerated?: boolean;
+        };
       };
       const byId = (id: string) => document.getElementById(id)!;
       return {
@@ -959,10 +964,14 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
         #generatedAmount::after { content: "100 USDC"; }
         #generatedHidden::after { content: "250 WETH"; visibility: hidden; }
         #generatedCounter::after { content: counter(page); }
+        #generatedAttr::after { content: attr(data-amount) " USDC"; }
+        #generatedMixed::after { content: counter(page) " USDC"; }
       </style>
       <div class="body" id="generatedAmount" style="width:320px"><span>Close-out</span></div>
       <div class="body" id="generatedHidden" style="width:320px"><span>Close-out</span></div>
       <div class="body" id="generatedCounter" style="width:320px"><span>Close-out</span></div>
+      <div class="body" id="generatedAttr" data-amount="100" style="width:320px"><span>Close-out</span></div>
+      <div class="body" id="generatedMixed" style="width:320px"><span>Close-out</span></div>
       <!-- The percentage spelling of the same thing. -->
       <div class="body" id="coveredByPercentFilter" style="position:relative; width:320px">
         <p style="margin:0">This loan can be closed out now.</p>
@@ -1058,7 +1067,12 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
       )() as {
         visible: (n: Element | null) => boolean;
         shownBox: (n: Element | null) => boolean;
-        visibleTextOf: (r: Element | null) => string;
+        // The unresolved-generated-content signal rides on the function
+        // rather than the return value, so the signature stays a string
+        // for its twenty call sites (round 116).
+        visibleTextOf: ((r: Element | null) => string) & {
+          sawUnresolvedGenerated?: boolean;
+        };
       };
       const byId = (id: string) => document.getElementById(id)!;
       // Read a fixture's painted text with it SCROLLED INTO VIEW.
@@ -1151,6 +1165,12 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
         generatedAmountText: scope.visibleTextOf(byId('generatedAmount')),
         generatedHiddenText: scope.visibleTextOf(byId('generatedHidden')),
         generatedCounterText: scope.visibleTextOf(byId('generatedCounter')),
+        generatedAttrText: scope.visibleTextOf(byId('generatedAttr')),
+        generatedAttrUnresolved: scope.visibleTextOf.sawUnresolvedGenerated === true,
+        generatedMixedText: (() => {
+          const t = scope.visibleTextOf(byId('generatedMixed'));
+          return { text: t, unresolved: scope.visibleTextOf.sawUnresolvedGenerated === true };
+        })(),
         coveredByHalfFilterSeen: seenScrolled(byId('coveredByHalfFilter')),
         coveredByPercentFilterSeen: seenScrolled(byId('coveredByPercentFilter')),
         coveredByFullFilterSeen: seenScrolled(byId('coveredByFullFilter')),
@@ -1536,4 +1556,22 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
     result.generatedCounterText,
     'and a non-string content invents no text',
   ).toBe('Close-out');
+
+  // ROUND 116 P2 — a dynamic component mixed with a literal unit. Reading
+  // only the quoted half yielded "USDC" with the NUMBER dropped, so the
+  // scan saw no digits and certified a card that visibly states an amount.
+  // attr() is resolved from the element; a counter cannot be, so the run
+  // says the claim was not established rather than reading half of it.
+  expect(
+    result.generatedAttrText,
+    'attr() is resolved, so the amount reaches the scan',
+  ).toContain('100 USDC');
+  expect(
+    result.generatedAttrUnresolved,
+    'and nothing was left unresolved in it',
+  ).toBe(false);
+  expect(
+    result.generatedMixedText.unresolved,
+    'a counter mixed with a unit leaves the claim unestablished',
+  ).toBe(true);
 });

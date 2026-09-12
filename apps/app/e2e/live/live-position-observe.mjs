@@ -6438,6 +6438,10 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
           if (!shownBox(root)) return '';
           const unpainted = /^(script|style|template|title|noscript)$/i;
           const parts = [];
+          // One shape for every early exit, so a pseudo that paints nothing and
+          // a pseudo whose content could not be resolved stay distinguishable.
+          const NOTHING_PAINTED = { text: '', unresolved: false };
+          let sawUnresolved = false;
           // ROUND 111 P2 — CSS-GENERATED TEXT IS TEXT THE LENDER READS.
           //
           // `::before` / `::after` content is painted on screen and appears in no
@@ -6460,13 +6464,13 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
             try {
               cs = getComputedStyle(el, which);
             } catch {
-              return '';
+              return NOTHING_PAINTED;
             }
-            if (!cs) return '';
+            if (!cs) return NOTHING_PAINTED;
             const content = cs.content;
-            if (!content || content === 'none' || content === 'normal') return '';
-            if (cs.display === 'none' || cs.visibility !== 'visible') return '';
-            if (Number.parseFloat(cs.opacity) === 0) return '';
+            if (!content || content === 'none' || content === 'normal') return NOTHING_PAINTED;
+            if (cs.display === 'none' || cs.visibility !== 'visible') return NOTHING_PAINTED;
+            if (Number.parseFloat(cs.opacity) === 0) return NOTHING_PAINTED;
             // THE SAME ALPHA RULE AS `alphaOf`, and written out because that one
             // lives in the occlusion scope and is not reachable from here. My
             // first version was a one-line regex taking the LAST number before
@@ -6476,19 +6480,50 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
             // third time is the #2102 duplication one level down, and is recorded
             // there rather than left implicit.
             const colour = String(cs.color).trim();
-            if (colour === 'transparent') return '';
+            if (colour === 'transparent') return NOTHING_PAINTED;
             const fn = /^[a-zA-Z-]+\(([^]*)\)$/.exec(colour);
             if (fn) {
               const body = fn[1];
               const cut = body.lastIndexOf('/');
               const parts = body.split(',');
               const raw = cut >= 0 ? body.slice(cut + 1) : parts.length === 4 ? parts[3] : null;
-              if (raw !== null && Number.parseFloat(raw) === 0) return '';
+              if (raw !== null && Number.parseFloat(raw) === 0) return NOTHING_PAINTED;
             }
-            const quoted = [...content.matchAll(/"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)'/g)]
-              .map((m) => (m[1] ?? m[2] ?? '').replace(/\\(.)/g, '$1'))
-              .join('');
-            return quoted;
+            // ROUND 116 P2 — RESOLVE `attr()`, AND SAY SO WHEN NOTHING CAN.
+            //
+            // Reading only the quoted parts drops the dynamic half: `attr(data-amount)
+            // " USDC"` yielded `USDC` with the number gone, so the scan saw no digits
+            // and certified a card that visibly states an amount — the very false PASS
+            // this collection was added to close.
+            //
+            // `attr()` is read off the element. A counter is not: its value comes from
+            // the document's counter state at paint time. What cannot be resolved is
+            // REPORTED rather than guessed at, and the verdict declines to certify the
+            // no-amount claim on that card.
+            let rest = content;
+            let out = '';
+            let unresolved = false;
+            while (rest.length > 0) {
+              const lit = /^\s*(?:"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)')/.exec(rest);
+              if (lit) {
+                out += (lit[1] ?? lit[2] ?? '').replace(/\\(.)/g, '$1');
+                rest = rest.slice(lit[0].length);
+                continue;
+              }
+              const attr = /^\s*attr\(\s*([A-Za-z_][-\w]*)[^)]*\)/.exec(rest);
+              if (attr) {
+                out += el.getAttribute(attr[1]) ?? '';
+                rest = rest.slice(attr[0].length);
+                continue;
+              }
+              const other = /^\s*[^\s]+/.exec(rest);
+              if (!other) break;
+              // `normal` and `none` are handled above; anything else left here is a
+              // component whose painted text this cannot know.
+              unresolved = true;
+              rest = rest.slice(other[0].length);
+            }
+            return { text: out, unresolved };
           };
           // ROUND 66 P2 — AN ELEMENT'S OWN TEXT AND ITS SUBTREE ARE JUDGED
           // SEPARATELY.
@@ -6580,10 +6615,12 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
                 // Generated text sits around the element's own children, so
                 // it is collected in the order it is painted.
                 const before = pseudoText(child, '::before');
-                if (before) parts.push(before);
+                if (before.unresolved) sawUnresolved = true;
+                if (before.text) parts.push(before.text);
                 walk(child);
                 const after = pseudoText(child, '::after');
-                if (after) parts.push(after);
+                if (after.unresolved) sawUnresolved = true;
+                if (after.text) parts.push(after.text);
               }
             }
           };
@@ -6591,11 +6628,18 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
           // and a card whose amount is painted through its own ::after is
           // exactly the shape this was written for.
           const rootBefore = pseudoText(root, '::before');
-          if (rootBefore) parts.push(rootBefore);
+          if (rootBefore.unresolved) sawUnresolved = true;
+          if (rootBefore.text) parts.push(rootBefore.text);
           walk(root);
           const rootAfter = pseudoText(root, '::after');
-          if (rootAfter) parts.push(rootAfter);
+          if (rootAfter.unresolved) sawUnresolved = true;
+          if (rootAfter.text) parts.push(rootAfter.text);
           // Horizontal whitespace collapses; the deliberate breaks do not.
+          // Published on the function rather than returned, so the signature
+          // stays a string for its twenty call sites and there is still only ONE
+          // parser of `content`. Read immediately after the call; the walk is
+          // synchronous, so there is no interleaving to get wrong.
+          visibleTextOf.sawUnresolvedGenerated = sawUnresolved;
           return parts
             .join('')
             .replace(/[^\S\n]+/g, ' ')
@@ -6603,6 +6647,11 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
             .trim();
         };
         const bodyVisibleText = visibleTextOf(body);
+        // ROUND 116 P2 — read IMMEDIATELY after the call it belongs to.
+        // Generated content the walk could not resolve means the no-amount
+        // claim was not established, and the verdict declines to certify it
+        // rather than reading the literal half as the whole.
+        const generatedUnresolved = visibleTextOf.sawUnresolvedGenerated === true;
         // ROUND 26 P2 — EVERY SUBMIT CONTROL, not whichever is first.
         //
         // `querySelector` described control number one and nothing else.
@@ -6675,6 +6724,7 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
           // the raw `innerText` beside it: the two differing IS the
           // finding, and collapsing them would hide it.
           bodyVisibleText,
+          bodyGeneratedUnresolved: generatedUnresolved,
           // The same for the WHOLE card, because state is also
           // recognised from the card's text where the body is absent or
           // says nothing — `saysCheckRunning` reads it. Leaving that one
@@ -6682,6 +6732,10 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
           // this defect and left its sibling open, which is the shape
           // this PR has now been caught by eight times.
           visibleText: visibleTextOf(el),
+          // The whole card's own generated content too, not only the body's:
+          // the amount scan reads both parts, so either one carrying text
+          // this could not resolve leaves the claim unestablished.
+          cardGeneratedUnresolved: visibleTextOf.sawUnresolvedGenerated === true,
           bodyText: body === null ? null : body.innerText,
           submitPresent: submits.length > 0,
           submitVisible: shownSubmits.length > 0,
@@ -6930,6 +6984,11 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
   let visibleCardsPeak = 0;
   let visibleSubmitsPeak = 0;
   let bodyHiddenSeen = false;
+  // ROUND 116 P2 — SEEN AT ANY POINT, like `bodyHiddenSeen` beside it. A
+  // render that painted generated text this drive could not resolve leaves
+  // the no-amount claim unestablished for the visit, whether or not the
+  // settled render still shows it.
+  let generatedUnresolvedSeen = false;
   const remember = (v) => {
     for (const part of [v?.text, v?.bodyText]) {
       if (typeof part === 'string' && part !== '') seenTexts.push(part);
@@ -7001,6 +7060,9 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
     // because the settled render's own `bodyVisible` is judged
     // separately, on its own terms.
     if (v?.bodyPresent === true && v?.bodyVisible === false) bodyHiddenSeen = true;
+    if (v?.bodyGeneratedUnresolved === true || v?.cardGeneratedUnresolved === true) {
+      generatedUnresolvedSeen = true;
+    }
   };
   remember(snap);
   const deadline = Date.now() + timeoutMs;
@@ -7020,6 +7082,8 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
         visibleCardsPeak,
         visibleSubmitsPeak,
         bodyHiddenSeen,
+    generatedUnresolved: generatedUnresolvedSeen,
+        generatedUnresolved: generatedUnresolvedSeen,
       });
     }
     remember(again);
@@ -7037,6 +7101,8 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
         visibleCardsPeak,
         visibleSubmitsPeak,
         bodyHiddenSeen,
+    generatedUnresolved: generatedUnresolvedSeen,
+        generatedUnresolved: generatedUnresolvedSeen,
       });
     }
     // ROUND 13 P2 — A CARD THAT VANISHES MID-POLL IS THE VANISHED CASE,
@@ -7096,6 +7162,8 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
         visibleCardsPeak,
         visibleSubmitsPeak,
         bodyHiddenSeen,
+    generatedUnresolved: generatedUnresolvedSeen,
+        generatedUnresolved: generatedUnresolvedSeen,
       };
     }
     snap = again;
@@ -8554,6 +8622,10 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
               if (!shownBox(root)) return '';
               const unpainted = /^(script|style|template|title|noscript)$/i;
               const parts = [];
+              // One shape for every early exit, so a pseudo that paints nothing and
+              // a pseudo whose content could not be resolved stay distinguishable.
+              const NOTHING_PAINTED = { text: '', unresolved: false };
+              let sawUnresolved = false;
               // ROUND 111 P2 — CSS-GENERATED TEXT IS TEXT THE LENDER READS.
               //
               // `::before` / `::after` content is painted on screen and appears in no
@@ -8576,13 +8648,13 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
                 try {
                   cs = getComputedStyle(el, which);
                 } catch {
-                  return '';
+                  return NOTHING_PAINTED;
                 }
-                if (!cs) return '';
+                if (!cs) return NOTHING_PAINTED;
                 const content = cs.content;
-                if (!content || content === 'none' || content === 'normal') return '';
-                if (cs.display === 'none' || cs.visibility !== 'visible') return '';
-                if (Number.parseFloat(cs.opacity) === 0) return '';
+                if (!content || content === 'none' || content === 'normal') return NOTHING_PAINTED;
+                if (cs.display === 'none' || cs.visibility !== 'visible') return NOTHING_PAINTED;
+                if (Number.parseFloat(cs.opacity) === 0) return NOTHING_PAINTED;
                 // THE SAME ALPHA RULE AS `alphaOf`, and written out because that one
                 // lives in the occlusion scope and is not reachable from here. My
                 // first version was a one-line regex taking the LAST number before
@@ -8592,19 +8664,50 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
                 // third time is the #2102 duplication one level down, and is recorded
                 // there rather than left implicit.
                 const colour = String(cs.color).trim();
-                if (colour === 'transparent') return '';
+                if (colour === 'transparent') return NOTHING_PAINTED;
                 const fn = /^[a-zA-Z-]+\(([^]*)\)$/.exec(colour);
                 if (fn) {
                   const body = fn[1];
                   const cut = body.lastIndexOf('/');
                   const parts = body.split(',');
                   const raw = cut >= 0 ? body.slice(cut + 1) : parts.length === 4 ? parts[3] : null;
-                  if (raw !== null && Number.parseFloat(raw) === 0) return '';
+                  if (raw !== null && Number.parseFloat(raw) === 0) return NOTHING_PAINTED;
                 }
-                const quoted = [...content.matchAll(/"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)'/g)]
-                  .map((m) => (m[1] ?? m[2] ?? '').replace(/\\(.)/g, '$1'))
-                  .join('');
-                return quoted;
+                // ROUND 116 P2 — RESOLVE `attr()`, AND SAY SO WHEN NOTHING CAN.
+                //
+                // Reading only the quoted parts drops the dynamic half: `attr(data-amount)
+                // " USDC"` yielded `USDC` with the number gone, so the scan saw no digits
+                // and certified a card that visibly states an amount — the very false PASS
+                // this collection was added to close.
+                //
+                // `attr()` is read off the element. A counter is not: its value comes from
+                // the document's counter state at paint time. What cannot be resolved is
+                // REPORTED rather than guessed at, and the verdict declines to certify the
+                // no-amount claim on that card.
+                let rest = content;
+                let out = '';
+                let unresolved = false;
+                while (rest.length > 0) {
+                  const lit = /^\s*(?:"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)')/.exec(rest);
+                  if (lit) {
+                    out += (lit[1] ?? lit[2] ?? '').replace(/\\(.)/g, '$1');
+                    rest = rest.slice(lit[0].length);
+                    continue;
+                  }
+                  const attr = /^\s*attr\(\s*([A-Za-z_][-\w]*)[^)]*\)/.exec(rest);
+                  if (attr) {
+                    out += el.getAttribute(attr[1]) ?? '';
+                    rest = rest.slice(attr[0].length);
+                    continue;
+                  }
+                  const other = /^\s*[^\s]+/.exec(rest);
+                  if (!other) break;
+                  // `normal` and `none` are handled above; anything else left here is a
+                  // component whose painted text this cannot know.
+                  unresolved = true;
+                  rest = rest.slice(other[0].length);
+                }
+                return { text: out, unresolved };
               };
               // ROUND 66 P2 — AN ELEMENT'S OWN TEXT AND ITS SUBTREE ARE JUDGED
               // SEPARATELY.
@@ -8661,10 +8764,12 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
                     // Generated text sits around the element's own children, so it is
                     // collected in the order it is painted.
                     const before = pseudoText(child, '::before');
-                    if (before) parts.push(before);
+                    if (before.unresolved) sawUnresolved = true;
+                    if (before.text) parts.push(before.text);
                     walk(child);
                     const after = pseudoText(child, '::after');
-                    if (after) parts.push(after);
+                    if (after.unresolved) sawUnresolved = true;
+                    if (after.text) parts.push(after.text);
                   }
                 }
               };
@@ -8672,11 +8777,18 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
               // and a card whose amount is painted through its own ::after is
               // exactly the shape this was written for.
               const rootBefore = pseudoText(root, '::before');
-              if (rootBefore) parts.push(rootBefore);
+              if (rootBefore.unresolved) sawUnresolved = true;
+              if (rootBefore.text) parts.push(rootBefore.text);
               walk(root);
               const rootAfter = pseudoText(root, '::after');
-              if (rootAfter) parts.push(rootAfter);
+              if (rootAfter.unresolved) sawUnresolved = true;
+              if (rootAfter.text) parts.push(rootAfter.text);
               // Horizontal whitespace collapses; the deliberate breaks do not.
+              // Published on the function rather than returned, so the signature
+              // stays a string for its twenty call sites and there is still only ONE
+              // parser of `content`. Read immediately after the call; the walk is
+              // synchronous, so there is no interleaving to get wrong.
+              visibleTextOf.sawUnresolvedGenerated = sawUnresolved;
               return parts
                 .join('')
                 .replace(/[^\S\n]+/g, ' ')
@@ -9066,6 +9178,7 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
     visibleCardsPeak,
     visibleSubmitsPeak,
     bodyHiddenSeen,
+    generatedUnresolved: generatedUnresolvedSeen,
   };
 }
 

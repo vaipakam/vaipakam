@@ -171,6 +171,47 @@ describe('forcedCloseVerdict', () => {
     expect(v.checkRunning).toBe(true);
   });
 
+  // ROUND 116 P2 — GENERATED TEXT THE DRIVE COULD NOT RESOLVE LEAVES THE
+  // NO-AMOUNT CLAIM UNESTABLISHED.
+  //
+  // The walk reads the QUOTED parts of `::before` / `::after`. A content
+  // value mixing a dynamic component with a literal unit —
+  // `counter(balance) " USDC"` — yielded `USDC` with the number dropped,
+  // so the scan saw no digits and certified a card that visibly states an
+  // amount. That is the same false PASS the pseudo-element collection was
+  // added to close, reopened by reading half of what is painted.
+  it('does not certify the no-amount claim when generated text was unresolvable', () => {
+    const v = forcedCloseVerdict(
+      { ...held, text: FORCED_CLOSE.unknown, generatedUnresolved: true },
+      copy,
+    );
+    expect(v.verdict).toBe('blocked');
+    expect(v.blockedKind).toBe('incomplete');
+    expect(v.why).toMatch(/generated text/);
+  });
+
+  it('still reports an amount it DID read, unresolved content notwithstanding', () => {
+    // Scoped to the case where nothing else was found: a card already
+    // stating an amount is reported as stating one, and the unresolved
+    // part adds nothing to that.
+    const v = forcedCloseVerdict(
+      {
+        ...held,
+        text: `${FORCED_CLOSE.unknown} You will receive 1.5 WETH.`,
+        generatedUnresolved: true,
+      },
+      copy,
+    );
+    expect(v.verdict).toBe('fail');
+    expect(v.why).toMatch(/states an amount/);
+  });
+
+  it('leaves a record without the field behaving as it did', () => {
+    // `undefined` means a shape predating the field, which must keep the
+    // old behaviour rather than being read as evidence either way.
+    expect(forcedCloseVerdict({ ...held, text: FORCED_CLOSE.unknown }, copy).verdict).toBe('pass');
+  });
+
   it('PASSES a present, submittable card', () => {
     const v = forcedCloseVerdict(
       { ...held, submitDisabled: false, text: FORCED_CLOSE.readyInKind },
@@ -3408,6 +3449,25 @@ describe('rounds 42–43 review findings', () => {
       // and 11 and must survive this.
       expect(monetaryAmountsIn('You receive 1m USDC')).toHaveLength(1);
       expect(monetaryAmountsIn('You receive 1m (USDC)')).toHaveLength(1);
+    });
+
+    // ROUND 116 P2 — AND NOT ONLY IN ASCII.
+    //
+    // `symbol()` is an arbitrary string. The full-width forms are what a
+    // locale or a paste produces, and they matched no ticker, no currency
+    // mark, no glyph and no lower-case unit — so the identifier exemption
+    // read the figure as a loan NUMBER and the scan came back clean on a
+    // visible amount. The third guess about other people's tokens in the
+    // same function, after the upper and lower length bounds.
+    it('recognises a symbol outside ASCII', () => {
+      expect(monetaryAmountsIn('Loan 100 ＵＳＤＣ principal')).toHaveLength(1);
+      expect(monetaryAmountsIn('Position 2 Ｘ')).toHaveLength(1);
+      // The uppercase RUN is still the discriminator, so scripts with no
+      // case do not read as tickers and ordinary words in them stay
+      // exempt — the property that keeps this off the shipped locales.
+      expect(monetaryAmountsIn('Loan 100 について')).toEqual([]);
+      expect(monetaryAmountsIn('Loan 100 مفتوح')).toEqual([]);
+      expect(monetaryAmountsIn('Loan 100 खुला')).toEqual([]);
     });
 
     it('does not fire on ordinary prose after a figure', () => {
