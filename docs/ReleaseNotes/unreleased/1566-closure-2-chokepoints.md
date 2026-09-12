@@ -17,7 +17,11 @@ yet paid, and otherwise charges the ledger by exactly that amount. Within one
 claim the coordinated-mode days are priced against what is left after the
 ordinary-schedule slice, so a funding shortfall still defers those days rather
 than refusing the whole claim, and the read-only preview quotes what the claim
-will actually pay under the same order. Forfeited
+will actually pay under the same order. The test that decides whether an
+unclaimed reward's expiry clock runs measures the same total, so a claimant
+whose claim would be refused for want of delivered funding is never counted as
+able to claim, and a forfeiture or expiry that the delivered funding cannot yet
+cover is deferred rather than failing the whole batch. Forfeited
 and expired reward value enters the recycle bucket only through a reward
 operation that refuses, charges and credits in one act. The generic
 "credit the bucket with this label" entry is gone: each of the three proven

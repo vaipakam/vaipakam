@@ -4761,7 +4761,24 @@ What the first PR ships, mapped to the rules above:
   and reverting it. The read-only preview follows the same order — it quotes
   zero when the legacy legs alone exceed the bound (the claim would revert),
   and prices the armed dry run against what the legacy legs leave — so
-  preview and claim keep agreeing on a mirror that has legacy legs.
+  preview and claim keep agreeing on a mirror that has legacy legs. Both
+  reservations include the legacy WINDOW the facet settles before the entry
+  legs (review r1), and the preview applies the pool cap before the delivered
+  test, because the claim truncates its fresh spend to the pool first.
+- **The measurement widens with the ledger (matrix row 13, and rows 1 and 5).**
+  `_entryExecutableNow` and the expiry sweep's executability test compare the
+  claimant's aggregate VINTAGE-BLIND fresh need — armed plus legacy legs plus
+  the legacy window, capped at the pool exactly as the claim truncates it —
+  against the delivered bound, through a fourth return on the need view
+  (`getUserArmedFreshNeedWithLegs`). A predicate that measured only the armed
+  need would have read a legacy-only claimant executable while their claim
+  reverts at the chokepoint, running their expiry clock through a period they
+  could not claim in. And both sweeps DEFER on a delivered shortfall instead of
+  letting the reward operation refuse the batch: the wholly-legacy and
+  spanning-legacy expiry branches block the entry (no credit, no cursor stamp)
+  when its fresh exceeds the allowance, the forfeit chunk returns before any
+  state is written, and each facet depletes the allowance by the fresh it
+  credited — which is what the reward operation charges.
 - **One reward-absorption operation, rejecting before it credits.**
   `LibVpfiRecycle.absorbRewardFresh` bounds, charges and credits in one call;
   the claim's treasury leg, the forfeit sweep and the expiry sweep all go

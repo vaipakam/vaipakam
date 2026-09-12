@@ -366,12 +366,19 @@ contract RewardRemittanceLensFacet {
      *                   (#1566 closure 2 retired the armed-attributable
      *                   test; the paid side is vintage-blind, so the
      *                   received side is too).
-     * @return uncounted Σ fresh-looking amount of every delivery whose
-     *                   composition was NOT stated (an old-wire packet).
-     *                   Non-zero means this chain's counted funding
-     *                   UNDERSTATES what Base sent — the safe direction,
-     *                   but one an operator must see; the cutover epoch of
-     *                   the second closure-2 PR is what reconciles it.
+     * @return uncounted Σ fresh-looking value this chain did not count: an
+     *                   old-wire packet whose composition was NOT stated
+     *                   lands here whole, and a composition-KNOWN delivery
+     *                   contributes its scaling residue — the receiver
+     *                   scales the fresh and recycled shares to what actually
+     *                   arrived with flooring, so on a fee-on-transfer or
+     *                   rounded delivery their sum sits below the amount and
+     *                   the difference is booked here rather than invented
+     *                   as fresh (Codex #2151 r1 P2). Non-zero means this
+     *                   chain's counted funding UNDERSTATES what Base sent —
+     *                   the safe direction, but one an operator must read
+     *                   with both sources in mind; the cutover epoch of the
+     *                   second closure-2 PR reconciles the old-wire part.
      */
     function getDeliveredFreshPosition()
         external

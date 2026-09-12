@@ -167,22 +167,19 @@ contract RewardHorizonSweepFacet is
             (
                 LibInteractionRewards.EntrySplit memory ex,
                 uint256 freshCredited,
-                uint256 armedDelivered
+                /* armedDelivered — the engine's per-day attribution; the
+                   allowance depletes by the fresh credited (#1566 closure 2) */
             ) = LibInteractionRewards.sweepExpiredEntry(
                 entryIds[i], headroom, allowance, freshRecoverable
             );
             headroom -= freshCredited;
-            // All-or-nothing per entry, so a credited entry consumed exactly
-            // its armed share of the allowance.
-            // Codex #1699 r5 P2 — deplete by what was DELIVERED-funded, not
-            // by the raw commitment. On a mirror the two differ whenever the
-            // D1 group cap bit, and charging the raw figure here would retire
-            // allowance for value the entry never received.
-            if (freshCredited != 0 && armedDelivered != 0) {
-                allowance = allowance > armedDelivered
-                    ? allowance - armedDelivered
-                    : 0;
-            }
+            // #1566 closure 2 — the allowance depletes by the FRESH credited,
+            // legacy and armed alike: that is exactly what the reward
+            // operation charges against the delivered ledger below. (Codex
+            // #1699 r5 P2 had it deplete by the armed share the engine
+            // attributed — right while only armed fresh was charged; the
+            // credited figure is already the cap-trimmed amount that moves.)
+            allowance = allowance > freshCredited ? allowance - freshCredited : 0;
             t.fresh += freshCredited;
             t.recycled += ex.recycled;
             t.armedFresh += ex.armedFresh;

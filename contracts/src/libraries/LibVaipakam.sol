@@ -6310,9 +6310,10 @@ library LibVaipakam {
         ///      delivery for a legacy/d2 payload, whose recycled share was
         ///      never transmitted.
         ///
-        ///      Not decorative. The exclusion (an unstated composition — the
-        ///      day-vintage exclusion was retired by #1566 closure 2) is
-        ///      silent by construction:
+        ///      Not decorative. Both sources are silent by construction — an
+        ///      unstated composition (the day-vintage exclusion was retired
+        ///      by #1566 closure 2) and the flooring residue of a
+        ///      composition-known delivery scaled to what actually arrived —
         ///      an uncounted delivery moves real VPFI into this Diamond and
         ///      changes no other figure, so without this counter the only
         ///      symptom would be armed claims deferring for funding the

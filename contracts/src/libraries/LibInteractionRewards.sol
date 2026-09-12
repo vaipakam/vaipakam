@@ -1531,7 +1531,14 @@ library LibInteractionRewards {
     ///        priced itself against the raw `poolRemaining()` while a sibling
     ///        leg had already spoken for part of it is how the same bug
     ///        surfaced twice in the #1404 review.
-    function claimForUserEntries(address user, uint256 freshBudget)
+    /// @param windowFreshReserved #1566 closure 2 (Codex #2151 r1 P1) — the
+    ///        legacy WINDOW reward the facet settled before this call. The
+    ///        69M-pool budget it passes is already net of it; the delivered
+    ///        netting inside the walk must subtract it too, or the armed days
+    ///        price against headroom the window has already spoken for and the
+    ///        combined delivery is refused at the chokepoint instead of the
+    ///        armed days deferring.
+    function claimForUserEntries(address user, uint256 freshBudget, uint256 windowFreshReserved)
         internal
         returns (
             EntrySplit memory toUser,
@@ -1572,7 +1579,7 @@ library LibInteractionRewards {
             (toUser.total - toUser.recycled) +
             (toTreasury.total - toTreasury.recycled);
         (EntrySplit memory wu, EntrySplit memory wt, bool walked) =
-            _walkShareOfPoolDays(s, user, freshBudget, legacyFresh);
+            _walkShareOfPoolDays(s, user, freshBudget, legacyFresh, windowFreshReserved);
         _foldSplit(toUser, wu);
         _foldSplit(toTreasury, wt);
         advancedAnyDay = walked;
@@ -1595,7 +1602,8 @@ library LibInteractionRewards {
         LibVaipakam.Storage storage s,
         address user,
         uint256 freshBudget,
-        uint256 legacyFreshReserved
+        uint256 legacyFreshReserved,
+        uint256 windowFreshReserved
     )
         private
         returns (
@@ -1624,9 +1632,8 @@ library LibInteractionRewards {
         // reason. Saturating: a legacy slice already beyond the bound leaves
         // nothing for the walk, and the chokepoint refuses the claim.
         uint256 deliveredLeft = deliveredFreshBound(s);
-        deliveredLeft = deliveredLeft > legacyFreshReserved
-            ? deliveredLeft - legacyFreshReserved
-            : 0;
+        uint256 reserved = legacyFreshReserved + windowFreshReserved; // entry legs AND the window (r1 P1)
+        deliveredLeft = deliveredLeft > reserved ? deliveredLeft - reserved : 0;
         WalkCtx memory ctx = WalkCtx({
             pool: PoolBudget({
                 fresh: freshLeft,
@@ -2171,7 +2178,7 @@ library LibInteractionRewards {
     function userArmedFreshNeedView(
         address user
     ) internal view returns (uint256 armed) {
-        (armed, , ) = userArmedFreshNeedWithLegsView(user);
+        (armed, , , ) = userArmedFreshNeedWithLegsView(user);
     }
 
     /// @notice Codex #1499 r6 P2 — the armed need TOGETHER WITH the legacy legs
@@ -2190,7 +2197,7 @@ library LibInteractionRewards {
     )
         internal
         view
-        returns (uint256 armed, uint256 userLegs, uint256 treasuryLegs)
+        returns (uint256 armed, uint256 userLegs, uint256 treasuryLegs, uint256 legacyFresh)
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         // Codex #1699 r14 P2 — the armed walk only ever spends what is left
@@ -2202,7 +2209,11 @@ library LibInteractionRewards {
         // against the allowance it is compared to would be circular).
         // r15 P2 — BOTH destinations reserve: a forfeited entry's legacy
         // slice spends the pool on its way to treasury.
-        (userLegs, treasuryLegs, ) = previewForUserEntriesLegacyOnly(s, user);
+        (userLegs, treasuryLegs, legacyFresh) = previewForUserEntriesLegacyOnly(s, user);
+        // #1566 closure 2 (Codex #2151 r1 P1) — the legacy WINDOW is fresh the
+        // claim also spends before the chokepoint, so it belongs in the
+        // vintage-blind aggregate the predicate and the sweep test.
+        legacyFresh += _userWindowFreshReserved(s, user);
         (, armed) = _dryRunShareOfPoolDays(
             s,
             user,
@@ -2217,7 +2228,7 @@ library LibInteractionRewards {
     )
         private
         view
-        returns (uint256 armed, uint256 userLegs, uint256 treasuryLegs)
+        returns (uint256 armed, uint256 userLegs, uint256 treasuryLegs, uint256 legacyFresh)
     {
         // Codex #1699 r4 P2 — read the CLAIM'S OWN grouped, capped figure.
         //
@@ -2257,10 +2268,11 @@ library LibInteractionRewards {
         // Fail CLOSED on an unrouted selector (a partially-refreshed Diamond):
         // a zero need would read as "nothing required" and let an entry expire
         // while unpayable, which is the defect this gate exists to prevent.
-        require(ok && ret.length == 96, "armed-need view unavailable");
-        (armed, userLegs, treasuryLegs) = abi.decode(
+        // four words since #1566 closure 2 (the fourth is `legacyFresh`)
+        require(ok && ret.length == 128, "armed-need view unavailable");
+        (armed, userLegs, treasuryLegs, legacyFresh) = abi.decode(
             ret,
-            (uint256, uint256, uint256)
+            (uint256, uint256, uint256, uint256)
         );
     }
 
@@ -2366,9 +2378,16 @@ library LibInteractionRewards {
         // makes the claim REVERT, and the preview quotes zero for it rather
         // than an amount the claim cannot pay; (b) the armed dry run prices
         // against what the legacy legs leave, as `_walkShareOfPoolDays` does.
+        // …including the legacy WINDOW the facet settles first (r1 P1), and
+        // capped at the pool BEFORE the delivered test (r1 P2): the claim
+        // truncates its fresh spend to `poolRemaining()` ahead of the
+        // chokepoint, so 100 of legacy entitlement against 50 of pool and 50
+        // delivered PAYS 50 — a preview comparing the raw 100 would quote 0
+        // for a claim that succeeds, breaking its upper-bound contract.
         uint256 deliveredLeft = deliveredFreshBound(s);
-        if (legacyFresh > deliveredLeft) return 0;
-        deliveredLeft -= legacyFresh;
+        uint256 cappedLegacy = _cappedFreshNeed(legacyFresh + _userWindowFreshReserved(s, user));
+        if (cappedLegacy > deliveredLeft) return 0;
+        deliveredLeft -= cappedLegacy;
         // Codex #1699 r14 P2 — the walk leg's fresh budget reserves the
         // PRECEDING legs, exactly as the live claim threads it: the facet
         // subtracts the window reward before `claimForUserEntries`, which
@@ -2844,7 +2863,7 @@ library LibInteractionRewards {
             armedOwed += o; armedDelivered += d;
             freshHeadroom = freshHeadroom > f ? freshHeadroom - f : 0;
             deliveredAllowance =
-                deliveredAllowance > d ? deliveredAllowance - d : 0;
+                deliveredAllowance > f ? deliveredAllowance - f : 0 /* #1566 closure 2 — by the FRESH credited, which is what the reward operation charges */;
         }
         uint256 borrowerId = s.loanBorrowerEntryId[loanId];
         if (borrowerId != 0 && _isForfeited(s, s.rewardEntries[borrowerId])) {
@@ -2857,7 +2876,7 @@ library LibInteractionRewards {
             armedOwed += o; armedDelivered += d;
             freshHeadroom = freshHeadroom > f ? freshHeadroom - f : 0;
             deliveredAllowance =
-                deliveredAllowance > d ? deliveredAllowance - d : 0;
+                deliveredAllowance > f ? deliveredAllowance - f : 0 /* #1566 closure 2 — by the FRESH credited, which is what the reward operation charges */;
         }
         // #953 (Codex) — lender entries a position sale orphaned from the
         // active pointer. Forfeited by construction; a processed one adds 0.
@@ -2874,7 +2893,7 @@ library LibInteractionRewards {
                 armedOwed += o; armedDelivered += d;
                 freshHeadroom = freshHeadroom > f ? freshHeadroom - f : 0;
                 deliveredAllowance =
-                    deliveredAllowance > d ? deliveredAllowance - d : 0;
+                    deliveredAllowance > f ? deliveredAllowance - f : 0 /* #1566 closure 2 — by the FRESH credited, which is what the reward operation charges */;
             }
             unchecked { ++i; }
         }
@@ -2942,6 +2961,12 @@ library LibInteractionRewards {
                 if (preFresh > freshHeadroom && freshRecoverable) {
                     return (0, 0, 0, 0);
                 }
+                // #1566 closure 2 — what this forfeit would credit (the
+                // pool-trimmed fresh) must fit the delivered allowance, or
+                // the reward-absorption operation refuses it; decided BEFORE
+                // the entry is processed, so a deferral leaves no state.
+                uint256 wouldCredit = preFresh > freshHeadroom ? freshHeadroom : preFresh;
+                if (wouldCredit > deliveredAllowance) return (0, 0, 0, 0);
             }
             (, EntrySplit memory t) = _processEntryWhole(s, id);
             uint256 wholeFresh = t.total - t.recycled;
@@ -2990,6 +3015,9 @@ library LibInteractionRewards {
                 if (freshRecoverable) return (0, 0, 0, 0);
                 legacyFresh = freshHeadroom;
             }
+            // #1566 closure 2 — bounded by the delivered allowance like every
+            // fresh outflow; a shortfall defers (no cursor stamp, no credit).
+            if (legacyFresh > deliveredAllowance) return (0, 0, 0, 0);
             s.rewardEntryClaimNextDay[id] = SafeCast.toUint64(armedFrom);
             return (legacyFresh, 0, 0, 0);
         }
@@ -3254,7 +3282,8 @@ library LibInteractionRewards {
             (
                 uint256 armedFresh,
                 uint256 userLegs,
-                uint256 treasuryLegs
+                uint256 treasuryLegs,
+                uint256 legacyFresh
             ) = _userArmedFreshNeedWithLegs(s, e.user);
             (, uint256 recycledUpper) = _userEntriesUpperBound(s, e.user);
             uint256 fundingNeed = _userClaimFundingNeedViewWith(
@@ -3299,8 +3328,15 @@ library LibInteractionRewards {
             // roles it protected: `deliveredFreshBound` returns `max` for
             // Canonical and Unconfigured, so `armedFresh <= max` is trivially
             // true and those chains keep sweeping exactly as before.
-            bool deliveredPayable = armedFresh == 0
-                || armedFresh <= deliveredFreshBound(s);
+            // #1566 closure 2 — measured VINTAGE-BLIND: the claim's delivery
+            // chokepoint refuses on the TOTAL fresh component, so the sweep's
+            // executability test compares the same aggregate (armed + legacy
+            // fresh, capped at the pool exactly as the claim truncates it) —
+            // a legacy-only claimant no longer reads executable on `armed == 0`
+            // while their claim reverts, which would run their expiry clock.
+            uint256 freshNeed = _cappedFreshNeed(armedFresh + legacyFresh);
+            bool deliveredPayable = freshNeed == 0
+                || freshNeed <= deliveredFreshBound(s);
             bool executable = !_recycledDroughtWith(s, recycledUpper) &&
                 _poolCappedPayable(toUser) != 0 &&
                 deliveredPayable &&
@@ -3459,7 +3495,11 @@ library LibInteractionRewards {
         if (armedFrom == 0 || e.endDay <= armedFrom) {
             EntrySplit memory whole = st.rawSplit;
             uint256 wholeFresh = whole.total - whole.recycled;
-            if (wholeFresh > freshHeadroom) {
+            // #1566 closure 2 — the delivered allowance bounds the fresh this
+            // entry would credit, legacy included: the reward-absorption
+            // operation refuses beyond it, and a refusal there would revert
+            // the whole batch where the rule is that a shortfall DEFERS.
+            if (wholeFresh > freshHeadroom || wholeFresh > deliveredAllowance) {
                 s.rewardEntryObsBlocked[id] = true;
                 return (expired, 0, 0);
             }
@@ -3492,12 +3532,15 @@ library LibInteractionRewards {
                 && s.rewardEntryClaimNextDay[id] == 0
         ) {
             // ALL fresh by the regime identity — pre-`D*` days contribute no
-            // recycled — and exempt from the delivered bound for the same
-            // reason a pre-arming forfeit is: no remittance ever funded it.
+            // recycled. #1566 closure 2 — NOT exempt from the delivered bound
+            // any more (this comment said it was, "for the same reason a
+            // pre-arming forfeit is"): the ledger is vintage-blind, so the
+            // legacy slice is bounded by the delivered allowance like every
+            // other fresh outflow, and a shortfall defers it.
             uint256 legacyFresh = st.rawSplit.total
                 - st.rawSplit.recycled
                 - st.rawSplit.armedFresh;
-            if (legacyFresh > freshHeadroom) {
+            if (legacyFresh > freshHeadroom || legacyFresh > deliveredAllowance) {
                 s.rewardEntryObsBlocked[id] = true;
                 return (expired, 0, 0);
             }
@@ -3826,14 +3869,20 @@ library LibInteractionRewards {
         (
             uint256 armedFresh,
             uint256 userLegs,
-            uint256 treasuryLegs
+            uint256 treasuryLegs,
+            uint256 legacyFresh
         ) = _userArmedFreshNeedWithLegs(s, e.user);
         // #1566 closure 3 — unconditional, matching the sweep's test above so
         // the predicate and the operation it predicts cannot disagree about a
         // role. `max` for Canonical and Unconfigured makes this a no-op there;
         // `Detached` now reads non-executable instead of inheriting the
         // mirror-gate's skip.
-        if (armedFresh != 0 && armedFresh > deliveredFreshBound(s)) {
+        // #1566 closure 2 — the same vintage-blind aggregate the sweep tests
+        // (design row 13): a predicate narrower than what `_deliverReward`
+        // spends would disagree with the claim, and the expiry clock is the
+        // one that runs silently.
+        uint256 freshNeed = _cappedFreshNeed(armedFresh + legacyFresh);
+        if (freshNeed != 0 && freshNeed > deliveredFreshBound(s)) {
             return false;
         }
         return
@@ -3910,7 +3959,7 @@ library LibInteractionRewards {
         (
             uint256 armedFresh,
             uint256 userLegs,
-            uint256 treasuryLegs
+            uint256 treasuryLegs,
         ) = _userArmedFreshNeedWithLegs(s, user);
         return _userClaimFundingNeedViewWith(
             s,
@@ -4235,6 +4284,18 @@ library LibInteractionRewards {
     ///         over-issue past the global 69M cap. `rewardBudgetRemittedGlobal`
     ///         is Base-only (remittance is `onlyCanonical`), so on a mirror it
     ///         is 0 and this collapses to the plain `CAP − paidOut` bound.
+    /// @dev #1566 closure 2 — a claimant's aggregate fresh need, capped at
+    ///      the pool first: the claim path truncates total fresh spend to
+    ///      `poolRemaining()` before the delivery chokepoint sees it, so near
+    ///      pool exhaustion a claimant with 10 of legacy entitlement, 1 of
+    ///      pool headroom and 1 delivered unit IS payable at 1 — an uncapped
+    ///      comparison would read the entry non-executable and its retired
+    ///      era could never terminalize over a claim that would succeed.
+    function _cappedFreshNeed(uint256 need) private view returns (uint256) {
+        uint256 pool = poolRemaining();
+        return need > pool ? pool : need;
+    }
+
     function poolRemaining() internal view returns (uint256) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         uint256 reserved = s.interactionPoolPaidOut + s.rewardBudgetRemittedGlobal;

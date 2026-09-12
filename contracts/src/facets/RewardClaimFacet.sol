@@ -229,7 +229,9 @@ contract RewardClaimFacet is
             LibInteractionRewards.EntrySplit memory userSplit,
             LibInteractionRewards.EntrySplit memory forfeitSplit,
             bool walkAdvanced
-        ) = LibInteractionRewards.claimForUserEntries(msg.sender, freshBudget);
+        ) = LibInteractionRewards.claimForUserEntries(
+            msg.sender, freshBudget, windowReward // #1566 closure 2 — the window reserves delivered headroom too
+        );
         uint256 entryReward = userSplit.total;
         uint256 treasuryDelta = forfeitSplit.total;
         uint256 paidRecycled = userSplit.recycled;

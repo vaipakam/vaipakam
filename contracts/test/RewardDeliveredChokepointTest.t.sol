@@ -321,6 +321,104 @@ contract RewardDeliveredChokepointTest is SetupTest, IVaipakamErrors {
         _mut().creditRecycleRaw(LibVpfiRecycle.RecycleSource.ExpiredReward, 0, 5);
     }
 
+    // ─── the vintage-blind measurement (design row 13; rows 1 and 5) ─────────
+
+    /// A legacy-only claimant on a mirror with nothing delivered is NOT
+    /// executable: the expiry clock must not accrue while the claim would be
+    /// refused at the chokepoint. Before this change the predicate measured
+    /// only the armed need (zero here) and the clock ran through a period the
+    /// owner could not claim in.
+    function test_ExpiryClock_DoesNotAccrue_WhileLegacyNeedExceedsDelivered() public {
+        _configureMirror();
+        _cfg().setRewardClaimHorizonDays(180);
+        (uint256 id, ) = _seedPayable(alice, 42);
+        _mut().setArmedFreshLedgerRaw(0, 0);
+        assertEq(_sweeper().sweepExpiredInteractionRewards(_ids(id)), 0, "stamps only");
+        uint256 remaining = 180 days + NOTICE + MAX_GAP;
+        while (remaining > 0) {
+            uint256 step = remaining < MAX_GAP ? remaining : MAX_GAP;
+            vm.warp(vm.getBlockTimestamp() + step);
+            assertEq(_sweeper().sweepExpiredInteractionRewards(_ids(id)), 0, "never expires while unfunded");
+            remaining -= step;
+        }
+        assertEq(vpfi.balanceOf(alice), 0, "nothing paid");
+        // Fund it: the clock resumes and the entry expires after a full
+        // horizon of EXECUTABLE time — charged to the ledger by its fresh.
+        _deliverFresh(1_000_000e18, 0, 7);
+        remaining = 180 days + NOTICE + MAX_GAP;
+        uint256 swept;
+        while (remaining > 0 && swept == 0) {
+            uint256 step = remaining < MAX_GAP ? remaining : MAX_GAP;
+            vm.warp(vm.getBlockTimestamp() + step);
+            swept = _sweeper().sweepExpiredInteractionRewards(_ids(id));
+            remaining -= step;
+        }
+        assertGt(swept, 0, "expires once funded and executable for the horizon");
+        (uint256 paid, ) = _rlens().getDeliveredFreshBound();
+        assertEq(paid, swept, "charged by the expired fresh");
+    }
+
+    /// An entry that is READY to expire defers when the delivered allowance
+    /// is short at sweep time (blocked, no credit, no revert), and expires
+    /// once the allowance is back. A revert here would fail a keeper's whole
+    /// batch on one unfunded entry.
+    function test_ExpirySweep_DefersOnShortAllowance_ThenExpires() public {
+        _configureMirror();
+        _cfg().setRewardClaimHorizonDays(180);
+        (uint256 id, ) = _seedPayable(alice, 42);
+        _deliverFresh(1_000_000e18, 0, 7);
+        assertEq(_sweeper().sweepExpiredInteractionRewards(_ids(id)), 0, "stamps only");
+        // accrue exactly up to the threshold without crossing it
+        uint256 remaining = 180 days + NOTICE - MAX_GAP;
+        while (remaining > 0) {
+            uint256 step = remaining < MAX_GAP ? remaining : MAX_GAP;
+            vm.warp(vm.getBlockTimestamp() + step);
+            assertEq(_sweeper().sweepExpiredInteractionRewards(_ids(id)), 0, "not yet");
+            remaining -= step;
+        }
+        vm.warp(vm.getBlockTimestamp() + MAX_GAP);
+        // the allowance vanishes right before the final sweep
+        _mut().setArmedFreshLedgerRaw(0, 0);
+        uint256 bucketBefore = _cfg().getRecycleBucket();
+        assertEq(_sweeper().sweepExpiredInteractionRewards(_ids(id)), 0, "deferred, not reverted");
+        assertEq(_cfg().getRecycleBucket(), bucketBefore, "no credit on a deferral");
+        // allowance back: the first sweep only UNBLOCKS the observation (the
+        // blocked interval was not executable time and is not credited), the
+        // next gap of executable time then expires the entry and charges it
+        _mut().setArmedFreshLedgerRaw(1_000_000e18, 0);
+        vm.warp(vm.getBlockTimestamp() + MAX_GAP);
+        assertEq(_sweeper().sweepExpiredInteractionRewards(_ids(id)), 0, "unblocks; the deferred interval is not credited");
+        vm.warp(vm.getBlockTimestamp() + MAX_GAP);
+        uint256 swept = _sweeper().sweepExpiredInteractionRewards(_ids(id));
+        assertGt(swept, 0, "expires once the allowance is back and executable time accrued");
+        assertEq(_cfg().getRecycleBucket() - bucketBefore, swept, "credited");
+        (uint256 paid, ) = _rlens().getDeliveredFreshBound();
+        assertEq(paid, swept, "and charged");
+    }
+
+    /// The forfeit sweep defers a legacy forfeit whose fresh exceeds the
+    /// delivered allowance (no state written), and credits + charges it once
+    /// funded.
+    function test_ForfeitSweep_DefersOnShortAllowance_ThenCredits() public {
+        _configureMirror();
+        uint256 id = _mut().pushRewardEntry(alice, 42, LibVaipakam.RewardSide.Lender, 100e18, 1);
+        _mut().closeRewardEntryRaw(id, 3);
+        _mut().setRewardEntryForfeitedRaw(id);
+        _mut().setLoanActiveLenderEntryId(42, id);
+        _mut().setArmedFreshLedgerRaw(0, 0);
+        uint256 bucketBefore = _cfg().getRecycleBucket();
+        assertEq(_facet().sweepForfeitedInteractionRewards(42), 0, "deferred while unfunded");
+        assertEq(_cfg().getRecycleBucket(), bucketBefore, "no credit");
+        (uint256 paid0, ) = _rlens().getDeliveredFreshBound();
+        assertEq(paid0, 0, "no charge");
+        _deliverFresh(1_000_000e18, 0, 7);
+        uint256 swept = _facet().sweepForfeitedInteractionRewards(42);
+        assertGt(swept, 0, "credited once funded");
+        assertEq(_cfg().getRecycleBucket() - bucketBefore, swept, "bucket credited by the fresh share");
+        (uint256 paid1, ) = _rlens().getDeliveredFreshBound();
+        assertEq(paid1, swept, "charged by exactly what moved");
+    }
+
     // ─── the non-reward inflow operations ────────────────────────────────────
 
     /// Each proven inflow class has its own delta-checked door: a credit whose
