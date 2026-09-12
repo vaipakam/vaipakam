@@ -766,6 +766,20 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
         <p style="margin:0">This loan can be closed out now.</p>
         <div style="position:absolute; inset:0; background:#123456; pointer-events:none"></div>
       </div>
+      <!-- ROUND 90 P2 — a DESCENDANT can cover its parent's own text. The
+           first version exempted every descendant, so an absolutely
+           positioned opaque child was declared not-a-cover by the very
+           fact that it belongs to the element it hides. -->
+      <div class="body" id="coveredByChild" style="position:relative; width:320px">
+        <p style="margin:0; position:relative">This loan can be closed out now.<span style="position:absolute; inset:0; background:#123456"></span></p>
+      </div>
+      <!-- ROUND 90 P2 — a modern colour form. Chromium preserves these
+           notations, so an rgba-only parser reads the cover as transparent
+           and keeps the hidden text. -->
+      <div class="body" id="coveredByModernColor" style="position:relative; width:320px">
+        <p style="margin:0">This loan can be closed out now.</p>
+        <div style="position:absolute; inset:0; background:oklab(0.5 0.1 0.1)"></div>
+      </div>
       <!-- SELF-REVIEW OF THE OCCLUSION RULE — the page body carries an
            opaque background, as a real stylesheet almost always does. The
            walk from a hit stops at the first element containing the text,
@@ -875,6 +889,8 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
         halfCoveredPaintedText: scope.visibleTextOf(byId('halfCovered')),
         occludedNoPointerPaintedText: scope.visibleTextOf(byId('occludedNoPointer')),
         onOpaquePagePaintedText: scope.visibleTextOf(byId('onOpaquePage')),
+        coveredByChildPaintedText: scope.visibleTextOf(byId('coveredByChild')),
+        coveredByModernColorPaintedText: scope.visibleTextOf(byId('coveredByModernColor')),
         hangingIndentPaintedText: scope.visibleTextOf(byId('hangingIndent')),
         belowFoldPaintedText: scope.visibleTextOf(byId('belowFold')),
         flexRowPaintedText: scope.visibleTextOf(byId('flexRow')),
@@ -1101,4 +1117,16 @@ test('an explanation erased inside the body is not a visible body', async ({ pag
     result.onOpaquePagePaintedText,
     'ordinary copy on a page with an opaque background is still painted',
   ).toContain('closed out now');
+
+  // ROUND 90 P2 — two ways the first version of the cover test could be
+  // walked past: a cover that BELONGS to the text it hides, and one
+  // painted in a colour notation an rgba-only parser cannot read.
+  expect(
+    result.coveredByChildPaintedText,
+    'a descendant laid over its parent text is still a cover',
+  ).toBe('');
+  expect(
+    result.coveredByModernColorPaintedText,
+    'and an opaque cover in a modern colour form is one too',
+  ).toBe('');
 });

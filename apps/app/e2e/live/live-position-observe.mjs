@@ -2214,6 +2214,10 @@ const foreignPageRpcEndpoints = new Set();
  */
 async function pageProviderHead() {
   let low = 0n;
+  // WHICH endpoints this bound, not only the height (round 90). A sample
+  // says nothing about an endpoint it did not ask, and the caller has to
+  // be able to tell those apart.
+  const sampled = new Set();
   for (const url of knownPageRpcEndpoints) {
     try {
       const resp = await ufetch(url, {
@@ -2250,13 +2254,14 @@ async function pageProviderHead() {
       // of them will serve the card's query, so the further back one is
       // the only safe answer.
       if (seen > 0n && (low === 0n || seen < low)) low = seen;
+      if (seen > 0n) sampled.add(url);
     } catch {
       // An endpoint that will not answer contributes nothing. It is not a
       // failure: the floor simply falls back to its other sources, and the
       // ordering test still decides whether those bound anything.
     }
   }
-  return low === 0n ? null : low;
+  return { head: low === 0n ? null : low, sampled };
 }
 
 /**
@@ -2305,13 +2310,32 @@ async function pageProviderHead() {
  * and it is the same irreducible class as the observer/confirmer race this
  * PR already states as a limit.
  */
-function floorEstablishedFor(page) {
+function floorEstablishedFor(page, sampledBeforeNav) {
   const diamond = pageDiamondKeys.get(page);
   const heads = pageFirstHeadAt.get(page);
   const reads = pageFirstReadAt.get(page);
   if (!diamond || !heads || !reads) return false;
   let sawHead = false;
   for (const key of diamond) {
+    // ROUND 90 P2 — EVERY endpoint this page used has to be bounded, and
+    // there are two ways to bound one.
+    //
+    // The direct sample is taken before the navigation from the endpoints
+    // EARLIER visits proved, so it says nothing about an endpoint this
+    // page reached for the first time — a fallback transport, a second
+    // provider in the deployed config. Treating one sampled endpoint as
+    // sufficient let a NEW endpoint's reads go unbounded while the bracket
+    // started from the old one's height: a card truthfully rendered from
+    // the new endpoint's block could then be reported as disagreeing with
+    // the protocol.
+    //
+    // So a key counts as bounded when it was sampled before navigation OR
+    // when its own announcement ordering holds. One predicate, applied per
+    // endpoint, instead of a global shortcut standing in for all of them.
+    if (sampledBeforeNav?.has(key)) {
+      sawHead = true;
+      continue;
+    }
     const head = heads.get(key);
     const read = reads.get(key);
     if (head !== undefined) sawHead = true;
@@ -2798,6 +2822,7 @@ async function visit(path, { expectChooser = false, loan = null } = {}) {
   // the two cannot drift into disagreeing about which visits bracket.
   let headBeforeNav = null;
   let pageHeadBeforeNav = null;
+  let pageSampledBeforeNav = new Set();
   if (ROLE === 'lender' && loan) {
     try {
       headBeforeNav = await pub.getBlockNumber({ cacheTime: 0 });
@@ -2808,7 +2833,9 @@ async function visit(path, { expectChooser = false, loan = null } = {}) {
     // is the only source that bounds what the page's own reads can return.
     // See `pageProviderHead`. Null on the first visit, which needs no
     // floor: the list route carries no forced-close observation.
-    pageHeadBeforeNav = await pageProviderHead();
+    const sample = await pageProviderHead();
+    pageHeadBeforeNav = sample.head;
+    pageSampledBeforeNav = sample.sampled;
   }
   const pageErrors = [];
   const consoleErrors = [];
@@ -2855,7 +2882,8 @@ async function visit(path, { expectChooser = false, loan = null } = {}) {
   // product is right about — the same class of error `stillEligible`
   // exists to avoid for the lender card.
   const forcedClose =
-    ROLE === 'lender' && loan ? await observeForcedClose(page, loan, headBeforeNav, pageHeadBeforeNav) : null;
+    ROLE === 'lender' && loan ? await observeForcedClose(page, loan, headBeforeNav, pageHeadBeforeNav, pageSampledBeforeNav)
+      : null;
   const holdCard = await page.getByTestId('sale-listing-hold-card').count();
   const freeHeld = await page.getByTestId('free-held-options').count();
   const out = {
@@ -3929,7 +3957,7 @@ async function probeInternalMatch(loanId, blockNumber) {
  * reserves for a PRODUCT REGRESSION. A prerequisite read that could not
  * answer is BLOCKED, never a finding about the app.
  */
-async function observeForcedClose(page, loan, headBeforeNav, pageHeadBeforeNav) {
+async function observeForcedClose(page, loan, headBeforeNav, pageHeadBeforeNav, pageSampledBeforeNav) {
   // ROUND 55 P2 — BRACKET THE OBSERVATION, because the answer that
   // validates a render must not come from after it.
   //
@@ -4323,7 +4351,11 @@ async function observeForcedClose(page, loan, headBeforeNav, pageHeadBeforeNav) 
   // been showing. Where the snapshot is behind it, both answers stay
   // `null` and the verdict reports an incomplete observation.
   const observerCaughtUp = pageHead === 0n || pinnedBlock >= pageHead;
-  const floorSound = (pageNav > 0n || floorEstablishedFor(page)) && observerCaughtUp;
+  // ROUND 90 P2 — no global shortcut. `floorEstablishedFor` now decides
+  // PER ENDPOINT, accepting either the pre-navigation sample or that
+  // endpoint's own announcement ordering, so an endpoint this page reached
+  // for the first time cannot ride on a height taken from another one.
+  const floorSound = floorEstablishedFor(page, pageSampledBeforeNav) && observerCaughtUp;
   const defaultableStable =
     floorSound &&
     defaultableBefore !== undefined &&
@@ -5139,6 +5171,30 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
           ) {
             return false;
           }
+          // HOISTED ABOVE THE OCCLUSION RULE (round 90): that rule now reads a
+          // cover's background through this same parser, and a `const` arrow
+          // used before its declaration is a temporal-dead-zone throw — the
+          // shape that made a round-75 fix inert inside its own catch. One
+          // definition, declared before either reader.
+          const alphaOf = (value) => {
+            const v = String(value).trim();
+            if (v === 'transparent') return 0;
+            const fn = /^[a-zA-Z-]+\(([^]*)\)$/.exec(v);
+            if (!fn) return 1;
+            const body = fn[1];
+            const cut = body.lastIndexOf('/');
+            let raw = null;
+            if (cut >= 0) {
+              raw = body.slice(cut + 1);
+            } else {
+              const parts = body.split(',');
+              if (parts.length === 4) raw = parts[3];
+            }
+            if (raw === null) return 1;
+            const t = raw.trim();
+            const n = t.endsWith('%') ? Number(t.slice(0, -1)) / 100 : Number(t);
+            return Number.isFinite(n) ? n : 1;
+          };
           // ROUND 89 P2 — AND TEXT COVERED BY SOMETHING OPAQUE IS NOT
           // PAINTED EITHER.
           //
@@ -5195,17 +5251,32 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
           const coveredAt = (x, y) => {
             const hit = document.elementFromPoint(x, y);
             if (!hit) return false;
-            if (node.contains(hit) || hit.contains(node)) return false;
+            // ROUND 90 P2 — ONLY THIS NODE AND ITS ANCESTORS ARE EXEMPT. A
+            // DESCENDANT CAN COVER ITS PARENT'S OWN TEXT.
+            //
+            // The first version exempted `node.contains(hit)` as well, which
+            // trusted every descendant — so an absolutely positioned opaque
+            // child laid over its parent's glyphs was declared "not a cover" by
+            // the very fact that it belongs to the element it is hiding.
+            //
+            // `contains` is true of a node itself, so `hit.contains(node)` covers
+            // both the element's own hit and any ancestor's, and nothing else is
+            // waved through. Note the rects probed are the element's OWN text
+            // nodes, so an ordinary inline child is not at these points at all —
+            // a descendant hit here is one that genuinely overlaps the text.
+            if (hit.contains(node)) return false;
             for (let n = hit; n && n !== document.documentElement; n = n.parentElement) {
-              if (node.contains(n) || n.contains(node)) return false;
+              if (n.contains(node)) return false;
               if (/^(img|video|canvas|svg)$/i.test(n.tagName)) return true;
+              // ROUND 90 P2 — READ BY SHAPE, via the same `alphaOf` the fill test
+              // uses. The first version matched `rgba?(…)` only, so an overlay
+              // painted in `oklab(…)` or `color(display-p3 …)` — forms Chromium
+              // preserves, as the note above `alphaOf` records — read as
+              // transparent and the hidden text stayed in the reading. Round 38
+              // learned this exact lesson for the text colour and I wrote the new
+              // site against the old standard anyway.
               const bg = getComputedStyle(n).backgroundColor || '';
-              const m = bg.match(/^rgba?\(([^)]*)\)$/i);
-              if (m) {
-                const parts = m[1].split(/[,/]/).map((t) => t.trim());
-                const alpha = parts.length > 3 ? Number(parts[3]) : 1;
-                if (Number.isFinite(alpha) && alpha === 1) return true;
-              }
+              if (bg && bg !== 'transparent' && alphaOf(bg) === 1) return true;
             }
             return false;
           };
@@ -5253,25 +5324,6 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
           // must not be condemned: a false FAIL on legible copy is the error
           // that gets the whole check switched off, so the residual is a
           // missed defect and never an invented one.
-          const alphaOf = (value) => {
-            const v = String(value).trim();
-            if (v === 'transparent') return 0;
-            const fn = /^[a-zA-Z-]+\(([^]*)\)$/.exec(v);
-            if (!fn) return 1;
-            const body = fn[1];
-            const cut = body.lastIndexOf('/');
-            let raw = null;
-            if (cut >= 0) {
-              raw = body.slice(cut + 1);
-            } else {
-              const parts = body.split(',');
-              if (parts.length === 4) raw = parts[3];
-            }
-            if (raw === null) return 1;
-            const t = raw.trim();
-            const n = t.endsWith('%') ? Number(t.slice(0, -1)) / 100 : Number(t);
-            return Number.isFinite(n) ? n : 1;
-          };
           // ROUND 75 P2 — A ZERO-ALPHA FILL IS NOT THE ONLY WAY GLYPHS GET
           // PAINTED.
           //
@@ -6759,6 +6811,30 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
               ) {
                 return false;
               }
+              // HOISTED ABOVE THE OCCLUSION RULE (round 90): that rule now reads a
+              // cover's background through this same parser, and a `const` arrow
+              // used before its declaration is a temporal-dead-zone throw — the
+              // shape that made a round-75 fix inert inside its own catch. One
+              // definition, declared before either reader.
+              const alphaOf = (value) => {
+                const v = String(value).trim();
+                if (v === 'transparent') return 0;
+                const fn = /^[a-zA-Z-]+\(([^]*)\)$/.exec(v);
+                if (!fn) return 1;
+                const body = fn[1];
+                const cut = body.lastIndexOf('/');
+                let raw = null;
+                if (cut >= 0) {
+                  raw = body.slice(cut + 1);
+                } else {
+                  const parts = body.split(',');
+                  if (parts.length === 4) raw = parts[3];
+                }
+                if (raw === null) return 1;
+                const t = raw.trim();
+                const n = t.endsWith('%') ? Number(t.slice(0, -1)) / 100 : Number(t);
+                return Number.isFinite(n) ? n : 1;
+              };
               // ROUND 89 P2 — AND TEXT COVERED BY SOMETHING OPAQUE IS NOT
               // PAINTED EITHER.
               //
@@ -6815,17 +6891,32 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
               const coveredAt = (x, y) => {
                 const hit = document.elementFromPoint(x, y);
                 if (!hit) return false;
-                if (node.contains(hit) || hit.contains(node)) return false;
+                // ROUND 90 P2 — ONLY THIS NODE AND ITS ANCESTORS ARE EXEMPT. A
+                // DESCENDANT CAN COVER ITS PARENT'S OWN TEXT.
+                //
+                // The first version exempted `node.contains(hit)` as well, which
+                // trusted every descendant — so an absolutely positioned opaque
+                // child laid over its parent's glyphs was declared "not a cover" by
+                // the very fact that it belongs to the element it is hiding.
+                //
+                // `contains` is true of a node itself, so `hit.contains(node)` covers
+                // both the element's own hit and any ancestor's, and nothing else is
+                // waved through. Note the rects probed are the element's OWN text
+                // nodes, so an ordinary inline child is not at these points at all —
+                // a descendant hit here is one that genuinely overlaps the text.
+                if (hit.contains(node)) return false;
                 for (let n = hit; n && n !== document.documentElement; n = n.parentElement) {
-                  if (node.contains(n) || n.contains(node)) return false;
+                  if (n.contains(node)) return false;
                   if (/^(img|video|canvas|svg)$/i.test(n.tagName)) return true;
+                  // ROUND 90 P2 — READ BY SHAPE, via the same `alphaOf` the fill test
+                  // uses. The first version matched `rgba?(…)` only, so an overlay
+                  // painted in `oklab(…)` or `color(display-p3 …)` — forms Chromium
+                  // preserves, as the note above `alphaOf` records — read as
+                  // transparent and the hidden text stayed in the reading. Round 38
+                  // learned this exact lesson for the text colour and I wrote the new
+                  // site against the old standard anyway.
                   const bg = getComputedStyle(n).backgroundColor || '';
-                  const m = bg.match(/^rgba?\(([^)]*)\)$/i);
-                  if (m) {
-                    const parts = m[1].split(/[,/]/).map((t) => t.trim());
-                    const alpha = parts.length > 3 ? Number(parts[3]) : 1;
-                    if (Number.isFinite(alpha) && alpha === 1) return true;
-                  }
+                  if (bg && bg !== 'transparent' && alphaOf(bg) === 1) return true;
                 }
                 return false;
               };
@@ -6873,25 +6964,6 @@ async function readForcedCloseCard(page, timeoutMs = 30_000) {
               // must not be condemned: a false FAIL on legible copy is the error
               // that gets the whole check switched off, so the residual is a
               // missed defect and never an invented one.
-              const alphaOf = (value) => {
-                const v = String(value).trim();
-                if (v === 'transparent') return 0;
-                const fn = /^[a-zA-Z-]+\(([^]*)\)$/.exec(v);
-                if (!fn) return 1;
-                const body = fn[1];
-                const cut = body.lastIndexOf('/');
-                let raw = null;
-                if (cut >= 0) {
-                  raw = body.slice(cut + 1);
-                } else {
-                  const parts = body.split(',');
-                  if (parts.length === 4) raw = parts[3];
-                }
-                if (raw === null) return 1;
-                const t = raw.trim();
-                const n = t.endsWith('%') ? Number(t.slice(0, -1)) / 100 : Number(t);
-                return Number.isFinite(n) ? n : 1;
-              };
               if (alphaOf(fill) !== 0) return true;
               const shadow = String(cs.textShadow ?? 'none').trim();
               if (shadow !== '' && shadow !== 'none') return true;
