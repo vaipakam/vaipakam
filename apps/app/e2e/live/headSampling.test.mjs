@@ -528,6 +528,43 @@ describe('the synthetic chain probe validates as a quantity (round 100)', () => 
 // and in the SAME commit introduced `head>19 head>20` for the pinned block
 // and the sighting, which is the identical defect. Twice in one change is
 // enough to stop relying on noticing it.
+// EVERY OBSERVATION FIELD REACHES THE REPORT, asserted rather than
+// remembered.
+//
+// `observeForcedClose` returns the head facts, a hand-maintained projection
+// copies them onto the visit record as `forcedClose*`, and the report reads
+// them from there. Rounds 101-106 added seven fields along that path, and a
+// field added to the observation but missed in the projection does not fail
+// anything — it prints `unobserved`, which is a LIE about a figure rather
+// than a missing one, on the surface whose whole job is stating what it
+// knows.
+//
+// Checked when this was written and nothing had drifted. The point is that
+// the next one cannot.
+describe('the head facts survive the projection (round 106)', () => {
+  const src = fs.readFileSync(DRIVE, 'utf8');
+
+  it('every head* field the observation returns is projected', () => {
+    // Scoped to `observeForcedClose` itself. The first version searched the
+    // whole file for a four-space-indented `head*:` and matched Playwright's
+    // `headless:` launch option — a guard that fails on something it was
+    // never about is no better than one that passes on nothing.
+    const fn = functionBody(
+      src,
+      'async function observeForcedClose(page, loan, headBeforeNav, pageHeadBeforeNav, pageSampledBeforeNav)',
+    );
+    const produced = [...fn.matchAll(/^ {4}(head[A-Za-z]+):/gm)].map((m) => m[1]);
+    expect(produced.length, 'the observation head fields were not found').toBeGreaterThan(4);
+    const projected = new Set(
+      [...src.matchAll(/forcedClose[A-Za-z]*:\s*forcedClose\s*\?\s*\(forcedClose\.([A-Za-z]+)/g)].map(
+        (m) => m[1],
+      ),
+    );
+    const missing = [...new Set(produced)].filter((k) => !projected.has(k));
+    expect(missing, `observation fields never projected: ${missing.join(', ')}`).toEqual([]);
+  });
+});
+
 describe('the forced-close report emits distinct keys (round 106)', () => {
   const src = fs.readFileSync(DRIVE, 'utf8');
 
