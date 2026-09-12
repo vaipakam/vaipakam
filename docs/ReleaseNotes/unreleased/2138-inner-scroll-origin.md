@@ -70,7 +70,13 @@ reverses an actual flex container, and that the newer stand-alone rotate
 and scale properties count as transforms the way the combined property
 does; the exact treatment of a region rotated off the page's axes, where
 the per-axis bounds admit more than a single scroll position can reach,
-is deferred to its own issue with the reasoning recorded there. The list of properties that make an element the
+is deferred to its own issue with the reasoning recorded there. A sixth
+round drew two boundaries and closed one gap: a region inside a
+three-dimensional scene or written vertically is declared beyond what the
+rule quantifies and is admitted rather than mis-measured, and a row that
+is off-screen and admitted only because a region can scroll it back is now
+checked for cover at the place it would come back to, so an opaque overlay
+parked over the whole region rejects it. The list of properties that make an element the
 reference for absolutely positioned descendants gained two more, each
 confirmed by measurement in the check's own browser, and one candidate the
 review raised, container queries, was measured not to be one and left out

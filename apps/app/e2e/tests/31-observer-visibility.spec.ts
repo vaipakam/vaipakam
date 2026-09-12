@@ -1959,3 +1959,68 @@ test('flex reversal applies only to flex containers, and individual transform pr
   expect(result.scaledRowTop).toBe(-440);
   expect(result.scaledRow, 'a row under an individual scale property').toBe(true);
 });
+
+// #2157 round 6 — what the credit declines to model, and where occlusion
+// is judged when the row is off-screen:
+//
+//   - a projective chain (ancestor `perspective`, any 3-D transform) and a
+//     vertical writing mode are UNQUANTIFIABLE — admitted, stated, never
+//     mis-scaled; nothing the drive reads uses either;
+//   - a row admitted only by scroll credit is judged for occlusion at the
+//     slit it would come back to, so an overlay parked over the whole
+//     scrollport condemns it.
+test('unmodelled chains admit, and an overlay over the slit condemns an off-screen row', async ({
+  page,
+}) => {
+  await page.setContent(`<!DOCTYPE html>
+    <style>body { margin: 0 } p { margin: 0 }</style>
+    <!-- 0..40: a scroller in a 3-D scene -->
+    <div style="perspective:100px">
+      <div id="persp" style="transform:translateZ(-50px); height:40px; overflow:auto">
+        <p id="perspRow" style="height:20px">scrolled out under perspective</p>
+        <p style="height:400px">filler</p>
+      </div>
+    </div>
+    <!-- 40..240: a vertical-rl scroller, whose horizontal range is negative -->
+    <div id="vert" style="writing-mode:vertical-rl; width:40px; height:200px; overflow:auto">
+      <p id="vertRow" style="width:20px; height:200px">vertical</p>
+      <p style="width:400px; height:200px">filler</p>
+    </div>
+    <!-- 240..280: a scroller whose slit an opaque overlay covers entirely;
+         the row is scrolled far above the viewport -->
+    <div style="position:relative">
+      <div id="covered" style="height:40px; overflow:auto">
+        <p id="coveredRow" style="height:20px">hidden at every scroll offset</p>
+        <p style="height:1000px">filler</p>
+      </div>
+      <div style="position:absolute; inset:0; background:#000"></div>
+    </div>
+  `);
+  const result = await page.evaluate((helpersSrc) => {
+    const family = new Function(`return (${helpersSrc})();`)();
+    const visible = family.visible as (n: Element | null) => boolean;
+    const byId = (id: string) => document.getElementById(id)!;
+    byId('persp').scrollTop = 300;
+    byId('vert').scrollLeft = -300;
+    byId('covered').scrollTop = 600;
+    return {
+      perspRowTop: byId('perspRow').getBoundingClientRect().top,
+      perspRow: visible(byId('perspRow')),
+      vertScrollLeft: byId('vert').scrollLeft,
+      vertRow: visible(byId('vertRow')),
+      coveredRowBottom: byId('coveredRow').getBoundingClientRect().bottom,
+      coveredRow: visible(byId('coveredRow')),
+    };
+  }, VISIBILITY_SOURCE);
+  // Perspective-scaled displacement: the row is above the origin and the
+  // credit is not quantifiable, so it is admitted rather than mis-scaled.
+  expect(result.perspRowTop).toBeLessThan(0);
+  expect(result.perspRow, 'a projective chain admits').toBe(true);
+  // The negative horizontal range is the premise; the credit declines it.
+  expect(result.vertScrollLeft).toBeLessThan(0);
+  expect(result.vertRow, 'a vertical writing mode admits').toBe(true);
+  // Off-screen (bottom < 0), reachable by the scroll — and the slit it
+  // would come back to is covered, so it is not visible at any offset.
+  expect(result.coveredRowBottom).toBeLessThan(0);
+  expect(result.coveredRow, 'an overlay over the whole scrollport').toBe(false);
+});

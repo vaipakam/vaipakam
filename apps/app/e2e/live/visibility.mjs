@@ -109,6 +109,12 @@ export function visibilityHelpers() {
     const scrollsY = cs.overflowY === 'auto' || cs.overflowY === 'scroll';
     const scrollsX = cs.overflowX === 'auto' || cs.overflowX === 'scroll';
     if (!scrollsY && !scrollsX) return null;
+    // A VERTICAL WRITING MODE is not modelled (#2157 round 6): its block
+    // axis is horizontal and may grow leftward, and a flex reversal lands
+    // on the other physical axis. Rather than guess the sign of either
+    // range, the credit is unquantifiable there, which admits. Nothing the
+    // drive reads is written vertically.
+    if (cs.writingMode && cs.writingMode !== 'horizontal-tb') return { unquantifiable: true };
     // An `overflow: auto` box whose content fits has the STYLE of a
     // scroller and none of the movement (#2157 round 3): its range on that
     // axis is [0, 0], which the clip walk reads as "clipper", in viewport
@@ -138,6 +144,11 @@ export function visibilityHelpers() {
     try {
       for (let a = n; a; a = a.parentElement) {
         const acs = getComputedStyle(a);
+        // A PROJECTIVE CHAIN is not modelled either (round 6): under an
+        // ancestor's `perspective`, or any 3-D transform, a displacement is
+        // scaled by depth and a `w = 0` vector drops the depth translation.
+        // Unquantifiable, which admits — stated rather than mis-scaled.
+        if (acs.perspective && acs.perspective !== 'none') return { unquantifiable: true };
         // The individual properties `rotate` / `scale` (`translate` has no
         // linear part) are NOT folded into the computed `transform`
         // (#2157 round 5); per the spec they apply before it, so the local
@@ -166,6 +177,7 @@ export function visibilityHelpers() {
       if (m === null) {
         return { lo: { x: local.xLo, y: local.yLo }, hi: { x: local.xHi, y: local.yHi } };
       }
+      if (!m.is2D) return { unquantifiable: true };
       const lo = { x: Infinity, y: Infinity };
       const hi = { x: -Infinity, y: -Infinity };
       for (const [dx, dy] of [
@@ -1184,6 +1196,56 @@ export function visibilityHelpers() {
       if (!allCovered) break;
     }
     if (probed > 0 && allCovered) return false;
+    // ROUND 6 OF #2157 — OCCLUSION AT THE REACHABLE POSITION. When every
+    // glyph is off-screen, the loop above probed nothing, and the row is
+    // being admitted only because a scroller can bring it back. Where it
+    // would come back TO is that scroller's exposed slit — so the slit is
+    // probed instead: an opaque overlay parked over the whole scrollport
+    // hides the row at every scroll offset, and a row nothing covers there
+    // is admitted as before. Same `coveredAt`, so the scroller itself
+    // (which contains the node) is never mistaken for a cover.
+    if (probed === 0 && glyphs.length > 0) {
+      let scroller = null;
+      for (let n = node; n; n = n.parentElement) {
+        const ncs = getComputedStyle(n);
+        const sy =
+          (ncs.overflowY === 'auto' || ncs.overflowY === 'scroll') &&
+          n.scrollHeight > n.clientHeight;
+        const sx =
+          (ncs.overflowX === 'auto' || ncs.overflowX === 'scroll') &&
+          n.scrollWidth > n.clientWidth;
+        if (sy || sx) {
+          scroller = n;
+          break;
+        }
+      }
+      if (scroller !== null) {
+        const sb = scroller.getBoundingClientRect();
+        const slit = {
+          left: Math.max(sb.left, 0),
+          top: Math.max(sb.top, 0),
+          right: Math.min(sb.right, vw),
+          bottom: Math.min(sb.bottom, vh),
+        };
+        if (slit.right > slit.left && slit.bottom > slit.top) {
+          let slitProbed = 0;
+          let slitCovered = true;
+          outer: for (const fy of ROW_FRACTIONS) {
+            for (const fx of COL_FRACTIONS) {
+              const x = slit.left + inset(slit.right - slit.left, fx);
+              const y = slit.top + inset(slit.bottom - slit.top, fy);
+              if (!inView(x, y)) continue;
+              slitProbed += 1;
+              if (!coveredAt(x, y)) {
+                slitCovered = false;
+                break outer;
+              }
+            }
+          }
+          if (slitProbed > 0 && slitCovered) return false;
+        }
+      }
+    }
     const fill = cs.webkitTextFillColor || cs.color || '';
     // ROUND 38 P2 — EVERY COMPUTED COLOUR FORM, not just `rgb()`/`rgba()`.
     //
