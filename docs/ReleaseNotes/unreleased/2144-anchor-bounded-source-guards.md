@@ -389,6 +389,32 @@ one-reason-many-bounds fault found earlier on a line declaring several
 names, a scope wider. A note above a helper now excuses it only when
 there is exactly one thing in it to be about.
 
+A later round is worth recording for what it says about fixing things one
+shape at a time. Half its findings were holes in the two rounds before
+it — each of those a fix that was right about the case in front of it and
+silent about the case beside it. A note excusing a genuine count, written
+above a name, was made to cover only one truncation when the name held a
+function; it still covered two when the name held anything else. That
+same rule has now been stated four times, at four scopes, and only the
+fourth states it plainly: one reason excuses one bound, wherever the two
+sit.
+
+The others follow the same pattern. A borrowed truncation whose method
+name cannot be read was dropped, where the ordinary path has inspected
+such a call for many rounds on the principle that a call nobody can name
+is not a reason to stop looking. A truncation borrowed through the
+language's own reflection helper was invisible because the thing it
+borrows sits in an argument rather than on the call. And a region taken
+from a named landmark would quietly take the NEXT block in the file when
+the named one opened no block at all — which is the silent-wrong-region
+failure this whole effort exists to refuse, produced by the helper meant
+to refuse it. It now says so instead.
+
+Two more were the check objecting to correct work: a value set inside a
+branch went on poisoning a name that a later, unconditional setting
+provably replaces; and a region chosen between two already-bounded
+regions was called unbounded, when either choice has a meaningful end.
+
 Three of the windows survived the earlier passes for a reason worth
 naming: they bounded a declaration spread over several lines, which is
 neither a block nor a call, so there was nothing to convert them to. That

@@ -985,6 +985,76 @@ describe('#2144 — no source region is bounded by a character count', () => {
     expect(sliceCallsIn(two).some((c) => marks(two, c))).toBe(false);
   });
 
+  // ROUND 19 — six, and THREE were holes in the two rounds before it.
+  it('refuses the round-19 shapes', () => {
+    const lead = "const s = f();\nconst start = s.indexOf('a');\n";
+    for (const [why, tail] of [
+      [
+        'a borrowed truncator whose method name cannot be read',
+        "const r = String.prototype['sl' + 'ice'].call(s, start, start + 320);",
+      ],
+      [
+        'a truncator borrowed through Reflect.apply',
+        'const r = Reflect.apply(String.prototype.slice, s, [start, start + 320]);',
+      ],
+      [
+        "Reflect.apply's bounds spread from somewhere unreadable",
+        'const r = Reflect.apply(String.prototype.slice, s, [...bounds]);',
+      ],
+    ]) {
+      const code = lead + tail;
+      const call = sliceCallsIn(code).at(-1);
+      expect(call, why).toBeDefined();
+      expect(countsCharacters(code, call), why).toBe(true);
+    }
+  });
+
+  it('does not refuse the round-19 shapes', () => {
+    const lead = "const s = f();\nconst start = s.indexOf('a');\n";
+    for (const [why, tail] of [
+      [
+        'an uncertain initializer overwritten by a certain one before the use',
+        "if (on) { var end = start + 320; }\nvar end = s.indexOf('e');\nconst r = s.slice(start, end);",
+      ],
+      [
+        'a choice between two already-bounded regions',
+        "import { blockFrom, between } from './sourceBlock.mjs';\n" +
+          "const block = useA ? blockFrom(s, 'if (x) {') : between(s, 'a', 'b');\n" +
+          "const r = block.slice(block.indexOf('y'));",
+      ],
+    ]) {
+      const code = lead + tail;
+      const call = sliceCallsIn(code).at(-1);
+      expect(call, why).toBeDefined();
+      expect(countsCharacters(code, call), why).toBe(false);
+    }
+  });
+
+  // The marker rule's THIRD shape: round 7 fixed the multi-declarator
+  // statement, round 17 the function declaration, round 18 the
+  // function-valued name — and a non-function initializer holding two
+  // truncators was still excused by one reason.
+  it('a marker excuses one truncator whatever the initializer is', () => {
+    const two =
+      '// not-a-source-region: a label, capped for display.\n' +
+      'const label = choose(text.slice(0, 40), src.slice(start, start + 320));\n';
+    const marks = (src, call) =>
+      markableStatementsOf(src, call.node).some((stmt) =>
+        markedStatement(src, stmt, 'not-a-source-region'),
+      );
+    expect(sliceCallsIn(two).some((c) => marks(two, c))).toBe(false);
+  });
+
+  // `blockFrom` must return the block the NAMED header opens, not the
+  // next one in the file. A header whose construct has no block is an
+  // error, not an invitation to take a neighbour's.
+  it('refuses a header that opens no block of its own', () => {
+    expect(() =>
+      blockFrom('const anchor = 1;\nif (ready) { work(); }\n', 'const anchor = 1;'),
+    ).toThrow(/opens no block/);
+    expect(blockFrom('if (ready) { work(); }\n', 'if (ready) {')).toContain('work()');
+  });
+
   // ROUND 8 — the list kept shrinking in kind: these are the remaining
   // ways a bound can look like a landmark without being one, plus the two
   // spellings of a truncation the collector was not seeing.

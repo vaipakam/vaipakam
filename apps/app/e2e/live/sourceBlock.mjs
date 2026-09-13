@@ -182,6 +182,16 @@ export function blockFrom(src, header) {
   const { nodes } = astOf(src, 'blockFrom');
   const brace = nodes.find((n) => BRACED.has(n.type) && n.start >= start);
   if (!brace) throw new Error(`${header} opens no block`);
+  // The brace must belong to the construct the header INTRODUCES (round
+  // 19). `blockFrom('const anchor = 1; if (ready) { … }', 'const anchor
+  // = 1;')` took the `if` body — a plausible, complete, unrelated region.
+  // The failure it hides is the one this module exists to refuse: refactor
+  // a guarded construct to drop its block while a neighbour keeps one, and
+  // the assertions carry on over the neighbour instead of going red.
+  const owner = nodes.find((n) => n.start >= start && STATEMENT.test(n.type));
+  if (owner && (brace.start < owner.start || brace.end > owner.end)) {
+    throw new Error(`${header} opens no block of its own`);
+  }
   return src.slice(start, brace.end);
 }
 
@@ -374,6 +384,24 @@ export function sliceCallsIn(src) {
       continue;
     }
     if (!c || c.type !== 'MemberExpression') continue;
+    // `Reflect.apply(String.prototype.slice, src, [a, b])` — the same
+    // borrowing again, through a callee whose object is a plain name
+    // rather than a member, so `borrowedTruncator` refused it and the
+    // direct path saw only `apply` (round 19). The receiver is the
+    // SECOND argument and the bounds are in the third.
+    const reflected = reflectApplyTruncator(n);
+    if (reflected) {
+      out.push({
+        method: reflected,
+        line: lineOf(src, n.start),
+        receiver: n.arguments[1] ? src.slice(n.arguments[1].start, n.arguments[1].end) : '',
+        args: effective(arrayElements(n.arguments[2])),
+        text: src.slice(n.start, n.end),
+        node: n,
+        receiverNode: n.arguments[1] ?? null,
+      });
+      continue;
+    }
     // `String.prototype.slice.call(src, a, b)` is the same operation with
     // the receiver moved into the arguments (round 8). Recognised, and
     // the shifted receiver dropped so the bounds line up.
@@ -456,9 +484,28 @@ function effective(args) {
 function borrowedArgs(via, args) {
   const rest = args.slice(1);
   if (via !== 'apply') return rest;
-  const arr = rest[0];
-  if (!arr || arr.type !== 'ArrayExpression') return [];
-  return arr.elements.some((e) => !e || e.type === 'SpreadElement') ? [] : arr.elements;
+  return arrayElements(rest[0]);
+}
+
+/** The statically readable elements of an argument ARRAY, or none. A
+ *  spread or a hole makes the bounds unknown, and unknown refuses. */
+function arrayElements(node) {
+  if (!node || node.type !== 'ArrayExpression') return [];
+  return node.elements.some((e) => !e || e.type === 'SpreadElement') ? [] : node.elements;
+}
+
+/** The truncator a `Reflect.apply(fn, recv, args)` is borrowing, or null.
+ *  Takes the whole call: the borrowed function is its FIRST ARGUMENT,
+ *  where every other borrowing form carries it on the callee. */
+function reflectApplyTruncator(call) {
+  const callee = call.callee;
+  if (callee.object?.type !== 'Identifier' || callee.object.name !== 'Reflect') return null;
+  if (memberName(callee) !== 'apply') return null;
+  const fn = call.arguments[0];
+  if (!fn || fn.type !== 'MemberExpression') return null;
+  const method = memberName(fn);
+  if (method === UNREADABLE) return UNREADABLE;
+  return TRUNCATORS.has(method) ? method : null;
 }
 
 function borrowedTruncator(src, callee, only) {
@@ -467,6 +514,13 @@ function borrowedTruncator(src, callee, only) {
   const inner = callee.object;
   if (!inner || inner.type !== 'MemberExpression') return null;
   const method = memberName(inner);
+  // An UNREADABLE inner name is inspected, not dropped (round 19). The
+  // direct path has treated an unreadable computed name that way since
+  // round 7 — a call nobody can name is not a reason to stop looking at
+  // it — and unifying the two readers in round 17 left this half still
+  // returning null, so `String.prototype['sl' + 'ice'].call(…)` fell
+  // through both paths. Same question, same answer, both ways round.
+  if (method === UNREADABLE) return UNREADABLE;
   return TRUNCATORS.has(method) ? method : null;
 }
 
@@ -542,8 +596,18 @@ export function bindingOf(src, node) {
   // the use is outside of — poisons the binding rather than being
   // skipped: `var e = t.indexOf('e'); if (on) { var { e } = obj; }` may
   // leave `e` holding either (round 12, restated here).
+  // The definition that STANDS is the last one that definitely runs
+  // before the use. An uncertain definition only matters if nothing
+  // certain overwrites it afterwards (round 19): in
+  // `if (on) { var end = start + 320; } var end = s.indexOf('e');`
+  // reaching the use proves the second ran, so the first cannot be what
+  // `end` holds — and poisoning the binding refused correct work.
+  const certain = [...withInit].reverse().find((d) => alwaysRunsBefore(src, d.node, node));
   const uncertain = withInit.some(
-    (d) => !alwaysRunsBefore(src, d.node, node) && !definitelyAfter(src, d.node, node),
+    (d) =>
+      !alwaysRunsBefore(src, d.node, node) &&
+      !definitelyAfter(src, d.node, node) &&
+      !(certain && certain.node.start > d.node.end),
   );
   const initialised = uncertain
     ? undefined
@@ -751,19 +815,19 @@ export function markableStatementsOf(src, node) {
     const stmt = parents.get(n);
     // One name per marked statement, or the reason is ambiguous.
     if (stmt && stmt.type === 'VariableDeclaration' && stmt.declarations.length === 1) {
-      // A name holding a FUNCTION is the same scope as a function
-      // declaration and takes the same one-truncator rule (round 18).
-      // The previous round fixed `function f() {}` and left
-      // `const f = () => {}` — which is the form this very suite uses
-      // for its one marked helper, so the sibling was the live one.
-      const fn = n.init && FUNCTIONS.has(n.init.type) ? n.init : null;
-      if (!fn || truncatorCount(src, fn) === 1) out.push(stmt);
+      // EVERY marked declarator takes the one-truncator rule, whatever
+      // its initializer is (round 19). Round 18 applied it only when the
+      // initializer WAS a function, so a marker above
+      // `const label = choose(t.slice(0, 40), src.slice(start, start + 320));`
+      // still excused both — the third shape of the same fault, after
+      // round 7's multi-declarator statement and round 17's function
+      // declaration. One reason cannot say which of two bounds it is
+      // about, wherever the two sit.
+      if (truncatorCount(src, stmt) <= 1) out.push(stmt);
     }
   }
   return out;
 }
-
-const FUNCTIONS = new Set(['ArrowFunctionExpression', 'FunctionExpression']);
 
 /** How many truncating calls `fn` contains. */
 function truncatorCount(src, fn) {
@@ -1073,6 +1137,14 @@ export function isBoundedRegion(src, node, seen = new Set()) {
       fn.init.body.type !== 'BlockStatement'
       ? isBoundedRegion(src, fn.init.body, seen)
       : false;
+  }
+  // A CHOICE between two bounded regions is bounded (round 19): either
+  // value `const block = useA ? blockFrom(…) : between(…)` can take
+  // already has a meaningful end, so refusing it pressed the author
+  // toward a marker asserting a character count that is not there.
+  // Both arms must qualify — one unbounded arm is an unbounded region.
+  if (node.type === 'ConditionalExpression') {
+    return isBoundedRegion(src, node.consequent, seen) && isBoundedRegion(src, node.alternate, seen);
   }
   if (node.type !== 'Identifier') return false;
   const key = `region:${node.name}@${node.start}`;
