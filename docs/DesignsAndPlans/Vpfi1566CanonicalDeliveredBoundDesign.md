@@ -5926,8 +5926,9 @@ remains possible and shows only as the unattributed remainder — review r5).**
 > carries `received > 0, paid == 0`). Replacement is run
 > through `ReplaceRewardCustodyHolder.s.sol` — directly while one key holds
 > the roles, or staged after governance handover (the Pauser Safe's `pause` —
-> staged unless the Diamond is durably paused by the manual flag, since an
-> auto-pause window can lapse during the Timelock delay — and the Timelock's
+> ALWAYS executed immediately before the switch, whatever the pause state was
+> at staging, since an auto-pause window can lapse and an authorised unpause
+> can resume service during the Timelock delay — and the Timelock's
 > `replace` calldata written to a ceremony record; NO unpause is pre-authorised — and the direct path does not unpause either,
 > since either could lift an unrelated emergency pause raised meanwhile;
 > then `record()` reconciles the artifact only once the chain reports a new
@@ -6076,9 +6077,15 @@ PR C.**
 - The migration ceremony per deployment, for BOTH active roles (review r2 —
   the first draft covered Canonical only while the same deploy switches every
   Mirror to holder custody). Canonical (Base Sepolia first): pause →
-  recovery/overage and recycled reconciliations above → `rebaseArmedFreshPaid(P)`
-  → verify `received == paid` → bind the holder as the custody source → unpause
-  → fund forward through `fundRewardPool`. Mirror: pause → the same
+  recovery/overage and recycled reconciliations above → VERIFY the paid-side
+  baseline PR A already installed (`armedFreshPaidRebased()` true and
+  `received == paid` through `armedFreshLedger()`; review r7 — a fresh
+  deploy consumes the one-shot at deploy and an active-role in-place refresh
+  runs it itself, so calling `rebaseArmedFreshPaid(P)` here would revert
+  `ArmedFreshPaidAlreadyRebased`); the call itself is reserved for a chain
+  whose refresh DEFERRED it (inactive role with history, now re-attached
+  under the active role) → switch custody reads to the holder PR A bound →
+  unpause → fund forward through `fundRewardPool`. Mirror: pause → the same
   recovery/overage and recycled reconciliations → read the historical
   `received − paid`: zero is recorded as a verified-zero position; a positive
   gap is dispositioned per §5c's mirror bootstrap rule with the two
@@ -6086,7 +6093,9 @@ PR C.**
   the recorded gap, touching no `received` counter) or an atomic write-down
   of the imported ledger figures to what the holder backs — so no Mirror
   binds the holder with ghost headroom or with previously funded claims
-  refused → bind → unpause. No deployed Mirror carries a non-zero ledger
+  refused → verify the PR-A baseline the same way (or run the deferred rebase
+  under the now-active role) → switch custody reads to the holder PR A bound
+  → unpause. No deployed Mirror carries a non-zero ledger
   today, so each ceremony is expected to record a verified zero; the rule is
   stated so the ceremony cannot be skipped on that expectation.
 - Tests: a canonical claim is refused with nothing funded and pays once

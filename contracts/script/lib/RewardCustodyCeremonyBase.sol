@@ -6,7 +6,6 @@ import {console} from "forge-std/console.sol";
 
 import {RewardCustodyHolder} from "../../src/RewardCustodyHolder.sol";
 import {RewardCustodyFacet} from "../../src/facets/RewardCustodyFacet.sol";
-import {AdminFacet} from "../../src/facets/AdminFacet.sol";
 import {Deployments} from "./Deployments.sol";
 
 /**
@@ -35,11 +34,16 @@ import {Deployments} from "./Deployments.sol";
  *     the two records are out of step and an operator reconciles them first;
  *     a ceremony must not widen the gap.
  *
- * @dev    A ceremony never resumes service. Both scripts leave the Diamond
- *         in whatever pause state their own steps required and say so;
- *         unpausing is a fresh decision by the Unpauser, because a ceremony
- *         that unpaused could lift an unrelated emergency pause raised in
- *         the meantime (Codex #2158 r3 P1, r4 P1).
+ * @dev    A ceremony never resumes service, and never relies on a pause it
+ *         observed earlier. The replacement executes its own `pause()`
+ *         immediately before the switch — idempotent on an already paused
+ *         Diamond — because any pause seen at staging time can lapse (an
+ *         auto-pause window) or be lifted by an authorised Unpauser before
+ *         a delayed Timelock call executes (Codex #2158 r6 P1, r7 P2).
+ *         Both scripts leave the Diamond paused and say so; unpausing is a
+ *         fresh decision by the Unpauser, because a ceremony that unpaused
+ *         could lift an unrelated emergency pause raised in the meantime
+ *         (Codex #2158 r3 P1, r4 P1).
  */
 abstract contract RewardCustodyCeremonyBase is Script {
     // ─── Chain + artifact agreement ─────────────────────────────────────────
@@ -55,23 +59,6 @@ abstract contract RewardCustodyCeremonyBase is Script {
             recorded == bound,
             "reward-custody ceremony: the artifact's .rewardCustodyHolder does not match the bound holder -- reconcile the record before running a ceremony"
         );
-    }
-
-    // ─── Pause state a ceremony may rely on ─────────────────────────────────
-
-    /// @dev Whether the Diamond is DURABLY paused — by the indefinite manual
-    ///      flag — as opposed to an auto-pause window that expires on its
-    ///      own. `paused()` is true for both, but a replacement scheduled
-    ///      through the Timelock waits out a delay, and an auto-pause that
-    ///      lapses meanwhile would fail the ceremony's `requirePaused()` at
-    ///      execution (Codex #2158 r6 P1). When an auto-pause window is
-    ///      active the manual flag cannot be read apart from it, so the
-    ///      answer is `false` and the ceremony stages the manual pause
-    ///      anyway — a second `pause()` on an already manually paused
-    ///      Diamond rewrites the same flag and costs nothing.
-    function _durablyPaused(address diamond) internal view returns (bool) {
-        AdminFacet a = AdminFacet(diamond);
-        return a.paused() && a.pausedUntil() <= block.timestamp;
     }
 
     // ─── Ceremony record ────────────────────────────────────────────────────
