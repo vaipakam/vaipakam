@@ -107,6 +107,114 @@ describe('worker configs preserve dashboard vars at the source (#1995)', () => {
     expect(runCheck().ok).toBe(true);
   });
 
+  /**
+   * A configuration that is NOT the Worker's canonical one.
+   *
+   * `wrangler deploy --config other.jsonc` (and `versions upload`) loads the
+   * selected file, so the canonical config's declaration is not the one in
+   * force. This was the ONE thing the retired command scanner caught that the
+   * declaration alone did not, raised as a P1 on #2171 when the retirement
+   * claimed it traded away no coverage. It is answered here as a property of
+   * configuration FILES rather than of commands — no notion of what runs, no
+   * parsing of text as a command.
+   *
+   * Each case seeds a COPY, for the reason `copiedRoot` documents.
+   */
+  describe('a non-canonical config naming a var-carrying Worker (#2171 r1 P1)', () => {
+    /** The Worker names, read from the tree — never restated here. */
+    function agentName(): string {
+      const raw = readFileSync(join(REPO_ROOT, 'apps/agent/wrangler.jsonc'), 'utf8');
+      return /"name"\s*:\s*"([^"]+)"/.exec(raw)?.[1] as string;
+    }
+
+    function withSeeded(rel: string, body: string, assert: (r: ReturnType<typeof runCheck>) => void) {
+      const root = copiedRoot();
+      try {
+        const path = join(root, rel);
+        mkdirSync(dirname(path), { recursive: true });
+        writeFileSync(path, body);
+        assert(runCheck(root));
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    }
+
+    it('is REJECTED when it omits the declaration', () => {
+      withSeeded('apps/agent/unsafe.jsonc', `{"name": "${agentName()}", "compatibility_date": "2026-01-01"}\n`, (r) => {
+        expect(r.ok, 'a selected config without keep_vars was accepted').toBe(false);
+        expect(r.out).toContain('apps/agent/unsafe.jsonc');
+        expect(r.out).toContain(agentName());
+      });
+    });
+
+    it('is ACCEPTED when it declares it — the rule is the key, not the filename', () => {
+      withSeeded(
+        'apps/agent/safe.jsonc',
+        `{"name": "${agentName()}", "compatibility_date": "2026-01-01", "keep_vars": true}\n`,
+        (r) => expect(r.ok, r.out).toBe(true),
+      );
+    });
+
+    it('is found at any depth, not only beside the canonical config', () => {
+      withSeeded('apps/agent/deploy/envs/staging.jsonc', `{"name": "${agentName()}", "compatibility_date": "2026-01-01"}\n`, (r) => {
+        expect(r.ok).toBe(false);
+        expect(r.out).toContain('apps/agent/deploy/envs/staging.jsonc');
+      });
+    });
+
+    it('ignores a config naming a Worker that has no vars to lose', () => {
+      const www = /"name"\s*:\s*"([^"]+)"/.exec(
+        readFileSync(join(REPO_ROOT, 'apps/www/wrangler.jsonc'), 'utf8'),
+      )?.[1] as string;
+      expect(VAR_CARRYING_WORKERS).not.toContain('apps/www');
+      withSeeded('apps/agent/other.jsonc', `{"name": "${www}", "compatibility_date": "2026-01-01"}\n`, (r) =>
+        expect(r.ok, r.out).toBe(true),
+      );
+    });
+
+    it('ignores a manifest that merely SHARES the Worker name', () => {
+      // Not hypothetical: `ops/mesh-watcher/package.json` and its lockfile
+      // both carry `"name": "vaipakam-mesh-watcher"`. The first draft of this
+      // rule keyed on the name alone and turned the committed tree red with
+      // four false reports. `compatibility_date` is the marker instead —
+      // wrangler requires it to deploy, so a file without one cannot publish
+      // and cannot delete a var.
+      withSeeded(
+        'apps/agent/some-package.json',
+        `{"name": "${agentName()}", "version": "1.0.0"}\n`,
+        (r) => expect(r.ok, r.out).toBe(true),
+      );
+    });
+
+    it('ignores ordinary JSON and unparseable JSON — it is not a blanket file ban', () => {
+      // Most JSON under apps/ is not a wrangler config, and some of it is
+      // deliberately malformed fixture input. Neither may turn the check red.
+      withSeeded('apps/agent/tsconfig.probe.json', '{"compilerOptions": {}}\n', (r) =>
+        expect(r.ok, r.out).toBe(true),
+      );
+      withSeeded('apps/agent/broken.probe.json', 'not json at all {{{\n', (r) =>
+        expect(r.ok, r.out).toBe(true),
+      );
+    });
+
+    it('does not walk node_modules', () => {
+      withSeeded('apps/agent/node_modules/pkg/wrangler.jsonc', `{"name": "${agentName()}", "compatibility_date": "2026-01-01"}\n`, (r) =>
+        expect(r.ok, 'a vendored config was treated as ours').toBe(true),
+      );
+    });
+
+    it('REFUSES a TOML config rather than guessing at its grammar', () => {
+      // Wrangler accepts TOML. Deciding whether a `keep_vars = true` line is
+      // top-level — and not inside a table or a multiline string — is the
+      // class of reasoning the retired scanner failed at, so the check says so
+      // instead of approximating. No TOML exists under apps/ or ops/ today.
+      withSeeded('apps/agent/wrangler.toml', `name = "${agentName()}"\nkeep_vars = true\n`, (r) => {
+        expect(r.ok, 'a TOML config was silently skipped').toBe(false);
+        expect(r.out).toContain('JSON/JSONC configs only');
+      });
+    });
+  });
+
   it('CI actually runs this suite when any listed config changes', () => {
     // The unconditional job is the primary gate, but this suite carries the
     // richer assertions and is path-gated. That gate listed

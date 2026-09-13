@@ -135,7 +135,9 @@ actions) without reaching the end.
 
 The flag stays on the package script — it is still correct, and harmless.
 `scripts/check-keep-vars.mjs` asserts the declaration itself, unconditionally
-in CI, and is now the whole defence.
+in CI, over every configuration in `apps/` and `ops/` that names a Worker with
+vars to lose — not only the canonical one per directory, since a deploy can
+select a different config — and is now the whole implemented defence.
 
 **The trade, stated deliberately:** a deploy can no longer *remove* a var.
 Deleting one is now an explicit dashboard action — see the rollback note in

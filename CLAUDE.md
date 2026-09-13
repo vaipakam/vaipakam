@@ -626,11 +626,18 @@ deleted, and so is the `keeper deploy guard (--keep-vars, tree-wide)` CI job.
 was fourteen open issues (#2110, #2112–#2119, #2121–#2124, #2126), each a
 different parsing edge of the same unbounded predicate and four of them false
 reports on a correct tree, with no issue naming a real file in this repo.
-`apps/keeper/scripts/check-keep-vars.mjs` — five files, structurally parsed,
-unconditional in CI — is now the whole defence, and its header states by name
-what the retirement gives up. Do not rebuild the scanner; if the declaration
-ever stops being sufficient, the answer is a bounded assertion about configs,
-not a parser for arbitrary text.
+`apps/keeper/scripts/check-keep-vars.mjs` — structural, unconditional in CI —
+is now the whole implemented defence. It asserts the declaration on **every
+configuration that names a var-carrying Worker**, at any depth under `apps/`
+and `ops/`, not just the canonical one per directory: a deploy can be pointed
+at another config with `--config`, and that was the one thing the scanner
+caught which the declaration alone did not (Codex raised it as a P1 on #2171).
+A config is identified by carrying `compatibility_date` — wrangler requires it
+to deploy, so the examined set is exactly the set that can delete a var, and a
+manifest that merely shares the Worker's name is out of scope. The header
+states by name what is still given up. Do not rebuild the scanner; if the
+declaration ever stops being sufficient, the answer is another bounded
+assertion about configs, not a parser for arbitrary text.
 
 **The trade:** a deploy can no longer REMOVE a var. Deleting one is a
 deliberate dashboard action.

@@ -1157,7 +1157,8 @@ jobs:
   # asked whether any command anywhere would deploy without preserving vars —
   # is retired: that is an open-ended search over every way a deploy can be
   # spelled, and it never converged. This job asks whether any Worker could
-  # lose its vars at all, which is five files. The retirement's full reasoning,
+  # lose its vars at all — a question about configuration files, not commands.
+  # The retirement's full reasoning,
   # and the exposures it accepts by name, live in the header of the script this
   # job runs.
   #

@@ -27,22 +27,32 @@
  * ones nobody has written yet. This file asserts the declaration.
  *
  * THE TREE-WIDE SCANNER IS RETIRED, and this file is now the whole defence.
- * #1995 kept `check-deploy-invocations.mjs` as defence in depth on top of the
- * declaration. Sixteen further months of review rounds showed what that cost:
- * fourteen open issues (#2110, #2112–#2119, #2121–#2124, #2126), every one an
- * edge of the same predicate — a folded YAML scalar's offsets, a settable
- * `.RECIPEPREFIX`, a PowerShell here-string, a case-varied variable name, an
- * upper-case file extension, a semicolon after an assignment — and four of
- * them FALSE REPORTS that redden a correct tree. Each was a constructed
- * example; none named a file in this repository. Reading arbitrary text and
- * deciding whether it will run a command requires the execution model of
- * every interpreter it might be, and 23,800 lines of scanner and fixtures did
- * not get there. Deleting the predicate is the fix the record asks for, the
- * same move as #2066 (a declaration heuristic deleted after six rounds) and
- * #2149 (a speculative branch deleted at round 13).
+ * #1995 (2026-08-31) kept `check-deploy-invocations.mjs` as defence in depth
+ * on top of the declaration. The thirteen days that followed showed what that
+ * cost: fourteen open issues (#2110, #2112–#2119, #2121–#2124, #2126), every
+ * one an edge of the same predicate — a folded YAML scalar's offsets, a
+ * settable `.RECIPEPREFIX`, a PowerShell here-string, a case-varied variable
+ * name, an upper-case file extension, a semicolon after an assignment — and
+ * four of them FALSE REPORTS that redden a correct tree. Each was a
+ * constructed example; none named a file in this repository. Reading
+ * arbitrary text and deciding whether it will run a command requires the
+ * execution model of every interpreter it might be, and 23,800 lines of
+ * scanner and fixtures did not get there. Deleting the predicate is the fix
+ * the record asks for, the same move as #2066 (a declaration heuristic
+ * deleted after six rounds) and #2149 (a speculative branch deleted at round
+ * 13). Thirteen days is a short observation window and the reader should
+ * weigh it as one; what argues for the retirement is the SHAPE of the
+ * findings, not their elapsed time.
  *
- * WHAT THAT ACCEPTS, stated rather than implied, because a defence that has
- * shrunk should say what it no longer covers:
+ * ONE THING THE SCANNER CAUGHT IS KEPT, in bounded form. It rejected a deploy
+ * or `versions upload` pointed by `--config` at a different configuration
+ * file, since the canonical config's declaration is then not the one wrangler
+ * loads. That coverage is real and is preserved below as an assertion over
+ * FILES — every config naming a var-carrying Worker must declare preservation
+ * — rather than over commands. See the block above `workerNames()`.
+ *
+ * WHAT IT STILL ACCEPTS, stated rather than implied, because a defence that
+ * has shrunk should say what it no longer covers:
  *
  *   - A deploy that OVERRIDES the declaration on the command line. Whether
  *     wrangler honours a negating spelling such as `--no-keep-vars` against a
@@ -50,9 +60,12 @@
  *     scanner did not look for it either — it searched for a MISSING flag, and
  *     went quiet entirely once a Worker declared `keep_vars`. So this is an
  *     exposure the retirement inherits, not one it creates.
- *   - A deploy pointed at a wrangler config this check never sees. It walks
- *     `apps/*` and `ops/*` one level down, which is where every Worker in this
- *     repo lives; a config elsewhere would be neither discovered nor asserted.
+ *   - A configuration that does not exist in the tree when this runs —
+ *     generated at deploy time, or written outside `apps/` and `ops/`. A file
+ *     scan cannot see a file that is not there, and no amount of command
+ *     reading would have made this checkable either: the retired scanner read
+ *     the SELECTED config's checked-in bytes, so it missed a generated one for
+ *     the same reason.
  *   - A dashboard var on a Worker whose config declares no `vars` at all
  *     (`apps/app`, `apps/www`). Dashboard values are by definition absent from
  *     the config, so an empty `vars` block is not evidence that none exist.
@@ -161,6 +174,135 @@ for (const rel of discoverWorkerConfigs()) {
         `VAR_CARRYING_WORKERS.\n    A deploy of this Worker would DELETE every ` +
         `dashboard-managed var. Add the key, then add\n    "${dir}" to the ` +
         `list so the per-Worker mutation tests cover it too.`,
+    );
+  }
+}
+
+/**
+ * EVERY config in the tree that NAMES a var-carrying Worker, not only the
+ * canonical one in that Worker's own directory.
+ *
+ * A deploy or `versions upload` can be pointed at a different configuration
+ * file (`--config unsafe.jsonc`), and the canonical config's declaration is
+ * then not the one wrangler loads. The retired command scanner caught that
+ * case, and only that case, out of everything it attempted — Codex raised it
+ * as a P1 on #2171 and was right: retiring the scanner without this would have
+ * traded away real coverage while the pull request claimed it traded away
+ * none.
+ *
+ * The answer is NOT to restore command parsing. The bounded form of the same
+ * assertion is about FILES: any configuration that names a var-carrying Worker
+ * must declare preservation, whichever command happens to select it. That
+ * needs no execution model, no notion of which text is a command, and no
+ * knowledge of how a deploy is spelled.
+ *
+ * WORKER NAMES ARE DERIVED, never restated: they are read from the canonical
+ * configs above, so `VAR_CARRYING_WORKERS` stays the single list and a rename
+ * cannot leave a stale copy here.
+ *
+ * Scope is every tracked JSON/JSONC file under `apps/` and `ops/` at any
+ * depth, minus generated and vendored trees. Reading a `name` and a
+ * `keep_vars` out of parsed JSON is structural; nothing is inferred.
+ */
+function workerNames() {
+  const names = new Set();
+  for (const dir of VAR_CARRYING_WORKERS) {
+    try {
+      const n = readJsonc(`${dir}/wrangler.jsonc`).name;
+      if (typeof n === 'string' && n) names.add(n);
+    } catch {
+      /* the canonical-config assertion below reports an unreadable config */
+    }
+  }
+  return names;
+}
+
+const SKIP_DIRS = new Set([
+  'node_modules',
+  'dist',
+  'build',
+  'coverage',
+  '.wrangler',
+  '.turbo',
+  '.next',
+  'test-results',
+  'playwright-report',
+]);
+
+function walkConfigCandidates(rel, out) {
+  let entries;
+  try {
+    entries = readdirSync(join(REPO_ROOT, rel), { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const e of entries) {
+    const child = `${rel}/${e.name}`;
+    if (e.isDirectory()) {
+      if (!SKIP_DIRS.has(e.name)) walkConfigCandidates(child, out);
+    } else if (/\.jsonc?$/.test(e.name)) {
+      out.push(child);
+    } else if (/\.toml$/.test(e.name)) {
+      // REFUSED RATHER THAN PARSED. Wrangler accepts a TOML config; deciding
+      // whether a `keep_vars = true` line is top-level, and not inside a
+      // table or a multiline string, is a grammar this file deliberately does
+      // not carry — that is the class of reasoning the retired scanner failed
+      // at. There is no TOML anywhere under apps/ or ops/ today, so the rule
+      // costs nothing and converts a silent miss into a loud instruction.
+      out.push(child);
+    }
+  }
+}
+
+const namesInScope = workerNames();
+const candidates = [];
+walkConfigCandidates('apps', candidates);
+walkConfigCandidates('ops', candidates);
+
+for (const rel of candidates.sort()) {
+  if (rel.endsWith('.toml')) {
+    problems.push(
+      `${rel} is a TOML file, and this check reads JSON/JSONC configs only.\n` +
+        `    If it is a wrangler config, convert it to JSONC so its ` +
+        `\`keep_vars\` can be asserted;\n    if it is not, this check needs ` +
+        `extending to say so. It will not guess.`,
+    );
+    continue;
+  }
+  // The canonical configs are asserted in full below; everything else is
+  // examined only when it claims to configure a Worker that has vars to lose.
+  if (VAR_CARRYING_WORKERS.some((d) => rel === `${d}/wrangler.jsonc`)) continue;
+  let cfg;
+  try {
+    cfg = readJsonc(rel);
+  } catch {
+    // Most JSON under apps/ is not a wrangler config and some of it is not
+    // even JSON (fixtures of malformed input). An unparseable file cannot
+    // name a Worker, so it is out of scope rather than a problem.
+    continue;
+  }
+  if (cfg === null || typeof cfg !== 'object' || Array.isArray(cfg)) continue;
+  if (!namesInScope.has(cfg.name)) continue;
+  // A NAME MATCH IS NOT EVIDENCE OF A WRANGLER CONFIG, and the first draft of
+  // this rule proved it: `ops/mesh-watcher/package.json` and its lockfile both
+  // carry `"name": "vaipakam-mesh-watcher"`, so four false reports turned the
+  // committed tree red. That is the open-world failure shape the prose gates'
+  // admission criterion warns about, arriving in the very change arguing
+  // against it.
+  //
+  // `compatibility_date` is the closed-world positive marker instead, and it
+  // is SOUND rather than merely convenient: wrangler requires it to deploy a
+  // Worker, so a config without one cannot publish and therefore cannot delete
+  // a var. The set this examines is exactly the set that can do the harm.
+  if (typeof cfg.compatibility_date !== 'string') continue;
+  if (cfg.keep_vars !== true) {
+    problems.push(
+      `${rel} configures \`${cfg.name}\` — a Worker with dashboard-managed ` +
+        `vars — but does not\n    declare \`"keep_vars": true\`. A deploy or ` +
+        `\`versions upload\` SELECTING this config\n    (\`--config ` +
+        `${rel.split('/').pop()}\`) would DELETE those vars, whatever the ` +
+        `canonical config says.\n    Add the key, or delete the config if it ` +
+        `is not meant to be deployable.`,
     );
   }
 }
