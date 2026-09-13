@@ -1971,6 +1971,17 @@ export function isAnchored(src, node, seen = new Set()) {
   return kindOf(src, node, seen) === 'position';
 }
 
+/**
+ * Whether an expression is VISIBLY not a piece of text — written out as
+ * an object, an array, a function or a class, or a name that resolves to
+ * one. Deliberately not the inverse of "is text": a value this cannot
+ * read is not visibly anything, and says nothing either way.
+ */
+function visiblyNotText(src, node, seen) {
+  const r = resolutionOf(src, node, new Set(seen));
+  return r.state === RESOLVED && NOT_TEXT.has(r.value.type);
+}
+
 function callKind(src, node, seen) {
   const callee = node.callee;
   // `s.indexOf('x')`. Its ARGUMENTS are not inspected: a number in one
@@ -1990,7 +2001,7 @@ function callKind(src, node, seen) {
   ) {
     return 'position';
   }
-  return helperKind(src, callee, seen);
+  return helperKind(src, callee, node.arguments, seen);
 }
 
 /**
@@ -2010,8 +2021,20 @@ function callKind(src, node, seen) {
  * expression or to bound the region with one of the structural helpers —
  * never to mark it.
  */
-function helperKind(src, callee, seen) {
+function helperKind(src, callee, args, seen) {
   if (callee.type !== 'Identifier') return null;
+  // THE ARGUMENTS AT THE CALL ARE PART OF THE ANSWER (round 2 of #2175).
+  // A helper's receiver is a parameter, and a parameter is exempt from
+  // the stand-in check on the grounds that its value arrives from the
+  // caller — which is sound only while the caller is out of sight. Here
+  // it is not: `at({ indexOf: () => start + 320 })` hands the helper a
+  // stand-in in plain view, and the exemption then vouched for it.
+  //
+  // Substituting arguments for parameters properly is dataflow, and
+  // this does not attempt it. It asks the bounded question instead: is
+  // any argument a value that is visibly NOT TEXT? If so the call is
+  // refused, whatever the helper's body would have said.
+  if (args?.some((a) => visiblyNotText(src, a, seen))) return null;
   const key = `fn:${callee.name}@${callee.start}`;
   if (seen.has(key)) return null;
   seen.add(key);

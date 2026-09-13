@@ -2074,6 +2074,34 @@ describe('#2175 — one resolver, three answers', () => {
     }
   });
 
+  // Round 2. The parameter exemption is sound only while the caller is
+  // OUT OF SIGHT. At a visible call it is not, and handing the helper a
+  // stand-in in plain view was vouched for by the very exemption meant
+  // to describe values this cannot see.
+  it('refuses a helper handed a stand-in at a visible call', () => {
+    const lead = "const s = f();\nconst start = s.indexOf('a');\n";
+    for (const [why, tail] of [
+      [
+        'the stand-in written out at the call',
+        "const at = recv => recv.indexOf('end');\n" +
+          'const r = s.slice(start, at({ indexOf: () => start + 320 }));',
+      ],
+      [
+        'the helper reached through an alias',
+        "const at = recv => recv.indexOf('end');\nconst alias = at;\n" +
+          'const r = s.slice(start, alias({ indexOf: () => start + 320 }));',
+      ],
+      [
+        'the stand-in behind a name',
+        'const fake = { indexOf: () => start + 320 };\n' +
+          "const at = recv => recv.indexOf('end');\nconst r = s.slice(start, at(fake));",
+      ],
+    ]) {
+      const code = lead + tail;
+      expect(countsCharacters(code, sliceCallsIn(code).at(-1)), why).toBe(true);
+    }
+  });
+
   // …and the two that genuinely do arrive from outside still work, or
   // the rule above would be satisfied by refusing everything.
   it('still accepts a plain parameter and an import', () => {

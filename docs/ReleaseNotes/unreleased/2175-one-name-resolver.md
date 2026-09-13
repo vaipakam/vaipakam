@@ -56,5 +56,14 @@ run. All four inherited the exemption. The rule now asks the binding a
 question of fact — does this value arrive from outside this file — which
 is true of a plain parameter and of an import and of none of the four.
 
+One more limit on that exemption followed, and it is the kind worth
+stating: it describes a value the check CANNOT SEE. Where a helper is
+called with the value in plain view — handed an object that merely has a
+search-shaped property — the exemption had been vouching for exactly what
+the check exists to catch. So a call whose argument is visibly not text
+is refused, whatever the helper's body would have said. Working out what
+each parameter holds at each call is a larger analysis and is not
+attempted here; the narrower question has an answer and is asked instead.
+
 No other behaviour changes. The rules that were correct are correct in
 the same cases; they now say why in terms anyone can check.
