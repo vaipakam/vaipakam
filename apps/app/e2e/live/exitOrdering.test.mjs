@@ -36,7 +36,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
-import { stripLineComments } from './sourceBlock.mjs';
+import { between, blockFrom, stripLineComments } from './sourceBlock.mjs';
 
 const DRIVE = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -202,7 +202,7 @@ describe('a funds defect that was READ outranks every blocker', () => {
   });
 
   it('names it inside the Advanced blocked branch too', () => {
-    const branch = src.slice(at('if (advBlocked.length) {'), at('if (advBlocked.length) {') + 900);
+    const branch = blockFrom(src, 'if (advBlocked.length) {');
     expect(branch, 'the Advanced exit mentions the forced-close gap').toContain('fcGap');
   });
 
@@ -299,7 +299,10 @@ describe('a funds defect that was READ outranks every blocker', () => {
     expect(fn).toContain('if (soldNow === true)');
     // And the loop: a skip `continue`s BEFORE the counter moves, so the
     // budget is spent on visits that observed something.
-    const loop = src.slice(src.indexOf('for (const l of readyFirst) {'));
+    // The loop's own body, not everything after it: sliced to the end of
+    // the file, this ordering rule could be satisfied by a `continue;`
+    // and an increment sitting anywhere later in the drive (#2144 round 7).
+    const loop = blockFrom(src, 'for (const l of readyFirst) {');
     const skip = loop.indexOf('continue;');
     const spend = loop.indexOf('observedDetails += 1;');
     expect(skip, 'the skip was not found').toBeGreaterThan(-1);
@@ -350,9 +353,17 @@ describe('a funds defect that was READ outranks every blocker', () => {
   // property: what the run says happened must match what it observed. This
   // one gets it wrong before observing anything at all.
   it('classifies a local copy-bundle failure as BLOCKED, not as a product FAIL', () => {
-    const i = src.indexOf('const FORCED_CLOSE_COPY = (() => {');
-    expect(i, 'the copy binding was not found').toBeGreaterThan(-1);
-    const binding = src.slice(i, src.indexOf('function readForcedCloseCopy()', i));
+    // #2144 round 24 — the END was an unchecked search. The opening was
+    // asserted found and the closing was not, so renaming
+    // `readForcedCloseCopy` would have made it -1, a perfectly valid
+    // slice bound, and this region would have run nearly to EOF with its
+    // assertions still passing off unrelated code. `between` throws on
+    // either anchor missing, and on a close that does not follow.
+    const binding = between(
+      src,
+      'const FORCED_CLOSE_COPY = (() => {',
+      'function readForcedCloseCopy()',
+    );
     expect(binding, 'the read is not guarded').toContain('} catch (err) {');
     expect(binding, 'a setup failure must exit BLOCKED').toContain('process.exit(2)');
     // And it still says WHICH failure, by name — a silent 2 would hide a

@@ -28,6 +28,10 @@ import { CHAIN_ID_CONFLICT } from './rpc-verdict.mjs';
 const CHAIN_ID = 84532;
 const CHAIN_HEX = '0x14a34';
 const DIAMOND = `0x${'ab'.repeat(20)}`;
+// The same address with its `0x` gone — a malformed value the reader must
+// reject. Two characters off the front of an ADDRESS, not a source region.
+// not-a-source-region: drops the 0x prefix of a hex address fixture
+const DIAMOND_NO_0X = DIAMOND.slice(2);
 const EP = 'https://rpc.example/one';
 const EP2 = 'https://rpc.example/two';
 
@@ -109,7 +113,7 @@ describe('createPageHeadTracker', () => {
     for (const [key, bad] of [
       ['chainId', 0],
       ['chainId', '84532'],
-      ['diamondAddress', DIAMOND.slice(2)],
+      ['diamondAddress', DIAMOND_NO_0X],
       ['diamondAddress', undefined],
       ['observedPageChain', {}],
       ['fetch', undefined],
@@ -156,7 +160,7 @@ describe('heads are scoped to endpoints proven to serve the deployment', () => {
     // only inside the encoded call — the common case, per the tracker's note.
     const { t, page } = watched();
     const multicall = call(1, 'eth_call', [
-      { to: `0x${'cc'.repeat(20)}`, data: `0x252dba42${DIAMOND.slice(2)}` },
+      { to: `0x${'cc'.repeat(20)}`, data: `0x252dba42${DIAMOND_NO_0X}` },
     ]);
     exchange(page, EP, multicall, reply(1, '0x'));
     exchange(page, EP, call(2, 'eth_blockNumber'), reply(2, '0x64'));

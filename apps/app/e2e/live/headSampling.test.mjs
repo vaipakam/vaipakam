@@ -44,7 +44,13 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
-import { blockFrom, callContaining, stripLineComments } from './sourceBlock.mjs';
+import {
+  between,
+  blockFrom,
+  callContaining,
+  statementFrom,
+  stripLineComments,
+} from './sourceBlock.mjs';
 
 const DRIVE = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -171,7 +177,7 @@ describe('the head sample waits for the readings in flight', () => {
   it('pins the pre-render simulation to a head the card cannot predate', () => {
     // Not to `pageHead` — that is the round-57 fix keeping the round-58
     // defect, and the two identifiers differ by one word.
-    const decl = src.slice(at('const defaultableBefore ='), at('const defaultableBefore =') + 400);
+    const decl = between(src, 'const defaultableBefore =', 'const matchBefore =');
     expect(decl).toContain('headBefore');
     expect(decl).not.toContain('pageHead ===');
   });
@@ -199,7 +205,7 @@ describe('the head sample waits for the readings in flight', () => {
     // floor where they are further back, and because the page-provider
     // sample is absent on the first visit and on an endpoint that will
     // not answer.
-    const decl = src.slice(at('const headFloor ='), at('const headFloor =') + 700);
+    const decl = between(src, 'const headFloor =', 'const defaultableBefore =');
     expect(decl).toContain('pageHeadFloorOf(page)');
     expect(decl).toContain('headBeforeNav');
     expect(decl).toContain('pageHeadBeforeNav');
@@ -219,7 +225,7 @@ describe('the head sample waits for the readings in flight', () => {
     expect(sample).toBeLessThan(goto);
     // Uncached, for round 13's reason: a height viem answered from a cache
     // filled by an earlier visit is a number this drive already had.
-    const decl = src.slice(sample, sample + 200);
+    const decl = between(src, 'headBeforeNav = await pub.getBlockNumber(', 'pageHeadBeforeNav = sample.head;');
     expect(decl).toContain('cacheTime: 0');
   });
 
@@ -236,7 +242,7 @@ describe('the head sample waits for the readings in flight', () => {
   // which keeps a genuinely dead endpoint loud.
   it('degrades rather than ending the run when that sample fails', () => {
     const sample = at('headBeforeNav = await pub.getBlockNumber(');
-    const decl = src.slice(sample - 200, sample + 200);
+    const decl = between(src, 'let headBeforeNav = null;', 'pageHeadBeforeNav = sample.head;');
     expect(decl).not.toContain('discovery(');
     expect(decl).toContain('catch');
   });
@@ -433,7 +439,7 @@ describe('the head sample waits for the readings in flight', () => {
     expect(mod).toContain("body.includes('eth_call')");
     // And the gate is actually consumed by both stability reads — with no
     // global shortcut past it, which is the round-90 finding.
-    const both = src.slice(at('const floorSound ='), at('const floorSound =') + 1200);
+    const both = between(src, 'const floorSound =', 'const attemptedResults =');
     expect(both).toContain('floorEstablishedFor(page, pageSampledBeforeNav)');
     expect(both).not.toMatch(/pageNav > 0n \|\|/);
     expect(both).toMatch(/defaultableStable =\s*\n?\s*floorSound &&/);
@@ -445,7 +451,7 @@ describe('the head sample waits for the readings in flight', () => {
   // can round-trip inside the window.
   it('checks the protocol answer held at every block of the span', () => {
     expect(at('async function stableAcross(')).toBeGreaterThan(-1);
-    const both = src.slice(at('const defaultableStable ='), at('const defaultableStable =') + 1400);
+    const both = between(src, 'const defaultableStable =', 'const attemptedResults =');
     // Reformatted in round 105 when the extent callback was added, so this
     // pins the arguments rather than a one-line call shape.
     expect(both).toContain('pinnedDefaultable');
@@ -462,7 +468,7 @@ describe('the head sample waits for the readings in flight', () => {
   it('brackets the settlement-route read the same way', () => {
     // Both pre-render probes answer questions about the same render, so a
     // fix applied to one of them is this PR's most repeated finding.
-    const decl = src.slice(at('const matchBefore ='), at('const matchBefore =') + 400);
+    const decl = between(src, 'const matchBefore =', 'const card = await readForcedCloseCard(page);');
     expect(decl).toContain('headBefore');
   });
 
@@ -511,8 +517,12 @@ describe('the head sample waits for the readings in flight', () => {
     // an `async` listener that adds itself partway through.
     expect(mod).toContain("page.on('response', (res) => {");
     expect(mod).not.toContain("page.on('response', async (res) => {");
-    const reg = mod.slice(mod.indexOf("page.on('response', (res) => {"));
-    expect(reg.slice(0, 400)).toContain('pending.add(done)');
+    // The listener's OWN body, not the 400 characters that follow its
+    // opening: the registration has to be inside the listener, and a
+    // window that overran it would have accepted `pending.add(done)`
+    // sitting in whatever came next.
+    const reg = blockFrom(mod, "page.on('response', (res) => {");
+    expect(reg).toContain('pending.add(done)');
   });
 
   // AMENDED IN ROUND 92 — the drain is BOUNDED, not a single snapshot.
@@ -579,10 +589,7 @@ describe('the head sample waits for the readings in flight', () => {
     expect(src, 'the post-scrape site captures it').toContain(
       'const headSettled = await settleHeadReads(page);',
     );
-    const caughtUp = src.slice(
-      src.indexOf('const observerCaughtUp ='),
-      src.indexOf('const observerCaughtUp =') + 320,
-    );
+    const caughtUp = statementFrom(src, 'const observerCaughtUp =');
     expect(caughtUp, 'the catch-up test is gated on the ceiling drain').toContain(
       'headSettled &&',
     );
@@ -620,13 +627,10 @@ describe('the head sample waits for the readings in flight', () => {
     expect(sampleAt, 'the ceiling sample was not found').toBeGreaterThan(-1);
     expect(src.indexOf('const card = await readForcedCloseCard(page);')).toBeLessThan(sampleAt);
     // And consumed, with an unbounded endpoint refusing rather than lowering.
-    const caughtUp = src.slice(
-      src.indexOf('const observerCaughtUp ='),
-      src.indexOf('const observerCaughtUp =') + 320,
-    );
+    const caughtUp = statementFrom(src, 'const observerCaughtUp =');
     expect(caughtUp).toContain('ceilingSound');
     expect(caughtUp).toContain('pinnedBlock >= ceiling.head');
-    const sound = src.slice(src.indexOf('const ceilingSound ='), src.indexOf('const ceilingSound =') + 400);
+    const sound = statementFrom(src, 'const ceilingSound =');
     expect(sound, 'every endpoint the page used must be sampled').toContain('.every(');
   });
 });
@@ -657,9 +661,15 @@ describe('the synthetic chain probe validates as a quantity (round 100)', () => 
   });
 
   it('applies the same safe-integer check the captured reader applies', () => {
-    const i = src.indexOf('hexQuantity(believableResult(await r.json()))');
-    expect(i, 'the probe body moved').toBeGreaterThan(-1);
-    const body = src.slice(i, i + 320);
+    // Bounded by the `catch` that ends the probe's try, not by the
+    // sentence inside it. #2144 round 5 found this anchored on a COMMENT —
+    // `between` now refuses a landmark that exists only in prose, which is
+    // how a rule ends up asserted over a region the code does not have.
+    const body = between(
+      src,
+      'const id = hexQuantity(believableResult(await r.json()));',
+      '} catch {',
+    );
     expect(body).toContain('Number.isSafeInteger(n)');
   });
 
@@ -855,8 +865,11 @@ describe('an endpoint that lied about its chain stays untrusted', () => {
   });
 
   it('that place checks BOTH the per-page and the module-wide exclusion', () => {
-    const i = src.indexOf('const admitIfNotForeign = () => {');
-    const body = src.slice(i, src.indexOf('};', i) + 2);
+    // Brace-MATCHED, not "up to the first `};`": a nested object literal
+    // or arrow inside the body closes first, and the region would end
+    // there with the guard-before-add ordering below never reaching the
+    // code it is about.
+    const body = blockFrom(src, 'const admitIfNotForeign = () => {');
     const guard = body.indexOf('foreign.has(key) || foreignPageRpcEndpoints.has(key)');
     const add = body.indexOf('diamond.add(key)');
     expect(guard, 'both exclusions are tested').toBeGreaterThan(-1);

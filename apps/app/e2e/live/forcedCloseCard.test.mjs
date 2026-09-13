@@ -17,6 +17,14 @@ import {
 } from './forcedCloseCard.mjs';
 import { durationSamplesFor, durationUnitsFor, durationVocabularyFor } from './durationVocabulary.mjs';
 
+// The fixture text, shortened for the line vitest prints when an
+// assertion fails. Not a source region — this truncates a MESSAGE, and a
+// message that runs to four lines is worse than one that stops — so the
+// fixed length is the right tool here and the #2144 guard is told so
+// once, in the one place it now happens.
+// not-a-source-region: assertion label, not code under inspection
+const label = (text) => text.slice(0, 40);
+
 const FORCED_CLOSE = enBundle.copy.forcedClose;
 
 // #2098 / #2131 — the card DECLARES its state and the block its facts came
@@ -1091,7 +1099,7 @@ describe('round 7 review findings', () => {
     // directly.
     for (const ready of copy.readyCopy) {
       const v = forcedCloseVerdict({ ...base, submitDisabled: true, text: ready }, copy);
-      expect(v.verdict, ready.slice(0, 40)).toBe('fail');
+      expect(v.verdict, label(ready)).toBe('fail');
       expect(v.why).toMatch(/READY route/);
     }
   });
@@ -1116,7 +1124,7 @@ describe('round 7 review findings', () => {
     for (const waiting of [FORCED_CLOSE.unknown, FORCED_CLOSE.notYet, FORCED_CLOSE.blockedPaused]) {
       expect(
         forcedCloseVerdict({ ...base, submitDisabled: true, text: waiting }, copy).verdict,
-        waiting.slice(0, 40),
+        label(waiting),
       ).toBe('pass');
     }
   });
@@ -1205,7 +1213,7 @@ describe('round 8 review findings', () => {
     // expensive half: here the user pays a fee for a refusal.
     for (const withheld of copy.withheldCopy) {
       const v = forcedCloseVerdict({ ...base, submitDisabled: false, text: withheld }, copy);
-      expect(v.verdict, withheld.slice(0, 40)).toBe('fail');
+      expect(v.verdict, label(withheld)).toBe('fail');
       expect(v.why).toMatch(/NON-ACTIONABLE/);
     }
     // ROUND 9 P2 — AND WITH `settled: false`, which is the only shape
@@ -1225,7 +1233,7 @@ describe('round 8 review findings', () => {
     for (const ready of copy.readyCopy) {
       expect(
         forcedCloseVerdict({ ...base, submitDisabled: false, text: ready }, copy).verdict,
-        ready.slice(0, 40),
+        label(ready),
       ).toBe('pass');
     }
   });
@@ -1470,7 +1478,7 @@ describe('round 11 review findings', () => {
       expect(
         forcedCloseVerdict({ ...base, submitDisabled, text: known, bodyText: known }, copy)
           .verdict,
-        known.slice(0, 40),
+        label(known),
       ).toBe('pass');
     }
   });
@@ -4286,7 +4294,7 @@ describe('round 56 review findings', () => {
       ]) {
         expect(
           forcedCloseVerdict({ ...withheld, text: state, bodyText: state }, copy).verdict,
-          state.slice(0, 40),
+          label(state),
         ).toBe('pass');
       }
     });
@@ -4528,6 +4536,7 @@ describe('round 54 review findings', () => {
     // `ReviewReceipt` renders "six fixed rows, same order everywhere".
     it('BLOCKS a correctly paired receipt in the wrong ORDER', () => {
       const rows = paired();
+      // not-a-source-region: drops the first two ROWS of a fixture array
       const reordered = [rows[1], rows[0], ...rows.slice(2)];
       expect(forcedCloseVerdict({ ...base, confirmRowsText: reordered }, copy).verdict).not.toBe(
         'pass',
