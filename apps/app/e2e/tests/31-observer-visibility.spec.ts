@@ -2280,3 +2280,128 @@ test('the off-screen slit probe uses the transformed client area, clipped by anc
   expect(result.halfRowBottom).toBeLessThan(0);
   expect(result.halfRow, 'a half-exposed scrollport whose exposed half is covered').toBe(false);
 });
+
+// #2157 round 9 — the model's stated scope, and four corrections inside it:
+//
+//   - the individual transform properties establish a containing block
+//     even at identity (`scale: 1`), with computed `transform` at `none`;
+//   - an in-flow row inside a viewport-fixed card does not ride the page;
+//   - the slit probe clips to ancestors' PADDING boxes, not border boxes;
+//   - a zero-span scroller stays an ordinary clipper under every bail-out;
+//   - and two declared boundaries: a rotated scroller's probe does not
+//     run, and `flex-wrap: wrap-reverse` is unquantifiable (both admit).
+test('identity individual transforms, fixed ancestors, ancestor padding boxes, zero spans', async ({
+  page,
+}) => {
+  await page.setContent(`<!DOCTYPE html>
+    <style>body { margin: 0; height: 3000px } p { margin: 0 }</style>
+    <!-- 0..40: a containing block by scale: 1 alone -->
+    <div id="identity" style="scale:1; height:40px; overflow:auto">
+      <p id="identityRow" style="position:absolute; top:0; height:20px">carried by an identity-scaled container</p>
+      <p style="height:400px">filler</p>
+    </div>
+    <!-- a viewport-fixed card parked above the viewport, holding a static row -->
+    <div style="position:fixed; top:-200px; height:100px; left:0; right:0">
+      <p id="fixedChildRow" style="height:20px">static inside a fixed card</p>
+    </div>
+    <!-- 40..80: a bordered clipper exposing 20 of a 40px scrollport through
+         its padding box (10..30 within it), with an overlay over exactly
+         that padding box -->
+    <div style="position:relative; width:300px">
+      <div style="height:20px; overflow:hidden; border:10px solid #888; box-sizing:content-box">
+        <div id="throughBorder" style="height:40px; overflow:auto">
+          <p id="throughBorderRow" style="height:20px">the padding box is covered</p>
+          <p style="height:1000px">filler</p>
+        </div>
+      </div>
+      <div style="position:absolute; top:10px; left:10px; width:280px; height:20px; background:#000"></div>
+    </div>
+    <!-- a zero-span scroller under zoom: still a clipper -->
+    <div style="zoom:2">
+      <div id="zeroUnderZoom" style="height:40px; overflow:auto">
+        <p id="zeroUnderZoomRow" style="position:relative; top:-39px; height:20px">one pixel inside, nothing to scroll</p>
+      </div>
+    </div>
+  `);
+  const result = await page.evaluate((helpersSrc) => {
+    const family = new Function(`return (${helpersSrc})();`)();
+    const visible = family.visible as (n: Element | null) => boolean;
+    const byId = (id: string) => document.getElementById(id)!;
+    byId('identity').scrollTop = 300;
+    byId('throughBorder').scrollTop = 600;
+    const before = {
+      identityTransform: getComputedStyle(byId('identity')).transform,
+      identityRowTop: byId('identityRow').getBoundingClientRect().top,
+      identityRow: visible(byId('identityRow')),
+      throughBorderRowBottom: byId('throughBorderRow').getBoundingClientRect().bottom,
+      throughBorderRow: visible(byId('throughBorderRow')),
+      zeroSpan: byId('zeroUnderZoom').scrollHeight - byId('zeroUnderZoom').clientHeight,
+      zeroUnderZoomRow: visible(byId('zeroUnderZoomRow')),
+    };
+    window.scrollTo(0, 1000);
+    return {
+      ...before,
+      scrollY: window.scrollY,
+      fixedChildRowTop: byId('fixedChildRow').getBoundingClientRect().top,
+      fixedChildRow: visible(byId('fixedChildRow')),
+    };
+  }, VISIBILITY_SOURCE);
+  // scale: 1 leaves computed transform at none and still anchors the row.
+  expect(result.identityTransform).toBe('none');
+  expect(result.identityRowTop).toBe(-300);
+  expect(result.identityRow, 'an absolute row under scale: 1').toBe(true);
+  // The clipper's border is not part of the opening; the padding box is
+  // covered, so nothing the row can come back to is readable.
+  expect(result.throughBorderRowBottom).toBeLessThan(0);
+  expect(result.throughBorderRow, 'a covered padding box behind a bordered clipper').toBe(false);
+  // Zero span under zoom: the half rule applies, one pixel of twenty.
+  expect(result.zeroSpan).toBe(0);
+  expect(result.zeroUnderZoomRow, 'a zero-span scroller under zoom is a clipper').toBe(false);
+  // The static row inside a fixed card parked at -200: page scroll of
+  // 1000 moves neither, so no page offset is added.
+  expect(result.scrollY).toBe(1000);
+  expect(result.fixedChildRowTop).toBe(-200);
+  expect(result.fixedChildRow, 'a static row inside a viewport-fixed card').toBe(false);
+});
+
+test('declared boundaries: a rotated scroller is not probed, wrap-reverse is unquantifiable', async ({
+  page,
+}) => {
+  await page.setContent(`<!DOCTYPE html>
+    <style>body { margin: 0 } p { margin: 0 }</style>
+    <div style="position:absolute; top:0; left:0; transform:translate(40px, 0) rotate(90deg); transform-origin:0 0; width:200px; height:40px">
+      <div id="rot" style="width:200px; height:40px; overflow:auto">
+        <p id="rotRow" style="height:20px">rotated, off-screen</p>
+        <p style="height:1000px">filler</p>
+      </div>
+    </div>
+    <div id="wrapRev" style="position:absolute; top:300px; display:flex; flex-wrap:wrap-reverse; width:100px; height:40px; overflow:auto">
+      <p id="wrapRevRow" style="flex:none; width:100px; height:20px">first line</p>
+      <p style="flex:none; width:100px; height:20px">second</p>
+      <p style="flex:none; width:100px; height:400px">tall filler</p>
+    </div>
+  `);
+  const result = await page.evaluate((helpersSrc) => {
+    const family = new Function(`return (${helpersSrc})();`)();
+    const visible = family.visible as (n: Element | null) => boolean;
+    const byId = (id: string) => document.getElementById(id)!;
+    byId('rot').scrollTop = 600;
+    const wr = byId('wrapRev');
+    wr.scrollTop = -10000;
+    return {
+      rotRowLeft: byId('rotRow').getBoundingClientRect().left,
+      rotRow: visible(byId('rotRow')),
+      wrapRevMinScroll: wr.scrollTop,
+      wrapRevRow: visible(byId('wrapRevRow')),
+    };
+  }, VISIBILITY_SOURCE);
+  // Off-screen to the right of the standing scroller; the credit reaches
+  // it and, under rotation, the occlusion probe declines rather than
+  // mis-measuring the client area.
+  expect(result.rotRowLeft).toBeGreaterThan(200);
+  expect(result.rotRow, 'a rotated scroller: reachable, probe declined').toBe(true);
+  // The premise for wrap-reverse: a negative scroll range. Declared
+  // unquantifiable, admitted.
+  expect(result.wrapRevMinScroll).toBeLessThan(0);
+  expect(result.wrapRevRow, 'wrap-reverse admits').toBe(true);
+});

@@ -71,6 +71,11 @@ export function visibilityHelpers() {
     cs.contentVisibility === 'auto' ||
     cs.contentVisibility === 'hidden' ||
     cs.transform !== 'none' ||
+    // The individual properties establish one even at identity (`scale: 1`),
+    // and the computed `transform` stays `none` (#2157 round 9).
+    (typeof cs.translate === 'string' && cs.translate !== 'none') ||
+    (typeof cs.rotate === 'string' && cs.rotate !== 'none') ||
+    (typeof cs.scale === 'string' && cs.scale !== 'none') ||
     cs.perspective !== 'none' ||
     cs.filter !== 'none' ||
     (typeof cs.backdropFilter === 'string' && cs.backdropFilter !== 'none') ||
@@ -117,18 +122,27 @@ export function visibilityHelpers() {
     const scrollsY = cs.overflowY === 'auto' || cs.overflowY === 'scroll';
     const scrollsX = cs.overflowX === 'auto' || cs.overflowX === 'scroll';
     if (!scrollsY && !scrollsX) return null;
+    // An `overflow: auto` box whose content fits has the STYLE of a
+    // scroller and none of the movement (#2157 round 3): its range on that
+    // axis is [0, 0], which the clip walk reads as "clipper", in viewport
+    // axes after the mapping below. Decided BEFORE any bail-out below
+    // (round 9): a zero-span box has nothing to quantify, and declaring it
+    // unquantifiable would lift the ordinary half rule off it and every
+    // clipper above.
+    const spanY = scrollsY ? Math.max(0, n.scrollHeight - n.clientHeight) : 0;
+    const spanX = scrollsX ? Math.max(0, n.scrollWidth - n.clientWidth) : 0;
+    if (spanX === 0 && spanY === 0) return { lo: { x: 0, y: 0 }, hi: { x: 0, y: 0 } };
     // A VERTICAL WRITING MODE is not modelled (#2157 round 6): its block
     // axis is horizontal and may grow leftward, and a flex reversal lands
     // on the other physical axis. Rather than guess the sign of either
     // range, the credit is unquantifiable there, which admits. Nothing the
     // drive reads is written vertically.
     if (cs.writingMode && cs.writingMode !== 'horizontal-tb') return { unquantifiable: true };
-    // An `overflow: auto` box whose content fits has the STYLE of a
-    // scroller and none of the movement (#2157 round 3): its range on that
-    // axis is [0, 0], which the clip walk reads as "clipper", in viewport
-    // axes after the mapping below.
-    const spanY = scrollsY ? Math.max(0, n.scrollHeight - n.clientHeight) : 0;
-    const spanX = scrollsX ? Math.max(0, n.scrollWidth - n.clientWidth) : 0;
+    // Nor is a REVERSED CROSS AXIS (round 9): `flex-wrap: wrap-reverse`
+    // makes the wrapped axis scroll negative, on whichever physical axis
+    // the flex direction leaves it. Unquantifiable, admits.
+    const flexBox = cs.display === 'flex' || cs.display === 'inline-flex';
+    if (flexBox && cs.flexWrap === 'wrap-reverse') return { unquantifiable: true };
     // A flex reversal only reverses a FLEX container (#2157 round 5): the
     // computed `flex-direction` is reported on any element, and on a block
     // scroller it has no layout effect and the range stays [0, span].
@@ -256,14 +270,23 @@ export function visibilityHelpers() {
     // on a page scrolled by 1000 is still 80px above the viewport at every
     // page offset. Only a fixed box CAPTURED by an ancestor's containing
     // block rides the page like anything else.
-    let captured = flow !== 'fixed';
-    if (!captured) {
-      for (let a = node.parentElement; a; a = a.parentElement) {
-        if (establishesCB(getComputedStyle(a))) {
-          captured = true;
+    // ... and the same for any viewport-fixed ANCESTOR (round 9): an in-flow
+    // row inside a fixed card does not ride the page either. Walk the chain
+    // for a fixed box; if one is found, it is captured only by a containing
+    // block ABOVE it.
+    let captured = true;
+    for (let a = node; a; a = a.parentElement) {
+      const pos = a === node ? flow : getComputedStyle(a).position;
+      if (pos !== 'fixed') continue;
+      let heldBy = false;
+      for (let b = a.parentElement; b; b = b.parentElement) {
+        if (establishesCB(getComputedStyle(b))) {
+          heldBy = true;
           break;
         }
       }
+      if (!heldBy) captured = false;
+      break;
     }
     const pageX = captured ? window.scrollX : 0;
     const pageY = captured ? window.scrollY : 0;
@@ -1285,8 +1308,26 @@ export function visibilityHelpers() {
         // node and is therefore never a cover.
         // In VIEWPORT pixels (round 8): the rect is transformed, the client
         // metrics are the element's own, so the metrics are scaled by the
-        // rect-to-layout ratio per axis. Exact for an axis-aligned scale;
-        // for a rotation this is the bounding box, stated as such.
+        // rect-to-layout ratio per axis. Exact for an axis-aligned scale.
+        // Under a ROTATION (round 9) the insets land on the other axis and
+        // the ratio is not a bounding box, so the probe does not run — the
+        // pre-#2157 behaviour for that geometry, stated rather than
+        // mis-measured. Nothing the drive reads is rotated.
+        let rotated = false;
+        for (let a = scroller; a && !rotated; a = a.parentElement) {
+          const acs = getComputedStyle(a);
+          if (typeof acs.rotate === 'string' && acs.rotate !== 'none' && acs.rotate !== '0deg') {
+            rotated = true;
+          } else if (acs.transform && acs.transform !== 'none') {
+            try {
+              const tm = new DOMMatrixReadOnly(acs.transform);
+              if (tm.b !== 0 || tm.c !== 0) rotated = true;
+            } catch {
+              rotated = true;
+            }
+          }
+        }
+        if (rotated) return true;
         const sb = scroller.getBoundingClientRect();
         const sx = scroller.offsetWidth > 0 ? sb.width / scroller.offsetWidth : 1;
         const sy = scroller.offsetHeight > 0 ? sb.height / scroller.offsetHeight : 1;
@@ -1306,13 +1347,20 @@ export function visibilityHelpers() {
           if (a === document.documentElement || a === document.body) continue;
           const acs = getComputedStyle(a);
           const ab = a.getBoundingClientRect();
+          // The PADDING box (round 9): overflow clips at the padding edge,
+          // and a probe on the ancestor's border hits the ancestor, which
+          // contains the node and is never a cover.
+          const ax = a.offsetWidth > 0 ? ab.width / a.offsetWidth : 1;
+          const ay = a.offsetHeight > 0 ? ab.height / a.offsetHeight : 1;
           if (acs.overflowY !== 'visible') {
-            slit.top = Math.max(slit.top, ab.top);
-            slit.bottom = Math.min(slit.bottom, ab.bottom);
+            const t = ab.top + a.clientTop * ay;
+            slit.top = Math.max(slit.top, t);
+            slit.bottom = Math.min(slit.bottom, t + a.clientHeight * ay);
           }
           if (acs.overflowX !== 'visible') {
-            slit.left = Math.max(slit.left, ab.left);
-            slit.right = Math.min(slit.right, ab.right);
+            const l = ab.left + a.clientLeft * ax;
+            slit.left = Math.max(slit.left, l);
+            slit.right = Math.min(slit.right, l + a.clientWidth * ax);
           }
         }
         if (slit.right > slit.left && slit.bottom > slit.top) {

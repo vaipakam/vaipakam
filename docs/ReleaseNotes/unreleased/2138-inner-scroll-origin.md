@@ -93,7 +93,15 @@ what it actually shows; and the cover check reads the region's frame as
 drawn on screen and only through the wrappers that show it. Two further
 refinements, knowing which region's scroll supplied the credit and holding
 one scroll position across the origin and clipping checks, were folded
-into the two issues already open for those themes. The list of properties that make an element the
+into the two issues already open for those themes. A ninth round closed
+four more gaps inside the rule's scope, including that a row inside a
+card fixed to the viewport does not ride the page any more than the card
+does, and declared two more boundaries; it also wrote the scope down. The
+rule now states exactly which layouts it quantifies, admits everything
+outside that scope rather than guessing at it, and an umbrella issue
+collects further precision findings beyond the scope so that the review
+loop is bounded, while any finding inside the scope that would wrongly
+reject readable copy is still fixed in place. The list of properties that make an element the
 reference for absolutely positioned descendants gained two more, each
 confirmed by measurement in the check's own browser, and one candidate the
 review raised, container queries, was measured not to be one and left out
