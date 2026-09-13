@@ -5932,9 +5932,11 @@ remains possible and shows only as the unattributed remainder — review r5).**
 > `replace` calldata written to a ceremony record; NO unpause is pre-authorised — and the direct path does not unpause either,
 > since either could lift an unrelated emergency pause raised meanwhile;
 > then `record()` reconciles the artifact only once the chain reports a new
-> holder bound). `DeployRewardCustodyHolder.s.sol` (the live-chain initial
-> bind) has the same direct / `stage()` / `record()` shape through a shared
-> ceremony base, and `redeploy-testnet-inplace.sh` carries
+> holder bound — and the DIRECT path reconciles the same way, leaving a
+> record for `record()` instead of writing the artifact from its own
+> simulated read, review r9). `DeployRewardCustodyHolder.s.sol` (the
+> live-chain initial bind) has the same direct / `stage()` / `record()`
+> shape through a shared ceremony base, and `redeploy-testnet-inplace.sh` carries
 > `ARMED_FRESH_PAID_TOTAL_<PREFIX>` / `ARMED_FRESH_REBASE_NO_HISTORY_<PREFIX>`
 > per chain with the seed's preflight. Simulations neither create nor erase
 > ceremony records. The row invariants are NOT pinned yet: with

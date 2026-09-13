@@ -92,16 +92,20 @@ contract RewardCustodyFacet is DiamondAccessControl {
 
     /// @notice A token that is not the configured VPFI was recovered from a
     ///         holder to the treasury.
-    /// @param holder   The holder swept (bound or previous).
-    /// @param token    The ERC-20 moved.
-    /// @param treasury Where it went.
-    /// @param amount   How much.
+    /// @param holder    The holder swept (bound or previous).
+    /// @param token     The ERC-20 moved.
+    /// @param treasury  Where it went.
+    /// @param requested How much was released from the holder.
+    /// @param received  How much the treasury's balance actually grew by —
+    ///                  the substantiated receipt (a fee-on-transfer token
+    ///                  credits less than requested; Codex #2158 r9 P2).
     /// @custom:event-category state-change/reward-custody
     event RewardCustodyForeignTokenSwept(
         address indexed holder,
         address indexed token,
         address indexed treasury,
-        uint256 amount
+        uint256 requested,
+        uint256 received
     );
 
     /// @notice The delivered-fresh ledger's paid side was rebased to an
@@ -223,7 +227,9 @@ contract RewardCustodyFacet is DiamondAccessControl {
      *         VPFI itself (that IS the custody, and leaves only through the
      *         reward outflows), delivers to the configured treasury and to
      *         nowhere else, and accepts only a holder whose `DIAMOND()` is
-     *         this Diamond. Event-logged so the recovery is auditable.
+     *         this Diamond. The event carries both the requested amount and
+     *         the treasury's MEASURED receipt, since an arbitrary foreign
+     *         token may credit less than it was asked to move.
      * @param  holder A holder this Diamond constructed (bound or previous).
      * @param  token  The ERC-20 to recover; never the configured VPFI.
      * @param  amount The amount to move to the treasury.
@@ -239,8 +245,10 @@ contract RewardCustodyFacet is DiamondAccessControl {
         address treasury = s.treasury;
         if (treasury == address(0)) revert IVaipakamErrors.RewardCustodyTreasuryUnset();
         _requireOurHolder(holder);
+        uint256 before = IERC20(token).balanceOf(treasury);
         RewardCustodyHolder(holder).release(token, treasury, amount);
-        emit RewardCustodyForeignTokenSwept(holder, token, treasury, amount);
+        uint256 received = IERC20(token).balanceOf(treasury) - before;
+        emit RewardCustodyForeignTokenSwept(holder, token, treasury, amount, received);
     }
 
     // ─── Paid-side migration importer ───────────────────────────────────────

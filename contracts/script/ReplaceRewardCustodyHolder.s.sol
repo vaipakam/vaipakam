@@ -22,9 +22,12 @@ import {RewardCustodyCeremonyBase} from "./lib/RewardCustodyCeremonyBase.sol";
  *  - `run()`    — DIRECT: `ADMIN_PRIVATE_KEY` holds `ADMIN_ROLE` and
  *                 `PAUSER_ROLE`. Pauses (always — idempotent on a paused
  *                 Diamond, and a pause observed a moment earlier can be
- *                 lifted or lapse), replaces, reconciles the artifact from
- *                 chain state — and LEAVES THE DIAMOND PAUSED. Refuses before
- *                 any broadcast when the key lacks either role.
+ *                 lifted or lapse), replaces, leaves a ceremony record — and
+ *                 LEAVES THE DIAMOND PAUSED. The artifact is written by
+ *                 `record()` once the transactions have confirmed, never
+ *                 from the script's own simulated read (Codex #2158 r9 P2).
+ *                 Refuses before any broadcast when the key lacks either
+ *                 role.
  *  - `stage()`  — STAGED, for a handed-over deployment where `ADMIN_ROLE`
  *                 sits on the Timelock and `PAUSER_ROLE` on the Pauser Safe:
  *                 broadcasts nothing; writes a ceremony record with the
@@ -66,6 +69,7 @@ contract ReplaceRewardCustodyHolder is RewardCustodyCeremonyBase {
         uint256 adminKey = vm.envUint("ADMIN_PRIVATE_KEY");
         address admin = vm.addr(adminKey);
         (address diamond, address previous) = _boundDiamond();
+        _requireNoPendingRecord(KIND);
         AccessControlFacet acl = AccessControlFacet(diamond);
         AdminFacet adminFacet = AdminFacet(diamond);
 
@@ -93,12 +97,18 @@ contract ReplaceRewardCustodyHolder is RewardCustodyCeremonyBase {
         RewardCustodyFacet(diamond).replaceRewardCustodyHolder();
         vm.stopBroadcast();
 
-        _reconcileFromChain(diamond, previous);
-        console.log("The Diamond is left PAUSED. Resume service by a fresh Unpauser decision once nothing else holds the pause.");
+        string memory obj = "ceremony";
+        vm.serializeAddress(obj, "diamond", diamond);
+        vm.serializeAddress(obj, "previousHolder", previous);
+        vm.serializeString(obj, "mode", "direct");
+        string memory json = vm.serializeUint(obj, "broadcastAtBlock", block.number);
+        _writeRecord(KIND, json);
+        console.log("The Diamond is left PAUSED. Resume service by a fresh Unpauser decision once record() has confirmed the ceremony and nothing else holds the pause.");
     }
 
     function stage() external {
         (address diamond, address previous) = _boundDiamond();
+        _requireNoPendingRecord(KIND);
         bytes memory pauseCall = abi.encodeCall(AdminFacet.pause, ());
         bytes memory replaceCall = abi.encodeCall(RewardCustodyFacet.replaceRewardCustodyHolder, ());
 
@@ -115,6 +125,7 @@ contract ReplaceRewardCustodyHolder is RewardCustodyCeremonyBase {
         string memory obj = "ceremony";
         vm.serializeAddress(obj, "diamond", diamond);
         vm.serializeAddress(obj, "previousHolder", previous);
+        vm.serializeString(obj, "mode", "staged");
         vm.serializeUint(obj, "stagedAtBlock", block.number);
         vm.serializeBytes(obj, "step1_pauserSafe_pause", pauseCall);
         string memory json = vm.serializeBytes(obj, "step2_timelock_replaceRewardCustodyHolder", replaceCall);

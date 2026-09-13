@@ -100,7 +100,8 @@ contract RewardCustodyFacetTest is SetupTest {
         address indexed holder,
         address indexed token,
         address indexed treasury,
-        uint256 amount
+        uint256 requested,
+        uint256 received
     );
 
     uint32 internal constant CHAIN_BASE = 8453;
@@ -671,7 +672,7 @@ contract RewardCustodyFacetTest is SetupTest {
         assertEq(foreign.balanceOf(holder), 70, "replacement moved only the configured VPFI; the foreign token stayed behind");
 
         vm.expectEmit(true, true, true, true, address(diamond));
-        emit RewardCustodyForeignTokenSwept(holder, address(foreign), treasury, 70);
+        emit RewardCustodyForeignTokenSwept(holder, address(foreign), treasury, 70, 70);
         _custody().sweepForeignTokenFromRewardCustody(holder, address(foreign), 70);
         assertEq(foreign.balanceOf(treasury), 70, "recovered to the treasury");
         assertEq(foreign.balanceOf(holder), 0);
@@ -679,6 +680,20 @@ contract RewardCustodyFacetTest is SetupTest {
         foreign.mint(successor, 5);
         _custody().sweepForeignTokenFromRewardCustody(successor, address(foreign), 5);
         assertEq(foreign.balanceOf(treasury), 75, "also from the bound holder");
+    }
+
+    /// @dev Codex #2158 r9 P2 — the sweep reports the treasury's MEASURED
+    ///      receipt, not the requested amount: a fee-on-transfer token
+    ///      credits less.
+    function test_Sweep_ReportsTheMeasuredReceiptNotTheRequest() public {
+        address holder = _bind();
+        address treasury = _treasury();
+        FeeSkimmingERC20 skim = new FeeSkimmingERC20();
+        skim.mint(holder, 100);
+        vm.expectEmit(true, true, true, true, address(diamond));
+        emit RewardCustodyForeignTokenSwept(holder, address(skim), treasury, 100, 99);
+        _custody().sweepForeignTokenFromRewardCustody(holder, address(skim), 100);
+        assertEq(skim.balanceOf(treasury), 99);
     }
 
     // ─── 5. Read surface ────────────────────────────────────────────────────

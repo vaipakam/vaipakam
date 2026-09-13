@@ -223,7 +223,13 @@
         "internalType": "address"
       },
       {
-        "name": "amount",
+        "name": "requested",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "received",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"

@@ -16,7 +16,8 @@ including a former reward token after a rotation, it is invisible to the read
 surface and would stay behind at a replaced holder, so an administrator can
 recover such a token from any holder the platform constructed to the
 treasury, and only to the treasury, through an audited sweep that refuses the
-configured reward token itself. A fresh deployment
+configured reward token itself and reports what the treasury actually
+received beside what was requested. A fresh deployment
 constructs and binds its holder while still paused and records the address in
 the deployment artifact; a live chain gets one through a dedicated one-shot
 script after the facet refresh, because a refresh must never deploy or
@@ -56,9 +57,13 @@ carrying history on either counter keeps its guard open until it is
 re-attached, so the baseline is never installed under the wrong role. Replacing a holder is run
 through its own script, which rewrites the deployment record's holder address
 in the same run so no later tool reads the emptied previous address as
-custody. Before governance handover the script runs the ceremony directly;
-after handover, where pausing and administration sit with different signers,
-it stages the two calls for those signers — the pause is always executed
+custody. In every mode the deployment
+record is reconciled by a separate record step from live chain state after the
+transactions have confirmed, never from the ceremony's own simulated result,
+so a rejected or interrupted broadcast can never leave the record pointing at
+a holder that was never bound. Before governance handover the script runs the
+ceremony directly; after handover, where pausing and administration sit with
+different signers, it stages the two calls for those signers — the pause is always executed
 immediately before the replacement, whatever the state was at staging, since
 a time-bounded automatic pause can lapse and an authorised unpause can resume
 service while the delayed call waits — and a final record step reconciles the

@@ -18,17 +18,25 @@ import {Deployments} from "./Deployments.sol";
  *         (`ReplaceRewardCustodyHolder`) — share three properties, and they
  *         live here exactly once so the two scripts cannot drift:
  *
- *  1. **The artifact is written only from chain state.** `addresses.json`
- *     is what `Deployments` documents as the source of truth for later
- *     scripts and the package sync; nothing is ever written from intent. A
- *     staged ceremony is not custody; a simulated one is not either.
- *  2. **A staged ceremony is a record beside the artifact**
+ *  1. **The artifact is written only from LIVE chain state, by `record()`.**
+ *     `addresses.json` is what `Deployments` documents as the source of
+ *     truth for later scripts and the package sync; nothing is ever written
+ *     from intent — and nothing from a script's OWN broadcast either (Codex
+ *     #2158 r9 P2): Forge simulates the script body first and submits the
+ *     recorded transactions afterwards, so a read inside `run()` sees the
+ *     simulated result whether or not the transaction is later rejected,
+ *     dropped or interrupted. `run()` therefore leaves a ceremony record
+ *     exactly as `stage()` does, and `record()` — a separate, non-broadcast
+ *     invocation after the transactions confirmed — reads the chain and
+ *     writes the artifact. One writer, one source.
+ *  2. **A pending ceremony is a record beside the artifact**
  *     (`deployments/<chain-slug>/reward-custody-<kind>.json`) holding the
- *     previous state and the calldata each handed-over signer executes
- *     against the Diamond. The record is created and removed ONLY under the
- *     artifact's own write rule (`Deployments.artifactWritesEnabled()`), so
- *     a plain `forge script` simulation neither invents nor erases
- *     operational state.
+ *     previous state and — for a staged ceremony — the calldata each
+ *     handed-over signer executes against the Diamond. The record is
+ *     created and removed ONLY under the artifact's own write rule
+ *     (`Deployments.artifactWritesEnabled()`), so a plain `forge script`
+ *     simulation neither invents nor erases operational state. A record's
+ *     absence is required BEFORE any broadcast, never discovered after.
  *  3. **The artifact and the chain must already agree before a ceremony
  *     starts.** If `.rewardCustodyHolder` disagrees with the bound holder,
  *     the two records are out of step and an operator reconciles them first;
@@ -67,22 +75,28 @@ abstract contract RewardCustodyCeremonyBase is Script {
         return string.concat("deployments/", Deployments.chainSlug(), "/reward-custody-", kind, ".json");
     }
 
-    /// @dev Write a staged ceremony record. `json` is a serialised object the
-    ///      caller built with `vm.serialize*`. Gated on the artifact's write
-    ///      rule: a simulation prints and writes nothing.
+    /// @dev A pending record must be dealt with BEFORE a new ceremony
+    ///      broadcasts anything — discovering it afterwards would leave the
+    ///      chain changed with nothing to reconcile from.
+    function _requireNoPendingRecord(string memory kind) internal view {
+        require(
+            !vm.exists(_recordPath(kind)),
+            "reward-custody ceremony: a ceremony record already exists -- run record() once the transactions have confirmed, or remove the stale record deliberately"
+        );
+    }
+
+    /// @dev Write a pending ceremony record. `json` is a serialised object
+    ///      the caller built with `vm.serialize*`. Gated on the artifact's
+    ///      write rule: a simulation prints and writes nothing.
     function _writeRecord(string memory kind, string memory json) internal {
         string memory p = _recordPath(kind);
         if (!Deployments.artifactWritesEnabled()) {
             console.log("artifact writes are off for this run -- ceremony record NOT written (simulation):", p);
             return;
         }
-        require(
-            !vm.exists(p),
-            "reward-custody ceremony: a ceremony record already exists -- run record() once the bundle has executed, or remove the stale record deliberately"
-        );
         vm.writeJson(json, p);
         console.log("Ceremony record:", p);
-        console.log("Then run record() to reconcile the artifact. The artifact is unchanged until then.");
+        console.log("Then, once the transactions have CONFIRMED on chain, run record() to reconcile the artifact from live state. The artifact is unchanged until then.");
     }
 
     /// @dev Read a staged ceremony record; refuses when none exists or it
@@ -111,9 +125,11 @@ abstract contract RewardCustodyCeremonyBase is Script {
 
     // ─── Reconcile the artifact from chain state ────────────────────────────
 
-    /// @dev The bound holder is read back, required to differ from
-    ///      `previous` (zero for the initial bind) and to answer to this
-    ///      Diamond, and THEN recorded. Returns the holder now bound.
+    /// @dev Called ONLY from `record()` — a non-broadcast invocation after the
+    ///      ceremony's transactions confirmed. The bound holder is read from
+    ///      live chain state, required to differ from `previous` (zero for
+    ///      the initial bind) and to answer to this Diamond, and THEN
+    ///      recorded. Returns the holder now bound.
     function _reconcileFromChain(address diamond, address previous) internal returns (address bound) {
         bound = RewardCustodyFacet(diamond).rewardCustodyHolder();
         require(

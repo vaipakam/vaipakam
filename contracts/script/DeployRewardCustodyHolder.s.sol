@@ -20,10 +20,12 @@ import {RewardCustodyCeremonyBase} from "./lib/RewardCustodyCeremonyBase.sol";
  *         wrong contract.
  *
  *  - `run()`    — DIRECT: `ADMIN_PRIVATE_KEY` holds `ADMIN_ROLE` (every chain
- *                 before `Handover`; testnets stay admin-owned). Binds and
- *                 records the constructed holder. Refuses before any
- *                 broadcast when the key lacks the role, pointing at
- *                 `stage()`.
+ *                 before `Handover`; testnets stay admin-owned). Binds, then
+ *                 leaves a ceremony record; the artifact is written by
+ *                 `record()` once the transaction has confirmed (never from
+ *                 the script's own simulated read — Codex #2158 r9 P2).
+ *                 Refuses before any broadcast when the key lacks the role,
+ *                 pointing at `stage()`.
  *  - `stage()`  — STAGED, for a handed-over deployment where `ADMIN_ROLE`
  *                 sits on the Timelock (Codex #2158 r4 P1): broadcasts
  *                 nothing; writes a ceremony record with the calldata the
@@ -65,6 +67,7 @@ contract DeployRewardCustodyHolder is RewardCustodyCeremonyBase {
         uint256 adminKey = vm.envUint("ADMIN_PRIVATE_KEY");
         address admin = vm.addr(adminKey);
         address diamond = _unboundDiamond();
+        _requireNoPendingRecord(KIND);
         require(
             AccessControlFacet(diamond).hasRole(LibAccessControl.ADMIN_ROLE, admin),
             "DeployRewardCustodyHolder: ADMIN_PRIVATE_KEY does not hold ADMIN_ROLE -- after governance handover use stage() / record()"
@@ -78,11 +81,16 @@ contract DeployRewardCustodyHolder is RewardCustodyCeremonyBase {
         RewardCustodyFacet(diamond).bindRewardCustodyHolder();
         vm.stopBroadcast();
 
-        _reconcileFromChain(diamond, address(0));
+        string memory obj = "ceremony";
+        vm.serializeAddress(obj, "diamond", diamond);
+        vm.serializeString(obj, "mode", "direct");
+        string memory json = vm.serializeUint(obj, "broadcastAtBlock", block.number);
+        _writeRecord(KIND, json);
     }
 
     function stage() external {
         address diamond = _unboundDiamond();
+        _requireNoPendingRecord(KIND);
         bytes memory bindCall = abi.encodeCall(RewardCustodyFacet.bindRewardCustodyHolder, ());
 
         console.log("=== Reward custody holder (initial bind, staged) ===");
@@ -93,6 +101,7 @@ contract DeployRewardCustodyHolder is RewardCustodyCeremonyBase {
 
         string memory obj = "ceremony";
         vm.serializeAddress(obj, "diamond", diamond);
+        vm.serializeString(obj, "mode", "staged");
         vm.serializeUint(obj, "stagedAtBlock", block.number);
         string memory json = vm.serializeBytes(obj, "step1_timelock_bindRewardCustodyHolder", bindCall);
         _writeRecord(KIND, json);

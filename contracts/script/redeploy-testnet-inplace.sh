@@ -487,8 +487,10 @@ EOF
     echo "  #   (#1566 slice-4 rebase, if not yet rebased: prefix with"
     echo "  #    ARMED_FRESH_PAID_TOTAL=\$ARMED_FRESH_PAID_TOTAL_${pfx}  or  ARMED_FRESH_REBASE_NO_HISTORY=true)"
     echo "  FOUNDRY_PROFILE=default forge script script/RefreshAllFacetsInPlace.s.sol --sig \"refresh()\" --rpc-url \$$var --broadcast --slow"
-    echo "  #   (#1566 slice-4, only while rewardCustodyHolder() is unbound; after handover: --sig \"stage()\" then --sig \"record()\")"
+    echo "  #   (#1566 slice-4, only while rewardCustodyHolder() is unbound; after handover: --sig \"stage()\" then --sig \"record()\";"
+    echo "  #    in every mode the artifact is reconciled by --sig \"record()\" once the bind has confirmed)"
     echo "  FOUNDRY_PROFILE=default forge script script/DeployRewardCustodyHolder.s.sol --sig \"run()\" --rpc-url \$$var --broadcast --slow"
+    echo "  FOUNDRY_PROFILE=default forge script script/DeployRewardCustodyHolder.s.sol --sig \"record()\" --rpc-url \$$var"
     [ "$SKIP_VAULT" -eq 0 ] && \
     echo "  FOUNDRY_PROFILE=default forge script script/UpgradeVaultImplementation.s.sol --sig \"run()\" --rpc-url \$$var --broadcast --slow"
     echo
@@ -546,21 +548,32 @@ for slug in $CHAINS; do
   # broadcast when the key lacks ADMIN_ROLE (a handed-over deployment):
   # that refusal names the staged path — `--sig "stage()"` then
   # `--sig "record()"` — which this loop cannot run for it.
-  bound_holder=""
-  if command -v cast >/dev/null 2>&1; then
-    dfile3="deployments/$slug/addresses.json"
-    diamond3="$(grep -oE '"diamond"[[:space:]]*:[[:space:]]*"0x[0-9a-fA-F]{40}"' "$dfile3" 2>/dev/null | grep -oE '0x[0-9a-fA-F]{40}')"
-    [ -n "$diamond3" ] && bound_holder="$(cast call "$diamond3" 'rewardCustodyHolder()(address)' --rpc-url "$rpc" 2>/dev/null || echo '')"
-  fi
+  # Fail CLOSED (Codex #2158 r9 P2): an unreadable or malformed holder is
+  # not "unbound" — treating it so would re-run the one-shot bind on a
+  # chain that already has a holder (which the script refuses, ending the
+  # rollout before the vault upgrade) or skip a bind that is genuinely
+  # needed. This step therefore requires `cast` and a well-formed answer,
+  # and binds only on the exact zero address.
+  command -v cast >/dev/null 2>&1 || fail "$slug: 'cast' is required after the refresh to read rewardCustodyHolder() -- install foundry's cast, or run DeployRewardCustodyHolder by hand once you have confirmed the holder is unbound"
+  dfile3="deployments/$slug/addresses.json"
+  diamond3="$(grep -oE '"diamond"[[:space:]]*:[[:space:]]*"0x[0-9a-fA-F]{40}"' "$dfile3" 2>/dev/null | grep -oE '0x[0-9a-fA-F]{40}')"
+  [ -n "$diamond3" ] || fail "$slug: could not read the Diamond address from $dfile3"
+  bound_holder="$(cast call "$diamond3" 'rewardCustodyHolder()(address)' --rpc-url "$rpc" 2>/dev/null)" \
+    || fail "$slug: rewardCustodyHolder() could not be read after the refresh (is RewardCustodyFacet routed? is the RPC up?) -- refusing to guess whether a holder is bound"
   case "$bound_holder" in
-    0x0000000000000000000000000000000000000000|"")
+    0x0000000000000000000000000000000000000000)
       banner "[4b] $slug — DeployRewardCustodyHolder (one-shot initial bind)"
       "${NICE[@]}" forge script script/DeployRewardCustodyHolder.s.sol --sig "run()" \
         --rpc-url "$rpc" --broadcast --slow \
         || fail "$slug: DeployRewardCustodyHolder failed -- after governance handover run it with --sig \"stage()\" and, once the Timelock executed the bind, --sig \"record()\""
+      info "[4b] $slug — bind broadcast; once it has CONFIRMED, run: forge script script/DeployRewardCustodyHolder.s.sol --sig \"record()\" --rpc-url \$$var  (reconciles .rewardCustodyHolder from live chain state)"
+      ;;
+    0x[0-9a-fA-F]*)
+      [ "${#bound_holder}" -eq 42 ] || fail "$slug: rewardCustodyHolder() returned a malformed address '$bound_holder' -- refusing to proceed"
+      info "[4b] $slug — reward custody holder already bound ($bound_holder) ✓"
       ;;
     *)
-      info "[4b] $slug — reward custody holder already bound ($bound_holder) ✓"
+      fail "$slug: rewardCustodyHolder() returned an unexpected answer '$bound_holder' -- refusing to proceed"
       ;;
   esac
 
