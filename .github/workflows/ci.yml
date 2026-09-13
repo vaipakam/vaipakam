@@ -1106,6 +1106,41 @@ jobs:
   # NOT a required status check: this Worker is detection-only and moves
   # no funds, so a red here should inform rather than block a contracts
   # merge. The merge gate stays `contracts-fast` + Slither.
+  # ── Storage-layout provenance (#1566 §7a, #2092) ────────────────────────
+  # The custody census reads storage at EVERY layout era; the era table it
+  # reads is generated from history and must not fall behind it. This job
+  # checks out the FULL history (the walker refuses a shallow clone) and
+  # requires (1) the walk itself to run, and (2) every era the walk implies to
+  # be present in contracts/deployments/storage-slot-eras.json. It does not
+  # build any era — regeneration is `node scripts/storage-layout-eras.mjs`.
+  storage-layout-provenance:
+    name: storage layout provenance (walk + era table freshness)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+      # the HEAD era is REBUILT here and compared with the table (#2095 r22): a
+      # content digest catches an edit after generation, a fresh build catches
+      # a digest recomputed over edited contents
+      - uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          run_install: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Walk the library's history (append-only property, change events)
+        working-directory: packages/contracts
+        # exit 1 only for a layout change nobody acknowledged (#2092 — a --fresh redeploy plan is the acknowledgement); exit 2 = walked nothing
+        run: node scripts/storage-layout-provenance.mjs --ack ../../contracts/deployments/storage-layout-violations.ack.json
+      - name: Era table covers every era the walk implies, its contents verify, and a fresh HEAD build matches it
+        working-directory: packages/contracts
+        run: node scripts/storage-layout-eras.mjs --check --rebuild-head
+
   mesh-watcher:
     name: ops/mesh-watcher (typecheck + tests)
     needs: detect-changes

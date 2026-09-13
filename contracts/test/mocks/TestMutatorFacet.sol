@@ -243,6 +243,27 @@ contract TestMutatorFacet {
         LibVaipakam.storageSlot().nextLoanId = v;
     }
 
+    /// @notice #1566 §7 calibration — write an intent-commit row through the
+    ///         library's own layout so the census's derived slot can be checked
+    ///         against the routed `getIntentCommit`. The production commit path
+    ///         cannot complete in the unit harness (it needs Fusion's canonical
+    ///         extension and a priced loan for the HF gate); the SLOT is the
+    ///         compiler's either way, and the routed getter is the production
+    ///         READ path.
+    function setIntentCommitRaw(uint256 loanId, LibVaipakam.SwapToRepayIntentCommit memory commit) external {
+        LibVaipakam.storageSlot().intentCommits[loanId] = commit;
+        LibVaipakam.storageSlot().intentLiveCommitCount += 1;
+    }
+
+    /// @notice #1566 §7 calibration — write a rebate row the way the library's
+    ///         own layout places it (the compiler derives the slot), so the
+    ///         census's derived slot can be checked against the routed getter.
+    function setBorrowerLifRebateRaw(uint256 loanId, uint256 vpfiHeld, uint256 rebateAmount) external {
+        LibVaipakam.BorrowerLifRebate storage r = LibVaipakam.storageSlot().borrowerLifRebate[loanId];
+        r.vpfiHeld = vpfiHeld;
+        r.rebateAmount = rebateAmount;
+    }
+
     /// @notice Bump the `nextOfferId` counter — see {setNextLoanId}.
     function setNextOfferId(uint256 v) external {
         LibVaipakam.storageSlot().nextOfferId = v;
