@@ -195,8 +195,30 @@ second declaration quietly replaces the first rather than making a new
 one. Resolving it where it is written rather than where it belongs had
 made those look like two separate things.
 
-Putting a removed window back, in any of the forty-one disguises review
-has demonstrated, turns the suite red.
+A tenth round found six more, and two were again the check objecting to
+correct work: a landmark stored in an old-style name declared plainly at
+the top of a function, which always runs before it is used; and a list
+changed *after* the region was already taken, which cannot affect
+something that has already happened. Both are accepted now, and the
+cases that genuinely are unsafe — a landmark set up inside a branch, or
+one set up after the fact, or a list changed before the region is taken —
+still are not.
+
+The other four were the list rule again and a receiver taken on trust: a
+position past the end of the list, a position written in a way that looks
+like a number without being one, an entry stepped up in place, and a
+thing that merely has a search-shaped method. The check now resolves the
+list and confirms the entry is really there, and confirms a receiver is
+not something written out in the file with a method of the right name.
+
+One process note, because it is the more useful lesson. I read that round
+as clean and began merging. It was not: the findings were on the second
+page of a paginated list and my check read only the first. Nothing
+merged, but only because a rule about resolving conversations stopped it,
+not because my own check caught the mistake.
+
+Putting a removed window back, in any of the fifty disguises review has
+demonstrated, turns the suite red.
 
 Three of the windows survived the earlier passes for a reason worth
 naming: they bounded a declaration spread over several lines, which is

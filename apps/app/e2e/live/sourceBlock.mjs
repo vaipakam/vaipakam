@@ -494,7 +494,7 @@ export function bindingAt(src, name, at) {
     found: true,
     init: found.init,
     decl: found.decl,
-    reassigned: assignsTo(src, name, found),
+    reassigned: assignsTo(src, name, found, at),
   };
 }
 
@@ -516,6 +516,13 @@ function resolveBinding(src, name, at) {
     }
     if (FUNCTIONS.has(scope.type)) {
       for (const decl of hoistedVarsIn(scope)) {
+        // A `var` written DIRECTLY in this function's body, before the
+        // use, runs unconditionally on the way there — so its
+        // initializer is as good as a `const`'s (round 10). Only the
+        // nested or later ones are unknown.
+        if (decl.name === name && decl.direct && decl.decl.end <= at) {
+          return { ...decl, scope };
+        }
         // A HOISTED `var` is found, and its initializer is NOT trusted
         // (round 8). `if (x) { var END = s.indexOf('e'); }` used after
         // the branch is `undefined` when the branch did not run, and the
@@ -528,7 +535,21 @@ function resolveBinding(src, name, at) {
   return null;
 }
 
-function assignsTo(src, name, found) {
+/**
+ * Whether `name` is written to in a way that could reach the use at
+ * `useAt`.
+ *
+ * Position matters (round 10). Scanning the whole scope rejected a
+ * correctly anchored slice because the collection was mutated AFTER it:
+ * `const r = s.slice(start, ends[0]); ends.push(start + 320);` cannot be
+ * affected by a write that has not happened yet, and reporting it is the
+ * false-positive direction this guard's own premise says to avoid.
+ *
+ * A write counts when it sits BEFORE the use, or when both are inside
+ * something that can run more than once — a loop or a function body —
+ * where "after" in the text can still be "before" in time.
+ */
+function assignsTo(src, name, found, useAt) {
   const { nodes, parents } = astOf(src, 'assignsTo');
   return nodes.some((n) => {
     const target =
@@ -545,7 +566,7 @@ function assignsTo(src, name, found) {
     // a second one.
     if (n.type === 'VariableDeclarator') {
       if (n.kind === undefined && n !== found.decl && n.init && n.id.type === 'Identifier') {
-        if (n.id.name === name && inScopeOf(n) && sameBinding(n)) return true;
+        if (n.id.name === name && inScopeOf(n) && reaches(n) && sameBinding(n)) return true;
       }
       return false;
     }
@@ -553,9 +574,16 @@ function assignsTo(src, name, found) {
     // or calling a method that could, makes what a selection reads
     // unknown (round 9) — `ends[0] = start + 320` and `ends.push(…)`
     // both leave the earlier classification stale.
+    if (
+      (n.type === 'AssignmentExpression' || n.type === 'UpdateExpression') &&
+      (n.type === 'UpdateExpression' ? n.argument : n.left).type === 'MemberExpression'
+    ) {
+      const t = n.type === 'UpdateExpression' ? n.argument : n.left;
+      return rootName(t) === name && inScopeOf(n) && reaches(n) && sameBinding(n);
+    }
     if (n.type === 'AssignmentExpression' && n.left.type === 'MemberExpression') {
       const root = rootName(n.left);
-      return root === name && inScopeOf(n) && sameBinding(n);
+      return root === name && inScopeOf(n) && reaches(n) && sameBinding(n);
     }
     if (
       n.type === 'CallExpression' &&
@@ -563,15 +591,27 @@ function assignsTo(src, name, found) {
       !n.callee.computed &&
       MUTATORS.has(n.callee.property.name)
     ) {
-      return rootName(n.callee) === name && inScopeOf(n) && sameBinding(n);
+      return rootName(n.callee) === name && inScopeOf(n) && reaches(n) && sameBinding(n);
     }
     if (!target) return false;
     // Destructuring is a write too — `[end] = [start + 320]` and
     // `({ end } = …)` reach the same binding as `end = …` (round 8).
     const written = writtenNames(target);
     if (!written.has(name)) return false;
-    return inScopeOf(n) && sameBinding(n);
+    return inScopeOf(n) && reaches(n) && sameBinding(n);
   });
+
+  /** Whether a write at `n` could execute before the use. */
+  function reaches(n) {
+    if (n.start < useAt) return true;
+    // A later write still reaches an earlier use when both sit inside
+    // something that repeats.
+    for (let p = n; p; p = parents.get(p)) {
+      if (!REPEATABLE.has(p.type)) continue;
+      if (p.start <= useAt && p.end >= useAt) return true;
+    }
+    return false;
+  }
 
   function inScopeOf(n) {
     for (let p = n; p; p = parents.get(p)) if (p === found.scope) return true;
@@ -599,6 +639,19 @@ function assignsTo(src, name, found) {
 // `length` — leaves it exactly as it was, and counting every call as a
 // write made every region name look mutated, which rejected the regions
 // this suite actually takes.
+// Constructs that can run more than once, so a write written AFTER a use
+// may still execute before it.
+const REPEATABLE = new Set([
+  'ForStatement',
+  'ForOfStatement',
+  'ForInStatement',
+  'WhileStatement',
+  'DoWhileStatement',
+  'FunctionDeclaration',
+  'FunctionExpression',
+  'ArrowFunctionExpression',
+]);
+
 const MUTATORS = new Set([
   'push',
   'pop',
@@ -727,8 +780,15 @@ export function kindOf(src, node, seen = new Set()) {
       // but it must be an index rather than a named property: round 8
       // found `ends['length']`, whose value is the count of landmarks
       // rather than one of them.
-      if (!selectsElement(node)) return null;
-      return kindOf(src, node.object, seen) === 'positions' ? 'position' : null;
+      // The element must EXIST. `ends[1]` on a one-element array is
+      // `undefined` at runtime and the region runs to the end of the text
+      // (round 10), and `ends['01']` is not the key `'0'` either. So the
+      // collection is resolved and the index checked against it.
+      const index = indexOf(node);
+      if (index === null) return null;
+      const elements = collectionElements(src, node.object, seen);
+      if (elements === null || index >= elements.length) return null;
+      return kindOf(src, elements[index], seen) === 'position' ? 'position' : null;
     }
 
     case 'BinaryExpression': {
@@ -843,7 +903,8 @@ function callKind(src, node, seen) {
     callee.type === 'MemberExpression' &&
     !callee.computed &&
     FINDERS.has(callee.property.name) &&
-    isPlainName(callee.object)
+    isPlainName(callee.object) &&
+    !resolvesToCollection(src, callee.object, seen)
   ) {
     return 'position';
   }
@@ -887,21 +948,57 @@ function helperKind(src, callee, seen) {
  * index: `ends['length']` is written as a subscript and is not one
  * (round 8). `ends.at(0)` is a call and is handled as a helper, not here.
  */
-function selectsElement(node) {
-  if (!node.computed) return false;
+function indexOf(node) {
+  if (!node.computed) return null;
   const key = node.property;
-  // A provable, non-negative, whole index. `ends[-1]`, `ends[1.5]` and
-  // `ends[true]` are all `undefined` at runtime, so the region would run
-  // to the end of the text while the bound looked like a selection
-  // (round 9). An expression key cannot be proved and is refused for the
-  // same reason: unknown is not a landmark.
   const text =
     key.type === 'Literal' && (typeof key.value === 'number' || typeof key.value === 'string')
       ? String(key.value)
       : key.type === 'TemplateLiteral' && key.expressions.length === 0
         ? key.quasis[0].value.cooked
         : null;
-  return text !== null && /^\d+$/.test(text);
+  // Canonical only: `'01'` is not the key `'0'`, and `-1` / `1.5` / a
+  // non-numeric key are all `undefined` at runtime. An expression key
+  // cannot be proved and is refused for the same reason.
+  if (text === null || !/^(0|[1-9]\d*)$/.test(text)) return null;
+  return Number(text);
+}
+
+/** The elements of the array `node` resolves to, or `null`. */
+function collectionElements(src, node, seen) {
+  if (!node) return null;
+  if (node.type === 'ArrayExpression') return node.elements;
+  if (node.type !== 'Identifier') return null;
+  const key = `arr:${node.name}@${node.start}`;
+  if (seen.has(key)) return null;
+  seen.add(key);
+  const bound = bindingAt(src, node.name, node.start);
+  return bound.found && !bound.reassigned && bound.init
+    ? collectionElements(src, bound.init, seen)
+    : null;
+}
+
+/**
+ * Whether `node` resolves to an object or array written out in this
+ * file — a receiver whose `indexOf` cannot be a search of source text.
+ *
+ * Round 10: `const fake = { indexOf: () => start + 320 }; s.slice(start,
+ * fake.indexOf())` passed because `fake` is a plain name. Requiring a
+ * plain name says something about the SPELLING; this says something
+ * about the value. A receiver that resolves to neither — an import, a
+ * parameter, a call result — is still accepted, which is the stated
+ * interprocedural limit and not a new one.
+ */
+function resolvesToCollection(src, node, seen) {
+  if (!node || node.type !== 'Identifier') return false;
+  const key = `recv:${node.name}@${node.start}`;
+  if (seen.has(key)) return false;
+  seen.add(key);
+  const bound = bindingAt(src, node.name, node.start);
+  if (!bound.found || !bound.init) return false;
+  const t = bound.init.type;
+  if (t === 'ObjectExpression' || t === 'ArrayExpression') return true;
+  return t === 'Identifier' ? resolvesToCollection(src, bound.init, seen) : false;
 }
 
 /**
@@ -927,7 +1024,17 @@ function isPlainName(node) {
 function declarationsDirectlyIn(scope) {
   const out = [];
   const add = (id, init, decl) => {
-    if (id && id.type === 'Identifier') out.push({ name: id.name, init: init ?? null, decl });
+    if (!id) return;
+    if (id.type === 'Identifier') {
+      out.push({ name: id.name, init: init ?? null, decl });
+      return;
+    }
+    // A name bound inside a PATTERN still shadows (round 10): without
+    // this, `function region(s, start, { end })` resolved its `end` to an
+    // outer landmark and inherited an anchor the caller may never supply.
+    // What a pattern binds is unknown, so it is recorded with no value —
+    // which shadows, and is not a landmark.
+    for (const n of writtenNames(id)) out.push({ name: n, init: null, decl });
   };
   // A DEFAULTED parameter is an AssignmentPattern, and its right-hand
   // side is a binding like any other — `function f(WINDOW = 320)` was
@@ -964,9 +1071,19 @@ function declarationsDirectlyIn(scope) {
   return out;
 }
 
-/** Every `var` declared under `fn`, not crossing into a nested function. */
+/**
+ * Every `var` declared under `fn`, not crossing into a nested function.
+ *
+ * `direct` marks the ones written as statements of `fn`'s own body, which
+ * therefore execute unconditionally; anything inside a branch or a loop
+ * may not run at all, and its initializer cannot be trusted.
+ */
 function hoistedVarsIn(fn) {
   const out = [];
+  const body = fn.type === 'Program' ? fn.body : (fn.body?.body ?? []);
+  const directDecls = new Set(
+    (body ?? []).filter((st) => st.type === 'VariableDeclaration' && st.kind === 'var'),
+  );
   const descend = (n, top) => {
     if (n === null || typeof n !== 'object') return;
     if (Array.isArray(n)) {
@@ -978,7 +1095,12 @@ function hoistedVarsIn(fn) {
     if (n.type === 'VariableDeclaration' && n.kind === 'var') {
       for (const d of n.declarations) {
         if (d.id && d.id.type === 'Identifier') {
-          out.push({ name: d.id.name, init: d.init ?? null, decl: d });
+          out.push({
+            name: d.id.name,
+            init: d.init ?? null,
+            decl: d,
+            direct: directDecls.has(n),
+          });
         }
       }
     }

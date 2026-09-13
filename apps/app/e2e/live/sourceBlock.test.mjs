@@ -508,6 +508,74 @@ describe('#2144 — no source region is bounded by a character count', () => {
     expect(countsCharacters(code, sliceCallsIn(code).at(-1))).toBe(false);
   });
 
+  // ROUND 10 — six findings, two of them the guard objecting to correct
+  // work. I nearly merged on a false convergence verdict here: my check
+  // for findings read only the first page of a paginated list, so a
+  // clean-looking round was not one.
+  it('refuses the round-10 shapes', () => {
+    const lead = "const s = f();\nconst start = s.indexOf('a');\n";
+    for (const [why, tail] of [
+      [
+        'an index past the end of the collection',
+        "const ends = [s.indexOf('e')];\nconst r = s.slice(start, ends[1]);",
+      ],
+      [
+        'a non-canonical index spelling',
+        "const ends = [s.indexOf('e')];\nconst r = s.slice(start, ends['01']);",
+      ],
+      [
+        'an element stepped by ++',
+        "const ends = [s.indexOf('e')];\nends[0]++;\nconst r = s.slice(start, ends[0]);",
+      ],
+      [
+        'a mutation that happens BEFORE the use',
+        "const ends = [s.indexOf('e')];\nends.push(start + 320);\nconst r = s.slice(start, ends[0]);",
+      ],
+      [
+        'a finder on a receiver that is an object literal',
+        'const fake = { indexOf: () => start + 320 };\nconst r = s.slice(start, fake.indexOf());',
+      ],
+      [
+        'a var whose initializer is inside a branch',
+        "function g(t, on) { const a = t.indexOf('a'); if (on) { var e = t.indexOf('e'); } return t.slice(a, e); }",
+      ],
+      [
+        'a var initialised after the use',
+        "function g(t) { const a = t.indexOf('a'); const r = t.slice(a, e); var e = t.indexOf('e'); return r; }",
+      ],
+    ]) {
+      const code = lead + tail;
+      const call = sliceCallsIn(code).at(-1);
+      expect(call, why).toBeDefined();
+      expect(countsCharacters(code, call), why).toBe(true);
+    }
+  });
+
+  // A name bound inside a PATTERN still shadows. Without that, a
+  // destructured parameter inherited an outer landmark the caller may
+  // never supply.
+  it('lets a destructured binding shadow an outer landmark', () => {
+    const code = "const s = f();\nconst end = s.indexOf('e');\nfunction region(t, start, { end }) { return t.slice(start, end); }";
+    expect(countsCharacters(code, sliceCallsIn(code).at(-1))).toBe(true);
+  });
+
+  // ROUND 10's two FALSE POSITIVES.
+  it('does not object to correct code, round 10', () => {
+    for (const [why, code] of [
+      [
+        'a var declared directly in the body, before the use',
+        "function g(t) { const a = t.indexOf('a'); var e = t.indexOf('e'); return t.slice(a, e); }",
+      ],
+      [
+        'a mutation that happens AFTER the use',
+        "const s = f();\nconst start = s.indexOf('a');\nconst ends = [s.indexOf('e')];\nconst r = s.slice(start, ends[0]);\nends.push(start + 320);",
+      ],
+    ]) {
+      const call = sliceCallsIn(code).at(-1);
+      expect(countsCharacters(code, call), why).toBe(false);
+    }
+  });
+
   // The other side of the same rules, so they cannot be satisfied by
   // refusing everything.
   it('still accepts the landmark shapes this suite writes', () => {
