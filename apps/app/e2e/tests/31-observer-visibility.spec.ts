@@ -2024,3 +2024,152 @@ test('unmodelled chains admit, and an overlay over the slit condemns an off-scre
   expect(result.coveredRowBottom).toBeLessThan(0);
   expect(result.coveredRow, 'an overlay over the whole scrollport').toBe(false);
 });
+
+// #2157 round 7 — seven more corrections to the same model, each pinned:
+//
+//   - the off-screen slit probe runs only where the PAGE scroll cannot
+//     help (glyphs before the document origin);
+//   - that probe samples the scroller's CLIENT area, not its border;
+//   - a viewport-fixed row gets no page-scroll credit, whatever scrollY is;
+//   - `will-change: backdrop-filter` establishes a containing block;
+//   - CSS `zoom` is unquantifiable (admits);
+//   - the outer offset is chosen for the ROW's reachable band, not the
+//     slit's centre;
+//   - stacked clippers are measured against the ORIGINAL slit extent.
+test('the slit probe respects page scroll and borders; fixed rows get no page credit', async ({
+  page,
+}) => {
+  await page.setContent(`<!DOCTYPE html>
+    <style>body { margin: 0; height: 3000px } p { margin: 0 }</style>
+    <!-- a fixed overlay over the bottom 120px of the viewport -->
+    <div style="position:fixed; left:0; right:0; bottom:0; height:120px; background:#000"></div>
+    <!-- a scroller whose top 20px show beneath that overlay; its row sits
+         BELOW the viewport and comes back by page scroll, not inner scroll -->
+    <div id="belowScroller" style="position:absolute; top:700px; height:100px; overflow:auto">
+      <p style="height:50px">head</p>
+      <p id="belowRow" style="height:20px">below the fold, page-scrollable</p>
+      <p style="height:400px">filler</p>
+    </div>
+    <!-- a BORDERED scroller whose client area an overlay covers -->
+    <div style="position:absolute; top:200px; left:0; width:120px">
+      <div id="bordered" style="height:60px; width:100px; overflow:auto; border:10px solid #888">
+        <p id="borderedRow" style="height:20px">hidden behind the client-area overlay</p>
+        <p style="height:1000px">filler</p>
+      </div>
+      <div style="position:absolute; top:10px; left:10px; width:100px; height:60px; background:#000"></div>
+    </div>
+    <!-- a viewport-fixed row above the viewport -->
+    <p id="fixedRow" style="position:fixed; top:-100px; height:20px">never on screen</p>
+  `);
+  const result = await page.evaluate((helpersSrc) => {
+    const family = new Function(`return (${helpersSrc})();`)();
+    const visible = family.visible as (n: Element | null) => boolean;
+    const byId = (id: string) => document.getElementById(id)!;
+    byId('bordered').scrollTop = 600;
+    const before = {
+      belowRowTop: byId('belowRow').getBoundingClientRect().top,
+      belowRow: visible(byId('belowRow')),
+      borderedRowBottom: byId('borderedRow').getBoundingClientRect().bottom,
+      borderedRow: visible(byId('borderedRow')),
+    };
+    window.scrollTo(0, 1000);
+    return {
+      ...before,
+      viewportHeight: window.innerHeight,
+      scrollY: window.scrollY,
+      fixedRowTop: byId('fixedRow').getBoundingClientRect().top,
+      fixedRow: visible(byId('fixedRow')),
+    };
+  }, VISIBILITY_SOURCE);
+  // Below the viewport (750 > 720) behind a fixed overlay: page scroll
+  // brings both scroller and row away from the overlay, so admitted.
+  expect(result.viewportHeight).toBe(720);
+  expect(result.belowRowTop).toBe(750);
+  expect(result.belowRow, 'a page-scrollable row under a fixed overlay').toBe(true);
+  // Scrolled above the origin, and the only place it can come back to is
+  // covered — probing the border would have found the scroller itself.
+  expect(result.borderedRowBottom).toBeLessThan(0);
+  expect(result.borderedRow, 'a bordered scroller whose client area is covered').toBe(false);
+  // Fixed 100 above the viewport with the page scrolled by 1000: the page
+  // offset must not be added, so it is before the origin with no credit.
+  expect(result.scrollY).toBe(1000);
+  expect(result.fixedRowTop).toBe(-100);
+  expect(result.fixedRow, 'a viewport-fixed row gets no page-scroll credit').toBe(false);
+});
+
+test('containing-block hints, zoom, joint outer offset and stacked clippers', async ({
+  page,
+}) => {
+  await page.setContent(`<!DOCTYPE html>
+    <style>body { margin: 0 } p { margin: 0 }</style>
+    <!-- 0..40: a scroller made the containing block only by a will-change hint -->
+    <div id="hinted" style="will-change:backdrop-filter; height:40px; overflow:auto">
+      <p id="hintedRow" style="position:absolute; top:0; height:20px">absolute under a hinted containing block</p>
+      <p style="height:400px">filler</p>
+    </div>
+    <!-- 40..120: zoom is not modelled -->
+    <div style="zoom:2">
+      <div id="zoomed" style="height:40px; overflow:auto">
+        <p id="zoomedRow" style="height:20px">under zoom</p>
+        <p style="height:400px">filler</p>
+      </div>
+    </div>
+    <!-- 120..160: a 40px outer scroller at rest holding a 200px inner
+         scroller whose first row is scrolled above the origin; the row can
+         come back only to the inner slit's TOP, which the outer box shows -->
+    <div id="outerShort" style="height:40px; overflow:auto">
+      <div id="innerTall" style="height:200px; overflow:auto">
+        <p id="jointRow" style="height:20px">reachable at the inner slit's top</p>
+        <p style="height:600px">inner filler</p>
+      </div>
+      <p style="height:400px">outer filler</p>
+    </div>
+    <!-- 160..170: two clippers each keeping half of what the previous left:
+         10 of a 40px slit is a quarter, not "half of half" -->
+    <div style="height:10px; overflow:hidden">
+      <div style="height:20px; overflow:hidden">
+        <div id="stacked" style="height:40px; overflow:auto">
+          <p id="stackedRow" style="height:20px">seen through a quarter of its slit</p>
+          <p style="height:400px">filler</p>
+        </div>
+      </div>
+    </div>
+  `);
+  const result = await page.evaluate((helpersSrc) => {
+    const family = new Function(`return (${helpersSrc})();`)();
+    const visible = family.visible as (n: Element | null) => boolean;
+    const byId = (id: string) => document.getElementById(id)!;
+    byId('hinted').scrollTop = 300;
+    byId('zoomed').scrollTop = 300;
+    byId('innerTall').scrollTop = 300;
+    return {
+      hintedRowTop: byId('hintedRow').getBoundingClientRect().top,
+      hintedRow: visible(byId('hintedRow')),
+      zoomValue: getComputedStyle(byId('zoomed').parentElement!).zoom,
+      zoomedRowTop: byId('zoomedRow').getBoundingClientRect().top,
+      zoomedRow: visible(byId('zoomedRow')),
+      outerScrollTop: byId('outerShort').scrollTop,
+      jointRowTop: byId('jointRow').getBoundingClientRect().top,
+      jointRow: visible(byId('jointRow')),
+      stackedRowTop: byId('stackedRow').getBoundingClientRect().top,
+      stackedRow: visible(byId('stackedRow')),
+    };
+  }, VISIBILITY_SOURCE);
+  // Carried by its hinted containing block: -300 with 300 of credit.
+  expect(result.hintedRowTop).toBe(-300);
+  expect(result.hintedRow, 'an absolute row under a will-change: backdrop-filter scroller').toBe(true);
+  // Zoom: declared unquantifiable, admitted.
+  expect(result.zoomValue).toBe('2');
+  expect(result.zoomedRowTop).toBeLessThan(0);
+  expect(result.zoomedRow, 'zoom admits').toBe(true);
+  // Outer at rest; the row restores to the inner slit's top (120..140),
+  // which is inside the outer box (120..160). Centring the 200px inner
+  // slit in the 40px box demanded the row at 200..240 and condemned it.
+  expect(result.outerScrollTop).toBe(0);
+  expect(result.jointRowTop).toBe(-180);
+  expect(result.jointRow, 'the outer offset is chosen for the row').toBe(true);
+  // 10 of the original 40 shows: a quarter, condemned; halving twice
+  // would have passed it.
+  expect(result.stackedRowTop).toBe(160);
+  expect(result.stackedRow, 'stacked clippers keep a quarter of the slit').toBe(false);
+});

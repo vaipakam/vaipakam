@@ -76,7 +76,16 @@ three-dimensional scene or written vertically is declared beyond what the
 rule quantifies and is admitted rather than mis-measured, and a row that
 is off-screen and admitted only because a region can scroll it back is now
 checked for cover at the place it would come back to, so an opaque overlay
-parked over the whole region rejects it. The list of properties that make an element the
+parked over the whole region rejects it. A seventh round refined those
+edges: the cover check applies only where the page's own scrolling could
+not bring the row back and looks inside the region's frame rather than at
+its border, a row fixed to the viewport is never credited with the page's
+scroll, page zoom is declared beyond the rule, the position chosen for a
+nested region is the one that brings the row's reachable part into view
+rather than the region's middle, and a stack of wrappers is measured
+against the region's original size so that halving twice cannot pass as
+half. One refinement, checking cover only over the exact band a scrolled-
+out row can return to, is deferred to its own issue. The list of properties that make an element the
 reference for absolutely positioned descendants gained two more, each
 confirmed by measurement in the check's own browser, and one candidate the
 review raised, container queries, was measured not to be one and left out

@@ -70,7 +70,10 @@ export function visibilityHelpers() {
     cs.filter !== 'none' ||
     (typeof cs.backdropFilter === 'string' && cs.backdropFilter !== 'none') ||
     /\b(paint|layout|strict|content)\b/.test(cs.contain || '') ||
-    /\b(transform|perspective|filter)\b/.test(cs.willChange || '');
+    // `backdrop-filter` is spelled out although `\bfilter\b` already matched
+    // inside it across the hyphen (#2157 round 7): a reader should not have
+    // to know that to see it is covered.
+    /\b(transform|perspective|filter|backdrop-filter)\b/.test(cs.willChange || '');
 
   /**
    * How far, in VIEWPORT pixels, can scrolling `n` move the content it
@@ -149,6 +152,11 @@ export function visibilityHelpers() {
         // scaled by depth and a `w = 0` vector drops the depth translation.
         // Unquantifiable, which admits — stated rather than mis-scaled.
         if (acs.perspective && acs.perspective !== 'none') return { unquantifiable: true };
+        // CSS `zoom` scales rects and displacements while `scrollTop` and the
+        // client metrics stay in the element's own pixels (round 7). Its
+        // interaction with scroll metrics is not modelled: unquantifiable.
+        const zoom = Number.parseFloat(acs.zoom);
+        if (Number.isFinite(zoom) && zoom !== 1) return { unquantifiable: true };
         // The individual properties `rotate` / `scale` (`translate` has no
         // linear part) are NOT folded into the computed `transform`
         // (#2157 round 5); per the spec they apply before it, so the local
@@ -237,10 +245,26 @@ export function visibilityHelpers() {
    * the direction this file takes every time.
    */
   const unreachableBeforeOrigin = (node, box, { ownScroll = false } = {}) => {
-    const beforeX = box.right + window.scrollX <= 0;
-    const beforeY = box.bottom + window.scrollY <= 0;
-    if (!beforeX && !beforeY) return false;
     const flow = getComputedStyle(node).position;
+    // A VIEWPORT-fixed box is not moved by the page scroll (round 7), so the
+    // document-coordinate conversion does not apply to it: `bottom: -80px`
+    // on a page scrolled by 1000 is still 80px above the viewport at every
+    // page offset. Only a fixed box CAPTURED by an ancestor's containing
+    // block rides the page like anything else.
+    let captured = flow !== 'fixed';
+    if (!captured) {
+      for (let a = node.parentElement; a; a = a.parentElement) {
+        if (establishesCB(getComputedStyle(a))) {
+          captured = true;
+          break;
+        }
+      }
+    }
+    const pageX = captured ? window.scrollX : 0;
+    const pageY = captured ? window.scrollY : 0;
+    const beforeX = box.right + pageX <= 0;
+    const beforeY = box.bottom + pageY <= 0;
+    if (!beforeX && !beforeY) return false;
     // `sticky` is in flow for THIS question: it rides its scroller.
     let reachedCB = flow === 'static' || flow === 'relative' || flow === 'sticky';
     const pageScroller = document.scrollingElement || document.documentElement;
@@ -264,8 +288,8 @@ export function visibilityHelpers() {
       hiX += range.hi.x;
       hiY += range.hi.y;
     }
-    const stuckX = beforeX && box.right + window.scrollX + hiX <= 0;
-    const stuckY = beforeY && box.bottom + window.scrollY + hiY <= 0;
+    const stuckX = beforeX && box.right + pageX + hiX <= 0;
+    const stuckY = beforeY && box.bottom + pageY + hiY <= 0;
     return stuckX || stuckY;
   };
   // ROUND 22 P2 — OPACITY IS NOT INHERITED, so asking the node
@@ -482,6 +506,9 @@ export function visibilityHelpers() {
     // scrollers at or below it), `slitShift` how far the slit itself can be
     // carried by the scrollers passed since it was set (#2157 round 3).
     let slit = null;
+    // The slit's extent when it was set: stacked clippers are measured
+    // against THIS, not against whatever the previous one left (round 7).
+    let slitExtent = null;
     let innerShift = zero();
     const slitShift = zero();
     let unbounded = false;
@@ -702,6 +729,7 @@ export function visibilityHelpers() {
           }
           if (scrollsY || scrollsX) {
             slit = { top: box.top, bottom: box.bottom, left: box.left, right: box.right };
+            slitExtent = { h: box.bottom - box.top, w: box.right - box.left };
             innerShift = { ...shift };
           }
         } else {
@@ -714,11 +742,26 @@ export function visibilityHelpers() {
           // permits vertical overflow neither moves nor trims the slit
           // vertically, so a vertically protruding scrollport keeps its
           // full vertical extent for the clippers above.
+          // The offset is chosen for the ROW, not for the slit (round 7): the
+          // band of the slit the row can actually reach — its rectangles
+          // moved by the inner scrollers, clipped to the slit — is what has
+          // to be brought against this box. Centring the whole slit put a
+          // tall inner scrollport's middle in a short outer box and then
+          // asked the row, which can only reach the slit's top, to be there.
+          const band = { top: Infinity, bottom: -Infinity, left: Infinity, right: -Infinity };
+          for (const q of boxes) {
+            band.top = Math.min(band.top, Math.max(slit.top, q.top + innerShift.yLo));
+            band.bottom = Math.max(band.bottom, Math.min(slit.bottom, q.bottom + innerShift.yHi));
+            band.left = Math.min(band.left, Math.max(slit.left, q.left + innerShift.xLo));
+            band.right = Math.max(band.right, Math.min(slit.right, q.right + innerShift.xHi));
+          }
+          const aimY = band.bottom > band.top ? band : slit;
+          const aimX = band.right > band.left ? band : slit;
           const dy = clipsY
-            ? clamp((box.top + box.bottom - slit.top - slit.bottom) / 2, slitShift.yLo, slitShift.yHi)
+            ? clamp((box.top + box.bottom - aimY.top - aimY.bottom) / 2, slitShift.yLo, slitShift.yHi)
             : 0;
           const dx = clipsX
-            ? clamp((box.left + box.right - slit.left - slit.right) / 2, slitShift.xLo, slitShift.xHi)
+            ? clamp((box.left + box.right - aimX.left - aimX.right) / 2, slitShift.xLo, slitShift.xHi)
             : 0;
           const S = {
             top: clipsY ? Math.max(slit.top + dy, box.top) : slit.top,
@@ -732,11 +775,11 @@ export function visibilityHelpers() {
           // anything scrolled into it, and one wholly outside shows nothing.
           if (clipsY) {
             const seen = S.bottom - S.top;
-            if (seen <= 0 || (!scrollsY && seen / (slit.bottom - slit.top) < 0.5)) return false;
+            if (seen <= 0 || (!scrollsY && seen / slitExtent.h < 0.5)) return false;
           }
           if (clipsX) {
             const seen = S.right - S.left;
-            if (seen <= 0 || (!scrollsX && seen / (slit.right - slit.left) < 0.5)) return false;
+            if (seen <= 0 || (!scrollsX && seen / slitExtent.w < 0.5)) return false;
           }
           // And the ROW has to reach the part of the slit that is shown,
           // moving relative to the slit by the scrollers at or below it.
@@ -1204,7 +1247,14 @@ export function visibilityHelpers() {
     // hides the row at every scroll offset, and a row nothing covers there
     // is admitted as before. Same `coveredAt`, so the scroller itself
     // (which contains the node) is never mistaken for a cover.
-    if (probed === 0 && glyphs.length > 0) {
+    // Only where the PAGE scroll cannot help (round 7): a row below the
+    // viewport comes back by ordinary page scrolling, which moves it away
+    // from a fixed overlay too, so the slit is probed only for glyphs parked
+    // before the document origin — the case the scroll credit alone admits.
+    const pageCannotHelp = glyphs.every(
+      (q) => q.bottom + window.scrollY <= 0 || q.right + window.scrollX <= 0,
+    );
+    if (probed === 0 && glyphs.length > 0 && pageCannotHelp) {
       let scroller = null;
       for (let n = node; n; n = n.parentElement) {
         const ncs = getComputedStyle(n);
@@ -1220,12 +1270,17 @@ export function visibilityHelpers() {
         }
       }
       if (scroller !== null) {
+        // The CLIENT area, not the border box (round 7): a probe landing on
+        // the scroller's own border hits the scroller, which contains the
+        // node and is therefore never a cover.
         const sb = scroller.getBoundingClientRect();
+        const cl = sb.left + scroller.clientLeft;
+        const ct = sb.top + scroller.clientTop;
         const slit = {
-          left: Math.max(sb.left, 0),
-          top: Math.max(sb.top, 0),
-          right: Math.min(sb.right, vw),
-          bottom: Math.min(sb.bottom, vh),
+          left: Math.max(cl, 0),
+          top: Math.max(ct, 0),
+          right: Math.min(cl + scroller.clientWidth, vw),
+          bottom: Math.min(ct + scroller.clientHeight, vh),
         };
         if (slit.right > slit.left && slit.bottom > slit.top) {
           let slitProbed = 0;
