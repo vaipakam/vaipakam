@@ -83,7 +83,9 @@ with nothing sent, and a simulation writes nothing to the deployment record.
 The relation between a chain's bound holder and its deployment record is
 classified before any broadcast by the same rule the post-refresh step
 applies, so a record that names a different holder than the chain, with no
-ceremony record to explain it, refuses the run before anything is sent; a
+ceremony record to explain it, refuses the run before anything is sent — and a
+holder state that cannot be read at all, for any reason other than the platform
+not yet routing the getter, refuses the run rather than reading as absent; a
 pending ceremony record is accepted as the explanation only after the ceremony
 script itself validates it, the same way the record step will. A direct
 ceremony's pending record names only what its run can know — the deployment,
@@ -92,7 +94,13 @@ which is proven by the record step from live chain state. On a chain whose rewar
 inactive the rebase accepts only a history-free chain, meaning nothing to
 import and nothing on either the paid or the received side; a detached chain
 carrying history on either counter keeps its guard open until it is
-re-attached, so the baseline is never installed under the wrong role. Replacing a holder is run
+re-attached, so the baseline is never installed under the wrong role. Replacing a holder, and the paid-side rebase, require the platform's MANUAL
+pause and refuse under an automatic, time-bounded watcher pause alone — enforced
+by the platform itself whatever path the call arrives by, since such a pause
+lapses on its own and service would resume by no one's decision after an
+irreversible step; the in-place refresh therefore proves the manual pause or
+sets it before its migrations, and a refresh begun under an automatic pause
+leaves the platform paused for a fresh decision. Replacing a holder is run
 through its own script, which leaves a pending ceremony record; the
 deployment record's holder address is rewritten by the separate record step
 after the transactions have confirmed, so no later tool reads the emptied

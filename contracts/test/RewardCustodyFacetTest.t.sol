@@ -6,6 +6,7 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
 import {VPFIToken} from "../src/token/VPFIToken.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
+import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {RewardCustodyFacet} from "../src/facets/RewardCustodyFacet.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {RewardRemittanceLensFacet} from "../src/facets/RewardRemittanceLensFacet.sol";
@@ -336,7 +337,7 @@ contract RewardCustodyFacetTest is SetupTest {
 
     function test_Replace_RequiresPause() public {
         _bind();
-        vm.expectRevert(LibPausable.ExpectedPause.selector);
+        vm.expectRevert(LibPausable.ExpectedManualPause.selector);
         _custody().replaceRewardCustodyHolder();
     }
 
@@ -460,9 +461,29 @@ contract RewardCustodyFacetTest is SetupTest {
 
     // ─── 4. The paid-side rebase ────────────────────────────────────────────
 
+    /// @dev Codex #2158 r18 P2 — an auto-pause window does not qualify: it
+    ///      lapses on its own, so a ceremony run under it alone would be
+    ///      followed by service resuming by no one's decision. Only the manual
+    ///      pause lets the replacement and the rebase through.
+    function test_CeremoniesRequireTheManualPauseNotAnAutoPause() public {
+        _bind();
+        _becomeCanonical();
+        address watcher = makeAddr("watcher");
+        AccessControlFacet(address(diamond)).grantRole(LibAccessControl.WATCHER_ROLE, watcher);
+        vm.prank(watcher);
+        AdminFacet(address(diamond)).autoPause("anomaly");
+        assertTrue(AdminFacet(address(diamond)).paused(), "auto-paused");
+        vm.expectRevert(LibPausable.ExpectedManualPause.selector);
+        _custody().replaceRewardCustodyHolder();
+        vm.expectRevert(LibPausable.ExpectedManualPause.selector);
+        _custody().rebaseArmedFreshPaid(1);
+        _pause(); // the manual pause
+        _custody().replaceRewardCustodyHolder();
+    }
+
     function test_Rebase_RequiresPause() public {
         _becomeCanonical();
-        vm.expectRevert(LibPausable.ExpectedPause.selector);
+        vm.expectRevert(LibPausable.ExpectedManualPause.selector);
         _custody().rebaseArmedFreshPaid(1);
     }
 

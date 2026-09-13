@@ -55,6 +55,9 @@ library LibPausable {
 
     error EnforcedPause();
     error ExpectedPause();
+    /// @dev The manual pause was required and only an auto-pause window (or
+    ///      nothing) is active.
+    error ExpectedManualPause();
 
     function _storage() private pure returns (PausableStorage storage ps) {
         bytes32 position = PAUSABLE_STORAGE_POSITION;
@@ -82,6 +85,17 @@ library LibPausable {
 
     function requirePaused() internal view {
         if (!paused()) revert ExpectedPause();
+    }
+
+    /// @dev The MANUAL pause only — an auto-pause window does not qualify.
+    ///      For a ceremony or migration whose safety depends on service NOT
+    ///      resuming until someone decides it should (#1566 slice 4 PR A,
+    ///      Codex #2158 r18 P2): an auto-pause window lapses on its own, so a
+    ///      step run under it alone would be followed by service resuming by
+    ///      no one's decision — the opposite of the fresh Unpauser decision
+    ///      the ceremony's design requires.
+    function requireManuallyPaused() internal view {
+        if (!_storage().paused) revert ExpectedManualPause();
     }
 
     function pause() internal {

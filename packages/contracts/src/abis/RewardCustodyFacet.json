@@ -607,7 +607,7 @@
   },
   {
     "type": "error",
-    "name": "ExpectedPause",
+    "name": "ExpectedManualPause",
     "inputs": []
   },
   {

@@ -252,6 +252,13 @@ contract RewardCustodyFacet is DiamondAccessControl {
      *         token there is no balance to read, and flipping the pointer
      *         blind could strand a balance that a later `setVPFIToken`
      *         reveals at the OLD address.
+     *
+     *         The pause it requires is the MANUAL one (Codex #2158 r18 P2):
+     *         a watcher's auto-pause window lapses on its own, so a
+     *         replacement run under it alone would be followed by service
+     *         resuming by no one's decision, where the design requires a
+     *         fresh Unpauser decision after every custody ceremony. Enforced
+     *         here, whatever path the call arrives by.
      * @return successor The holder constructed and now bound.
      */
     function replaceRewardCustodyHolder()
@@ -259,7 +266,7 @@ contract RewardCustodyFacet is DiamondAccessControl {
         onlyRole(LibAccessControl.ADMIN_ROLE)
         returns (address successor)
     {
-        LibPausable.requirePaused();
+        LibPausable.requireManuallyPaused();
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         address previous = s.rewardCustodyHolder;
         if (previous == address(0)) {
@@ -463,7 +470,8 @@ contract RewardCustodyFacet is DiamondAccessControl {
     // ─── Paid-side migration importer ───────────────────────────────────────
 
     /**
-     * @notice ONE-SHOT, PAUSED migration: rebase the delivered-fresh ledger's
+     * @notice ONE-SHOT, PAUSED migration (the MANUAL pause — an auto-pause
+     *         window does not qualify, Codex #2158 r18 P2): rebase the delivered-fresh ledger's
      *         paid side to an absolute reconstructed total, never below what
      *         it already holds, and on the canonical chain set the received
      *         side to the same figure.
@@ -533,7 +541,7 @@ contract RewardCustodyFacet is DiamondAccessControl {
     function rebaseArmedFreshPaid(
         uint256 total
     ) external onlyRole(LibAccessControl.ADMIN_ROLE) {
-        LibPausable.requirePaused();
+        LibPausable.requireManuallyPaused();
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (s.armedFreshPaidRebased) {
             revert IVaipakamErrors.ArmedFreshPaidAlreadyRebased();

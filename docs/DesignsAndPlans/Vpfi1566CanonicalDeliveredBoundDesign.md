@@ -5956,7 +5956,12 @@ remains possible and shows only as the unattributed remainder — review r5).**
 > recovery reported only once the treasury reads as the owner (review r17); a
 > pending record is accepted by the pre-flight only after the ceremony script's
 > own validation, and a direct run's record names the block it was PREPARED
-> against, never an inclusion block (review r17). Simulations neither create nor erase
+> against, never an inclusion block (review r17). Both paused ceremonies —
+> the replacement and the rebase — require the MANUAL pause on chain; an
+> auto-pause window does not qualify, and the in-place refresh proves or sets
+> the manual flag before its migrations (review r18). The pre-flight's holder
+> read fails closed on a transport failure, the loupe alone deciding "not
+> routed" (review r18). Simulations neither create nor erase
 > ceremony records. The row invariants are NOT pinned yet: with
 > no writer in PR A they would be vacuous; they land with PR B's writers.
 

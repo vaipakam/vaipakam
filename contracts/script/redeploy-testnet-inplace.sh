@@ -227,9 +227,13 @@ dec_add() {
 # — a single classification, consumed by the all-chain pre-flight (which
 # refuses a divergence BEFORE any broadcast) and by step [4b] (which acts on
 # the rest after the refresh). Prints "<state> <holder>":
-#   unrouted  the getter is not routed — a pre-slice-4 Diamond, expected
-#             before the refresh and an error after it (the RPC itself was
-#             proven live by the chain-id check, so a failed read is a revert)
+#   unrouted  the LOUPE says the getter is not routed — a pre-slice-4
+#             Diamond, expected before the refresh and an error after it
+#   unreadable the loupe, or a routed getter, could not be read — an RPC or
+#             transport failure, never "not routed"; both consumers FAIL
+#             CLOSED on it (Codex #2158 r18 P2: a transient error must not
+#             read as "unrouted" and wave a divergent holder past the
+#             pre-flight)
 #   unbound   routed and zero: the one-shot bind is owed
 #   recorded  bound, and the artifact names the same holder
 #   pending   bound, artifact differs, a bind ceremony record file exists —
@@ -240,10 +244,20 @@ dec_add() {
 #   diverged  bound, artifact differs, and no record explains it
 #   malformed the getter answered something that is not an address
 holder_state() {
-  local slug="$1" diamond="$2" rpc="$3" bound recorded
-  bound="$(cast call "$diamond" 'rewardCustodyHolder()(address)' --rpc-url "$rpc" 2>/dev/null || echo '')"
+  local slug="$1" diamond="$2" rpc="$3" sel routed bound recorded
+  # Routed or not is the LOUPE's answer (every Diamond routes it), so a
+  # failed read anywhere below is a transport failure, never "not routed".
+  sel="$(cast sig 'rewardCustodyHolder()')"
+  routed="$(cast call "$diamond" 'facetAddress(bytes4)(address)' "$sel" --rpc-url "$rpc" 2>/dev/null)" \
+    || { echo "unreadable loupe"; return 0; }
+  case "$routed" in
+    0x0000000000000000000000000000000000000000) echo "unrouted"; return 0 ;;
+    0x[0-9a-fA-F]*) [ "${#routed}" -eq 42 ] || { echo "malformed $routed"; return 0; } ;;
+    *) echo "malformed $routed"; return 0 ;;
+  esac
+  bound="$(cast call "$diamond" 'rewardCustodyHolder()(address)' --rpc-url "$rpc" 2>/dev/null)" \
+    || { echo "unreadable getter"; return 0; }
   case "$bound" in
-    '') echo "unrouted"; return 0 ;;
     0x0000000000000000000000000000000000000000) echo "unbound $bound"; return 0 ;;
     0x[0-9a-fA-F]*) [ "${#bound}" -eq 42 ] || { echo "malformed $bound"; return 0; } ;;
     *) echo "malformed $bound"; return 0 ;;
@@ -535,6 +549,7 @@ for slug in $CHAINS; do
     case "$holder_st" in
       diverged)  fail "chain '$slug': the Diamond reports reward custody holder $holder_addr but the artifact records a different (or no) address and no bind ceremony record is pending -- reconcile deployments/$slug/addresses.json (.rewardCustodyHolder) by hand BEFORE any broadcast; nothing has been sent" ;;
       malformed) fail "chain '$slug': rewardCustodyHolder() returned a malformed answer '$holder_addr' -- refusing to proceed" ;;
+      unreadable) fail "chain '$slug': the reward custody holder state could not be read (the $holder_addr call failed -- an RPC or transport error, not a revert) -- refusing to treat an unreadable holder as absent; retry when the RPC answers; nothing has been sent" ;;
       pending)
         # The record explains the divergence only if record() will accept it
         # (Codex #2158 r17 P2): validated NOW, by the ceremony script's own
@@ -546,7 +561,7 @@ for slug in $CHAINS; do
         info "$slug: reward custody holder $holder_addr is bound and a VALID bind ceremony record is pending; [4b] reconciles the artifact after the refresh" ;;
       recorded)  info "$slug: reward custody holder $holder_addr bound and recorded ✓" ;;
       unbound)   info "$slug: reward custody holder unbound; [4b] binds it after the refresh" ;;
-      unrouted)  info "$slug: reward custody getter not routed yet (pre-slice-4 Diamond); [4b] binds after the refresh" ;;
+      unrouted)  info "$slug: the loupe reports the reward custody getter not routed yet (pre-slice-4 Diamond); [4b] binds after the refresh" ;;
     esac
   fi
 done
@@ -753,7 +768,10 @@ for slug in $CHAINS; do
   read -r holder_st bound_holder <<<"$(holder_state "$slug" "$diamond3" "$rpc")"
   case "$holder_st" in
     unrouted)
-      fail "$slug: rewardCustodyHolder() could not be read after the refresh (is RewardCustodyFacet routed? is the RPC up?) -- refusing to guess whether a holder is bound"
+      fail "$slug: the loupe reports rewardCustodyHolder() NOT routed after the refresh -- is RewardCustodyFacet in the cut? refusing to guess whether a holder is bound"
+      ;;
+    unreadable)
+      fail "$slug: the reward custody holder state could not be read after the refresh (the $bound_holder call failed -- an RPC or transport error) -- refusing to guess whether a holder is bound; retry [4b] by hand once the RPC answers"
       ;;
     malformed)
       fail "$slug: rewardCustodyHolder() returned a malformed answer '$bound_holder' -- refusing to proceed"

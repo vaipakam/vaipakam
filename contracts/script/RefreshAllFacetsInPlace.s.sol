@@ -295,7 +295,16 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         // routing verification passes — a failed verify reverts the script
         // before the unpause broadcasts, so a bad refresh is left safely frozen.
         bool wasPaused = AdminFacet(diamond).paused();
-        if (!wasPaused) AdminFacet(diamond).pause();
+        // The paused migrations below require the MANUAL pause (Codex #2158
+        // r18 P2): an auto-pause window reads as paused here but lapses on
+        // its own, resuming service by no one's decision after an
+        // irreversible migration. `paused() && pausedUntil() == 0` proves the
+        // manual flag; any other paused state gets the flag set as well
+        // (idempotent) and is then LEFT paused for a fresh Unpauser decision
+        // — this script restores service only where it found the Diamond
+        // live.
+        bool manuallyPaused = wasPaused && AdminFacet(diamond).pausedUntil() == 0;
+        if (!manuallyPaused) AdminFacet(diamond).pause();
 
         // Dispatch the cut in selector-budgeted batches so no single diamondCut
         // tx exceeds the RPC/block gas cap.
