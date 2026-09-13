@@ -385,6 +385,17 @@ Thin-market honesty rules apply.
   would then be wrong about the one fact this surface exists to state. The app
   may show the grace window to explain a wait; it must never use its own
   arithmetic to decide whether the action is permitted.
+- The card states what it decided and as of when. Beside its wording it
+  carries, in a form a machine can read, the state it resolved and the block
+  at which every fact behind that state was evaluated — one block for all of
+  them, because they are read together. Every resolved state names its block;
+  a decision the app cannot date is not stated, and shows as still checking
+  instead. The block is omitted, never stated as zero, only beside that
+  still-checking state — while the facts are unread, or when the app has set
+  the state aside as unknown for a reason of its own rather than resolved it
+  from those facts. A reviewer, or an automated check, can therefore ask the
+  protocol the same questions at the same block and compare the answers to
+  what the card says, instead of inferring the state from prose.
 - Two settlement routes are distinguished, because they are not equally
   available. Where closing out transfers the collateral as-is — collateral
   without a reliable market price, or collateral whose value has collapsed far

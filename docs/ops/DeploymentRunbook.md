@@ -69,7 +69,7 @@ Three deploy scripts after the 2026-05-10 modernization sweep
 | Phase | Confirm flag | Description |
 |---|---|---|
 | `preflight` | — | Read-only. RPC chainId, deployer balance, env-var presence, WETH-pull validation on bnb/polygon. Always run first. |
-| `contracts` | `--confirm-i-have-multisig-ready` | Deploys Diamond + Timelock + VPFI lane + Reward OApp. Step `[1b]` runs `predeploy-check.sh` right after the `forge build` — the deploy-sanity forge suite (`test/deploy/*`: facet EIP-170 sizes + selector coverage + selector-collision check), deploy shell-script lint, and committed-ABI sync — and aborts before any broadcast if it fails (the mainnet script runs the full regression too, via `--full`). Auto-steps: master-flag flip (testnet only). (There is no per-adapter `setRateLimits` step any more — the buy adapter is removed, #687-A; per-lane CCIP rate limits live on the VPFI TokenPool and are set through the bounds-checked `VpfiPoolRateGovernor` in the `ccip-wire` phase.) Refuses to re-run if `addresses.json` already has a `diamond` key — pass `--fresh` (testnet) or `--fresh --confirm-purging-prior-mainnet-deploy` (mainnet) to archive prior state under `.archive/<ISO-8601>/` and redeploy. **Bump `REWARD_VERSION` in `.env` before `--fresh` re-runs** — the Reward OApp proxy is CREATE2-addressed off `REWARD_VERSION`. |
+| `contracts` | `--confirm-i-have-multisig-ready` | Deploys Diamond + Timelock + VPFI lane + Reward OApp. Step `[1b]` runs `predeploy-check.sh` right after the `forge build` — the deploy-sanity forge suite (`test/deploy/*`: facet EIP-170 sizes + selector coverage + selector-collision check), deploy shell-script lint, and committed-ABI sync — and aborts before any broadcast if it fails (the mainnet script runs the full regression too, via `--full`). Auto-steps: master-flag flip (testnet only). (There is no per-adapter `setRateLimits` step any more — the buy adapter is removed, #687-A; per-lane CCIP rate limits live on the VPFI TokenPool and are set through the bounds-checked `VpfiPoolRateGovernor` in the `ccip-wire` phase.) Refuses to re-run if `addresses.json` already has a `diamond` key — pass `--fresh` (testnet) or `--fresh --confirm-purging-prior-mainnet-deploy` (mainnet) to archive prior state under `.archive/<ISO-8601>/` and redeploy. |
 | `ccip-wire` | — | Runs `ConfigureCcip.s.sol` — CCIP lane/channel wiring: chain selectors, remote messengers, channel peers, per-lane VPFI TokenPool rate limits (via the bounds-checked `VpfiPoolRateGovernor`), guardian wiring, `TokenAdminRegistry` CCT registration. Run only after the `contracts` phase has landed on EVERY chain in the topology (it reads each chain's `addresses.json`). Requires `CCIP_LANE_CHAIN_IDS` + `CCIP_GUARDIAN` (refuses to run without them; #855). No DVN policy to review — CCIP's DON/RMN security is uniform for every integrator, so the LayerZero-era `--confirm-dvn-policy-reviewed` gate is gone. |
 | `swap-adapters` | — | Phase 7a aggregator adapters via `DeploySwapAdapters.s.sol`. Requires `INITIAL_SETTLERS` env var (current 0x Settler set). **Required before routing value (conformance-review L-i, decided 2026-07-11):** at least one swap adapter MUST be registered here. A forced close / liquidation on a deployment with **zero** registered adapters reverts `NoSwapAdaptersConfigured` — it does NOT silently fall through to the in-kind collateral fallback (that per-loan fallback engages only after configured routes are actually attempted and fail; spec `ProjectDetailsREADME §7`). `verify` does not check the adapter set, so confirm it is non-empty before `handover`, or every liquidation on that chain will revert. |
 | `configure` | — | `DiamondConfigSpell.s.sol` — composes ConfigureVPFIToken + ConfigureOracle + ConfigureRewardReporter + ConfigureNFTImageURIs into one operator-action. Requires per-chain Chainlink feed addresses + WETH. **ConfigureVPFIBuy is NOT in the launch path (#884)** — the VPFI discount peg stays unset. To opt in **through a wrapper**, pass `--configure-vpfi-peg`; the wrappers deliberately force the `CONFIGURE_VPFI_PEG` env var off, so exporting it does nothing there. The env var is for invoking `DiamondConfigSpell` directly. |
@@ -171,16 +171,13 @@ mainnet without preflight discipline:
   patch. Until that lands: source `nvm` and `nvm use 20` (or 25)
   BEFORE running `deploy-chain.sh`. Confirm with `which node && node
   --version` ≥ 20.0.0.
-- **`REWARD_VERSION` collision recovery.** Step `[5]` deploys the
-  Reward OApp via CREATE2 with a salt derived from `REWARD_VERSION`.
-  If the same `(deployer, salt, init code)` tuple ever landed code
-  on this chain (a prior rehearsal that completed step `[5]` with the
-  same version), the second attempt reverts `Create2DeployFailed
-  (CreateCollision)`. Recovery: bump the `REWARD_VERSION` env var
-  (e.g. `v1-rehearsal-2026-05-06` → `v2-rehearsal-2026-05-06`), then
-  `deploy-chain.sh <slug> --resume` to skip the already-completed
-  steps and re-run from `[5]`. The new salt yields a fresh CREATE2
-  address.
+- **`REWARD_VERSION` / CREATE2 collision recovery — retired (T-068).**
+  This bullet used to describe bumping a CREATE2 salt when a rehearsal
+  had already landed the Reward OApp. That deploy path is gone: the
+  reward messenger is deployed with an ordinary `new` by
+  `DeployCrosschain.s.sol`, no script reads `REWARD_VERSION`, and there
+  is no salt to bump. See the dead-section banner further down and
+  `contracts/.env.example`.
 - **drpc.live throttling on Base Sepolia.** Sustained high-frequency
   reads during forge's broadcast prep phase silently throttle on
   `lb.drpc.live/base-sepolia/...`, causing the deploy to hang for
@@ -195,14 +192,6 @@ mainnet without preflight discipline:
   stop being crawled by the watcher and stop appearing in the
   frontend's chain picker. NOT auto-updated by deploy scripts —
   adding/removing a chain is a one-line operator edit.
-- **CREATE2 OApp address is the same across chains for the same
-  `REWARD_VERSION`.** A bumped version on Base only matters for
-  Base; the same bumped version on Arb and OP yields a different
-  CREATE2 address on each chain only because each chain has its
-  own state. If a prior rehearsal landed a Reward OApp at the v1
-  salt on multiple chains, ALL of them need the same version bump
-  in lockstep — otherwise the cross-chain peer wiring (Reward
-  mesh) won't match the deployed addresses.
 - **Rate-limit verification gate (Item 1, 2026-05-06).**
   *(Historical — the BuyAdapter and its `getRateLimits()` view were
   removed with the on-chain issuer sale, #687-A.)* The production-
@@ -1008,15 +997,16 @@ The schema each script populates (no manual editing needed since the
 | Key | Written by |
 |---|---|
 | `chainId`, `chainSlug`, `deployedAt`, `deployBlock` | `DeployDiamond` |
-| `lzEid`, `lzEndpoint` | `DeployDiamond` (eid) + each OApp deploy script (endpoint) |
+| `lzEid`, `lzEndpoint` | *(historical — LayerZero removed in T-068; no script writes these any more)* |
 | `diamond`, `vaultImpl`, `treasury`, `admin` | `DeployDiamond` |
 | `facets.<name>` (×30) | `DeployDiamond` |
-| `vpfiToken`, `vpfiTokenImpl`, `vpfiOftAdapter`, `vpfiOftAdapterImpl`, `isCanonicalVPFI=true` | `DeployVPFICanonical` |
-| `vpfiMirror`, `vpfiMirrorImpl`, `isCanonicalVPFI=false` | `DeployVPFIMirror` |
+| `vpfiToken`, `vpfiTokenImpl` | `DeployVPFIToken` (canonical chain). `vpfiOftAdapter` / `vpfiOftAdapterImpl` are LayerZero-era names retained on the `Deployment` type; the CCIP pool is written as `vpfiTokenPool` by `DeployCrosschain` (row below). `isCanonicalVPFI` has a `Deployments.writeIsCanonicalVpfi` helper but **no live script calls it** |
+| `vpfiMirror` | `DeployCrosschain` (mirror chains) — the mirror token's proxy. `vpfiMirrorImpl` is typed on `Deployment` but **no script writes it**: `DeployCrosschain` deploys the implementation and records only the proxy, so a fresh artifact has no such key. *(`DeployVPFIMirror` was removed in T-068.)* |
+| `ccipMessenger`, `vpfiTokenPool`, `vpfiPoolRateGovernor`, `rewardMessenger`; mirror chains also `vpfiMirror`, `rewardRemittanceReceiver(+Impl)`, `vpfiReturnSender(+Impl)`; canonical also `buybackRemittanceReceiver(+Impl)`, `vpfiReturnReceiver(+Impl)` | `DeployCrosschain` — the T-068 CCIP path; each chain's messenger address is its own (no CREATE2) |
 | `vpfiBuyReceiver`, `vpfiBuyReceiverImpl` | `DeployVPFIBuyReceiver` *(historical — buy flow removed, #687-A)* |
 | `vpfiBuyAdapter`, `vpfiBuyAdapterImpl`, `vpfiBuyReceiverEid`, `vpfiBuyPaymentToken` | `DeployVPFIBuyAdapter` *(historical — buy flow removed, #687-A)* |
-| `rewardOApp`, `rewardOAppBootstrapImpl`, `rewardOAppRealImpl`, `rewardLocalEid`, `rewardBaseEid`, `isCanonicalReward` | `DeployRewardOAppCreate2` |
-| `rewardOApp` / `rewardLocalEid` / `rewardBaseEid` / `rewardGraceSeconds` / `isCanonicalReward` | `ConfigureRewardReporter` (idempotent overwrite) |
+| `rewardOApp`, `rewardOAppBootstrapImpl`, `rewardOAppRealImpl`, `rewardLocalEid`, `rewardBaseEid` | *(historical — `DeployRewardOAppCreate2` and the CREATE2 reward bootstrap were removed in T-068; the reward messenger is `rewardMessenger`, written by `DeployCrosschain` above)* |
+| `rewardMessenger`, `rewardBaseChainId`, `rewardGraceSeconds`, `isCanonicalReward`; mirror chains also `baseRewardDeployment` | `ConfigureRewardReporter` (idempotent overwrite; reads `.rewardMessenger` from the artifact, or `REWARD_MESSENGER_PROXY` as an explicit override that must agree with it) |
 | `vpfiDiscountEthPriceAsset`, `vpfiDiscountWeiPerVpfi` | `ConfigureVPFIBuy` — fee-discount price config only: the chain's ETH reference asset for discount math + the wei-per-VPFI discount price anchor. **Both stay ZERO at launch (#884)**; setting them switches the lender hold discount from direct reduction to VPFI-payment-authoritative |
 | `vpfiBuyWeiPerVpfi`, `vpfiBuyGlobalCap`, `vpfiBuyPerWalletCap`, `vpfiBuyEnabled` | *(historical — fixed-rate sale removed, #687-A; no script writes these any more)* |
 | `interactionLaunchTimestamp`, `interactionCapVpfiPerEth` | `SetInteractionLaunch` |
@@ -1239,7 +1229,7 @@ If any check fails → **do not broadcast**.
 - `AccessControlFacet.hasRole(DEFAULT_ADMIN_ROLE, ADMIN_ADDRESS)` == `true` and the deployer holds zero roles.
 - `AdminFacet.getTreasury()` == `TREASURY_ADDRESS`.
 - `VaultFactoryFacet.getVaipakamVaultImplementationAddress()` != `0x0`.
-- `RewardReporterFacet.getRewardReporterConfig()` returns zeros for `rewardOApp`/`localEid`/`baseEid` — wiring happens in §3.
+- `RewardReporterFacet.getRewardReporterConfig()` returns `rewardMessenger == 0x0` and `baseChainId == 0` — wiring happens in §3b. `localChainId` is **not** zero on a fresh Diamond: it is read from the chain itself (`block.chainid`) and equals the chain you deployed on from the first block. `isCanonicalRewardChain` is `false`, and `rewardGraceSeconds` reports the facet's built-in 4h default rather than zero.
 
 **Authority-state matrix after the deploy + handover sequence.** Different
 chains can land in different ownership states depending on whether the
@@ -1471,29 +1461,62 @@ The script prints `RewardOAppProxy (CROSS-CHAIN IDENTICAL)` — the value MUST m
 
 ### 3b. Reward config wiring
 
-On **every** chain:
+Driven by `ConfigureRewardReporter.s.sol`, which runs inside the `configure`
+phase (`DiamondConfigSpell`). Chains are keyed by **EVM chain id** — there are
+no eids. Every setter is idempotent. Which side a chain is on is decided by the
+chain id the script runs on (Base = 8453 / 84532), never by an env var.
 
-1. `RewardReporterFacet.setLocalEid(<LZ eid of this chain>)`
-2. `RewardReporterFacet.setBaseEid(<LZ eid of Base>)`
-3. `RewardReporterFacet.setRewardOApp(<RewardOApp proxy from §3a>)`
-4. `RewardReporterFacet.setRewardGraceSeconds(14400)` — 4h default
+On **every** chain, unconditionally:
 
-On **Base only** (the canonical reward chain):
+1. `RewardReporterFacet.setBaseChainId(<BASE_CHAIN_ID>)` — Base's EVM chain id. On a reporter a zero is **refused**: it would put the Diamond into the DETACHED role and stop reward claims.
+2. `RewardReporterFacet.setRewardMessenger(<.rewardMessenger from the artifact>)` — `REWARD_MESSENGER_PROXY` may override, and must agree with the artifact
+3. `RewardReporterFacet.setRewardGraceSeconds(<REWARD_GRACE_SECONDS>)` — default 14400 (4h)
+4. `RewardReporterFacet.setIsCanonicalRewardChain(<true on Base, false elsewhere>)`
 
-5. `RewardReporterFacet.setIsCanonicalRewardChain(true)`
-6. `RewardAggregatorFacet.setExpectedSourceEids([eidA, eidB, ...])` — every reporter chain's eid
+On **Base only** (the canonical reward chain), two registrations, **each
+driven by its own env var**:
 
-On **all other chains** (reporters):
+5. `RewardAggregatorFacet.setExpectedSourceChainIds([...])` from `REWARD_EXPECTED_SOURCE_CHAIN_IDS` — comma-separated chain ids, e.g. `8453,42161,10,137`, canonical included.
+6. `RewardCommitmentFacet.setMirrorRewardDeployment(<chainId>, <that chain's Diamond>)`, once per entry of `MIRROR_REWARD_DEPLOYMENTS` — format `chainId:0xaddr,chainId:0xaddr`, no whitespace. Until a chain is registered, the compensation-quote (kind-11) ingress is fail-closed for it (`CompQuoteMirrorEraUnset`) and zeroed-day compensation on that lane is unreachable.
 
-5'. `RewardReporterFacet.setIsCanonicalRewardChain(false)` — explicit, do not rely on default
+On **every reporter** (non-Base chain), one registration, driven the same way:
+
+5'. `RewardReporterFacet.setBaseRewardDeployment(<BASE_REWARD_DEPLOYMENT>)` — Base's Diamond address. Until it is set, the V3 (kind-10) broadcast ingress is DARK on this reporter: day figures still arrive on the kind-5 wire, but no day clock installs and the P2 lapse machinery can never arm. When set, the artifact also gains `baseRewardDeployment`.
+
+**What an unset var does depends on which entry point you used — and on
+whether the Diamond was configured before.**
+
+- **The script itself, and `deploy-testnet.sh`:** an unset var prints a
+  `WARNING`, the call is **skipped**, and the run completes green. On a
+  **fresh** Diamond that leaves the ingress in the fail-closed state described
+  above. On a **rerun** against an already-configured Diamond it leaves the
+  **previous** value in force — a skipped registration neither disables nor
+  updates what is stored, so an omitted var is never a way to retire a stale
+  source list, mirror registry or base deployment. Rotate or retire those with
+  the setter and an explicit value; verify with the readbacks below.
+- **`deploy-mainnet.sh`:** none of the three is optional. Its preflight refuses
+  to start without `BASE_REWARD_DEPLOYMENT` on a mirror and
+  `MIRROR_REWARD_DEPLOYMENTS` on Base, and its configure phase additionally
+  requires `REWARD_EXPECTED_SOURCE_CHAIN_IDS` on Base and checks that the
+  registry's chain set equals that list minus Base, with no duplicates — a
+  hard `FAIL` before the spell runs, not a warning.
+- **`deploy-chain.sh`:** does not run the configure phase at all — it prints
+  the `DiamondConfigSpell` command for you to run by hand, so what you get is
+  the script's own warn-and-skip posture.
 
 Then, once per chain:
 
-7. `InteractionRewardsFacet.setInteractionLaunchTimestamp(<unix ts of launch day 00:00 UTC>)`
+7. `InteractionRewardsFacet.setInteractionLaunchTimestamp(<unix ts of launch day 00:00 UTC>)` — `SetInteractionLaunch.s.sol`, same value on every chain
 
-**Post-step verification:**
-- On Base: `getRewardReporterConfig()` returns `isCanonical == true`, `localEid == baseEid`, expected-source-eids list matches intent.
-- On every reporter: `getRewardReporterConfig()` returns `isCanonical == false`, `rewardOApp != 0x0`, `baseEid != 0`.
+**Post-step verification.** The script sanity-checks the messenger candidate
+before it broadcasts, but reads none of the configuration back afterwards, and
+a run that skipped a conditional registration exits green — so read the
+conditional ones back explicitly, on every chain.
+
+`getRewardReporterConfig()` returns `rewardMessenger, localChainId, baseChainId, isCanonicalRewardChain, rewardGraceSeconds`:
+- On every chain: `rewardMessenger != 0x0`, `baseChainId` == Base's chain id, `localChainId` == the chain you are on.
+- On Base: `isCanonicalRewardChain == true` (hence `localChainId == baseChainId`); `RewardAggregatorFacet.getExpectedSourceChainIds()` matches intent; `RewardCommitmentFacet.getMirrorRewardDeployment(<chainId>)` returns that chain's Diamond for **every** reporter chain — a zero means step 6 was skipped or missed that chain.
+- On every reporter: `isCanonicalRewardChain == false`; `RewardReporterFacet.getBaseRewardDeployment()` == Base's Diamond — a zero means step 5' was skipped and the V3 ingress is dark.
 - `getInteractionLaunchTimestamp()` is non-zero on every chain and identical across chains.
 
 ---
@@ -2677,6 +2700,10 @@ those fixes are described in chronological order in
 | Exit gate | `DeployerZeroRolesTest` 10/10 ✓ (Sepolia fork) |
 
 ### Cross-chain CREATE2 parity — confirmed
+
+> *LayerZero-era rehearsal record.* The property below no longer holds and is
+> not meant to: since T-068 the reward messenger is deployed with an ordinary
+> `new` and each chain's address is its own. Kept as what the rehearsal saw.
 
 The Reward OApp landed at the **same address**
 `0xB112C8b7832Ca3b3A8f1D586188424d72B79bDf9` on all three

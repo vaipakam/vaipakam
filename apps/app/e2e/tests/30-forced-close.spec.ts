@@ -78,6 +78,24 @@ import { pub, DIAMOND, DIAMOND_ABI_VIEM, MOCKS } from '../lib/chain';
 const WARP_STEP_SECONDS = 86_400;
 const MAX_WARP_STEPS = 40;
 
+/** The card names the block its facts were read at (#2098, #2131). A
+ *  named block has to be a real one: a positive integer no higher than
+ *  the chain's head at the moment of reading, since `block.number` of an
+ *  executed aggregate cannot exceed the height the chain has reached.
+ *  `toHaveAttribute` first, so a card that has not yet published the
+ *  block is waited for rather than read once and failed. */
+async function expectDeclaredBlock(
+  card: import('@playwright/test').Locator,
+  client: typeof pub,
+) {
+  await expect(card).toHaveAttribute('data-forced-close-block', /^[1-9]\d*$/, {
+    timeout: 30_000,
+  });
+  const declared = BigInt((await card.getAttribute('data-forced-close-block'))!);
+  const head = await client.getBlockNumber({ cacheTime: 0 });
+  expect(declared).toBeLessThanOrEqual(head);
+}
+
 test('the close-out card tracks the grace boundary for the lender', async ({
   launchWallet,
 }) => {
@@ -116,6 +134,14 @@ test('the close-out card tracks the grace boundary for the lender', async ({
   await expect(
     beforeWarp.page.getByTestId('forced-close-submit'),
   ).toHaveCount(0);
+  // The card STATES its decision and the block it was made at (#2098,
+  // #2131) rather than leaving both to be inferred from copy. The
+  // state is the resolver's own name for it; the block is `block.number`
+  // of the aggregate that read the facts, so it must be a real height
+  // this chain has reached — never a placeholder and never absent once
+  // the copy above has settled.
+  await expect(cardBefore).toHaveAttribute('data-forced-close-state', 'not-yet');
+  await expectDeclaredBlock(cardBefore, pub);
   await beforeWarp.ctx.close();
 
   // ---- Warp past maturity AND grace ----
@@ -199,6 +225,14 @@ test('the close-out card tracks the grace boundary for the lender', async ({
   await expect(
     cardAfter.getByText(/anyone can close out an overdue loan/i),
   ).toBeVisible({ timeout: 30_000 });
+  // The declared state moved with the copy, and the block moved with the
+  // chain: the facts were re-read after the warp, so the block the card
+  // names must be one the warp produced, not the pre-warp height.
+  await expect(cardAfter).toHaveAttribute(
+    'data-forced-close-state',
+    'ready-needs-route',
+  );
+  await expectDeclaredBlock(cardAfter, pub);
   await afterWarp.ctx.close();
 
   // ---- The borrower is not offered their own default ----

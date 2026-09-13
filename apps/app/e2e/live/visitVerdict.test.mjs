@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   preRaced,
   visitBlockedReason,
+  visitProblemKinds,
   visitProblems,
   visitVerdict,
 } from './visitVerdict.mjs';
@@ -356,5 +357,226 @@ describe('a page can carry both verdicts at once', () => {
       problems: [],
       blocked: 'the card could not be mounted when the probe read the chain',
     });
+  });
+});
+
+describe('the forced-close card (#2069)', () => {
+  const fail = { verdict: 'fail', why: 'card absent on a held Active lender position' };
+
+  it('fails when its verdict is fail', () => {
+    expect(visitProblems(lender({ forcedCloseVerdict: fail }), 'lender')).toContain(
+      `forced-close card: ${fail.why}`,
+    );
+  });
+
+  it('is REPORTED ALONGSIDE a missing exit chooser, not swallowed by it', () => {
+    // The placement test, and the reason this arm sits above the
+    // `!v.chooser` early return. They are different cards that happen
+    // to share a page; a run that observed two defects must report two.
+    const problems = visitProblems(
+      lender({ chooser: false, forcedCloseVerdict: fail }),
+      'lender',
+    );
+    expect(problems).toContain(`forced-close card: ${fail.why}`);
+    expect(problems).toContain('lender chooser MISSING on an eligible loan');
+    expect(problems).toHaveLength(2);
+  });
+
+  it('adds nothing when the verdict passes', () => {
+    expect(
+      visitProblems(lender({ forcedCloseVerdict: { verdict: 'pass', why: 'present' } }), 'lender'),
+    ).toEqual([]);
+  });
+
+  it('adds nothing when the verdict is blocked — nothing observed is not a defect', () => {
+    expect(
+      visitProblems(
+        lender({ forcedCloseVerdict: { verdict: 'blocked', why: 'not a held Active position' } }),
+        'lender',
+      ),
+    ).toEqual([]);
+  });
+
+  it('adds nothing when there is no verdict at all (borrower runs)', () => {
+    expect(visitProblems(lender({ forcedCloseVerdict: null }), 'lender')).toEqual([]);
+    expect(visitProblems(lender({ forcedCloseVerdict: undefined }), 'lender')).toEqual([]);
+  });
+
+  it('stays silent on the list route, which has no position card', () => {
+    expect(
+      visitProblems({ path: '/positions', http: 200, forcedCloseVerdict: fail }, 'lender'),
+    ).toEqual([]);
+  });
+});
+
+describe('the forced-close card is judged above the chooser suppressions', () => {
+  const fail = { verdict: 'fail', why: 'card absent on a held Active lender position' };
+
+  it('survives preRaced, which is built only from CHOOSER facts', () => {
+    // `preRaced` = advancedBlocked && advancedPreRaced && cardAbsentAtScrape.
+    // All three describe the lender exit card. The divergence is real:
+    // a sanctions-flagged holder correctly loses the exit chooser while
+    // the forced-close card deliberately stays available, so a
+    // positively observed amount would have been discarded here.
+    const v = lender({
+      advancedBlocked: true,
+      advancedPreRaced: true,
+      cardAbsentAtScrape: true,
+      forcedCloseVerdict: fail,
+    });
+    expect(visitProblems(v, 'lender')).toContain(`forced-close card: ${fail.why}`);
+  });
+
+  it('still suppresses the CHOOSER rows under preRaced', () => {
+    // The suppression must keep doing its own job — this change moves
+    // one arm above it, it does not disable it.
+    const v = lender({
+      advancedBlocked: true,
+      advancedPreRaced: true,
+      cardAbsentAtScrape: true,
+      chooser: false,
+      waitRow: false,
+      forcedCloseVerdict: null,
+    });
+    expect(visitProblems(v, 'lender')).toEqual([]);
+  });
+
+  it('is still not judged on a page that never navigated', () => {
+    // A page that failed to load produced no observation of either
+    // card; the nav failure is the only honest finding.
+    expect(visitProblems({ path: '/positions/7', nav: 'timeout', forcedCloseVerdict: fail }, 'lender')).toEqual(
+      ['nav: timeout'],
+    );
+  });
+});
+
+// ROUND 78 P2 — the TAGS the exit ordering reads.
+//
+// A page built against another network explains an ABSENCE and nothing
+// else. Gating the unknown-chain blocker on the aggregate failure count
+// would have downgraded a directly observed defect — a crash, an uncaught
+// error, a dead anchor — to "nothing was learned".
+describe('visitProblemKinds', () => {
+  const detail = (extra) => ({
+    path: '/positions/7',
+    http: 200,
+    chooser: true,
+    lenderBlurb: true,
+    waitRow: true,
+    sellNowRow: true,
+    listRow: true,
+    waitFirst: true,
+    ...extra,
+  });
+  const kindOf = (v, why) =>
+    visitProblemKinds(v, 'lender').find((p) => p.why.includes(why))?.kind;
+
+  it('tags what was READ as observed', () => {
+    expect(kindOf(detail({ hooks: true }), 'HOOKS-ORDER')).toBe('observed');
+    expect(kindOf(detail({ pageErrors: ['boom'] }), 'uncaught error')).toBe('observed');
+    expect(kindOf(detail({ waitFirst: false }), 'NOT first')).toBe('observed');
+    expect(
+      kindOf(
+        detail({ advancedAnchors: [{ target: '#x', present: false, reached: null }] }),
+        'did not reach its own anchor',
+      ),
+    ).toBe('observed');
+  });
+
+  it('tags what was MISSING as an absence', () => {
+    expect(kindOf(detail({ chooser: false }), 'chooser MISSING')).toBe('absence');
+    expect(kindOf(detail({ waitRow: false }), 'wait row MISSING')).toBe('absence');
+    expect(kindOf(detail({ listRow: false }), 'listing row MISSING')).toBe('absence');
+  });
+
+  it('takes the forced-close card’s own tag rather than deciding again', () => {
+    const read = detail({
+      forcedCloseVerdict: { verdict: 'fail', failKind: 'observed', why: 'stated an amount' },
+    });
+    const inferred = detail({
+      forcedCloseVerdict: { verdict: 'fail', failKind: 'inferred', why: 'route disagrees' },
+    });
+    expect(kindOf(read, 'forced-close card')).toBe('observed');
+    expect(kindOf(inferred, 'forced-close card')).toBe('absence');
+  });
+
+  // ROUND 82 P3 — and this is now the ONLY thing standing between an
+  // observed forced-close failure and the blockers that would swallow it.
+  //
+  // The drive carried a second, unreachable exit of its own for this card
+  // (`fcObserved`), pinned by four source-order cases in
+  // `exitOrdering.test.mjs`. Folding it away moved the whole property
+  // here: the promotion above the infrastructure gates selects on
+  // `blockable === false` and knows nothing about which card produced the
+  // problem, so if this tag were wrong the card's finding would be
+  // reported as an inconclusive run on any drive that also hit a blocked
+  // request — round 38's defect, restored silently.
+  it('lets a READ forced-close failure past the blockers, and an inferred one not', () => {
+    const blockable = (v) =>
+      visitProblemKinds(v, 'lender').find((p) => p.why.includes('forced-close card'))
+        ?.blockable;
+    expect(
+      blockable(
+        detail({
+          forcedCloseVerdict: { verdict: 'fail', failKind: 'observed', why: 'stated an amount' },
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      blockable(
+        detail({
+          forcedCloseVerdict: { verdict: 'fail', failKind: 'inferred', why: 'route disagrees' },
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  // ROUND 94 P2 — an Advanced failure is READ, and a blocked request
+  // cannot explain it.
+  //
+  // Both producers report a contradiction inside one render: a card whose
+  // own attributes say ready and jumpable while it renders no switch, and
+  // a Basic-mode switch standing beside Advanced-only jump buttons. A
+  // refused request can remove a surface; it cannot make a component
+  // assert readiness it does not have, nor render two exclusive modes at
+  // once. Tagged blockable, they dropped out of the promotion and a run
+  // that also hit any blocker exited 2 over the blocker.
+  it('promotes an explicit Advanced failure past the blockers', () => {
+    const p = visitProblemKinds(
+      detail({ advancedFailed: true, advancedWhy: 'switch beside jumps' }),
+      'lender',
+    ).find((x) => x.why.includes('switch beside jumps'));
+    expect(p?.kind).toBe('observed');
+    expect(p?.blockable).toBe(false);
+  });
+
+  // SELF-REVIEW AFTER ROUND 79 — `blockable` is the second question, and
+  // every arm answers it at its own site.
+  it('marks what a blocked request could explain', () => {
+    const blockable = (v, why) =>
+      visitProblemKinds(v, 'lender').find((p) => p.why.includes(why))?.blockable;
+    // Read directly AND structurally immune to a missing read.
+    expect(blockable(detail({ waitFirst: false }), 'NOT first')).toBe(false);
+    expect(
+      blockable(
+        detail({ advancedAnchors: [{ target: '#x', present: false, reached: null }] }),
+        'did not reach its own anchor',
+      ),
+    ).toBe(false);
+    // Read directly, but a refused request is a plausible cause — round
+    // 69 added the allowlist gate because this drive can break the page.
+    expect(blockable(detail({ hooks: true }), 'HOOKS-ORDER')).toBe(true);
+    expect(blockable(detail({ pageErrors: ['x'] }), 'uncaught error')).toBe(true);
+    // An absence is always explicable by a blocker.
+    expect(blockable(detail({ chooser: false }), 'chooser MISSING')).toBe(true);
+  });
+
+  it('reports the same strings as visitProblems, in the same order', () => {
+    // One decision site, two views — the property that keeps the tags
+    // from drifting away from the text they describe.
+    const v = detail({ hooks: true, chooser: false, pageErrors: ['x'] });
+    expect(visitProblemKinds(v, 'lender').map((p) => p.why)).toEqual(
+      visitProblems(v, 'lender'),
+    );
   });
 });

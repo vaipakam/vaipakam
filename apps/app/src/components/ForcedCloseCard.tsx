@@ -133,12 +133,30 @@ export function ForcedCloseCard({
   setBusy,
   onClosedOut,
   preSubmitBlock,
+  resolvedBlock,
 }: {
   loanId: string | number;
   /** Resolved by `decideForcedClose` from live reads — never derived
    *  in this component. The card renders the decision; it does not
    *  make it. */
   readiness: ForcedCloseReadiness;
+  /** The block every polled fact behind `readiness` was evaluated at —
+   *  `block.number` of the one aggregate `useForcedCloseReads` issues
+   *  (#2098, #2131). Published on the card as `data-forced-close-block`
+   *  beside `data-forced-close-state`, so a reader (a person with
+   *  devtools, or the live drive) can check the state the card declares
+   *  against the chain at the block it names, instead of inferring the
+   *  state from prose and guessing the block.
+   *
+   *  `undefined` while the facts are unread, when the aggregate failed,
+   *  or when the page has overridden `readiness` to `unknown` for a
+   *  reason of its own — a declared block beside a state that was not
+   *  resolved from facts read at it would be a claim, not a fact. Every
+   *  one of those renders `unknown`, so a RESOLVED state always has a
+   *  block: `forcedCloseFacts` unreads every fact when the block call
+   *  fails, precisely so this pairing holds by construction. Like
+   *  `readiness`, never derived here. */
+  resolvedBlock: bigint | undefined;
   /** Where the close-out lands if the internal-match candidate is gone
    *  by the time the transaction mines. Read ONLY on
    *  `ready-internal-match`. Resolved on the page by
@@ -630,8 +648,9 @@ export function ForcedCloseCard({
     // REVERSIBLE. `useForcedCloseReads` is enabled on the page's
     // `effectivelyActive`, so a close-out that lands the loan in
     // `FallbackPending` — seen by the live-status rail or another tab
-    // before this watcher processes the receipt — disables all seven
-    // reads while the card stays mounted. They keep their PRE-CLOSE
+    // before this watcher processes the receipt — disables the readiness
+    // aggregate (one query since #2148; seven before it) while the card
+    // stays mounted. It keeps its PRE-CLOSE
     // cache. The active set is then empty, the target completes on the
     // spot, and if the borrower later cures back to Active those
     // queries reactivate and serve the old readings to a card whose
@@ -1289,7 +1308,22 @@ export function ForcedCloseCard({
   const overdueEstablished = view.overdue;
 
   return (
-    <section className="card" data-testid="forced-close-card">
+    // The resolved state and its block, STATED rather than left to be
+    // inferred from copy (#2098, #2131). Same shape as the lender exit
+    // chooser's `data-chooser-*` attributes (#1855): the card says what
+    // it decided and as of which block, so a consumer that reads copy to
+    // recover the state is reading a weaker source than the one the card
+    // could simply publish. `data-forced-close-block` is omitted, not
+    // zeroed, when there is no block to name — an absent attribute is
+    // "unknown", where `0` would be a number.
+    <section
+      className="card"
+      data-testid="forced-close-card"
+      data-forced-close-state={readiness}
+      data-forced-close-block={
+        resolvedBlock === undefined ? undefined : String(resolvedBlock)
+      }
+    >
       <div className="card-title">
         <AlertTriangle aria-hidden />
         <h3 style={{ margin: 0 }}>

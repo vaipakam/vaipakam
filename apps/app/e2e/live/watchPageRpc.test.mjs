@@ -26,19 +26,7 @@
 // script.
 import { describe, expect, it } from 'vitest';
 import { watchPageRpc } from './driver.mjs';
-
-/** Minimal stand-in for a Playwright Page's event surface. */
-class FakePage {
-  constructor() {
-    this.handlers = {};
-  }
-  on(event, fn) {
-    (this.handlers[event] ??= []).push(fn);
-  }
-  emit(event, arg) {
-    for (const fn of this.handlers[event] ?? []) fn(arg);
-  }
-}
+import { FakePage } from './fakePage.mjs';
 
 const request = (method = 'POST') => ({ method: () => method });
 const response = (req, status, body) => ({
