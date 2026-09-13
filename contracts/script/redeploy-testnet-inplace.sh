@@ -293,6 +293,13 @@ for slug in $CHAINS; do
   # and skips the block entirely, so demanding an obsolete value would just
   # re-create the wedge that gating fixed.
   pfx="$(prefix_for "$slug")" || fail "chain '$slug': no env-prefix mapping"
+  # #1566 slice 4 PR A (Codex #2158 r10 P2) — `cast` is REQUIRED by the
+  # post-refresh holder step ([4b] reads rewardCustodyHolder() and fails
+  # closed). Demand it HERE, before any broadcast: discovering its absence
+  # after RefreshAllFacetsInPlace has already cut and migrated would leave a
+  # partially completed rollout, which is exactly what an all-chain
+  # preflight exists to prevent.
+  command -v cast >/dev/null 2>&1 || fail "'cast' is required for this workflow (the post-refresh holder step reads rewardCustodyHolder() with it) -- install foundry's cast before broadcasting"
   # Reward-role declaration (#1566 closure 3) — required for every selected
   # chain, validated BEFORE any broadcast. Unlike the P1-b seed there is no
   # on-chain "already done" flag to skip on: the forge script compares the

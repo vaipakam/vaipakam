@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {Script} from "forge-std/Script.sol";
+import {VmSafe} from "forge-std/Vm.sol";
 import {console} from "forge-std/console.sol";
 
 import {RewardCustodyHolder} from "../../src/RewardCustodyHolder.sol";
@@ -33,10 +34,17 @@ import {Deployments} from "./Deployments.sol";
  *     (`deployments/<chain-slug>/reward-custody-<kind>.json`) holding the
  *     previous state and — for a staged ceremony — the calldata each
  *     handed-over signer executes against the Diamond. The record is
- *     created and removed ONLY under the artifact's own write rule
- *     (`Deployments.artifactWritesEnabled()`), so a plain `forge script`
- *     simulation neither invents nor erases operational state. A record's
- *     absence is required BEFORE any broadcast, never discovered after.
+ *     created and removed ONLY under a write rule that matches the step's
+ *     own nature: a BROADCASTING step (`run()`) follows the artifact's rule
+ *     (`Deployments.artifactWritesEnabled()`, which reads Forge's dry-run
+ *     context — a simulation must not invent a record for transactions it
+ *     never sent), while a NON-BROADCASTING step (`stage()`, `record()`)
+ *     has no dry run to speak of — the invocation IS the real run — so it
+ *     writes unless under `forge test` or an explicit
+ *     `DEPLOY_SKIP_ARTIFACTS` (Codex #2158 r10 P1: gating `record()` on the
+ *     dry-run context made the documented `--sig record()` invocation skip
+ *     the very artifact write it exists for). A record's absence is
+ *     required BEFORE any broadcast, never discovered after.
  *  3. **The artifact and the chain must already agree before a ceremony
  *     starts.** If `.rewardCustodyHolder` disagrees with the bound holder,
  *     the two records are out of step and an operator reconciles them first;
@@ -85,13 +93,25 @@ abstract contract RewardCustodyCeremonyBase is Script {
         );
     }
 
+    /// @dev Whether a NON-broadcasting step (`stage()`, `record()`) may write.
+    ///      Forge's dry-run context is not a signal here — such a step sends
+    ///      nothing, so there is no "simulated" outcome to protect against;
+    ///      only `forge test` and an explicit `DEPLOY_SKIP_ARTIFACTS` refuse.
+    function _nonBroadcastWritesEnabled() internal view returns (bool) {
+        if (vm.isContext(VmSafe.ForgeContext.TestGroup)) return false;
+        return !vm.envOr("DEPLOY_SKIP_ARTIFACTS", false);
+    }
+
     /// @dev Write a pending ceremony record. `json` is a serialised object
-    ///      the caller built with `vm.serialize*`. Gated on the artifact's
-    ///      write rule: a simulation prints and writes nothing.
-    function _writeRecord(string memory kind, string memory json) internal {
+    ///      the caller built with `vm.serialize*`. `broadcasts` says whether
+    ///      the calling step sent transactions: a broadcasting step follows
+    ///      the artifact's dry-run-aware rule, a non-broadcasting one its
+    ///      own.
+    function _writeRecord(string memory kind, string memory json, bool broadcasts) internal {
         string memory p = _recordPath(kind);
-        if (!Deployments.artifactWritesEnabled()) {
-            console.log("artifact writes are off for this run -- ceremony record NOT written (simulation):", p);
+        bool enabled = broadcasts ? Deployments.artifactWritesEnabled() : _nonBroadcastWritesEnabled();
+        if (!enabled) {
+            console.log("writes are off for this run -- ceremony record NOT written:", p);
             return;
         }
         vm.writeJson(json, p);
@@ -112,11 +132,11 @@ abstract contract RewardCustodyCeremonyBase is Script {
     }
 
     /// @dev Remove the record only when the artifact was actually written —
-    ///      the same rule that created it.
+    ///      `record()` is non-broadcasting, so its own rule applies.
     function _removeRecord(string memory kind) internal {
         string memory p = _recordPath(kind);
-        if (!Deployments.artifactWritesEnabled()) {
-            console.log("artifact writes are off for this run -- ceremony record kept (simulation):", p);
+        if (!_nonBroadcastWritesEnabled()) {
+            console.log("writes are off for this run -- ceremony record kept:", p);
             return;
         }
         vm.removeFile(p);
@@ -141,8 +161,10 @@ abstract contract RewardCustodyCeremonyBase is Script {
             "reward-custody ceremony: the bound holder does not answer to this Diamond"
         );
         console.log("Bound holder:", bound);
-        if (!Deployments.artifactWritesEnabled()) {
-            console.log("artifact writes are off for this run -- .rewardCustodyHolder NOT rewritten; the artifact is STALE until it is.");
+        // `record()` broadcasts nothing: a plain `forge script --sig "record()"`
+        // IS the real run, so the artifact's dry-run-aware rule does not apply.
+        if (!_nonBroadcastWritesEnabled()) {
+            console.log("writes are off for this run (forge test / DEPLOY_SKIP_ARTIFACTS) -- .rewardCustodyHolder NOT rewritten; the artifact is STALE until it is.");
             return bound;
         }
         Deployments.writeRewardCustodyHolder(bound);

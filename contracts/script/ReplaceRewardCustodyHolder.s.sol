@@ -102,7 +102,7 @@ contract ReplaceRewardCustodyHolder is RewardCustodyCeremonyBase {
         vm.serializeAddress(obj, "previousHolder", previous);
         vm.serializeString(obj, "mode", "direct");
         string memory json = vm.serializeUint(obj, "broadcastAtBlock", block.number);
-        _writeRecord(KIND, json);
+        _writeRecord(KIND, json, true);
         console.log("The Diamond is left PAUSED. Resume service by a fresh Unpauser decision once record() has confirmed the ceremony and nothing else holds the pause.");
     }
 
@@ -129,7 +129,7 @@ contract ReplaceRewardCustodyHolder is RewardCustodyCeremonyBase {
         vm.serializeUint(obj, "stagedAtBlock", block.number);
         vm.serializeBytes(obj, "step1_pauserSafe_pause", pauseCall);
         string memory json = vm.serializeBytes(obj, "step2_timelock_replaceRewardCustodyHolder", replaceCall);
-        _writeRecord(KIND, json);
+        _writeRecord(KIND, json, false);
     }
 
     function record() external {

@@ -85,7 +85,7 @@ contract DeployRewardCustodyHolder is RewardCustodyCeremonyBase {
         vm.serializeAddress(obj, "diamond", diamond);
         vm.serializeString(obj, "mode", "direct");
         string memory json = vm.serializeUint(obj, "broadcastAtBlock", block.number);
-        _writeRecord(KIND, json);
+        _writeRecord(KIND, json, true);
     }
 
     function stage() external {
@@ -104,7 +104,7 @@ contract DeployRewardCustodyHolder is RewardCustodyCeremonyBase {
         vm.serializeString(obj, "mode", "staged");
         vm.serializeUint(obj, "stagedAtBlock", block.number);
         string memory json = vm.serializeBytes(obj, "step1_timelock_bindRewardCustodyHolder", bindCall);
-        _writeRecord(KIND, json);
+        _writeRecord(KIND, json, false);
     }
 
     function record() external {
