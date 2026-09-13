@@ -361,6 +361,37 @@ describe('statementFrom', () => {
 // array rows — say so at their declaration with a `not-a-source-region`
 // marker naming what they count. Nine such sites became three markers,
 // because saying it once per reason is also how you notice a fourth.
+const countsCharacters = (src, call) => {
+  // Bounds this cannot read are not absent bounds (round 25). Zero
+  // arguments on a bounded receiver is a legitimate slice-to-end;
+  // an unreadable argument list is a window nobody can see.
+  if (call.args === UNKNOWN_BOUNDS) return true;
+  // A MISSING end is not an anchored end (round 7): the region runs to
+  // the end of the text, so a rule over it can be satisfied by matching
+  // anything later. True of `substr` too, whose one-argument form takes
+  // the rest of the string (round 8) — the earlier exemption for it was
+  // about its SECOND argument and had no business covering this.
+  // …unless the receiver is ALREADY a bounded region, in which case the
+  // end is that region's end, bounded by meaning when it was taken.
+  if (call.args.length < 2 && !isBoundedRegion(src, call.receiverNode)) return true;
+  return call.args.some((a, i) => {
+    // `substr`'s second argument is a LENGTH by definition, however it
+    // is produced — and a method name this cannot READ may be
+    // `substr` (round 24): `const m = 'substr'; s[m](start, at('end'))`
+    // was recorded as UNREADABLE and then had both arguments accepted
+    // as positions. Unreadable means it might be, which is the same
+    // reason the collector inspects such calls instead of skipping
+    // them.
+    if ((call.method === 'substr' || typeof call.method === 'symbol') && i === 1) return true;
+    // A START may be the literal 0 — the stable beginning of the text,
+    // a position and not a count (round 8). Marking it would claim a
+    // character count that is not happening. Every END, and every other
+    // bound, must be a landmark.
+    if (i === 0 && isStartOfText(src, a)) return false;
+    return !isAnchored(src, a);
+  });
+};
+
 describe('#2144 — no source region is bounded by a character count', () => {
   const dir = path.dirname(fileURLToPath(import.meta.url));
   // RECURSIVELY, because Vitest discovers `e2e/live/**/*.test.mjs`
@@ -387,36 +418,6 @@ describe('#2144 — no source region is bounded by a character count', () => {
   // produced — `s.substr(start, s.indexOf('end'))` truncates by however
   // many characters that landmark happens to sit at, which is a fixed
   // window wearing an anchor's clothes.
-  const countsCharacters = (src, call) => {
-    // Bounds this cannot read are not absent bounds (round 25). Zero
-    // arguments on a bounded receiver is a legitimate slice-to-end;
-    // an unreadable argument list is a window nobody can see.
-    if (call.args === UNKNOWN_BOUNDS) return true;
-    // A MISSING end is not an anchored end (round 7): the region runs to
-    // the end of the text, so a rule over it can be satisfied by matching
-    // anything later. True of `substr` too, whose one-argument form takes
-    // the rest of the string (round 8) — the earlier exemption for it was
-    // about its SECOND argument and had no business covering this.
-    // …unless the receiver is ALREADY a bounded region, in which case the
-    // end is that region's end, bounded by meaning when it was taken.
-    if (call.args.length < 2 && !isBoundedRegion(src, call.receiverNode)) return true;
-    return call.args.some((a, i) => {
-      // `substr`'s second argument is a LENGTH by definition, however it
-      // is produced — and a method name this cannot READ may be
-      // `substr` (round 24): `const m = 'substr'; s[m](start, at('end'))`
-      // was recorded as UNREADABLE and then had both arguments accepted
-      // as positions. Unreadable means it might be, which is the same
-      // reason the collector inspects such calls instead of skipping
-      // them.
-      if ((call.method === 'substr' || typeof call.method === 'symbol') && i === 1) return true;
-      // A START may be the literal 0 — the stable beginning of the text,
-      // a position and not a count (round 8). Marking it would claim a
-      // character count that is not happening. Every END, and every other
-      // bound, must be a landmark.
-      if (i === 0 && isStartOfText(src, a)) return false;
-      return !isAnchored(src, a);
-    });
-  };
 
 
   // The marker excuses a STATEMENT the call sits inside, and only that.
@@ -1979,5 +1980,76 @@ describe('#2144 — no source region is bounded by a character count', () => {
     const src = "const a = b;\nconst b = a;\nconst s = f();\nconst start = s.indexOf('x');\nconst r = s.slice(start, a);";
     const call = sliceCallsIn(src).at(-1);
     expect(countsCharacters(src, call)).toBe(true);
+  });
+});
+
+// #2175 — "what does this name hold, and can I trust it here" is asked
+// ONCE. These pin the contract rather than any one rule: that the three
+// states are distinguished, and that callers are allowed to disagree
+// about what a state MEANS as long as they disagree in the open.
+describe('#2175 — one resolver, three answers', () => {
+  // UNBOUND is not a failure. The two rules below read it in OPPOSITE
+  // directions on purpose, and that is the case that cannot be
+  // expressed at all while "no binding" and "cannot be trusted" share
+  // one falsy answer.
+  it('reads an unbound name as text for a needle and as no region for a bound', () => {
+    // A needle named by an import: taken as text, so stepping past it
+    // is a landmark and the region is accepted.
+    const needle =
+      "import { LANDMARK } from './fixture.mjs';\n" +
+      'const s = f();\n' +
+      "const r = s.slice(0, s.indexOf(LANDMARK) + LANDMARK.length);";
+    expect(countsCharacters(needle, sliceCallsIn(needle).at(-1))).toBe(false);
+
+    // The same unboundness in a RECEIVER position is not a bounded
+    // region, so a one-argument slice off it is reported.
+    const region = "import { block } from './fixture.mjs';\nconst r = block.slice(40);";
+    expect(countsCharacters(region, sliceCallsIn(region).at(-1))).toBe(true);
+  });
+
+  // UNRESOLVED refuses everywhere, because a name that may hold
+  // anything by the time the line runs is not something to reason from.
+  it('refuses a name whose value cannot be trusted at the use', () => {
+    const lead = "const s = f();\nconst start = s.indexOf('a');\n";
+    for (const [why, tail] of [
+      ['reassigned before the use', "let end = s.indexOf('e');\nend = start + 320;\nconst r = s.slice(start, end);"],
+      ['unpacked from a pattern', "const { end } = s.indexOf('e');\nconst r = s.slice(start, end);"],
+      ['defined in terms of itself', 'const a = b;\nconst b = a;\nconst r = s.slice(start, a);'],
+    ]) {
+      const code = lead + tail;
+      expect(countsCharacters(code, sliceCallsIn(code).at(-1)), why).toBe(true);
+    }
+  });
+
+  // The rule that used to live in ONE of seven copies. A name unpacked
+  // from a pattern is not an alias for the whole initialiser, and every
+  // reader inherits that now rather than the one that was taught it.
+  it('applies the unpacking rule to every reader, not just the alias one', () => {
+    // The borrowing reader — the copy that always had the rule.
+    const borrowed =
+      "const s = f();\nconst start = s.indexOf('a');\n" +
+      'const { slice: cut } = String.prototype;\n' +
+      'const r = cut.call(s, start, start + 320);';
+    expect(countsCharacters(borrowed, sliceCallsIn(borrowed).at(-1))).toBe(true);
+
+    // The receiver reader — a copy that did not, until the binding
+    // reader itself stopped handing back a pattern's initialiser.
+    const receiver =
+      "const s = f();\nconst start = s.indexOf('a');\n" +
+      'const { thing: fake } = { thing: { indexOf: () => start + 320 } };\n' +
+      "const r = s.slice(start, fake.indexOf('end'));";
+    expect(countsCharacters(receiver, sliceCallsIn(receiver).at(-1))).toBe(true);
+  });
+
+  // An intrinsic is recognised BECAUSE it is unbound, not in spite of
+  // it — the distinction round 36 reached with a fallback and this
+  // states directly.
+  it('recognises an intrinsic global and refuses a local of the same name', () => {
+    expect(sliceCallsIn('const t = String.raw`const p = 1;`;\n')).toEqual([]);
+    const shadowed =
+      "const s = f();\nconst start = s.indexOf('a');\n" +
+      'const String = { raw: s.slice };\n' +
+      'const r = String.raw`320`;';
+    expect(sliceCallsIn(shadowed).length).toBeGreaterThan(0);
   });
 });
