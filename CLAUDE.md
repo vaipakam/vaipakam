@@ -1295,7 +1295,12 @@ comment (e.g. an `@codex review` comment). Apply this loop on every PR:
   count; replies, thread resolutions, and comment-only / docs-only
   tweaks do NOT (amended 2026-07-05, superseding the earlier
   "after the last diff push" wording). Re-trigger after every fix
-  push. **Hard cap: 30 rounds in total** (user directive 2026-09-12,
+  push. **At that backstop — ten rounds since the last surface change,
+  still producing P1/P2 — escalate to the owner rather than looping on;
+  say what keeps recurring and what the root fix would cost.** Ten
+  rounds without a substantive change is the signal that the loop is
+  circling something the PR's shape cannot resolve. **Hard cap: 30
+  rounds in total** (user directive 2026-09-12,
   reaffirmed 2026-09-13: "if its code related, then don't go beyond 30
   rounds") — once round 30 is triaged, a PR with no major findings may
   be merged, and no round 31 is triggered.
