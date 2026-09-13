@@ -616,7 +616,20 @@ export function durationSamplesFor(tag) {
   };
 }
 const unitVocabulary = new Map();
+const EMPTY_VOCABULARY = Object.freeze({ units: new Set(), leads: new Set(), trails: new Set() });
+/** The unit words alone — see `durationVocabularyFor` for the whole. */
 export function durationUnitsFor(locale) {
+  return durationVocabularyFor(locale).units;
+}
+/**
+ * `units`: the locale's duration words and phrases. `leads` / `trails`:
+ * the locale's TEMPORAL CONTEXT around a duration (#2125 round 4) — the
+ * literal on the other side of the number in a relative-time phrase,
+ * `dentro de`, `il y a`, `za`, `خلال` — which is what lets a one-letter
+ * unit be read as a duration where `DURATION_LEAD`'s English cannot:
+ * `dentro de 3 h` is a wait in Spanish exactly as `in 3 h` is in English.
+ */
+export function durationVocabularyFor(locale) {
   const tags = (Array.isArray(locale) ? locale : [locale]).filter(
     (t) => typeof t === 'string' && t !== '',
   );
@@ -627,6 +640,8 @@ export function durationUnitsFor(locale) {
   const key = JSON.stringify(tags);
   if (unitVocabulary.has(key)) return unitVocabulary.get(key);
   const words = new Set();
+  const leads = new Set();
+  const trails = new Set();
   for (const tag of tags) {
     let supported = false;
     try {
@@ -661,7 +676,12 @@ export function durationUnitsFor(locale) {
     // tokens: `Tagen`, `days ago`, `日後`, `दिन में`, `baada ya siku`. The
     // phrase is stored whole and only whole, so a linker inside it is
     // never a unit alone; the preposition on the OTHER side (`in`,
-    // `vor`, `dans`) is not a unit and is not taken.
+    // `vor`, `dans`) is not a unit — it is CONTEXT, and is kept as such.
+    // The unit's side is read from EACH phrase (round 4): Hebrew's unit
+    // formatter writes the number first, but its relative-time singular
+    // is `בעוד יום (1)`, unit before a bracketed number, so the side the
+    // unit formatter suggests is used only when it carries a word at all,
+    // and the other side is taken otherwise.
     for (const unit of DURATION_UNITS) {
       for (const style of UNIT_DISPLAYS) {
         let rtf;
@@ -674,17 +694,50 @@ export function durationUnitsFor(locale) {
           const parts = rtf.formatToParts(n, unit);
           const i = parts.findIndex((p) => p.type === 'integer');
           if (i < 0) continue;
-          const lit = unitFirst ? parts[i - 1] : parts[i + 1];
-          if (!lit || lit.type !== 'literal') continue;
-          const toks = lit.value.split(/\s+/).map(tokenOf).filter(Boolean);
-          const phraseToks = unitFirst ? toks.slice(-MAX_PHRASE_TOKENS) : toks.slice(0, MAX_PHRASE_TOKENS);
-          if (phraseToks.length > 0) words.add(foldUnit(phraseToks.join(' '), tag));
+          const tokensOf = (part) =>
+            part && part.type === 'literal' ? part.value.split(/\s+/).map(tokenOf).filter(Boolean) : [];
+          const left = tokensOf(parts[i - 1]);
+          const right = tokensOf(parts[i + 1]);
+          let unitOnLeft = unitFirst;
+          if (unitOnLeft && left.length === 0 && right.length > 0) unitOnLeft = false;
+          if (!unitOnLeft && right.length === 0 && left.length > 0) unitOnLeft = true;
+          const unitToks = unitOnLeft ? left.slice(-MAX_PHRASE_TOKENS) : right.slice(0, MAX_PHRASE_TOKENS);
+          if (unitToks.length > 0) words.add(foldUnit(unitToks.join(' '), tag));
+          const contextToks = unitOnLeft ? right.slice(0, MAX_PHRASE_TOKENS) : left.slice(-MAX_PHRASE_TOKENS);
+          if (contextToks.length > 0) {
+            (unitOnLeft ? trails : leads).add(foldUnit(contextToks.join(' '), tag));
+          }
         }
       }
     }
   }
-  unitVocabulary.set(key, words);
-  return words;
+  const vocabulary = Object.freeze({ units: words, leads, trails });
+  unitVocabulary.set(key, vocabulary);
+  return vocabulary;
+}
+
+/**
+ * Does the locale's own temporal wording surround the figure? A lead
+ * phrase ending `before` (`dentro de 3 h`), or a trail phrase starting
+ * what follows the unit — at a word boundary, folded with the locale.
+ */
+const CONTEXT_SEP = /^[\s(\[{:,;«»"'‘’“”)\]}–—-]*/u;
+function localeLeadEnds(before, vocabulary, locale) {
+  const b = foldUnit(before, locale).replace(/[\s(\[{«"'‘“]*$/u, '');
+  for (const lead of vocabulary.leads) {
+    if (!b.endsWith(lead)) continue;
+    const at = b.length - lead.length;
+    if (at === 0 || !/[\p{L}\p{M}\p{N}]/u.test(b[at - 1])) return true;
+  }
+  return false;
+}
+function localeTrailStarts(afterUnit, vocabulary, locale) {
+  const a = foldUnit(afterUnit, locale).replace(CONTEXT_SEP, '');
+  for (const trail of vocabulary.trails) {
+    if (!a.startsWith(trail)) continue;
+    if (a.length === trail.length || !/[\p{L}\p{M}\p{N}]/u.test(a[trail.length])) return true;
+  }
+  return false;
 }
 
 /**
@@ -806,8 +859,10 @@ function unitAfter(after, units, locale) {
 function unitBefore(before, units, locale) {
   if (units.size === 0) return null;
   for (let k = MAX_PHRASE_TOKENS; k >= 1; k -= 1) {
+    // Whitespace or an OPENING bracket may sit between the unit and the
+    // figure (round 4): Hebrew writes its singular as `בעוד יום (1)`.
     const m = before.match(
-      new RegExp(`((?:[\\p{L}\\p{M}\\p{N}]+\\s+){${k - 1}}[\\p{L}\\p{M}\\p{N}]+)\\s*$`, 'u'),
+      new RegExp(`((?:[\\p{L}\\p{M}\\p{N}]+\\s+){${k - 1}}[\\p{L}\\p{M}\\p{N}]+)[\\s(\\[{«"'‘“]*$`, 'u'),
     );
     if (!m) continue;
     const phrase = foldUnit(m[1].split(/\s+/).join(' '), locale);
@@ -830,9 +885,13 @@ function unitBefore(before, units, locale) {
  */
 function isAmbiguousUnit(unit) {
   if (AMBIGUOUS_UNIT.test(unit)) return true;
-  // One LETTER. `%` is one character and is not an abbreviation of anything.
-  if ([...unit].length !== 1 || !/^\p{L}$/u.test(unit)) return false;
-  return !/^[\p{Script=Han}\p{Script=Hangul}\p{Script=Hiragana}\p{Script=Katakana}]$/u.test(unit);
+  // One LETTER, counted without its combining marks (round 4): Hindi's
+  // short hour `घं` is one visible letter written as a base plus a mark,
+  // and is exactly as much an abbreviation as `h`. `%` is one character
+  // and is not an abbreviation of anything.
+  const base = unit.replace(/\p{M}/gu, '');
+  if ([...base].length !== 1 || !/^\p{L}$/u.test(base)) return false;
+  return !/^[\p{Script=Han}\p{Script=Hangul}\p{Script=Hiragana}\p{Script=Katakana}]$/u.test(base);
 }
 
 /**
@@ -860,7 +919,9 @@ function isAmbiguousUnit(unit) {
  */
 export function monetaryAmountsIn(text, { locale } = {}) {
   if (typeof text !== 'string' || text === '') return [];
-  const localeUnits = locale === undefined || locale === null ? new Set() : durationUnitsFor(locale);
+  const vocabulary =
+    locale === undefined || locale === null ? EMPTY_VOCABULARY : durationVocabularyFor(locale);
+  const localeUnits = vocabulary.units;
   const hits = [];
   // Numbers with optional grouping and decimals. The separators are
   // locale-dependent — the console formats for the reader's language —
@@ -1152,7 +1213,23 @@ export function monetaryAmountsIn(text, { locale } = {}) {
         // where the matched unit ENDS, since it may be a phrase, or a
         // prefix of the run.
         const afterUnit = afterLong.slice(matched.end);
-        const temporal = DURATION_LEAD.test(before) || DURATION_TRAIL.test(afterUnit);
+        // A MONEY SIGN OR GLYPH DIRECTLY AFTER THE UNIT (#2125 round 4):
+        // `3日$` splits the run at the sign, so `日` matched exactly and
+        // `hugsCurrency`, which reads what follows the FIGURE, could not
+        // see through the counter. The unit is then the wrong reading of
+        // the run: a currency sign is never a particle.
+        if (currencyAfter.test(afterUnit) || ASSET_GLYPH.test(afterUnit.replace(CONTEXT_SEP, '').slice(0, 2))) {
+          hits.push(fragment(text, start, end));
+          continue;
+        }
+        // Duration CONTEXT: the English lists, or the locale's own lead /
+        // trail phrases learned from its relative-time wording (round 4),
+        // so `dentro de 3 h` reads as a wait in Spanish.
+        const temporal =
+          DURATION_LEAD.test(before) ||
+          DURATION_TRAIL.test(afterUnit) ||
+          localeLeadEnds(before, vocabulary, locale) ||
+          localeTrailStarts(afterUnit, vocabulary, locale);
         if (isAmbiguousUnit(unit) && !temporal) {
           hits.push(fragment(text, start, end));
           continue;
@@ -1207,11 +1284,29 @@ export function monetaryAmountsIn(text, { locale } = {}) {
     // a ticker LATER in the clause counts only against an ambiguous unit
     // (#2125 round 3), exactly as for a unit after the figure: `Bado siku
     // 3 kabla USDC irudi` states a duration and then names an asset.
-    if (leading && !hugsCurrency && !trailingGlyph && !trailingLower && !isTicker(firstWordAfter)) {
+    // ... and the MAGNITUDE guards the identifier exemption already has
+    // (round 4): `siku 3k USDC` and `siku 3 million` are quantities
+    // whatever word stands in front of them.
+    // Not gated on `leading` (round 4): that regex wants a letter run
+    // right before the figure, and a unit may be separated from it by an
+    // opening bracket — `unitBefore` reads the phrase itself.
+    if (
+      !hugsCurrency &&
+      !trailingGlyph &&
+      !trailingLower &&
+      !spacedMagnitude &&
+      endsCleanly &&
+      !isTicker(firstWordAfter)
+    ) {
       const matchedBefore = unitBefore(before, localeUnits, locale);
       if (matchedBefore !== null) {
         const { unit, start: unitStart } = matchedBefore;
-        const temporal = DURATION_LEAD.test(before.slice(0, unitStart)) || DURATION_TRAIL.test(after);
+        const beforeUnit = before.slice(0, unitStart);
+        const temporal =
+          DURATION_LEAD.test(beforeUnit) ||
+          DURATION_TRAIL.test(after) ||
+          localeLeadEnds(beforeUnit, vocabulary, locale) ||
+          localeTrailStarts(after, vocabulary, locale);
         if (isAmbiguousUnit(unit) && (!temporal || trailingTicker)) {
           hits.push(fragment(text, start, end));
         }

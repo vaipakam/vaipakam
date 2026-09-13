@@ -11,6 +11,7 @@ import {
   declaredStateConsistent,
   durationSamplesFor,
   durationUnitsFor,
+  durationVocabularyFor,
   forcedCloseCoverage,
   forcedCloseVerdict,
   monetaryAmountsIn,
@@ -7836,5 +7837,57 @@ describe('#2125 round 3 — contextual forms, particle transitions, preceding un
     expect(monetaryAmountsIn('siku 3 USDC', { locale: 'sw' })).toHaveLength(1);
     expect(monetaryAmountsIn('siku 3 Ξ', { locale: 'sw' })).toHaveLength(1);
     expect(monetaryAmountsIn('siku 3 eth', { locale: 'sw' })).toHaveLength(1);
+  });
+});
+
+describe('#2125 round 4 — per-phrase unit side, money after a counter, magnitudes, localised context, marked letters', () => {
+  // The unit's side is read from each relative-time phrase: Hebrew's
+  // singular puts the unit before a bracketed number although its unit
+  // formatter writes the number first.
+  it('learns a unit that precedes a bracketed number', () => {
+    expect(new Intl.RelativeTimeFormat('he', { numeric: 'always' }).format(1, 'day')).toBe('בעוד יום (1)');
+    expect(monetaryAmountsIn('בעוד יום (1)', { locale: 'he' })).toEqual([]);
+    expect(monetaryAmountsIn('בעוד 3 ימים', { locale: 'he' })).toEqual([]);
+  });
+
+  // A currency sign or glyph directly after a matched unit is an amount.
+  it('reports a money sign or glyph appended to a counter', () => {
+    expect(monetaryAmountsIn('3日$', { locale: 'ja' })).toHaveLength(1);
+    expect(monetaryAmountsIn('3日₿', { locale: 'ja' })).toHaveLength(1);
+    expect(monetaryAmountsIn('3日Ξ', { locale: 'ja' })).toHaveLength(1);
+    expect(monetaryAmountsIn('3 days $', { locale: 'en-US' })).toHaveLength(1);
+    expect(monetaryAmountsIn('3日', { locale: 'ja' })).toEqual([]);
+  });
+
+  // The magnitude guards apply before a preceding unit exempts.
+  it('rejects a magnitude after a preceding unit', () => {
+    expect(monetaryAmountsIn('siku 3k USDC', { locale: 'sw' })).toHaveLength(1);
+    expect(monetaryAmountsIn('siku 3 million', { locale: 'sw' })).toHaveLength(1);
+    expect(monetaryAmountsIn('siku 3.', { locale: 'sw' })).toEqual([]);
+  });
+
+  // Localised temporal context makes a one-letter unit a duration.
+  it('reads the locale\'s own temporal wording around a one-letter unit', () => {
+    expect(durationVocabularyFor('es').leads.has('dentro de')).toBe(true);
+    expect(monetaryAmountsIn('dentro de 3 h', { locale: 'es' })).toEqual([]);
+    expect(monetaryAmountsIn('hace 3 h', { locale: 'es' })).toEqual([]);
+    expect(monetaryAmountsIn('dans 3 h', { locale: 'fr' })).toEqual([]);
+    expect(monetaryAmountsIn('za 3 h', { locale: 'cs' })).toEqual([]);
+    expect(monetaryAmountsIn('in 3 Std.', { locale: 'de' })).toEqual([]);
+    // Without any context the abbreviation stays ambiguous and reports.
+    expect(monetaryAmountsIn('3 h', { locale: 'es' })).toHaveLength(1);
+    expect(monetaryAmountsIn('Recibes 3 h', { locale: 'es' })).toHaveLength(1);
+  });
+
+  // A one-letter abbreviation written with a combining mark is still one
+  // letter, and still ambiguous.
+  it('counts a marked base letter as a one-letter abbreviation', () => {
+    expect(new Intl.NumberFormat('hi', { style: 'unit', unit: 'hour', unitDisplay: 'short' }).format(3)).toBe(
+      '3 घं॰',
+    );
+    expect(monetaryAmountsIn('You receive 3 घं USDC', { locale: 'hi' })).toHaveLength(1);
+    expect(monetaryAmountsIn('3 घं॰', { locale: 'hi' })).toHaveLength(1);
+    expect(monetaryAmountsIn('3 घंटे', { locale: 'hi' })).toEqual([]);
+    expect(monetaryAmountsIn('3 घंटे में', { locale: 'hi' })).toEqual([]);
   });
 });

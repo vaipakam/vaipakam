@@ -52,6 +52,12 @@ the unspaced-script rule so that only Japanese grammatical script after a
 counter reads as a particle, since the script used for loanwords is also
 where asset names are written; and let a duration written before the
 number stand when an asset is merely mentioned later in the sentence, as
-one written after the number already did.
+one written after the number already did. A fourth round read which side
+of the number a unit sits on from each phrase rather than assuming it,
+treated a money sign glued to a counter as the amount it is, applied the
+existing quantity guards to a unit written before the number, let a
+language's own words for "in" and "ago" establish that a one-letter unit
+means time, and counted a letter written with a combining mark as the
+single letter it is.
 
 Closes #2125. No product surface changes.
