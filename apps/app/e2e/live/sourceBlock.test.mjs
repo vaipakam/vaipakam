@@ -6,9 +6,20 @@
  * neighbours. Neither shows up as a red test, which is exactly why the
  * helper is pinned directly rather than only through its callers.
  */
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import { describe, expect, it } from 'vitest';
 
-import { between, blockFrom, callContaining, stripLineComments } from './sourceBlock.mjs';
+import {
+  balancedArgs,
+  between,
+  blockFrom,
+  callContaining,
+  statementFrom,
+  stripLineComments,
+} from './sourceBlock.mjs';
 
 describe('blockFrom', () => {
   it('ends at the matching close, not the first one', () => {
@@ -176,5 +187,163 @@ describe('#2144 — between(): a region bounded by a following anchor', () => {
     expect(() => between(src, '', 'const beta')).toThrow(/non-empty `from`/);
     expect(() => between(src, 'const alpha', '')).toThrow(/non-empty `to`/);
     expect(() => between(src, undefined, 'const beta')).toThrow(/non-empty `from`/);
+  });
+});
+
+describe('statementFrom', () => {
+  it('ends at the declaration s own semicolon, not the next one', () => {
+    const src = 'const a =\n  one &&\n  two;\nconst b = three;\n';
+    expect(statementFrom(src, 'const a =')).toBe('const a =\n  one &&\n  two;');
+  });
+
+  // The reason a fixed window was reached for in the first place: these
+  // initializers span lines and carry calls, so any bound short of the
+  // statement's own end either truncates it or runs into the next one.
+  it('keeps a multi-line initializer whole, including nested calls', () => {
+    const src = 'const s =\n  h > 0n &&\n  [...k].every((x) => f(x));\nconst next = 1;\n';
+    const got = statementFrom(src, 'const s =');
+    expect(got).toContain('.every(');
+    expect(got.endsWith('f(x));')).toBe(true);
+    expect(got).not.toContain('next');
+  });
+
+  // A semicolon inside an arrow body belongs to the body, not to the
+  // declaration that contains it. Stopping there would cut the statement
+  // in half and leave the rule blind to everything after the callback.
+  it('does not end on a semicolon nested inside a callback', () => {
+    const src = 'const g = run(() => { step(); }) && tail;\nconst after = 2;\n';
+    expect(statementFrom(src, 'const g =')).toBe('const g = run(() => { step(); }) && tail;');
+  });
+
+  // Strings and comments are TEXT. A `;` in either is not the statement's
+  // end, and reading it as one produces a short slice that passes a
+  // `toContain` only by luck.
+  it('ignores semicolons inside strings and comments', () => {
+    const src = "const m = note('a; b') /* c; */ + `d; ${e('f; g')}`;\nconst z = 3;\n";
+    const got = statementFrom(src, 'const m =');
+    expect(got.endsWith('`;')).toBe(true);
+    expect(got).not.toContain('const z');
+  });
+
+  // Same refusal as every other helper here: a missing anchor, or a
+  // statement with no end, throws rather than handing back a region that
+  // would pass by measuring nothing.
+  it('throws rather than guessing when the anchor or the end is missing', () => {
+    expect(() => statementFrom('const a = 1;', 'const gone =')).toThrow(/renamed or removed/);
+    expect(() => statementFrom('const a = 1', 'const a =')).toThrow(/no terminating semicolon/);
+  });
+});
+
+describe('balancedArgs', () => {
+  it('takes the whole argument list, across lines and nested calls', () => {
+    const src = 'f(\n  a.indexOf(g(1)),\n  b,\n);\nafter();';
+    expect(balancedArgs(src, src.indexOf('('))).toBe('\n  a.indexOf(g(1)),\n  b,\n');
+  });
+
+  it('closes on the call, not on a nested bracket', () => {
+    const src = 'h([x, y], {k: 1});next();';
+    expect(balancedArgs(src, src.indexOf('('))).toBe('[x, y], {k: 1}');
+  });
+
+  // A SCANNER meets text that is not a call, and should move on rather
+  // than abort the sweep — the opposite of the anchored helpers, which
+  // are told what to find and throw when it is gone.
+  it('returns null instead of throwing when there is no call to read', () => {
+    expect(balancedArgs('const x = 1;', 0)).toBeNull();
+    expect(balancedArgs('f(a, b', 1)).toBeNull();
+    // An unterminated quote means this was not a call — an apostrophe in
+    // a comment is the usual way — so the sweep moves on rather than
+    // aborting on text it was never meant to read.
+    expect(balancedArgs("f('unclosed", 1)).toBeNull();
+  });
+
+  // The realistic anchor: a quoted fragment of the code being searched
+  // for, whose own brackets are TEXT. Counting them walks the depth off
+  // and the call "closes" somewhere in the next test.
+  it('does not count brackets inside a string anchor', () => {
+    const src = "f(s.indexOf('for (const l of xs) {'));\nnext();";
+    expect(balancedArgs(src, src.indexOf('('))).toBe("s.indexOf('for (const l of xs) {')");
+  });
+});
+
+// THE GUARD THIS WHOLE MODULE EXISTS FOR (#2144).
+//
+// Twice now the completeness of that conversion was claimed from a
+// hand-written grep, and twice the grep was narrower than the shape it
+// was looking for: the first missed `slice(i, i + 320)` because it
+// required an `indexOf` in the bound, the second missed the same window
+// written across four lines because `[^)]*` stops at the nested
+// `indexOf(...)`'s own close paren. Both times the claim read as
+// verified and was not.
+//
+// A prose rule policed by a regex a person writes fresh each time is not
+// a rule. This asserts it instead, and the two properties that beat the
+// greps are why it is written the long way round:
+//
+//   - the bound is read as BALANCED TEXT, so it does not matter whether
+//     the window is on one line or four, nor how many nested calls its
+//     arguments carry;
+//   - string literals are removed from the bound BEFORE looking for a
+//     number, so `indexOf('ROUND 93 P2 — …')` is an anchor and not a
+//     count. What remains is arithmetic, and arithmetic on a source
+//     region is the defect.
+//
+// It deliberately does NOT forbid a hand-written `src.slice(a, b)` whose
+// bounds are both anchors. Several read perfectly well, `between` is
+// exactly that shape, and a rule that banned them would be about tidiness
+// rather than about the failure #2144 names.
+describe('#2144 — no source region is bounded by a character count', () => {
+  const dir = path.dirname(fileURLToPath(import.meta.url));
+  const files = fs
+    .readdirSync(dir)
+    .filter((n) => n.endsWith('.test.mjs'))
+    .sort();
+
+  // Producers of SOURCE TEXT. `readFileSync` however it is qualified
+  // (`fs.readFileSync`, a destructured import), and every helper in this
+  // module — a region taken from a region is still a region.
+  const PRODUCER = String.raw`(?:[\w$.]*\breadFileSync|blockFrom|between|statementFrom|callContaining|stripLineComments)`;
+
+  // Counted rather than sliced: this file is itself under the rule, and a
+  // helper that broke it to report on it would be its own first failure.
+  const lineOf = (text, index) => {
+    let n = 1;
+    for (let i = 0; i < index; i += 1) if (text[i] === '\n') n += 1;
+    return n;
+  };
+
+  const withoutStrings = (text) => text.replace(/'[^']*'|"[^"]*"|`[^`]*`/g, "''");
+
+  it('finds the suites to check', () => {
+    expect(files.length).toBeGreaterThan(10);
+    expect(files).toContain('headSampling.test.mjs');
+  });
+
+  it.each(files)('%s bounds every source region by meaning', (file) => {
+    const text = fs.readFileSync(path.join(dir, file), 'utf8');
+    const held = new Set();
+    const decl = new RegExp(
+      String.raw`\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:await\s+)?${PRODUCER}\s*\(`,
+      'g',
+    );
+    for (const m of text.matchAll(decl)) held.add(m[1]);
+
+    const counted = [];
+    for (const name of held) {
+      const use = new RegExp(String.raw`\b${name}\s*\.\s*slice\s*\(`, 'g');
+      for (const m of text.matchAll(use)) {
+        const open = text.indexOf('(', m.index + name.length);
+        const args = balancedArgs(text, open);
+        if (args === null) continue;
+        const bare = withoutStrings(args);
+        if (/\d/.test(bare)) {
+          counted.push(`${file}:${lineOf(text, m.index)} — ${name}.slice(${bare.trim()})`);
+        }
+      }
+    }
+    expect(
+      counted,
+      'a source region bounded by a number: use blockFrom / between / statementFrom / callContaining',
+    ).toEqual([]);
   });
 });

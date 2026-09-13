@@ -87,6 +87,86 @@ export function between(src, from, to) {
 }
 
 /**
+ * The source of the STATEMENT introduced by `header`, from the header
+ * through its own terminating semicolon.
+ *
+ * For the region a declaration owns — `const x = a && b && c;` spread over
+ * several lines — which is neither a brace block nor a call, and which
+ * `between` can only bound by naming whatever happens to follow it. That
+ * "whatever follows" is the weakness: it is a real anchor in the file but
+ * it means nothing ABOUT the region, so it moves when an unrelated
+ * declaration is inserted after this one, and a rule about this statement
+ * silently starts reading the insertion too.
+ *
+ * Every fixed-length window this module set out to retire (#2144) was over
+ * exactly this shape — a multi-line initializer with no closing brace to
+ * match — which is why they survived two passes of conversion: there was
+ * nothing to convert them TO. This is that missing bound.
+ *
+ * Depth-tracked over `()`, `[]` and `{}`, so a semicolon inside an
+ * arrow body or an object literal does not end the statement. String
+ * literals and comments are SKIPPED rather than scanned, unlike
+ * `blockFrom`'s naive brace count: a `;` inside a message string is
+ * ordinary here, where a stray brace in a whole-function header is not.
+ */
+export function statementFrom(src, header) {
+  const start = src.indexOf(header);
+  if (start === -1) throw new Error(`${header} was renamed or removed`);
+  const OPEN = { '(': ')', '[': ']', '{': '}' };
+  let depth = 0;
+  for (let i = start; i < src.length; i += 1) {
+    const c = src[i];
+    if (c === '/' && src[i + 1] === '/') {
+      const nl = src.indexOf('\n', i);
+      i = nl === -1 ? src.length : nl;
+      continue;
+    }
+    if (c === '/' && src[i + 1] === '*') {
+      const close = src.indexOf('*/', i + 2);
+      if (close === -1) throw new Error(`${header} has an unterminated comment`);
+      i = close + 1;
+      continue;
+    }
+    if (c === "'" || c === '"' || c === '`') {
+      i = endOfString(src, i, c, header);
+      continue;
+    }
+    if (OPEN[c]) depth += 1;
+    else if (c === ')' || c === ']' || c === '}') depth -= 1;
+    else if (c === ';' && depth === 0) return src.slice(start, i + 1);
+  }
+  throw new Error(`${header} has no terminating semicolon`);
+}
+
+function endOfString(src, open, quote, label) {
+  for (let i = open + 1; i < src.length; i += 1) {
+    if (src[i] === '\\') {
+      i += 1;
+      continue;
+    }
+    // A template's `${…}` holds EXPRESSIONS, which may carry their own
+    // strings — including another backtick. Walking straight past them
+    // would read that inner quote as this template's close and hand the
+    // rest of the file back as code, so the hole is skipped by brace depth.
+    if (quote === '`' && src[i] === '$' && src[i + 1] === '{') {
+      let depth = 1;
+      let j = i + 2;
+      for (; j < src.length && depth > 0; j += 1) {
+        const c = src[j];
+        if (c === "'" || c === '"' || c === '`') j = endOfString(src, j, c, label);
+        else if (c === '{') depth += 1;
+        else if (c === '}') depth -= 1;
+      }
+      if (depth > 0) throw new Error(`${label} has an unterminated \${} in a template`);
+      i = j - 1;
+      continue;
+    }
+    if (src[i] === quote) return i;
+  }
+  throw new Error(`${label} has an unterminated ${quote} string`);
+}
+
+/**
  * The source of the call that CONTAINS `needle`, from `callee` through
  * its matching close paren.
  *
@@ -115,6 +195,50 @@ export function callContaining(src, needle, callee = 'console.log(') {
   // about the wrong code.
   if (!call.includes(needle)) throw new Error(`${needle} is not inside the ${callee} call found`);
   return call;
+}
+
+/**
+ * The ARGUMENT TEXT of the call whose open paren sits at `open`, without
+ * the parens themselves — `null` if the call never closes.
+ *
+ * Finding a delimited region is this module's job, and the #2144 guard in
+ * the sibling test needs one: to decide whether a bound is an anchor or a
+ * number it has to read the whole argument list, however many lines and
+ * nested calls it spans. Reading it there would have meant the guard
+ * narrowing source by hand in order to forbid narrowing source by hand.
+ *
+ * Returns `null` rather than throwing. A caller SCANNING a file meets
+ * text that is not a call and should move on; the anchored helpers above
+ * are told exactly what to find and throw when it is gone.
+ */
+export function balancedArgs(src, open) {
+  if (src[open] !== '(') return null;
+  let depth = 0;
+  for (let i = open; i < src.length; i += 1) {
+    const c = src[i];
+    // Skipped, not counted. The arguments here are ANCHORS — string
+    // literals quoting the code being looked for — and the realistic one
+    // is `indexOf('for (const l of readyFirst) {')`, whose own brackets
+    // are text. Counting them walks the depth off by two and the call
+    // "closes" somewhere in the next test.
+    if (c === "'" || c === '"' || c === '`') {
+      // A quote that never closes means this was not a call after all —
+      // an apostrophe in a comment is the usual way. Same answer as an
+      // unclosed paren: not a call, move on.
+      try {
+        i = endOfString(src, i, c, 'balancedArgs');
+      } catch {
+        return null;
+      }
+      continue;
+    }
+    if ('([{'.includes(c)) depth += 1;
+    else if (')]}'.includes(c)) {
+      depth -= 1;
+      if (depth === 0) return src.slice(open + 1, i);
+    }
+  }
+  return null;
 }
 
 function balanced(src, start, open, close, what, label) {

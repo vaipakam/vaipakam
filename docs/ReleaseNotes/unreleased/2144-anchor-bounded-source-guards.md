@@ -23,11 +23,27 @@ nothing, which is the failure this whole family of helpers exists to
 refuse. Regions that are brace-delimited blocks use the existing
 block helper rather than a second anchor.
 
-Review caught the first attempt claiming more than it had done: the
-search used to find the fixed windows was narrower than the windows
-themselves, so eight of the fourteen were missed while the note said none
-remained. The search is now written against the shape being removed —
-arithmetic on a slice bound — and all fourteen are converted.
+Review caught the same mistake twice, and the second time is the more
+useful one. Both attempts claimed the conversion was complete on the
+strength of a search written by hand, and both searches were narrower
+than the thing they were looking for: the first demanded a particular
+starting point and missed several, the second could not see a window
+written across four lines because it stopped at the first closing bracket
+it met. Each time the claim read as verified and was not.
+
+So the claim is no longer made in prose. The suite asserts it: it reads
+every check in this family, works out what bounds each region it takes,
+and fails when that bound is a number rather than something in the code.
+It reads the bound as a whole — however many lines and nested calls it
+spans — and ignores numbers that appear inside quoted fragments of the
+code being searched for, which is what a hand-written pattern could not
+be trusted to do. Reintroducing one of the removed windows turns it red.
+
+Three of the windows survived both earlier passes for a reason worth
+naming: they bounded a declaration spread over several lines, which is
+neither a block nor a call, so there was nothing to convert them to. That
+missing bound now exists — a region may be taken as the statement it
+belongs to, ending where that statement ends.
 
 The effect is that these checks now fail when the thing they describe
 changes, and not when the file grows. A check that fails because a file

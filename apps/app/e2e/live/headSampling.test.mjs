@@ -44,7 +44,13 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
-import { between, blockFrom, callContaining, stripLineComments } from './sourceBlock.mjs';
+import {
+  between,
+  blockFrom,
+  callContaining,
+  statementFrom,
+  stripLineComments,
+} from './sourceBlock.mjs';
 
 const DRIVE = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -511,8 +517,12 @@ describe('the head sample waits for the readings in flight', () => {
     // an `async` listener that adds itself partway through.
     expect(mod).toContain("page.on('response', (res) => {");
     expect(mod).not.toContain("page.on('response', async (res) => {");
-    const reg = mod.slice(mod.indexOf("page.on('response', (res) => {"));
-    expect(reg.slice(0, 400)).toContain('pending.add(done)');
+    // The listener's OWN body, not the 400 characters that follow its
+    // opening: the registration has to be inside the listener, and a
+    // window that overran it would have accepted `pending.add(done)`
+    // sitting in whatever came next.
+    const reg = blockFrom(mod, "page.on('response', (res) => {");
+    expect(reg).toContain('pending.add(done)');
   });
 
   // AMENDED IN ROUND 92 — the drain is BOUNDED, not a single snapshot.
@@ -579,10 +589,7 @@ describe('the head sample waits for the readings in flight', () => {
     expect(src, 'the post-scrape site captures it').toContain(
       'const headSettled = await settleHeadReads(page);',
     );
-    const caughtUp = src.slice(
-      src.indexOf('const observerCaughtUp ='),
-      src.indexOf('const observerCaughtUp =') + 320,
-    );
+    const caughtUp = statementFrom(src, 'const observerCaughtUp =');
     expect(caughtUp, 'the catch-up test is gated on the ceiling drain').toContain(
       'headSettled &&',
     );
@@ -620,13 +627,10 @@ describe('the head sample waits for the readings in flight', () => {
     expect(sampleAt, 'the ceiling sample was not found').toBeGreaterThan(-1);
     expect(src.indexOf('const card = await readForcedCloseCard(page);')).toBeLessThan(sampleAt);
     // And consumed, with an unbounded endpoint refusing rather than lowering.
-    const caughtUp = src.slice(
-      src.indexOf('const observerCaughtUp ='),
-      src.indexOf('const observerCaughtUp =') + 320,
-    );
+    const caughtUp = statementFrom(src, 'const observerCaughtUp =');
     expect(caughtUp).toContain('ceilingSound');
     expect(caughtUp).toContain('pinnedBlock >= ceiling.head');
-    const sound = src.slice(src.indexOf('const ceilingSound ='), src.indexOf('const ceilingSound =') + 400);
+    const sound = statementFrom(src, 'const ceilingSound =');
     expect(sound, 'every endpoint the page used must be sampled').toContain('.every(');
   });
 });
@@ -855,8 +859,11 @@ describe('an endpoint that lied about its chain stays untrusted', () => {
   });
 
   it('that place checks BOTH the per-page and the module-wide exclusion', () => {
-    const i = src.indexOf('const admitIfNotForeign = () => {');
-    const body = src.slice(i, src.indexOf('};', i) + 2);
+    // Brace-MATCHED, not "up to the first `};`": a nested object literal
+    // or arrow inside the body closes first, and the region would end
+    // there with the guard-before-add ordering below never reaching the
+    // code it is about.
+    const body = blockFrom(src, 'const admitIfNotForeign = () => {');
     const guard = body.indexOf('foreign.has(key) || foreignPageRpcEndpoints.has(key)');
     const add = body.indexOf('diamond.add(key)');
     expect(guard, 'both exclusions are tested').toBeGreaterThan(-1);
