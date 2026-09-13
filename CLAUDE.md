@@ -1278,24 +1278,37 @@ Codex is **NOT auto-invoked** on PR open or on pushes to a PR. It runs
 ONLY when its trigger words appear in the PR description or a PR
 comment (e.g. an `@codex review` comment). Apply this loop on every PR:
 
-- **Docs-only PRs**: **merge after 2 Codex review rounds** (user
-  directive 2026-08-07, verbatim "merge after 2 rounds as these are
-  docs only PR, we can go for full convergence on codex findings for
-  PR with code" — superseding the 2026-07-10 "up to 5 rounds"
-  directive, which had itself superseded an earlier 2-round wording).
-  Run round 1 → triage/fix every finding → round 2 → triage/fix →
-  merge, regardless of whether round 2 was clean; merge earlier if a
-  round converges (zero P1/P2). The cap bounds ROUNDS, not diligence —
-  every finding still gets the accept-fix / refute / defer triage
-  gate. Skipping entirely remains OK for trivial mechanical edits —
-  say so in the thread.
+- **Docs-only PRs**: **cap at 10 Codex review rounds; at the cap, merge
+  if there are no P1 findings** (user directive 2026-09-13, verbatim "if
+  the PR is docs only don't go beyond 10 rounds, merge them after 10
+  rounds if there are no P1 findings" — superseding the 2026-08-07
+  "merge after 2 rounds" directive, which had superseded the 2026-07-10
+  "up to 5 rounds" one). Merge earlier if a round converges (zero
+  P1/P2). At the cap, open P2/P3 findings are triaged and closed — fixed,
+  refuted or deferred — and do not hold the merge; an open P1 does. The
+  cap bounds ROUNDS, not diligence — every finding still gets the
+  accept-fix / refute / defer triage gate. Skipping entirely remains OK
+  for trivial mechanical edits — say so in the thread.
 - **Coding PRs**: keep triggering rounds until findings **converge**,
   allowing up to 10 rounds after the last SURFACE CHANGE in the code
-  as a hard backstop. Only a substantive code change resets the
+  as a backstop. Only a substantive code change resets the
   count; replies, thread resolutions, and comment-only / docs-only
   tweaks do NOT (amended 2026-07-05, superseding the earlier
   "after the last diff push" wording). Re-trigger after every fix
-  push.
+  push. **Hard cap: 30 rounds in total** (user directive 2026-09-12,
+  reaffirmed 2026-09-13: "if its code related, then don't go beyond 30
+  rounds") — a PR past 30 rounds with no major findings may be merged.
+  **When rounds keep producing edges of the previous round's fix, that
+  is not a nearly-finished PR; it is a heuristic with an unbounded edge
+  list. Step back and fix it at the root — delete the predicate and
+  name the miss — rather than patching corner N+1** (same directive,
+  verbatim: "take a step back and see if you can fix the issue at the
+  root rather than patching them in every path"). The recorded
+  precedents are #1995 (242 findings enumerating one predicate,
+  replaced by a bounded declaration), #2066 (a heuristic deleted after
+  six rounds of edges) and #2149 (thirty findings across rounds 2–13,
+  every one an edge of a speculative branch nothing had ever observed;
+  deleting it at round 13 is what reached a clean round 21).
 - **Converged, operationally** (amendment 2026-07-05b): a round with
   ZERO P1/P2 findings (Codex's own severity badges). A P3-only round
   counts as clean — fix or defer P3s at the agent's judgment without
@@ -1315,9 +1328,10 @@ comment (e.g. an `@codex review` comment). Apply this loop on every PR:
   independent adversarial self-review BEFORE Codex round 1 so the
   loop starts from a cleaner base. Not required for app/test-infra
   PRs.
-- Merge gate: **coding PRs** only after a converged round AND green CI;
-  **docs-only PRs** after the 2-round cap above (converged or not) AND
-  green CI. All review conversations must be resolved before merge
+- Merge gate: **coding PRs** only after a converged round AND green CI
+  (or past the 30-round hard cap with no major findings); **docs-only
+  PRs** after a converged round, or at the 10-round cap with no open P1,
+  AND green CI. All review conversations must be resolved before merge
   (repo rule) in both cases.
 
 ## Release notes — per-PR fragments
