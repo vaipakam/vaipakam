@@ -100,10 +100,9 @@ analyse() { # analyse <trace> <now-epoch>  -> prints "<seconds>\t<reason>", exit
   [ -n "${last_status:-}" ] || return 2
   local last
   last=$(tail -n "+$last_status" "$trace")
-  local remaining reset retry message
+  local remaining reset message
   remaining=$(printf '%s\n' "$last" | last_header 'x-ratelimit-remaining')
   reset=$(printf '%s\n' "$last" | last_header 'x-ratelimit-reset')
-  retry=$(printf '%s\n' "$last" | last_header 'retry-after')
   # EVERY message field of the last response, not the last one alone: a
   # GraphQL body can carry several errors, and evidence of a secondary
   # limit in any of them is evidence (#2149 r17).
@@ -173,7 +172,12 @@ analyse() { # analyse <trace> <now-epoch>  -> prints "<seconds>\t<reason>", exit
   # limit that still holds. An earlier version reported the header as
   # "present and not used" and matched anyway — the contract and the code
   # disagreed, and the contract is the one that was thought through.
-  [ -z "${retry:-}" ] || return 1
+  # PRESENCE is the header LINE existing, whatever its value: an empty
+  # `Retry-After:` is present, and inferring absence from an empty parsed
+  # value would read it as absent (#2149 r19).
+  if printf '%s\n' "$last" | grep -aqiE '^[[:space:]]*<?[[:space:]]*retry-after:'; then
+    return 1
+  fi
 
   local wait bound
   read -r wait bound <<<"$(clamp_wait $(( reset_n - now )))"
@@ -370,6 +374,15 @@ selftest() {
   expect "a Retry-After beside the shape makes it the secondary miss" \
 '< HTTP/2.0 403 Forbidden
 < Retry-After: 600
+< X-Ratelimit-Remaining: 0
+< X-Ratelimit-Reset: 1789188527
+{"message":"API rate limit exceeded for user ID 275282153."}' \
+    1789188167 1
+  # Presence is the header LINE, not its value (#2149 r19): an empty
+  # `Retry-After:` is present, and is the same miss.
+  expect "an EMPTY Retry-After beside the shape is still present, still the miss" \
+'< HTTP/2.0 403 Forbidden
+< Retry-After:
 < X-Ratelimit-Remaining: 0
 < X-Ratelimit-Reset: 1789188527
 {"message":"API rate limit exceeded for user ID 275282153."}' \
