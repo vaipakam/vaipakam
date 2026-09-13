@@ -9,6 +9,7 @@ import {
   cardSettled,
   confirmationReady,
   declaredStateConsistent,
+  durationUnitsFor,
   forcedCloseCoverage,
   forcedCloseVerdict,
   monetaryAmountsIn,
@@ -1345,8 +1346,11 @@ describe('the calibration covers EVERY shipped locale, not only English', () => 
     const perBundle = new Map();
     for (const [file, fc] of bundles) {
       let here = 0;
+      // In the bundle's OWN locale (#2125): the scanner sources that
+      // language's duration words, as the drive does for its pinned one.
+      const locale = file.replace(/\.json$/, '');
       for (const [key, value] of walk(fc, 'forcedClose')) {
-        expect(monetaryAmountsIn(value), `${file} ${key}: ${value}`).toEqual([]);
+        expect(monetaryAmountsIn(value, { locale }), `${file} ${key}: ${value}`).toEqual([]);
         here += 1;
         checked += 1;
       }
@@ -3209,27 +3213,20 @@ describe('round 38 review findings', () => {
     // non-ASCII character after a figure is a glyph" — is actively
     // harmful, so the list stays explicit.
     //
-    // ⚠ THIS CASE PINS BEHAVIOUR THAT IS WRONG, deliberately. I wrote it
-    // first as `toEqual([])` and it FAILED, which is how #2125 was
-    // found: every exemption in this scanner tokenises with `[A-Za-z]`,
-    // so a non-Latin duration cannot reach `NON_MONETARY_UNIT` at all
-    // and falls through to the absolute bare-figure arm. A grace-window
-    // sentence in ja/hi/ta/ko/zh is therefore reported as an invented
-    // amount — the false-FAIL direction, on copy the spec explicitly
-    // permits.
-    //
-    // It is LATENT: the all-locale calibration passes because no shipped
-    // string currently writes a figure that way. That is luck, not a
-    // guard.
-    //
-    // Pinned as-is rather than deleted or written as a wish. A test
-    // asserting the wish goes green the day someone "fixes" the symptom
-    // by weakening the scanner; this one fails loudly when #2125 is
-    // genuinely fixed, which is the prompt to come back and update it.
-    it('reports a non-Latin duration as an amount — WRONG, tracked in #2125', () => {
+    // #2125 — FIXED. This case used to pin the WRONG behaviour on purpose
+    // (a non-Latin duration reported as an amount), written as reality
+    // rather than as a wish so it would fail loudly when the scanner was
+    // genuinely fixed. It did, and this is the update it asked for: told
+    // the language, the scanner sources that language's duration words
+    // from CLDR and exempts the grace window. NOT told the language, it
+    // still reports — a loud false hit rather than a silent exemption,
+    // which is the direction a caller that forgot the locale should feel.
+    it('exempts a non-Latin duration when told the language, and reports it when not', () => {
+      expect(monetaryAmountsIn('猶予期間は 3 日です。', { locale: 'ja' })).toEqual([]);
+      expect(monetaryAmountsIn('3 दिन शेष हैं।', { locale: 'hi' })).toEqual([]);
       expect(monetaryAmountsIn('猶予期間は 3 日です。')).toHaveLength(1);
       expect(monetaryAmountsIn('3 दिन शेष हैं।')).toHaveLength(1);
-      // The English equivalent, for contrast: the exemption reaches it.
+      // The English equivalent, for contrast: the base list reaches it.
       expect(monetaryAmountsIn('The grace period is 3 days.')).toEqual([]);
     });
 
@@ -7553,5 +7550,115 @@ describe('round 85 review findings', () => {
       );
       expect(v.verdict).not.toBe('fail');
     });
+  });
+});
+
+describe('#2125 — duration words sourced per locale', () => {
+  const LOCALES_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '../../src/i18n/locales');
+  const shipped = fs
+    .readdirSync(LOCALES_DIR)
+    .filter((f) => f.endsWith('.json'))
+    .map((f) => f.replace(/\.json$/, ''));
+
+  // The vocabulary is only as good as the runtime's knowledge of the
+  // locale, and `durationUnitsFor` returns EMPTY for one it does not know
+  // — which would make the all-locale calibration green for exactly the
+  // reason it must not be. So every shipped bundle is asserted known, and
+  // each yields a word for a day.
+  it('knows every shipped locale and finds its day word', () => {
+    expect(shipped.length).toBeGreaterThan(1);
+    for (const locale of shipped) {
+      expect(Intl.NumberFormat.supportedLocalesOf([locale]).length, locale).toBe(1);
+      const words = durationUnitsFor(locale);
+      expect(words.size, locale).toBeGreaterThan(5);
+      const day = new Intl.NumberFormat(locale, { style: 'unit', unit: 'day', unitDisplay: 'long' })
+        .formatToParts(3)
+        .find((p) => p.type === 'unit')?.value;
+      expect(typeof day, locale).toBe('string');
+      expect(words.has(day.split(/\s+/)[0].replace(/[.॰۔]+$/u, '')), `${locale}: ${day}`).toBe(true);
+    }
+  });
+
+  it('returns an empty set for an unknown or absent locale rather than guessing', () => {
+    expect(durationUnitsFor('zz-Zzzz-QQ').size).toBe(0);
+    expect(durationUnitsFor(undefined).size).toBe(0);
+    expect(durationUnitsFor('').size).toBe(0);
+  });
+
+  // Each shipped non-Latin script, in the grace-window shape the issue
+  // gives, exempted in its own locale.
+  it('exempts the grace window in every shipped non-Latin locale', () => {
+    expect(monetaryAmountsIn('3 நாட்கள் மீதமுள்ளன.', { locale: 'ta' })).toEqual([]);
+    expect(monetaryAmountsIn('3일 남았습니다.', { locale: 'ko' })).toEqual([]);
+    expect(monetaryAmountsIn('还有 3 天。', { locale: 'zh' })).toEqual([]);
+    expect(monetaryAmountsIn('3天', { locale: 'zh' })).toEqual([]);
+    expect(monetaryAmountsIn('3 أيام متبقية.', { locale: 'ar' })).toEqual([]);
+    expect(monetaryAmountsIn('Noch 3 Tage.', { locale: 'de' })).toEqual([]);
+    expect(monetaryAmountsIn('Encore 3 jours.', { locale: 'fr' })).toEqual([]);
+    expect(monetaryAmountsIn('Quedan 3 días.', { locale: 'es' })).toEqual([]);
+  });
+
+  // The PREFIX rule's boundary: a counter followed by a particle in a
+  // different script is a unit; the same unit character continuing in
+  // its own script is a different word — and `日本円` is yen.
+  it('accepts a unit as a prefix only across a script boundary', () => {
+    expect(monetaryAmountsIn('3 日です', { locale: 'ja' })).toEqual([]);
+    expect(monetaryAmountsIn('3 日本円', { locale: 'ja' })).toHaveLength(1);
+    expect(monetaryAmountsIn('3日で', { locale: 'ja' })).toEqual([]);
+  });
+
+  // An asset glyph is still an amount in every locale: the sourced words
+  // are duration words, never a licence for "any non-ASCII token".
+  it('keeps reporting asset glyphs and tickers under a locale', () => {
+    expect(monetaryAmountsIn('Loan 100 Ξ', { locale: 'ja' })).toHaveLength(1);
+    expect(monetaryAmountsIn('3 USDC', { locale: 'hi' })).toHaveLength(1);
+    expect(monetaryAmountsIn('You receive 1.5', { locale: 'zh' })).toHaveLength(1);
+  });
+
+  // Ambiguity generalised: a one-letter unit in an alphabetic script is
+  // an abbreviation that might be a magnitude, so without duration
+  // context it is reported (loud) rather than exempted (silent). A
+  // single ideograph or Hangul syllable is the whole word and is not.
+  it('treats a one-letter alphabetic unit as ambiguous, an ideograph as a word', () => {
+    expect(monetaryAmountsIn('Noch 3 M', { locale: 'de' })).toHaveLength(1);
+    expect(monetaryAmountsIn('in 3 M', { locale: 'de' })).toEqual([]);
+    expect(monetaryAmountsIn('3 天', { locale: 'zh' })).toEqual([]);
+    expect(monetaryAmountsIn('3 일', { locale: 'ko' })).toEqual([]);
+    expect(monetaryAmountsIn('Reste 3 j', { locale: 'fr' })).toHaveLength(1);
+  });
+
+  // The English locale gains CLDR's abbreviations too, under the same
+  // ambiguity rule, and everything the base list already decided holds.
+  it('adds the English abbreviations under the pinned drive locale', () => {
+    expect(monetaryAmountsIn('Wait 2 yr.', { locale: 'en-US' })).toEqual([]);
+    expect(monetaryAmountsIn('Wait 3 wks.', { locale: 'en-US' })).toEqual([]);
+    expect(monetaryAmountsIn('You receive 1d', { locale: 'en-US' })).toHaveLength(1);
+    expect(monetaryAmountsIn('in 1d', { locale: 'en-US' })).toEqual([]);
+    expect(monetaryAmountsIn('1m USDC', { locale: 'en-US' })).toHaveLength(1);
+    expect(monetaryAmountsIn('The grace period is 3 days.', { locale: 'en-US' })).toEqual([]);
+  });
+
+  // The verdict threads the copy's locale through, so a drive pinned to a
+  // non-English locale would judge its card in that language.
+  it('scans the card in the language the copy names', () => {
+    const copy = {
+      locale: 'ja',
+      unknownCopy: FORCED_CLOSE.unknown,
+      readyCopy: [FORCED_CLOSE.readyInKind, FORCED_CLOSE.readyInternalMatch, FORCED_CLOSE.readyRental],
+      withheldCopy: [FORCED_CLOSE.unknown, FORCED_CLOSE.notYet, FORCED_CLOSE.readyNeedsRoute],
+      recognisedCopy: [FORCED_CLOSE.unknown, FORCED_CLOSE.notYet],
+    };
+    const base = {
+      present: true,
+      text: `${FORCED_CLOSE.notYet} 猶予期間は 3 日です。`,
+      bodyText: FORCED_CLOSE.notYet,
+      hasControl: false,
+      settled: true,
+    };
+    const inJa = forcedCloseVerdict(base, copy);
+    expect(inJa.why ?? '', 'the grace window in Japanese is not an amount').not.toMatch(/states an amount/);
+    const noLocale = forcedCloseVerdict(base, { ...copy, locale: undefined });
+    expect(noLocale.verdict).toBe('fail');
+    expect(noLocale.why).toMatch(/states an amount/);
   });
 });

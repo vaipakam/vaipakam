@@ -137,7 +137,7 @@ const CURRENCY_MARK = /\p{Sc}/u;
 function isTicker(word) {
   if (typeof word !== 'string') return false;
   if (/^\p{Lu}$/u.test(word)) return true;
-  if (!/^\p{L}[\p{L}\p{N}]+$/u.test(word)) return false;
+  if (!/^\p{L}[\p{L}\p{M}\p{N}]+$/u.test(word)) return false;
   return /\p{Lu}{2}/u.test(word);
 }
 
@@ -454,7 +454,7 @@ function hasTickerNear(after) {
   // sentence. Splitting on punctuation alone left exactly the boundary
   // that real card markup produces.
   const clause = String(after).split(/[\n.;!?—–]|,\s/)[0] ?? '';
-  for (const word of clause.split(/[^\p{L}\p{N}]+/u)) {
+  for (const word of clause.split(/[^\p{L}\p{M}\p{N}]+/u)) {
     if (isTicker(word)) return true;
   }
   return false;
@@ -532,6 +532,140 @@ const DURATION_LEAD = /\b(in|within|after|wait|waits|waiting|takes|lasts|expires
 const DURATION_TRAIL = /^\s*(ago|to go|from now|of grace|earlier|later)\b/i;
 
 /**
+ * The duration words of a LOCALE, taken from the runtime's own CLDR data
+ * rather than hand-listed (#2125).
+ *
+ * `NON_MONETARY_UNIT` above is English. Every other exemption in this
+ * scanner was too: a non-Latin unit word could not reach it, so a
+ * grace-window sentence in ja / hi / ta / ko / zh — `猶予期間は 3 日です`
+ * — fell through to the absolute bare-figure arm and was reported as an
+ * invented amount. That is the false-FAIL direction, on the one thing
+ * the spec explicitly permits this card to say, in five shipped locales.
+ * Latent only because no shipped translation currently writes the
+ * window with a figure — luck, not a guard.
+ *
+ * The obvious generalisation, "any non-ASCII word after a figure is a
+ * unit", is worse than the bug: it would also exempt a non-ASCII ASSET
+ * glyph, which `ASSET_GLYPH` has just made reportable. So the vocabulary
+ * is SOURCED, not guessed: `Intl.NumberFormat` with `style: 'unit'` is
+ * asked, for the locale, how it writes each duration unit in its long,
+ * short and narrow forms across every plural category, and the unit
+ * parts of those renderings are the words. The same CLDR data the app's
+ * own formatting runs on, so the list cannot drift from what a reader is
+ * shown, and a locale added later needs no edit here.
+ *
+ * Empty for a locale the runtime does not know (stated; the all-locale
+ * calibration asserts every shipped bundle IS known), and empty when no
+ * locale is given — a caller that does not say which language the text
+ * is in gets the English list alone and, for other scripts, a loud false
+ * hit rather than a silent miss.
+ *
+ * Trailing abbreviation marks (`Std.`, `घं॰`) are stripped, because the
+ * token the scanner reads stops at punctuation.
+ */
+const DURATION_UNITS = ['day', 'hour', 'minute', 'second', 'week', 'month', 'year'];
+const UNIT_DISPLAYS = ['long', 'short', 'narrow'];
+// One sample per CLDR plural category: zero, one, two, few, many, other.
+const PLURAL_SAMPLES = [0, 1, 2, 3, 5, 11, 21, 100];
+const unitVocabulary = new Map();
+export function durationUnitsFor(locale) {
+  const tags = (Array.isArray(locale) ? locale : [locale]).filter(
+    (t) => typeof t === 'string' && t !== '',
+  );
+  const key = tags.join('|');
+  if (unitVocabulary.has(key)) return unitVocabulary.get(key);
+  const words = new Set();
+  for (const tag of tags) {
+    let supported = false;
+    try {
+      supported = Intl.NumberFormat.supportedLocalesOf([tag]).length > 0;
+    } catch {
+      supported = false;
+    }
+    if (!supported) continue;
+    for (const unit of DURATION_UNITS) {
+      for (const unitDisplay of UNIT_DISPLAYS) {
+        const nf = new Intl.NumberFormat(tag, { style: 'unit', unit, unitDisplay });
+        for (const n of PLURAL_SAMPLES) {
+          for (const part of nf.formatToParts(n)) {
+            if (part.type !== 'unit') continue;
+            for (const w of part.value.split(/\s+/)) {
+              const bare = w.replace(/[.॰۔]+$/u, '');
+              if (bare !== '') words.add(bare);
+            }
+          }
+        }
+      }
+    }
+  }
+  unitVocabulary.set(key, words);
+  return words;
+}
+
+/**
+ * Which locale word, if any, is the unit the figure is written with?
+ *
+ * Exact match first. Then the case the shipped scripts actually produce:
+ * Japanese and Chinese put no space between a counter and what follows,
+ * so the letter run after `3` in `3 日です` is `日です`, not `日`. The unit
+ * is accepted as a PREFIX of the run only where the run continues in a
+ * DIFFERENT script — the counter `日` (Han) followed by the particle `で`
+ * (Hiragana). Where it continues in the same script the run is one word
+ * and no exemption applies: `日本円` is yen, and `3 日本円` is an amount.
+ * A character whose script this does not know is treated as the same,
+ * so an unknown pairing is reported rather than exempted.
+ */
+const SCRIPT_TESTS = [
+  'Han',
+  'Hiragana',
+  'Katakana',
+  'Hangul',
+  'Latin',
+  'Greek',
+  'Cyrillic',
+  'Arabic',
+  'Hebrew',
+  'Devanagari',
+  'Bengali',
+  'Tamil',
+  'Telugu',
+  'Thai',
+].map((s) => new RegExp(`^\\p{Script=${s}}$`, 'u'));
+const scriptOf = (ch) => SCRIPT_TESTS.findIndex((re) => re.test(ch));
+const sameScript = (a, b) => {
+  const sa = scriptOf(a);
+  const sb = scriptOf(b);
+  return sa === -1 || sb === -1 || sa === sb;
+};
+function matchUnit(run, units) {
+  if (units.size === 0) return null;
+  if (units.has(run)) return run;
+  for (const u of units) {
+    if (run.length > u.length && run.startsWith(u) && !sameScript(u[u.length - 1], run[u.length])) {
+      return u;
+    }
+  }
+  return null;
+}
+
+/**
+ * `AMBIGUOUS_UNIT` generalised to every locale (#2125): a ONE-CHARACTER
+ * unit in an alphabetic script is an abbreviation — `m`, `j`, `M`, `ي` —
+ * and might as easily be a magnitude, so it needs duration context, and
+ * that context vocabulary is English. A single CJK ideograph or Hangul
+ * syllable is the whole word (`日`, `天`, `일`) and is not ambiguous. So a
+ * bare `3 M` in German is reported: a loud false hit on copy that does
+ * not exist, which the all-locale calibration is what proves, rather
+ * than a silent exemption of a compact million.
+ */
+function isAmbiguousUnit(unit) {
+  if (AMBIGUOUS_UNIT.test(unit)) return true;
+  // One LETTER. `%` is one character and is not an abbreviation of anything.
+  if ([...unit].length !== 1 || !/^\p{L}$/u.test(unit)) return false;
+  return !/^[\p{Script=Han}\p{Script=Hangul}\p{Script=Hiragana}\p{Script=Katakana}]$/u.test(unit);
+}
+
+/**
  * A number with something money-shaped attached to it.
  *
  * Scans for a numeric run and then looks at what sits immediately
@@ -549,10 +683,14 @@ const DURATION_TRAIL = /^\s*(ago|to go|from now|of grace|earlier|later)\b/i;
  * would let the next reviewer skip the reading.
  *
  * @param {string} text rendered card text
+ * @param {{locale?: string | string[]}} [options] the language the text
+ *   is rendered in, so its duration words can be sourced (#2125); without
+ *   it only the English list applies
  * @returns {string[]} the offending fragments, empty when clean
  */
-export function monetaryAmountsIn(text) {
+export function monetaryAmountsIn(text, { locale } = {}) {
   if (typeof text !== 'string' || text === '') return [];
+  const localeUnits = locale === undefined || locale === null ? new Set() : durationUnitsFor(locale);
   const hits = [];
   // Numbers with optional grouping and decimals. The separators are
   // locale-dependent — the console formats for the reader's language —
@@ -625,8 +763,13 @@ export function monetaryAmountsIn(text) {
     // is untouched, so `3-day` is exempt for the same reason `3 days`
     // is and for no new one: a compound adjective is how English writes
     // that phrase, not a different claim about the number.
+    // `\p{M}` in every letter run (#2125): Devanagari and Tamil write
+    // vowels and viramas as COMBINING MARKS, which are not `\p{L}`, so
+    // `दिन` tokenised as `द` and no unit word could ever match it. Same
+    // widening in `leading`, `firstWordAfter`, `hasTickerNear` and
+    // `isTicker`, so a word is one token in every reader of it.
     const trailing = after.match(
-      /^[\s‐-―-]*([\p{L}%][\p{L}\p{N}]*)\s*([\p{L}][\p{L}\p{N}]*)?/u,
+      /^[\s‐-―-]*([\p{L}%][\p{L}\p{M}\p{N}]*)\s*([\p{L}][\p{L}\p{M}\p{N}]*)?/u,
     );
     // ROUND 11 P2 — LOOK PAST PUNCTUATION, not only whitespace.
     //
@@ -742,7 +885,7 @@ export function monetaryAmountsIn(text) {
     // word is not, so it does not.
     const firstWordAfter = (() => {
       const clause = String(after).split(/[\n.;!?—–]|,\s/)[0] ?? '';
-      const w = clause.match(/^[\s(\[{:,;«»"'‘’“”)\]}\u2013\u2014-]*([\p{L}][\p{L}\p{N}]*)/u);
+      const w = clause.match(/^[\s(\[{:,;«»"'‘’“”)\]}\u2013\u2014-]*([\p{L}][\p{L}\p{M}\p{N}]*)/u);
       return w ? w[1] : '';
     })();
     const trailingLower = LOWERCASE_ASSET_UNIT.test(firstWordAfter);
@@ -813,22 +956,27 @@ export function monetaryAmountsIn(text) {
       continue;
     }
     if (trailing) {
-      const unit = trailing[1];
+      const run = trailing[1];
       const next = trailing[2];
+      // The English list, or the LOCALE's own words (#2125) — which may
+      // be a prefix of the run in a script that writes no space between
+      // a counter and the particle after it. See `matchUnit`.
+      const unit = NON_MONETARY_UNIT.test(run) ? run : matchUnit(run, localeUnits);
       // ROUND 3 P2 — A MAGNITUDE ABBREVIATION IS NOT A DURATION WHEN A
       // TICKER FOLLOWS IT. `1m USDC` reads `m` as minutes, exempts the
       // figure and never looks at `USDC` — so the scanner missed
       // precisely the promise it exists to catch, on the shortest way
       // of writing a large one. The exemption now only applies when
       // nothing token-shaped follows.
-      if (NON_MONETARY_UNIT.test(unit)) {
+      if (unit !== null) {
         // ROUND 21 P2 — a one-letter unit needs duration CONTEXT, not
         // just the absence of a ticker. See `AMBIGUOUS_UNIT`.
         // Strip the UNIT only — `trailing[0]` also swallows the word
-        // after it, which is precisely the word being looked for.
-        const afterUnit = after.replace(/^\s*[\p{L}%][\p{L}\p{N}]*/u, '');
+        // after it, which is precisely the word being looked for. And
+        // only the unit's own length, since it may be a prefix of the run.
+        const afterUnit = after.slice(after.search(/[\p{L}%]/u) + unit.length);
         const temporal = DURATION_LEAD.test(before) || DURATION_TRAIL.test(afterUnit);
-        if (AMBIGUOUS_UNIT.test(unit) && !temporal) {
+        if (isAmbiguousUnit(unit) && !temporal) {
           hits.push(fragment(text, start, end));
           continue;
         }
@@ -852,19 +1000,25 @@ export function monetaryAmountsIn(text) {
         // The false-positive direction is the one this file argues at
         // length gets a check switched off, and here it fired on the two
         // exemptions most likely to appear in real sentences.
-        if (AMBIGUOUS_UNIT.test(unit) && trailingTicker) {
+        // A ticker AFTER THE UNIT (#2125), not anywhere after the figure:
+        // a one-letter unit in an upper-case script — German's `M` for
+        // Monat — is itself an upper-case run, so the whole-clause
+        // lookahead read the unit as the ticker that cancels it, and
+        // `in 3 M` was reported through the very context that had just
+        // exempted it. `1m USDC` still reports: `USDC` is after the unit.
+        if (isAmbiguousUnit(unit) && hasTickerNear(afterUnit)) {
           hits.push(fragment(text, start, end));
         }
         continue;
       }
-      if (isTicker(unit)) {
+      if (isTicker(run)) {
         hits.push(fragment(text, start, end));
         continue;
       }
     }
 
     // A ticker immediately BEFORE the number — `USDC 120`.
-    const leading = before.match(/([\p{L}][\p{L}\p{N}]*)\s*$/u);
+    const leading = before.match(/([\p{L}][\p{L}\p{M}\p{N}]*)\s*$/u);
     if (leading && isTicker(leading[1])) {
       hits.push(fragment(text, start, end));
       continue;
@@ -1782,7 +1936,12 @@ function forcedCloseVerdictBody(obs, copy) {
   // two identical fragments say nothing a reader can act on differently.
   // The verdict turns on whether there were any, which dedup cannot
   // change.
-  const amounts = [...new Set(parts.flatMap((part) => monetaryAmountsIn(part)))];
+  // In the LANGUAGE the card was rendered in (#2125): the drive pins its
+  // browser locale and passes it with the copy, so the scanner sources
+  // that locale's duration words rather than reading only English ones.
+  const amounts = [
+    ...new Set(parts.flatMap((part) => monetaryAmountsIn(part, { locale: copy?.locale }))),
+  ];
   const amountFinding = () => ({
     verdict: 'fail',
     failKind: 'observed',

@@ -468,6 +468,15 @@ const FORCED_CLOSE_COPY = (() => {
 })();
 
 /**
+ * The locale the browser context is pinned to (see `newContext` below),
+ * and therefore the language every string this drive reads is rendered
+ * in. Carried with the forced-close copy so the amount scanner can source
+ * that language's duration words (#2125) — the bundle read here and the
+ * locale pinned there must name the same language.
+ */
+const PINNED_LOCALE = 'en-US';
+
+/**
  * Read and validate the forced-close copy this drive matches against.
  *
  * Separated from the binding above only so the failure can be CLASSIFIED:
@@ -499,6 +508,7 @@ function readForcedCloseCopy() {
     return value;
   };
   return {
+    locale: PINNED_LOCALE,
     unknownCopy: need(fc.unknown, 'unknown'),
     // ROUND 7 P2 — the READY routes, so a card rendering one of them
     // while offering no usable action reads as the defect it is rather
@@ -1666,7 +1676,7 @@ liveBrowser = browser;
 const ctx = await discovery('creating the browser context', () =>
   browser.newContext({
     viewport: { width: 1280, height: 1000 },
-    locale: 'en-US',
+    locale: PINNED_LOCALE,
   }),
 );
 
