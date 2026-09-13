@@ -34,16 +34,18 @@ constructed, kept in a registry that includes every predecessor, never on an
 address that merely claims to be one. The configured reward token sent to a
 retired predecessor after its replacement is brought back into the bound
 holder, where it shows as the unattributed remainder, rather than left
-trapped; and the bound holder's own unattributed remainder — configured reward
-token that reached its public address outside any writer, which nothing
-describes and which would otherwise roll forward through every replacement —
-can be moved to the treasury by an administrator under the manual pause, never
-beyond what no ledger row describes, so attributed custody is never reachable
-that way and the token-rotation runbook's drain-to-zero step stays possible — and that move is verified at both ends exactly as a replacement is:
-the bound holder must grow, and the retired holder must be debited, by
-precisely the amount moved, so a token that credits without debiting can
-neither strand value at a replacement nor report a recovery that moved
-nothing. A fresh deployment
+trapped — a move verified at both ends exactly as a replacement is: the bound
+holder must grow, and the retired predecessor must be debited, by precisely
+the amount moved, so a token that credits without debiting can neither strand
+value at a replacement nor report a recovery that moved nothing. The bound
+holder's own unattributed remainder — configured reward token that reached its
+public address outside any writer, which nothing describes and which would
+otherwise roll forward through every replacement — can be moved to the
+treasury by an administrator under the manual pause, never beyond what no
+ledger row describes, so attributed custody is never reachable that way and
+the token-rotation runbook's drain-to-zero step stays possible; in that move
+the treasury must grow, and the bound holder must be debited, by precisely the
+amount moved — no retired holder takes part. A fresh deployment
 constructs and binds its holder while still paused and records the address in
 the deployment artifact; a live chain gets one through a dedicated one-shot
 script after the facet refresh, because a refresh must never deploy or
