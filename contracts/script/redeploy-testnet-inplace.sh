@@ -497,7 +497,7 @@ EOF
     echo "  #   (#1566 slice-4, only while rewardCustodyHolder() is unbound; after handover: --sig \"stage()\" then --sig \"record()\";"
     echo "  #    in every mode the artifact is reconciled by --sig \"record()\" once the bind has confirmed)"
     echo "  FOUNDRY_PROFILE=default forge script script/DeployRewardCustodyHolder.s.sol --sig \"run()\" --rpc-url \$$var --broadcast --slow"
-    echo "  FOUNDRY_PROFILE=default forge script script/DeployRewardCustodyHolder.s.sol --sig \"record()\" --rpc-url \$$var"
+    echo "  FOUNDRY_PROFILE=default forge script script/DeployRewardCustodyHolder.s.sol --sig \"record()\" --rpc-url \$$var   # after the bind is mined; BEFORE any export"
     [ "$SKIP_VAULT" -eq 0 ] && \
     echo "  FOUNDRY_PROFILE=default forge script script/UpgradeVaultImplementation.s.sol --sig \"run()\" --rpc-url \$$var --broadcast --slow"
     echo
@@ -573,7 +573,14 @@ for slug in $CHAINS; do
       "${NICE[@]}" forge script script/DeployRewardCustodyHolder.s.sol --sig "run()" \
         --rpc-url "$rpc" --broadcast --slow \
         || fail "$slug: DeployRewardCustodyHolder failed -- after governance handover run it with --sig \"stage()\" and, once the Timelock executed the bind, --sig \"record()\""
-      info "[4b] $slug — bind broadcast; once it has CONFIRMED, run: forge script script/DeployRewardCustodyHolder.s.sol --sig \"record()\" --rpc-url \$$var  (reconciles .rewardCustodyHolder from live chain state)"
+      # `--slow` returned only after the bind was MINED, so the reconciliation
+      # can follow at once (Codex #2158 r11 P2): record() reads the live
+      # holder and writes .rewardCustodyHolder, so the export in [6] and every
+      # later script see the bound holder rather than a stale artifact.
+      "${NICE[@]}" forge script script/DeployRewardCustodyHolder.s.sol --sig "record()" \
+        --rpc-url "$rpc" \
+        || fail "$slug: DeployRewardCustodyHolder record() failed -- the bind broadcast but .rewardCustodyHolder was NOT reconciled; run --sig \"record()\" again before exporting"
+      info "[4b] $slug — reward custody holder bound and recorded ✓"
       ;;
     0x[0-9a-fA-F]*)
       [ "${#bound_holder}" -eq 42 ] || fail "$slug: rewardCustodyHolder() returned a malformed address '$bound_holder' -- refusing to proceed"

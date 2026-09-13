@@ -452,6 +452,29 @@ contract RewardCustodyFacetTest is SetupTest {
         assertEq(remaining, 0, "over-paid mirror has no headroom, not an underflow");
     }
 
+    /// @dev Codex #2158 r11 P1 — the one-shot floor must not accept a total
+    ///      no honest history can reach; above the pool cap it is refused
+    ///      before any guard is consumed.
+    function test_Rebase_RefusesATotalAboveThePoolCap() public {
+        _becomeCanonical();
+        _pause();
+        uint256 cap = LibVaipakam.VPFI_INTERACTION_POOL_CAP;
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.ArmedFreshRebaseTotalExceedsCap.selector, cap + 1, cap
+            )
+        );
+        _custody().rebaseArmedFreshPaid(cap + 1);
+        assertFalse(_custody().armedFreshPaidRebased(), "guard untouched");
+        assertFalse(_rep().armedFreshPaidSeeded(), "seed guard untouched");
+
+        // Exactly the cap is the largest honest figure and is accepted.
+        _custody().rebaseArmedFreshPaid(cap);
+        (uint256 received, uint256 paid) = _custody().armedFreshLedger();
+        assertEq(paid, cap);
+        assertEq(received, cap);
+    }
+
     function test_Rebase_IsOneShot() public {
         _becomeCanonical();
         _pause();

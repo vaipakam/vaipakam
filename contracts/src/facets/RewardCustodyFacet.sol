@@ -315,7 +315,10 @@ contract RewardCustodyFacet is DiamondAccessControl {
      *         Direction of error, so an operator chooses deliberately: too
      *         LOW re-opens a double-spend; too HIGH strands legitimate funding
      *         until further deliveries arrive (recoverable, the conservative
-     *         side). Prefer the high estimate when uncertain.
+     *         side). Prefer the high estimate when uncertain — but never
+     *         above the interaction pool's lifetime cap, which the call
+     *         refuses: nothing honest can have paid out more than can ever
+     *         be rewarded, and a mistyped figure would be irreversible.
      * @param  total The reconstructed absolute paid total.
      */
     function rebaseArmedFreshPaid(
@@ -325,6 +328,13 @@ contract RewardCustodyFacet is DiamondAccessControl {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (s.armedFreshPaidRebased) {
             revert IVaipakamErrors.ArmedFreshPaidAlreadyRebased();
+        }
+        // Bounded to what can ever be rewarded (Codex #2158 r11 P1): the
+        // call is one-shot and a floor, so a mistyped total above the pool
+        // cap could never be lowered again and, on the canonical chain,
+        // would be installed as `received` too.
+        if (total > LibVaipakam.VPFI_INTERACTION_POOL_CAP) {
+            revert IVaipakamErrors.ArmedFreshRebaseTotalExceedsCap(total, LibVaipakam.VPFI_INTERACTION_POOL_CAP);
         }
         LibVaipakam.RewardRole role = LibVaipakam.rewardRole(s);
 

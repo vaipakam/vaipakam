@@ -226,6 +226,16 @@ interface IVaipakamErrors {
     ///         canonical chain, resets `received` to it: a second call could
     ///         only lower delivered headroom that has since been earned.
     error ArmedFreshPaidAlreadyRebased();
+    /// @notice #1566 slice 4 PR A (Codex #2158 r11 P1) — the reconstructed
+    ///         paid total offered to the one-shot rebase exceeds the
+    ///         interaction pool's lifetime cap. No honest history can be
+    ///         larger than everything that can ever be rewarded, and a
+    ///         mistyped value would be installed irreversibly — as `paid`,
+    ///         and on the canonical chain as `received` — with no way left
+    ///         to lower it.
+    /// @param total The total offered.
+    /// @param cap   The pool cap it must not exceed.
+    error ArmedFreshRebaseTotalExceedsCap(uint256 total, uint256 cap);
     /// @notice #1566 slice 4 PR A (Codex #2158 r1 P2, r5 P1) — the paid-side
     ///         rebase was called on an inactive reward role (`Unconfigured`
     ///         or `Detached`) on a chain that is not history-free: something
