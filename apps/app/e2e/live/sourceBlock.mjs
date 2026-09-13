@@ -422,6 +422,30 @@ export function sliceCallsIn(src) {
   const { nodes } = astOf(src, 'sliceCallsIn');
   const out = [];
   for (const n of nodes) {
+    // A truncator invoked as a TAG (round 34). `src.slice`320`` is a
+    // call: the template's cooked parts arrive as an array, which the
+    // truncator coerces to a number, so this is a one-argument slice
+    // from a fixed offset to the end of the text — the exact window this
+    // guard exists to refuse, written in a form the node-type filter
+    // below never looked at. The bounds are a coercion rather than a
+    // landmark, so they are reported as unreadable rather than
+    // interpreted.
+    if (n.type === 'TaggedTemplateExpression') {
+      const tag = unwrapChain(n.tag);
+      if (!tag || tag.type !== 'MemberExpression') continue;
+      const tagged = memberName(tag);
+      if (tagged !== UNREADABLE && !TRUNCATORS.has(tagged)) continue;
+      out.push({
+        method: tagged,
+        line: lineOf(src, n.start),
+        receiver: src.slice(tag.object.start, tag.object.end),
+        args: UNKNOWN_BOUNDS,
+        text: src.slice(n.start, n.end),
+        node: n,
+        receiverNode: tag.object,
+      });
+      continue;
+    }
     if (n.type !== 'CallExpression') continue;
     const c = unwrapChain(n.callee);
     // `f.bind(src)(a, b)` — the receiver sits on the INNER call and the
@@ -845,9 +869,25 @@ export function bindingOf(src, node) {
   const initialised = uncertain
     ? undefined
     : [...withInit].reverse().find((d) => alwaysRunsBefore(src, d.node, node));
+  // A DESTRUCTURED name is not bound to the whole initialiser (round
+  // 34). `const { end } = src.indexOf('end')` binds `end` to a property
+  // of the number the search returned — which is `undefined` — while the
+  // declarator's initialiser is the search itself. Handing that back
+  // read the search as this name's value and certified a bound that at
+  // runtime is not there at all, so the region ran to the end of the
+  // text.
+  //
+  // Fixed HERE rather than at the caller, and that is the point: the
+  // alias resolver has carried its own destructuring check since round
+  // 27, and the rule was missing from every other reader of this
+  // function. One reader, one answer — see #2175, which this narrows.
+  // The definition still counts for the uncertainty test above, so a
+  // destructured definition that MIGHT have run still poisons the
+  // binding (round 12); it simply never supplies a value.
+  const projected = initialised && initialised.node.id?.type !== 'Identifier';
   return {
     found: true,
-    init: initialised ? initialised.node.init : null,
+    init: initialised && !projected ? initialised.node.init : null,
     notText,
     // A declaration's OWN initialiser counts as a write reference, and
     // it is not one for this purpose — `const at = s.indexOf(…)` would

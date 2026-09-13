@@ -1792,6 +1792,31 @@ describe('#2144 — no source region is bounded by a character count', () => {
     }
   });
 
+  // Round 34, both permissive. A truncator invoked as a TAG is a call —
+  // the template's parts arrive as an array the truncator coerces to a
+  // number — so this is a one-argument slice from a fixed offset to the
+  // end of the text, written in a form the node-type filter never saw.
+  it('finds a truncator invoked as a template tag', () => {
+    const code = 'const s = f();\nconst region = s.slice`320`;\n';
+    const calls = sliceCallsIn(code);
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls[0].args).toBe(UNKNOWN_BOUNDS);
+    expect(countsCharacters(code, calls[0])).toBe(true);
+  });
+
+  // A destructured name is not bound to the whole initialiser: `end`
+  // holds a property of the number the search returned, which is
+  // `undefined`, so the region runs to the end of the text. The alias
+  // resolver has known this since round 27 and every other reader of
+  // the binding did not — so it is fixed at the shared reader.
+  it('refuses a bound introduced by destructuring a finder result', () => {
+    const code =
+      "const s = f();\nconst start = s.indexOf('a');\n" +
+      "const { end } = s.indexOf('end');\n" +
+      'const r = s.slice(start, end);';
+    expect(countsCharacters(code, sliceCallsIn(code).at(-1))).toBe(true);
+  });
+
   // A truncator bound in one statement and called in another. The bind
   // is skipped for being a bind, the call is skipped for having a plain
   // name as its callee, and the window left through the gap.

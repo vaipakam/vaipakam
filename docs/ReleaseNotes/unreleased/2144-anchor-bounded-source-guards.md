@@ -512,6 +512,31 @@ the next. The fixing was passed over because fixing is not narrowing,
 and the call was passed over because its name says nothing about what it
 holds, so the window fell through the space between the two.
 
+Two last narrowings had been leaving unexamined, and the second is the
+one that says something about the rest.
+
+The first is a narrowing written as a label attached to a piece of quoted
+text rather than as an ordinary call. It is still a call, and what it
+hands the narrowing is coerced into a number, so it is a fixed offset
+running to the end of the text — in a form nothing had thought to look
+at. It is now looked at, and its bounds are reported as unreadable rather
+than interpreted, since a coercion is not a landmark.
+
+The second is a name taken apart from something rather than set to it.
+Where a name is introduced by unpacking, it holds a piece of whatever was
+unpacked — and unpacking a number yields nothing at all, so the name is
+empty and the region runs to the end of the text. What the check saw
+instead was the search on the other side of the declaration, and read it
+as the name's value.
+
+That rule already existed. One part of the system had known since several
+rounds earlier that unpacking is not the same as naming, and every other
+part that asks what a name holds did not. So it is fixed where the
+question is answered rather than where it was asked, which is the
+direction the remaining work in this area points: one place that answers
+what a name holds and whether that answer can be trusted here, instead of
+several that each answer a little differently.
+
 The effect is that these checks now fail when the thing they describe
 changes, and not when the file grows. A check that fails because a file
 got longer teaches nothing, and trains the next reader to widen the
