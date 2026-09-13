@@ -26,7 +26,7 @@ holders; no externally supplied address is ever accepted as one, so nothing
 can be imitated. Replacing a holder is its own paused ceremony: the successor
 is created, the old holder's whole balance moves into it and the Diamond's
 pointer flips in the same transaction, refusing if the successor did not grow
-by exactly what was released. Value someone sent ahead of time to the
+by exactly what was released or the previous holder did not end up empty. Value someone sent ahead of time to the
 address the successor would take is reported as unattributed rather than
 allowed to block the ceremony.
 
@@ -55,9 +55,11 @@ inactive the rebase accepts only a history-free chain, meaning nothing to
 import and nothing on either the paid or the received side; a detached chain
 carrying history on either counter keeps its guard open until it is
 re-attached, so the baseline is never installed under the wrong role. Replacing a holder is run
-through its own script, which rewrites the deployment record's holder address
-in the same run so no later tool reads the emptied previous address as
-custody. In every mode the deployment
+through its own script, which leaves a pending ceremony record; the
+deployment record's holder address is rewritten by the separate record step
+after the transactions have confirmed, so no later tool reads the emptied
+previous address as custody once that step has run, and later ceremonies
+refuse to proceed until it has. In every mode the deployment
 record is reconciled by a separate record step from live chain state after the
 transactions have confirmed, never from the ceremony's own simulated result,
 so a rejected or interrupted broadcast can never leave the record pointing at

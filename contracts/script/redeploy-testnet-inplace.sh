@@ -365,6 +365,14 @@ for slug in $CHAINS; do
     if [ "${#total_norm}" -gt 78 ] || { [ "${#total_norm}" -eq 78 ] && [ "$total_norm" \> "$uint_max" ]; }; then
       fail "chain '$slug': \$$total_var='${total_val}' exceeds uint256 -- the forge script could not decode it, after earlier chains had already broadcast"
     fi
+    # And within the interaction pool's lifetime cap (Codex #2158 r12 P2):
+    # the facet refuses a larger total (nothing honest can have paid out
+    # more than can ever be rewarded), and that refusal must land HERE,
+    # before any chain has broadcast, not at a later chain's rebase.
+    pool_cap="69000000000000000000000000"   # LibVaipakam.VPFI_INTERACTION_POOL_CAP = 69_000_000 * 1e18
+    if [ "${#total_norm}" -gt "${#pool_cap}" ] || { [ "${#total_norm}" -eq "${#pool_cap}" ] && [ "$total_norm" \> "$pool_cap" ]; }; then
+      fail "chain '$slug': \$$total_var='${total_val}' exceeds the interaction pool cap (69,000,000 VPFI = ${pool_cap} wei) -- the rebase would refuse it on chain; correct the reconstruction"
+    fi
     info "$slug: slice-4 rebase total = \$$total_var ($total_val)"
   elif [ "$rnohist_val" = "true" ]; then
     info "$slug: slice-4 rebase total = 0 (\$$rnohist_var declares nothing to import)"
@@ -584,7 +592,23 @@ for slug in $CHAINS; do
       ;;
     0x[0-9a-fA-F]*)
       [ "${#bound_holder}" -eq 42 ] || fail "$slug: rewardCustodyHolder() returned a malformed address '$bound_holder' -- refusing to proceed"
-      info "[4b] $slug — reward custody holder already bound ($bound_holder) ✓"
+      # Already bound on chain — but is the ARTIFACT in step (Codex #2158 r12
+      # P2)? An earlier run interrupted between the mined bind and record()
+      # leaves a pending ceremony record and a stale or missing
+      # .rewardCustodyHolder; continuing would let [6] export the stale
+      # artifact and every later ceremony fail its agreement check.
+      recorded_holder="$(grep -oE '"rewardCustodyHolder"[[:space:]]*:[[:space:]]*"0x[0-9a-fA-F]{40}"' "$dfile3" 2>/dev/null | grep -oE '0x[0-9a-fA-F]{40}' || true)"
+      if [ "$(printf '%s' "$recorded_holder" | tr 'A-F' 'a-f')" = "$(printf '%s' "$bound_holder" | tr 'A-F' 'a-f')" ]; then
+        info "[4b] $slug — reward custody holder already bound and recorded ($bound_holder) ✓"
+      elif [ -f "deployments/$slug/reward-custody-bind.json" ]; then
+        info "[4b] $slug — holder bound on chain but a bind ceremony record is still pending; reconciling the artifact now"
+        "${NICE[@]}" forge script script/DeployRewardCustodyHolder.s.sol --sig "record()" \
+          --rpc-url "$rpc" \
+          || fail "$slug: DeployRewardCustodyHolder record() failed -- .rewardCustodyHolder is NOT reconciled with the chain; fix before exporting"
+        info "[4b] $slug — reward custody holder recorded ✓"
+      else
+        fail "$slug: the Diamond reports holder $bound_holder but the artifact records '${recorded_holder:-<unset>}' and no bind ceremony record is pending -- reconcile .rewardCustodyHolder by hand before continuing"
+      fi
       ;;
     *)
       fail "$slug: rewardCustodyHolder() returned an unexpected answer '$bound_holder' -- refusing to proceed"

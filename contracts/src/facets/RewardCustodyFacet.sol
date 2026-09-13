@@ -164,10 +164,12 @@ contract RewardCustodyFacet is DiamondAccessControl {
      * @dev    ADMIN, PAUSED. The order is deliberate: construct the successor,
      *         read the old holder's whole balance and the successor's
      *         starting balance, release, verify the successor GREW by exactly
-     *         what was released, THEN flip the pointer. A move the successor
-     *         cannot account for (a fee-on-transfer token) reverts the whole
-     *         ceremony rather than leaving the pointer on a custody the
-     *         ledger overstates. The rows in storage are not touched — that
+     *         what was released AND that the previous holder now reads
+     *         empty, THEN flip the pointer. A move either end cannot account
+     *         for (a fee-on-transfer token; a token that credits without
+     *         debiting) reverts the whole ceremony rather than leaving the
+     *         pointer on a custody the ledger misdescribes or VPFI stranded
+     *         at an address nothing can reach. The rows in storage are not touched — that
      *         is the point of keeping the ledger out of the holder.
      *
      *         A successor's address is predictable from the Diamond's nonce,
@@ -208,6 +210,14 @@ contract RewardCustodyFacet is DiamondAccessControl {
         uint256 delta = IERC20(token).balanceOf(successor) - before;
         if (delta != moving) {
             revert IVaipakamErrors.RewardCustodyMoveUnverified(moving, delta);
+        }
+        // Both ends are measured (Codex #2158 r12 P2): the successor grew by
+        // exactly the release AND the previous holder reads empty. A
+        // non-conforming token crediting without debiting would otherwise
+        // strand configured VPFI at an address nothing can reach.
+        uint256 remaining = IERC20(token).balanceOf(previous);
+        if (remaining != 0) {
+            revert IVaipakamErrors.RewardCustodyPreviousNotEmptied(previous, remaining);
         }
 
         s.rewardCustodyHolder = successor;

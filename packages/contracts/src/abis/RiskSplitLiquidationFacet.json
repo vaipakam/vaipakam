@@ -2030,6 +2030,22 @@
   },
   {
     "type": "error",
+    "name": "RewardCustodyPreviousNotEmptied",
+    "inputs": [
+      {
+        "name": "previous",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "remaining",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "RewardCustodySweepIsVpfi",
     "inputs": []
   },

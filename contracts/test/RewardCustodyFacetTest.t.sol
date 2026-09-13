@@ -55,6 +55,22 @@ contract PlainERC20 {
     }
 }
 
+/// @dev A broken "token" that credits the recipient WITHOUT debiting the
+///      sender — the successor grows by the release while the previous holder
+///      keeps its balance. The replacement must refuse to flip the pointer.
+contract CreditOnlyERC20 {
+    mapping(address => uint256) public balanceOf;
+
+    function mint(address to, uint256 amount) external {
+        balanceOf[to] += amount;
+    }
+
+    function transfer(address to, uint256 amount) external returns (bool) {
+        balanceOf[to] += amount; // sender is never debited
+        return true;
+    }
+}
+
 /// @dev A "token" whose balanceOf reverts — a proxy upgraded into a broken
 ///      implementation. The snapshot must report the balance as unknown.
 contract RevertingBalanceToken {
@@ -374,6 +390,25 @@ contract RewardCustodyFacetTest is SetupTest {
         _custody().replaceRewardCustodyHolder();
         assertEq(_custody().rewardCustodyHolder(), holder, "pointer untouched");
         assertEq(skim.balanceOf(holder), 100, "revert undid the move");
+    }
+
+    /// @dev Codex #2158 r12 P2 — both ends of the move are measured: a token
+    ///      that credits the successor without debiting the previous holder
+    ///      passes the growth check but leaves VPFI stranded at an address
+    ///      nothing can reach, so the ceremony refuses.
+    function test_Replace_RefusesWhenThePreviousHolderIsNotEmptied() public {
+        CreditOnlyERC20 broken = new CreditOnlyERC20();
+        _mut().setVpfiTokenRaw(address(broken));
+        address holder = _bind();
+        broken.mint(holder, 100);
+        _pause();
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.RewardCustodyPreviousNotEmptied.selector, holder, 100
+            )
+        );
+        _custody().replaceRewardCustodyHolder();
+        assertEq(_custody().rewardCustodyHolder(), holder, "pointer untouched");
     }
 
     // ─── 4. The paid-side rebase ────────────────────────────────────────────

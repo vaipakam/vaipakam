@@ -269,6 +269,16 @@ interface IVaipakamErrors {
     /// @param expected The old holder's whole balance.
     /// @param delta    What the successor's balance actually grew by.
     error RewardCustodyMoveUnverified(uint256 expected, uint256 delta);
+    /// @notice #1566 slice 4 PR A (Codex #2158 r12 P2) — after the release the
+    ///         previous holder still reports a balance in the configured
+    ///         VPFI. A token that credits the successor without debiting the
+    ///         source would otherwise pass the growth check and leave VPFI
+    ///         abandoned at an address the Diamond no longer points at —
+    ///         and the foreign-token sweep refuses the configured VPFI, so
+    ///         nothing could reach it.
+    /// @param previous  The holder being replaced.
+    /// @param remaining What it still reports after the release.
+    error RewardCustodyPreviousNotEmptied(address previous, uint256 remaining);
     /// @notice #1566 slice 4 PR A (Codex #2158 r8 P2) — the foreign-token
     ///         sweep was asked to move the configured VPFI token. VPFI in a
     ///         holder IS the custody the attribution ledger describes and
