@@ -22,7 +22,9 @@ any asset, is refused unless the holder was debited by exactly what was
 released, so a token that credits without debiting can never be reported as
 recovered. Native currency forced into a holder,
 which accepts none by itself, is likewise reported and recoverable to the
-treasury the same way, and so is an NFT that reached a holder: a constructed
+treasury the same way — refused if the holder's own balance did not fall by
+exactly the amount, so a treasury that forces value back cannot turn a sweep
+into a repeatable report — and so is an NFT that reached a holder: a constructed
 holder refuses a safe transfer of one, but a non-safe transfer, or delivery to
 the holder's predicted address before it exists, still lands there and nothing
 else could ever move it, so an administrator can recover a single-token NFT or
@@ -80,12 +82,18 @@ the seed already was, so neither migration writer can run on a chain with no
 history to import. The in-place facet refresh runs the rebase itself while the
 Diamond is still paused, after the reward-role backfill and before service
 resumes, and refuses to default the figure: the operator states the
-reconstructed total or declares there is none. A stated figure — the older
-seed or this total — is accepted only from a chain that could not move while
-it was taken: the pre-flight refuses it unless the platform is already under
-its manual pause, and the refresh itself pauses as its very first transaction,
-before any implementation is deployed, so no payout between the
-reconstruction and the pause can go uncounted behind a one-shot guard. The
+reconstructed total or declares there is none. Every answer to a due
+migration — the older seed, this total, or a declaration that there is no
+history — is accepted only from a chain that could not move while it was
+established and that has not moved since: the pre-flight refuses to proceed
+for a chain with a migration due unless the platform is already under its
+manual pause (read directly, so a manual pause beside a watcher's automatic
+window counts), it pins that chain's pause epoch, and the refresh refuses the
+migration unless the chain is still manually paused at that very epoch,
+re-checked immediately before each broadcast, so a pause lifted or re-applied
+at any point in between refuses with nothing sent. The refresh itself pauses
+as its very first transaction, before any implementation is deployed, and
+never pauses on the operator's behalf over a due migration. The
 refresh also decides a deferral from what it reads rather than by calling
 into a refusal, so a deferred rebase on a detached chain never puts a failing
 transaction on the broadcast — and the multi-chain

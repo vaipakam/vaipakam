@@ -87,6 +87,7 @@ import {MulticallFacet} from "../src/facets/MulticallFacet.sol";
 import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
 import {RewardRemittanceLensFacet} from "../src/facets/RewardRemittanceLensFacet.sol";
 import {RewardCustodyFacet} from "../src/facets/RewardCustodyFacet.sol";
+import {LibPausable} from "../src/libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {VaipakamRewardMessenger, REWARD_MESSENGER_WIRE_GENERATION} from "../src/crosschain/VaipakamRewardMessenger.sol";
 import {VpfiReturnSender, VPFI_RETURN_SENDER_WIRE_GENERATION} from "../src/crosschain/VpfiReturnSender.sol";
@@ -266,9 +267,55 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         // uncharged by the widened ledger and never reach the reconstructed
         // seed or total the migrations below install — sealing an understated
         // counter behind a one-shot guard. Pausing first closes that window
-        // inside the run; the orchestrator's pre-flight closes the one before
-        // it by requiring a stated figure to have been taken under the manual
-        // pause already.
+        // inside the run.
+        //
+        // And when a MIGRATION IS DUE — the P1-b seed or the slice-4 rebase
+        // has not run on this Diamond — the pause must already be in force,
+        // manually, and CONTINUOUSLY since the answer was established (Codex
+        // #2158 r26 P1 ×2): the pre-flight read the pause epoch
+        // (`lastPauseBoundaryAt`) under the manual pause and exported it as
+        // ARMED_FRESH_PAUSE_EPOCH; a different epoch here means the pause was
+        // lifted or re-applied since, and a payout in that gap never reaches
+        // the counter the one-shot guard is about to seal — so this run
+        // refuses before its first transaction rather than "repairing" the
+        // pause and consuming a stale answer. A no-history declaration is
+        // pinned the same way: a payout in the gap would falsify it. Both are
+        // read from the pause library's one slot (`vm.load`), which a
+        // pre-refresh Diamond exposes before any newer getter is routed.
+        // Forge's pre-send simulation re-runs this check immediately before
+        // each broadcast, so it holds at that moment too.
+        {
+            bool seeded = _probeBool(diamond, IArmedFreshPaidSeed.armedFreshPaidSeeded.selector);
+            bool rebased = _probeBool(diamond, RewardCustodyFacet.armedFreshPaidRebased.selector);
+            if (!seeded || !rebased) {
+                (bool manual,, uint64 epochNow) =
+                    LibPausable.decodePausableSlot(vm.load(diamond, LibPausable.PAUSABLE_STORAGE_POSITION));
+                require(
+                    manual,
+                    "RefreshAllFacetsInPlace: a paid-side migration is due but the Diamond is not under "
+                    "the MANUAL pause - pause it (AdminFacet.pause()), establish the seed / total / "
+                    "no-history answer from the paused chain, then run; an auto-pause window does not "
+                    "count and this run will not pause on your behalf over a due migration"
+                );
+                uint256 epoch = vm.envOr("ARMED_FRESH_PAUSE_EPOCH", type(uint256).max);
+                require(
+                    epoch != type(uint256).max,
+                    "RefreshAllFacetsInPlace: set ARMED_FRESH_PAUSE_EPOCH to the pause epoch "
+                    "(AdminFacet lastPauseBoundaryAt, or the pause library slot) observed when the "
+                    "seed / total / no-history answer was established under the manual pause; the "
+                    "orchestrator exports it from its pre-flight. Refusing to consume an answer "
+                    "whose pause cannot be shown continuous."
+                );
+                require(
+                    epoch == uint256(epochNow),
+                    "RefreshAllFacetsInPlace: the pause state changed since the answer was established "
+                    "(the pause was lifted or re-applied) - a payout in between never reaches the "
+                    "counter this migration seals. Re-establish the answer under a pause that then "
+                    "stays in force, and re-run the pre-flight"
+                );
+                console.log("paid-side migration due: manual pause continuous since epoch", epoch);
+            }
+        }
         // Codex #992 — pause the diamond across the batched cuts so no
         // `whenNotPaused` entry point can be exercised under a partially-
         // refreshed (mixed old/new facet) configuration between batches, or if
@@ -288,7 +335,8 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         // (idempotent) and is then LEFT paused for a fresh Unpauser decision
         // — this script restores service only where it found the Diamond
         // live.
-        bool manuallyPaused = wasPaused && AdminFacet(diamond).pausedUntil() == 0;
+        (bool manuallyPaused,,) =
+            LibPausable.decodePausableSlot(vm.load(diamond, LibPausable.PAUSABLE_STORAGE_POSITION));
         if (!manuallyPaused) AdminFacet(diamond).pause();
 
         Item[] memory items = _deployItems();
@@ -1493,6 +1541,14 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
                 reps[ri++] = sels[i];
             }
         }
+    }
+
+    /// @dev A bool getter probed without reverting the run when it is not
+    ///      routed yet: an unrouted one-shot flag on a pre-upgrade Diamond
+    ///      reads as "not done", which is exactly what it means.
+    function _probeBool(address diamond, bytes4 selector) private view returns (bool) {
+        (bool ok, bytes memory ret) = diamond.staticcall(abi.encodeWithSelector(selector));
+        return ok && ret.length == 32 && abi.decode(ret, (bool));
     }
 
     /// @dev `REWARD_ROLE_EXPECTED` label -> `LibVaipakam.RewardRole` ordinal.

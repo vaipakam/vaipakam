@@ -13,7 +13,12 @@ import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 library LibPausable {
     /// @dev ERC-7201 namespaced storage slot.
     ///      keccak256(abi.encode(uint256(keccak256("vaipakam.storage.Pausable")) - 1)) & ~bytes32(uint256(0xff))
-    bytes32 private constant PAUSABLE_STORAGE_POSITION =
+    /// @dev `internal` rather than `private` (#1566 slice 4 PR A, Codex #2158
+    ///      r26): the deploy tooling reads this ONE slot — raw, before a
+    ///      refresh has routed any newer getter — to learn the manual flag
+    ///      and the pause epoch, and {decodePausableSlot} is the single
+    ///      decoder of its layout.
+    bytes32 internal constant PAUSABLE_STORAGE_POSITION =
         0x2160e84a745d8897ad2778886d40d3563c8bc30c059c5f2173e21e9d47057400;
 
     /// @dev APPEND-ONLY POST-LAUNCH. New fields go at the end; never reorder,
@@ -87,6 +92,32 @@ library LibPausable {
         if (!paused()) revert ExpectedPause();
     }
 
+    /// @dev The manual flag alone — TRUE while `pause()` is in force, whether
+    ///      or not an auto-pause window is active beside it (`pause()` leaves
+    ///      an active window's timestamp intact, so `pausedUntil() == 0` is
+    ///      NOT a valid proxy for this, Codex #2158 r26 P2).
+    function manuallyPaused() internal view returns (bool) {
+        return _storage().paused;
+    }
+
+    /// @dev Decode the raw first slot of {PausableStorage} — the three fields
+    ///      pack into it: `paused` at byte 0, `pausedUntilTimestamp` in the
+    ///      next 8 bytes, `lastPauseBoundaryAt` in the 8 after that. The ONE
+    ///      implementation of that layout for every reader that must see the
+    ///      pause state before a refresh has routed the getters (the in-place
+    ///      refresh script via `vm.load`); the orchestrator's shell mirror of
+    ///      it is pinned to this function by test.
+    function decodePausableSlot(bytes32 raw)
+        internal
+        pure
+        returns (bool manual, uint64 pausedUntilTimestamp, uint64 lastBoundaryAt)
+    {
+        uint256 word = uint256(raw);
+        manual = uint8(word) != 0;
+        pausedUntilTimestamp = uint64(word >> 8);
+        lastBoundaryAt = uint64(word >> 72);
+    }
+
     /// @dev The MANUAL pause only — an auto-pause window does not qualify.
     ///      For a ceremony or migration whose safety depends on service NOT
     ///      resuming until someone decides it should (#1566 slice 4 PR A,
@@ -95,7 +126,7 @@ library LibPausable {
     ///      no one's decision — the opposite of the fresh Unpauser decision
     ///      the ceremony's design requires.
     function requireManuallyPaused() internal view {
-        if (!_storage().paused) revert ExpectedManualPause();
+        if (!manuallyPaused()) revert ExpectedManualPause();
     }
 
     function pause() internal {

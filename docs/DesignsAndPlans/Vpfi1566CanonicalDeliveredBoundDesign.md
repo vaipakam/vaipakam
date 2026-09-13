@@ -5980,7 +5980,12 @@ remains possible and shows only as the unattributed remainder — review r5).**
 > FIRST transaction and the pre-flight refuses a stated seed or total unless
 > the chain is already manually paused, so a reconstructed figure is never
 > stale behind a one-shot guard; a deferred rebase is decided from reads and
-> never called into a refusal under broadcast (review r25). Simulations neither create nor erase
+> never called into a refusal under broadcast (review r25). Every answer to a
+> due migration, a no-history declaration included, requires the manual
+> pause — read directly from the pause library's slot, so a manual pause
+> beside a watcher window counts — and is pinned to a pause epoch the refresh
+> re-verifies before its first transaction; the native sweep verifies the
+> holder's debit like every other release (review r26). Simulations neither create nor erase
 > ceremony records. The row invariants are NOT pinned yet: with
 > no writer in PR A they would be vacuous; they land with PR B's writers.
 

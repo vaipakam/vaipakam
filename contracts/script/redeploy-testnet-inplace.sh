@@ -132,13 +132,18 @@
 #   Where the counter reads, the seeder's own predicate — the RESULTING
 #   counter, existing plus seed, within the cap — is checked as well.
 #
-#   A STATED seed or total must have been reconstructed from a chain that
-#   could not move: the pre-flight refuses a stated figure unless the Diamond
-#   is already under the MANUAL pause, and the refresh itself pauses as its
-#   first transaction, before the implementation deploys — otherwise a
-#   payout between the reconstruction and the pause never reaches the
-#   counter the one-shot migration seals. A NO_HISTORY declaration needs no
-#   pause.
+#   EVERY answer to a due migration — a stated seed or total, or a
+#   NO_HISTORY declaration — must have been established from a chain that
+#   could not move: the pre-flight refuses to proceed for a chain with a
+#   migration due unless the Diamond is already under the MANUAL pause (read
+#   directly from the pause library's storage slot, so a manual pause beside
+#   a watcher window counts), it pins that chain's pause EPOCH
+#   (ARMED_FRESH_PAUSE_EPOCH_<PREFIX>, exported per chain like the answers),
+#   and the refresh refuses the migration unless the chain is still manually
+#   paused at that very epoch — forge re-checks it immediately before each
+#   broadcast, so a pause lifted or re-applied at any point after the
+#   pre-flight refuses with nothing sent. The refresh itself also pauses as
+#   its first transaction, before the implementation deploys.
 #
 #   And before the first broadcast, EVERY selected chain's refresh is
 #   simulated end to end against a fork of its live state (step [3b], never
@@ -330,6 +335,11 @@ export_chain_answers() {
   unset ARMED_FRESH_PAID_TOTAL ARMED_FRESH_REBASE_NO_HISTORY
   [ -n "${!total_var:-}" ] && export ARMED_FRESH_PAID_TOTAL="${!total_var}"
   [ "${!rnohist_var:-}" = "true" ] && export ARMED_FRESH_REBASE_NO_HISTORY=true
+  # The pause epoch the pre-flight pinned for this chain (set only where a
+  # migration is due); the refresh refuses a due migration without it.
+  local epoch_var="ARMED_FRESH_PAUSE_EPOCH_${pfx}"
+  unset ARMED_FRESH_PAUSE_EPOCH
+  [ -n "${!epoch_var:-}" ] && export ARMED_FRESH_PAUSE_EPOCH="${!epoch_var}"
   return 0
 }
 info()   { printf '  · %s\n' "$*"; }
@@ -509,34 +519,51 @@ for slug in $CHAINS; do
   else
     info "$slug: existing armed-fresh paid counter = ${live_paid} wei (within the pool cap) ✓"
   fi
-  # A RECONSTRUCTED figure is only as good as the moment it was taken (Codex
-  # #2158 r25 P1): a payout between the reconstruction and the refresh's
-  # pause is charged to the old counter under the old rules and never reaches
-  # the seeded or rebased figure, which a one-shot guard then seals. The
-  # refresh pauses as its FIRST transaction, closing the window inside the
-  # run; the window before it is closed here — a chain for which a seed or a
-  # total is STATED must already be under the MANUAL pause (paused() and no
-  # auto-pause window) when this pre-flight runs, so the figure was read from
-  # a chain that could not move. A NO_HISTORY declaration needs no pause: it
-  # asserts an absence that no payout can create on a chain whose counter
-  # does not charge.
-  manual_paused=""
+  # An ANSWER to a one-shot migration — a stated seed, a stated total, OR a
+  # no-history declaration — is only as good as the moment it was
+  # established (Codex #2158 r25 P1, r26 P1 ×2): a payout between then and
+  # the refresh's pause is charged to the old counter under the old rules,
+  # never reaches the seeded or rebased figure, and falsifies "no history"
+  # just as surely. The refresh pauses as its FIRST transaction, closing the
+  # window inside the run; the window before it is closed here: every chain
+  # on which a migration is still DUE (not yet seeded, or not yet rebased)
+  # must already be under the MANUAL pause when this pre-flight runs, and
+  # its pause EPOCH is exported so the refresh can refuse if the pause was
+  # lifted or re-applied at any point after this read — forge re-runs that
+  # check immediately before each broadcast. Both facts come from the pause
+  # library's ONE storage slot (LibPausable.PAUSABLE_STORAGE_POSITION:
+  # `paused` at byte 0, the auto-pause deadline in the next 8 bytes, the
+  # last pause-boundary timestamp in the 8 after that), read raw because a
+  # pre-refresh Diamond routes no newer getter; the manual flag is read
+  # DIRECTLY, so a manual pause that coexists with a watcher window counts
+  # (r26 P2). The decode mirrors LibPausable.decodePausableSlot.
+  pause_slot="0x2160e84a745d8897ad2778886d40d3563c8bc30c059c5f2173e21e9d47057400"
+  manual_paused=""; pause_epoch=""
   if [ -n "${diamond2:-}" ]; then
-    p_flag="$(cast call "$diamond2" 'paused()(bool)' --rpc-url "$val" 2>/dev/null || echo '')"
-    p_until="$(cast call "$diamond2" 'pausedUntil()(uint256)' --rpc-url "$val" 2>/dev/null | cut -d' ' -f1 || echo '')"
-    if [ "$p_flag" = "true" ] && [ "$p_until" = "0" ]; then manual_paused=true; fi
+    raw="$(cast storage "$diamond2" "$pause_slot" --rpc-url "$val" 2>/dev/null || echo '')"
+    case "$raw" in
+      0x[0-9a-fA-F]*)
+        if [ "${#raw}" -eq 66 ]; then
+          hex="${raw#0x}"
+          # Big-endian word: byte 0 (`paused`) is the LAST two hex digits;
+          # bytes 1..8 (the auto-pause deadline) the 16 before them; bytes
+          # 9..16 (`lastPauseBoundaryAt`) the 16 before those — hex[30:46].
+          [ "${hex:62:2}" != "00" ] && manual_paused=true
+          pause_epoch="$(cast to-dec "0x${hex:30:16}")"
+        fi ;;
+    esac
   fi
-  require_manual_pause_for() {
-    # $1 = the stated variable's name (for the message)
-    [ "$manual_paused" = "true" ] && return 0
-    fail "chain '$slug': \$$1 is stated but the Diamond is not under the MANUAL pause (paused()=${p_flag:-unreadable}, pausedUntil()=${p_until:-unreadable}) -- a reconstructed figure taken from a live chain can be stale by the time the refresh pauses, and a payout in between never reaches the seeded or rebased counter. Pause the Diamond (AdminFacet.pause(), the manual pause; an auto-pause window does not count), reconstruct the figure from the paused chain, then re-run. Nothing has been sent"
-  }
+  if [ "$already_seeded" != "true" ] || [ "$already_rebased" != "true" ]; then
+    [ "$manual_paused" = "true" ] || fail "chain '$slug': a paid-side migration is DUE on this Diamond (seeded=${already_seeded:-no}, rebased=${already_rebased:-no}) but it is not under the MANUAL pause (pause slot ${raw:-unreadable}) -- the seed, total, or no-history answer for it must be established from a chain that cannot move, and a payout before the refresh pauses never reaches the counter the one-shot guard seals. Pause the Diamond (AdminFacet.pause(); a watcher auto-pause window alone does not count), establish the answer from the paused chain, then re-run. Nothing has been sent"
+    [ -n "$pause_epoch" ] || fail "chain '$slug': the pause epoch could not be read from the pause slot -- refusing to consume a migration answer whose pause cannot be pinned"
+    export "ARMED_FRESH_PAUSE_EPOCH_${pfx}=$pause_epoch"
+    info "$slug: manually paused ✓ (pause epoch $pause_epoch, pinned for the refresh)"
+  fi
   if [ "$already_seeded" = "true" ]; then
     info "$slug: P1-b armed-fresh history already seeded ✓ (migration will be skipped)"
   elif [ -n "$seed_val" ] && [ "$nohist_val" = "true" ]; then
     fail "chain '$slug': both \$$seed_var and \$$nohist_var are set — they are mutually exclusive; state ONE answer for this chain"
   elif [ -n "$seed_val" ]; then
-    require_manual_pause_for "$seed_var"
     # Same shape and cap checks as the slice-4 total below (Codex #2158 r14
     # P2): the seed is now capped on chain too, and that refusal must land
     # here, before any chain has broadcast.
@@ -575,7 +602,6 @@ for slug in $CHAINS; do
   elif [ -n "$total_val" ] && [ "$rnohist_val" = "true" ]; then
     fail "chain '$slug': both \$$total_var and \$$rnohist_var are set — they are mutually exclusive; state ONE answer for this chain"
   elif [ -n "$total_val" ]; then
-    require_manual_pause_for "$total_var"
     case "$total_val" in
       ''|*[!0-9]*) fail "chain '$slug': \$$total_var='${total_val}' is not a non-negative integer (wei)" ;;
     esac

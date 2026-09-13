@@ -104,6 +104,21 @@ contract CreditOnlyERC1155 {
     }
 }
 
+/// @dev A treasury whose receive path forces the value straight back into
+///      the sender — the holder's net native debit is then zero although the
+///      release "succeeded". The sweep must refuse (Codex #2158 r26 P2).
+contract RefundingTreasury {
+    receive() external payable {
+        new Refunder{value: msg.value}(payable(msg.sender));
+    }
+}
+
+contract Refunder {
+    constructor(address payable target) payable {
+        selfdestruct(target); // a same-transaction selfdestruct still transfers
+    }
+}
+
 /// @dev An ERC-721 whose safe transfer returns without moving ownership — a
 ///      proxy upgraded into a broken implementation. The sweep must refuse.
 contract NoopERC721 {
@@ -499,6 +514,47 @@ contract RewardCustodyFacetTest is SetupTest {
         _custody().rebaseArmedFreshPaid(1);
         _pause(); // the manual pause
         _custody().replaceRewardCustodyHolder();
+    }
+
+    /// @dev Codex #2158 r26 — the deploy tooling reads the pause library's one
+    ///      slot raw (before a refresh routes any newer getter); pin the
+    ///      decoder to the live functions across every state, including the
+    ///      manual pause that coexists with an auto-pause window, which
+    ///      `pausedUntil() == 0` would misread.
+    function test_PausableSlotDecoderMatchesTheLiveFunctions() public {
+        AdminFacet admin = AdminFacet(address(diamond));
+        address watcher = makeAddr("watcher");
+        AccessControlFacet(address(diamond)).grantRole(LibAccessControl.WATCHER_ROLE, watcher);
+
+        // The setup Diamond was paused at construction and unpaused by the
+        // helper, so a boundary is already stamped; only its later moves are
+        // asserted against block time.
+        (bool manual, uint64 until, uint64 boundary) = _decodeLive();
+        assertFalse(manual); assertEq(until, 0);
+        uint64 setupBoundary = boundary;
+
+        vm.warp(block.timestamp + 100);
+        vm.prank(watcher);
+        admin.autoPause("anomaly");
+        (manual, until, boundary) = _decodeLive();
+        assertFalse(manual, "auto-pause is not the manual flag");
+        assertEq(until, admin.pausedUntil()); assertEq(boundary, block.timestamp);
+        assertGt(boundary, setupBoundary, "the epoch moved with the auto-pause");
+
+        vm.warp(block.timestamp + 10);
+        admin.pause(); // manual pause BESIDE the still-active window
+        (manual, until, boundary) = _decodeLive();
+        assertTrue(manual, "manual flag read directly");
+        assertGt(until, 0, "the window is left intact by pause()");
+        assertEq(boundary, block.timestamp, "the epoch moved with the manual pause");
+
+        admin.unpause();
+        (manual, until,) = _decodeLive();
+        assertFalse(manual); assertEq(until, 0);
+    }
+
+    function _decodeLive() internal view returns (bool, uint64, uint64) {
+        return LibPausable.decodePausableSlot(vm.load(address(diamond), LibPausable.PAUSABLE_STORAGE_POSITION));
     }
 
     function test_Rebase_RequiresPause() public {
@@ -1094,6 +1150,21 @@ contract RewardCustodyFacetTest is SetupTest {
         vm.prank(nonAdmin);
         _expectNotAdmin(nonAdmin);
         _custody().sweepNativeFromRewardCustody(holder, 1);
+    }
+
+    /// @dev Codex #2158 r26 P2 — the native sweep verifies the holder's debit:
+    ///      a treasury that forces the value back into the holder leaves the
+    ///      holder's balance unchanged, and the sweep refuses.
+    function test_SweepNative_RefusesWhenTheTreasuryForcesTheValueBack() public {
+        address holder = _bind();
+        RefundingTreasury refunding = new RefundingTreasury();
+        AdminFacet(address(diamond)).setTreasury(address(refunding));
+        vm.deal(holder, 1 ether);
+        vm.expectRevert(
+            abi.encodeWithSelector(IVaipakamErrors.RewardCustodySourceNotDebited.selector, holder, 1 ether, 0)
+        );
+        _custody().sweepNativeFromRewardCustody(holder, 1 ether);
+        assertEq(holder.balance, 1 ether, "nothing left the holder");
     }
 
     /// @dev Codex #2158 r8 P2 — a token that is not the configured VPFI is

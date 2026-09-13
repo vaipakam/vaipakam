@@ -372,9 +372,15 @@ contract RewardCustodyFacet is DiamondAccessControl {
         address treasury = s.treasury;
         if (treasury == address(0)) revert IVaipakamErrors.RewardCustodyTreasuryUnset();
         _requireConstructedHere(s, holder);
+        uint256 holderBefore = holder.balance;
         uint256 before = treasury.balance;
         RewardCustodyHolder(holder).releaseNative(treasury, amount);
         uint256 received = treasury.balance - before;
+        // The holder's net debit must be exactly the amount (Codex #2158 r26
+        // P2): a treasury whose receive path forces value back into the
+        // holder would otherwise be reported as a completed sweep that can
+        // be repeated.
+        _requireDebited(holder, holderBefore, holder.balance, amount);
         emit RewardCustodyNativeSwept(holder, treasury, amount, received);
     }
 
