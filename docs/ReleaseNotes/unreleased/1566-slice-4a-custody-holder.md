@@ -19,7 +19,12 @@ treasury, and only to the treasury, through an audited sweep that refuses the
 configured reward token itself and reports what the treasury actually
 received beside what was requested. Native currency forced into a holder,
 which accepts none by itself, is likewise reported and recoverable to the
-treasury the same way. The sweeps act only on holders the platform itself
+treasury the same way, and so is an NFT that reached a holder: a constructed
+holder refuses a safe transfer of one, but a non-safe transfer, or delivery to
+the holder's predicted address before it exists, still lands there and nothing
+else could ever move it, so an administrator can recover a single-token NFT or
+multi-token units from any platform-constructed holder to the treasury only.
+The sweeps act only on holders the platform itself
 constructed, kept in a registry that includes every predecessor, never on an
 address that merely claims to be one. The configured reward token sent to a
 retired predecessor after its replacement is brought back into the bound
@@ -66,8 +71,17 @@ resumes, and refuses to default the figure: the operator states the
 reconstructed total or declares there is none — and the multi-chain
 pre-flight refuses, before any chain broadcasts, a stated total, a stated seed
 or an already-recorded paid counter above what the reward pool can ever pay
-out, so a later chain's refusal can never land after earlier chains have
-already completed their irreversible refreshes. On a chain whose reward role is
+out — and, where that counter can be read, the seed's own predicate, the
+counter plus the seed within the cap — so a later chain's refusal can never
+land after earlier chains have already completed their irreversible
+refreshes. Beyond those explicit checks, the multi-chain refresh now simulates
+every selected chain's whole refresh against its live state before the first
+broadcast on any chain, so every refusal the refresh can raise on chain lands
+with nothing sent, and a simulation writes nothing to the deployment record.
+The relation between a chain's bound holder and its deployment record is
+classified before any broadcast by the same rule the post-refresh step
+applies, so a record that names a different holder than the chain, with no
+ceremony record to explain it, refuses the run before anything is sent. On a chain whose reward role is
 inactive the rebase accepts only a history-free chain, meaning nothing to
 import and nothing on either the paid or the received side; a detached chain
 carrying history on either counter keeps its guard open until it is

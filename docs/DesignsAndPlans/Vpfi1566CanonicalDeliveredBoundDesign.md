@@ -5945,7 +5945,14 @@ remains possible and shows only as the unattributed remainder — review r5).**
 > `ARMED_FRESH_PAID_TOTAL_<PREFIX>` / `ARMED_FRESH_REBASE_NO_HISTORY_<PREFIX>`
 > per chain with the seed's preflight, and that preflight reads the EXISTING
 > paid counter of every not-yet-rebased chain, refusing one over the pool cap
-> before any broadcast (review r15). Simulations neither create nor erase
+> before any broadcast (review r15) and the seed's resulting counter likewise;
+> the wrapper simulates every selected chain's refresh end to end before the
+> first broadcast on any chain, a dry run of the refresh writing no artifact,
+> and classifies the bound-holder / artifact relation up front by the one rule
+> the post-refresh bind step applies (review r16). An NFT that reached a holder
+> — a non-safe ERC-721 transfer, or delivery to the predicted address before
+> construction; a constructed holder refuses safe transfers — is recoverable
+> to the treasury from any registered holder (review r16). Simulations neither create nor erase
 > ceremony records. The row invariants are NOT pinned yet: with
 > no writer in PR A they would be vacuous; they land with PR B's writers.
 

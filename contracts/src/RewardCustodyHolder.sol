@@ -3,6 +3,8 @@ pragma solidity ^0.8.29;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
+import {IERC1155} from "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
 
 /**
  * @title RewardCustodyHolder — the Diamond-owned custody address for
@@ -18,9 +20,14 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
  * **This contract keeps no ledger.** Which part of its balance is live
  * fresh funding, which is recycled, which is a stranded recovery and so on
  * is recorded in Diamond storage (`LibVaipakam.Storage.rewardCustodyRows`),
- * credited and debited only by the Diamond. The holder exposes exactly two
- * mutating surfaces — {release} for an ERC-20 and {releaseNative} for
- * native currency forced in — and only the Diamond can call either. Keeping
+ * credited and debited only by the Diamond. The holder exposes four
+ * mutating surfaces — {release} for an ERC-20, {releaseNative} for native
+ * currency forced in, and {releaseERC721} / {releaseERC1155} for an NFT
+ * that reached it (Codex #2158 r16 P2) — and only the Diamond can call any
+ * of them. The holder implements no receiver hook, so a SAFE transfer of an
+ * NFT into a constructed holder is refused by the token itself; what can
+ * still land is a non-safe ERC-721 `transferFrom`, and anything delivered
+ * to the predicted address before construction. Keeping
  * the ledger out of the holder is what makes the holder replaceable at any
  * size: a successor is deployed, the whole balance moves in one call, the
  * Diamond's pointer flips in the same transaction, and the ledger (untouched)
@@ -60,6 +67,28 @@ contract RewardCustodyHolder {
     /// @param to     The recipient.
     /// @param amount The amount moved.
     event RewardCustodyNativeReleased(address indexed to, uint256 amount);
+
+    /// @notice An ERC-721 was released by the Diamond.
+    /// @param token   The ERC-721 contract.
+    /// @param to      The recipient.
+    /// @param tokenId The token moved.
+    event RewardCustodyERC721Released(
+        address indexed token,
+        address indexed to,
+        uint256 indexed tokenId
+    );
+
+    /// @notice ERC-1155 units were released by the Diamond.
+    /// @param token  The ERC-1155 contract.
+    /// @param to     The recipient.
+    /// @param id     The token id.
+    /// @param amount How many units moved.
+    event RewardCustodyERC1155Released(
+        address indexed token,
+        address indexed to,
+        uint256 indexed id,
+        uint256 amount
+    );
 
     /// @notice The caller is not the bound Diamond.
     error RewardCustodyHolderOnlyDiamond(address caller);
@@ -111,5 +140,45 @@ contract RewardCustodyHolder {
         (bool ok,) = to.call{value: amount}("");
         if (!ok) revert RewardCustodyHolderNativeReleaseFailed(to, amount);
         emit RewardCustodyNativeReleased(to, amount);
+    }
+
+    /// @notice Move ERC-721 `tokenId` of `token` from this holder to `to`.
+    /// @dev    Diamond-gated. A holder implements no receiver hook, so a safe
+    ///         transfer into it is refused by the token; a non-safe
+    ///         `transferFrom`, or a token delivered to the predicted address
+    ///         before construction, still makes the holder its owner and
+    ///         nothing else could ever move it (Codex #2158 r16 P2). The
+    ///         Diamond routes it to the treasury through
+    ///         `sweepERC721FromRewardCustody`. The safe variant is used so an
+    ///         NFT is never pushed into a recipient that cannot hold one.
+    /// @param token   The ERC-721 contract.
+    /// @param to      The recipient. Zero is refused.
+    /// @param tokenId The token to move.
+    function releaseERC721(address token, address to, uint256 tokenId) external {
+        if (msg.sender != DIAMOND) {
+            revert RewardCustodyHolderOnlyDiamond(msg.sender);
+        }
+        if (to == address(0)) revert RewardCustodyHolderZeroAddress();
+        IERC721(token).safeTransferFrom(address(this), to, tokenId);
+        emit RewardCustodyERC721Released(token, to, tokenId);
+    }
+
+    /// @notice Move `amount` units of ERC-1155 `id` of `token` from this
+    ///         holder to `to`.
+    /// @dev    Diamond-gated. An ERC-1155 has only safe transfers, so units
+    ///         can reach a holder only at the predicted address before
+    ///         construction (Codex #2158 r16 P2). The Diamond routes them to
+    ///         the treasury through `sweepERC1155FromRewardCustody`.
+    /// @param token  The ERC-1155 contract.
+    /// @param to     The recipient. Zero is refused.
+    /// @param id     The token id.
+    /// @param amount How many units to move.
+    function releaseERC1155(address token, address to, uint256 id, uint256 amount) external {
+        if (msg.sender != DIAMOND) {
+            revert RewardCustodyHolderOnlyDiamond(msg.sender);
+        }
+        if (to == address(0)) revert RewardCustodyHolderZeroAddress();
+        IERC1155(token).safeTransferFrom(address(this), to, id, amount, "");
+        emit RewardCustodyERC1155Released(token, to, id, amount);
     }
 }

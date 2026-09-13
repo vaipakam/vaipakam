@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {IERC1155} from "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
@@ -125,6 +126,37 @@ contract RewardCustodyFacet is DiamondAccessControl {
         address indexed predecessor,
         address indexed bound,
         uint256 amount
+    );
+
+    /// @notice An ERC-721 that reached a holder was recovered to the treasury.
+    /// @param holder   The holder it was found at (bound or previous).
+    /// @param token    The ERC-721 contract.
+    /// @param treasury The configured treasury it went to.
+    /// @param tokenId  The token recovered.
+    /// @custom:event-category state-change/reward-custody
+    event RewardCustodyERC721Swept(
+        address indexed holder,
+        address indexed token,
+        address indexed treasury,
+        uint256 tokenId
+    );
+
+    /// @notice ERC-1155 units that reached a holder were recovered to the
+    ///         treasury.
+    /// @param holder    The holder they were found at (bound or previous).
+    /// @param token     The ERC-1155 contract.
+    /// @param treasury  The configured treasury they went to.
+    /// @param id        The token id.
+    /// @param requested How many were released.
+    /// @param received  How many the treasury's balance actually grew by.
+    /// @custom:event-category state-change/reward-custody
+    event RewardCustodyERC1155Swept(
+        address indexed holder,
+        address indexed token,
+        address indexed treasury,
+        uint256 id,
+        uint256 requested,
+        uint256 received
     );
 
     /// @notice Native currency forced into a holder was recovered to the
@@ -315,6 +347,68 @@ contract RewardCustodyFacet is DiamondAccessControl {
         RewardCustodyHolder(holder).releaseNative(treasury, amount);
         uint256 received = treasury.balance - before;
         emit RewardCustodyNativeSwept(holder, treasury, amount, received);
+    }
+
+    /**
+     * @notice Recover an ERC-721 that reached a holder this Diamond
+     *         constructed — the bound one or a previous one — to the
+     *         treasury.
+     * @dev    ADMIN. A holder implements no receiver hook, so a safe transfer
+     *         into a constructed holder is refused by the token; a non-safe
+     *         `transferFrom`, or a token delivered to the predicted address
+     *         before construction, still makes the holder its owner, and
+     *         nothing else could ever move it (Codex #2158 r16 P2). Outside
+     *         the attribution ledger and the VPFI snapshot like every foreign
+     *         asset; delivers to the configured treasury and to nowhere else,
+     *         and only from a holder in the constructed registry. A
+     *         conforming ERC-721 reverts unless the transfer happened, so
+     *         there is no separate receipt to measure.
+     * @param  holder  A holder this Diamond constructed (bound or previous).
+     * @param  token   The ERC-721 contract.
+     * @param  tokenId The token to recover.
+     */
+    function sweepERC721FromRewardCustody(
+        address holder,
+        address token,
+        uint256 tokenId
+    ) external onlyRole(LibAccessControl.ADMIN_ROLE) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (token == address(0)) revert IVaipakamErrors.InvalidAddress();
+        address treasury = s.treasury;
+        if (treasury == address(0)) revert IVaipakamErrors.RewardCustodyTreasuryUnset();
+        _requireConstructedHere(s, holder);
+        RewardCustodyHolder(holder).releaseERC721(token, treasury, tokenId);
+        emit RewardCustodyERC721Swept(holder, token, treasury, tokenId);
+    }
+
+    /**
+     * @notice Recover ERC-1155 units that reached a holder this Diamond
+     *         constructed — the bound one or a previous one — to the
+     *         treasury.
+     * @dev    ADMIN. Same posture as {sweepERC721FromRewardCustody}; an
+     *         ERC-1155 has only safe transfers, so units can reach a holder
+     *         only at the predicted address before construction. The event
+     *         carries the treasury's MEASURED receipt beside the request.
+     * @param  holder A holder this Diamond constructed (bound or previous).
+     * @param  token  The ERC-1155 contract.
+     * @param  id     The token id.
+     * @param  amount How many units to recover.
+     */
+    function sweepERC1155FromRewardCustody(
+        address holder,
+        address token,
+        uint256 id,
+        uint256 amount
+    ) external onlyRole(LibAccessControl.ADMIN_ROLE) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (token == address(0)) revert IVaipakamErrors.InvalidAddress();
+        address treasury = s.treasury;
+        if (treasury == address(0)) revert IVaipakamErrors.RewardCustodyTreasuryUnset();
+        _requireConstructedHere(s, holder);
+        uint256 before = IERC1155(token).balanceOf(treasury, id);
+        RewardCustodyHolder(holder).releaseERC1155(token, treasury, id, amount);
+        uint256 received = IERC1155(token).balanceOf(treasury, id) - before;
+        emit RewardCustodyERC1155Swept(holder, token, treasury, id, amount, received);
     }
 
     /**

@@ -15,6 +15,8 @@ import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
 import {LibPausable} from "../src/libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
+import {MockRentableNFT721} from "./mocks/MockRentableNFT721.sol";
+import {ERC1155Mock} from "./mocks/ERC1155Mock.sol";
 
 /// @dev A minimal ERC-20 that skims a fee on every transfer. The ONLY use is
 ///      to make the replacement ceremony's delta check fail for the right
@@ -137,6 +139,20 @@ contract RewardCustodyFacetTest is SetupTest {
         address indexed predecessor,
         address indexed bound,
         uint256 amount
+    );
+    event RewardCustodyERC721Swept(
+        address indexed holder,
+        address indexed token,
+        address indexed treasury,
+        uint256 tokenId
+    );
+    event RewardCustodyERC1155Swept(
+        address indexed holder,
+        address indexed token,
+        address indexed treasury,
+        uint256 id,
+        uint256 requested,
+        uint256 received
     );
 
     uint32 internal constant CHAIN_BASE = 8453;
@@ -870,6 +886,80 @@ contract RewardCustodyFacetTest is SetupTest {
         _custody().recoverVpfiFromPredecessor(holder, 100);
         assertEq(skim.balanceOf(holder), 100, "revert undid the move");
         assertEq(skim.balanceOf(successor), 0, "bound holder untouched");
+    }
+
+    /// @dev Codex #2158 r16 P2 — an NFT can reach a holder: a non-safe
+    ///      ERC-721 `transferFrom` (a holder has no receiver hook, so a SAFE
+    ///      transfer is refused by the token itself), or delivery to the
+    ///      predicted address before construction. Nothing else could ever
+    ///      move it, so the Diamond recovers it to the treasury — from the
+    ///      bound holder and from a predecessor, only through the registry.
+    function test_Sweep_RecoversAnERC721ThatReachedAHolder() public {
+        address holder = _bind();
+        address treasury = _treasury();
+        address alice = makeAddr("alice");
+        MockRentableNFT721 nft = new MockRentableNFT721();
+        nft.mint(alice, 1);
+        nft.mint(alice, 2);
+
+        // A safe transfer into a constructed holder is refused by the token.
+        vm.prank(alice);
+        vm.expectRevert();
+        nft.safeTransferFrom(alice, holder, 2);
+        // A non-safe one lands.
+        vm.prank(alice);
+        nft.transferFrom(alice, holder, 1);
+        assertEq(nft.ownerOf(1), holder);
+
+        vm.expectEmit(true, true, true, true, address(diamond));
+        emit RewardCustodyERC721Swept(holder, address(nft), treasury, 1);
+        _custody().sweepERC721FromRewardCustody(holder, address(nft), 1);
+        assertEq(nft.ownerOf(1), treasury, "recovered to the treasury");
+
+        // From a retired predecessor too, and only from the registry.
+        _pause();
+        _custody().replaceRewardCustodyHolder();
+        vm.prank(alice);
+        nft.transferFrom(alice, holder, 2);
+        _custody().sweepERC721FromRewardCustody(holder, address(nft), 2);
+        assertEq(nft.ownerOf(2), treasury, "also from a retired predecessor");
+        vm.expectRevert(
+            abi.encodeWithSelector(IVaipakamErrors.RewardCustodyHolderNotConstructedHere.selector, alice)
+        );
+        _custody().sweepERC721FromRewardCustody(alice, address(nft), 2);
+        vm.prank(nonAdmin);
+        _expectNotAdmin(nonAdmin);
+        _custody().sweepERC721FromRewardCustody(holder, address(nft), 2);
+    }
+
+    /// @dev Codex #2158 r16 P2 — an ERC-1155 has only safe transfers, so
+    ///      units can reach a holder only at its PREDICTED address before
+    ///      construction; the Diamond recovers them to the treasury with the
+    ///      measured receipt reported.
+    function test_Sweep_RecoversERC1155DeliveredBeforeConstruction() public {
+        address treasury = _treasury();
+        address alice = makeAddr("alice");
+        ERC1155Mock units = new ERC1155Mock();
+        address predicted = _nextHolderAddress();
+        units.mint(predicted, 7, 3); // no code there yet, so the mint lands
+        address holder = _bind();
+        assertEq(holder, predicted);
+        assertEq(units.balanceOf(holder, 7), 3, "delivered ahead of construction");
+
+        // Once constructed, the holder refuses a safe transfer.
+        units.mint(alice, 7, 1);
+        vm.prank(alice);
+        vm.expectRevert();
+        units.safeTransferFrom(alice, holder, 7, 1, "");
+
+        vm.expectEmit(true, true, true, true, address(diamond));
+        emit RewardCustodyERC1155Swept(holder, address(units), treasury, 7, 3, 3);
+        _custody().sweepERC1155FromRewardCustody(holder, address(units), 7, 3);
+        assertEq(units.balanceOf(treasury, 7), 3, "recovered to the treasury");
+        assertEq(units.balanceOf(holder, 7), 0);
+        vm.prank(nonAdmin);
+        _expectNotAdmin(nonAdmin);
+        _custody().sweepERC1155FromRewardCustody(holder, address(units), 7, 1);
     }
 
     function test_SweepNative_IsAdminOnly() public {

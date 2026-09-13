@@ -246,6 +246,15 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         console.log("Diamond: ", diamond);
         console.log("Owner:   ", currentOwner);
 
+        // #1566 slice 4 PR A (Codex #2158 r16 P2) — resolved BEFORE the first
+        // transaction, like the deploy scripts: a dry run (no `--broadcast`)
+        // writes nothing, so the orchestrator can simulate this refresh on
+        // every selected chain before broadcasting on any of them — every
+        // refusal below lands with nothing sent — and a live broadcast that
+        // asked to skip the artifact is refused here rather than after the
+        // cuts.
+        bool writesArtifact = Deployments.artifactWritesEnabled();
+
         vm.startBroadcast(ownerKey);
 
         Item[] memory items = _deployItems();
@@ -1024,6 +1033,11 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
 
         vm.stopBroadcast();
 
+        if (!writesArtifact) {
+            console.log("");
+            console.log("dry run: addresses.json NOT written (no transaction was sent)");
+            return;
+        }
         // Persist the new addresses so the deployments sync picks them up.
         for (uint256 i; i < items.length; ++i) {
             Deployments.writeFacet(items[i].key, items[i].impl);

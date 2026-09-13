@@ -129,6 +129,15 @@
 #   refuses to floor on it. A chain that reports the P1-b seed as run must
 #   expose that counter; on one that never routed the seeder the read is
 #   best-effort, because nothing but the pre-cap seeder could exceed the cap.
+#   Where the counter reads, the seeder's own predicate — the RESULTING
+#   counter, existing plus seed, within the cap — is checked as well.
+#
+#   And before the first broadcast, EVERY selected chain's refresh is
+#   simulated end to end against a fork of its live state (step [3b], never
+#   skipped): every refusal the forge script can raise on chain lands there,
+#   with nothing sent, and a dry run writes no artifact. The bound-holder /
+#   artifact relation is classified in the pre-flight too, by the same rule
+#   [4b] applies after the refresh: a divergence refuses before any broadcast.
 #
 # USAGE
 #   # gate only (safe default) — validate, print broadcast commands:
@@ -184,6 +193,85 @@ while [ $# -gt 0 ]; do
 done
 
 banner() { printf '\n\033[1;36m═══ %s ═══\033[0m\n' "$*"; }
+
+# Decimal-string arithmetic for figures past bash's 64-bit range (wei amounts
+# near 1e26), with no external dependency. Every pre-flight comparison of
+# such a figure goes through `dec_gt`, and the on-chain seeder validates a
+# SUM (Codex #2158 r16 P2), so the pre-flight needs `dec_add` too.
+dec_norm() { local v; v="$(printf '%s' "$1" | sed 's/^0*//')"; printf '%s' "${v:-0}"; }
+# TRUE when digit-only $1 > digit-only $2.
+dec_gt() {
+  local a b; a="$(dec_norm "$1")"; b="$(dec_norm "$2")"
+  [ "${#a}" -gt "${#b}" ] || { [ "${#a}" -eq "${#b}" ] && [ "$a" \> "$b" ]; }
+}
+# Prints digit-only $1 + digit-only $2.
+dec_add() {
+  local a b carry=0 out="" i j da db s
+  a="$(dec_norm "$1")"; b="$(dec_norm "$2")"
+  i=$(( ${#a} - 1 )); j=$(( ${#b} - 1 ))
+  while [ "$i" -ge 0 ] || [ "$j" -ge 0 ] || [ "$carry" -ne 0 ]; do
+    da=0; db=0
+    [ "$i" -ge 0 ] && da="${a:$i:1}"
+    [ "$j" -ge 0 ] && db="${b:$j:1}"
+    s=$(( da + db + carry ))
+    out="$(( s % 10 ))$out"; carry=$(( s / 10 ))
+    i=$(( i - 1 )); j=$(( j - 1 ))
+  done
+  printf '%s' "$out"
+}
+
+# The bound-holder / artifact relation of ONE chain (Codex #2158 r12, r16 P2)
+# — a single classification, consumed by the all-chain pre-flight (which
+# refuses a divergence BEFORE any broadcast) and by step [4b] (which acts on
+# the rest after the refresh). Prints "<state> <holder>":
+#   unrouted  the getter is not routed — a pre-slice-4 Diamond, expected
+#             before the refresh and an error after it (the RPC itself was
+#             proven live by the chain-id check, so a failed read is a revert)
+#   unbound   routed and zero: the one-shot bind is owed
+#   recorded  bound, and the artifact names the same holder
+#   pending   bound, artifact differs, a bind ceremony record awaits record()
+#   diverged  bound, artifact differs, and no record explains it
+#   malformed the getter answered something that is not an address
+holder_state() {
+  local slug="$1" diamond="$2" rpc="$3" bound recorded
+  bound="$(cast call "$diamond" 'rewardCustodyHolder()(address)' --rpc-url "$rpc" 2>/dev/null || echo '')"
+  case "$bound" in
+    '') echo "unrouted"; return 0 ;;
+    0x0000000000000000000000000000000000000000) echo "unbound $bound"; return 0 ;;
+    0x[0-9a-fA-F]*) [ "${#bound}" -eq 42 ] || { echo "malformed $bound"; return 0; } ;;
+    *) echo "malformed $bound"; return 0 ;;
+  esac
+  recorded="$(grep -oE '"rewardCustodyHolder"[[:space:]]*:[[:space:]]*"0x[0-9a-fA-F]{40}"' "deployments/$slug/addresses.json" 2>/dev/null | grep -oE '0x[0-9a-fA-F]{40}' || true)"
+  if [ "$(printf '%s' "$recorded" | tr 'A-F' 'a-f')" = "$(printf '%s' "$bound" | tr 'A-F' 'a-f')" ]; then
+    echo "recorded $bound"
+  elif [ -f "deployments/$slug/reward-custody-bind.json" ]; then
+    echo "pending $bound"
+  else
+    echo "diverged $bound"
+  fi
+}
+
+# Resolve ONE chain's per-chain answers into the process-global names the
+# forge script reads (all validated in the pre-flight). Called per chain,
+# right before each forge invocation, so a multi-chain run can never apply
+# one chain's irreversible answer to another — the whole reason these
+# variables are per chain.
+export_chain_answers() {
+  local slug="$1" pfx seed_var nohist_var role_var total_var rnohist_var
+  pfx="$(prefix_for "$slug")"
+  seed_var="ARMED_FRESH_PAID_SEED_${pfx}"; nohist_var="ARMED_FRESH_PAID_NO_HISTORY_${pfx}"
+  unset ARMED_FRESH_PAID_SEED ARMED_FRESH_PAID_NO_HISTORY
+  [ -n "${!seed_var:-}" ] && export ARMED_FRESH_PAID_SEED="${!seed_var}"
+  [ "${!nohist_var:-}" = "true" ] && export ARMED_FRESH_PAID_NO_HISTORY=true
+  role_var="REWARD_ROLE_EXPECTED_${pfx}"
+  unset REWARD_ROLE_EXPECTED
+  export REWARD_ROLE_EXPECTED="${!role_var}"
+  total_var="ARMED_FRESH_PAID_TOTAL_${pfx}"; rnohist_var="ARMED_FRESH_REBASE_NO_HISTORY_${pfx}"
+  unset ARMED_FRESH_PAID_TOTAL ARMED_FRESH_REBASE_NO_HISTORY
+  [ -n "${!total_var:-}" ] && export ARMED_FRESH_PAID_TOTAL="${!total_var}"
+  [ "${!rnohist_var:-}" = "true" ] && export ARMED_FRESH_REBASE_NO_HISTORY=true
+  return 0
+}
 info()   { printf '  · %s\n' "$*"; }
 fail()   { printf '\n\033[1;31m✗ %s\033[0m\n' "$*" >&2; exit 1; }
 
@@ -335,6 +423,32 @@ for slug in $CHAINS; do
       already_seeded="$(cast call "$diamond2" 'armedFreshPaidSeeded()(bool)' --rpc-url "$val" 2>/dev/null || echo '')"
     fi
   fi
+  # The slice-4 "already rebased" flag and the EXISTING paid counter are read
+  # here, once, because BOTH decisions below consult them: the seeder
+  # validates `existing + seed` (Codex #2158 r16 P2) and the rebase refuses to
+  # floor on a counter above the pool cap (r13 P1, pre-flighted since r15 P2)
+  # — refusals that must land HERE, before any chain has broadcast, not at a
+  # later chain's paused refresh. A pre-slice-4 Diamond does not route the
+  # flag (a revert reads as "not rebased"); the counter is the first word of
+  # the lens getter every seeded Diamond routes. Only the pre-cap seeder could
+  # have pushed the counter over the cap (ordinary payouts are charged out of
+  # the 69M pool), so a chain that reports the P1-b seed as run MUST expose
+  # its counter, while on a chain that never routed the seeder the read is
+  # best-effort.
+  already_rebased=""; live_paid=""
+  if [ -n "${diamond2:-}" ]; then
+    already_rebased="$(cast call "$diamond2" 'armedFreshPaidRebased()(bool)' --rpc-url "$val" 2>/dev/null || echo '')"
+    live_paid="$(cast call "$diamond2" 'getDeliveredFreshBound()(uint256,uint256)' --rpc-url "$val" 2>/dev/null | head -n 1 | cut -d' ' -f1 | tr -d '[:space:]' || echo '')"
+    case "$live_paid" in ''|*[!0-9]*) live_paid="" ;; esac
+  fi
+  if [ -z "$live_paid" ]; then
+    [ "$already_seeded" = "true" ] && fail "chain '$slug': the P1-b seed has run on this Diamond but its existing armed-fresh paid counter could not be read (getDeliveredFreshBound() via cast) -- the slice-4 rebase refuses a counter above the interaction pool cap, and that must be known BEFORE any chain broadcasts; fix the read and re-run"
+    info "$slug: existing armed-fresh paid counter not readable here (the seeder never ran on this Diamond, so the counter is bounded by the pool schedule)"
+  elif [ "$already_rebased" != "true" ] && dec_gt "$live_paid" "$pool_cap"; then
+    fail "chain '$slug': the EXISTING armed-fresh paid counter (${live_paid} wei) already exceeds the interaction pool cap (69,000,000 VPFI = ${pool_cap} wei) -- rebaseArmedFreshPaid refuses to floor on it, so this chain's refresh would abort paused after earlier chains had already broadcast. Only a seed placed before the seeder was capped can have produced it and this refresh carries no in-place correction for it; decide this chain's disposition before re-running (nothing has been broadcast)"
+  else
+    info "$slug: existing armed-fresh paid counter = ${live_paid} wei (within the pool cap) ✓"
+  fi
   if [ "$already_seeded" = "true" ]; then
     info "$slug: P1-b armed-fresh history already seeded ✓ (migration will be skipped)"
   elif [ -n "$seed_val" ] && [ "$nohist_val" = "true" ]; then
@@ -346,9 +460,18 @@ for slug in $CHAINS; do
     case "$seed_val" in
       ''|*[!0-9]*) fail "chain '$slug': \$$seed_var='${seed_val}' is not a non-negative integer (wei)" ;;
     esac
-    seed_norm="$(printf '%s' "$seed_val" | sed 's/^0*//')"; [ -z "$seed_norm" ] && seed_norm="0"
-    if [ "${#seed_norm}" -gt "${#pool_cap}" ] || { [ "${#seed_norm}" -eq "${#pool_cap}" ] && [ "$seed_norm" \> "$pool_cap" ]; }; then
+    if dec_gt "$seed_val" "$pool_cap"; then
       fail "chain '$slug': \$$seed_var='${seed_val}' exceeds the interaction pool cap (69,000,000 VPFI = ${pool_cap} wei) -- seedArmedFreshPaid would refuse it on chain; correct the figure"
+    fi
+    # The seeder's actual predicate is the SUM (Codex #2158 r16 P2): it refuses
+    # `existing + seed` above the cap, so two figures that pass on their own
+    # can still abort a later chain's refresh. Checked whenever the counter
+    # reads; the simulation in [3b] covers the rest.
+    if [ -n "$live_paid" ]; then
+      seed_resulting="$(dec_add "$live_paid" "$seed_val")"
+      if dec_gt "$seed_resulting" "$pool_cap"; then
+        fail "chain '$slug': the existing armed-fresh paid counter (${live_paid} wei) plus \$$seed_var (${seed_val}) = ${seed_resulting} wei exceeds the interaction pool cap (69,000,000 VPFI = ${pool_cap} wei) -- seedArmedFreshPaid refuses the RESULTING counter on chain, and that would land after earlier chains had already broadcast; correct the figure"
+      fi
     fi
     info "$slug: P1-b seed = \$$seed_var ($seed_val)"
   elif [ "$nohist_val" = "true" ]; then
@@ -364,38 +487,6 @@ for slug in $CHAINS; do
   rnohist_var="ARMED_FRESH_REBASE_NO_HISTORY_${pfx}"
   total_val="${!total_var:-}"
   rnohist_val="${!rnohist_var:-}"
-  already_rebased=""
-  if command -v cast >/dev/null 2>&1 && [ -n "${diamond2:-}" ]; then
-    already_rebased="$(cast call "$diamond2" 'armedFreshPaidRebased()(bool)' --rpc-url "$val" 2>/dev/null || echo '')"
-  fi
-  # The rebase also refuses an EXISTING paid counter above the pool cap (the
-  # guard #2158 r13 left open for a chain seeded before the seeder was
-  # capped), and that refusal must land HERE too, before any chain has
-  # broadcast (Codex #2158 r15 P2) — not at a later chain's paused rebase
-  # after earlier chains completed their irreversible refreshes. Only the
-  # pre-cap seeder could have pushed the counter over the cap (ordinary
-  # payouts are charged out of the 69M pool), so a chain that reports the
-  # P1-b seed as run MUST expose its counter to this preflight, while on a
-  # chain that never routed the seeder the read is best-effort. The counter
-  # is the first word of the lens getter every seeded Diamond routes.
-  if [ "$already_rebased" != "true" ] && [ -n "${diamond2:-}" ]; then
-    live_paid="$(cast call "$diamond2" 'getDeliveredFreshBound()(uint256,uint256)' --rpc-url "$val" 2>/dev/null | head -n 1 | cut -d' ' -f1 | tr -d '[:space:]' || echo '')"
-    case "$live_paid" in
-      ''|*[!0-9]*)
-        if [ "$already_seeded" = "true" ]; then
-          fail "chain '$slug': the P1-b seed has run on this Diamond but its existing armed-fresh paid counter could not be read (getDeliveredFreshBound() via cast) -- the slice-4 rebase refuses a counter above the interaction pool cap, and that must be known BEFORE any chain broadcasts; fix the read and re-run"
-        fi
-        info "$slug: existing armed-fresh paid counter not readable here (the seeder never ran on this Diamond, so the counter is bounded by the pool schedule)"
-        ;;
-      *)
-        live_norm="$(printf '%s' "$live_paid" | sed 's/^0*//')"; [ -z "$live_norm" ] && live_norm="0"
-        if [ "${#live_norm}" -gt "${#pool_cap}" ] || { [ "${#live_norm}" -eq "${#pool_cap}" ] && [ "$live_norm" \> "$pool_cap" ]; }; then
-          fail "chain '$slug': the EXISTING armed-fresh paid counter (${live_paid} wei) already exceeds the interaction pool cap (69,000,000 VPFI = ${pool_cap} wei) -- rebaseArmedFreshPaid refuses to floor on it, so this chain's refresh would abort paused after earlier chains had already broadcast. Only a seed placed before the seeder was capped can have produced it and this refresh carries no in-place correction for it; decide this chain's disposition before re-running (nothing has been broadcast)"
-        fi
-        info "$slug: existing armed-fresh paid counter = ${live_paid} wei (within the pool cap) ✓"
-        ;;
-    esac
-  fi
   if [ "$already_rebased" = "true" ]; then
     info "$slug: slice-4 paid-side rebase already run ✓ (migration will be skipped)"
   elif [ -n "$total_val" ] && [ "$rnohist_val" = "true" ]; then
@@ -408,16 +499,15 @@ for slug in $CHAINS; do
     # maximum passes the shape check but cannot be decoded by the forge
     # script, and in a multi-chain run that abort would land AFTER earlier
     # chains had already completed their irreversible refreshes.
-    total_norm="$(printf '%s' "$total_val" | sed 's/^0*//')"; [ -z "$total_norm" ] && total_norm="0"
     uint_max="115792089237316195423570985008687907853269984665640564039457584007913129639935"
-    if [ "${#total_norm}" -gt 78 ] || { [ "${#total_norm}" -eq 78 ] && [ "$total_norm" \> "$uint_max" ]; }; then
+    if dec_gt "$total_val" "$uint_max"; then
       fail "chain '$slug': \$$total_var='${total_val}' exceeds uint256 -- the forge script could not decode it, after earlier chains had already broadcast"
     fi
     # And within the interaction pool's lifetime cap (Codex #2158 r12 P2):
     # the facet refuses a larger total (nothing honest can have paid out
     # more than can ever be rewarded), and that refusal must land HERE,
     # before any chain has broadcast, not at a later chain's rebase.
-    if [ "${#total_norm}" -gt "${#pool_cap}" ] || { [ "${#total_norm}" -eq "${#pool_cap}" ] && [ "$total_norm" \> "$pool_cap" ]; }; then
+    if dec_gt "$total_val" "$pool_cap"; then
       fail "chain '$slug': \$$total_var='${total_val}' exceeds the interaction pool cap (69,000,000 VPFI = ${pool_cap} wei) -- the rebase would refuse it on chain; correct the reconstruction"
     fi
     info "$slug: slice-4 rebase total = \$$total_var ($total_val)"
@@ -425,6 +515,24 @@ for slug in $CHAINS; do
     info "$slug: slice-4 rebase total = 0 (\$$rnohist_var declares nothing to import)"
   else
     fail "chain '$slug': the slice-4 paid-side rebase has NOT run and is irreversible. Set \$$total_var to the reconstructed absolute fresh-paid total for this chain (every vintage; the deduplicated sum of payouts, expiry/forfeit absorptions and the fresh portions of non-recovery remittance and compensation dispatches), or \$$rnohist_var=true to declare there is nothing to import. Refusing to broadcast an accounting migration this run cannot state an answer for."
+  fi
+  # #1566 slice 4 PR A (Codex #2158 r16 P2) — the bound-holder / artifact
+  # relation is classified HERE, before any broadcast, by the same rule step
+  # [4b] applies after the refresh: a chain whose Diamond already names a
+  # holder the artifact does not record, with no bind ceremony record to
+  # explain it (a staged bind executed from another checkout, say), would
+  # otherwise be refused only after this chain's cuts and migrations — and
+  # earlier chains' — had already landed.
+  if [ -n "${diamond2:-}" ]; then
+    read -r holder_st holder_addr <<<"$(holder_state "$slug" "$diamond2" "$val")"
+    case "$holder_st" in
+      diverged)  fail "chain '$slug': the Diamond reports reward custody holder $holder_addr but the artifact records a different (or no) address and no bind ceremony record is pending -- reconcile deployments/$slug/addresses.json (.rewardCustodyHolder) by hand BEFORE any broadcast; nothing has been sent" ;;
+      malformed) fail "chain '$slug': rewardCustodyHolder() returned a malformed answer '$holder_addr' -- refusing to proceed" ;;
+      pending)   info "$slug: reward custody holder $holder_addr is bound and its bind ceremony record is pending; [4b] reconciles the artifact after the refresh" ;;
+      recorded)  info "$slug: reward custody holder $holder_addr bound and recorded ✓" ;;
+      unbound)   info "$slug: reward custody holder unbound; [4b] binds it after the refresh" ;;
+      unrouted)  info "$slug: reward custody getter not routed yet (pre-slice-4 Diamond); [4b] binds after the refresh" ;;
+    esac
   fi
 done
 if [ "$BROADCAST" -eq 1 ]; then
@@ -461,6 +569,27 @@ if [ "$SKIP_REGRESSION" -eq 0 ]; then
 else
   info "[3] regression skipped (--skip-regression)"
 fi
+
+# ── [3b] Simulate every selected chain's refresh — no broadcast ──────────────
+# The root of a whole family of pre-flight findings (Codex #2158 r8, r12,
+# r14, r15, r16): every refusal RefreshAllFacetsInPlace can raise on chain —
+# the seed's and rebase's caps and sums, the role declaration, the owner key,
+# the facet cuts themselves — is exercised HERE, per chain, against a fork of
+# its live state, before the first broadcast on any chain. The bash checks
+# above stay as early, explicit messages for the common mistakes; this pass
+# is the exhaustive one and re-implements no on-chain rule. A dry run writes
+# nothing: the script persists its artifact only when
+# `Deployments.artifactWritesEnabled()` reports a broadcast under way. It is
+# never skipped — an irreversible multi-chain rollout always simulates first.
+banner "[3b] simulate RefreshAllFacetsInPlace on every selected chain (no broadcast)"
+for slug in $CHAINS; do
+  var="$(rpc_var_for "$slug")"
+  export_chain_answers "$slug"
+  info "[3b] $slug — simulating refresh()"
+  "${NICE[@]}" forge script script/RefreshAllFacetsInPlace.s.sol --sig "refresh()" \
+    --rpc-url "${!var}" \
+    || fail "$slug: RefreshAllFacetsInPlace would REVERT on this chain (see the trace above) -- nothing has been broadcast on any chain"
+done
 
 banner "GATE PASSED"
 
@@ -566,26 +695,10 @@ fi
 for slug in $CHAINS; do
   var="$(rpc_var_for "$slug")"
   rpc="${!var}"
-  # Resolve THIS chain's P1-b answer into the process-global names the forge
-  # script reads (validated in the pre-flight above). Scoped inside the loop so
-  # a multi-chain run can never apply one chain's answer to another — the whole
-  # reason these variables are per chain.
-  pfx="$(prefix_for "$slug")"
-  seed_var="ARMED_FRESH_PAID_SEED_${pfx}"
-  nohist_var="ARMED_FRESH_PAID_NO_HISTORY_${pfx}"
-  unset ARMED_FRESH_PAID_SEED ARMED_FRESH_PAID_NO_HISTORY
-  [ -n "${!seed_var:-}" ] && export ARMED_FRESH_PAID_SEED="${!seed_var}"
-  [ "${!nohist_var:-}" = "true" ] && export ARMED_FRESH_PAID_NO_HISTORY=true
-  # Same per-chain scoping for the reward-role declaration (validated above).
-  role_var="REWARD_ROLE_EXPECTED_${pfx}"
-  unset REWARD_ROLE_EXPECTED
-  export REWARD_ROLE_EXPECTED="${!role_var}"
-  # Same per-chain scoping for the slice-4 paid-side rebase (validated above).
-  total_var="ARMED_FRESH_PAID_TOTAL_${pfx}"
-  rnohist_var="ARMED_FRESH_REBASE_NO_HISTORY_${pfx}"
-  unset ARMED_FRESH_PAID_TOTAL ARMED_FRESH_REBASE_NO_HISTORY
-  [ -n "${!total_var:-}" ] && export ARMED_FRESH_PAID_TOTAL="${!total_var}"
-  [ "${!rnohist_var:-}" = "true" ] && export ARMED_FRESH_REBASE_NO_HISTORY=true
+  # THIS chain's answers (seed, role, rebase — all validated in the pre-flight
+  # and exercised by the simulation in [3b]) into the process-global names the
+  # forge script reads; scoped per chain inside the loop.
+  export_chain_answers "$slug"
   banner "[4] $slug — RefreshAllFacetsInPlace (diamond cuts)"
   "${NICE[@]}" forge script script/RefreshAllFacetsInPlace.s.sol --sig "refresh()" \
     --rpc-url "$rpc" --broadcast --slow \
@@ -620,10 +733,17 @@ for slug in $CHAINS; do
   dfile3="deployments/$slug/addresses.json"
   diamond3="$(grep -oE '"diamond"[[:space:]]*:[[:space:]]*"0x[0-9a-fA-F]{40}"' "$dfile3" 2>/dev/null | grep -oE '0x[0-9a-fA-F]{40}')"
   [ -n "$diamond3" ] || fail "$slug: could not read the Diamond address from $dfile3"
-  bound_holder="$(cast call "$diamond3" 'rewardCustodyHolder()(address)' --rpc-url "$rpc" 2>/dev/null)" \
-    || fail "$slug: rewardCustodyHolder() could not be read after the refresh (is RewardCustodyFacet routed? is the RPC up?) -- refusing to guess whether a holder is bound"
-  case "$bound_holder" in
-    0x0000000000000000000000000000000000000000)
+  # One classification for the holder / artifact relation (Codex #2158 r16
+  # P2) — the same `holder_state` the pre-flight ran before any broadcast.
+  read -r holder_st bound_holder <<<"$(holder_state "$slug" "$diamond3" "$rpc")"
+  case "$holder_st" in
+    unrouted)
+      fail "$slug: rewardCustodyHolder() could not be read after the refresh (is RewardCustodyFacet routed? is the RPC up?) -- refusing to guess whether a holder is bound"
+      ;;
+    malformed)
+      fail "$slug: rewardCustodyHolder() returned a malformed answer '$bound_holder' -- refusing to proceed"
+      ;;
+    unbound)
       banner "[4b] $slug — DeployRewardCustodyHolder (one-shot initial bind)"
       "${NICE[@]}" forge script script/DeployRewardCustodyHolder.s.sol --sig "run()" \
         --rpc-url "$rpc" --broadcast --slow \
@@ -637,28 +757,23 @@ for slug in $CHAINS; do
         || fail "$slug: DeployRewardCustodyHolder record() failed -- the bind broadcast but .rewardCustodyHolder was NOT reconciled; run --sig \"record()\" again before exporting"
       info "[4b] $slug — reward custody holder bound and recorded ✓"
       ;;
-    0x[0-9a-fA-F]*)
-      [ "${#bound_holder}" -eq 42 ] || fail "$slug: rewardCustodyHolder() returned a malformed address '$bound_holder' -- refusing to proceed"
-      # Already bound on chain — but is the ARTIFACT in step (Codex #2158 r12
-      # P2)? An earlier run interrupted between the mined bind and record()
-      # leaves a pending ceremony record and a stale or missing
+    recorded)
+      info "[4b] $slug — reward custody holder already bound and recorded ($bound_holder) ✓"
+      ;;
+    pending)
+      # Already bound on chain, but the ARTIFACT is not in step (Codex #2158
+      # r12 P2): an earlier run interrupted between the mined bind and
+      # record() left a pending ceremony record and a stale or missing
       # .rewardCustodyHolder; continuing would let [6] export the stale
       # artifact and every later ceremony fail its agreement check.
-      recorded_holder="$(grep -oE '"rewardCustodyHolder"[[:space:]]*:[[:space:]]*"0x[0-9a-fA-F]{40}"' "$dfile3" 2>/dev/null | grep -oE '0x[0-9a-fA-F]{40}' || true)"
-      if [ "$(printf '%s' "$recorded_holder" | tr 'A-F' 'a-f')" = "$(printf '%s' "$bound_holder" | tr 'A-F' 'a-f')" ]; then
-        info "[4b] $slug — reward custody holder already bound and recorded ($bound_holder) ✓"
-      elif [ -f "deployments/$slug/reward-custody-bind.json" ]; then
-        info "[4b] $slug — holder bound on chain but a bind ceremony record is still pending; reconciling the artifact now"
-        "${NICE[@]}" forge script script/DeployRewardCustodyHolder.s.sol --sig "record()" \
-          --rpc-url "$rpc" \
-          || fail "$slug: DeployRewardCustodyHolder record() failed -- .rewardCustodyHolder is NOT reconciled with the chain; fix before exporting"
-        info "[4b] $slug — reward custody holder recorded ✓"
-      else
-        fail "$slug: the Diamond reports holder $bound_holder but the artifact records '${recorded_holder:-<unset>}' and no bind ceremony record is pending -- reconcile .rewardCustodyHolder by hand before continuing"
-      fi
+      info "[4b] $slug — holder bound on chain but a bind ceremony record is still pending; reconciling the artifact now"
+      "${NICE[@]}" forge script script/DeployRewardCustodyHolder.s.sol --sig "record()" \
+        --rpc-url "$rpc" \
+        || fail "$slug: DeployRewardCustodyHolder record() failed -- .rewardCustodyHolder is NOT reconciled with the chain; fix before exporting"
+      info "[4b] $slug — reward custody holder recorded ✓"
       ;;
-    *)
-      fail "$slug: rewardCustodyHolder() returned an unexpected answer '$bound_holder' -- refusing to proceed"
+    diverged)
+      fail "$slug: the Diamond reports holder $bound_holder but the artifact records a different (or no) address and no bind ceremony record is pending -- reconcile .rewardCustodyHolder by hand before continuing (the all-chain pre-flight refuses this before any broadcast; reaching it here means the state changed mid-run)"
       ;;
   esac
 
