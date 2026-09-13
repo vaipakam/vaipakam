@@ -183,6 +183,37 @@ describe('worker configs preserve dashboard vars at the source (#1995)', () => {
       );
     });
 
+    it('does not treat an alternate config as a new Worker to be listed', () => {
+      // `configs/wrangler.agent.jsonc` is a perfectly valid alternate config.
+      // Deriving the Worker identity from its parent directory reported the
+      // Worker `configs` and told the reader to add it to
+      // VAR_CARRYING_WORKERS — which the later pass would then fail on, for
+      // want of `configs/wrangler.jsonc` (#2171 r6). A false report on correct
+      // input, with an unfollowable remedy.
+      withSeeded(
+        'configs/wrangler.agent.jsonc',
+        `{"name": "vaipakam-agent", "keep_vars": true, "vars": {"A": "1"}}\n`,
+        (r) => expect(r.ok, 'a valid alternate config was reported as a new Worker').toBe(true),
+      );
+    });
+
+    it('counts exempt Pages configs apart from the ones it asserted', () => {
+      // The single total claimed every config "declares preservation" while
+      // including the Pages ones, which declare nothing and cannot. An
+      // operator reading the line for verification was told something untrue
+      // about a file the check never asserted (#2171 r6).
+      withSeeded(
+        'apps/site/wrangler.jsonc',
+        `{"name": "vaipakam-site", "pages_build_output_dir": "./dist"}\n`,
+        (r) => {
+          expect(r.ok, r.out).toBe(true);
+          expect(r.out).toContain('5 wrangler config(s) declare preservation');
+          expect(r.out).toContain('1 Pages config(s) are exempt');
+          expect(r.out).toContain('apps/site/wrangler.jsonc');
+        },
+      );
+    });
+
     it('exempts a Pages config that declares vars — the field Pages DOES support', () => {
       // The r3 exemption lived in one pass and not the other, so the earlier
       // pass rejected a valid Pages project for lacking a field wrangler

@@ -272,6 +272,9 @@ const configs = [];
 walkConfigs('', configs);
 configs.sort();
 
+/** Configs the deployment tool refuses the declaration for — counted apart. */
+const exempt = [];
+
 if (configs.length === 0) {
   problems.push(
     'no wrangler config was found anywhere in the tree, which cannot be right ' +
@@ -314,18 +317,33 @@ for (const rel of configs) {
   // Requiring it there would make CI and wrangler demand opposite things, with
   // no version of the file that satisfies both (#2171 r3, P2). Pages does not
   // use the Worker deploy behaviour this guard exists for.
-  if (typeof cfg.pages_build_output_dir === 'string') continue;
-  // The list's only remaining job, carried here so it cannot drift from the
-  // rule beside it: a Worker that has values to lose should be in
-  // VAR_CARRYING_WORKERS, or its per-Worker mutation fixture never runs.
-  const dir = rel.replace(/\/[^/]+$/, '');
+  if (typeof cfg.pages_build_output_dir === 'string') {
+    exempt.push(rel);
+    continue;
+  }
+  // The list's only remaining job: a Worker that has values to lose should be
+  // in VAR_CARRYING_WORKERS, or its per-Worker mutation fixture never runs.
+  //
+  // SCOPED TO A CANONICAL CONFIG, and that is load-bearing rather than tidy.
+  // Entries in `VAR_CARRYING_WORKERS` are DIRECTORIES, and the pass below
+  // reads `<entry>/wrangler.jsonc` for each. Deriving the entry from any
+  // config's parent directory therefore produced an instruction that could not
+  // be followed: `configs/wrangler.agent.jsonc` — a perfectly valid alternate
+  // config declaring both `vars` and `keep_vars` — was reported as the Worker
+  // `configs`, and adding `configs` to the list would then fail the later pass
+  // for want of `configs/wrangler.jsonc` (#2171 r6). A false report on correct
+  // input, with a remedy that makes it worse, is the exact failure this whole
+  // change argues against, so the advisory now fires only where its remedy is
+  // guaranteed to work: a config that IS `<dir>/wrangler.json(c)`.
+  const canonical = /^(.+)\/wrangler\.jsonc?$/.exec(rel);
   if (
+    canonical &&
     typeof cfg.vars === 'object' &&
     cfg.vars !== null &&
-    !VAR_CARRYING_WORKERS.includes(dir)
+    !VAR_CARRYING_WORKERS.includes(canonical[1])
   ) {
     problems.push(
-      `${rel} declares \`vars\` but \`${dir}\` is not in ` +
+      `${rel} declares \`vars\` but \`${canonical[1]}\` is not in ` +
         `VAR_CARRYING_WORKERS.\n    The preservation rule already covers it; ` +
         `what is missing is the per-Worker mutation\n    fixture that proves ` +
         `the check fails when this config loses the key. Add the directory.`,
@@ -397,8 +415,18 @@ if (problems.length > 0) {
   process.exit(1);
 }
 
+// ASSERTED AND EXEMPT ARE COUNTED APART. The single total said every config
+// "declares preservation" while silently including the Pages ones, which
+// declare nothing and cannot — an operator reading the line for verification
+// would have been told something untrue about a file this check never asserted
+// (#2171 r6). A count is a claim.
 console.log(
-  `[check-keep-vars] OK — ${configs.length} wrangler config(s) declare ` +
-    `preservation; ${VAR_CARRYING_WORKERS.length} of the Workers they cover ` +
-    `carry dashboard-managed vars today.`,
+  `[check-keep-vars] OK — ${configs.length - exempt.length} wrangler ` +
+    `config(s) declare preservation` +
+    (exempt.length
+      ? `, and ${exempt.length} Pages config(s) are exempt because the tool ` +
+        `refuses the key there (${exempt.join(', ')})`
+      : '') +
+    `; ${VAR_CARRYING_WORKERS.length} of the Workers they cover carry ` +
+    `dashboard-managed vars today.`,
 );
