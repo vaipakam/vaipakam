@@ -43,8 +43,14 @@ to retire, moved from shell text into configuration files.
 So the classification is gone. **Every deployment configuration in the tree
 declares preservation**, whatever it names and wherever it sits, identified by
 the tool's own filename convention rather than by anything about its contents.
-Named environments are required to declare it too, since whether the top-level
-setting carries into them is not something the check can establish. Two
+A named environment is deliberately NOT required to declare it separately —
+an intermediate draft did require that, reasoning that inheritance could not be
+established from here, and review pointed out the setting is top-level-only:
+the tool rejects it inside an environment and reads the top-level value after
+the environment is selected. Demanding it there would have forced an
+unsupported field and a validation warning on every deployment. Not being able
+to establish something is a reason to go and find out, not a licence to require
+the cautious-looking thing. Two
 Workers that hold no operator-managed values today declare it as well: that is
 the point rather than an oversight — classifying them was the thing that kept
 going wrong, and one that later gains a value is already safe. What it costs

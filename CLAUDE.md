@@ -643,9 +643,16 @@ sixth Worker is in no list. Answering those needs wrangler's CLI-and-config
 merge semantics — the same unbounded inference, moved from shell text into
 JSON. **Do not reintroduce a scoping predicate here.** A config is identified
 by wrangler's own filename convention (`wrangler*.json`/`.jsonc`/`.toml`),
-which is a test on a string; named environments are asserted rather than
-assumed to inherit; a TOML config is refused with an instruction rather than
-parsed. Two things it does not cover are stated in the script's
+which is a test on a string. A named environment is NOT separately
+required to declare it — `keep_vars` is top-level-only, wrangler rejects it
+inside an `env.<name>` block, and the top-level value is what a `--env` deploy
+reads (an intermediate revision required it there and was wrong). A **Pages**
+config is exempt, keyed on `pages_build_output_dir`: wrangler refuses
+`keep_vars` outright for Pages, so requiring it would leave no version of the
+file that satisfies both. A TOML config is refused with an instruction rather
+than parsed. Directories are skipped by exact path where the name is ambiguous
+(`contracts/lib` is vendored, `packages/lib` is ours) and by basename only for
+unambiguously generated ones. Two things it does not cover are stated in the script's
 header: a config checked in under a non-`wrangler*` name, and — the one real
 REDUCTION rather than an inherited gap — a config **generated or rewritten at
 deploy time**, which the retired scanner refused by falling back to judging the
