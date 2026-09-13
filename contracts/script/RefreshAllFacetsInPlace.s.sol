@@ -246,13 +246,15 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
         console.log("Diamond: ", diamond);
         console.log("Owner:   ", currentOwner);
 
-        // #1566 slice 4 PR A (Codex #2158 r16 P2) — resolved BEFORE the first
-        // transaction, like the deploy scripts: a dry run (no `--broadcast`)
-        // writes nothing, so the orchestrator can simulate this refresh on
-        // every selected chain before broadcasting on any of them — every
-        // refusal below lands with nothing sent — and a live broadcast that
-        // asked to skip the artifact is refused here rather than after the
-        // cuts.
+        // #1566 slice 4 PR A (Codex #2158 r16 P2, r19 P1) — resolved BEFORE
+        // the first transaction, like the deploy scripts: a dry run (no
+        // `--broadcast`) writes nothing, so the orchestrator can simulate this
+        // refresh on every selected chain before broadcasting on any of them,
+        // and a live broadcast that asked to skip the artifact is refused
+        // here rather than after the cuts. The writes the upgrade probes make
+        // mid-run are covered too: every artifact write goes through ONE
+        // dry-run gate inside `Deployments` itself, so this flag only shapes
+        // the messages below.
         bool writesArtifact = Deployments.artifactWritesEnabled();
 
         vm.startBroadcast(ownerKey);

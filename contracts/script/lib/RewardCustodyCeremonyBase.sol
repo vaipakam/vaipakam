@@ -178,7 +178,13 @@ abstract contract RewardCustodyCeremonyBase is Script {
             console.log("writes are off for this run (forge test / DEPLOY_SKIP_ARTIFACTS) -- .rewardCustodyHolder NOT rewritten; the artifact is STALE until it is.");
             return bound;
         }
+        // A plain `forge script --sig "record()"` runs in forge's dry-run
+        // context, and `Deployments` refuses every artifact write in that
+        // context (Codex #2158 r19 P1) — this step is the one deliberate
+        // exception, declared for exactly this write and cleared after it.
+        Deployments.allowNonBroadcastWrites(true);
         Deployments.writeRewardCustodyHolder(bound);
+        Deployments.allowNonBroadcastWrites(false);
         console.log("Recorded .rewardCustodyHolder =", bound, "in", Deployments.path());
     }
 }

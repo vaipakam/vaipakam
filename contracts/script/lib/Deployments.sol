@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {Vm, VmSafe} from "forge-std/Vm.sol";
+import {console} from "forge-std/console.sol";
 
 /**
  * @title Deployments
@@ -667,24 +668,55 @@ library Deployments {
         );
     }
 
+    /// @dev Set by a NON-broadcasting step that is nonetheless a real run —
+    ///      `record()` reconciling the artifact from live chain state — so
+    ///      the dry-run gate below lets its writes through. Nothing else sets
+    ///      it; callers clear it again right after their write.
+    string private constant NONBROADCAST_WRITE_ENV = "VAIPAKAM_NONBROADCAST_ARTIFACT_WRITE";
+
+    function allowNonBroadcastWrites(bool on) internal {
+        CHEATS.setEnv(NONBROADCAST_WRITE_ENV, on ? "true" : "false");
+    }
+
+    /// @dev ONE gate for every artifact write (#1566 slice 4 PR A, Codex #2158
+    ///      r16 P2, r19 P1): a forge dry run (`forge script` without
+    ///      `--broadcast`) writes NOTHING, whichever helper reached here.
+    ///      Foundry evaluates the script and its filesystem cheatcodes before
+    ///      it submits anything, so a write from a dry run records addresses
+    ///      that were never broadcast — an upgrade probe's implementation, a
+    ///      simulated facet. Scripts that skip their writes themselves still
+    ///      do; this is the gate a forgotten one cannot slip past. Checked
+    ///      before the publication marker so a dry run never demands a live
+    ///      publication token either.
+    function _dryRunSkips(string memory jsonKey) private view returns (bool) {
+        if (!CHEATS.isContext(VmSafe.ForgeContext.ScriptDryRun)) return false;
+        if (CHEATS.envOr(NONBROADCAST_WRITE_ENV, false)) return false;
+        console.log("Deployments: dry run - NOT writing", jsonKey);
+        return true;
+    }
+
     function _writeAddr(string memory jsonKey, address a) private {
+        if (_dryRunSkips(jsonKey)) return;
         requireMarkedPublication(jsonKey);
         _ensureFile();
         CHEATS.writeJson(CHEATS.toString(a), path(), jsonKey);
     }
 
     function _writeUint(string memory jsonKey, uint256 v) private {
+        if (_dryRunSkips(jsonKey)) return;
         requireMarkedPublication(jsonKey);
         _ensureFile();
         CHEATS.writeJson(CHEATS.toString(v), path(), jsonKey);
     }
 
     function _writeBool(string memory jsonKey, bool v) private {
+        if (_dryRunSkips(jsonKey)) return;
         _ensureFile();
         CHEATS.writeJson(v ? "true" : "false", path(), jsonKey);
     }
 
     function _writeString(string memory jsonKey, string memory v) private {
+        if (_dryRunSkips(jsonKey)) return;
         _ensureFile();
         // Manually quote — `vm.writeJson(value, path, key)` accepts a
         // raw JSON fragment. For strings we must wrap in double quotes

@@ -134,8 +134,17 @@
 #
 #   And before the first broadcast, EVERY selected chain's refresh is
 #   simulated end to end against a fork of its live state (step [3b], never
-#   skipped): every refusal the forge script can raise on chain lands there,
-#   with nothing sent, and a dry run writes no artifact. The bound-holder /
+#   skipped): each refusal the forge script can raise is exercised at that
+#   chain's head AT SIMULATION TIME, with nothing sent, and a dry run writes
+#   no artifact (one gate inside `Deployments` covers every write). What the
+#   pass cannot cover is state that changes between the simulation and a
+#   later chain's broadcast — an ownership handover, a role, a holder, a
+#   proxy generation. Forge re-simulates each chain immediately before
+#   sending on it, so such a change refuses BEFORE that chain sends anything;
+#   but chains broadcast earlier in the same run are complete by then, and
+#   the run then names them and prints the `--chains` rerun for the rest.
+#   It is a per-chain validation at a point in time, not a cross-chain
+#   guarantee. The bound-holder /
 #   artifact relation is classified in the pre-flight too, by the same rule
 #   [4b] applies after the refresh: a divergence refuses before any broadcast,
 #   and a pending bind record is validated by the ceremony script's own
@@ -602,15 +611,23 @@ fi
 
 # ── [3b] Simulate every selected chain's refresh — no broadcast ──────────────
 # The root of a whole family of pre-flight findings (Codex #2158 r8, r12,
-# r14, r15, r16): every refusal RefreshAllFacetsInPlace can raise on chain —
+# r14, r15, r16): each refusal RefreshAllFacetsInPlace can raise on chain —
 # the seed's and rebase's caps and sums, the role declaration, the owner key,
 # the facet cuts themselves — is exercised HERE, per chain, against a fork of
-# its live state, before the first broadcast on any chain. The bash checks
-# above stay as early, explicit messages for the common mistakes; this pass
-# is the exhaustive one and re-implements no on-chain rule. A dry run writes
-# nothing: the script persists its artifact only when
-# `Deployments.artifactWritesEnabled()` reports a broadcast under way. It is
-# never skipped — an irreversible multi-chain rollout always simulates first.
+# its live state AT SIMULATION TIME, before the first broadcast on any chain.
+# The bash checks above stay as early, explicit messages for the common
+# mistakes; this pass re-implements no on-chain rule. A dry run writes
+# nothing: every artifact write goes through one dry-run gate inside
+# `Deployments` (r19 P1). It is never skipped — an irreversible multi-chain
+# rollout always simulates first.
+#
+# What it is NOT (Codex #2158 r19 P2): a cross-chain guarantee. State that
+# changes between this pass and a later chain's broadcast — an ownership
+# handover, a role, a holder, a proxy generation — can still refuse that
+# chain. Forge re-simulates each chain immediately before sending on it, so
+# such a change refuses before THAT chain sends anything; the chains already
+# broadcast in this run are complete by then, and the [4] failure names them
+# and the `--chains` rerun for the remaining ones.
 banner "[3b] simulate RefreshAllFacetsInPlace on every selected chain (no broadcast)"
 for slug in $CHAINS; do
   var="$(rpc_var_for "$slug")"
@@ -620,6 +637,7 @@ for slug in $CHAINS; do
     --rpc-url "${!var}" \
     || fail "$slug: RefreshAllFacetsInPlace would REVERT on this chain (see the trace above) -- nothing has been broadcast on any chain"
 done
+info "[3b] every selected chain's refresh simulated at its current head; state that changes before a later chain's broadcast is re-checked by forge right before that chain sends (see the header)"
 
 banner "GATE PASSED"
 
@@ -729,10 +747,16 @@ for slug in $CHAINS; do
   # and exercised by the simulation in [3b]) into the process-global names the
   # forge script reads; scoped per chain inside the loop.
   export_chain_answers "$slug"
+  # The chains from this one onward, for the rerun hint below (Codex #2158
+  # r19 P2): a refusal HERE can only mean state changed since [3b] (forge
+  # re-simulates immediately before sending, so this chain sent nothing),
+  # and the chains before it in this run are complete.
+  remaining=""; hit=0
+  for c in $CHAINS; do [ "$c" = "$slug" ] && hit=1; [ "$hit" -eq 1 ] && remaining="${remaining:+$remaining }$c"; done
   banner "[4] $slug — RefreshAllFacetsInPlace (diamond cuts)"
   "${NICE[@]}" forge script script/RefreshAllFacetsInPlace.s.sol --sig "refresh()" \
     --rpc-url "$rpc" --broadcast --slow \
-    || fail "$slug: RefreshAllFacetsInPlace broadcast failed"
+    || fail "$slug: RefreshAllFacetsInPlace refused or failed on this chain. Forge re-simulated it immediately before sending, so if its state changed since [3b] (ownership, a role, a holder, a proxy generation) nothing was sent HERE; chains already complete in this run: [${done_chains:-none}]. Rerun for the rest with: --chains \"$remaining\""
 
   # #1448 r14 — printed HERE, not once at the end. The cut has already
   # landed: this chain's live Diamond now carries the new selector over a
@@ -819,6 +843,7 @@ for slug in $CHAINS; do
     info "[5] $slug — vault upgrade skipped (--skip-vault)"
   fi
   info "$slug: in-place redeploy complete."
+  done_chains="${done_chains:+$done_chains }$slug"
 done
 
 # ── [6] Optional: re-export deployments + ABIs (once) ─────────────────────────

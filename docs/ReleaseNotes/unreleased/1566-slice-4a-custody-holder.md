@@ -78,8 +78,18 @@ counter plus the seed within the cap — so a later chain's refusal can never
 land after earlier chains have already completed their irreversible
 refreshes. Beyond those explicit checks, the multi-chain refresh now simulates
 every selected chain's whole refresh against its live state before the first
-broadcast on any chain, so every refusal the refresh can raise on chain lands
-with nothing sent, and a simulation writes nothing to the deployment record.
+broadcast on any chain, so each refusal the refresh can raise on chain is
+exercised at that chain's state at simulation time, with nothing sent — a
+per-chain validation at a point in time, not a cross-chain guarantee: state
+that changes between the simulation and a later chain's broadcast can still
+refuse that chain, and because each chain is re-simulated immediately before
+anything is sent on it, such a change refuses before that chain sends while the
+chains already refreshed in the run stay complete, which the run then states
+together with the command to resume for the remaining chains. A simulation
+writes nothing to the deployment record, enforced at the single place every
+record write goes through rather than script by script; the one deliberate
+exception is the ceremony record step, which declares itself a real run for
+its single reconciliation write.
 The relation between a chain's bound holder and its deployment record is
 classified before any broadcast by the same rule the post-refresh step
 applies, so a record that names a different holder than the chain, with no

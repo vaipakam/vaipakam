@@ -5947,7 +5947,11 @@ remains possible and shows only as the unattributed remainder — review r5).**
 > paid counter of every not-yet-rebased chain, refusing one over the pool cap
 > before any broadcast (review r15) and the seed's resulting counter likewise;
 > the wrapper simulates every selected chain's refresh end to end before the
-> first broadcast on any chain, a dry run of the refresh writing no artifact,
+> first broadcast on any chain — a per-chain validation at simulation time,
+> not a cross-chain guarantee; a later state change refuses that chain before
+> it sends, with earlier chains complete, and the run names the rerun (review
+> r19) — every artifact write refusing a dry run at one gate inside the
+> artifact library, with `record()` the declared exception (review r19),
 > and classifies the bound-holder / artifact relation up front by the one rule
 > the post-refresh bind step applies (review r16). An NFT that reached a holder
 > — a non-safe ERC-721 transfer, or delivery to the predicted address before
