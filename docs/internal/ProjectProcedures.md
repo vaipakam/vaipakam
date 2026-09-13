@@ -427,14 +427,15 @@ For every finding:
   gate still applies to every finding (accept-and-fix / refute with
   evidence / defer to a follow-up issue), and per `CLAUDE.md` a P3-only
   round counts as converged, with P3s fixed or deferred at the agent's
-  judgment. A coding PR iterates until a round returns zero P1/P2; escalate
-  to the owner rather than continuing past **ten** rounds after the last
-  substantive surface change, and **never go past thirty rounds at all**
-  (user directive 2026-09-13) — the backstops `CLAUDE.md` sets (an earlier
-  revision here said twelve, from a stale agent note). Docs-only PRs loop
-  to convergence and **never past ten rounds**, merging at ten if no P1
-  stands; the earlier "merge after two rounds, converged or not" wording
-  is superseded by that same directive.
+  judgment. A coding PR iterates until a round returns zero P1/P2.
+  **The round caps, the escalation point and the merge gate are stated
+  once — in `CLAUDE.md`'s "Codex PR-review policy" section — and are
+  deliberately not repeated here.** This bullet carried its own copy of
+  them until 2026-09-13 and that copy drifted twice: first to "twelve
+  rounds" from a stale agent note, then to "docs-only PRs merge after two
+  rounds" once the 2026-09-13 directive moved the docs cap to ten. Two
+  copies of one rule is the failure, not the particular numbers, so the
+  numbers now live in one place and this handbook points at it.
 - **Findings are verified; remedies are only suggestions.** Verify a
   finding against the code before accepting it, then design the fix
   yourself and prove it with a discriminating test — a reviewer's
