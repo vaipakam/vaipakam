@@ -545,6 +545,13 @@ const DURATION_TRAIL = /^\s*(ago|to go|from now|of grace|earlier|later)\b/i;
  * unit or a magnitude word is evidence of an amount, and the run is then
  * not a unit at all.
  */
+/** Any letter run of two or more letters in `span`, as written, that reads as a ticker. */
+function tickerShapedSpan(span) {
+  for (const m of span.matchAll(/[\p{L}\p{M}\p{N}]+/gu)) {
+    if ([...m[0].replace(/\p{M}/gu, '')].length > 1 && isTicker(m[0])) return true;
+  }
+  return false;
+}
 function denominationLeads(suffix) {
   const head = leadingScriptRun(suffix);
   return (
@@ -861,21 +868,19 @@ export function monetaryAmountsIn(text, { locale } = {}) {
     const matched =
       unitAfter(afterLong, vocabulary, { isDenomination: denominationLeads }) ??
       (trailing && NON_MONETARY_UNIT.test(run)
-        ? { unit: run, end: afterLong.search(/[\p{L}%]/u) + run.length, raw: run, tokens: 1 }
+        ? { unit: run, end: afterLong.search(/[\p{L}%]/u) + run.length, raw: run }
         : null);
     {
-      // A ONE-WORD unit written as an UPPER-CASE RUN is ticker-shaped
-      // (#2125 round 6): `3 TAGE`, `3 DAYS`. Token symbols are arbitrary,
+      // A unit written as an UPPER-CASE RUN is ticker-shaped (#2125 rounds
+      // 6–7): `3 TAGE`, `3 DAYS`, `3 M-CE`. Token symbols are arbitrary,
       // and this scanner's own ticker rule already reads such a run as an
       // asset, so the folded match must not erase that evidence — reported,
-      // the loud direction. A one-letter upper-case unit (German `M`) is the
-      // ambiguous path's business, and a multi-word phrase is a phrase.
-      const tickerShaped =
-        matched !== null &&
-        matched.tokens === 1 &&
-        [...matched.raw.replace(/\p{M}/gu, '')].length > 1 &&
-        isTicker(matched.raw);
-      const unit = matched === null || tickerShaped ? null : matched.unit;
+      // the loud direction. Judged on the matched span AS WRITTEN, run by
+      // run: any run of two or more letters that reads as a ticker condemns
+      // the match, whether the span is one word, a hyphenated one or a
+      // phrase. A one-letter upper-case unit (German `M`) is the ambiguous
+      // path's business.
+      const unit = matched === null || tickerShapedSpan(matched.raw) ? null : matched.unit;
       // ROUND 3 P2 — A MAGNITUDE ABBREVIATION IS NOT A DURATION WHEN A
       // TICKER FOLLOWS IT. `1m USDC` reads `m` as minutes, exempts the
       // figure and never looks at `USDC` — so the scanner missed
@@ -976,15 +981,8 @@ export function monetaryAmountsIn(text, { locale } = {}) {
       !isTicker(firstWordAfter)
     ) {
       const matchedBefore = unitBefore(before, vocabulary);
-      // The same ticker-shaped rule as after the figure (round 6).
-      if (
-        matchedBefore !== null &&
-        !(
-          matchedBefore.tokens === 1 &&
-          [...matchedBefore.raw.replace(/\p{M}/gu, '')].length > 1 &&
-          isTicker(matchedBefore.raw)
-        )
-      ) {
+      // The same ticker-shaped rule as after the figure (rounds 6–7).
+      if (matchedBefore !== null && !tickerShapedSpan(matchedBefore.raw)) {
         const { unit, start: unitStart } = matchedBefore;
         const beforeUnit = before.slice(0, unitStart);
         const temporal =

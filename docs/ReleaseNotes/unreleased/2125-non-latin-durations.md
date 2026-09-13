@@ -70,6 +70,9 @@ phrase words be separated by any punctuation short of a line break,
 remembered on which side of a number each word was seen so a word only
 ever seen after a figure is not accepted in front of one, and treated a
 unit word written entirely in capitals as the ticker it might be rather
-than the duration it might be, in every language including English.
+than the duration it might be, in every language including English. A
+seventh round allowed only punctuation, never a symbol such as a currency
+sign, between the words of a phrase, and applied the capitals rule to each
+part of a hyphenated unit.
 
 Closes #2125. No product surface changes.

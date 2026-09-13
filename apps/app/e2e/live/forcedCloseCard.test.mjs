@@ -7976,3 +7976,23 @@ describe('#2125 round 6 — punctuation inside phrases, placement, ticker-shaped
     expect(monetaryAmountsIn('3 days ago', { locale: 'en-US' })).toEqual([]);
   });
 });
+
+describe('#2125 round 7 — symbols are never phrase separators, ticker-shaped hyphenated units', () => {
+  // Punctuation may sit between a phrase's words; a symbol may not, since
+  // a currency sign there is the scanner's evidence of an amount.
+  it('does not swallow a currency sign inside a phrase span', () => {
+    expect(monetaryAmountsIn('You receive 3 m$ce', { locale: 'pl' })).toHaveLength(1);
+    expect(monetaryAmountsIn('3 m₿ce', { locale: 'pl' })).toHaveLength(1);
+    expect(monetaryAmountsIn('3 m-ce', { locale: 'pl' })).toEqual([]);
+    expect(monetaryAmountsIn('3 m.ce', { locale: 'pl' })).toEqual([]);
+  });
+
+  // The ticker-shaped test reads the matched span as written, run by run,
+  // so a hyphenated unit written in capitals is still ticker evidence.
+  it('reports a ticker-shaped run inside a punctuation-split unit', () => {
+    expect(monetaryAmountsIn('You receive 3 M-CE', { locale: 'pl' })).toHaveLength(1);
+    expect(monetaryAmountsIn('3 DAYS AGO', { locale: 'en-US' })).toHaveLength(1);
+    expect(monetaryAmountsIn('3 days ago', { locale: 'en-US' })).toEqual([]);
+    expect(monetaryAmountsIn('in 3 M', { locale: 'de' })).toEqual([]);
+  });
+});

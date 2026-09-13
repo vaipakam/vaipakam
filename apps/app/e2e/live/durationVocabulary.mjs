@@ -234,14 +234,16 @@ export const CONTEXT_SEP = /^[\s(\[{:,;«»"'‘’“”)\]}–—-]*/u;
 // (a compound duration, `3-day`) and opening brackets (Tagalog's
 // `sa 1 (na) araw`, round 6).
 const PHRASE_LEAD = /^[\s‐-―(\[{«"'‘“-]*/u;
-// Between the words of a phrase: anything that is not a token and not a
-// line break (round 6) — CLDR writes `(na) araw` and `గం.లో`, and the
-// vocabulary was built by dropping exactly that punctuation, so matching
-// must drop it too. A line break stays a boundary: `innerText` puts one
-// between rendered elements, and a phrase does not span two of them.
-// Non-empty, so a single word cannot be read as several words joined by
-// nothing.
-const BETWEEN_WORDS = '[^\\p{L}\\p{M}\\p{N}\\n]+';
+// Between the words of a phrase: whitespace and PUNCTUATION, not a line
+// break and not a symbol (rounds 6–7). CLDR writes `(na) araw`, `గం.లో`
+// and `m-ce`, all punctuation, and the vocabulary was built by dropping
+// exactly that, so matching drops it too. A line break stays a boundary:
+// `innerText` puts one between rendered elements, and a phrase does not
+// span two of them. A SYMBOL is never a separator: a currency sign inside
+// a span (`3 m$ce`) is the scanner's evidence of an amount and must not be
+// swallowed by the match. Non-empty, so a single word cannot be read as
+// several words joined by nothing.
+const BETWEEN_WORDS = '(?:[^\\S\\n]|\\p{P})+';
 
 /**
  * Does a lead phrase of the locale's temporal wording END `before` —
@@ -332,9 +334,9 @@ const particleFollows = (last, next) => PARTICLE_TRANSITIONS.has(`${scriptOf(las
  * @param {string} after text following the figure
  * @param {ReturnType<typeof durationVocabularyFor>} vocabulary
  * @param {{isDenomination: (suffix: string) => boolean}} judge
- * @returns {{unit: string, end: number, raw: string, tokens: number} | null}
- *   `raw` is the first matched token as written, `tokens` how many the
- *   phrase spans — the scanner reads both for its own evidence.
+ * @returns {{unit: string, end: number, raw: string} | null}
+ *   `raw` is the matched span as written, so the scanner can read its own
+ *   evidence (an upper-case run) off the text rather than off the fold.
  */
 export function unitAfter(after, vocabulary, { isDenomination }) {
   const { after: units, tags } = vocabulary;
@@ -349,7 +351,7 @@ export function unitAfter(after, vocabulary, { isDenomination }) {
     const span = rest.slice(0, last.index + last[0].length);
     if (k > 1 && !phraseSpan.test(span)) continue;
     const phrase = foldUnit(tokens.slice(0, k).map((t) => t[0]).join(' '), tags);
-    if (units.has(phrase)) return { unit: phrase, end: lead + span.length, raw: tokens[0][0], tokens: k };
+    if (units.has(phrase)) return { unit: phrase, end: lead + span.length, raw: span };
   }
   const raw = tokens[0][0].normalize('NFC');
   const run = foldUnit(raw, tags);
@@ -362,7 +364,7 @@ export function unitAfter(after, vocabulary, { isDenomination }) {
     if (u.includes(' ')) continue;
     if (run.length > u.length && run.startsWith(u) && particleFollows(u[u.length - 1], run[u.length])) {
       if (isDenomination(raw.slice(u.length))) return null;
-      return { unit: u, end: lead + u.length, raw: raw.slice(0, u.length), tokens: 1 };
+      return { unit: u, end: lead + u.length, raw: raw.slice(0, u.length) };
     }
   }
   return null;
@@ -377,8 +379,8 @@ export function unitAfter(after, vocabulary, { isDenomination }) {
  * `בעוד יום (1)`). Exact match only: the prefix rule is about a counter
  * and the particle after it.
  *
- * @returns {{unit: string, start: number, raw: string, tokens: number} | null}
- *   `raw` is the last matched token as written (the one beside the figure).
+ * @returns {{unit: string, start: number, raw: string} | null}
+ *   `raw` is the matched span as written.
  */
 export function unitBefore(before, vocabulary) {
   const { before: units, tags } = vocabulary;
@@ -396,9 +398,7 @@ export function unitBefore(before, vocabulary) {
     const phrase = foldUnit(words.join(' '), tags);
     // `start` is where the phrase begins in `before`, so the duration
     // context can be read from the text in front of it.
-    if (units.has(phrase)) {
-      return { unit: phrase, start: m.index, raw: words[words.length - 1], tokens: words.length };
-    }
+    if (units.has(phrase)) return { unit: phrase, start: m.index, raw: m[1] };
   }
   return null;
 }
