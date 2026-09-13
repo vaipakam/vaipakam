@@ -948,6 +948,43 @@ describe('#2144 — no source region is bounded by a character count', () => {
     expect(sliceCallsIn(two).some((c) => marks(two, c))).toBe(false);
   });
 
+  // ROUND 18. One accepted, one REFUTED, two deferred — see the PR
+  // thread and the follow-up issue.
+  //
+  // The refuted one is worth a case anyway, because the behaviour it
+  // asked for is already the behaviour and should stay so. An optional
+  // finder call IS refused — `maybe?.indexOf('end')` parses as a
+  // `ChainExpression`, which `kindOf` does not recognise, so round 6's
+  // inversion refuses it before `callKind` is reached. No special check
+  // for it exists, and one was written and removed as dead code. This
+  // pins the inversion doing the work.
+  it('refuses an optional finder call, whose receiver may be absent', () => {
+    const code =
+      "const s = f();\nconst start = s.indexOf('a');\nconst r = s.slice(start, maybe?.indexOf('end'));";
+    expect(countsCharacters(code, sliceCallsIn(code).at(-1))).toBe(true);
+  });
+
+  // The arrow-function twin of round 17's marker rule. This is the form
+  // THIS suite's one marked helper actually uses, so the sibling left
+  // unfixed was the live one.
+  it('a marker on a function-valued name excuses one truncator, not every one', () => {
+    const one =
+      '// not-a-source-region: a label, capped for display.\n' +
+      'const label = (t) => t.slice(0, 40);\n';
+    const two =
+      '// not-a-source-region: a label, capped for display.\n' +
+      'const label = (t, src, start) => {\n' +
+      '  const region = src.slice(start, start + 320);\n' +
+      '  return t.slice(0, 40) + region;\n' +
+      '};\n';
+    const marks = (src, call) =>
+      markableStatementsOf(src, call.node).some((stmt) =>
+        markedStatement(src, stmt, 'not-a-source-region'),
+      );
+    expect(sliceCallsIn(one).every((c) => marks(one, c))).toBe(true);
+    expect(sliceCallsIn(two).some((c) => marks(two, c))).toBe(false);
+  });
+
   // ROUND 8 — the list kept shrinking in kind: these are the remaining
   // ways a bound can look like a landmark without being one, plus the two
   // spellings of a truncation the collector was not seeing.

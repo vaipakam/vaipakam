@@ -751,11 +751,19 @@ export function markableStatementsOf(src, node) {
     const stmt = parents.get(n);
     // One name per marked statement, or the reason is ambiguous.
     if (stmt && stmt.type === 'VariableDeclaration' && stmt.declarations.length === 1) {
-      out.push(stmt);
+      // A name holding a FUNCTION is the same scope as a function
+      // declaration and takes the same one-truncator rule (round 18).
+      // The previous round fixed `function f() {}` and left
+      // `const f = () => {}` — which is the form this very suite uses
+      // for its one marked helper, so the sibling was the live one.
+      const fn = n.init && FUNCTIONS.has(n.init.type) ? n.init : null;
+      if (!fn || truncatorCount(src, fn) === 1) out.push(stmt);
     }
   }
   return out;
 }
+
+const FUNCTIONS = new Set(['ArrowFunctionExpression', 'FunctionExpression']);
 
 /** How many truncating calls `fn` contains. */
 function truncatorCount(src, fn) {
