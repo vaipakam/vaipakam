@@ -85,7 +85,15 @@ nested region is the one that brings the row's reachable part into view
 rather than the region's middle, and a stack of wrappers is measured
 against the region's original size so that halving twice cannot pass as
 half. One refinement, checking cover only over the exact band a scrolled-
-out row can return to, is deferred to its own issue. The list of properties that make an element the
+out row can return to, is deferred to its own issue. An eighth round
+added, each confirmed by measurement or pinned by a fixture: a container
+that skips rendering its off-screen content also anchors absolutely
+positioned descendants; a nested region resets the half-shown measure to
+what it actually shows; and the cover check reads the region's frame as
+drawn on screen and only through the wrappers that show it. Two further
+refinements, knowing which region's scroll supplied the credit and holding
+one scroll position across the origin and clipping checks, were folded
+into the two issues already open for those themes. The list of properties that make an element the
 reference for absolutely positioned descendants gained two more, each
 confirmed by measurement in the check's own browser, and one candidate the
 review raised, container queries, was measured not to be one and left out

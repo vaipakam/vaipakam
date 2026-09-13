@@ -65,6 +65,11 @@ export function visibilityHelpers() {
   // repository uses it. Listing it would skip real scrollers in the credit
   // walk and revoke real clipping in the clip walk.
   const establishesCB = (cs) =>
+    // `content-visibility: auto | hidden` measured in the same Chromium
+    // (#2157 round 8): an absolute child is positioned against the
+    // container.
+    cs.contentVisibility === 'auto' ||
+    cs.contentVisibility === 'hidden' ||
     cs.transform !== 'none' ||
     cs.perspective !== 'none' ||
     cs.filter !== 'none' ||
@@ -776,10 +781,15 @@ export function visibilityHelpers() {
           if (clipsY) {
             const seen = S.bottom - S.top;
             if (seen <= 0 || (!scrollsY && seen / slitExtent.h < 0.5)) return false;
+            // A nested SCROLLER is the new limiting viewport (round 8): the
+            // half rule above it measures against what this scroller shows,
+            // not against the inner scrollport it has already narrowed.
+            if (scrollsY) slitExtent = { ...slitExtent, h: seen };
           }
           if (clipsX) {
             const seen = S.right - S.left;
             if (seen <= 0 || (!scrollsX && seen / slitExtent.w < 0.5)) return false;
+            if (scrollsX) slitExtent = { ...slitExtent, w: seen };
           }
           // And the ROW has to reach the part of the slit that is shown,
           // moving relative to the slit by the scrollers at or below it.
@@ -1273,15 +1283,38 @@ export function visibilityHelpers() {
         // The CLIENT area, not the border box (round 7): a probe landing on
         // the scroller's own border hits the scroller, which contains the
         // node and is therefore never a cover.
+        // In VIEWPORT pixels (round 8): the rect is transformed, the client
+        // metrics are the element's own, so the metrics are scaled by the
+        // rect-to-layout ratio per axis. Exact for an axis-aligned scale;
+        // for a rotation this is the bounding box, stated as such.
         const sb = scroller.getBoundingClientRect();
-        const cl = sb.left + scroller.clientLeft;
-        const ct = sb.top + scroller.clientTop;
+        const sx = scroller.offsetWidth > 0 ? sb.width / scroller.offsetWidth : 1;
+        const sy = scroller.offsetHeight > 0 ? sb.height / scroller.offsetHeight : 1;
+        const cl = sb.left + scroller.clientLeft * sx;
+        const ct = sb.top + scroller.clientTop * sy;
         const slit = {
           left: Math.max(cl, 0),
           top: Math.max(ct, 0),
-          right: Math.min(cl + scroller.clientWidth, vw),
-          bottom: Math.min(ct + scroller.clientHeight, vh),
+          right: Math.min(cl + scroller.clientWidth * sx, vw),
+          bottom: Math.min(ct + scroller.clientHeight * sy, vh),
         };
+        // And through the same clipping ancestors the row itself is seen
+        // through (round 8): a wrapper exposing half of the scrollport
+        // leaves only that half to probe; the other half is not a place the
+        // row can ever be seen, and background there is not evidence.
+        for (let a = scroller.parentElement; a; a = a.parentElement) {
+          if (a === document.documentElement || a === document.body) continue;
+          const acs = getComputedStyle(a);
+          const ab = a.getBoundingClientRect();
+          if (acs.overflowY !== 'visible') {
+            slit.top = Math.max(slit.top, ab.top);
+            slit.bottom = Math.min(slit.bottom, ab.bottom);
+          }
+          if (acs.overflowX !== 'visible') {
+            slit.left = Math.max(slit.left, ab.left);
+            slit.right = Math.min(slit.right, ab.right);
+          }
+        }
         if (slit.right > slit.left && slit.bottom > slit.top) {
           let slitProbed = 0;
           let slitCovered = true;

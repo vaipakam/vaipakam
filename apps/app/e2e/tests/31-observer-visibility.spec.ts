@@ -2173,3 +2173,110 @@ test('containing-block hints, zoom, joint outer offset and stacked clippers', as
   expect(result.stackedRowTop).toBe(160);
   expect(result.stackedRow, 'stacked clippers keep a quarter of the slit').toBe(false);
 });
+
+// #2157 round 8 — four more, each pinned against a real engine:
+//
+//   - `content-visibility: auto` establishes a containing block (measured);
+//   - a nested scroller becomes the new limiting viewport for the half rule;
+//   - the off-screen slit probe uses the TRANSFORMED client area;
+//   - and intersects it with the scroller's clipping ancestors.
+test('content-visibility containing block, and the nested slit resets the half-rule denominator', async ({
+  page,
+}) => {
+  await page.setContent(`<!DOCTYPE html>
+    <style>body { margin: 0 } p { margin: 0 }</style>
+    <!-- 0..40: a scroller made a containing block by content-visibility -->
+    <div id="cv" style="content-visibility:auto; height:40px; overflow:auto">
+      <p id="cvRow" style="position:absolute; top:0; height:20px">absolute under a content-visibility container</p>
+      <p style="height:400px">filler</p>
+    </div>
+    <!-- 40..80: a wrapper that fully exposes a 40px outer scroller which in
+         turn shows 40 of a 200px inner scrollport -->
+    <div style="height:40px; overflow:hidden">
+      <div id="outerFull" style="height:40px; overflow:auto">
+        <div id="innerTall2" style="height:200px; overflow:auto">
+          <p id="nestedRow2" style="height:20px">readable through the outer slit</p>
+          <p style="height:600px">inner filler</p>
+        </div>
+        <p style="height:400px">outer filler</p>
+      </div>
+    </div>
+  `);
+  const result = await page.evaluate((helpersSrc) => {
+    const family = new Function(`return (${helpersSrc})();`)();
+    const visible = family.visible as (n: Element | null) => boolean;
+    const byId = (id: string) => document.getElementById(id)!;
+    byId('cv').scrollTop = 300;
+    byId('innerTall2').scrollTop = 300;
+    return {
+      cvComputed: getComputedStyle(byId('cv')).contentVisibility,
+      cvRowTop: byId('cvRow').getBoundingClientRect().top,
+      cvRow: visible(byId('cvRow')),
+      nestedRow2Top: byId('nestedRow2').getBoundingClientRect().top,
+      nestedRow2: visible(byId('nestedRow2')),
+    };
+  }, VISIBILITY_SOURCE);
+  // Carried by the container: at -300 with 300 of credit.
+  expect(result.cvComputed).toBe('auto');
+  expect(result.cvRowTop).toBe(-300);
+  expect(result.cvRow, 'an absolute row under a content-visibility container').toBe(true);
+  // The wrapper exposes all 40 of the outer slit; measured against the
+  // 200px inner extent it looked like 20% and was condemned.
+  expect(result.nestedRow2Top).toBe(-260);
+  expect(result.nestedRow2, 'a fully exposed outer slit over a tall inner one').toBe(true);
+});
+
+test('the off-screen slit probe uses the transformed client area, clipped by ancestors', async ({
+  page,
+}) => {
+  await page.setContent(`<!DOCTYPE html>
+    <style>body { margin: 0 } p { margin: 0 }</style>
+    <!-- a scaled, bordered scroller whose client area an overlay covers
+         exactly; the unscaled client metrics would probe twice as far -->
+    <div style="position:absolute; top:0; left:0; transform:scale(0.5); transform-origin:0 0; width:220px">
+      <div id="scaledBordered" style="width:200px; height:80px; overflow:auto; border:10px solid #888">
+        <p id="scaledBorderedRow" style="height:20px">behind a scaled overlay</p>
+        <p style="height:1000px">filler</p>
+      </div>
+      <div style="position:absolute; top:10px; left:10px; width:200px; height:80px; background:#000"></div>
+    </div>
+    <!-- a wrapper exposing the top half of a 40px scrollport, with an
+         overlay over exactly that exposed half -->
+    <div style="position:absolute; top:200px; left:0; width:300px">
+      <div style="height:20px; overflow:hidden">
+        <div id="halfExposed" style="height:40px; overflow:auto">
+          <p id="halfExposedRow" style="height:20px">the visible half is covered</p>
+          <p style="height:1000px">filler</p>
+        </div>
+      </div>
+      <div style="position:absolute; top:0; left:0; width:300px; height:20px; background:#000"></div>
+    </div>
+  `);
+  const result = await page.evaluate((helpersSrc) => {
+    const family = new Function(`return (${helpersSrc})();`)();
+    const visible = family.visible as (n: Element | null) => boolean;
+    const byId = (id: string) => document.getElementById(id)!;
+    byId('scaledBordered').scrollTop = 600;
+    byId('halfExposed').scrollTop = 600;
+    const sb = byId('scaledBordered').getBoundingClientRect();
+    return {
+      scaledBoxBottom: sb.bottom,
+      scaledClientHeight: byId('scaledBordered').clientHeight,
+      scaledRowBottom: byId('scaledBorderedRow').getBoundingClientRect().bottom,
+      scaledRow: visible(byId('scaledBorderedRow')),
+      halfRowBottom: byId('halfExposedRow').getBoundingClientRect().bottom,
+      halfRow: visible(byId('halfExposedRow')),
+    };
+  }, VISIBILITY_SOURCE);
+  // The premise: a 100px layout box drawn 50px tall, client height still
+  // reported as 80. Unscaled client metrics would probe down to y=90 and
+  // find uncovered background below the 50px box.
+  expect(result.scaledBoxBottom).toBe(50);
+  expect(result.scaledClientHeight).toBe(80);
+  expect(result.scaledRowBottom).toBeLessThan(0);
+  expect(result.scaledRow, 'a scaled scroller whose client area is covered').toBe(false);
+  // Only the top 20 of the 40px slit is ever shown, and that half is
+  // covered; probing the clipped-away half would have found background.
+  expect(result.halfRowBottom).toBeLessThan(0);
+  expect(result.halfRow, 'a half-exposed scrollport whose exposed half is covered').toBe(false);
+});
