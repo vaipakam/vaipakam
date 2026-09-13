@@ -384,7 +384,7 @@ export function sliceCallsIn(src) {
         method: borrowed,
         line: lineOf(src, n.start),
         receiver: n.arguments[0] ? src.slice(n.arguments[0].start, n.arguments[0].end) : '',
-        args: n.arguments.slice(1),
+        args: borrowedArgs(c.property.name, n.arguments),
         text: src.slice(n.start, n.end),
         node: n,
         receiverNode: n.arguments[0] ?? null,
@@ -436,6 +436,24 @@ const BORROWERS = new Set(['call', 'apply']);
  * calls omitted it entirely — the guard reporting green having never
  * looked (round 8).
  */
+/**
+ * The BOUNDS a borrowed truncator was actually given.
+ *
+ * `call` passes them straight through after the receiver. `apply` passes
+ * them in an array, and reading the array expression itself as the sole
+ * argument reported a correctly anchored slice as unbounded (round 16) —
+ * refusing correct work while claiming to support the form. An array
+ * this cannot read statically (a spread, a name) yields no arguments,
+ * which refuses, and refusing an unreadable bound is the right way round.
+ */
+function borrowedArgs(via, args) {
+  const rest = args.slice(1);
+  if (via !== 'apply') return rest;
+  const arr = rest[0];
+  if (!arr || arr.type !== 'ArrayExpression') return [];
+  return arr.elements.some((e) => !e || e.type === 'SpreadElement') ? [] : arr.elements;
+}
+
 function borrowedTruncator(src, callee, only) {
   if (callee.computed) return null;
   const via = callee.property.name;
@@ -521,8 +539,8 @@ export function bindingOf(src, node) {
 function alwaysRunsBefore(src, decl, use) {
   const { parents } = astOf(src, 'alwaysRunsBefore');
   const contains = (n) => n.start <= use.start && n.end >= use.end;
-  for (let p = parents.get(decl); p; p = parents.get(p)) {
-    if (CONDITIONAL.has(p.type) && !contains(p)) return false;
+  for (let c = decl, p = parents.get(c); p; c = p, p = parents.get(p)) {
+    if (inGuardedSlot(SKIPPABLE, p, c) && !contains(p)) return false;
   }
   return decl.start < use.start;
 }
@@ -535,31 +553,109 @@ function alwaysRunsBefore(src, decl, use) {
 function definitelyAfter(src, decl, use) {
   if (decl.start < use.end) return false;
   const { parents } = astOf(src, 'definitelyAfter');
-  for (let p = parents.get(decl); p; p = parents.get(p)) {
-    if (isDeferred(p)) return false;
+  for (let c = decl, p = parents.get(c); p; c = p, p = parents.get(p)) {
+    if (inGuardedSlot(DEFERRED, p, c)) return false;
   }
   return true;
 }
 
-// Constructs whose body may be skipped entirely.
-const CONDITIONAL = new Set([
-  'IfStatement',
-  'ForStatement',
-  'ForOfStatement',
-  'ForInStatement',
-  'WhileStatement',
-  'DoWhileStatement',
-  'SwitchCase',
-  'TryStatement',
-  'CatchClause',
-  'ConditionalExpression',
-  'LogicalExpression',
-]);
+/**
+ * THE GUARDED THING IS A SLOT, NOT A NODE (round 16).
+ *
+ * Both rules above used to ask "is any ancestor of type X", and that is
+ * the wrong unit — three of one round's five findings were the same
+ * mistake wearing different syntax:
+ *
+ *   - a `do` body runs at least once, though the loop repeats;
+ *   - a class field's KEY is evaluated where the class is defined,
+ *     though its VALUE waits for construction;
+ *   - a `while` test runs at least once, though its body may not.
+ *
+ * In each case part of the construct is guarded and part is not, so a
+ * rule keyed to the construct is wrong about the other part — and wrong
+ * in the direction that refuses correct code, which is the direction
+ * that gets a check switched off. The tables below name the SLOTS.
+ *
+ * This is the same correction as round 15's template finding one level
+ * up: a template is not text or code, its quasis are text and its holes
+ * are code. A node is not skipped or run, its slots are.
+ */
+function inGuardedSlot(table, parent, child) {
+  const slots =
+    parent.type === 'PropertyDefinition' && parent.static
+      ? // A STATIC field initializer runs where it is written, in
+        // class-definition order, so nothing about it is guarded.
+        undefined
+      : table[parent.type];
+  if (!slots) return false;
+  if (slots === ALL_SLOTS) return true;
+  return slots.some((slot) => holds(parent[slot], child));
+}
+
+/** Whether a slot's value IS `child`, or is a list containing it. */
+function holds(value, child) {
+  return Array.isArray(value) ? value.includes(child) : value === child;
+}
+
+const ALL_SLOTS = Symbol('every slot');
+
+/**
+ * Slots that MAY NOT RUN AT ALL, so a declaration inside one cannot be
+ * relied on by a use outside it.
+ *
+ * What is deliberately absent is as load-bearing as what is present. A
+ * `for`'s `init` always runs. A `while`/`for` `test` runs at least once.
+ * A `do` statement appears nowhere: both its body and its test are
+ * guaranteed a first pass. A `try`'s `finalizer` always runs, while its
+ * `block` may stop part-way through.
+ */
+const SKIPPABLE = {
+  IfStatement: ['consequent', 'alternate'],
+  ForStatement: ['update', 'body'],
+  ForOfStatement: ['left', 'body'],
+  ForInStatement: ['left', 'body'],
+  WhileStatement: ['body'],
+  SwitchCase: ['test', 'consequent'],
+  TryStatement: ['block', 'handler'],
+  CatchClause: ['param', 'body'],
+  ConditionalExpression: ['consequent', 'alternate'],
+  LogicalExpression: ['right'],
+};
+
+/**
+ * Slots that run at a time a POSITION CANNOT EXPRESS — a loop repeats, a
+ * function body runs whenever it is called, an instance field waits for
+ * construction. A write inside one is treated as reaching any use, which
+ * refuses rather than certifies.
+ *
+ * A `do` IS here even though it is absent above: running at least once
+ * answers "did it happen", not "in what order relative to everything
+ * else in the loop".
+ */
+const DEFERRED = {
+  PropertyDefinition: ['value'],
+  ForStatement: ['test', 'update', 'body'],
+  ForOfStatement: ['body'],
+  ForInStatement: ['body'],
+  WhileStatement: ['test', 'body'],
+  DoWhileStatement: ['test', 'body'],
+  FunctionDeclaration: ALL_SLOTS,
+  FunctionExpression: ALL_SLOTS,
+  ArrowFunctionExpression: ALL_SLOTS,
+};
 
 // Definition kinds that cannot hold source text, whichever syntax
-// introduced them — `function f(){}`, `class C{}`, `export class C{}`,
-// `import x from …` all land here.
-const NOT_TEXT_DEFS = new Set(['FunctionName', 'ClassName', 'ImportBinding']);
+// introduced them — `function f(){}`, `class C{}`, `export class C{}`
+// all land here.
+//
+// An IMPORT does NOT (round 16). A module can export a string, so an
+// imported name can hold source text, and rejecting it contradicted the
+// stated interprocedural limit two screens below: a receiver that
+// resolves to an import, a parameter or a call result is ACCEPTED. The
+// cost of getting this wrong is not a missed window, it is pressure on
+// an author to mark correct code as a character count — a falsehood the
+// next reader inherits.
+const NOT_TEXT_DEFS = new Set(['FunctionName', 'ClassName']);
 
 /**
  * The DECLARATORS `node` sits inside, innermost first — the units a
@@ -633,38 +729,6 @@ export function markedStatement(src, stmt, marker) {
   });
 }
 
-// Constructs whose body may run at a time position cannot express — a
-// loop repeats, a function runs whenever it is called. A write inside one
-// is treated as reaching any use, which refuses rather than certifies.
-const DEFERRABLE = new Set([
-  // An INSTANCE field initializer runs at construction, not where it is
-  // written (round 15), so a write below the class can execute first.
-  // `isDeferred` below exempts the static case, which does run in place.
-  'PropertyDefinition',
-  'ForStatement',
-  'ForOfStatement',
-  'ForInStatement',
-  'WhileStatement',
-  'DoWhileStatement',
-  'FunctionDeclaration',
-  'FunctionExpression',
-  'ArrowFunctionExpression',
-]);
-
-/**
- * Whether `n` defers what is inside it to a time a position cannot state.
- *
- * A STATIC field initializer is the one exception in the set above: it
- * runs where it is written, in class-definition order, so it is ordinary
- * straight-line code. Only an INSTANCE field waits for construction. The
- * distinction is kept because refusing a static field would object to
- * correct work, and a check that does that gets switched off.
- */
-function isDeferred(n) {
-  if (n.type === 'PropertyDefinition') return !n.static;
-  return DEFERRABLE.has(n.type);
-}
-
 /**
  * Whether a write to `variable` could reach the use at `useAt`.
  *
@@ -673,12 +737,18 @@ function isDeferred(n) {
  * cannot express, and so does a USE inside one — a region taken inside a
  * function runs whenever it is called, so a write below it may execute
  * first. Unknown order refuses rather than certifies.
+ *
+ * "Inside" is a SLOT question, not a node question — see `inGuardedSlot`.
+ * A slice in a class field's computed KEY is not inside anything
+ * deferred, however deferred the field's value is.
  */
 function writeReaches(src, writes, useAt) {
   if (writes.length === 0) return false;
   const { nodes, parents } = astOf(src, 'writeReaches');
   const deferred = (n) => {
-    for (let p = n; p; p = parents.get(p)) if (isDeferred(p)) return true;
+    for (let c = n, p = parents.get(c); p; c = p, p = parents.get(p)) {
+      if (inGuardedSlot(DEFERRED, p, c)) return true;
+    }
     return false;
   };
   let useNode = null;
@@ -919,8 +989,22 @@ function importedFromThisModule(src, node) {
     (d) =>
       d.type === 'ImportBinding' &&
       typeof d.parent?.source?.value === 'string' &&
-      d.parent.source.value.endsWith('sourceBlock.mjs'),
+      isThisModule(d.parent.source.value),
   );
+}
+
+/**
+ * Whether a module specifier names THIS helper.
+ *
+ * The file name has to be a whole path SEGMENT. `endsWith` was matching
+ * `./fake-sourceBlock.mjs` too (round 16) — which is a module a test can
+ * write, exporting a `blockFrom` that returns the raw source, and that
+ * was enough to be trusted as the canonical one. A near-miss name is the
+ * cheapest possible way past a trust check, so the comparison is on the
+ * segment rather than on the tail of the string.
+ */
+function isThisModule(specifier) {
+  return specifier.split('/').pop() === 'sourceBlock.mjs';
 }
 
 /** Whether `node` is a bound that may end a source region. */

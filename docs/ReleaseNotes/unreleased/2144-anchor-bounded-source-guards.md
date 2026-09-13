@@ -310,6 +310,50 @@ was slipping past the collector, and so was a header written inside the
 gap of a piece of assembled text, which is code and was being skipped as
 though it were quotation.
 
+A further round is the one that shows the effort has turned a corner, and
+it is worth recording for that rather than for its fixes. Four of its
+five findings were the check REFUSING CORRECT WORK — the direction that
+matters most, because a check which complains about correct code does not
+get obeyed, it gets switched off. The refusing side has become tight
+enough that the remaining work is loosening it where it is too tight.
+
+Three of those four were the same mistake wearing different syntax, and
+naming it is the fix. A rule was being stated about a whole piece of
+code, when only PART of that piece is uncertain. The body of a loop that
+always runs at least once is not uncertain, though the loop repeats. The
+name of a value stored on an object is worked out when the object's
+shape is written down, though the value itself waits until the object is
+made. The test of a loop runs at least once, though its body may not. In
+each case the rule was right about one part and wrong about the other,
+and wrong in the direction that refuses.
+
+So the rules no longer name a piece of code. They name the PART of it
+that is uncertain, and everything not named is ordinary code in ordinary
+order. What is left out of those lists carries as much weight as what is
+in them, and is written down beside them: the setting-up step of a loop
+always runs, the clean-up step after a guarded attempt always runs, and
+the kind of loop that checks its condition afterwards appears in neither
+list, because it is guaranteed a first pass.
+
+This is the same correction as the earlier one about assembled text, one
+level up. A piece of assembled text is not quotation or code — its fixed
+parts are quotation and its gaps are code. A piece of code is not
+skipped or run — its parts are.
+
+The fifth finding went the other way and was the cheapest kind of evasion
+to fix: the check confirmed a helper came from this very file by looking
+at the END of the file name it was imported from, so a file whose name
+merely ENDED that way was trusted. A test could write one, have it hand
+back the whole unbounded text, and pass. The name now has to be the whole
+final part of the path.
+
+Two smaller ones round it out, both again the refusing direction: bounds
+handed to a borrowed operation inside a list were being read as one
+unreadable thing rather than as the two bounds they are, and text brought
+in from another file was being refused outright on the grounds that
+imports cannot hold text — which is untrue, and contradicted a limit this
+same file states two screens further down.
+
 Three of the windows survived the earlier passes for a reason worth
 naming: they bounded a declaration spread over several lines, which is
 neither a block nor a call, so there was nothing to convert them to. That

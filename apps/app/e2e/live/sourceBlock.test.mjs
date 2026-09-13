@@ -811,6 +811,70 @@ describe('#2144 — no source region is bounded by a character count', () => {
     }
   });
 
+  // ROUND 16 — the round where the findings turned round. Four of five
+  // were the check REFUSING CORRECT WORK, and three of those four were
+  // one mistake: a rule stated over a NODE where only part of that node
+  // is guarded. The slot tables are the fix; these are the shapes.
+  it('does not refuse the round-16 shapes', () => {
+    const lead = "const s = f();\nconst start = s.indexOf('a');\n";
+    for (const [why, tail] of [
+      [
+        "a do body, which is guaranteed a first pass however the loop's test reads",
+        "do { var end = s.indexOf('e'); } while (false);\nconst r = s.slice(start, end);",
+      ],
+      [
+        'a computed field KEY, evaluated where the class is defined',
+        "let e = s.indexOf('e');\nclass C { [s.slice(start, e)] = 1; }\ne = start + 320;",
+      ],
+      [
+        "apply's bounds, which live in the array it is handed",
+        "const r = String.prototype.slice.apply(s, [start, s.indexOf('x')]);",
+      ],
+      [
+        'a finder on imported source text, which a module can export',
+        "import source from './fixture.mjs';\nconst r = source.slice(source.indexOf('a'), source.indexOf('b'));",
+      ],
+      [
+        "a for INIT, which always runs even when the body does not",
+        "for (var end = s.indexOf('e'); on; ) { work(); }\nconst r = s.slice(start, end);",
+      ],
+    ]) {
+      const code = lead + tail;
+      const call = sliceCallsIn(code).at(-1);
+      expect(call, why).toBeDefined();
+      expect(countsCharacters(code, call), why).toBe(false);
+    }
+  });
+
+  // And the refusing side of the same round, so loosening the four above
+  // cannot have loosened anything else. A near-miss module NAME is the
+  // cheapest way past a trust check, and `endsWith` fell for it.
+  it('refuses the round-16 shapes', () => {
+    const lead = "const s = f();\nconst start = s.indexOf('a');\n";
+    for (const [why, tail] of [
+      [
+        'a structural helper from a look-alike module',
+        "import { blockFrom } from './fake-sourceBlock.mjs';\nconst b = blockFrom(s, 'if (x) {');\nconst r = b.slice(start);",
+      ],
+      [
+        "apply's bounds spread from somewhere unreadable",
+        'const r = String.prototype.slice.apply(s, [...bounds]);',
+      ],
+      [
+        'a WHILE body, which may not run at all',
+        "while (on) { var end = s.indexOf('e'); }\nconst r = s.slice(start, end);",
+      ],
+    ]) {
+      const code = lead + tail;
+      const call = sliceCallsIn(code).at(-1);
+      expect(call, why).toBeDefined();
+      expect(countsCharacters(code, call), why).toBe(true);
+    }
+  });
+  // The field VALUE stays refused — that case is already pinned in the
+  // round-15 block above, and the computed-KEY case accepted here is
+  // precisely its other half: same node, different slot, opposite answer.
+
   // ROUND 8 — the list kept shrinking in kind: these are the remaining
   // ways a bound can look like a landmark without being one, plus the two
   // spellings of a truncation the collector was not seeing.
