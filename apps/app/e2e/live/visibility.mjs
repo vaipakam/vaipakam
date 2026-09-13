@@ -91,10 +91,41 @@ export function visibilityHelpers() {
     // 12): `contain`, `translate` / `rotate` / `scale` and `offset-path` do;
     // `content-visibility`, `container-type` and `opacity` do NOT, although
     // the first is a containing block when actually set, so they are left
-    // out on that evidence.
-    /\b(transform|perspective|filter|backdrop-filter|contain|translate|rotate|scale|offset-path)\b/.test(
-      cs.willChange || '',
-    );
+    // out on that evidence. Matched as WHOLE property names (round 13): the
+    // computed value is a comma-separated list, and a word-boundary regex
+    // read `transform-origin` and `contain-intrinsic-size` as hits.
+    willChangeEstablishesCB(cs.willChange);
+  const WILL_CHANGE_CB = new Set([
+    'transform',
+    'perspective',
+    'filter',
+    'backdrop-filter',
+    'contain',
+    'translate',
+    'rotate',
+    'scale',
+    'offset-path',
+  ]);
+  const willChangeEstablishesCB = (willChange) =>
+    String(willChange || '')
+      .split(',')
+      .some((t) => WILL_CHANGE_CB.has(t.trim().toLowerCase()));
+
+  /**
+   * Is `n` judged as the VIEWPORT rather than as its own layout box? The
+   * root's `overflow` — and `<body>`'s, when the root's is `visible` and
+   * `<body>`'s propagates to it — clips and scrolls the viewport, not the
+   * element's box (#2157 round 4). A `<body>` whose overflow does NOT
+   * propagate, because the root's is already non-visible, clips at its own
+   * box like any element. One predicate for the clip walk and the slit
+   * probe (round 13), so the two cannot disagree about which `<body>` is
+   * real.
+   */
+  const judgedAsViewport = (n) =>
+    n === document.documentElement ||
+    (n === document.body &&
+      getComputedStyle(document.documentElement).overflowX === 'visible' &&
+      getComputedStyle(document.documentElement).overflowY === 'visible');
 
   /**
    * The matrix of `acs`'s OWN transform: the individual `rotate` / `scale`
@@ -759,11 +790,7 @@ export function visibilityHelpers() {
       // 40px layout box while sitting well inside the viewport. So such an
       // element is judged as the viewport, with the page scroller's own
       // scroll metrics.
-      const actsAsViewport =
-        n === document.documentElement ||
-        (n === document.body &&
-          getComputedStyle(document.documentElement).overflowX === 'visible' &&
-          getComputedStyle(document.documentElement).overflowY === 'visible');
+      const actsAsViewport = judgedAsViewport(n);
       const box = actsAsViewport
         ? {
             top: 0,
@@ -887,9 +914,10 @@ export function visibilityHelpers() {
         return Math.min(to + d, want.hi) - Math.max(from + d, want.lo);
       };
       const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi);
-      // Half of what could be shown: the line's own extent or the opening
-      // it is seen through, whichever is smaller (round 12).
-      const readable = (seen, extent, opening) => seen >= Math.min(extent, opening) / 2;
+      // Half the line — or the whole opening, where half the line would not
+      // fit in it (round 12; the bound corrected to the stated intent in
+      // round 13, which had shipped as half the opening).
+      const readable = (seen, extent, opening) => seen >= Math.min(extent / 2, opening);
       if (range !== null && range.unquantifiable) unbounded = true;
       // PER AXIS (#2157 round 3): an `overflow: auto` box whose content fits
       // on an axis has no movement there and is an ordinary clipper for it.
@@ -906,8 +934,8 @@ export function visibilityHelpers() {
         if (slit === null) {
           // READABLE overlap, not any overlap, at a scroller too (#2157
           // round 12): the best offset in the range still has to show half
-          // of what COULD be shown — half the line, or the whole opening
-          // when the line is taller than it. A relatively shifted row with
+          // the line — or the whole opening, where half the line would not
+          // fit in it. A relatively shifted row with
           // one pixel inside a scrollport that can only carry it further
           // out is never readable at any offset, and `> 0` admitted it. A
           // clipper keeps the plain half-line rule: it cannot scroll, so a
@@ -1564,9 +1592,21 @@ export function visibilityHelpers() {
         // ancestor, which contains the node and is never a cover. An
         // ancestor whose client area cannot be read leaves the slit as it
         // is, a wider probe, which admits.
+        // Only the ancestors that CARRY the scroller (round 13): an
+        // `overflow` box between an absolutely positioned scroller and its
+        // containing block does not clip it, and narrowing the probe to
+        // that box let an overlay over the box alone condemn a scrollport
+        // readable beside it. Same `carrierWalk` the clip walk runs for the
+        // row. And the root is skipped — the slit is already inside the
+        // viewport — while `<body>` is skipped only where it IS the viewport
+        // (round 13, `judgedAsViewport`): a body that clips at its own box
+        // because the root's overflow is non-visible is a real clipper, and
+        // probing the scrollport beyond its opening found background there.
+        const walk = carrierWalk(scroller);
         for (let a = scroller.parentElement; a; a = a.parentElement) {
-          if (a === document.documentElement || a === document.body) continue;
           const acs = getComputedStyle(a);
+          if (!walk.carries(a, acs)) continue;
+          if (judgedAsViewport(a)) continue;
           if (acs.overflowY === 'visible' && acs.overflowX === 'visible') continue;
           const aa = clipBoxOf(a, acs);
           if (aa === null) continue;

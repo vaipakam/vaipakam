@@ -134,13 +134,23 @@ line, so a line reachable only through a mostly hidden region is
 rejected as it should be. A twelfth round tightened the scrolling
 region's own test from "can any of it be reached" to "can enough of it
 be read": the best position a region can reach must show at least half
-of the line, or the whole opening when the line is taller than it, so a
-row leaving a sliver in a region that can only carry it further away is
-rejected. An ancestor that draws no box of its own is no longer mistaken
-for the reference of an absolutely positioned row, and two more
+of the line, or the whole opening where half the line would not fit in
+it, so a row leaving a sliver in a region that can only carry it further
+away is rejected. An ancestor that draws no box of its own is no longer
+mistaken for the reference of an absolutely positioned row, and two more
 declarations of intent to change an element's containing-block
 properties, measured in the check's own browser, are recognised as
-establishing that reference in advance.
+establishing that reference in advance. A thirteenth round found that the
+shipped bound for that readable-overlap rule was looser than the
+sentence above, half the opening rather than the whole of it, and
+corrected the rule to the stated intent rather than the sentence to the
+rule. It also reads such declarations of intent as whole property names,
+so a declaration about a related property is not mistaken for one about
+the property itself; makes the cover check look through only the
+ancestors that actually carry the scrolling region, so a box the region
+is not clipped by cannot narrow the check to itself; and treats a page
+body that clips at its own edge, rather than standing in for the
+viewport, as the real clipper it is.
 
 Also carried: the wording of the previous entry's call-site ordering, in
 the test header and the coverage row, now states the two sites separately

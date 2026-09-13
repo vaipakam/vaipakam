@@ -2761,3 +2761,109 @@ test('readable overlap at scrollers, boxless positioned ancestors, will-change: 
   );
   expect(result.sliverRow, 'a row whose best reachable overlap is a sliver').toBe(false);
 });
+
+// #2157 round 13 — three corrections inside the stated scope, plus the
+// readable-overlap bound corrected to its stated intent:
+//
+//   - `will-change` is matched as whole property names, so
+//     `transform-origin` is not read as `transform`;
+//   - the slit probe intersects only the ancestors that CARRY the credited
+//     scroller, so an `overflow` box an absolutely positioned scroller is
+//     not clipped by does not narrow the probe to itself;
+//   - `<body>` is skipped by the probe only where it is the viewport (see
+//     the next test).
+test('will-change tokens match whole names; the probe clips only through carriers', async ({
+  page,
+}) => {
+  await page.setContent(`<!DOCTYPE html>
+    <style>body { margin: 0 } p { margin: 0 }</style>
+    <!-- 0..40: a scroller with will-change: transform-origin — not a
+         containing block — under the real one -->
+    <div style="position:relative; width:300px; height:40px">
+      <div id="wcOrigin" style="height:40px; overflow:auto; will-change:transform-origin">
+        <p id="wcOriginRow" style="position:absolute; top:-600px; height:20px">not anchored by transform-origin</p>
+        <p style="height:1000px">filler</p>
+      </div>
+    </div>
+    <!-- 40..80: an absolutely positioned scroller whose containing block
+         is above a 100px hidden wrapper; an overlay covers only the
+         wrapper's box, the rest of the scrollport is readable -->
+    <div style="position:relative; width:300px; height:40px">
+      <div style="width:100px; height:40px; overflow:hidden">
+        <div id="absScroller" style="position:absolute; top:0; left:0; width:300px; height:40px; overflow:auto">
+          <p id="absScrollerRow" style="height:20px">readable beside the wrapper</p>
+          <p style="height:1000px">filler</p>
+        </div>
+      </div>
+      <div id="absOverlay" style="position:absolute; top:0; left:0; width:100px; height:40px; background:#000"></div>
+    </div>
+  `);
+  const result = await page.evaluate((helpersSrc) => {
+    const family = new Function(`return (${helpersSrc})();`)();
+    const visible = family.visible as (n: Element | null) => boolean;
+    const byId = (id: string) => document.getElementById(id)!;
+    const hitId = (x: number, y: number) => document.elementFromPoint(x, y)?.id ?? '';
+    byId('absScroller').scrollTop = 600;
+    return {
+      wcComputed: getComputedStyle(byId('wcOrigin')).willChange,
+      wcOriginRowBottom: byId('wcOriginRow').getBoundingClientRect().bottom,
+      wcOriginRow: visible(byId('wcOriginRow')),
+      absScrollerRowBottom: byId('absScrollerRow').getBoundingClientRect().bottom,
+      hitBesideWrapper: byId('absScroller').contains(document.elementFromPoint(200, 60)),
+      hitOnOverlay: hitId(50, 60),
+      absScrollerRow: visible(byId('absScrollerRow')),
+    };
+  }, VISIBILITY_SOURCE);
+  // Measured: the row is anchored to the relative box (at -580), not to the
+  // will-change scroller, whose 960px of credit therefore never moves it.
+  expect(result.wcComputed).toBe('transform-origin');
+  expect(result.wcOriginRowBottom).toBe(-580);
+  expect(result.wcOriginRow, 'an absolute row under will-change: transform-origin').toBe(false);
+  // The scrollport is hit beside the wrapper and covered only over it: the
+  // wrapper does not carry the scroller, so it does not narrow the probe.
+  expect(result.absScrollerRowBottom).toBeLessThan(0);
+  expect(result.hitBesideWrapper).toBe(true);
+  expect(result.hitOnOverlay).toBe('absOverlay');
+  expect(result.absScrollerRow, 'a scrollport readable beside a non-carrying wrapper').toBe(true);
+});
+
+test('a body that clips at its own box narrows the slit probe', async ({ page }) => {
+  await page.setContent(`<!DOCTYPE html>
+    <style>html { overflow: hidden } body { margin: 0; overflow: hidden; height: 40px } p { margin: 0 }</style>
+    <!-- the root's overflow is non-visible, so the body's does not
+         propagate: the body clips at its own 40px box. An 80px scrollport
+         shows only through that opening, and an overlay covers it. -->
+    <div style="position:relative">
+      <div id="bodyClipped" style="width:300px; height:80px; overflow:auto">
+        <p id="bodyClippedRow" style="height:20px">seen only through the body's opening</p>
+        <p style="height:1000px">filler</p>
+      </div>
+      <div id="bodyOverlay" style="position:absolute; top:0; left:0; width:300px; height:40px; background:#000"></div>
+    </div>
+  `);
+  const result = await page.evaluate((helpersSrc) => {
+    const family = new Function(`return (${helpersSrc})();`)();
+    const visible = family.visible as (n: Element | null) => boolean;
+    const byId = (id: string) => document.getElementById(id)!;
+    const hitId = (x: number, y: number) => document.elementFromPoint(x, y)?.id ?? '';
+    byId('bodyClipped').scrollTop = 600;
+    return {
+      rootOverflow: getComputedStyle(document.documentElement).overflowY,
+      bodyOverflow: getComputedStyle(document.body).overflowY,
+      bodyClientHeight: document.body.clientHeight,
+      hitInOpening: hitId(150, 20),
+      hitPastOpening: hitId(150, 60),
+      rowBottom: byId('bodyClippedRow').getBoundingClientRect().bottom,
+      row: visible(byId('bodyClippedRow')),
+    };
+  }, VISIBILITY_SOURCE);
+  // Measured: past the body's 40px opening the scrollport is not hit at
+  // all; inside it, only the overlay is.
+  expect(result.rootOverflow).toBe('hidden');
+  expect(result.bodyOverflow).toBe('hidden');
+  expect(result.bodyClientHeight).toBe(40);
+  expect(result.hitInOpening).toBe('bodyOverlay');
+  expect(result.hitPastOpening).not.toBe('bodyClipped');
+  expect(result.rowBottom).toBeLessThan(0);
+  expect(result.row, 'a scrollport covered over the whole opening a clipping body leaves').toBe(false);
+});
