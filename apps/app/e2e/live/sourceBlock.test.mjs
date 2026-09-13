@@ -19,6 +19,7 @@ import {
   bindingOf,
   isAnchored,
   isBoundedRegion,
+  isStartOfText,
   markableStatementsOf,
   UNKNOWN_BOUNDS,
   markedStatement,
@@ -412,13 +413,11 @@ describe('#2144 — no source region is bounded by a character count', () => {
       // a position and not a count (round 8). Marking it would claim a
       // character count that is not happening. Every END, and every other
       // bound, must be a landmark.
-      if (i === 0 && isStartOfText(a)) return false;
+      if (i === 0 && isStartOfText(src, a)) return false;
       return !isAnchored(src, a);
     });
   };
 
-  const isStartOfText = (node) =>
-    node.type === 'Literal' && (node.value === 0 || node.value === '0');
 
   // The marker excuses a STATEMENT the call sits inside, and only that.
   // Proximity alone excused a neighbour (round 4). Two further corrections
@@ -1341,6 +1340,54 @@ describe('#2144 — no source region is bounded by a character count', () => {
       expect(call, why).toBeDefined();
       expect(countsCharacters(code, call), why).toBe(false);
     }
+  });
+
+  // ROUND 28 — five; three refusing, two accepting.
+  it('refuses the round-28 shapes', () => {
+    const lead = "const s = f();\nconst start = s.indexOf('a');\n";
+    for (const [why, tail] of [
+      [
+        'a finder on a locally CONSTRUCTED object',
+        'const fake = new (class { indexOf() { return start + 320; } })();\nconst r = s.slice(start, fake.indexOf());',
+      ],
+      [
+        'a PRIVATE method that merely shares the finder name',
+        'class C { #indexOf() { return start + 320; } region(src) { return src.slice(start, src.#indexOf()); } }\n' +
+          'const r = new C().region(s);',
+      ],
+    ]) {
+      const code = lead + tail;
+      const call = sliceCallsIn(code).at(-1);
+      expect(call, why).toBeDefined();
+      expect(countsCharacters(code, call), why).toBe(true);
+    }
+  });
+
+  it('does not refuse the round-28 shapes', () => {
+    const lead = "const s = f();\nconst start = s.indexOf('a');\n";
+    for (const [why, tail] of [
+      [
+        'a NAMED start of text',
+        "const begin = 0;\nconst r = s.slice(begin, s.indexOf('end'));",
+      ],
+      [
+        "a destructuring default whose own value takes the region",
+        "let end = s.indexOf('e');\n[end = s.slice(start, end).length] = [];",
+      ],
+    ]) {
+      const code = lead + tail;
+      const call = sliceCallsIn(code).at(-1);
+      expect(call, why).toBeDefined();
+      expect(countsCharacters(code, call), why).toBe(false);
+    }
+  });
+
+  // A header whose construct has no braced body opens nothing — the
+  // first brace after it may belong to an argument.
+  it('refuses a header whose construct has an unbraced body', () => {
+    expect(() => blockFrom('if (ready) consume({ marker: true });\n', 'if (ready)')).toThrow(
+      /opens no block/,
+    );
   });
 
   // ROUND 8 — the list kept shrinking in kind: these are the remaining

@@ -199,6 +199,15 @@ export function blockFrom(src, header) {
   if (owner && (brace.start < owner.start || brace.end > owner.end)) {
     throw new Error(`${header} opens no block of its own`);
   }
+  // …and the construct must actually HAVE a braced body (round 28).
+  // `if (ready) consume({ marker: true });` has none, so the first
+  // braced node after the header is the argument's object literal —
+  // inside the owner, so the containment check passed, and the helper
+  // handed back a plausible partial region instead of saying the header
+  // opens nothing.
+  if (owner && unbracedBody(owner)) {
+    throw new Error(`${header} opens no block of its own`);
+  }
   return src.slice(start, brace.end);
 }
 
@@ -788,6 +797,23 @@ function crossesDeferredBoundary(parents, decl, use) {
   return false;
 }
 
+/** Whether a construct that CAN have a braced body does not have one. */
+function unbracedBody(node) {
+  const body = node.type === 'IfStatement' ? node.consequent : node.body;
+  if (!body || typeof body.type !== 'string') return false;
+  return BODY_BEARING.has(node.type) && !BRACED.has(body.type);
+}
+
+const BODY_BEARING = new Set([
+  'IfStatement',
+  'ForStatement',
+  'ForOfStatement',
+  'ForInStatement',
+  'WhileStatement',
+  'DoWhileStatement',
+  'LabeledStatement',
+]);
+
 /** Whether a slot's extent covers `use`. A slot may be a list — a case
  *  body, a block's statements — and the whole list is one guarded path,
  *  so a use in a LATER statement of it is still on that path. */
@@ -1088,7 +1114,11 @@ function declaredWithin(src, write, host) {
  *  the write necessarily happens after it. */
 function writesAfterUse(parents, write, useAt) {
   for (let c = write, p = parents.get(c); p; c = p, p = parents.get(p)) {
-    if (p.type === 'AssignmentExpression' && p.left === c) {
+    // An `AssignmentPattern` is the same shape inside a destructuring —
+    // `[end = s.slice(start, end).length] = []` evaluates the default
+    // before the write (round 28), and walking past it to the outer
+    // assignment tested the wrong right-hand side.
+    if ((p.type === 'AssignmentExpression' || p.type === 'AssignmentPattern') && p.left === c) {
       return p.right.start <= useAt && p.right.end >= useAt;
     }
   }
@@ -1452,6 +1482,20 @@ function isThisModule(specifier) {
   return specifier === './sourceBlock.mjs';
 }
 
+/**
+ * Whether `node` denotes the START OF THE TEXT — the literal `0`, or a
+ * name that stably holds it (round 28). A region opening at `begin`
+ * where `const begin = 0` is the same stable position as one opening at
+ * `0`, and refusing it asked the author to mark correct code as a count.
+ */
+export function isStartOfText(src, node) {
+  if (!node) return false;
+  if (node.type === 'Literal') return node.value === 0 || node.value === '0';
+  if (node.type !== 'Identifier') return false;
+  const init = resolveAlias(src, node);
+  return !!init && init !== node && isStartOfText(src, init);
+}
+
 /** Whether `node` is a bound that may end a source region. */
 export function isAnchored(src, node, seen = new Set()) {
   return kindOf(src, node, seen) === 'position';
@@ -1526,6 +1570,10 @@ function helperKind(src, callee, seen) {
  * interprocedural limit and not a new one.
  */
 const NOT_TEXT = new Set([
+  // A locally constructed object is no more evidence of source text
+  // than an object literal (round 28): `new (class { indexOf() { … } })`
+  // is the same fake finder with a constructor in front of it.
+  'NewExpression',
   'ObjectExpression',
   'ArrayExpression',
   'ArrowFunctionExpression',
@@ -1663,6 +1711,9 @@ function measuredSource(src, node) {
  * (round 11). `sliceCallsIn` already read truncator names this way.
  */
 function propertyName(member) {
+  // `#indexOf` is a PRIVATE method and can never be the built-in string
+  // finder (round 28), but its node carries the bare name `indexOf`.
+  if (member.property?.type === 'PrivateIdentifier') return null;
   if (!member.computed) return member.property.name;
   const k = member.property;
   if (k.type === 'Literal' && typeof k.value === 'string') return k.value;
