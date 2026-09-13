@@ -1147,6 +1147,38 @@ describe('#2144 — no source region is bounded by a character count', () => {
     expect(blockFrom("'x' && (() => { work(); })();\n", "'x' && (() => {")).toContain('work()');
   });
 
+  // ROUND 23 — three, all on round 21/22's fixes.
+  it('refuses an anchor that is only a comment', () => {
+    expect(() =>
+      blockFrom('// if (target) {\nif (ready) { work(); }\n', '// if (target) {'),
+    ).toThrow(/renamed or removed/);
+  });
+
+  it('refuses a non-text needle hidden behind an alias', () => {
+    const code =
+      "const s = f();\nconst start = s.indexOf('a');\nconst raw = 320;\nconst needle = raw;\n" +
+      'const r = s.slice(start, s.indexOf(needle) + needle.length);';
+    expect(countsCharacters(code, sliceCallsIn(code).at(-1))).toBe(true);
+  });
+
+  // Deferring a function says nothing about the order of statements
+  // WITHIN one call of it.
+  it('keeps order for a write local to the same function as the use', () => {
+    const code =
+      'function region(s) {\n' +
+      "  const start = s.indexOf('a');\n  let end = s.indexOf('e');\n" +
+      '  const r = s.slice(start, end);\n  end = start + 320;\n  return r;\n}';
+    expect(countsCharacters(code, sliceCallsIn(code).at(-1))).toBe(false);
+  });
+
+  // …but a LOOP body gives no order even when it is shared.
+  it('still refuses a write sharing a loop body with the use', () => {
+    const code =
+      "const s = f();\nconst start = s.indexOf('a');\nlet end = s.indexOf('e');\n" +
+      'for (const x of xs) {\n  const r = s.slice(start, end);\n  end = start + 320;\n}';
+    expect(countsCharacters(code, sliceCallsIn(code).at(-1))).toBe(true);
+  });
+
   // ROUND 8 — the list kept shrinking in kind: these are the remaining
   // ways a bound can look like a landmark without being one, plus the two
   // spellings of a truncation the collector was not seeing.

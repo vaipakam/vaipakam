@@ -321,7 +321,15 @@ function anchorIn(src, anchor, at, { skipStrings = false } = {}) {
     const straddles = skipped.some(
       ([a, b]) => i < b && end > a && !(i <= a && end >= b),
     );
-    if (!straddles) return i;
+    // …and it must contain SOME CODE. Round 23: the containment rule
+    // above happily accepted a match that IS a comment — `// if (target)
+    // {` — which walked `blockFrom` on to an unrelated later block, the
+    // very behaviour `anchorAt` says is always skipped. Containing a
+    // skipped span is fine; consisting of one is not.
+    const hasCode = [...Array(end - i).keys()].some(
+      (k) => !skipped.some(([a, b]) => i + k >= a && i + k < b),
+    );
+    if (!straddles && hasCode) return i;
   }
   return -1;
 }
@@ -920,13 +928,41 @@ function writeReaches(src, writes, useAt) {
     }
     return false;
   };
+  // The innermost deferred ancestor — the function or loop body a node
+  // runs inside. Two nodes sharing one are in the SAME invocation, where
+  // ordinary position order holds again (round 23): deferring a function
+  // says nothing about the order of statements within a single call of
+  // it, and treating every use inside one as unordered refused correct
+  // code outright.
+  const host = (n) => {
+    for (let c = n, p = parents.get(c); p; c = p, p = parents.get(p)) {
+      if (inGuardedSlot(DEFERRED, p, c)) return p;
+    }
+    return null;
+  };
   let useNode = null;
   for (const n of nodes) if (n.start <= useAt && n.end >= useAt) useNode = n;
-  if (useNode && deferred(useNode)) return true;
-  return writes.some(
-    (w) => w.start < useAt || deferred(w) || keyPrecedesStaticValue(parents, w, useNode),
-  );
+  const useHost = useNode ? host(useNode) : null;
+  return writes.some((w) => {
+    if (keyPrecedesStaticValue(parents, w, useNode)) return true;
+    const writeHost = host(w);
+    // A LOOP repeats, so even one body gives no order; only a shared
+    // FUNCTION host restores it.
+    const shared =
+      useHost !== null && writeHost === useHost && !LOOPS.has(useHost.type);
+    if (shared) return w.start < useAt;
+    if (useHost !== null) return true;
+    return w.start < useAt || writeHost !== null;
+  });
 }
+
+const LOOPS = new Set([
+  'ForStatement',
+  'ForOfStatement',
+  'ForInStatement',
+  'WhileStatement',
+  'DoWhileStatement',
+]);
 
 /**
  * Whether `write` sits in a computed KEY that runs before `use`'s static
@@ -1401,17 +1437,24 @@ function needleNode(node) {
  * REGION (`const haveControl = blockFrom(...)`), so requiring a literal
  * initializer here would refuse the very case the rule is for.
  */
-function isTextNeedle(src, node) {
+function isTextNeedle(src, node, seen = new Set()) {
   if (!node) return false;
   if (node.type === 'Literal') return typeof node.value === 'string';
   if (node.type === 'TemplateLiteral') return true;
   if (node.type !== 'Identifier') return false;
+  const key = `needle:${node.name}@${node.start}`;
+  if (seen.has(key)) return false;
+  seen.add(key);
   const bound = bindingOf(src, node);
   if (!bound.found) return true;
   if (bound.notText) return false;
   const init = bound.init;
   if (!init) return true;
   if (init.type === 'Literal') return typeof init.value === 'string';
+  // An ALIAS hides the value one hop further on (round 23):
+  // `const raw = 320; const needle = raw;` stopped at the Identifier
+  // initializer and certified it as text. Follow the chain.
+  if (init.type === 'Identifier') return isTextNeedle(src, init, seen);
   return !NOT_TEXT.has(init.type);
 }
 
