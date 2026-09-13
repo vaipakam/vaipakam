@@ -54,6 +54,34 @@ export function blockFrom(src, header) {
 }
 
 /**
+ * The source BETWEEN two anchors — from `from` up to (not including) the
+ * next occurrence of `to` after it.
+ *
+ * For a region that is neither a brace block nor a paren call: a
+ * declaration and the few lines that belong with it, a neighbourhood of
+ * statements. `blockFrom` cannot bound those — there is no brace to match
+ * — and the tempting substitute is the fixed window this module exists to
+ * refuse (#2144). A following anchor bounds the region by something that
+ * MEANS the region ended, so it moves with the code instead of with the
+ * file's length.
+ *
+ * Throws if either anchor is gone, and if `to` does not follow `from`.
+ * The empty-slice failure is the one worth naming: a rule asserted over
+ * `''` passes by measuring nothing, and a `to` that only appears BEFORE
+ * `from` would produce exactly that — silently, and for as long as the
+ * rename survived.
+ */
+export function between(src, from, to) {
+  const start = src.indexOf(from);
+  if (start === -1) throw new Error(`${from} was renamed or removed`);
+  const end = src.indexOf(to, start + from.length);
+  if (end === -1) {
+    throw new Error(`${to} does not follow ${from} — it was renamed, removed, or moved above it`);
+  }
+  return src.slice(start, end);
+}
+
+/**
  * The source of the call that CONTAINS `needle`, from `callee` through
  * its matching close paren.
  *

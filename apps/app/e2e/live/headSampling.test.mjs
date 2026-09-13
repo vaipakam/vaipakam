@@ -44,7 +44,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
-import { blockFrom, callContaining, stripLineComments } from './sourceBlock.mjs';
+import { between, blockFrom, callContaining, stripLineComments } from './sourceBlock.mjs';
 
 const DRIVE = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -171,7 +171,7 @@ describe('the head sample waits for the readings in flight', () => {
   it('pins the pre-render simulation to a head the card cannot predate', () => {
     // Not to `pageHead` — that is the round-57 fix keeping the round-58
     // defect, and the two identifiers differ by one word.
-    const decl = src.slice(at('const defaultableBefore ='), at('const defaultableBefore =') + 400);
+    const decl = between(src, 'const defaultableBefore =', 'const matchBefore =');
     expect(decl).toContain('headBefore');
     expect(decl).not.toContain('pageHead ===');
   });
@@ -199,7 +199,7 @@ describe('the head sample waits for the readings in flight', () => {
     // floor where they are further back, and because the page-provider
     // sample is absent on the first visit and on an endpoint that will
     // not answer.
-    const decl = src.slice(at('const headFloor ='), at('const headFloor =') + 700);
+    const decl = between(src, 'const headFloor =', 'const defaultableBefore =');
     expect(decl).toContain('pageHeadFloorOf(page)');
     expect(decl).toContain('headBeforeNav');
     expect(decl).toContain('pageHeadBeforeNav');
@@ -433,7 +433,7 @@ describe('the head sample waits for the readings in flight', () => {
     expect(mod).toContain("body.includes('eth_call')");
     // And the gate is actually consumed by both stability reads — with no
     // global shortcut past it, which is the round-90 finding.
-    const both = src.slice(at('const floorSound ='), at('const floorSound =') + 1200);
+    const both = between(src, 'const floorSound =', 'const attemptedResults =');
     expect(both).toContain('floorEstablishedFor(page, pageSampledBeforeNav)');
     expect(both).not.toMatch(/pageNav > 0n \|\|/);
     expect(both).toMatch(/defaultableStable =\s*\n?\s*floorSound &&/);
@@ -445,7 +445,7 @@ describe('the head sample waits for the readings in flight', () => {
   // can round-trip inside the window.
   it('checks the protocol answer held at every block of the span', () => {
     expect(at('async function stableAcross(')).toBeGreaterThan(-1);
-    const both = src.slice(at('const defaultableStable ='), at('const defaultableStable =') + 1400);
+    const both = between(src, 'const defaultableStable =', 'const attemptedResults =');
     // Reformatted in round 105 when the extent callback was added, so this
     // pins the arguments rather than a one-line call shape.
     expect(both).toContain('pinnedDefaultable');
@@ -462,7 +462,7 @@ describe('the head sample waits for the readings in flight', () => {
   it('brackets the settlement-route read the same way', () => {
     // Both pre-render probes answer questions about the same render, so a
     // fix applied to one of them is this PR's most repeated finding.
-    const decl = src.slice(at('const matchBefore ='), at('const matchBefore =') + 400);
+    const decl = between(src, 'const matchBefore =', 'const card = await readForcedCloseCard(page);');
     expect(decl).toContain('headBefore');
   });
 

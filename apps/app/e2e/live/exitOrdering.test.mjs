@@ -36,7 +36,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
-import { stripLineComments } from './sourceBlock.mjs';
+import { blockFrom, stripLineComments } from './sourceBlock.mjs';
 
 const DRIVE = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -202,7 +202,7 @@ describe('a funds defect that was READ outranks every blocker', () => {
   });
 
   it('names it inside the Advanced blocked branch too', () => {
-    const branch = src.slice(at('if (advBlocked.length) {'), at('if (advBlocked.length) {') + 900);
+    const branch = blockFrom(src, 'if (advBlocked.length) {');
     expect(branch, 'the Advanced exit mentions the forced-close gap').toContain('fcGap');
   });
 

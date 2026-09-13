@@ -8,7 +8,7 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { blockFrom, callContaining, stripLineComments } from './sourceBlock.mjs';
+import { between, blockFrom, callContaining, stripLineComments } from './sourceBlock.mjs';
 
 describe('blockFrom', () => {
   it('ends at the matching close, not the first one', () => {
@@ -130,5 +130,43 @@ describe('stripLineComments', () => {
   it('leaves comment-free text untouched', () => {
     const src = 'a();\nb();\n';
     expect(stripLineComments(src)).toBe(src);
+  });
+});
+
+describe('#2144 — between(): a region bounded by a following anchor', () => {
+  const src = [
+    'const alpha = 1;',
+    '// a comment about beta',
+    'const beta = 2;',
+    'const gamma = 3;',
+  ].join('\n');
+
+  it('returns the region from one anchor up to the next', () => {
+    const region = between(src, 'const alpha', 'const beta');
+    expect(region).toContain('const alpha = 1;');
+    expect(region).toContain('a comment about beta');
+    expect(region).not.toContain('const beta = 2;');
+  });
+
+  it('throws when the opening anchor is gone', () => {
+    expect(() => between(src, 'const delta', 'const beta')).toThrow(/const delta was renamed/);
+  });
+
+  it('throws when the closing anchor is gone', () => {
+    expect(() => between(src, 'const alpha', 'const omega')).toThrow(/const omega does not follow/);
+  });
+
+  // The vacuous shape this helper exists to refuse: a `to` that appears
+  // only BEFORE `from` would otherwise yield '' and pass every assertion
+  // by measuring nothing.
+  it('throws rather than returning an empty region when the anchors are out of order', () => {
+    expect(() => between(src, 'const gamma', 'const alpha')).toThrow(/does not follow/);
+    expect(between(src, 'const alpha', 'const gamma')).not.toBe('');
+  });
+
+  // The closing anchor is searched for AFTER the opening one ends, so an
+  // anchor that is a prefix of its own region does not match itself.
+  it('does not match the closing anchor inside the opening one', () => {
+    expect(between('const a = 1; const a = 2;', 'const a', 'const a')).toBe('const a = 1; ');
   });
 });
