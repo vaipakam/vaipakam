@@ -668,16 +668,6 @@ library Deployments {
         );
     }
 
-    /// @dev Set by a NON-broadcasting step that is nonetheless a real run —
-    ///      `record()` reconciling the artifact from live chain state — so
-    ///      the dry-run gate below lets its writes through. Nothing else sets
-    ///      it; callers clear it again right after their write.
-    string private constant NONBROADCAST_WRITE_ENV = "VAIPAKAM_NONBROADCAST_ARTIFACT_WRITE";
-
-    function allowNonBroadcastWrites(bool on) internal {
-        CHEATS.setEnv(NONBROADCAST_WRITE_ENV, on ? "true" : "false");
-    }
-
     /// @dev ONE gate for every artifact write (#1566 slice 4 PR A, Codex #2158
     ///      r16 P2, r19 P1): a forge dry run (`forge script` without
     ///      `--broadcast`) writes NOTHING, whichever helper reached here.
@@ -687,12 +677,29 @@ library Deployments {
     ///      simulated facet. Scripts that skip their writes themselves still
     ///      do; this is the gate a forgotten one cannot slip past. Checked
     ///      before the publication marker so a dry run never demands a live
-    ///      publication token either.
+    ///      publication token either. There is NO switch that widens it — not
+    ///      an environment variable, which a caller's shell or `.env` could
+    ///      carry into every write (Codex #2158 r21 P2); the single real-run
+    ///      exception is {writeRewardCustodyHolderReconciled}, a dedicated
+    ///      writer for one field that a caller invokes on purpose.
     function _dryRunSkips(string memory jsonKey) private view returns (bool) {
         if (!CHEATS.isContext(VmSafe.ForgeContext.ScriptDryRun)) return false;
-        if (CHEATS.envOr(NONBROADCAST_WRITE_ENV, false)) return false;
         console.log("Deployments: dry run - NOT writing", jsonKey);
         return true;
+    }
+
+    /// @dev The ONE artifact write a non-broadcasting step may make: the
+    ///      reward-custody `record()` reconciling `.rewardCustodyHolder` from
+    ///      live chain state once a ceremony has confirmed. That step sends
+    ///      nothing, so forge classifies it as a dry run, yet it IS the real
+    ///      run — this writer alone bypasses the dry-run gate, for this key
+    ///      only, by an explicit call and never by anything an environment
+    ///      could carry (Codex #2158 r19 P1, r21 P2). Every other rule of a
+    ///      write still applies.
+    function writeRewardCustodyHolderReconciled(address a) internal {
+        requireMarkedPublication(".rewardCustodyHolder");
+        _ensureFile();
+        CHEATS.writeJson(CHEATS.toString(a), path(), ".rewardCustodyHolder");
     }
 
     function _writeAddr(string memory jsonKey, address a) private {

@@ -181,10 +181,9 @@ abstract contract RewardCustodyCeremonyBase is Script {
         // A plain `forge script --sig "record()"` runs in forge's dry-run
         // context, and `Deployments` refuses every artifact write in that
         // context (Codex #2158 r19 P1) — this step is the one deliberate
-        // exception, declared for exactly this write and cleared after it.
-        Deployments.allowNonBroadcastWrites(true);
-        Deployments.writeRewardCustodyHolder(bound);
-        Deployments.allowNonBroadcastWrites(false);
+        // exception, made through a dedicated writer for exactly this field
+        // rather than any switch an environment could carry (r21 P2).
+        Deployments.writeRewardCustodyHolderReconciled(bound);
         console.log("Recorded .rewardCustodyHolder =", bound, "in", Deployments.path());
     }
 }

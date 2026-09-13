@@ -5951,7 +5951,9 @@ remains possible and shows only as the unattributed remainder — review r5).**
 > not a cross-chain guarantee; a later state change refuses that chain before
 > it sends, with earlier chains complete, and the run names the rerun (review
 > r19) — every artifact write refusing a dry run at one gate inside the
-> artifact library, with `record()` the declared exception (review r19),
+> artifact library, with `record()`'s one reconciliation write the sole
+> exception — a dedicated writer for that field, not an environment switch
+> (review r19, r21),
 > and classifies the bound-holder / artifact relation up front by the one rule
 > the post-refresh bind step applies (review r16). An NFT that reached a holder
 > — a non-safe ERC-721 transfer, or delivery to the predicted address before

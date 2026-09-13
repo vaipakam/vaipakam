@@ -88,8 +88,9 @@ chains already refreshed in the run stay complete, which the run then states
 together with the command to resume for the remaining chains. A simulation
 writes nothing to the deployment record, enforced at the single place every
 record write goes through rather than script by script; the one deliberate
-exception is the ceremony record step, which declares itself a real run for
-its single reconciliation write.
+exception is the ceremony record step's single reconciliation write, made
+through a dedicated writer for that one field so that no setting an
+environment could carry can widen the exception to any other write.
 The relation between a chain's bound holder and its deployment record is
 classified before any broadcast by the same rule the post-refresh step
 applies, so a record that names a different holder than the chain, with no
