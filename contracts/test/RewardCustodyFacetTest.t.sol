@@ -90,6 +90,20 @@ contract RevertingBalanceToken {
     }
 }
 
+/// @dev An ERC-1155 that credits the recipient WITHOUT debiting the sender.
+///      The sweep must refuse rather than report a recovery that moved nothing.
+contract CreditOnlyERC1155 {
+    mapping(address => mapping(uint256 => uint256)) public balanceOf;
+
+    function mint(address to, uint256 id, uint256 amount) external {
+        balanceOf[to][id] += amount;
+    }
+
+    function safeTransferFrom(address, address to, uint256 id, uint256 amount, bytes calldata) external {
+        balanceOf[to][id] += amount;
+    }
+}
+
 /// @dev An ERC-721 whose safe transfer returns without moving ownership — a
 ///      proxy upgraded into a broken implementation. The sweep must refuse.
 contract NoopERC721 {
@@ -1010,6 +1024,31 @@ contract RewardCustodyFacetTest is SetupTest {
         );
         _custody().sweepERC721FromRewardCustody(holder, address(broken), 9);
         assertEq(broken.ownerOf(9), holder, "nothing moved, nothing reported");
+    }
+
+    /// @dev Codex #2158 r22 P2 — every release from a holder verifies the
+    ///      holder's debit, foreign assets included: a token that credits the
+    ///      treasury without debiting the holder is refused, so no sweep can
+    ///      be reported over units that never left.
+    function test_Sweep_RefusesForeignAssetsThatDoNotDebitTheHolder() public {
+        address holder = _bind();
+        _treasury();
+
+        CreditOnlyERC20 erc20 = new CreditOnlyERC20();
+        erc20.mint(holder, 50);
+        vm.expectRevert(
+            abi.encodeWithSelector(IVaipakamErrors.RewardCustodySourceNotDebited.selector, holder, 50, 0)
+        );
+        _custody().sweepForeignTokenFromRewardCustody(holder, address(erc20), 50);
+        assertEq(erc20.balanceOf(holder), 50, "still at the holder, nothing reported");
+
+        CreditOnlyERC1155 units = new CreditOnlyERC1155();
+        units.mint(holder, 7, 3);
+        vm.expectRevert(
+            abi.encodeWithSelector(IVaipakamErrors.RewardCustodySourceNotDebited.selector, holder, 3, 0)
+        );
+        _custody().sweepERC1155FromRewardCustody(holder, address(units), 7, 3);
+        assertEq(units.balanceOf(holder, 7), 3, "still at the holder, nothing reported");
     }
 
     function test_SweepNative_IsAdminOnly() public {

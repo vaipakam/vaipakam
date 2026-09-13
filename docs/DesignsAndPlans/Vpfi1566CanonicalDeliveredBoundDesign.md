@@ -5968,7 +5968,11 @@ remains possible and shows only as the unattributed remainder — review r5).**
 > the manual flag before its migrations (review r18). The pre-flight's holder
 > read fails closed on a transport failure, the loupe alone deciding "not
 > routed" (review r18), and an unexecuted bind record over a holderless chain
-> refuses before any broadcast (review r20). Simulations neither create nor erase
+> refuses before any broadcast (review r20). Every release from a holder,
+> foreign assets included, verifies the holder's debit; a replacement record
+> must name the artifact's current holder as its predecessor; and only a
+> Detached refusal of the rebase is a deferral — an Unconfigured chain with
+> history aborts paused (review r22). Simulations neither create nor erase
 > ceremony records. The row invariants are NOT pinned yet: with
 > no writer in PR A they would be vacuous; they land with PR B's writers.
 

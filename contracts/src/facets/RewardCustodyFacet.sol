@@ -306,7 +306,10 @@ contract RewardCustodyFacet is DiamondAccessControl {
      *         nowhere else, and accepts only a holder whose `DIAMOND()` is
      *         this Diamond. The event carries both the requested amount and
      *         the treasury's MEASURED receipt, since an arbitrary foreign
-     *         token may credit less than it was asked to move.
+     *         token may credit less than it was asked to move; the holder's
+     *         debit, by contrast, must be exactly the amount (Codex #2158
+     *         r22 P2) — a token that credits without debiting is refused
+     *         rather than reported as recovered.
      * @param  holder A holder this Diamond constructed (bound or previous).
      * @param  token  The ERC-20 to recover; never the configured VPFI.
      * @param  amount The amount to move to the treasury.
@@ -322,9 +325,11 @@ contract RewardCustodyFacet is DiamondAccessControl {
         address treasury = s.treasury;
         if (treasury == address(0)) revert IVaipakamErrors.RewardCustodyTreasuryUnset();
         _requireConstructedHere(s, holder);
+        uint256 holderBefore = IERC20(token).balanceOf(holder);
         uint256 before = IERC20(token).balanceOf(treasury);
         RewardCustodyHolder(holder).release(token, treasury, amount);
         uint256 received = IERC20(token).balanceOf(treasury) - before;
+        _requireDebited(holder, holderBefore, IERC20(token).balanceOf(holder), amount);
         emit RewardCustodyForeignTokenSwept(holder, token, treasury, amount, received);
     }
 
@@ -403,7 +408,8 @@ contract RewardCustodyFacet is DiamondAccessControl {
      * @dev    ADMIN. Same posture as {sweepERC721FromRewardCustody}; an
      *         ERC-1155 has only safe transfers, so units can reach a holder
      *         only at the predicted address before construction. The event
-     *         carries the treasury's MEASURED receipt beside the request.
+     *         carries the treasury's MEASURED receipt beside the request; the
+     *         holder's debit must be exactly the amount (Codex #2158 r22 P2).
      * @param  holder A holder this Diamond constructed (bound or previous).
      * @param  token  The ERC-1155 contract.
      * @param  id     The token id.
@@ -420,9 +426,11 @@ contract RewardCustodyFacet is DiamondAccessControl {
         address treasury = s.treasury;
         if (treasury == address(0)) revert IVaipakamErrors.RewardCustodyTreasuryUnset();
         _requireConstructedHere(s, holder);
+        uint256 holderBefore = IERC1155(token).balanceOf(holder, id);
         uint256 before = IERC1155(token).balanceOf(treasury, id);
         RewardCustodyHolder(holder).releaseERC1155(token, treasury, id, amount);
         uint256 received = IERC1155(token).balanceOf(treasury, id) - before;
+        _requireDebited(holder, holderBefore, IERC1155(token).balanceOf(holder, id), amount);
         emit RewardCustodyERC1155Swept(holder, token, treasury, id, amount, received);
     }
 
@@ -743,8 +751,25 @@ contract RewardCustodyFacet is DiamondAccessControl {
         if (credited != amount) {
             revert IVaipakamErrors.RewardCustodyMoveUnverified(amount, credited);
         }
-        uint256 fromAfter = IERC20(token).balanceOf(from);
-        uint256 debited = fromAfter > fromBefore ? 0 : fromBefore - fromAfter;
+        _requireDebited(from, fromBefore, IERC20(token).balanceOf(from), amount);
+    }
+
+    /// @dev The source-side rule of EVERY release from a holder, in one place
+    ///      (Codex #2158 r12, r15, r22 P2): the holder released from must
+    ///      have been debited by exactly `amount`. A token that credits the
+    ///      destination without debiting the source would otherwise leave the
+    ///      asset in the holder behind a "recovered" event, repeatable at
+    ///      will — for the configured VPFI and for a foreign ERC-20 or
+    ///      ERC-1155 alike. The destination side differs by asset: custody
+    ///      moves require exact growth, foreign sweeps report the measured
+    ///      receipt (a fee-on-transfer token legitimately delivers less).
+    function _requireDebited(
+        address from,
+        uint256 balanceBefore,
+        uint256 balanceAfter,
+        uint256 amount
+    ) private pure {
+        uint256 debited = balanceAfter > balanceBefore ? 0 : balanceBefore - balanceAfter;
         if (debited != amount) {
             revert IVaipakamErrors.RewardCustodySourceNotDebited(from, amount, debited);
         }

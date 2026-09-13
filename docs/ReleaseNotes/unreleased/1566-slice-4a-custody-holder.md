@@ -17,7 +17,10 @@ surface and would stay behind at a replaced holder, so an administrator can
 recover such a token from any holder the platform constructed to the
 treasury, and only to the treasury, through an audited sweep that refuses the
 configured reward token itself and reports what the treasury actually
-received beside what was requested. Native currency forced into a holder,
+received beside what was requested — while every recovery from a holder, of
+any asset, is refused unless the holder was debited by exactly what was
+released, so a token that credits without debiting can never be reported as
+recovered. Native currency forced into a holder,
 which accepts none by itself, is likewise reported and recoverable to the
 treasury the same way, and so is an NFT that reached a holder: a constructed
 holder refuses a safe transfer of one, but a non-safe transfer, or delivery to
@@ -109,7 +112,14 @@ which is proven by the record step from live chain state. On a chain whose rewar
 inactive the rebase accepts only a history-free chain, meaning nothing to
 import and nothing on either the paid or the received side; a detached chain
 carrying history on either counter keeps its guard open until it is
-re-attached, so the baseline is never installed under the wrong role. Replacing a holder, and the paid-side rebase, require the platform's MANUAL
+re-attached, so the baseline is never installed under the wrong role — and
+only a detached chain's refusal is treated as that deferral: a chain with no
+reward role at all that carries history has no re-attachment ahead of it and
+keeps paying meanwhile, so its refusal stops the refresh, paused, for an
+explicit decision. The record step of a replacement accepts a ceremony record
+only if the predecessor it names is the deployment record's current holder, so
+a stale or corrupted record can never confirm a replacement that never
+executed. Replacing a holder, and the paid-side rebase, require the platform's MANUAL
 pause and refuse under an automatic, time-bounded watcher pause alone — enforced
 by the platform itself whatever path the call arrives by, since such a pause
 lapses on its own and service would resume by no one's decision after an

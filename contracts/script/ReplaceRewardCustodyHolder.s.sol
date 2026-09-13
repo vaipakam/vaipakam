@@ -8,6 +8,7 @@ import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
 import {RewardCustodyCeremonyBase} from "./lib/RewardCustodyCeremonyBase.sol";
+import {Deployments} from "./lib/Deployments.sol";
 
 /**
  * @title  ReplaceRewardCustodyHolder — the paused holder-replacement
@@ -109,9 +110,32 @@ contract ReplaceRewardCustodyHolder is RewardCustodyCeremonyBase {
     }
 
     /// @notice Validate the pending replacement record and write nothing —
-    ///         what record() will require (Codex #2158 r17 P2).
+    ///         what record() will require (Codex #2158 r17 P2): parseable,
+    ///         this Diamond, and a predecessor that is the artifact's current
+    ///         holder (r22 P2).
     function check() external view {
         _checkRecord(KIND);
+        _recordedPredecessor(_readRecord(KIND));
+        console.log("predecessor matches the artifact's current holder");
+    }
+
+    /// @dev The record's predecessor must be the artifact's CURRENT holder —
+    ///      the one this ceremony set out to replace (Codex #2158 r22 P2). A
+    ///      zero or foreign predecessor would let a live holder that merely
+    ///      differs from it — the original, still bound, when the bundle
+    ///      never executed — pass reconciliation, rewrite the artifact and
+    ///      retire the record, after which service could resume on the very
+    ///      holder the ceremony meant to replace.
+    function _recordedPredecessor(string memory json) private view returns (address previous) {
+        previous = vm.parseJsonAddress(json, ".previousHolder");
+        require(
+            previous != address(0),
+            "ReplaceRewardCustodyHolder: the ceremony record names no predecessor -- stale or corrupted; remove it deliberately or re-stage"
+        );
+        require(
+            previous == Deployments.readRewardCustodyHolderOptional(),
+            "ReplaceRewardCustodyHolder: the ceremony record's predecessor is not the artifact's current holder -- stale or foreign record; remove it deliberately or re-stage"
+        );
     }
 
     function stage() external {
@@ -143,7 +167,7 @@ contract ReplaceRewardCustodyHolder is RewardCustodyCeremonyBase {
     function record() external {
         string memory json = _readRecord(KIND);
         address diamond = vm.parseJsonAddress(json, ".diamond");
-        address previous = vm.parseJsonAddress(json, ".previousHolder");
+        address previous = _recordedPredecessor(json);
         console.log("=== Reward custody holder replacement (record) ===");
         console.log("Diamond:         ", diamond);
         console.log("Previous holder: ", previous);

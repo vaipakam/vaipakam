@@ -1025,10 +1025,27 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
                 if (sel == IVaipakamErrors.ArmedFreshPaidAlreadyRebased.selector) {
                     console.log("slice-4: armed-fresh paid side already rebased - skipped");
                 } else if (sel == IVaipakamErrors.ArmedFreshRebaseRequiresActiveRole.selector) {
+                    // The refusal names the role, and only DETACHED is a
+                    // deferral (Codex #2158 r22 P2): nothing spends on a
+                    // detached chain (its bound is zero) and the
+                    // re-attachment ceremony is where the carried total
+                    // lands. An UNCONFIGURED chain has no such ceremony
+                    // ahead of it, keeps paying under a `max` bound that
+                    // charges no paid counter, and would make the logged
+                    // total stale by the time anyone used it — so its
+                    // refusal aborts, paused, for an explicit disposition.
+                    (uint8 role,,,) = abi.decode(_errorData(err), (uint8, uint256, uint256, uint256));
+                    require(
+                        role == _roleFromLabel("detached"),
+                        "slice-4: rebase refused on an UNCONFIGURED chain that carries history "
+                        "(paid, received, or a stated total) - no re-attachment ceremony can carry "
+                        "the figure and the chain keeps paying under the max bound; aborting while "
+                        "paused for an explicit disposition"
+                    );
                     console.log(
-                        "slice-4: inactive reward role (Unconfigured/Detached) with history on "
-                        "the paid or received side, or a stated total - rebase DEFERRED, guard "
-                        "left OPEN; carry this total to the re-attachment ceremony:",
+                        "slice-4: DETACHED reward role with history on the paid or received side, "
+                        "or a stated total - rebase DEFERRED, guard left OPEN; carry this total to "
+                        "the re-attachment ceremony:",
                         total
                     );
                 } else {
@@ -1475,6 +1492,15 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             } else {
                 reps[ri++] = sels[i];
             }
+        }
+    }
+
+    /// @dev The ABI-encoded arguments of a custom error: the revert data
+    ///      minus its 4-byte selector.
+    function _errorData(bytes memory err) private pure returns (bytes memory data) {
+        data = new bytes(err.length - 4);
+        for (uint256 i = 0; i < data.length; ++i) {
+            data[i] = err[i + 4];
         }
     }
 
