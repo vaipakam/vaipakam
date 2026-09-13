@@ -153,7 +153,9 @@ body that clips at its own edge, rather than standing in for the
 viewport, as the real clipper it is. A fourteenth round measured that a
 plain inline span cannot be transformed or contained, so declaring a
 transform on one does not make it the reference for an absolutely
-positioned row inside it; only a filter does. The rule now reads inline
+positioned row inside it; of the properties the rule reads, only the two
+filter properties, a filter on the element or a backdrop filter behind
+it, and a declared intent to change either, do. The rule now reads inline
 wrappers accordingly, so a scrolling region between such a wrapper and
 the row's real reference is neither credited nor blamed for the row.
 
