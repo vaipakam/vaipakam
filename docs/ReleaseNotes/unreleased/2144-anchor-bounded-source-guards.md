@@ -489,6 +489,29 @@ even though the review loop had reached its agreed limit; a limit on how
 long to keep polishing is not permission to ship a hole opened on the way
 there.
 
+The round after that is the one where an allowance was withdrawn instead
+of mended, and it is the clearest example in the whole effort of when to
+stop patching. A wrapper around a piece of text had been allowed through
+on the grounds that it uses the built-in search. Three consecutive rounds
+then found three ways to change which search it uses: writing over the
+search on the wrapper, writing over it one step further along, and
+replacing the built-in search for every piece of text before the wrapper
+is even made. Each fix was correct and each revealed the next, and the
+third is not reachable by examining the wrapper at all — it asks whether
+anything anywhere has changed how searching works, which is not a
+question with a bounded answer.
+
+So the allowance is gone. A wrapper is now treated like any other
+constructed thing, which is to say not trusted, and the cost is one
+shape nothing in these suites writes. Three rounds needing three fixes
+to one rule is the rule telling you which side of it is wrong.
+
+The same round closed a narrowing that had been leaving entirely: a
+search function fixed to a piece of text in one statement and called in
+the next. The fixing was passed over because fixing is not narrowing,
+and the call was passed over because its name says nothing about what it
+holds, so the window fell through the space between the two.
+
 The effect is that these checks now fail when the thing they describe
 changes, and not when the file grows. A check that fails because a file
 got longer teaches nothing, and trains the next reader to widen the

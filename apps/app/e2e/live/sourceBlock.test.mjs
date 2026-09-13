@@ -1399,10 +1399,6 @@ describe('#2144 — no source region is bounded by a character count', () => {
         "let end = s.indexOf('e');\n[end = 0] = [s.slice(start, end).length];",
       ],
       [
-        'a built-in String wrapper, which uses the built-in finder',
-        "const copy = new String(s);\nconst r = s.slice(start, copy.indexOf('end'));",
-      ],
-      [
         'a local Reflect that is not the intrinsic',
         'const Reflect = { apply(fn, recv, args) { return fn(recv, args); } };\n' +
           "const r = s.slice(start, s.indexOf('end'));\nReflect.apply(custom, s, [start, start + 320]);",
@@ -1760,13 +1756,53 @@ describe('#2144 — no source region is bounded by a character count', () => {
     expect(countsCharacters(code, calls.at(-1))).toBe(true);
   });
 
-  it("refuses a wrapper mutated through its prototype", () => {
+  // Round 33 WITHDREW the wrapper exemption rather than mending it a
+  // fourth time. Three rounds found three routes to the same finder — a
+  // property on the wrapper, the same property through its prototype,
+  // and the intrinsic prototype replaced before the wrapper exists. The
+  // last is not reachable from the wrapper's own uses at all, so no
+  // examination of them closes it. All three are refused now, and so is
+  // the untouched wrapper the exemption existed for: a shape no live
+  // suite writes.
+  it('refuses a built-in String wrapper, however it was reached', () => {
+    const lead = "const s = f();\nconst start = s.indexOf('a');\n";
+    for (const [why, tail] of [
+      [
+        'a property written on the wrapper',
+        'const copy = new String(s);\ncopy.indexOf = () => start + 320;\n' +
+          "const r = s.slice(start, copy.indexOf('end'));",
+      ],
+      [
+        'the same property written through its prototype',
+        'const copy = new String(s);\ncopy.__proto__.indexOf = () => start + 320;\n' +
+          "const r = s.slice(start, copy.indexOf('end'));",
+      ],
+      [
+        'the intrinsic prototype replaced before the wrapper exists',
+        'String.prototype.indexOf = () => start + 320;\nconst copy = new String(s);\n' +
+          "const r = s.slice(start, copy.indexOf('end'));",
+      ],
+      [
+        'an untouched wrapper — the shape the withdrawn exemption existed for',
+        "const copy = new String(s);\nconst r = s.slice(start, copy.indexOf('end'));",
+      ],
+    ]) {
+      const code = lead + tail;
+      expect(countsCharacters(code, sliceCallsIn(code).at(-1)), why).toBe(true);
+    }
+  });
+
+  // A truncator bound in one statement and called in another. The bind
+  // is skipped for being a bind, the call is skipped for having a plain
+  // name as its callee, and the window left through the gap.
+  it('finds a truncator bound to a name and called later', () => {
     const code =
       "const s = f();\nconst start = s.indexOf('a');\n" +
-      'const copy = new String(s);\n' +
-      'copy.__proto__.indexOf = () => start + 320;\n' +
-      "const r = s.slice(start, copy.indexOf('end'));";
-    expect(countsCharacters(code, sliceCallsIn(code).at(-1))).toBe(true);
+      'const cut = s.slice.bind(s);\n' +
+      'const r = cut(start, start + 320);';
+    const calls = sliceCallsIn(code);
+    expect(calls.length).toBeGreaterThan(0);
+    expect(countsCharacters(code, calls.at(-1))).toBe(true);
   });
 
   // Round 29 made `callContaining` try every occurrence of its needle.

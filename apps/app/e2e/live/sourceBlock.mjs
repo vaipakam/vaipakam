@@ -452,6 +452,38 @@ export function sliceCallsIn(src) {
       }
       continue;
     }
+    // `const cut = src.slice.bind(src); cut(start, start + 320)` — the
+    // binding and the invocation in two statements instead of one
+    // (round 33). The inline form above is recognised because both
+    // halves sit in one expression; store the bound function in a name
+    // and the `bind` call is skipped for being a `bind`, while the call
+    // that uses it is skipped for having a plain name as its callee. The
+    // window left the collector through the gap between the two.
+    if (c && c.type === 'Identifier') {
+      const held = resolveAlias(src, c);
+      if (held && held.type === 'CallExpression') {
+        const inner = unwrapChain(held.callee);
+        if (inner && inner.type === 'MemberExpression' && memberName(inner) === 'bind') {
+          const method = borrowedTruncator(src, inner, 'bind');
+          if (method) {
+            out.push({
+              method,
+              line: lineOf(src, n.start),
+              receiver: held.arguments[0]
+                ? src.slice(held.arguments[0].start, held.arguments[0].end)
+                : '',
+              // Preset bounds first, exactly as the inline form: they are
+              // what a two-argument truncator consumes.
+              args: effective([...held.arguments.slice(1), ...n.arguments]),
+              text: src.slice(n.start, n.end),
+              node: n,
+              receiverNode: held.arguments[0] ?? null,
+            });
+          }
+          continue;
+        }
+      }
+    }
     if (!c || c.type !== 'MemberExpression') continue;
     // `Reflect.apply(String.prototype.slice, src, [a, b])` — the same
     // borrowing again, through a callee whose object is a plain name
@@ -1698,55 +1730,6 @@ const NOT_TEXT = new Set([
   'ClassExpression',
 ]);
 
-/**
- * Whether every use of a name is a PLAIN READ THROUGH IT — `copy.x`,
- * and never `copy.x = …`, never `delete copy.x`, never handed anywhere
- * that could keep it.
- *
- * This is the round-6 inversion again: the question "could this object's
- * finder have been replaced" has no closed answer, because anything
- * holding the object can replace it — an argument to a call, a property
- * of something returned, a closure. So the ALLOWED uses are enumerated
- * instead, and a name used any other way is not trusted.
- */
-function onlyReadThrough(src, node) {
-  const { variableOf, parents } = astOf(src, 'onlyReadThrough');
-  const variable = variableOf.get(node);
-  if (!variable) return false;
-  return variable.references.every((ref) => {
-    const id = ref.identifier;
-    // The declaration's own initialiser is how the name got its value.
-    if (ref.init) return true;
-    if (ref.isWrite()) return false;
-    let member = parents.get(id);
-    // Read THROUGH the name, not read AS a value: `f(copy)` hands the
-    // object to somebody who may do anything with it.
-    if (!member || member.type !== 'MemberExpression' || member.object !== id) return false;
-    // The WHOLE chain, not one link of it (round 32).
-    // `copy.__proto__.indexOf = …` replaces the same finder that
-    // `copy.indexOf = …` does, and reaches it one property further out;
-    // checking only the immediate parent saw a member expression, called
-    // it an ordinary read, and trusted a wrapper somebody had just
-    // rewritten. Climb to the end of the chain and ask there.
-    let outer = parents.get(member);
-    while (outer && outer.type === 'MemberExpression' && outer.object === member) {
-      member = outer;
-      outer = parents.get(member);
-    }
-    if (!outer) return false;
-    // The property being read must not be the property being written.
-    if (
-      (outer.type === 'AssignmentExpression' || outer.type === 'AssignmentPattern') &&
-      outer.left === member
-    ) {
-      return false;
-    }
-    if (outer.type === 'UpdateExpression') return false;
-    if (outer.type === 'UnaryExpression' && outer.operator === 'delete') return false;
-    return true;
-  });
-}
-
 function suspectReceiver(src, node, seen) {
   if (!node || node.type !== 'Identifier') return false;
   const key = `recv:${node.name}@${node.start}`;
@@ -1760,19 +1743,25 @@ function suspectReceiver(src, node, seen) {
   // A function or a class is not text either, and a property can be
   // hung on one: `const fake = () => {}; fake.indexOf = () => start + 320`
   // read as a search until round 13.
-  // `new String(src)` uses the built-in finder and returns a
-  // source-relative position (round 29). Only an UNSHADOWED intrinsic
-  // counts — a local `String` is somebody else's function.
+  // THE `new String(src)` EXEMPTION IS GONE (round 33), and this is a
+  // root fix rather than a fourth patch.
   //
-  // And only a wrapper NOBODY HAS TOUCHED (round 30). A wrapper is an
-  // ordinary mutable object: `copy.indexOf = () => start + 320` replaces
-  // the built-in finder with a character count, and a property write is
-  // not a write to the NAME, so the reassignment check above never sees
-  // it. Rather than chase every way a property might be replaced — an
-  // open set — the uses are enumerated and everything else refused.
-  if (t === 'NewExpression' && isIntrinsic(src, bound.init.callee, 'String')) {
-    return !onlyReadThrough(src, node);
-  }
+  // It was added at round 29 because such a wrapper does use the
+  // built-in finder and does return a source-relative position. Three
+  // rounds then found three ways through it, each fix opening the next:
+  // a property written on the wrapper, the same property written through
+  // its prototype, and finally the intrinsic prototype itself replaced
+  // before the wrapper is even built. That last one is not reachable
+  // from the wrapper's own uses at all, so no amount of examining them
+  // closes it — the question is whether anything in the program has
+  // changed how strings search, which nothing bounded can answer.
+  //
+  // So the exemption is withdrawn rather than mended. `new` is already
+  // in NOT_TEXT, so a wrapper is now suspect like any other constructed
+  // object, and the cost is one shape nothing in these suites writes:
+  // the census found zero. Refusing is the direction this guard errs in
+  // everywhere else, and a rule that has needed a fix in each of three
+  // consecutive rounds is telling you which side of it is wrong.
   if (NOT_TEXT.has(t)) return true;
   return t === 'Identifier' ? suspectReceiver(src, bound.init, seen) : false;
 }
