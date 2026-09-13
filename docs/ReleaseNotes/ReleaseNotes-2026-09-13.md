@@ -1,3 +1,15 @@
+# Release Notes — 2026-09-13
+
+One entry, about the check that watches the lender's forced close-out
+card on the deployed build. The check reads only copy a sighted lender
+can see, and one of its rules was too quick to reject text sitting above
+the page's top edge: it did not know that a scrolling region inside the
+page could bring such text back. Sixteen review rounds later the rule
+credits exactly what a scrolling region can do and no more, measures
+every browser fact it relies on rather than assuming it, states the
+layouts it quantifies, and admits rather than guesses outside them. No
+product surface changed; the check still reads the live card as readable.
+
 ## Thread — Live-drive visibility rule credits an inner scroll container (PR #2157)
 
 The check that watches the lender's forced close-out card on the deployed
@@ -164,3 +176,4 @@ the test header and the coverage row, now states the two sites separately
 as the release-notes fold already does.
 
 Closes #2138. No product surface changes.
+<!-- assembled-fragment: 2138-inner-scroll-origin.md sha256=4a275dd14ce3fde9b3e6b5d563606fd3c940f5646e4268883e52fedaf7280ed4 -->
