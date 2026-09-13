@@ -2041,6 +2041,54 @@ describe('#2175 — one resolver, three answers', () => {
     expect(countsCharacters(receiver, sliceCallsIn(receiver).at(-1))).toBe(true);
   });
 
+  // Round 1 of this PR found the hazard I had flagged in the trigger:
+  // the resolver reported WHY a lookup failed, and two callers matched
+  // on that string — so every situation sharing a reason with a plain
+  // parameter inherited the parameter's exemption. The answer is to
+  // report the FACT ("the value arrives from outside this file") rather
+  // than the reason, asked of the binding.
+  it('exempts only a name whose value really does arrive from outside', () => {
+    const lead = "const s = f();\nconst start = s.indexOf('a');\n";
+    for (const [why, tail] of [
+      [
+        'a DEFAULTED parameter, which manufactures its own value',
+        "const at = (recv = { indexOf: () => start + 320 }) => recv.indexOf('end');\n" +
+          'const r = s.slice(start, at());',
+      ],
+      [
+        'a REST parameter, which is an array and not source text',
+        "const at = (...xs) => xs.indexOf('end');\nconst r = s.slice(start, at());",
+      ],
+      [
+        'a DESTRUCTURED parameter, whose value is a projection',
+        "const at = ({ recv }) => recv.indexOf('end');\nconst r = s.slice(start, at());",
+      ],
+      [
+        'a definition inside a branch that may never have run',
+        'if (on) { var recv = { indexOf: () => start + 320 }; }\n' +
+          "const r = s.slice(start, recv.indexOf('end'));",
+      ],
+    ]) {
+      const code = lead + tail;
+      expect(countsCharacters(code, sliceCallsIn(code).at(-1)), why).toBe(true);
+    }
+  });
+
+  // …and the two that genuinely do arrive from outside still work, or
+  // the rule above would be satisfied by refusing everything.
+  it('still accepts a plain parameter and an import', () => {
+    // The receiver is the parameter — which is what the fact governs.
+    // (A parameter used as a BOUND has never been a position: nothing
+    // in the file says where it points. That is unchanged here.)
+    const param = "function region(text) { return text.slice(0, text.indexOf('e')); }";
+    expect(countsCharacters(param, sliceCallsIn(param).at(-1))).toBe(false);
+
+    const imported =
+      "import { LANDMARK } from './fixture.mjs';\nconst s = f();\n" +
+      'const r = s.slice(0, s.indexOf(LANDMARK) + LANDMARK.length);';
+    expect(countsCharacters(imported, sliceCallsIn(imported).at(-1))).toBe(false);
+  });
+
   // An intrinsic is recognised BECAUSE it is unbound, not in spite of
   // it — the distinction round 36 reached with a fallback and this
   // states directly.

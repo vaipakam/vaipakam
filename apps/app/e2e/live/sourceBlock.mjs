@@ -923,7 +923,14 @@ function resolutionOf(src, node, seen = new Set()) {
   if (bound.projected) {
     return { state: UNRESOLVED, why: 'unpacked from a pattern', notText: bound.notText };
   }
-  if (!bound.init) return { state: UNRESOLVED, why: 'no value that stands', notText: bound.notText };
+  if (!bound.init) {
+    return {
+      state: UNRESOLVED,
+      why: 'no value that stands',
+      fromCaller: bound.fromCaller,
+      notText: bound.notText,
+    };
+  }
   const next = resolutionOf(src, bound.init, seen);
   return next.state === RESOLVED ? { ...next, notText: bound.notText || next.notText } : next;
 }
@@ -1036,12 +1043,38 @@ function memberName(member) {
  *   - `writes`   — the write references, for the ordering rule.
  */
 export function bindingOf(src, node) {
-  const { variableOf } = astOf(src, 'bindingOf');
+  const { variableOf, parents } = astOf(src, 'bindingOf');
   const variable = variableOf.get(node);
-  if (!variable) return { found: false, init: null, notText: false, writes: [] };
+  if (!variable) {
+    return { found: false, init: null, notText: false, writes: [], fromCaller: false };
+  }
   const defs = variable.defs;
-  if (defs.length === 0) return { found: true, init: null, notText: false, writes: [] };
+  if (defs.length === 0) {
+    return { found: true, init: null, notText: false, writes: [], fromCaller: false };
+  }
   const notText = defs.some((d) => NOT_TEXT_DEFS.has(d.type));
+  // A PLAIN parameter — every definition of the name is one, and each is
+  // written directly in the parameter list. This is a FACT about the
+  // binding, not a reason a lookup failed, and it is reported as one:
+  // the two rules that care ask whether the value arrives from the
+  // caller, rather than matching on a string that also covers other
+  // situations. That string-matching was the shape #2175 set out to
+  // remove and briefly recreated (round 1) — a defaulted parameter
+  // manufactures its own value, a rest parameter is an array, and a
+  // definition inside a branch may never have run, and all three shared
+  // one reason with a plain parameter.
+  const fromCaller =
+    defs.length > 0 &&
+    defs.every(
+      (d) =>
+        // A plain parameter, written directly in the parameter list.
+        (d.type === 'Parameter' && parents.get(d.name) === d.node) ||
+        // …or an IMPORT, which is the same fact by a different route:
+        // the value is another module's and nothing in this file can
+        // read it, while the name itself is perfectly well bound. Round
+        // 16 established that such a name is legitimate source text.
+        d.type === 'ImportBinding',
+    );
   // The LAST definition carrying an initializer is the one that stands:
   // `var end; var end = s.indexOf('e');` declares one binding twice, and
   // taking the first left a real landmark looking unknown (round 15).
@@ -1094,6 +1127,7 @@ export function bindingOf(src, node) {
     // arrives from the caller, which is the ordinary way a drive is
     // handed its source; an unpacked name has one this cannot read.
     projected,
+    fromCaller,
     notText,
     // A declaration's OWN initialiser counts as a write reference, and
     // it is not one for this purpose — `const at = s.indexOf(…)` would
@@ -2050,7 +2084,13 @@ function suspectReceiver(src, node, seen) {
   // the thing this rule exists to catch. The seven-copy version
   // answered ALL of them with "not suspect", and that only became
   // visible once the states had names.
-  if (r.state === UNRESOLVED) return r.why !== 'no value that stands';
+  // The question is whether the value ARRIVES FROM THE CALLER, asked of
+  // the binding itself — not whether a reason string happens to match.
+  // A defaulted parameter makes its own value, a rest parameter is an
+  // array, and a definition inside a branch may never have run; none of
+  // those arrives from the caller, and all three shared a reason with a
+  // plain parameter until round 1 of #2175 found them.
+  if (r.state === UNRESOLVED) return !r.fromCaller;
   const t = r.value.type;
   // A function or a class is not text either, and a property can be
   // hung on one: `const fake = () => {}; fake.indexOf = () => start + 320`
@@ -2152,7 +2192,7 @@ function isTextNeedle(src, node, seen = new Set()) {
   const r = resolutionOf(src, node, seen);
   if (r.notText) return false;
   if (r.state === UNBOUND) return true;
-  if (r.state === UNRESOLVED) return r.why === 'no value that stands';
+  if (r.state === UNRESOLVED) return Boolean(r.fromCaller);
   const init = r.value;
   if (init.type === 'Literal') return typeof init.value === 'string';
   // An ALIAS hides the value one hop further on (round 23):

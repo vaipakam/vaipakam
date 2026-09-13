@@ -45,5 +45,16 @@ pretending to be text. A parameter is exempt — its value arrives from the
 caller, which is how these drives are handed their source — and
 everything else unresolved is now refused.
 
+That exemption was first written by matching on the REASON the lookup
+failed, and review caught it immediately — which is worth recording,
+because it is the same mistake in miniature that the whole change exists
+to remove. Several quite different situations shared one reason with a
+plain parameter: one that supplies its own value when the caller omits
+it, one that collects the remaining arguments into a list, one taken
+apart from a pattern, and one defined inside a branch that may never have
+run. All four inherited the exemption. The rule now asks the binding a
+question of fact — does this value arrive from outside this file — which
+is true of a plain parameter and of an import and of none of the four.
+
 No other behaviour changes. The rules that were correct are correct in
 the same cases; they now say why in terms anyone can check.
