@@ -38,9 +38,14 @@ import {RewardCustodyHolder} from "../RewardCustodyHolder.sol";
  *     `received = paid` in the same call.
  *
  * **This PR is deployable dark.** No payout, gate or funding path reads the
- * holder or the rows yet; PR B's role-branched cutover is where custody
- * moves. Binding a holder on a fresh deploy therefore changes no behaviour,
- * and the rows all read zero because nothing can credit them.
+ * holder or the rows yet, and no PROTOCOL writer can fund the holder; PR B's
+ * role-branched cutover is where custody moves. Binding a holder on a fresh
+ * deploy therefore changes no behaviour, and the rows all read zero because
+ * nothing can credit them. The holder's address is public, so an UNSOLICITED
+ * ERC-20 transfer to it is possible at any time (Codex #2158 r5 P2): such
+ * value is not custody the ledger describes — it is visible only as the
+ * snapshot's unattributed remainder, has no attribution or withdrawal path in
+ * PR A, and must not be read as "the dark holder is empty".
  *
  * @dev Why a separate facet rather than a corner of `RewardReporterFacet`
  *      (which hosts the older one-shot seeder): the reporter is a cross-chain
@@ -223,18 +228,23 @@ contract RewardCustodyFacet is DiamondAccessControl {
      *         to write and is left alone.
      *
      *         On an INACTIVE role (`Unconfigured`, `Detached`) the call is
-     *         accepted only when there is nothing to import AND nothing
-     *         already on the paid side (`total == 0 && paid == 0`): that is
-     *         the fresh-deploy case, which consumes both guards so neither
-     *         migration writer can ever run on a chain with no history.
-     *         Anything else on an inactive role is REFUSED (Codex #2158 r1
-     *         P2): the role decides whether the received side is rewritten,
-     *         and a one-shot that ran before the role was known could raise
-     *         `paid` without its baseline and then close the door — a chain
-     *         later configured canonical would start in deficit with no way
-     *         to install `received = paid`. A detached chain carrying paid
-     *         history therefore keeps its guard OPEN until it is re-attached
-     *         and the rebase runs under the active role.
+     *         accepted only when the chain is HISTORY-FREE on every side:
+     *         nothing to import, nothing on the paid side and nothing on the
+     *         received side (`total == 0 && paid == 0 && received == 0`).
+     *         That is the fresh-deploy case, which consumes both guards so
+     *         neither migration writer can ever run on a chain with no
+     *         history. Anything else on an inactive role is REFUSED (Codex
+     *         #2158 r1 P2, r5 P1): the role decides whether the received side
+     *         is rewritten, and a one-shot that ran before the role was
+     *         known would close the door on state the later role needs
+     *         levelled — a raised `paid` without its baseline, or a
+     *         pre-role-field chain detached before residual retirement
+     *         (`received > 0`, `paid == 0`) that a direct promotion to
+     *         Canonical would otherwise expose as spendable headroom with
+     *         no way left to install `received = paid`. A detached chain
+     *         carrying history on either side therefore keeps its guard
+     *         OPEN until it is re-attached and the rebase runs under the
+     *         active role.
      *
      *         Consumes {LibVaipakam.Storage.armedFreshPaidSeeded} as well as
      *         its own guard: if the P1-b seeder never ran, it would otherwise
@@ -263,9 +273,9 @@ contract RewardCustodyFacet is DiamondAccessControl {
         uint256 receivedBefore = s.rewardBudgetArmedFreshReceived;
         bool activeRole = role == LibVaipakam.RewardRole.Canonical
             || role == LibVaipakam.RewardRole.Mirror;
-        if (!activeRole && (total != 0 || paidBefore != 0)) {
+        if (!activeRole && (total != 0 || paidBefore != 0 || receivedBefore != 0)) {
             revert IVaipakamErrors.ArmedFreshRebaseRequiresActiveRole(
-                uint8(role), total, paidBefore
+                uint8(role), total, paidBefore, receivedBefore
             );
         }
         uint256 paidAfter = total > paidBefore ? total : paidBefore;

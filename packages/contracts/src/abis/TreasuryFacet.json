@@ -1753,6 +1753,11 @@
         "name": "paidBefore",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "receivedBefore",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ]
   },

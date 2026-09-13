@@ -495,6 +495,7 @@ contract RewardCustodyFacetTest is SetupTest {
                 IVaipakamErrors.ArmedFreshRebaseRequiresActiveRole.selector,
                 uint8(LibVaipakam.RewardRole.Unconfigured),
                 5 ether,
+                0,
                 0
             )
         );
@@ -513,7 +514,8 @@ contract RewardCustodyFacetTest is SetupTest {
                 IVaipakamErrors.ArmedFreshRebaseRequiresActiveRole.selector,
                 uint8(LibVaipakam.RewardRole.Unconfigured),
                 0,
-                300 ether
+                300 ether,
+                0
             )
         );
         _custody().rebaseArmedFreshPaid(0);
@@ -539,7 +541,8 @@ contract RewardCustodyFacetTest is SetupTest {
                 IVaipakamErrors.ArmedFreshRebaseRequiresActiveRole.selector,
                 uint8(LibVaipakam.RewardRole.Detached),
                 0,
-                500 ether
+                500 ether,
+                0
             )
         );
         _custody().rebaseArmedFreshPaid(0);
@@ -550,6 +553,43 @@ contract RewardCustodyFacetTest is SetupTest {
         _custody().rebaseArmedFreshPaid(700 ether);
         (, uint256 paid) = _custody().armedFreshLedger();
         assertEq(paid, 700 ether);
+        assertTrue(_custody().armedFreshPaidRebased());
+    }
+
+    /// @dev Codex #2158 r5 P1 — a pre-role-field chain detached before its
+    ///      residual was retired carries `received > 0, paid == 0`. That is
+    ///      NOT history-free: a zero rebase must not close the door, or a
+    ///      later direct promotion to Canonical would expose the stale
+    ///      received side as headroom with no way to install the baseline.
+    function test_Rebase_Detached_WithReceivedHistoryKeepsTheGuardOpen() public {
+        _becomeDetached();
+        _mut().setArmedFreshLedgerRaw(800 ether, 0);
+        _pause();
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.ArmedFreshRebaseRequiresActiveRole.selector,
+                uint8(LibVaipakam.RewardRole.Detached),
+                0,
+                0,
+                800 ether
+            )
+        );
+        _custody().rebaseArmedFreshPaid(0);
+        assertFalse(_custody().armedFreshPaidRebased(), "guard stays open");
+
+        // Promoted DIRECTLY to Canonical (never through Mirror, so no
+        // residual retirement levels the counters on the way): the baseline
+        // can still be installed because the guard stayed open.
+        vm.chainId(CHAIN_BASE);
+        _rep().setIsCanonicalRewardChain(true);
+        assertEq(uint8(_rep().getRewardRole()), uint8(LibVaipakam.RewardRole.Canonical));
+        (uint256 receivedBefore, uint256 paidBefore) = _custody().armedFreshLedger();
+        assertEq(receivedBefore, 800 ether, "direct promotion left the stale received side in place");
+        assertEq(paidBefore, 0);
+        _custody().rebaseArmedFreshPaid(0);
+        (uint256 received, uint256 paid) = _custody().armedFreshLedger();
+        assertEq(paid, 0);
+        assertEq(received, 0, "canonical: received levelled to paid, the stale headroom is gone");
         assertTrue(_custody().armedFreshPaidRebased());
     }
 

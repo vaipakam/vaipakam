@@ -6,7 +6,12 @@ design moves it to a dedicated custody address the Diamond owns, so that what
 backs reward payouts is one balance an observer can read and no other path can
 spend by accident. This first of three slice-4 changes puts that address and
 its lifecycle in place without moving any value: no payout, gate or funding
-path reads it yet, and nothing can put value into it. A fresh deployment
+path reads it yet, and no protocol writer can fund it yet. Its address is
+public, so an unsolicited token transfer into it is possible at any time;
+such value is not custody the ledger describes, shows only as the
+unattributed remainder in the read surface, and has no attribution or
+withdrawal path in this change, so operators must not read the dark holder
+as necessarily empty. A fresh deployment
 constructs and binds its holder while still paused and records the address in
 the deployment artifact; a live chain gets one through a dedicated one-shot
 script after the facet refresh, because a refresh must never deploy or

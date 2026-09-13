@@ -226,18 +226,20 @@ interface IVaipakamErrors {
     ///         canonical chain, resets `received` to it: a second call could
     ///         only lower delivered headroom that has since been earned.
     error ArmedFreshPaidAlreadyRebased();
-    /// @notice #1566 slice 4 PR A (Codex #2158 r1 P2) — the paid-side rebase
-    ///         was called on an inactive reward role (`Unconfigured` or
-    ///         `Detached`) with something to import or something already on
-    ///         the paid side. The role decides whether the received-side
-    ///         baseline is installed, so a one-shot run before the role is
-    ///         known would close the door on a deficit. Only a history-free
-    ///         chain (`total == 0`, `paid == 0`) may consume the guard while
+    /// @notice #1566 slice 4 PR A (Codex #2158 r1 P2, r5 P1) — the paid-side
+    ///         rebase was called on an inactive reward role (`Unconfigured`
+    ///         or `Detached`) on a chain that is not history-free: something
+    ///         to import, or something already on the paid OR received side.
+    ///         The role decides whether the received-side baseline is
+    ///         installed, so a one-shot run before the role is known would
+    ///         close the door on state the later role needs levelled. Only a
+    ///         chain with all three at zero may consume the guard while
     ///         inactive — the fresh-deploy case.
-    /// @param role       The resolved role ordinal.
-    /// @param total      The total offered.
-    /// @param paidBefore The paid counter as found.
-    error ArmedFreshRebaseRequiresActiveRole(uint8 role, uint256 total, uint256 paidBefore);
+    /// @param role           The resolved role ordinal.
+    /// @param total          The total offered.
+    /// @param paidBefore     The paid counter as found.
+    /// @param receivedBefore The received counter as found.
+    error ArmedFreshRebaseRequiresActiveRole(uint8 role, uint256 total, uint256 paidBefore, uint256 receivedBefore);
     /// @notice #1566 slice 4 PR A — the custody holder is already bound;
     ///         binding is one-shot and changes only through the paused
     ///         replacement ceremony.

@@ -5901,8 +5901,9 @@ consequences and blast radius, and one of them depends on closure 2's cutover
 apparatus.
 
 **Slice 4 PR A — the holder and the migration writers. Deployable dark: no
-payout, gate or funding path changes behaviour, and nothing can put value
-into the holder yet.**
+payout, gate or funding path changes behaviour, and no protocol writer can
+fund the holder yet (an unsolicited ERC-20 transfer to its public address
+remains possible and shows only as the unattributed remainder — review r5).**
 
 > **LANDED — PR #2158.** `RewardCustodyHolder` (non-upgradeable, immutable
 > `DIAMOND`, one Diamond-gated `release`), `RewardCustodyFacet` (the Diamond
