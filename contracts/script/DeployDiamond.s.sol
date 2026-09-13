@@ -82,7 +82,6 @@ import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
 import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
 import {RewardRemittanceLensFacet} from "../src/facets/RewardRemittanceLensFacet.sol";
 import {RewardCustodyFacet} from "../src/facets/RewardCustodyFacet.sol";
-import {RewardCustodyHolder} from "../src/RewardCustodyHolder.sol";
 import {RewardCompensationDispatchFacet} from "../src/facets/RewardCompensationDispatchFacet.sol";
 import {RewardCommitmentFacet} from "../src/facets/RewardCommitmentFacet.sol";
 import {RepatriationFacet} from "../src/facets/RepatriationFacet.sol";
@@ -759,15 +758,17 @@ contract DeployDiamond is Script {
         console.log("P1-b: fresh deployment marked seeded (0).");
 
         // 5d-ii. #1566 slice 4 PR A — the delivered reward custody holder.
-        //     Constructed for THIS Diamond and bound once, here, while the
-        //     Diamond is still paused. The holder's address is persisted in
-        //     the artifact below (`.rewardCustodyHolder`) and read back by
-        //     every later script; an in-place facet refresh NEVER deploys or
-        //     rebinds one (design §5d) — a refresh that did would leave the
-        //     attributed balance at the old address while the Diamond read
-        //     an empty one. Replacing a holder is its own paused ceremony
-        //     (`replaceRewardCustodyHolder`). Nothing reads the holder until
-        //     PR B's cutover, so binding it changes no live behaviour.
+        //     CONSTRUCTED BY THE DIAMOND ITSELF and bound once, here, while
+        //     the Diamond is still paused — no address is supplied, so no
+        //     contract can be imitated (Codex #2158 r3 P1). The holder's
+        //     address is read back and persisted in the artifact below
+        //     (`.rewardCustodyHolder`) for every later script; an in-place
+        //     facet refresh NEVER binds or rebinds one (design §5d) — a
+        //     refresh that did would leave the attributed balance at the old
+        //     address while the Diamond read an empty one. Replacing a holder
+        //     is its own paused ceremony (`ReplaceRewardCustodyHolder.s.sol`).
+        //     Nothing reads the holder until PR B's cutover, so binding it
+        //     changes no live behaviour.
         //
         //     The one-shot paid-side REBASE is consumed with a zero total
         //     for the same reason the P1-b seed is: a fresh deployment has no
@@ -776,10 +777,9 @@ contract DeployDiamond is Script {
         //     Role is `Unconfigured` at this point, so the call touches
         //     neither counter (`max(0, 0)`; the received side is rewritten
         //     only on `Canonical`).
-        RewardCustodyHolder rewardCustodyHolder = new RewardCustodyHolder(diamond);
-        RewardCustodyFacet(diamond).bindRewardCustodyHolder(address(rewardCustodyHolder));
+        address rewardCustodyHolder = RewardCustodyFacet(diamond).bindRewardCustodyHolder();
         RewardCustodyFacet(diamond).rebaseArmedFreshPaid(0);
-        console.log("Reward custody holder bound:", address(rewardCustodyHolder));
+        console.log("Reward custody holder bound:", rewardCustodyHolder);
         console.log("Slice 4: fresh deployment marked rebased (0).");
 
         // 5e. Unpause the protocol. The Diamond is born paused (see
@@ -941,7 +941,7 @@ contract DeployDiamond is Script {
         // #1566 slice 4 PR A — the custody holder's address is part of the
         // deployment's identity (design §5d): later scripts read it back
         // rather than re-deploying one.
-        Deployments.writeRewardCustodyHolder(address(rewardCustodyHolder));
+        Deployments.writeRewardCustodyHolder(rewardCustodyHolder);
 
         // Per-facet addresses — written under `.facets.<key>`. The
         // Diamond proxy is the only address frontend / dApp callers

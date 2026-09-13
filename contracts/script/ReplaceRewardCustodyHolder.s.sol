@@ -15,45 +15,59 @@ import {Deployments} from "./lib/Deployments.sol";
  * @title  ReplaceRewardCustodyHolder — the paused holder-replacement
  *         ceremony, executable before AND after governance handover, with
  *         the deployment artifact reconciled only against chain state
- *         (#1566 slice 4 PR A, design §5d; Codex #2158 r1 P2 + r2 P1)
+ *         (#1566 slice 4 PR A, design §5d; Codex #2158 r1 P2, r2 P1, r3)
  *
- * @notice Three entry points, one ceremony:
+ * @notice The Diamond constructs the successor itself inside
+ *         `replaceRewardCustodyHolder()` — one transaction creates it,
+ *         moves the old holder's whole balance into it and flips the
+ *         pointer. No address is staged, supplied or predicted by anyone
+ *         here. Three entry points, one ceremony:
  *
  *  - `run()`     — DIRECT. One key holds `ADMIN_ROLE` and, when the Diamond
  *                  is not already paused, `PAUSER_ROLE` + `UNPAUSER_ROLE`
  *                  (testnets stay deployer/admin-owned, and every chain is
- *                  in this state before `Handover`). Deploys the successor,
- *                  pauses if needed, replaces, restores the pause state,
- *                  verifies the pointer and rewrites `.rewardCustodyHolder`.
- *                  Refuses — before any broadcast — when the key lacks a
- *                  role it would need, and points at `stage()`.
+ *                  in this state before `Handover`). Pauses if needed,
+ *                  replaces, restores the pause state ONLY when no auto-pause
+ *                  began meanwhile, verifies the pointer and rewrites
+ *                  `.rewardCustodyHolder`. Refuses — before any broadcast —
+ *                  when the key lacks a role it would need, and points at
+ *                  `stage()`.
  *  - `stage()`   — STAGED, for a handed-over deployment where
  *                  `Handover.s.sol` put `ADMIN_ROLE` + `UNPAUSER_ROLE` on the
  *                  Timelock and `PAUSER_ROLE` on the Pauser Safe, so no single
- *                  key can run the three calls. Deploys the successor (any
- *                  funded key; the constructor is permissionless) and writes
- *                  a CEREMONY RECORD next to the artifact —
+ *                  key can run the calls. Broadcasts nothing. Writes a
+ *                  CEREMONY RECORD next to the artifact —
  *                  `deployments/<chain-slug>/reward-custody-replacement.json`
- *                  — holding the previous holder, the successor and the three
- *                  calldatas each signer executes against the Diamond:
- *                    1. Pauser Safe:  `pause()`            (skip if already paused)
- *                    2. Timelock:     `replaceRewardCustodyHolder(successor)`
- *                    3. Timelock:     `unpause()`          (skip if it was paused before)
- *                  Nothing on-chain changes in this step beyond the successor
- *                  deployment, and the artifact is NOT touched: an
- *                  unexecuted successor is not custody.
+ *                  — holding the previous holder and the calldata each signer
+ *                  executes against the Diamond:
+ *                    1. Pauser Safe:  `pause()`   (skip if already paused)
+ *                    2. Timelock:     `replaceRewardCustodyHolder()`
+ *                  There is deliberately NO third step. A pre-authorised
+ *                  `unpause()` scheduled today would execute whatever else
+ *                  paused the Diamond in the meantime — an incident pause,
+ *                  an auto-pause — because `unpause` clears both (Codex #2158
+ *                  r3 P1). The replaced Diamond stays paused; resuming
+ *                  service is a fresh decision by the Unpauser after
+ *                  `record()` confirms the ceremony and nothing else is
+ *                  holding the pause.
  *  - `record()`  — after the signers executed the bundle: reads the ceremony
- *                  record, requires the Diamond to report the successor as
- *                  the bound holder, rewrites `.rewardCustodyHolder`, and
- *                  removes the ceremony record. Refuses while the pointer
- *                  still reads the previous holder (the bundle has not
- *                  executed) or reads a third address (the record is stale).
+ *                  record, requires the Diamond to report a holder OTHER than
+ *                  the previous one that answers to this Diamond, rewrites
+ *                  `.rewardCustodyHolder` from that chain state, and removes
+ *                  the ceremony record. Refuses while the pointer still reads
+ *                  the previous holder (the bundle has not executed).
  *
  * @dev    Why the artifact is written only from chain state, in both modes:
  *         `addresses.json` is what `Deployments` documents as the source of
- *         truth for later scripts and the package sync. Writing the successor
- *         at staging time would advertise custody that has not moved;
- *         writing it only after the pointer is read back cannot lie.
+ *         truth for later scripts and the package sync. Nothing is written
+ *         from intent — a staged ceremony is not custody.
+ *
+ *         Why the ceremony record and its removal follow the artifact's own
+ *         write rule (`Deployments.artifactWritesEnabled()`, Codex #2158 r3
+ *         P2): a plain `forge script` simulation must neither invent a
+ *         record (which would make the real `stage()` refuse on "already
+ *         staged") nor erase the only reconciliation record while skipping
+ *         the artifact write it exists to gate.
  *
  *         Refuses, in every mode, when the artifact's `.rewardCustodyHolder`
  *         already disagrees with the bound holder — the two records are
@@ -62,14 +76,8 @@ import {Deployments} from "./lib/Deployments.sol";
  *         (`DeployRewardCustodyHolder` first).
  *
  *         Env:
- *           - `ADMIN_PRIVATE_KEY`     — `run()`: the role-holding key.
- *           - `DEPLOYER_PRIVATE_KEY`  — `stage()`: any funded key, deploys
- *                                        the successor only.
+ *           - `ADMIN_PRIVATE_KEY` — `run()` only: the role-holding key.
  *           - the Diamond and the recorded holder from `addresses.json`.
- *
- *         Artifact writes follow the same dry-run / `DEPLOY_SKIP_ARTIFACTS`
- *         rule as every deploy script; the ceremony record is written
- *         unconditionally by `stage()` because it IS the staged state.
  */
 contract ReplaceRewardCustodyHolder is Script {
     // ─── Shared preconditions ───────────────────────────────────────────────
@@ -97,10 +105,23 @@ contract ReplaceRewardCustodyHolder is Script {
         return string.concat("deployments/", Deployments.chainSlug(), "/reward-custody-replacement.json");
     }
 
-    function _writeArtifact(address successor) internal {
+    /// @dev The artifact follows chain state only: the bound holder is read
+    ///      back, required to differ from `previous` and to answer to this
+    ///      Diamond, and THEN recorded.
+    function _verifyAndRecord(address diamond, address previous) internal returns (address successor) {
+        successor = RewardCustodyFacet(diamond).rewardCustodyHolder();
+        require(
+            successor != address(0) && successor != previous,
+            "ReplaceRewardCustodyHolder: the Diamond still reports the previous holder -- the replacement has not executed"
+        );
+        require(
+            RewardCustodyHolder(successor).DIAMOND() == diamond,
+            "ReplaceRewardCustodyHolder: the bound holder does not answer to this Diamond"
+        );
+        console.log("Successor holder:", successor);
         if (!Deployments.artifactWritesEnabled()) {
             console.log("artifact writes are off for this run -- .rewardCustodyHolder NOT rewritten; the artifact is STALE until it is.");
-            return;
+            return successor;
         }
         Deployments.writeRewardCustodyHolder(successor);
         console.log("Recorded .rewardCustodyHolder =", successor, "in", Deployments.path());
@@ -113,7 +134,8 @@ contract ReplaceRewardCustodyHolder is Script {
         address admin = vm.addr(adminKey);
         Ctx memory c = _ctx();
         AccessControlFacet acl = AccessControlFacet(c.diamond);
-        bool wasPaused = AdminFacet(c.diamond).paused();
+        AdminFacet adminFacet = AdminFacet(c.diamond);
+        bool wasPaused = adminFacet.paused();
 
         // Every role the direct path will exercise is checked BEFORE any
         // broadcast, so a handed-over deployment is told to stage rather
@@ -137,56 +159,36 @@ contract ReplaceRewardCustodyHolder is Script {
         console.log("Admin:           ", admin);
 
         vm.startBroadcast(adminKey);
-        if (!wasPaused) AdminFacet(c.diamond).pause();
-        RewardCustodyHolder successor = new RewardCustodyHolder(c.diamond);
-        RewardCustodyFacet(c.diamond).replaceRewardCustodyHolder(address(successor));
-        if (!wasPaused) AdminFacet(c.diamond).unpause();
+        if (!wasPaused) adminFacet.pause();
+        RewardCustodyFacet(c.diamond).replaceRewardCustodyHolder();
+        // Restore the pause state this script created — and ONLY that state.
+        // An auto-pause that began between the two calls sets a bounded
+        // window; lifting it here would end an incident response on the
+        // way out of a maintenance step, so it is left in place and named.
+        if (!wasPaused) {
+            if (adminFacet.pausedUntil() != 0) {
+                console.log("an auto-pause began during the ceremony -- NOT unpausing; resume service deliberately once it has been reviewed");
+            } else {
+                adminFacet.unpause();
+            }
+        }
         vm.stopBroadcast();
 
-        require(
-            RewardCustodyFacet(c.diamond).rewardCustodyHolder() == address(successor),
-            "ReplaceRewardCustodyHolder: the pointer did not flip to the successor"
-        );
-        console.log("Successor holder:", address(successor));
-        _writeArtifact(address(successor));
+        _verifyAndRecord(c.diamond, c.bound);
     }
 
     // ─── STAGED ─────────────────────────────────────────────────────────────
 
     function stage() external {
-        uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
         Ctx memory c = _ctx();
-        require(
-            !vm.exists(_recordPath()),
-            "ReplaceRewardCustodyHolder: a ceremony record already exists -- run record() once the bundle has executed, or remove the stale record deliberately"
-        );
         bool wasPaused = AdminFacet(c.diamond).paused();
 
-        vm.startBroadcast(deployerKey);
-        RewardCustodyHolder successor = new RewardCustodyHolder(c.diamond);
-        vm.stopBroadcast();
-
         bytes memory pauseCall = abi.encodeCall(AdminFacet.pause, ());
-        bytes memory replaceCall =
-            abi.encodeCall(RewardCustodyFacet.replaceRewardCustodyHolder, (address(successor)));
-        bytes memory unpauseCall = abi.encodeCall(AdminFacet.unpause, ());
-
-        string memory obj = "ceremony";
-        vm.serializeAddress(obj, "diamond", c.diamond);
-        vm.serializeAddress(obj, "previousHolder", c.bound);
-        vm.serializeAddress(obj, "successor", address(successor));
-        vm.serializeBool(obj, "diamondWasPaused", wasPaused);
-        vm.serializeUint(obj, "stagedAtBlock", block.number);
-        vm.serializeBytes(obj, "step1_pauserSafe_pause", pauseCall);
-        vm.serializeBytes(obj, "step2_timelock_replaceRewardCustodyHolder", replaceCall);
-        string memory json = vm.serializeBytes(obj, "step3_timelock_unpause", unpauseCall);
-        vm.writeJson(json, _recordPath());
+        bytes memory replaceCall = abi.encodeCall(RewardCustodyFacet.replaceRewardCustodyHolder, ());
 
         console.log("=== Reward custody holder replacement (staged) ===");
         console.log("Diamond:         ", c.diamond);
         console.log("Previous holder: ", c.bound);
-        console.log("Successor:       ", address(successor));
-        console.log("Ceremony record: ", _recordPath());
         console.log("Execute against the Diamond, in order:");
         if (wasPaused) {
             console.log("  1. (already paused - skip)");
@@ -194,14 +196,27 @@ contract ReplaceRewardCustodyHolder is Script {
             console.log("  1. Pauser Safe  pause()");
             console.logBytes(pauseCall);
         }
-        console.log("  2. Timelock     replaceRewardCustodyHolder(successor)");
+        console.log("  2. Timelock     replaceRewardCustodyHolder()  -- constructs the successor and moves the balance in that transaction");
         console.logBytes(replaceCall);
-        if (wasPaused) {
-            console.log("  3. (was paused before - leave it; skip)");
-        } else {
-            console.log("  3. Timelock     unpause()");
-            console.logBytes(unpauseCall);
+        console.log("No unpause is staged: the Diamond stays paused after step 2. Resume service by a fresh Unpauser decision after record() confirms the ceremony.");
+
+        if (!Deployments.artifactWritesEnabled()) {
+            console.log("artifact writes are off for this run -- ceremony record NOT written (simulation).");
+            return;
         }
+        require(
+            !vm.exists(_recordPath()),
+            "ReplaceRewardCustodyHolder: a ceremony record already exists -- run record() once the bundle has executed, or remove the stale record deliberately"
+        );
+        string memory obj = "ceremony";
+        vm.serializeAddress(obj, "diamond", c.diamond);
+        vm.serializeAddress(obj, "previousHolder", c.bound);
+        vm.serializeBool(obj, "diamondWasPaused", wasPaused);
+        vm.serializeUint(obj, "stagedAtBlock", block.number);
+        vm.serializeBytes(obj, "step1_pauserSafe_pause", pauseCall);
+        string memory json = vm.serializeBytes(obj, "step2_timelock_replaceRewardCustodyHolder", replaceCall);
+        vm.writeJson(json, _recordPath());
+        console.log("Ceremony record: ", _recordPath());
         console.log("Then run record() to reconcile the artifact. The artifact is unchanged until then.");
     }
 
@@ -213,27 +228,20 @@ contract ReplaceRewardCustodyHolder is Script {
         string memory json = vm.readFile(_recordPath());
         address diamond = vm.parseJsonAddress(json, ".diamond");
         address previous = vm.parseJsonAddress(json, ".previousHolder");
-        address successor = vm.parseJsonAddress(json, ".successor");
         require(
             diamond == Deployments.readDiamond(),
             "ReplaceRewardCustodyHolder: the ceremony record names a different Diamond"
         );
 
-        address bound = RewardCustodyFacet(diamond).rewardCustodyHolder();
-        require(
-            bound != previous,
-            "ReplaceRewardCustodyHolder: the Diamond still reports the previous holder -- the bundle has not executed"
-        );
-        require(
-            bound == successor,
-            "ReplaceRewardCustodyHolder: the Diamond reports a holder that is neither the previous nor the staged successor -- the ceremony record is stale; reconcile by hand"
-        );
-
         console.log("=== Reward custody holder replacement (record) ===");
         console.log("Diamond:         ", diamond);
         console.log("Previous holder: ", previous);
-        console.log("Bound successor: ", bound);
-        _writeArtifact(successor);
+        _verifyAndRecord(diamond, previous);
+
+        if (!Deployments.artifactWritesEnabled()) {
+            console.log("artifact writes are off for this run -- ceremony record kept (simulation).");
+            return;
+        }
         vm.removeFile(_recordPath());
         console.log("Ceremony record removed:", _recordPath());
     }

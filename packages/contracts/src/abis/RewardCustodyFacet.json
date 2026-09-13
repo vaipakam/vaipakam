@@ -33,14 +33,14 @@
   {
     "type": "function",
     "name": "bindRewardCustodyHolder",
-    "inputs": [
+    "inputs": [],
+    "outputs": [
       {
         "name": "holder",
         "type": "address",
         "internalType": "address"
       }
     ],
-    "outputs": [],
     "stateMutability": "nonpayable"
   },
   {
@@ -59,14 +59,14 @@
   {
     "type": "function",
     "name": "replaceRewardCustodyHolder",
-    "inputs": [
+    "inputs": [],
+    "outputs": [
       {
         "name": "successor",
         "type": "address",
         "internalType": "address"
       }
     ],
-    "outputs": [],
     "stateMutability": "nonpayable"
   },
   {
@@ -217,6 +217,12 @@
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
+      },
+      {
+        "name": "successorPreBalance",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
       }
     ],
     "anonymous": false
@@ -270,33 +276,12 @@
   },
   {
     "type": "error",
-    "name": "InvalidAddress",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "RewardCustodyHolderAlreadyBound",
     "inputs": []
   },
   {
     "type": "error",
     "name": "RewardCustodyHolderNotBound",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "RewardCustodyHolderNotOurs",
-    "inputs": [
-      {
-        "name": "holder",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "RewardCustodyHolderUnchanged",
     "inputs": []
   },
   {
@@ -310,22 +295,6 @@
       },
       {
         "name": "delta",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "RewardCustodySuccessorNotEmpty",
-    "inputs": [
-      {
-        "name": "successor",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "balance",
         "type": "uint256",
         "internalType": "uint256"
       }

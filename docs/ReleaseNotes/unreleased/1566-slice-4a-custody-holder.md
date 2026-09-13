@@ -10,17 +10,21 @@ path reads it yet, and nothing can put value into it. A fresh deployment
 constructs and binds its holder while still paused and records the address in
 the deployment artifact; a live chain gets one through a dedicated one-shot
 script after the facet refresh, because a refresh must never deploy or
-re-point a holder. Replacing a holder is its own paused ceremony: the old
-holder's whole balance moves to the successor and the Diamond's pointer flips
-in the same transaction, refusing if the successor cannot account for exactly
-what was released.
+re-point a holder. The platform constructs its own custody
+holders; no externally supplied address is ever accepted as one, so nothing
+can be imitated. Replacing a holder is its own paused ceremony: the successor
+is created, the old holder's whole balance moves into it and the Diamond's
+pointer flips in the same transaction, refusing if the successor did not grow
+by exactly what was released. Value someone sent ahead of time to the
+address the successor would take is reported as unattributed rather than
+allowed to block the ceremony.
 
 The holder keeps no ledger. Which part of its balance is live fresh funding,
 recycled value, a stranded recovery, a Detached era's pending surplus and so on
 is recorded in Diamond storage, credited and debited only by the Diamond; those
 writers arrive with the cutover change, so on this change every row reads zero
-and the read surface says when a balance cannot be read at all rather than
-reporting it as empty. Keeping the ledger out of the holder is what makes the
+and the read surface says when a balance cannot be read at all, including when
+the configured token cannot answer, rather than reporting it as empty. Keeping the ledger out of the holder is what makes the
 holder replaceable at any size.
 
 The change also lands the paid-side migration the design requires for chains
@@ -43,6 +47,7 @@ through its own script, which rewrites the deployment record's holder address
 in the same run so no later tool reads the emptied previous address as
 custody. Before governance handover the script runs the ceremony directly;
 after handover, where pausing and administration sit with different signers,
-it stages the successor and the three calls for those signers, and a final
-record step reconciles the deployment record only once the platform reports
-the successor as bound. Refs #1566, #1349, #1956.
+it stages the two calls for those signers without pre-authorising the
+unpause, since that would lift whatever else paused the platform in the
+meantime, and a final record step reconciles the deployment record only once
+the platform reports a new holder as bound. Refs #1566, #1349, #1956.

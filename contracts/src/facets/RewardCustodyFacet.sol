@@ -15,15 +15,22 @@ import {RewardCustodyHolder} from "../RewardCustodyHolder.sol";
  *
  * Three things live here, and nothing else:
  *
- *  1. **The holder binding.** `bindRewardCustodyHolder` points the Diamond
- *     at its `RewardCustodyHolder` once; `replaceRewardCustodyHolder` is the
- *     paused ceremony that swaps it for a successor — the old holder's WHOLE
- *     balance moves in one Diamond-gated call and the pointer flips in the
- *     same transaction, so the attribution ledger (Diamond storage, not the
- *     holder's) keeps describing the custody without a per-row migration.
+ *  1. **The holder lifecycle.** The Diamond CONSTRUCTS its own holders —
+ *     `bindRewardCustodyHolder` creates and binds the first one,
+ *     `replaceRewardCustodyHolder` is the paused ceremony that creates a
+ *     successor, moves the old holder's WHOLE balance into it and flips the
+ *     pointer, all in one transaction. No externally supplied address is
+ *     ever accepted as a holder (Codex #2158 r3 P1): authenticity is by
+ *     construction, not by a getter an arbitrary contract could imitate,
+ *     and because the successor does not exist before the transaction that
+ *     switches to it, there is no scheduled window in which it can be
+ *     targeted. The attribution ledger (Diamond storage, not the holder's)
+ *     keeps describing the custody without a per-row migration.
  *  2. **The attribution ledger's read surface.** The rows of
  *     {LibVaipakam.RewardCustodyRow} and the holder's balance, side by side,
- *     so the invariant "attributed never exceeds held" is observable.
+ *     so the invariant "attributed never exceeds held" is observable — and
+ *     the surface says when the balance CANNOT be read rather than
+ *     rendering zero.
  *  3. **`rebaseArmedFreshPaid`** — the paid-side importer §5b requires for a
  *     chain carrying history the vintage-blind ledger (#1566 closure 2) now
  *     charges. Paused, ADMIN, one-shot, a FLOOR rather than a set, and on the
@@ -45,22 +52,33 @@ import {RewardCustodyHolder} from "../RewardCustodyHolder.sol";
 contract RewardCustodyFacet is DiamondAccessControl {
     // ─── Events ─────────────────────────────────────────────────────────────
 
-    /// @notice The custody holder was bound for the first time.
+    /// @notice The custody holder was constructed and bound for the first
+    ///         time.
     /// @custom:event-category state-change/reward-custody
     event RewardCustodyHolderBound(address indexed holder);
 
     /// @notice The custody holder was replaced under the paused ceremony.
-    /// @param previous     The holder that was bound.
-    /// @param successor    The holder now bound.
-    /// @param token        The VPFI token whose balance moved.
-    /// @param balanceMoved The old holder's whole balance, now at the
-    ///                     successor. Zero when the old holder was empty.
+    /// @param previous             The holder that was bound.
+    /// @param successor            The holder now bound, constructed in this
+    ///                             transaction.
+    /// @param token                The VPFI token whose balance moved.
+    /// @param balanceMoved         The old holder's whole balance, now at
+    ///                             the successor. Zero when the old holder
+    ///                             was empty.
+    /// @param successorPreBalance  What the successor's address already held
+    ///                             before the move — value sent to the
+    ///                             predicted address ahead of construction.
+    ///                             It is custody no attribution row
+    ///                             describes; the snapshot reports it as the
+    ///                             unattributed remainder. Zero on the honest
+    ///                             path.
     /// @custom:event-category state-change/reward-custody
     event RewardCustodyHolderReplaced(
         address indexed previous,
         address indexed successor,
         address indexed token,
-        uint256 balanceMoved
+        uint256 balanceMoved,
+        uint256 successorPreBalance
     );
 
     /// @notice The delivered-fresh ledger's paid side was rebased to an
@@ -88,83 +106,85 @@ contract RewardCustodyFacet is DiamondAccessControl {
     // ─── Holder lifecycle ───────────────────────────────────────────────────
 
     /**
-     * @notice Bind the Diamond's delivered reward custody holder. One-shot.
+     * @notice Construct the Diamond's delivered reward custody holder and
+     *         bind it. One-shot.
      * @dev    ADMIN. Not pause-gated: nothing reads the holder before PR B,
      *         so binding changes no live behaviour, and a fresh deploy binds
      *         inside `DeployDiamond` while the Diamond is still paused
-     *         anyway. The holder must answer to THIS Diamond — its
-     *         `DIAMOND()` must be `address(this)` — or the Diamond could
-     *         never release from it.
-     * @param  holder The `RewardCustodyHolder` constructed for this Diamond.
+     *         anyway. The holder is `new RewardCustodyHolder(address(this))`
+     *         — constructed by the Diamond, answering only to the Diamond —
+     *         so no address is taken and nothing can be imitated.
+     * @return holder The holder constructed and bound.
      */
-    function bindRewardCustodyHolder(
-        address holder
-    ) external onlyRole(LibAccessControl.ADMIN_ROLE) {
+    function bindRewardCustodyHolder()
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+        returns (address holder)
+    {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (s.rewardCustodyHolder != address(0)) {
             revert IVaipakamErrors.RewardCustodyHolderAlreadyBound();
         }
-        _requireOurHolder(holder);
+        holder = address(new RewardCustodyHolder(address(this)));
         s.rewardCustodyHolder = holder;
         emit RewardCustodyHolderBound(holder);
     }
 
     /**
-     * @notice Replace the bound holder with a successor, moving the whole
-     *         custody balance across in the same transaction.
-     * @dev    ADMIN, PAUSED. The order is deliberate: read the old holder's
-     *         whole balance, release it to the successor, verify the
-     *         successor's balance grew by exactly that amount, THEN flip the
-     *         pointer. A move the successor cannot account for (a
-     *         fee-on-transfer token, a successor that rejects tokens) reverts
-     *         the whole ceremony rather than leaving the pointer on a custody
-     *         the ledger no longer describes. The rows in storage are not
-     *         touched — that is the point of keeping the ledger out of the
-     *         holder.
+     * @notice Replace the bound holder: construct a successor, move the
+     *         whole custody balance across, flip the pointer — one
+     *         transaction.
+     * @dev    ADMIN, PAUSED. The order is deliberate: construct the successor,
+     *         read the old holder's whole balance and the successor's
+     *         starting balance, release, verify the successor GREW by exactly
+     *         what was released, THEN flip the pointer. A move the successor
+     *         cannot account for (a fee-on-transfer token) reverts the whole
+     *         ceremony rather than leaving the pointer on a custody the
+     *         ledger overstates. The rows in storage are not touched — that
+     *         is the point of keeping the ledger out of the holder.
+     *
+     *         A successor's address is predictable from the Diamond's nonce,
+     *         so value can be sent to it ahead of construction. That is NOT
+     *         a reason to refuse (Codex #2158 r3 P1 — a one-wei dusting
+     *         would otherwise block every replacement at negligible cost):
+     *         the delta check measures growth, not the starting balance, and
+     *         whatever was there already is reported in the event and shows
+     *         in {rewardCustodySnapshot} as the unattributed remainder,
+     *         which no row describes and no path can spend as fresh.
      *
      *         Refuses while the Diamond has no VPFI token configured: with no
      *         token there is no balance to read, and flipping the pointer
      *         blind could strand a balance that a later `setVPFIToken`
      *         reveals at the OLD address.
-     * @param  successor A `RewardCustodyHolder` constructed for this
-     *                   Diamond, different from the one bound.
+     * @return successor The holder constructed and now bound.
      */
-    function replaceRewardCustodyHolder(
-        address successor
-    ) external onlyRole(LibAccessControl.ADMIN_ROLE) {
+    function replaceRewardCustodyHolder()
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+        returns (address successor)
+    {
         LibPausable.requirePaused();
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         address previous = s.rewardCustodyHolder;
         if (previous == address(0)) {
             revert IVaipakamErrors.RewardCustodyHolderNotBound();
         }
-        if (successor == previous) {
-            revert IVaipakamErrors.RewardCustodyHolderUnchanged();
-        }
         address token = s.vpfiToken;
         if (token == address(0)) revert IVaipakamErrors.RewardCustodyTokenUnset();
-        _requireOurHolder(successor);
 
+        successor = address(new RewardCustodyHolder(address(this)));
         uint256 moving = IERC20(token).balanceOf(previous);
-        // The successor must start EMPTY: a pre-funded successor would carry
-        // value no attribution row describes, and the delta check below
-        // cannot see it (it measures growth, not the starting balance).
-        // A successor is constructed for the ceremony, so this costs
-        // nothing on the honest path.
         uint256 before = IERC20(token).balanceOf(successor);
-        if (before != 0) {
-            revert IVaipakamErrors.RewardCustodySuccessorNotEmpty(successor, before);
-        }
         if (moving != 0) {
             RewardCustodyHolder(previous).release(token, successor, moving);
         }
-        uint256 delta = IERC20(token).balanceOf(successor);
+        uint256 delta = IERC20(token).balanceOf(successor) - before;
         if (delta != moving) {
             revert IVaipakamErrors.RewardCustodyMoveUnverified(moving, delta);
         }
 
         s.rewardCustodyHolder = successor;
-        emit RewardCustodyHolderReplaced(previous, successor, token, moving);
+        emit RewardCustodyHolderReplaced(previous, successor, token, moving, before);
     }
 
     // ─── Paid-side migration importer ───────────────────────────────────────
@@ -312,11 +332,17 @@ contract RewardCustodyFacet is DiamondAccessControl {
      *         it holds, and how much of that the ledger attributes.
      * @dev    Says what it does not know rather than rendering a figure it
      *         cannot substantiate: `held` is reported as zero with
-     *         `balanceKnown == false` when no holder is bound or no VPFI
-     *         token is configured, so a reader cannot mistake "unreadable"
-     *         for "empty". `attributed` is the sum of every row in
+     *         `balanceKnown == false` when no holder is bound, when no VPFI
+     *         token is configured, or when the configured token cannot answer
+     *         `balanceOf` (an EOA, a non-conforming contract, a proxy
+     *         upgraded into a reverting implementation — Codex #2158 r3 P2),
+     *         so a reader cannot mistake "unreadable" for "empty".
+     *         `attributed` is the sum of every row in
      *         {LibVaipakam.RewardCustodyRow}; the invariant every writer
-     *         preserves is `attributed <= held` whenever `balanceKnown`.
+     *         preserves is `attributed <= held` whenever `balanceKnown`, and
+     *         `held - attributed` is the unattributed remainder (value sent
+     *         to the holder outside any registered ingress, such as dust at
+     *         a predicted successor address).
      * @return holder       The bound holder (zero while unbound).
      * @return token        The VPFI token the Diamond recognises (zero while
      *                      unset).
@@ -338,30 +364,27 @@ contract RewardCustodyFacet is DiamondAccessControl {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         holder = s.rewardCustodyHolder;
         token = s.vpfiToken;
-        balanceKnown = holder != address(0) && token != address(0);
-        if (balanceKnown) held = IERC20(token).balanceOf(holder);
+        (balanceKnown, held) = _tryBalance(token, holder);
         attributed = _attributedTotal(s);
     }
 
     // ─── Internals ──────────────────────────────────────────────────────────
 
-    /// @dev The offered holder must be a `RewardCustodyHolder` whose
-    ///      `DIAMOND` is this Diamond. A zero address, an EOA, a contract
-    ///      without that getter, or a holder built for another Diamond all
-    ///      land in the same named revert — the distinction does not change
-    ///      what the operator has to do (construct one for THIS Diamond).
-    function _requireOurHolder(address holder) private view {
-        if (holder == address(0)) revert IVaipakamErrors.InvalidAddress();
-        if (holder.code.length == 0) {
-            revert IVaipakamErrors.RewardCustodyHolderNotOurs(holder);
+    /// @dev A balance read that cannot revert the snapshot: unbound holder,
+    ///      unset or codeless token, a failed call, or a malformed answer all
+    ///      report `known == false` — the reader is told the balance could
+    ///      not be read, never handed a zero that means "empty".
+    function _tryBalance(
+        address token,
+        address holder
+    ) private view returns (bool known, uint256 held) {
+        if (holder == address(0) || token == address(0) || token.code.length == 0) {
+            return (false, 0);
         }
-        try RewardCustodyHolder(holder).DIAMOND() returns (address diamond) {
-            if (diamond != address(this)) {
-                revert IVaipakamErrors.RewardCustodyHolderNotOurs(holder);
-            }
-        } catch {
-            revert IVaipakamErrors.RewardCustodyHolderNotOurs(holder);
-        }
+        (bool ok, bytes memory ret) =
+            token.staticcall(abi.encodeCall(IERC20.balanceOf, (holder)));
+        if (!ok || ret.length != 32) return (false, 0);
+        return (true, abi.decode(ret, (uint256)));
     }
 
     /// @dev Sum of every {LibVaipakam.RewardCustodyRow}. Iterates the enum

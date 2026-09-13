@@ -40,12 +40,22 @@ contract FeeSkimmingERC20 {
     }
 }
 
+/// @dev A "token" whose balanceOf reverts — a proxy upgraded into a broken
+///      implementation. The snapshot must report the balance as unknown.
+contract RevertingBalanceToken {
+    function balanceOf(address) external pure returns (uint256) {
+        revert("broken");
+    }
+}
+
 /**
  * @title RewardCustodyFacetTest — #1566 slice 4 PR A
- * @notice The holder's Diamond gate, the one-shot binding, the paused
- *         replacement ceremony (whole balance moves, pointer flips, delta
- *         verified), the paid-side rebase (paused, ADMIN, one-shot, a FLOOR,
- *         canonical-only received rewrite, seeder consumed), and the read
+ * @notice The holder's Diamond gate, the one-shot Diamond-constructed
+ *         binding, the paused replacement ceremony (successor constructed
+ *         in the same transaction, whole balance moves, pointer flips,
+ *         growth verified, dust reported not refused), the paid-side rebase
+ *         (paused, ADMIN, one-shot, a FLOOR, canonical-only received
+ *         rewrite, inactive-role gate, seeder consumed), and the read
  *         surface that says what it does not know.
  */
 contract RewardCustodyFacetTest is SetupTest {
@@ -55,7 +65,8 @@ contract RewardCustodyFacetTest is SetupTest {
         address indexed previous,
         address indexed successor,
         address indexed token,
-        uint256 balanceMoved
+        uint256 balanceMoved,
+        uint256 successorPreBalance
     );
     event ArmedFreshPaidRebased(
         uint8 role,
@@ -75,7 +86,6 @@ contract RewardCustodyFacetTest is SetupTest {
     uint32 internal constant CHAIN_ARB = 42161;
 
     VPFIToken internal vpfi;
-    RewardCustodyHolder internal holder;
     address internal nonAdmin;
 
     function setUp() public {
@@ -93,7 +103,6 @@ contract RewardCustodyFacetTest is SetupTest {
         VPFITokenFacet(address(diamond)).setCanonicalVPFIChain(true);
         VPFITokenFacet(address(diamond)).setVPFIToken(address(vpfi));
 
-        holder = new RewardCustodyHolder(address(diamond));
         nonAdmin = makeAddr("nonAdmin");
     }
 
@@ -123,6 +132,16 @@ contract RewardCustodyFacetTest is SetupTest {
     ///      facet's raw pair, since the bound getter cannot report it.
     function _received() internal view returns (uint256 received) {
         (received,) = _custody().armedFreshLedger();
+    }
+
+    /// @dev The address the Diamond's NEXT `new` will land on — what an
+    ///      attacker can compute and dust ahead of a replacement.
+    function _nextHolderAddress() internal view returns (address) {
+        return vm.computeCreateAddress(address(diamond), vm.getNonce(address(diamond)));
+    }
+
+    function _bind() internal returns (address holder) {
+        holder = _custody().bindRewardCustodyHolder();
     }
 
     function _expectNotAdmin(address who) internal {
@@ -163,6 +182,7 @@ contract RewardCustodyFacetTest is SetupTest {
     }
 
     function test_Holder_ReleaseIsDiamondGated() public {
+        RewardCustodyHolder holder = RewardCustodyHolder(_bind());
         vpfi.mint(address(holder), 10 ether);
         vm.prank(nonAdmin);
         vm.expectRevert(
@@ -176,6 +196,7 @@ contract RewardCustodyFacetTest is SetupTest {
     }
 
     function test_Holder_ReleaseRefusesZeroRecipient() public {
+        RewardCustodyHolder holder = RewardCustodyHolder(_bind());
         vpfi.mint(address(holder), 10 ether);
         vm.prank(address(diamond));
         vm.expectRevert(RewardCustodyHolder.RewardCustodyHolderZeroAddress.selector);
@@ -183,6 +204,7 @@ contract RewardCustodyFacetTest is SetupTest {
     }
 
     function test_Holder_ReleaseByDiamondMovesAndEmits() public {
+        RewardCustodyHolder holder = RewardCustodyHolder(_bind());
         vpfi.mint(address(holder), 10 ether);
         address to = makeAddr("recipient");
         vm.expectEmit(true, true, false, true, address(holder));
@@ -198,180 +220,126 @@ contract RewardCustodyFacetTest is SetupTest {
     function test_Bind_IsAdminOnly() public {
         vm.prank(nonAdmin);
         _expectNotAdmin(nonAdmin);
-        _custody().bindRewardCustodyHolder(address(holder));
+        _custody().bindRewardCustodyHolder();
     }
 
-    function test_Bind_RefusesZero() public {
-        vm.expectRevert(IVaipakamErrors.InvalidAddress.selector);
-        _custody().bindRewardCustodyHolder(address(0));
-    }
-
-    function test_Bind_RefusesAnEoa() public {
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IVaipakamErrors.RewardCustodyHolderNotOurs.selector,
-                nonAdmin
-            )
-        );
-        _custody().bindRewardCustodyHolder(nonAdmin);
-    }
-
-    function test_Bind_RefusesAHolderBuiltForAnotherDiamond() public {
-        RewardCustodyHolder foreign = new RewardCustodyHolder(makeAddr("otherDiamond"));
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IVaipakamErrors.RewardCustodyHolderNotOurs.selector,
-                address(foreign)
-            )
-        );
-        _custody().bindRewardCustodyHolder(address(foreign));
-    }
-
-    function test_Bind_RefusesAContractWithoutTheGetter() public {
-        // The VPFI token is a contract, but it is not a holder.
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IVaipakamErrors.RewardCustodyHolderNotOurs.selector,
-                address(vpfi)
-            )
-        );
-        _custody().bindRewardCustodyHolder(address(vpfi));
-    }
-
-    function test_Bind_SucceedsOnceAndEmits() public {
+    function test_Bind_ConstructsAHolderOwnedByThisDiamondAndEmits() public {
         assertEq(_custody().rewardCustodyHolder(), address(0), "unbound at start");
+        address predicted = _nextHolderAddress();
         vm.expectEmit(true, false, false, true, address(diamond));
-        emit RewardCustodyHolderBound(address(holder));
-        _custody().bindRewardCustodyHolder(address(holder));
-        assertEq(_custody().rewardCustodyHolder(), address(holder), "bound");
+        emit RewardCustodyHolderBound(predicted);
+        address holder = _bind();
 
-        RewardCustodyHolder another = new RewardCustodyHolder(address(diamond));
+        assertEq(holder, predicted, "the Diamond constructed it");
+        assertEq(_custody().rewardCustodyHolder(), holder, "bound");
+        assertGt(holder.code.length, 0, "has code");
+        assertEq(RewardCustodyHolder(holder).DIAMOND(), address(diamond), "answers to this Diamond");
+        // Byte-identical to a reference holder built for the same Diamond:
+        // authenticity is by construction, not by a getter.
+        RewardCustodyHolder canonical = new RewardCustodyHolder(address(diamond));
+        assertEq(keccak256(holder.code), keccak256(address(canonical).code), "canonical implementation");
+    }
+
+    function test_Bind_IsOneShot() public {
+        address holder = _bind();
         vm.expectRevert(IVaipakamErrors.RewardCustodyHolderAlreadyBound.selector);
-        _custody().bindRewardCustodyHolder(address(another));
-        assertEq(_custody().rewardCustodyHolder(), address(holder), "first binding stands");
+        _custody().bindRewardCustodyHolder();
+        assertEq(_custody().rewardCustodyHolder(), holder, "first binding stands");
     }
 
     // ─── 3. Replacement ceremony ────────────────────────────────────────────
 
     function test_Replace_RequiresPause() public {
-        _custody().bindRewardCustodyHolder(address(holder));
-        RewardCustodyHolder successor = new RewardCustodyHolder(address(diamond));
+        _bind();
         vm.expectRevert(LibPausable.ExpectedPause.selector);
-        _custody().replaceRewardCustodyHolder(address(successor));
+        _custody().replaceRewardCustodyHolder();
     }
 
     function test_Replace_IsAdminOnly() public {
-        _custody().bindRewardCustodyHolder(address(holder));
+        _bind();
         _pause();
-        RewardCustodyHolder successor = new RewardCustodyHolder(address(diamond));
         vm.prank(nonAdmin);
         _expectNotAdmin(nonAdmin);
-        _custody().replaceRewardCustodyHolder(address(successor));
+        _custody().replaceRewardCustodyHolder();
     }
 
     function test_Replace_RefusesWhileUnbound() public {
         _pause();
         vm.expectRevert(IVaipakamErrors.RewardCustodyHolderNotBound.selector);
-        _custody().replaceRewardCustodyHolder(address(holder));
-    }
-
-    function test_Replace_RefusesTheSameHolder() public {
-        _custody().bindRewardCustodyHolder(address(holder));
-        _pause();
-        vm.expectRevert(IVaipakamErrors.RewardCustodyHolderUnchanged.selector);
-        _custody().replaceRewardCustodyHolder(address(holder));
+        _custody().replaceRewardCustodyHolder();
     }
 
     function test_Replace_RefusesWithoutAVpfiToken() public {
-        _custody().bindRewardCustodyHolder(address(holder));
+        _bind();
         _mut().setVpfiTokenRaw(address(0));
         _pause();
-        RewardCustodyHolder successor = new RewardCustodyHolder(address(diamond));
         vm.expectRevert(IVaipakamErrors.RewardCustodyTokenUnset.selector);
-        _custody().replaceRewardCustodyHolder(address(successor));
+        _custody().replaceRewardCustodyHolder();
     }
 
-    function test_Replace_RefusesASuccessorBuiltForAnotherDiamond() public {
-        _custody().bindRewardCustodyHolder(address(holder));
+    function test_Replace_ConstructsSuccessorMovesWholeBalanceAndFlipsPointer() public {
+        address holder = _bind();
+        vpfi.mint(holder, 1_000 ether);
         _pause();
-        RewardCustodyHolder foreign = new RewardCustodyHolder(makeAddr("otherDiamond"));
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IVaipakamErrors.RewardCustodyHolderNotOurs.selector,
-                address(foreign)
-            )
-        );
-        _custody().replaceRewardCustodyHolder(address(foreign));
-    }
-
-    function test_Replace_MovesWholeBalanceAndFlipsPointer() public {
-        _custody().bindRewardCustodyHolder(address(holder));
-        vpfi.mint(address(holder), 1_000 ether);
-        RewardCustodyHolder successor = new RewardCustodyHolder(address(diamond));
-        _pause();
+        address predicted = _nextHolderAddress();
 
         vm.expectEmit(true, true, true, true, address(diamond));
-        emit RewardCustodyHolderReplaced(
-            address(holder), address(successor), address(vpfi), 1_000 ether
-        );
-        _custody().replaceRewardCustodyHolder(address(successor));
+        emit RewardCustodyHolderReplaced(holder, predicted, address(vpfi), 1_000 ether, 0);
+        address successor = _custody().replaceRewardCustodyHolder();
 
-        assertEq(_custody().rewardCustodyHolder(), address(successor), "pointer flipped");
-        assertEq(vpfi.balanceOf(address(holder)), 0, "old holder emptied");
-        assertEq(vpfi.balanceOf(address(successor)), 1_000 ether, "successor holds it all");
+        assertEq(successor, predicted, "constructed in the ceremony");
+        assertEq(RewardCustodyHolder(successor).DIAMOND(), address(diamond));
+        assertEq(_custody().rewardCustodyHolder(), successor, "pointer flipped");
+        assertEq(vpfi.balanceOf(holder), 0, "old holder emptied");
+        assertEq(vpfi.balanceOf(successor), 1_000 ether, "successor holds it all");
 
-        // The old holder is now unbound: a release from it by the Diamond
-        // would still be gated correctly, but the Diamond no longer points
-        // at it — the snapshot reads the successor.
         (address h,, bool known, uint256 held,) = _custody().rewardCustodySnapshot();
-        assertEq(h, address(successor));
+        assertEq(h, successor);
         assertTrue(known);
         assertEq(held, 1_000 ether);
     }
 
     function test_Replace_WithAnEmptyHolderMovesNothing() public {
-        _custody().bindRewardCustodyHolder(address(holder));
-        RewardCustodyHolder successor = new RewardCustodyHolder(address(diamond));
+        address holder = _bind();
         _pause();
+        address predicted = _nextHolderAddress();
         vm.expectEmit(true, true, true, true, address(diamond));
-        emit RewardCustodyHolderReplaced(
-            address(holder), address(successor), address(vpfi), 0
-        );
-        _custody().replaceRewardCustodyHolder(address(successor));
-        assertEq(_custody().rewardCustodyHolder(), address(successor));
+        emit RewardCustodyHolderReplaced(holder, predicted, address(vpfi), 0, 0);
+        address successor = _custody().replaceRewardCustodyHolder();
+        assertEq(_custody().rewardCustodyHolder(), successor);
     }
 
-    function test_Replace_RefusesAPreFundedSuccessor() public {
-        // Value already sitting in the successor would be custody no row
-        // describes, invisible to the delta check — refuse before moving.
-        _custody().bindRewardCustodyHolder(address(holder));
-        vpfi.mint(address(holder), 1_000 ether);
-        RewardCustodyHolder successor = new RewardCustodyHolder(address(diamond));
-        vpfi.mint(address(successor), 5 ether);
+    /// @dev Codex #2158 r3 P1 — the successor address is predictable, so a
+    ///      one-wei dusting ahead of the ceremony must NOT block it. The
+    ///      dust is reported in the event and shows as the unattributed
+    ///      remainder; the move itself is still verified as growth.
+    function test_Replace_DustAtThePredictedSuccessorIsReportedNotRefused() public {
+        address holder = _bind();
+        vpfi.mint(holder, 1_000 ether);
+        address predicted = _nextHolderAddress();
+        vpfi.mint(predicted, 5); // the attacker's dust, before construction
         _pause();
 
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IVaipakamErrors.RewardCustodySuccessorNotEmpty.selector,
-                address(successor),
-                5 ether
-            )
-        );
-        _custody().replaceRewardCustodyHolder(address(successor));
-        assertEq(_custody().rewardCustodyHolder(), address(holder), "pointer untouched");
-        assertEq(vpfi.balanceOf(address(holder)), 1_000 ether, "nothing moved");
+        vm.expectEmit(true, true, true, true, address(diamond));
+        emit RewardCustodyHolderReplaced(holder, predicted, address(vpfi), 1_000 ether, 5);
+        address successor = _custody().replaceRewardCustodyHolder();
+
+        assertEq(successor, predicted);
+        assertEq(vpfi.balanceOf(successor), 1_000 ether + 5, "dust rides along, unattributed");
+        (,, bool known, uint256 held, uint256 attributed) = _custody().rewardCustodySnapshot();
+        assertTrue(known);
+        assertEq(held - attributed, 1_000 ether + 5, "PR A: no writer, so all of it is the unattributed remainder");
     }
 
     function test_Replace_RefusesWhenTheSuccessorCannotAccountForTheMove() public {
-        // A token that skims on transfer: the successor receives one wei
+        // A token that skims on transfer: the successor GROWS by one wei
         // less than the old holder released. The ceremony must revert
         // rather than flip the pointer onto a custody the ledger would
         // overstate.
         FeeSkimmingERC20 skim = new FeeSkimmingERC20();
         _mut().setVpfiTokenRaw(address(skim));
-        _custody().bindRewardCustodyHolder(address(holder));
-        skim.mint(address(holder), 100);
-        RewardCustodyHolder successor = new RewardCustodyHolder(address(diamond));
+        address holder = _bind();
+        skim.mint(holder, 100);
         _pause();
 
         vm.expectRevert(
@@ -381,9 +349,9 @@ contract RewardCustodyFacetTest is SetupTest {
                 99
             )
         );
-        _custody().replaceRewardCustodyHolder(address(successor));
-        assertEq(_custody().rewardCustodyHolder(), address(holder), "pointer untouched");
-        assertEq(skim.balanceOf(address(holder)), 100, "revert undid the move");
+        _custody().replaceRewardCustodyHolder();
+        assertEq(_custody().rewardCustodyHolder(), holder, "pointer untouched");
+        assertEq(skim.balanceOf(holder), 100, "revert undid the move");
     }
 
     // ─── 4. The paid-side rebase ────────────────────────────────────────────
@@ -416,11 +384,7 @@ contract RewardCustodyFacetTest is SetupTest {
 
         (uint256 paid,) = _lens().getDeliveredFreshBound();
         assertEq(paid, 700 ether, "paid set to the total");
-        assertEq(
-            _received(),
-            700 ether,
-            "canonical: received rewritten to the zero-headroom baseline"
-        );
+        assertEq(_received(), 700 ether, "canonical: received rewritten to the zero-headroom baseline");
         assertTrue(_custody().armedFreshPaidRebased());
     }
 
@@ -505,8 +469,8 @@ contract RewardCustodyFacetTest is SetupTest {
     }
 
     function test_Rebase_Unconfigured_ConsumesGuardsWithoutTouchingTheBound() public {
-        // The fresh-deploy use: role Unconfigured, total 0. Both guards
-        // close, the bound stays `max`.
+        // The fresh-deploy use: role Unconfigured, total 0, paid 0. Both
+        // guards close, the bound stays `max`.
         _pause();
         vm.expectEmit(false, false, false, true, address(diamond));
         emit ArmedFreshPaidRebased(
@@ -602,7 +566,7 @@ contract RewardCustodyFacetTest is SetupTest {
         assertEq(attributed, 0);
 
         // Bound but token unset: still unknown.
-        _custody().bindRewardCustodyHolder(address(holder));
+        address holder = _bind();
         _mut().setVpfiTokenRaw(address(0));
         (, t, known, held,) = _custody().rewardCustodySnapshot();
         assertEq(t, address(0));
@@ -610,12 +574,34 @@ contract RewardCustodyFacetTest is SetupTest {
 
         // Bound with a token: known, and read from the holder.
         _mut().setVpfiTokenRaw(address(vpfi));
-        vpfi.mint(address(holder), 42 ether);
+        vpfi.mint(holder, 42 ether);
         (h, t, known, held, attributed) = _custody().rewardCustodySnapshot();
-        assertEq(h, address(holder));
+        assertEq(h, holder);
         assertTrue(known);
         assertEq(held, 42 ether);
         assertEq(attributed, 0, "PR A has no writer: every row is zero");
+    }
+
+    /// @dev Codex #2158 r3 P2 — a token that cannot answer `balanceOf` (an
+    ///      EOA, a non-conforming contract, a proxy upgraded into a reverting
+    ///      implementation) must read as UNKNOWN, never revert the snapshot
+    ///      and never read as empty.
+    function test_Snapshot_UnreadableTokenReportsUnknownNotZeroAndNeverReverts() public {
+        _bind();
+
+        _mut().setVpfiTokenRaw(nonAdmin); // an EOA
+        (,, bool known, uint256 held,) = _custody().rewardCustodySnapshot();
+        assertFalse(known, "EOA token: unknown");
+        assertEq(held, 0);
+
+        _mut().setVpfiTokenRaw(address(new RevertingBalanceToken()));
+        (,, known, held,) = _custody().rewardCustodySnapshot();
+        assertFalse(known, "reverting balanceOf: unknown");
+        assertEq(held, 0);
+
+        _mut().setVpfiTokenRaw(address(diamond)); // a contract without balanceOf
+        (,, known,,) = _custody().rewardCustodySnapshot();
+        assertFalse(known, "no balanceOf: unknown");
     }
 
     function test_Rows_AllReadZeroOnAPrAADiamond() public view {

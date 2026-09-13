@@ -2686,22 +2686,6 @@
   },
   {
     "type": "error",
-    "name": "RewardCustodyHolderNotOurs",
-    "inputs": [
-      {
-        "name": "holder",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "RewardCustodyHolderUnchanged",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "RewardCustodyMoveUnverified",
     "inputs": [
       {
@@ -2711,22 +2695,6 @@
       },
       {
         "name": "delta",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "RewardCustodySuccessorNotEmpty",
-    "inputs": [
-      {
-        "name": "successor",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "balance",
         "type": "uint256",
         "internalType": "uint256"
       }

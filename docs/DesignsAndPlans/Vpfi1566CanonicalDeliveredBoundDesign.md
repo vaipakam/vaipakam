@@ -5905,11 +5905,15 @@ payout, gate or funding path changes behaviour, and nothing can put value
 into the holder yet.**
 
 > **LANDED — PR #2158.** `RewardCustodyHolder` (non-upgradeable, immutable
-> `DIAMOND`, one Diamond-gated `release`), `RewardCustodyFacet` (one-shot
-> bind; paused replacement that refuses a pre-funded successor and verifies
-> the successor holds exactly what was released; `rebaseArmedFreshPaid`;
-> the ledger read surface incl. the raw received/paid pair), the
-> `RewardCustodyRow` enum and three appended storage fields. Two things the
+> `DIAMOND`, one Diamond-gated `release`), `RewardCustodyFacet` (the Diamond
+> CONSTRUCTS its own holders — one-shot bind; a paused replacement that
+> creates the successor, moves the whole balance and flips the pointer in
+> one transaction, verifying the successor GREW by exactly what was released
+> and reporting any dust already at the predicted address as unattributed
+> rather than refusing; `rebaseArmedFreshPaid`; a read surface incl. the raw
+> received/paid pair that reports an unreadable balance as unknown), the
+> `RewardCustodyRow` enum and three appended storage fields. No externally
+> supplied address is ever accepted as a holder (review r3). Two things the
 > review added to this plan: the in-place refresh runs the rebase itself,
 > paused, after the role backfill and before service resumes
 > (`ARMED_FRESH_PAID_TOTAL` or `ARMED_FRESH_REBASE_NO_HISTORY=true`, the
@@ -5918,10 +5922,12 @@ into the holder yet.**
 > detached chain with history keeps its guard open for the re-attachment
 > ceremony rather than closing the door on a deficit. Replacement is run
 > through `ReplaceRewardCustodyHolder.s.sol` — directly while one key holds
-> the roles, or staged after governance handover (successor deployed, the
-> Pauser Safe's `pause` and the Timelock's `replace` + `unpause` calldata
-> written to a ceremony record, then `record()` reconciles the artifact only
-> once the chain reports the successor bound). The row invariants are NOT pinned yet: with
+> the roles, or staged after governance handover (the Pauser Safe's `pause`
+> and the Timelock's `replace` calldata written to a ceremony record; NO
+> unpause is pre-authorised, since it would lift whatever else paused the
+> Diamond meanwhile; then `record()` reconciles the artifact only once the
+> chain reports a new holder bound). Simulations neither create nor erase
+> ceremony records. The row invariants are NOT pinned yet: with
 > no writer in PR A they would be vacuous; they land with PR B's writers.
 
 - The holder contract, its ledger and its lifecycle as above, plus its
